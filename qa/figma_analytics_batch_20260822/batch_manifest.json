@@ -1,0 +1,45 @@
+{
+  "fileKey": "czPqlJ7fXYn5cq4cbQyTFm",
+  "pageId": "0:1",
+  "batch": "ANA02_ANA03_ANA04_BATCH_REVIEW",
+  "previousBatch": {
+    "pages": ["ORD-05", "ORD-06", "ANA-01"],
+    "status": "CONFIRMED_AND_LOCKED"
+  },
+  "currentBatch": [
+    {
+      "code": "ANA-02",
+      "section": "289:6313",
+      "main1920": "289:6314",
+      "compat1440": "289:6524",
+      "states": "289:6727",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    },
+    {
+      "code": "ANA-03",
+      "section": "289:6728",
+      "main1920": "289:6729",
+      "compat1440": "289:6939",
+      "states": "289:7142",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    },
+    {
+      "code": "ANA-04",
+      "section": "289:7143",
+      "main1920": "289:7144",
+      "compat1440": "289:7354",
+      "states": "289:7557",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    }
+  ],
+  "qaChecks": {
+    "overflow": 0,
+    "placeholder": 0,
+    "font": "Noto Sans SC",
+    "activeNavigation": "分析中心",
+    "visualInspection": "PASS"
+  }
+}

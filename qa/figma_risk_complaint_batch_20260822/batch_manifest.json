@@ -1,0 +1,46 @@
+{
+  "fileKey": "czPqlJ7fXYn5cq4cbQyTFm",
+  "pageId": "0:1",
+  "batch": "RISK01_CS01_CS02_BATCH_REVIEW",
+  "previousBatch": {
+    "pages": ["ANA-02", "ANA-03", "ANA-04"],
+    "status": "CONFIRMED_AND_LOCKED"
+  },
+  "currentBatch": [
+    {
+      "code": "RISK-01",
+      "section": "301:6306",
+      "main1920": "301:6307",
+      "compat1440": "301:6506",
+      "states": "301:6689",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    },
+    {
+      "code": "CS-01",
+      "section": "301:6690",
+      "main1920": "301:6691",
+      "compat1440": "301:6944",
+      "states": "301:7161",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    },
+    {
+      "code": "CS-02",
+      "section": "301:7162",
+      "main1920": "301:7163",
+      "compat1440": "301:7416",
+      "states": "301:7633",
+      "status": "WAITING_FOR_BATCH_REVIEW",
+      "qa": "PASS"
+    }
+  ],
+  "qaChecks": {
+    "overflow": 0,
+    "placeholder": 0,
+    "font": "Noto Sans SC",
+    "riskActiveNavigation": "分析中心",
+    "complaintActiveNavigation": "客户管理",
+    "visualInspection": "PASS"
+  }
+}

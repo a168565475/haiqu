@@ -1,0 +1,24 @@
+{
+  "fileKey": "czPqlJ7fXYn5cq4cbQyTFm",
+  "pageId": "0:1",
+  "status": "CONFIRMED",
+  "style": "Fantastic Admin Pro neutral light + Element Plus + Iconify/Lucide",
+  "qa": {
+    "overflow": 0,
+    "placeholder": 0,
+    "wrongFont": 0,
+    "fontFamily": "Noto Sans SC",
+    "wide": "1920x1080",
+    "compact": "1440x900"
+  },
+  "pages": [
+    {"code":"CFG-01","section":"311:6563","wide":"311:6564","compact":"311:6765","states":"311:6954"},
+    {"code":"CFG-02","section":"311:6989","wide":"311:6990","compact":"311:7191","states":"311:7380"},
+    {"code":"PERM-01","section":"311:7415","wide":"311:7416","compact":"311:7617","states":"311:7806"},
+    {"code":"PERM-02","section":"311:7841","wide":"311:7842","compact":"311:8043","states":"311:8232"},
+    {"code":"AUTO-01","section":"311:8267","wide":"311:8268","compact":"311:8469","states":"311:8658"},
+    {"code":"AUTO-02","section":"311:8693","wide":"311:8694","compact":"311:8895","states":"311:9084"},
+    {"code":"AUD-01","section":"311:9119","wide":"311:9120","compact":"311:9321","states":"311:9510"},
+    {"code":"IMP-01","section":"311:9545","wide":"311:9546","compact":"311:9747","states":"311:9936"}
+  ]
+}

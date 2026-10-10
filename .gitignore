@@ -49,3 +49,4 @@ src/backend/tmp/
 src/backend/outputs/
 src/frontend/qa/
 qa/
+tmp_bom_serializer_excerpt.txt

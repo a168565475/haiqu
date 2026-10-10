@@ -1,0 +1,112 @@
+{
+  "revision": "D1-v2-20260929",
+  "status": "pending_user_confirmation",
+  "createdAt": "2026-09-29T13:51:12.275Z",
+  "scope": "金工半成品入库主页面、最低报工依据、提交确认及附属状态；仅示例原型，业务未开发",
+  "sourceFiles": [
+    {
+      "path": "docs/designs/tube_revision_20260929/d1.html",
+      "sha256": "fa13f296d922d7bcbb99e5a655e125fe11a83bd3ae2486d558f385d1ee4116ee"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d1-main.js",
+      "sha256": "41951efd0f3cc9d14a6f98259ee7fc58fae2ec42a5013f1feac55a56ae1ff217"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/D1ReviewApp.vue",
+      "sha256": "b470c25f847f5e8913a40ce11971764f41ba7f692fbf51d501a185f38541d189"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d1-design.scss",
+      "sha256": "f19df0805f9a3fae544946cc631ba64b54d0456fc1bd8e4d1ce822e65f85d20d"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d1-review.html",
+      "sha256": "ceb30331edff0c75766c55d80f2ddc03b92c2f4c06341147de1dd5119ae2ba16"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/DesignTable.vue",
+      "sha256": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/design.scss",
+      "sha256": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a"
+    },
+    {
+      "path": "docs/tube_revision_d1_design_review_20260929.md",
+      "sha256": "bfb6c0e3a67f3a03a9701f28cf4014a6d2853e01f74757003de25c5789de7f53"
+    },
+    {
+      "path": "src/frontend/src/components/common/AppWindowDialog.vue",
+      "sha256": "bf1a9b2c308d3ed12f00a6b863b1078b697e11d892c8578c114b6e38db97d2e7"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-main-1920.png",
+      "sha256": "01d5f05cf27522be4a2c82fe9572be4b7cfc8c6e6db69ad056bbfc33cac0ca20"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-basis-1920.png",
+      "sha256": "36bc4ddb13d415e2edd41286c6389bcd6295695bbf3beb112933cd71d712f65b"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-input-cap-1920.png",
+      "sha256": "23e9c4a1428e4938e5295de95ce8767aa7a27281be59390cdee90b4fed549726"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-missing-basis-1920.png",
+      "sha256": "fc1fe4c392b6cf903c4b4492377363d314d753e4161433d86b50688b2d7e4c30"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-zero-basis-1920.png",
+      "sha256": "b34bd9d1c68f176c8fe498f050c02d39567ce3f4c466a06ba10a85bbc43158af"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-confirm-1920.png",
+      "sha256": "9d1240041d07540deaee0cb8b68a9f714b1bc112e1b7130d08004fc9ef67f8ea"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-over-limit-1920.png",
+      "sha256": "0a34b4e8bf583a139d84bb5263dd3d85f5da81cdd12e8f903fcd6f0022a45ca7"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-date-1920.png",
+      "sha256": "70102ae48d5d4973d401b9335a9e831a94bda91992a2d44154979a0f850d56d1"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-select-1920.png",
+      "sha256": "16c07fb77b8ec8fb1fe8222fa268fd0d1461fc20531b254e4fcbc5094f73c605"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-empty-1920.png",
+      "sha256": "60f1abf3420d94e704479a96749aa7ad6af99c864382ea854ae650a01b5986f8"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-loading-1920.png",
+      "sha256": "1d40d471e0e55b537bdc1352a0da4729246d0a77a33dbfd32a2fdf77d4d88599"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-error-1920.png",
+      "sha256": "25304560a65e7c39a638189e69cebe5a4eb3b98c0d2c0d2a19c4f6fd6fa250df"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-forbidden-1920.png",
+      "sha256": "4c40ac4cf0784a67b7b57252ae4e6e97d40ff03dd5caeca8967b073a22d7c90a"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-future-1920.png",
+      "sha256": "37e4cc5623bc3875e3dae4508b7d655d707979f8b43c7419dfcd2806c58454ee"
+    },
+    {
+      "path": "qa/tube_revision_d1_design_20260929/d1-state-pending-1920.png",
+      "sha256": "554769c8dc6790c227effcc5f00b09b2623842d9e00d81fbd1cd6aea8a013b33"
+    }
+  ],
+  "verification": {
+    "path": "qa/tube_revision_d1_design_20260929/verification.json",
+    "sha256": "4d72abf05e29a953a3b572f2d6f410b4a535077b0fb5b7e37706748dabd1f8e7"
+  },
+  "businessApiRequests": 0,
+  "unchangedD2ApprovedFiles": 6
+}

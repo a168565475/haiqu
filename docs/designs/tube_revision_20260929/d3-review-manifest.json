@@ -1,0 +1,73 @@
+{
+  "createdAt": "2026-09-30T04:35:40.854Z",
+  "status": "pending_user_confirmation",
+  "page": "D3整单喷塑入库",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "sourceFiles": {
+    "docs/designs/tube_revision_20260929/D3ReviewApp.vue": "db4307121424de64fcd0408ab486dcc11334dbb6730434dceb5db3399d85db34",
+    "docs/designs/tube_revision_20260929/d3-main.js": "a1e2bc9cdc07688ff115501fbf61a0651d895b974c3af2a0ff0f5dd2bf41c483",
+    "docs/designs/tube_revision_20260929/d3.html": "33f6f6ae5be5fc669ccaed6cff5710c6e54da995d8c95104a6824a09c44f2517",
+    "docs/designs/tube_revision_20260929/d3-design.scss": "2ffab56352282321bf937824c3fc2b101f2bb6237ea60b5bf1f4365bc61fc56f"
+  },
+  "inheritedFiles": {
+    "docs/designs/tube_revision_20260929/design.scss": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a",
+    "docs/designs/tube_revision_20260929/DesignTable.vue": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb",
+    "src/frontend/src/components/common/AppWindowDialog.vue": "bf1a9b2c308d3ed12f00a6b863b1078b697e11d892c8578c114b6e38db97d2e7",
+    "src/frontend/src/styles/crm/_tokens.scss": "d34b43114b83b968a570c3da77578d3e7e8741a7ea662fd42ce1e72b2b8aeeae"
+  },
+  "evidenceFiles": {
+    "docs/tube_revision_d3_design_review_20260930.md": "ec1c7876c72bf26c90430eb8e945d9721f804e10e80c5a76530de9b422f1a9cf",
+    "docs/designs/tube_revision_20260929/d3-review.html": "937d971b600ccbafe51e00f611e44196e78f0a16696497fbb21f9e033cb347c8",
+    "qa/tube_revision_d3_design_20260930/verify.cjs": "7c4823dc2de117f9a56ffa52e4628d7bab9582fcea345642025b6ca92e30e7ca",
+    "qa/tube_revision_d3_design_20260930/verification.json": "f438ceab262f759cbcb5a5ae84014994bec132b1135d04d2deea70e5c9d6992b",
+    "qa/tube_revision_d3_design_20260930/scope-after.json": "2e096af8548aeb9384f6714105fc3309e0b3245913beae19cfda626111dbd437",
+    "qa/tube_revision_d3_design_20260930/raw_pipe-mixed-1920.png": "e8057b4e7914f3d1cd83189f3dd678c053f1019a8a0f25c21f1f5fd78d4b1679",
+    "qa/tube_revision_d3_design_20260930/raw_pipe-confirm-1920.png": "76b52d877582d2924dd225938996f92b411da7df78d90ab43c877002145a81e5",
+    "qa/tube_revision_d3_design_20260930/public_semi-mixed-1920.png": "e7f64c192b312983140f056b348b91d76ad041237536d3d5a526b26956131885",
+    "qa/tube_revision_d3_design_20260930/public_semi-confirm-1920.png": "e7c41fe6ee8f4237f2222c9ec41836ec81cd767da722e01170fbc74d5bb3554a",
+    "qa/tube_revision_d3_design_20260930/metal-mixed-1920.png": "6af08112d1a7388d5efc33e98e89715baba5adcf0a575c1a3c7700b18ec1b91d",
+    "qa/tube_revision_d3_design_20260930/metal-confirm-1920.png": "b1058bbf2f547d3db93f45742dc32a460fc88386a0c6dad587e07339fec02817",
+    "qa/tube_revision_d3_design_20260930/invalid-quantity-bubble-1920.png": "0d1baf0733045aaedb73b0b8244749afc4efc6798c55702f049ab6049ced20e6",
+    "qa/tube_revision_d3_design_20260930/missing-reason-bubble-1920.png": "c354710f1c4afda267e30bd449cc6705c249ccfdd49b1d2539a1a225f5d05b4b",
+    "qa/tube_revision_d3_design_20260930/date-1920.png": "58e913b8c79d164b2f89956d1f9fc70d6364846c699165284dc89db6b9963965",
+    "qa/tube_revision_d3_design_20260930/zone-select-1920.png": "778a51a9d956c4ff7ce8a997928960354bed790f05bb84774fa88a6c323815c4",
+    "qa/tube_revision_d3_design_20260930/warehouse-change-1920.png": "5ac2740949fe623857b73a2126a22053e0779e29a188272f3f92fcd2884600ee",
+    "qa/tube_revision_d3_design_20260930/all-zero-1920.png": "1292026f5b5c7bc6a393f770f0964a81916cd4fe2b30e79c1be2a75ac3726771",
+    "qa/tube_revision_d3_design_20260930/all-zero-confirm-1920.png": "ac0296f54436424b9f1715953f1f50156c57d6bd1a639ce3730a03472f133e42",
+    "qa/tube_revision_d3_design_20260930/all-blank-1920.png": "bf28c1862dd29099d94743419d136210ec8b82a251d75a0999793a0694617e51",
+    "qa/tube_revision_d3_design_20260930/all-blank-confirm-1920.png": "ad4347a71fea3fccea5d0ec30123cc6af0335324f46b2596227aac3801735f29",
+    "qa/tube_revision_d3_design_20260930/full-ended-1920.png": "901120671ac1f61a87ca244ae4c16c5f064df48bb5fc397fbabef76122fb52ab",
+    "qa/tube_revision_d3_design_20260930/order-picker-1920.png": "25c4d8956cdaa9e61ad2d254416a9365ccd838cbb5d4fcc1fd51b083db49be32",
+    "qa/tube_revision_d3_design_20260930/inventory-entry-1920.png": "33c1274738b335aba91c62f35c46b16c1e766416ed84050dfc23013f473081cd",
+    "qa/tube_revision_d3_design_20260930/long-first-1920.png": "0c674a3efda418ac4a96a75d213b7a809d8ae9683848e73dd5047749e50a3fab",
+    "qa/tube_revision_d3_design_20260930/long-last-1920.png": "92254a847e6fc5ce3b79a25e7741778beb50c7258c98ed268bb53cd43cfa14c7",
+    "qa/tube_revision_d3_design_20260930/long-confirm-last-1920.png": "c2b973c3007e9753dfad4e2552111a3ff5fdb4d632c5c680ab3b0d6a4b7a3e98",
+    "qa/tube_revision_d3_design_20260930/state-empty-1920.png": "61014cc8bdc29d9e571129679c32b855949fa9c768183a0119b75f0361e33a8b",
+    "qa/tube_revision_d3_design_20260930/state-loading-1920.png": "daea9ea2606556baac1b31fe506f44cb9bb130aa16fdad96e505fb600d62e6ac",
+    "qa/tube_revision_d3_design_20260930/state-error-1920.png": "d8c99a50435ab169036ccb537cc380c5433a72b5a773a49dcc8fd08ab98eb9ba",
+    "qa/tube_revision_d3_design_20260930/state-forbidden-1920.png": "9d5d0f22e882e889e87ef15dd62467a4d4237e88f3409ef2033822676c08d388",
+    "qa/tube_revision_d3_design_20260930/state-not-applicable-1920.png": "769b4e9673f30fb3ea66032ee7a509aa352e8cc6aef39a5d8ed2d6def9d86fd9",
+    "qa/tube_revision_d3_design_20260930/state-cancelled-1920.png": "debab270869db09ce8bfad34312c616c8ee7be735fef98635d658a05d23f3b9e",
+    "qa/tube_revision_d3_design_20260930/state-result-1920.png": "0b1576d9684ffe1ae4bde3d2afb76fbf93d683deda47012138e11af531fabc4f"
+  },
+  "businessDevelopmentAuthorized": false,
+  "businessApiRequests": 0,
+  "approvalScope": [
+    "D3收货主页面",
+    "半成品入口选单窗口",
+    "整单最终复核窗口",
+    "切换仓库窗口",
+    "D3结束只读及异常状态"
+  ],
+  "proposedDetail": "整单实收0无需选择仓库或库区，仍需日期和逐行少回原因",
+  "excluded": [
+    "D3业务开发",
+    "D4结束详情",
+    "D5库存记录领用接入",
+    "面料流程",
+    "主ERP启用"
+  ]
+}

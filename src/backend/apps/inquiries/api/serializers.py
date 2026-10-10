@@ -1,3 +1,8 @@
+from apps.access_control.sales_sources import require_file
+from apps.access_control import sales_policy
+from apps.access_control.sales_policy import SalesAccessSerializerMixin
+from functools import cached_property
+
 from django.db.models import Q
 from rest_framework import serializers
 
@@ -7,8 +12,16 @@ from apps.customers.models import CustomerAccount, CustomerContact, CustomerTran
 from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile
 from apps.organizations.models import Employee
+from apps.reference_data.models import Currency, Incoterm, ReferenceDictionary, ReferenceStatus
+from apps.reference_data.services import (
+    published_dictionary_code_is_active,
+    published_dictionary_options,
+)
 
-from ..models import Inquiry, InquiryFileLink, InquiryItem, InquirySlaLink
+from ..figma_demo import demo_override, is_figma_demo_inquiry, is_figma_demo_request
+from ..models import Inquiry, InquiryAssignmentHistory, InquiryFileLink, InquiryItem, InquiryPriority, InquirySlaLink
+from ..rich_text import rich_text_plain_text, sanitize_rich_text
+from ..selectors import inquiry_display_stage, inquiry_product_amount, inquiry_sla_summary
 
 
 class InquiryItemSerializer(serializers.ModelSerializer):
@@ -28,22 +41,62 @@ class InquiryItemSerializer(serializers.ModelSerializer):
             "line_number",
             "product_description",
             "specification",
+            "color",
+            "material",
             "quantity",
             "unit_code",
             "target_unit_price",
             "target_currency_code",
+            "expected_date",
+            "product_match_status",
             "notes",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def _validate_reference_codes(self, attrs, current=None):
+        target_currency = attrs.get(
+            "target_currency_code",
+            getattr(current, "target_currency_code", ""),
+        )
+        current_currency = getattr(current, "target_currency_code", "")
+        if (
+            target_currency
+            and target_currency != current_currency
+            and not Currency.objects.filter(
+                code=target_currency,
+                status=ReferenceStatus.ACTIVE,
+                archived_at__isnull=True,
+            ).exists()
+        ):
+            raise serializers.ValidationError(
+                {"target_currency_code": "目标价币种不存在、已停用或已归档。"}
+            )
+        return attrs
+
+    def validate(self, attrs):
+        return self._validate_reference_codes(attrs, self.instance)
+
 
 class InquiryItemUpdateSerializer(InquiryItemSerializer):
     def validate(self, attrs):
         if not attrs:
             raise serializers.ValidationError({"detail": "请至少提交一个需要修改的字段。"})
-        return attrs
+        return super().validate(attrs)
+
+
+class InquiryDraftItemSerializer(InquiryItemSerializer):
+    id = serializers.UUIDField(required=False)
+
+    class Meta(InquiryItemSerializer.Meta):
+        read_only_fields = ["created_at", "updated_at"]
+
+    def validate(self, attrs):
+        current = None
+        if attrs.get("id"):
+            current = InquiryItem.objects.filter(pk=attrs["id"]).first()
+        return self._validate_reference_codes(attrs, current)
 
 
 class InquiryFileLinkSerializer(serializers.ModelSerializer):
@@ -93,6 +146,7 @@ class InquiryFileLinkCreateSerializer(serializers.Serializer):
         ).distinct()
 
     def validate_file_id(self, business_file):
+        require_file(self.context.get("request"), business_file)
         inquiry = self.context["inquiry"]
         actor = getattr(self.context["request"], "employee", None)
         linked_customer_ids = set(business_file.customer_links.values_list("customer_account_id", flat=True))
@@ -117,7 +171,25 @@ class InquiryFileLinkCreateSerializer(serializers.Serializer):
         return business_file
 
 
+class InquiryWangImageUploadSerializer(serializers.Serializer):
+    file = serializers.FileField(allow_empty_file=False)
+
+
 class InquirySlaSerializer(serializers.ModelSerializer):
+    progress_context = serializers.SerializerMethodField()
+
+    def get_progress_context(self, obj) -> dict:
+        data = obj.sla_tracking.tracking_data
+        return {key: data.get(key) for key in ['round_number','entry_reason','source_label','completion_reason','quotation_id']}
+    work_calendar = serializers.SerializerMethodField()
+    target_minutes = serializers.SerializerMethodField()
+
+    def get_work_calendar(self, obj) -> dict | None:
+        return obj.sla_tracking.tracking_data.get("work_calendar")
+
+    def get_target_minutes(self, obj) -> int | None:
+        return obj.sla_tracking.tracking_data.get("target_minutes")
+
     policy_code = serializers.CharField(source="sla_tracking.sla_policy.policy_code", read_only=True)
     policy_name = serializers.CharField(source="sla_tracking.sla_policy.display_name", read_only=True)
     status = serializers.CharField(source="sla_tracking.status", read_only=True)
@@ -130,6 +202,8 @@ class InquirySlaSerializer(serializers.ModelSerializer):
         model = InquirySlaLink
         fields = [
             "id",
+            "stage_code",
+            "is_current",
             "policy_code",
             "policy_name",
             "status",
@@ -137,19 +211,142 @@ class InquirySlaSerializer(serializers.ModelSerializer):
             "next_deadline_at",
             "breached_at",
             "completed_at",
+            "work_calendar",
+            "target_minutes",
+            "progress_context",
         ]
 
 
-class InquiryListSerializer(serializers.ModelSerializer):
+class InquiryAttachmentUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    upload_id = serializers.UUIDField()
+
+
+class InquiryListSerializer(SalesAccessSerializerMixin, serializers.ModelSerializer):
+    priority_display = serializers.CharField(source="get_priority_display", read_only=True)
     customer_name = serializers.CharField(source="customer_account.account_name", read_only=True)
     owner = EmployeeSummarySerializer(source="owner_employee", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    customer = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
+    product_summary = serializers.SerializerMethodField()
+    product_amount = serializers.SerializerMethodField()
+    sla_summary = serializers.SerializerMethodField()
+    display_stage = serializers.SerializerMethodField()
+    display_stage_label = serializers.SerializerMethodField()
+    has_sent_quotation = serializers.SerializerMethodField()
+    has_quotation = serializers.BooleanField(read_only=True, default=False)
+    has_active_sample = serializers.SerializerMethodField()
+    etag = serializers.SerializerMethodField()
+    allowed_actions = serializers.SerializerMethodField()
+
+    @cached_property
+    def source_labels(self):
+        options, _version = published_dictionary_options("INQUIRY_SOURCE")
+        published = {item["code"]: item["label"] for item in options}
+        historical = dict(
+            ReferenceDictionary.objects.filter(
+                category_code="INQUIRY_SOURCE",
+                archived_at__isnull=True,
+            ).values_list("item_code", "display_name")
+        )
+        # 已发布名称优先，数据库当前值只用于补充已停用的历史代码。
+        return {**historical, **published}
+
+    def get_customer(self, obj):
+        return {"id": str(obj.customer_account_id), "name": obj.customer_account.account_name, "country_code": getattr(obj.customer_account, "primary_country_code", "")}
+
+    def get_source(self, obj):
+        code = obj.inquiry_source
+        return {"code": code, "display_name": self.source_labels.get(code, code or "未填写")}
+
+    def get_product_summary(self, obj):
+        items = getattr(obj, "list_items", [])
+        return {"first_description": items[0].product_description if items else "", "item_count": len(items)}
+
+    def get_product_amount(self, obj) -> dict:
+        return inquiry_product_amount(obj)
+
+    def get_sla_summary(self, obj):
+        request = self.context.get("request")
+        if request and is_figma_demo_request(request) and is_figma_demo_inquiry(obj):
+            return demo_override(obj).get("sla", {"state": "NONE", "next_deadline_at": None, "remaining_seconds": None})
+        return inquiry_sla_summary(obj)
+
+    def get_display_stage(self, obj):
+        request = self.context.get("request")
+        if request and is_figma_demo_request(request) and is_figma_demo_inquiry(obj):
+            return demo_override(obj).get("display_stage", {}).get("code", obj.status)
+        return inquiry_display_stage(obj)[0]
+
+    def get_display_stage_label(self, obj):
+        request = self.context.get("request")
+        if request and is_figma_demo_request(request) and is_figma_demo_inquiry(obj):
+            return demo_override(obj).get("display_stage", {}).get("label", obj.get_status_display())
+        return inquiry_display_stage(obj)[1]
+
+    def get_has_sent_quotation(self, obj):
+        return bool(getattr(obj, "sent_quotations", []))
+
+    def get_has_active_sample(self, obj):
+        return bool(getattr(obj, "active_sample_requests", []))
+
+    def get_etag(self, obj):
+        from apps.core.api.concurrency import etag_for_instance
+        return etag_for_instance(obj)
+
+    def get_allowed_actions(self, obj):
+        request = self.context.get("request")
+        if request is None:
+            return {
+                "assign": False,
+                "set_priority": False,
+                "mark_invalid": False,
+                "lifecycle": False,
+                "create_quotation": False,
+                "attach_contact": False,
+                "respond": False,
+                "confirm_requirements": False,
+                "follow_up": False,
+                "create_sample": False,
+                "create_sales_order": False,
+            }
+        item_count = len(getattr(obj, "list_items", []))
+        is_terminal = obj.status in {"CONVERTED", "CLOSED", "CANCELLED", "LOST"}
+        def can(code):
+            if not sales_policy.enabled():
+                return request.user.has_perm(code)
+            return sales_policy.can_customer(request, code, obj.customer_account_id)
+        can_change = can("inquiries.change_inquiry")
+        can_create_quotation = False
+        if obj.status == "READY_FOR_QUOTE" and can_change and can("quotations.add_quotation"):
+            if not hasattr(request, "_inquiry_quote_create_customer_ids"):
+                request._inquiry_quote_create_customer_ids = set(
+                    accessible_customers(request, "add_quotation").values_list("pk", flat=True)
+                )
+            can_create_quotation = obj.customer_account_id in request._inquiry_quote_create_customer_ids
+        return {
+            "assign": can("inquiries.assign_inquiry") and not is_terminal,
+            "set_priority": can_change and obj.archived_at is None,
+            "mark_invalid": (can("access_control.markinvalid_inquiry") if sales_policy.enabled() else can_change) and obj.status not in {"CONVERTED", "CLOSED", "CANCELLED"},
+            "lifecycle": can_change and not is_terminal,
+            "create_quotation": can_create_quotation,
+            "attach_contact": can_change and obj.customer_contact_id is None and not is_terminal and (not sales_policy.enabled() or can("customers.view_customercontact")),
+            "respond": (can("access_control.respond_inquiry") if sales_policy.enabled() else can_change) and obj.status == "NEW" and obj.customer_contact_id is not None,
+            "confirm_requirements": (can("access_control.confirmrequirements_inquiry") if sales_policy.enabled() else can_change) and obj.status == "ANALYZING" and obj.customer_contact_id is not None and item_count > 0,
+            "follow_up": (can("access_control.followup_inquiry") if sales_policy.enabled() else can_change) and obj.status in {"ANALYZING", "READY_FOR_QUOTE", "QUOTING", "QUOTED", "FOLLOW_UP", "QUOTE_ACCEPTED"},
+            "create_sample": obj.status == "QUOTE_ACCEPTED" and item_count > 0,
+            "create_sales_order": obj.status == "QUOTE_ACCEPTED" and (not sales_policy.enabled() or can("sales_orders.add_salesorder")),
+        }
 
     class Meta:
         model = Inquiry
         fields = [
+            "allowed_permissions",
             "id",
             "inquiry_number",
+            "priority",
+            "priority_display",
             "customer_account",
             "customer_name",
             "owner",
@@ -163,13 +360,152 @@ class InquiryListSerializer(serializers.ModelSerializer):
             "archived_at",
             "created_at",
             "updated_at",
+            "customer",
+            "source",
+            "product_summary",
+            "product_amount",
+            "sla_summary",
+            "display_stage",
+            "display_stage_label",
+            "has_sent_quotation",
+            "has_quotation",
+            "has_active_sample",
+            "estimated_amount_min",
+            "estimated_amount_max",
+            "estimated_currency_code",
+            "etag",
+            "allowed_actions",
         ]
 
 
 class InquiryDetailSerializer(InquiryListSerializer):
-    items = InquiryItemSerializer(many=True, read_only=True)
+    handling_time_rule = serializers.SerializerMethodField()
+
+    def get_handling_time_rule(self, obj) -> dict | None:
+        from apps.workflow.models import SlaPolicy
+        policy = SlaPolicy.objects.filter(target_type="INQUIRY", is_enabled=True, archived_at__isnull=True).order_by("policy_code").first()
+        if policy is None:
+            return None
+        return {"name": policy.display_name, "response_minutes": policy.response_minutes,
+                "confirmation_minutes": policy.resolution_minutes, "work_calendar": policy.config_data.get("work_calendar"),
+                "stage_minutes": policy.config_data.get('stage_minutes', {})}
+
+    items = InquiryItemSerializer(source="list_items", many=True, read_only=True)
     files = InquiryFileLinkSerializer(source="file_links", many=True, read_only=True)
-    sla = InquirySlaSerializer(source="sla_links", many=True, read_only=True)
+    sla = serializers.SerializerMethodField()
+    assignment_history = serializers.SerializerMethodField()
+    customer_contact_summary = serializers.SerializerMethodField()
+    linked_quotations = serializers.SerializerMethodField()
+    linked_samples = serializers.SerializerMethodField()
+    linked_sales_orders = serializers.SerializerMethodField()
+
+    def get_assignment_history(self, obj):
+        rows = getattr(obj, "assignment_history_rows", obj.assignment_history.all())
+        return [
+            {
+                "id": str(row.pk),
+                "previous_owner": EmployeeSummarySerializer(row.previous_owner_employee).data if row.previous_owner_employee_id else None,
+                "new_owner": EmployeeSummarySerializer(row.new_owner_employee).data if row.new_owner_employee_id else None,
+                "assigned_at": row.assigned_at,
+                "assignment_reason": row.assignment_reason,
+                "assignment_type": row.assignment_type,
+            }
+            for row in rows
+        ]
+
+    def get_sla(self, obj):
+        request = self.context.get("request")
+        if request and is_figma_demo_request(request) and is_figma_demo_inquiry(obj):
+            summary = demo_override(obj).get("sla", {})
+            if summary.get("state") == "NONE":
+                return []
+            return [{
+                "id": f"demo-{obj.pk}", "stage_code": "FIRST_RESPONSE", "is_current": True,
+                "policy_code": "FIGMA_DEMO", "policy_name": summary.get("policy_name", "示例 SLA"),
+                "status": "RUNNING", "started_at": obj.received_at,
+                "next_deadline_at": summary.get("next_deadline_at"), "breached_at": None, "completed_at": None,
+            }]
+        return InquirySlaSerializer(obj.sla_links.all(), many=True).data
+
+    def get_customer_contact_summary(self, obj):
+        contact = obj.customer_contact
+        if contact is None:
+            return None
+        return {
+            "id": str(contact.pk),
+            "display_name": contact.display_name,
+            "english_name": contact.english_name,
+            "preferred_language_code": contact.preferred_language_code,
+        }
+
+    def get_linked_quotations(self, obj):
+        request = self.context.get("request")
+        if request is None or not sales_policy.can_customer(request, "quotations.view_quotation", obj.customer_account_id):
+            return []
+        quotations = getattr(obj, "linked_quotation_rows", obj.quotations.filter(archived_at__isnull=True).prefetch_related("versions"))
+        rows = []
+        for quotation in quotations:
+            versions = list(quotation.versions.all())
+            current_version = max(versions, key=lambda version: version.version_number, default=None)
+            rows.append({
+                "id": str(quotation.pk),
+                "quotation_number": quotation.quotation_number,
+                "subject": quotation.subject,
+                "status": current_version.status if current_version else "DRAFT",
+                "version_id": str(current_version.pk) if current_version else None,
+                "outcome_status": quotation.outcome_status,
+                "accepted_version_id": str(quotation.accepted_version_id) if quotation.accepted_version_id else None,
+            })
+        return rows
+
+    def get_linked_samples(self, obj):
+        samples = getattr(
+            obj,
+            "linked_sample_rows",
+            obj.sample_requests.filter(archived_at__isnull=True).order_by("-updated_at", "-id"),
+        )
+        return [
+            {
+                "id": str(sample.pk),
+                "request_number": sample.request_number,
+                "status": sample.status,
+                "status_display": sample.get_status_display(),
+                "updated_at": sample.updated_at,
+            }
+            for sample in samples
+        ]
+
+    def get_linked_sales_orders(self, obj):
+        from apps.sales_orders.selectors import accessible_sales_orders
+        request = self.context.get("request")
+        allowed = set(accessible_sales_orders(request).values_list("pk", flat=True)) if request and sales_policy.enabled() else None
+        rows = []
+        seen = set()
+        quotations = getattr(obj, "linked_quotation_rows", [])
+        for quotation in quotations:
+            for version in quotation.versions.all():
+                for order in version.sales_orders.all():
+                    if order.pk in seen or order.archived_at is not None or (allowed is not None and order.pk not in allowed):
+                        continue
+                    seen.add(order.pk)
+                    rows.append(
+                        {
+                            "id": str(order.pk),
+                            "order_number": order.order_number,
+                            "status": order.status,
+                            "status_display": order.get_status_display(),
+                            "is_draft": order.status == "DRAFT",
+                            "total_amount": order.total_amount,
+                            "currency_code": order.currency_code,
+                            "updated_at": order.updated_at,
+                        }
+                    )
+        return sorted(rows, key=lambda row: row["updated_at"], reverse=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["description"] = sanitize_rich_text(instance.description, enforce_limits=False)
+        return data
 
     class Meta(InquiryListSerializer.Meta):
         fields = InquiryListSerializer.Meta.fields + [
@@ -178,9 +514,22 @@ class InquiryDetailSerializer(InquiryListSerializer):
             "description",
             "source_system",
             "external_id",
+            "customer_snapshot",
+            "source_snapshot",
+            "customer_language_code",
+            "trade_term_code",
+            "trade_term_place",
+            "delivery_requirement",
+            "draft_version",
             "items",
             "files",
             "sla",
+            "handling_time_rule",
+            "assignment_history",
+            "customer_contact_summary",
+            "linked_quotations",
+            "linked_samples",
+            "linked_sales_orders",
         ]
 
 
@@ -197,10 +546,6 @@ class InquiryWritableSerializer(serializers.ModelSerializer):
         allow_null=True,
         queryset=CustomerContact.objects.filter(archived_at__isnull=True),
     )
-    owner_employee_id = serializers.PrimaryKeyRelatedField(
-        source="owner_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
-    )
     inquiry_source = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -214,6 +559,14 @@ class InquiryWritableSerializer(serializers.ModelSerializer):
         validators=[uppercase_code_validator],
     )
     external_id = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    customer_language_code = serializers.CharField(required=False, allow_blank=True, max_length=30, validators=[uppercase_code_validator])
+    trade_term_code = serializers.CharField(required=False, allow_blank=True, max_length=30, validators=[uppercase_code_validator])
+    trade_term_place = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    delivery_requirement = serializers.CharField(required=False, allow_blank=True, max_length=250)
+    estimated_currency_code = serializers.CharField(required=False, allow_blank=True, max_length=3, validators=[currency_code_validator])
+
+    def validate_description(self, value):
+        return sanitize_rich_text(value)
 
     def validate(self, attrs):
         customer = attrs.get("customer_account", getattr(self.instance, "customer_account", None))
@@ -222,6 +575,32 @@ class InquiryWritableSerializer(serializers.ModelSerializer):
         source_system = attrs.get("source_system", getattr(self.instance, "source_system", ""))
         external_id = attrs.get("external_id", getattr(self.instance, "external_id", ""))
         errors = {}
+        inquiry_source = attrs.get(
+            "inquiry_source",
+            getattr(self.instance, "inquiry_source", ""),
+        )
+        current_source = getattr(self.instance, "inquiry_source", "")
+        if (
+            inquiry_source
+            and inquiry_source != current_source
+            and not published_dictionary_code_is_active("INQUIRY_SOURCE", inquiry_source)
+        ):
+            errors["inquiry_source"] = "询盘来源不存在或尚未发布。"
+        trade_term = attrs.get(
+            "trade_term_code",
+            getattr(self.instance, "trade_term_code", ""),
+        )
+        current_trade_term = getattr(self.instance, "trade_term_code", "")
+        if (
+            trade_term
+            and trade_term != current_trade_term
+            and not Incoterm.objects.filter(
+                code=trade_term,
+                status=ReferenceStatus.ACTIVE,
+                archived_at__isnull=True,
+            ).exists()
+        ):
+            errors["trade_term_code"] = "贸易术语不存在、已停用或已归档。"
         if entity and entity.customer_account_id != customer.pk:
             errors["transaction_entity_id"] = "交易主体必须属于当前客户。"
         if contact and contact.customer_account_id != customer.pk:
@@ -236,6 +615,27 @@ class InquiryWritableSerializer(serializers.ModelSerializer):
                 errors["external_id"] = "该来源系统下的外部编号已经存在。"
         if errors:
             raise serializers.ValidationError(errors)
+        amount_min = attrs.get("estimated_amount_min", getattr(self.instance, "estimated_amount_min", None))
+        amount_max = attrs.get("estimated_amount_max", getattr(self.instance, "estimated_amount_max", None))
+        currency = attrs.get("estimated_currency_code", getattr(self.instance, "estimated_currency_code", ""))
+        current_currency = getattr(self.instance, "estimated_currency_code", "")
+        if (
+            currency
+            and currency != current_currency
+            and not Currency.objects.filter(
+                code=currency,
+                status=ReferenceStatus.ACTIVE,
+                archived_at__isnull=True,
+            ).exists()
+        ):
+            raise serializers.ValidationError(
+                {"estimated_currency_code": "预计金额币种不存在、已停用或已归档。"}
+            )
+        if any(value is not None for value in [amount_min, amount_max]) or currency:
+            if amount_min is None or amount_max is None or not currency:
+                raise serializers.ValidationError({"estimated_amount_min": "预计金额需同时填写最小值、最大值和币种。"})
+            if amount_min < 0 or amount_max < amount_min:
+                raise serializers.ValidationError({"estimated_amount_max": "预计金额最大值不能小于最小值。"})
         return attrs
 
 
@@ -245,6 +645,7 @@ class InquiryCreateSerializer(InquiryWritableSerializer):
         queryset=CustomerAccount.objects.filter(archived_at__isnull=True),
     )
     items = InquiryItemSerializer(many=True, required=False)
+    idempotency_key = serializers.CharField(max_length=64, min_length=8, required=False, allow_blank=True, write_only=True)
 
     class Meta:
         model = Inquiry
@@ -252,7 +653,6 @@ class InquiryCreateSerializer(InquiryWritableSerializer):
             "customer_account_id",
             "transaction_entity_id",
             "customer_contact_id",
-            "owner_employee_id",
             "inquiry_source",
             "subject",
             "description",
@@ -260,7 +660,15 @@ class InquiryCreateSerializer(InquiryWritableSerializer):
             "requested_due_at",
             "source_system",
             "external_id",
+            "customer_language_code",
+            "trade_term_code",
+            "trade_term_place",
+            "delivery_requirement",
+            "estimated_amount_min",
+            "estimated_amount_max",
+            "estimated_currency_code",
             "items",
+            "idempotency_key",
         ]
         validators = []
 
@@ -293,7 +701,6 @@ class InquiryUpdateSerializer(InquiryWritableSerializer):
         fields = [
             "transaction_entity_id",
             "customer_contact_id",
-            "owner_employee_id",
             "inquiry_source",
             "subject",
             "description",
@@ -301,6 +708,13 @@ class InquiryUpdateSerializer(InquiryWritableSerializer):
             "requested_due_at",
             "source_system",
             "external_id",
+            "customer_language_code",
+            "trade_term_code",
+            "trade_term_place",
+            "delivery_requirement",
+            "estimated_amount_min",
+            "estimated_amount_max",
+            "estimated_currency_code",
         ]
         validators = []
 
@@ -323,9 +737,120 @@ class InquiryUpdateSerializer(InquiryWritableSerializer):
         return super().validate(attrs)
 
 
+class InquiryDraftSaveSerializer(InquiryWritableSerializer):
+    items = InquiryDraftItemSerializer(many=True, required=False)
+    idempotency_key = serializers.CharField(max_length=64, min_length=8, write_only=True)
+
+    class Meta:
+        model = Inquiry
+        fields = InquiryUpdateSerializer.Meta.fields + ["items", "idempotency_key"]
+        validators = []
+
+    def validate_items(self, items):
+        if len(items) > 200:
+            raise serializers.ValidationError("单张询价最多包含 200 条明细。")
+        ids = [str(item.get("id", "")) for item in items if item.get("id")]
+        numbers = [item.get("line_number") for item in items if item.get("line_number") is not None]
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError("明细不能重复提交。")
+        if len(numbers) != len(set(numbers)):
+            raise serializers.ValidationError("明细行号不能重复。")
+        return items
+
+
 class InquiryActionSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
 
+class InquiryRequiredNoteSerializer(serializers.Serializer):
+    note = serializers.CharField(max_length=500, trim_whitespace=True)
+
+
+class InquiryRichTextRequiredNoteSerializer(serializers.Serializer):
+    note = serializers.CharField(trim_whitespace=False)
+
+    def validate_note(self, value):
+        cleaned = sanitize_rich_text(value)
+        plain_text = rich_text_plain_text(value).strip()
+        if not plain_text:
+            raise serializers.ValidationError("记录首响时必须填写实际响应说明。")
+        if len(plain_text) > 500:
+            raise serializers.ValidationError("记录首响不能超过 500 个文字。")
+        return cleaned
+
+
+class InquiryCommunicationSerializer(serializers.Serializer):
+    communication_type = serializers.ChoiceField(
+        choices=["EMAIL", "PHONE", "MEETING", "VIDEO", "WECHAT", "WHATSAPP", "OTHER"]
+    )
+    content = serializers.CharField(trim_whitespace=False)
+    occurred_at = serializers.DateTimeField()
+
+    def validate_content(self, value):
+        cleaned = sanitize_rich_text(value)
+        plain_text = rich_text_plain_text(cleaned).strip()
+        if not plain_text:
+            raise serializers.ValidationError("必须填写实际沟通内容。")
+        if len(plain_text) > 2000:
+            raise serializers.ValidationError("沟通内容不能超过 2000 个文字。")
+        return cleaned
+
+
+class InquiryContactAttachSerializer(serializers.Serializer):
+    customer_contact_id = serializers.PrimaryKeyRelatedField(
+        source="customer_contact",
+        queryset=CustomerContact.objects.filter(archived_at__isnull=True),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        inquiry = self.context.get("inquiry")
+        if inquiry is not None:
+            self.fields["customer_contact_id"].queryset = CustomerContact.objects.filter(
+                customer_account_id=inquiry.customer_account_id,
+                archived_at__isnull=True,
+            ).order_by("display_name", "id")
+
+
 class InquiryReasonSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=500, trim_whitespace=True)
+
+
+class InquiryPrioritySerializer(serializers.Serializer):
+    priority = serializers.ChoiceField(choices=InquiryPriority.choices, allow_blank=True)
+
+
+class InquiryAssignSerializer(serializers.Serializer):
+    owner_employee_id = serializers.PrimaryKeyRelatedField(
+        source="owner_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class InquiryInvalidSerializer(serializers.Serializer):
+    reason_code = serializers.ChoiceField(choices=["DUPLICATE", "SPAM", "UNPROCESSABLE", "OTHER"])
+    reason_detail = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+
+
+class InquiryBulkSerializer(serializers.Serializer):
+    items = serializers.ListField(child=serializers.DictField(), min_length=1, max_length=100)
+
+    def validate_items(self, items):
+        ids = [str(item.get("id", "")) for item in items]
+        if any(not item.get("id") or not item.get("etag") for item in items):
+            raise serializers.ValidationError("每条记录必须包含 id 与 etag。")
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError("批量记录不能重复。")
+        return items
+
+
+class InquiryBulkAssignSerializer(InquiryBulkSerializer):
+    owner_employee_id = serializers.PrimaryKeyRelatedField(
+        source="owner_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class InquiryBulkInvalidSerializer(InquiryBulkSerializer):
+    reason_code = serializers.ChoiceField(choices=["DUPLICATE", "SPAM", "UNPROCESSABLE", "OTHER"])
+    reason_detail = serializers.CharField(required=False, allow_blank=True, max_length=1000)

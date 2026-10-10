@@ -1,0 +1,19 @@
+@use './theme/primitives' as primitive;
+@use './theme/semantic' as semantic;
+@use './theme/components' as components;
+
+:root,
+html[data-theme='warm'] {
+  @include primitive.emit-css-properties();
+  @include semantic.emit-css-properties();
+  @include components.emit-css-properties();
+  color-scheme: light;
+}
+
+html[data-theme='warm'],
+html[data-theme='warm'] body,
+html[data-theme='warm'] #app {
+  background: var(--erp-color-page);
+  color: var(--erp-color-text-primary);
+  font-family: var(--erp-font-body);
+}

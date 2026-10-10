@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>金工半成品入库 · 实际开发截图</title>
+<style>body{margin:0;background:#f6f3ec;color:#1f1d18;font:15px/1.7 "Microsoft YaHei",sans-serif}main{max-width:1440px;margin:auto;padding:32px}h1{font-size:28px;margin:0 0 12px}nav{display:flex;flex-wrap:wrap;gap:16px}a{color:#c84e28}article{margin:28px 0;background:#fcfbf7;border:1px solid #ddd6c9;border-radius:5px;overflow:hidden}h2{font-size:18px;padding:12px 20px;margin:0;border-bottom:1px solid #ddd6c9}img{display:block;width:100%;height:auto}.note{background:#fcfbf7;padding:16px;border:1px solid #ddd6c9;border-radius:5px}.note p{margin:6px 0}</style>
+<main><h1>金工半成品入库 · 实际开发截图</h1>
+<div class="note"><p>以下来自独立S3验收环境的真实页面与接口，采用真实测试单据，1920×1080截图。按已确认D1设计开发，主ERP尚未启用。</p><p>本次已实际入库20支未喷塑管材：半成品库存300→320支，可入额度80→60支；另有20支待发预留。原料仍为90根、454.50米，旧手工完成数没有增加。重复核对同一请求仅恢复原入库结果。</p><p>15列，表头44px、行40px、控件32px；最低报工与确认弹窗保留，日期、下拉复用ERP。表格后直接接备注；空白/0跳过，非法数量用气泡。</p></div>
+<nav><a href="#main">实际页面</a><a href="#basis">最低报工依据</a><a href="#confirm">入库确认</a><a href="#saved">已入库结果</a><a href="#pending">待核对恢复</a><a href="/d1-review.html" target="_blank">对照确认图</a></nav><div id="shots"></div></main>
+<script>
+const root='/@fs/E:/workspace/_project/project001_haiqu_ERP_CRM/qa/tube_revision_d1_20260929/';
+const shots=[['main','实际页面：原料颜色、未喷塑状态和共享可入量','d1-main-1920.png'],['basis','最低报工依据：200支需求、100支投入、100支最低报工，扣已入20和预留20后可入60','d1-basis-1920.png'],['confirm','确认窗口：只列本次填写正数的部位','d1-confirm-1920.png'],['saved','入库后刷新：累计已入20支，剩余可入60支','d1-saved-1920.png'],['pending','提交结果待核对：保留原请求，恢复时不重复入库','d1-pending-1920.png'],['validation','数量气泡校验','d1-validation-1920.png'],['date','ERP日期选择','d1-date-1920.png'],['select','ERP仓库下拉','d1-select-1920.png']];
+for(const [id,title,file] of shots){const article=document.createElement('article');article.id=id;const heading=document.createElement('h2');heading.textContent=title;const link=document.createElement('a');link.href=root+file;link.target='_blank';const img=document.createElement('img');img.src=root+file;img.alt=title;img.width=1920;img.height=1080;link.append(img);article.append(heading,link);document.getElementById('shots').append(article)}
+</script></html>

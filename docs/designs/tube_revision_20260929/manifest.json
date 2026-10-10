@@ -1,0 +1,220 @@
+{
+  "status": "awaiting-user-design-approval",
+  "createdAt": "2026-09-29T10:58:45.326Z",
+  "viewport": "1920x1080",
+  "files": [
+    {
+      "file": "App.vue",
+      "sha256": "4f6191c08b6e74f14a16c5c2ed50ea0aca6097ba08fa2fb8685a70bf50404a32"
+    },
+    {
+      "file": "ReviewStock.vue",
+      "sha256": "05a98708b1e29a96ed61a67d038a9497a8e12604df701fbf0190ffcca75c62be"
+    },
+    {
+      "file": "DesignTable.vue",
+      "sha256": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb"
+    },
+    {
+      "file": "design.scss",
+      "sha256": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a"
+    },
+    {
+      "file": "main.js",
+      "sha256": "fcda49254442c7ad9409e60ea058c8342f887a81f26e8829c6937f91b29a2b75"
+    },
+    {
+      "file": "serve.cjs",
+      "sha256": "84d8fddb1207be778bca3fa0645f6732242b9a62c9b1c2574265f42d58233f7d"
+    },
+    {
+      "file": "index.html",
+      "sha256": "94eddbe8e3bfdaa548adce17649c076d5116115d598c9a43b0982f09d29612da"
+    },
+    {
+      "file": "design_contract.md",
+      "sha256": "676af08c1a07e7e130943ec229f831ace59de5a0ea4175d0df69098ae24d321a"
+    },
+    {
+      "file": "review.html",
+      "sha256": "a8b26007b66ff52354b5c9d068970a12eec09062bf5f4261723ac3764e54facb"
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "metal-plan-menu-1920.png",
+      "label": "内部计划操作菜单",
+      "sha256": "7cae0839ce35100e32ca5e5ed1df9621fe6a740681e8f6d4036b3ac72d9b25c9"
+    },
+    {
+      "file": "metal-1920.png",
+      "label": "金工半成品入库",
+      "sha256": "f7ed757cdd6ec3e2809763b6cd482407f279755fbad37ce0a8f688282e51366b"
+    },
+    {
+      "file": "metal-plan-picker-1920.png",
+      "label": "仓库入口选择内部计划",
+      "sha256": "8dccb14eecfc6ab540c95e4dbf3f7903176d7ef45561bc296d9f7aca32c862dc"
+    },
+    {
+      "file": "metal-operation-basis-1920.png",
+      "label": "各工序累计与最低值",
+      "sha256": "3f47f44b2860a8b92ed233050c44e044e0fc997c3aafc0c3e0c9a87d81735767"
+    },
+    {
+      "file": "metal-limit-toast-1920.png",
+      "label": "超量气泡提示",
+      "sha256": "6281196f03b810beb37561c696db3062309c50f3d63df57b240879ac83bb7191"
+    },
+    {
+      "file": "dispatch-metal-1920.png",
+      "label": "厂内加工件直接外发",
+      "sha256": "4b733f8c739afbe6cad9590e48f8c6751d924acdfa786a61b4a2d6ba3b25ac7f"
+    },
+    {
+      "file": "dispatch-semi-1920.png",
+      "label": "公共未喷塑库存外发",
+      "sha256": "b3756441ad73356392993aedd045fbf25ba13d6f881f0a4909845b413714a1b0"
+    },
+    {
+      "file": "dispatch-raw-1920.png",
+      "label": "原管材及整根、米数换算",
+      "sha256": "ea20e8afb4e6291b9e77cb2213c9cefda3443d7c1c98821b2d582c524ad3091f"
+    },
+    {
+      "file": "dispatch-source-picker-1920.png",
+      "label": "切换来源",
+      "sha256": "b0d027dd2ee5f6f463b91751b0069dc39c68fd487846f71e7eee7e59bf646db5"
+    },
+    {
+      "file": "dispatch-metal-parts-1920.png",
+      "label": "加工件选择依据",
+      "sha256": "955548ea4d09717609c4bb7dc1d825b44dfa1b352163b0f96d90b385fe36d4cd"
+    },
+    {
+      "file": "dispatch-semi-parts-1920.png",
+      "label": "公共半成品选择依据",
+      "sha256": "2f38da273261e3ac8f97c92a0aa59ec78169883d902d9f26c1a1037671555316"
+    },
+    {
+      "file": "dispatch-raw-parts-1920.png",
+      "label": "原管材选择依据",
+      "sha256": "f7d9cb670d8ee89f105f6f4556e5f4c6c73f0410664d4c4506bc35f47ca6bbb9"
+    },
+    {
+      "file": "dispatch-confirm-1920.png",
+      "label": "确认交接发出",
+      "sha256": "4bfae9384beceac365dd761991f292dd7e7006b616af6a315fdd323fc9827d51"
+    },
+    {
+      "file": "dispatch-cancel-1920.png",
+      "label": "取消未发计划",
+      "sha256": "669852f81c2963c7584e7241b1482edda9b68266646818432139df352d81bb3a"
+    },
+    {
+      "file": "receipt-picker-1920.png",
+      "label": "仓库入口选择外发单",
+      "sha256": "3b8cb510e289a78a87a304e3a610b5af739fc6f6c6dcd7dbe4369b784b25b3a4"
+    },
+    {
+      "file": "receipt-1920.png",
+      "label": "全回、少回与零回同屏",
+      "sha256": "bcb2bbd2287bd9f010d12393e3caaf26e33f1859f2914b0052f493373fe86c1f"
+    },
+    {
+      "file": "receipt-confirm-1920.png",
+      "label": "整单最终复核",
+      "sha256": "2b7ce7805325db17745f03584c4f8a4c02f219dd1fe3548fe80b910668fb9e8f"
+    },
+    {
+      "file": "receipt-zero-1920.png",
+      "label": "整单零回货",
+      "sha256": "5f051455b01b47d9cdfc18ceb414b1e85cb6f63c16dae8e963144bf12243390b"
+    },
+    {
+      "file": "receipt-zero-confirm-1920.png",
+      "label": "零回货最终复核",
+      "sha256": "dd8aa5e24e218b129ac447f8e14f647bea264a7da7e5c4374f72cfe6f3a74bcf"
+    },
+    {
+      "file": "detail-pending-1920.png",
+      "label": "待外发",
+      "sha256": "c1e330f0929d5596117875c5be69e35ef8a3bbb334c7cdc7d6cf62d6e073981c"
+    },
+    {
+      "file": "detail-1920.png",
+      "label": "加工中",
+      "sha256": "cbb701da35e93ee3720d115ef01ac40d0682873a15ce6b7fcd2d32d371572a47"
+    },
+    {
+      "file": "detail-ended-1920.png",
+      "label": "已结束且只读",
+      "sha256": "62805d636a7e781db0986e5d222a8bf90fe1d06e060f2c9da7141aa958ca623a"
+    },
+    {
+      "file": "history-1920.png",
+      "label": "历史单只读示例",
+      "sha256": "44c66a1400395e87dbeba231d38291d9c50b4b017bd547598d3db1c35b79811b"
+    },
+    {
+      "file": "stock-1920.png",
+      "label": "材料库存 · 半成品",
+      "sha256": "d406900c4dac75c583cb173c4c388509ff22f029e2a7dc3faabb2be4ddf29483"
+    },
+    {
+      "file": "records-1920.png",
+      "label": "外发入库与厂内入库记录",
+      "sha256": "10dd49357ff9ff22660df6a4659628cbc71398e9c30941ba55df518cc7c65f7f"
+    },
+    {
+      "file": "record-source-1920.png",
+      "label": "来源详情弹窗",
+      "sha256": "526143287a05f26da7566886ee9c5ae8027268ea01e37020ede75983a3c07ea1"
+    },
+    {
+      "file": "issue-1920.png",
+      "label": "已喷塑与未喷塑混领",
+      "sha256": "ac84fc82602b7c23b68731fb34698053b01b0ee1cbc1c3a73263d8f2a4e41aa1"
+    },
+    {
+      "file": "issue-picker-1920.png",
+      "label": "公共半成品选择",
+      "sha256": "ce00ec119c61f04ae79f81c820a870e93ccc5dc08f600cfb3e1bbe0b21273b10"
+    },
+    {
+      "file": "issue-over-limit-1920.png",
+      "label": "合计超量",
+      "sha256": "9169f9ab3e683a0d31e3c28f51ed3d6a9dc4d483be127d72a075abf267e7a905"
+    },
+    {
+      "file": "issue-confirm-1920.png",
+      "label": "领料申请复核",
+      "sha256": "8063337681f425c9af12d1ded7831339afc8fef4a4358587da207754d66de4eb"
+    },
+    {
+      "file": "erp-date-picker-1920.png",
+      "label": "真实ERP日期控件",
+      "sha256": "f8df8a32e66a7ea3193c9f2ae31de64e078efbf8716268b7fdce9f22ea4dd88b"
+    },
+    {
+      "file": "erp-select-1920.png",
+      "label": "真实ERP下拉控件",
+      "sha256": "f9e63b121786e0f63c219ebf550107d8c3430b864866aee19dd1457ee6b31278"
+    },
+    {
+      "file": "metal-input-focus-1920.png",
+      "label": "品牌色聚焦",
+      "sha256": "872e58cd912058749802da37443f90ceded69b09b68b9c1b8ff300840a182146"
+    },
+    {
+      "file": "controls-1920.png",
+      "label": "通用页面状态",
+      "sha256": "ba7f48ae8b42ee74e4c78ebbd067821957c382d68dae57cf7d22878cf794aa06"
+    },
+    {
+      "file": "metal-long-table-1920.png",
+      "label": "长明细滚动与固定底栏",
+      "sha256": "3a6e70b9627ddac598b25f0e829fac501f33c655ea0a6e1784b7ecdfb105e16c"
+    }
+  ]
+}

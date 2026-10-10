@@ -1,0 +1,8 @@
+from django.apps import AppConfig
+
+
+class ProductionTasksConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.production_tasks"
+    verbose_name = "生产任务单"
+

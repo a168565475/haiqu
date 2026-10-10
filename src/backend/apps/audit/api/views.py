@@ -1,3 +1,5 @@
+from apps.access_control.sales_sources import filter_activity
+from apps.access_control import sales_policy
 import uuid
 
 from django.utils.dateparse import parse_datetime
@@ -70,6 +72,8 @@ class CustomerAuditLogNestedViewSet(CustomerApiViewSetBase):
                 context_type="CUSTOMER_ACCOUNT", context_id=customer.pk
             ),
         )
+        if sales_policy.enabled() and not sales_policy.has_permission(request, "audit.view_all_auditlog"):
+            queryset = filter_activity(queryset, request, type_field="object_type", id_field="object_id")
         page = self.paginate_queryset(queryset)
         data = AuditLogSerializer(page or queryset, many=True).data
         return self.get_paginated_response(data) if page is not None else Response({"data": data})

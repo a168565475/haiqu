@@ -1,0 +1,127 @@
+@use './tokens' as token;
+
+.task-operation-dialog,
+.complaint-operation-dialog {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fbfaf7;
+  font-family: token.$crm-font-body;
+
+  .el-dialog__header {
+    height: 72px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 0 30px;
+    border-bottom: 1px solid #e8e3dc;
+  }
+
+  .el-dialog__title {
+    color: #181716;
+    font-family: token.$crm-font-display;
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 32px;
+  }
+
+  .el-dialog__headerbtn {
+    width: 72px;
+    height: 72px;
+    top: 0;
+  }
+
+  .el-dialog__body { padding: 30px; color: #242424; }
+  .el-dialog__footer {
+    height: 80px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 30px;
+    border-top: 1px solid #e8e3dc;
+    background: #fbfaf7;
+  }
+
+  .el-dialog__footer .el-button {
+    min-width: 98px;
+    height: 42px;
+    margin-left: 12px;
+    border-radius: 5px;
+    font-size: 16px;
+  }
+
+  .el-dialog__footer .el-button--primary {
+    border-color: #c7441d;
+    background: #c7441d;
+  }
+
+  .el-form-item__label { font-size: 14px; line-height: 22px; }
+  .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before { color: #db2d22; }
+  .el-input__wrapper,
+  .el-select__wrapper { min-height: 42px; border-radius: 4px; }
+  .el-textarea__inner { border-radius: 4px; }
+}
+
+.task-complaint-overlay { background-color: rgba(24, 23, 21, .45); }
+
+.task-create-dialog { height: 660px; background: #fbf9f7; }
+.task-create-dialog .el-dialog__body { height: 508px; box-sizing: border-box; padding: 0; }
+.task-reassign-dialog { height: 646px; background: #fcfaf8; }
+.task-reassign-dialog .el-dialog__body { height: 494px; box-sizing: border-box; }
+.task-reschedule-dialog { height: 698px; background: #faf9f5; }
+.task-reschedule-dialog .el-dialog__body { height: 546px; box-sizing: border-box; }
+.task-bulk-complete-dialog { height: 674px; background: #f9f8f5; }
+.task-bulk-complete-dialog .el-dialog__body { height: 522px; box-sizing: border-box; }
+.task-bulk-reassign-dialog { height: 604px; background: #fbfaf6; }
+.task-bulk-reassign-dialog .el-dialog__body { height: 452px; box-sizing: border-box; }
+
+.complaint-create-dialog { height: 850px; background: #faf9f6; }
+.complaint-create-dialog .el-dialog__body { height: 698px; box-sizing: border-box; }
+.complaint-edit-dialog { height: 864px; background: #fbf9f6; }
+.complaint-edit-dialog .el-dialog__body { height: 712px; box-sizing: border-box; }
+.complaint-progress-dialog { height: 792px; background: #faf8f6; }
+.complaint-progress-dialog .el-dialog__body { height: 640px; box-sizing: border-box; }
+.complaint-preview-dialog { height: 792px; background: #f9f7f2; }
+.complaint-preview-dialog .el-dialog__body { height: 640px; box-sizing: border-box; padding: 0; }
+
+.task-operation-dialog.app-window-dialog,
+.complaint-operation-dialog.app-window-dialog {
+  .el-dialog__body {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+  }
+
+  .el-dialog__footer {
+    height: 56px;
+    padding: 12px 24px;
+  }
+
+  .el-dialog__footer .el-button {
+    height: 32px;
+    font-size: 14px;
+  }
+
+  .el-input__wrapper,
+  .el-select__wrapper {
+    min-height: 32px;
+  }
+}
+
+.task-create-dialog.app-window-dialog .el-dialog__body,
+.complaint-preview-dialog.app-window-dialog .el-dialog__body { padding: 0; }
+
+@media (max-height: 920px) {
+  .task-operation-dialog,
+  .complaint-operation-dialog {
+    max-height: calc(100vh - 32px);
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+
+  .task-operation-dialog .el-dialog__body,
+  .complaint-operation-dialog .el-dialog__body { overflow-y: auto; }
+}

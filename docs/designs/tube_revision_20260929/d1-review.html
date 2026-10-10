@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>D1 金工半成品入库 · 逐页审图</title>
+<style>body{margin:0;background:#f6f3ec;color:#1f1d18;font:15px/1.7 "Microsoft YaHei",sans-serif}main{max-width:1440px;margin:auto;padding:32px}h1{font-size:28px;margin:0 0 12px}nav{display:flex;flex-wrap:wrap;gap:16px}a{color:#c84e28}article{margin:28px 0;background:#fcfbf7;border:1px solid #ddd6c9;border-radius:5px;overflow:hidden}h2{font-size:18px;padding:12px 20px;margin:0;border-bottom:1px solid #ddd6c9}img{display:block;width:100%;height:auto}.note{background:#fcfbf7;padding:16px;border:1px solid #ddd6c9;border-radius:5px}.note p{margin:6px 0}summary{cursor:pointer;color:#c84e28;font-size:18px;padding:12px 0}article p{padding:0 20px;color:#6f6a61}</style>
+<main><h1>金工半成品入库 · 待确认设计</h1>
+<div class="note"><p>入口不变：生产车间 → 内部计划 → 金工计划 → 产品行“更多” → 半成品入库。此处为示例图，业务尚未开发，没有写入库存。</p><p>本次审图：入库主页面、最低报工依据弹窗、提交确认弹窗。表头44px、行40px、控件32px；日期和下拉沿用计划排产，弹窗沿用ERP窗口，聚焦为主题色。</p><p>业务变化：取消勾选；可部分入未喷塑公共库；上限按订单净需求、实领投入、最低报工取小后，扣除已入、已直发及待发预留。空白/0跳过，普通数量错误用气泡；表格后直接接备注。</p></div>
+<nav><a href="/d1.html" target="_blank">打开可操作图稿</a><a href="#main">入库页面</a><a href="#basis">最低报工依据</a><a href="#confirm">提交确认</a><a href="#more">控件与异常状态</a></nav>
+<div id="primary"></div><details id="more"><summary>展开控件与异常状态（12张）</summary><div id="secondary"></div></details>
+</main>
+<script>
+const root='/@fs/E:/workspace/_project/project001_haiqu_ERP_CRM/qa/tube_revision_d1_design_20260929/';
+const primary=[['main','入库主页面：无勾选，属性独立列，表后直接填写备注','d1-main-1920.png'],['basis','最低报工依据：三项取小后扣除已处理与有效预留','d1-basis-1920.png'],['confirm','入库确认：只列本次正数部位，未喷塑状态固定','d1-confirm-1920.png']];
+const secondary=[['input-cap','投入封顶：报工800支，实领600支，已入400支，本次最多200支','d1-input-cap-1920.png'],['missing','缺少依据：明确原因，不伪装成报工0','d1-missing-basis-1920.png'],['zero','有效工序未报工：最低0支','d1-zero-basis-1920.png'],['limit','数量超限：ERP浮动气泡','d1-over-limit-1920.png'],['date','日期：沿用计划排产中文日历','d1-date-1920.png'],['select','下拉：沿用ERP控件，仓库与库区联动','d1-select-1920.png'],['empty','空数据','d1-state-empty-1920.png'],['loading','读取中','d1-state-loading-1920.png'],['error','读取失败','d1-state-error-1920.png'],['forbidden','无入库权限','d1-state-forbidden-1920.png'],['future','后续已批准工价方案阻断','d1-state-future-1920.png'],['pending','提交结果不明确：锁定填写，核对原提交','d1-state-pending-1920.png']];
+for(const [target,list] of [['primary',primary],['secondary',secondary]])for(const [id,title,file] of list){const article=document.createElement('article');article.id=id;const heading=document.createElement('h2');heading.textContent=title;const link=document.createElement('a');link.href=root+file;link.target='_blank';const img=document.createElement('img');img.src=root+file;img.alt=title;img.width=1920;img.height=1080;link.append(img);article.append(heading,link);document.getElementById(target).append(article)}
+</script></html>

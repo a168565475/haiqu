@@ -1,8 +1,8 @@
 import redis
 from django.conf import settings
-from django.contrib.auth import authenticate, login as django_login, logout as django_logout
+from django.contrib.auth import authenticate, get_user_model, login as django_login, logout as django_logout
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import connection
+from django.db import connection, transaction
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect
 from drf_spectacular.utils import OpenApiResponse, extend_schema
@@ -11,8 +11,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from apps.organizations.models import EmployeeStatus
-
+from .auth import can_access_erp
 from .serializers import AuthenticationStateSerializer, HealthResponseSerializer, LoginSerializer
 
 
@@ -38,28 +37,32 @@ def user_payload(user):
     else:
         data_scope = "NONE"
 
-    return {
+    payload = {
         "id": user.pk,
         "username": user.get_username(),
         "display_name": user.get_full_name() or user.get_username(),
+        "is_superuser": user.is_superuser,
         "employee": employee_payload,
         "permissions": sorted(user.get_all_permissions()),
         "data_scope": data_scope,
     }
-
-
-def can_login_to_erp(user):
-    if not user.is_active:
-        return False
-    if user.is_superuser:
-        return True
-
-    try:
-        employee = user.employee_profile
-    except ObjectDoesNotExist:
-        return False
-
-    return employee.status == EmployeeStatus.ACTIVE and employee.archived_at is None
+    if settings.ACCESS_MANAGEMENT_ENABLED:
+        from apps.access_control.selectors import effective_access
+        payload["effective_access"] = effective_access(user)
+    from apps.access_control import sales_policy
+    payload["sales_access_enabled"] = sales_policy.enabled()
+    from apps.access_control import module_policy
+    payload['module_access_enabled'] = module_policy.enabled()
+    if module_policy.enabled():
+        from types import SimpleNamespace
+        request = SimpleNamespace(user=user, employee=employee)
+        payload['permissions'] = sorted(set(payload['permissions']) | {
+            code for code in module_policy.LEGACY_ALIASES if module_policy.has_permission(request, code)})
+    if sales_policy.enabled():
+        from types import SimpleNamespace
+        request = SimpleNamespace(user=user, employee=employee)
+        payload["permissions"] = sorted(set(payload["permissions"]) | {code for code in sales_policy.LEGACY_ACTION_PERMISSIONS if sales_policy.has_permission(request, code)})
+    return payload
 
 
 @extend_schema(
@@ -81,14 +84,34 @@ def auth_login(request):
         username=serializer.validated_data["username"],
         password=serializer.validated_data["password"],
     )
-    if user is None or not can_login_to_erp(user):
+    if user is None or not can_access_erp(user):
         return Response(
             {"detail": "用户名或密码错误"},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    django_login(request, user)
+    # Serialize session creation with account suspension; suspension deletes all
+    # existing DB sessions while holding this same user lock.
+    with transaction.atomic():
+        backend = user.backend
+        user = get_user_model().objects.select_for_update().get(pk=user.pk)
+        if not can_access_erp(user) or not user.check_password(serializer.validated_data["password"]):
+            return Response({"detail": "用户名或密码错误"}, status=status.HTTP_400_BAD_REQUEST)
+        django_login(request, user, backend=backend)
+        request.session.save()
     return Response({"authenticated": True, "user": user_payload(user)})
+
+
+@extend_schema(
+    request=None,
+    responses={200: AuthenticationStateSerializer},
+)
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_protect
+def development_auto_login(request):
+    """Retired: always require explicit credentials, even with old dev flags."""
+    return Response({"detail": "请使用独立账号和密码登录。"}, status=status.HTTP_404_NOT_FOUND)
 
 
 @extend_schema(

@@ -1,18 +1,35 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.conf import settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.audit.models import AuditLog
-from apps.crm.models import CustomerTimelineEvent
+from apps.crm.models import CommunicationTaskLink, CustomerCommunication, CustomerTimelineEvent
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
+from apps.quotations.models import (
+    Quotation,
+    QuotationLine,
+    QuotationOutcomeStatus,
+    QuotationVersion,
+    QuotationVersionStatus,
+)
 from apps.reference_data.models import ReferenceDictionary
+from apps.sales_orders.models import SalesOrder, SalesOrderSource, SalesOrderStatus
+from apps.workflow.models import BusinessTask
 
 from ..models import (
     CustomerAccount,
+    CustomerActivityReview,
     CustomerAssignment,
+    CustomerBusinessSnapshot,
     CustomerContact,
     CustomerDataAccessGrant,
+    CustomerGradeReview,
+    CustomerTag,
+    CustomerTaskLink,
     CustomerTransactionEntity,
 )
 
@@ -42,6 +59,10 @@ class CustomerApiTests(APITestCase):
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+        self.website_source = ReferenceDictionary.objects.get(
+            category_code="CUSTOMER_SOURCE",
+            item_code="ALIBABA_INTERNATIONAL",
+        )
 
     def create_customer(self, code, name, owner=None):
         customer = CustomerAccount.objects.create(
@@ -57,13 +78,134 @@ class CustomerApiTests(APITestCase):
         )
         return customer
 
+    def test_customer_list_uses_effective_sales_orders_for_rolling_sales_and_latest_order(self):
+        customer = self.create_customer("ORDER_METRICS", "订单指标客户")
+        today = timezone.localdate()
+
+        def make_order(number, *, days_ago, status, amount, rate="1.000000"):
+            return SalesOrder.objects.create(
+                order_number=number,
+                source_type=SalesOrderSource.DIRECT,
+                customer_account=customer,
+                salesperson=self.employee,
+                order_date=today - timedelta(days=days_ago),
+                currency_code="USD" if rate != "1.000000" else "CNY",
+                exchange_rate=rate,
+                status=status,
+                total_amount=amount,
+            )
+
+        make_order(
+            "SO-METRIC-001",
+            days_ago=40,
+            status=SalesOrderStatus.CONFIRMED,
+            amount="100.0000",
+            rate="7.000000",
+        )
+        latest = make_order(
+            "SO-METRIC-002",
+            days_ago=2,
+            status=SalesOrderStatus.FULFILLING,
+            amount="300.0000",
+        )
+        make_order(
+            "SO-METRIC-DRAFT",
+            days_ago=1,
+            status=SalesOrderStatus.DRAFT,
+            amount="9999.0000",
+        )
+        make_order(
+            "SO-METRIC-OLD",
+            days_ago=500,
+            status=SalesOrderStatus.COMPLETED,
+            amount="8888.0000",
+        )
+        make_order(
+            "SO-METRIC-FUTURE",
+            days_ago=-10,
+            status=SalesOrderStatus.CONFIRMED,
+            amount="7777.0000",
+        )
+        entity = CustomerTransactionEntity.objects.create(
+            customer_account=customer,
+            entity_code="ORDER_METRICS_ENTITY",
+            legal_name="订单指标客户",
+        )
+        for index, outcome_status in enumerate(
+            [
+                QuotationOutcomeStatus.WON,
+                QuotationOutcomeStatus.WON,
+                QuotationOutcomeStatus.OPEN,
+                QuotationOutcomeStatus.CANCELLED,
+            ],
+            start=1,
+        ):
+            quotation = Quotation.objects.create(
+                customer_account=customer,
+                transaction_entity=entity,
+                owner_employee=self.employee,
+                quotation_number=f"QUOTE-METRIC-{index:03d}",
+                subject=f"指标报价 {index}",
+            )
+            if outcome_status == QuotationOutcomeStatus.WON:
+                accepted_version = QuotationVersion.objects.create(
+                    quotation=quotation,
+                    version_number=1,
+                    currency_code="CNY",
+                )
+                QuotationLine.objects.create(
+                    quotation_version=accepted_version,
+                    line_number=1,
+                    product_description_snapshot="指标测试产品",
+                    quantity="1.0000",
+                    unit_code="PCS",
+                )
+                accepted_version.status = QuotationVersionStatus.SENT
+                accepted_version.locked_at = timezone.now()
+                accepted_version.transaction_entity_snapshot = {"legal_name": entity.legal_name}
+                accepted_version.address_snapshot = {"address_line1": "测试地址"}
+                accepted_version.contact_snapshot = {"display_name": "测试联系人"}
+                accepted_version.save(
+                    update_fields=[
+                        "status",
+                        "locked_at",
+                        "transaction_entity_snapshot",
+                        "address_snapshot",
+                        "contact_snapshot",
+                        "updated_at",
+                    ]
+                )
+                quotation.outcome_status = outcome_status
+                quotation.accepted_version = accepted_version
+                quotation.save(update_fields=["outcome_status", "accepted_version", "updated_at"])
+            elif outcome_status != QuotationOutcomeStatus.OPEN:
+                quotation.outcome_status = outcome_status
+                quotation.save(update_fields=["outcome_status", "updated_at"])
+
+        response = self.client.get("/api/v1/customers/")
+        detail = self.client.get(f"/api/v1/customers/{customer.pk}/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(detail.status_code, 200, detail.data)
+        row = next(item for item in response.data["data"] if item["id"] == str(customer.pk))
+        self.assertEqual(row["lifetime_sales_amount"], "9888.0000")
+        self.assertEqual(row["lifetime_sales_order_count"], 3)
+        self.assertEqual(row["last_12m_sales_amount"], "1000.0000")
+        self.assertEqual(row["last_12m_sales_order_count"], 2)
+        self.assertEqual(row["quotation_conversion_rate"], "66.67")
+        self.assertEqual(row["recent_order"]["id"], str(latest.pk))
+        self.assertEqual(row["recent_order"]["order_number"], latest.order_number)
+        self.assertEqual(row["recent_order"]["status_display"], "履约中")
+        self.assertEqual(detail.data["data"]["lifetime_sales_amount"], "9888.0000")
+        self.assertEqual(detail.data["data"]["quotation_conversion_rate"], "66.67")
+
     def test_create_customer_generates_number_owner_audit_and_timeline(self):
         response = self.client.post(
             "/api/v1/customers/",
             {
                 "account_name": "新建客户",
                 "primary_country_code": "CN",
-                "primary_owner_employee_id": str(self.employee.pk),
+                "customer_source_item_id": str(self.website_source.pk),
             },
             format="json",
         )
@@ -78,6 +220,8 @@ class CustomerApiTests(APITestCase):
                 effective_to__isnull=True,
             ).exists()
         )
+        self.assertEqual(customer.source_attributions.get().source_item, self.website_source)
+        self.assertEqual(customer.activity_reviews.get().activity_status, "INSUFFICIENT_DATA")
         self.assertTrue(
             AuditLog.objects.filter(
                 object_type="CUSTOMER_ACCOUNT",
@@ -92,6 +236,327 @@ class CustomerApiTests(APITestCase):
             ).exists()
         )
         self.assertIn("ETag", response)
+
+    def test_create_customer_accepts_domain_and_optional_contact(self):
+        response = self.client.post(
+            "/api/v1/customers/",
+            {
+                "account_name": "域名客户",
+                "primary_country_code": "DE",
+                "primary_website_url": "example.de",
+                "customer_source_item_id": str(self.website_source.pk),
+                "contact_name": "采购经理",
+                "contact_method_type": "EMAIL",
+                "contact_method_value": "Buyer@Example.de",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        customer = CustomerAccount.objects.get(pk=response.data["data"]["id"])
+        self.assertEqual(customer.primary_website_url, "https://example.de")
+        method = customer.contacts.get().methods.get()
+        self.assertEqual(method.normalized_value, "buyer@example.de")
+
+    def test_permanently_delete_customer_cascades_contact_and_task(self):
+        customer = self.create_customer("DELETE_CASCADE", "待永久删除客户")
+        contact = CustomerContact.objects.create(
+            customer_account=customer,
+            display_name="待永久删除联系人",
+        )
+        task = BusinessTask.objects.create(
+            assignee_employee=self.employee,
+            created_by_employee=self.employee,
+            title="待永久删除任务",
+        )
+        CustomerTaskLink.objects.create(
+            customer_account=customer,
+            business_task=task,
+            is_primary_source=True,
+        )
+
+        url = f"/api/v1/customers/{customer.pk}/"
+        etag = self.client.get(url).headers["ETag"]
+        response = self.client.delete(url, HTTP_IF_MATCH=etag)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertGreater(response.data["data"]["deleted_count"], 0)
+        self.assertFalse(CustomerAccount.objects.filter(pk=customer.pk).exists())
+        self.assertFalse(CustomerContact.objects.filter(pk=contact.pk).exists())
+        self.assertFalse(BusinessTask.objects.filter(pk=task.pk).exists())
+
+    def test_customer_options_and_duplicate_check(self):
+        existing = self.create_customer("DUPLICATE_CHECK", "海趣贸易有限公司")
+        existing.primary_website_url = "https://www.haiqu.example"
+        existing.save(update_fields=["primary_website_url", "updated_at"])
+
+        options = self.client.get("/api/v1/customers/options/")
+        published_sources = self.client.get(
+            "/api/v1/reference-data/options/CUSTOMER_SOURCE/"
+        )
+        duplicate = self.client.get(
+            "/api/v1/customers/duplicate-check/",
+            {
+                "name": "海趣贸易有限公司",
+                "website": "haiqu.example",
+                "country_code": "CN",
+            },
+        )
+
+        self.assertEqual(options.status_code, 200, options.data)
+        self.assertTrue(options.data["data"]["customer_sources"])
+        self.assertEqual(published_sources.status_code, 200, published_sources.data)
+        self.assertSetEqual(
+            {
+                item["item_code"]
+                for item in options.data["data"]["customer_sources"]
+            },
+            {item["code"] for item in published_sources.data["data"]},
+        )
+        self.assertTrue(options.data["data"]["owner_options"])
+        self.assertIn(
+            ("TH", "泰国"),
+            {
+                (item["item_code"], item["display_name"])
+                for item in options.data["data"]["country_options"]
+            },
+        )
+        self.assertEqual(duplicate.status_code, 200, duplicate.data)
+        self.assertTrue(duplicate.data["data"]["has_high_risk_match"])
+        self.assertEqual(duplicate.data["data"]["matches"][0]["customer_id"], str(existing.pk))
+
+    def test_create_customer_tag_validates_and_writes_audit(self):
+        created = self.client.post(
+            "/api/v1/customers/tags/",
+            {"tag_name": "东南亚重点", "color": "#2563EB"},
+            format="json",
+        )
+        duplicate = self.client.post(
+            "/api/v1/customers/tags/",
+            {"tag_name": "东南亚重点", "color": "#2563EB"},
+            format="json",
+        )
+        invalid_color = self.client.post(
+            "/api/v1/customers/tags/",
+            {"tag_name": "颜色错误", "color": "blue"},
+            format="json",
+        )
+
+        self.assertEqual(created.status_code, 201, created.data)
+        customer_tag = CustomerTag.objects.get(pk=created.data["data"]["id"])
+        self.assertTrue(customer_tag.tag_code.startswith("CUSTOM_"))
+        self.assertEqual(customer_tag.tag_name, "东南亚重点")
+        self.assertEqual(customer_tag.color, "#2563EB")
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        self.assertEqual(invalid_color.status_code, 400, invalid_color.data)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                object_type="CUSTOMER_TAG",
+                object_id=customer_tag.pk,
+                action="CREATED",
+            ).exists()
+        )
+
+    def test_customer_entity_can_keep_multiple_addresses(self):
+        customer = self.create_customer("MULTI_ADDRESS", "多地址客户")
+        entity = CustomerTransactionEntity.objects.create(
+            customer_account=customer,
+            entity_code="MULTI_ADDRESS_ENTITY",
+            legal_name="多地址客户主体",
+        )
+        address_url = f"/api/v1/customer-entities/{entity.pk}/addresses/"
+
+        office = self.client.post(
+            address_url,
+            {
+                "address_code": "OFFICE_001",
+                "label": "办公地址",
+                "country_code": "CN",
+                "city": "深圳",
+                "address_line1": "南山区办公路1号",
+                "is_verified": False,
+            },
+            format="json",
+        )
+        shipping = self.client.post(
+            address_url,
+            {
+                "address_code": "SHIPPING_001",
+                "label": "收货地址",
+                "country_code": "CN",
+                "city": "东莞",
+                "address_line1": "松山湖收货路2号",
+                "is_verified": False,
+            },
+            format="json",
+        )
+        listing = self.client.get(address_url)
+
+        self.assertEqual(office.status_code, 201, office.data)
+        self.assertEqual(shipping.status_code, 201, shipping.data)
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertEqual(len(listing.data["data"]), 2)
+        self.assertEqual(
+            {item["address_code"] for item in listing.data["data"]},
+            {"OFFICE_001", "SHIPPING_001"},
+        )
+
+    def test_customer_list_dashboard_fields_stats_export_and_bulk_tags(self):
+        customer = self.create_customer("LIST_DASHBOARD", "列表看板客户")
+        now = timezone.now()
+        grade_a = ReferenceDictionary.objects.get(category_code="CUSTOMER_GRADE", item_code="A")
+        CustomerGradeReview.objects.create(
+            customer_account=customer,
+            grade_item=grade_a,
+            reviewed_by_employee=self.employee,
+            reason="重点客户",
+            effective_from=now,
+        )
+        CustomerActivityReview.objects.create(
+            customer_account=customer,
+            activity_status="HIGH_RISK",
+            reviewed_by_employee=self.employee,
+            reason="需要及时跟进",
+            effective_from=now,
+        )
+        CustomerBusinessSnapshot.objects.create(
+            customer_account=customer,
+            source_type="MANUAL",
+            as_of_at=now,
+            currency_code="USD",
+            customer_total_value="128400.00",
+            entered_by_employee=self.employee,
+        )
+        communication = CustomerCommunication.objects.create(
+            customer_account=customer,
+            created_by_employee=self.employee,
+            communication_type="EMAIL",
+            direction="OUTBOUND",
+            content="客户跟进",
+            occurred_at=now,
+        )
+        task = BusinessTask.objects.create(
+            assignee_employee=self.employee,
+            created_by_employee=self.employee,
+            title="今日跟进客户",
+            due_at=now,
+        )
+        CustomerTaskLink.objects.create(customer_account=customer, business_task=task)
+
+        listing = self.client.get("/api/v1/customers/")
+        stats = self.client.get("/api/v1/customers/stats/")
+        export = self.client.get("/api/v1/customers/export/")
+        tag = CustomerTag.objects.get(tag_code="KEY_CUSTOMER")
+        bulk_tag = self.client.post(
+            "/api/v1/customers/bulk-add-tags/",
+            {"customer_ids": [str(customer.pk)], "customer_tag_ids": [str(tag.pk)], "reason": "批量维护标签"},
+            format="json",
+        )
+
+        self.assertEqual(listing.status_code, 200, listing.data)
+        row = listing.data["data"][0]
+        self.assertIsNotNone(row["last_contact_at"])
+        self.assertIsNotNone(row["next_follow_up_at"])
+        self.assertEqual(row["customer_value"]["customer_total_value"], "128400.00")
+        self.assertEqual(stats.status_code, 200, stats.data)
+        self.assertEqual(stats.data["data"]["high_value"], 1)
+        self.assertEqual(stats.data["data"]["high_risk"], 1)
+        self.assertEqual(stats.data["data"]["today_follow_up"], 1)
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("列表看板客户", export.content.decode("utf-8-sig"))
+        self.assertEqual(bulk_tag.status_code, 200, bulk_tag.data)
+        self.assertEqual(bulk_tag.data["data"]["updated_count"], 1)
+        self.assertTrue(customer.tag_assignments.filter(customer_tag=tag, effective_to__isnull=True).exists())
+
+    def test_duplicate_check_does_not_expose_inaccessible_customer(self):
+        hidden = self.create_customer("HIDDEN_DUPLICATE", "不可见重复客户", owner=self.other_employee)
+        hidden.primary_website_url = "https://private.example"
+        hidden.save(update_fields=["primary_website_url", "updated_at"])
+
+        response = self.client.get(
+            "/api/v1/customers/duplicate-check/",
+            {"name": "不可见重复客户", "website": "private.example", "country_code": "CN"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["matches"], [])
+
+    def test_profile_history_and_manual_business_snapshot(self):
+        customer = self.create_customer("PROFILE_HISTORY", "客户画像测试")
+        grade_a = ReferenceDictionary.objects.get(category_code="CUSTOMER_GRADE", item_code="A")
+
+        grade = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-grade/",
+            {"grade_item_id": str(grade_a.pk), "reason": "年度重点客户"},
+            format="json",
+        )
+        activity = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-activity/",
+            {"activity_status": "FOLLOW_UP", "reason": "超过约定跟进时间"},
+            format="json",
+        )
+        snapshot = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-business-snapshot/",
+            {
+                "as_of_at": timezone.now().isoformat(),
+                "currency_code": "USD",
+                "last_12m_order_amount": "120000.00",
+                "last_12m_order_count": 8,
+                "quote_conversion_rate": "35.50",
+                "notes": "人工录入，待订单模块接入后替换",
+            },
+            format="json",
+        )
+
+        self.assertEqual(grade.status_code, 201, grade.data)
+        self.assertEqual(activity.status_code, 201, activity.data)
+        self.assertEqual(snapshot.status_code, 201, snapshot.data)
+        self.assertEqual(snapshot.data["data"]["source_type"], "MANUAL")
+        self.assertEqual(CustomerActivityReview.objects.filter(customer_account=customer).count(), 1)
+        self.assertTrue(CustomerBusinessSnapshot.objects.get(customer_account=customer).is_current)
+
+    def test_source_history_classification_and_filters(self):
+        customer = self.create_customer("CLASSIFICATION", "分类筛选客户")
+        canton_fair = ReferenceDictionary.objects.get(
+            category_code="CUSTOMER_SOURCE", item_code="CANTON_FAIR"
+        )
+        potential_customer = ReferenceDictionary.objects.get(
+            category_code="CUSTOMER_TYPE", item_code="POTENTIAL"
+        )
+        customer_tag = CustomerTag.objects.get(tag_code="EUROPE_MARKET")
+
+        first_source = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-source/",
+            {"source_item_id": str(self.website_source.pk), "notes": "首次来源"},
+            format="json",
+        )
+        latest_source = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-source/",
+            {"source_item_id": str(canton_fair.pk), "notes": "近期广交会"},
+            format="json",
+        )
+        classification = self.client.post(
+            f"/api/v1/customers/{customer.pk}/set-classification/",
+            {
+                "customer_type_item_ids": [str(potential_customer.pk)],
+                "customer_tag_ids": [str(customer_tag.pk)],
+                "reason": "客户资料复核",
+            },
+            format="json",
+        )
+        filtered = self.client.get(
+            "/api/v1/customers/",
+            {"customer_source": "CANTON_FAIR", "customer_type": "POTENTIAL", "customer_tag": "EUROPE_MARKET"},
+        )
+
+        self.assertEqual(first_source.status_code, 201, first_source.data)
+        self.assertEqual(latest_source.status_code, 201, latest_source.data)
+        self.assertEqual(classification.status_code, 200, classification.data)
+        self.assertEqual([item["id"] for item in filtered.data["data"]], [str(customer.pk)])
+        history = customer.source_attributions.order_by("effective_from")
+        self.assertEqual(history.count(), 2)
+        self.assertIsNotNone(history.first().effective_to)
+        self.assertIsNone(history.last().effective_to)
 
     def test_customer_list_only_contains_assigned_customers(self):
         visible = self.create_customer("VISIBLE_CUSTOMER", "可见客户")
@@ -149,7 +614,15 @@ class CustomerApiTests(APITestCase):
     def test_customer_update_requires_current_etag(self):
         customer = self.create_customer("ETAG_API_CUSTOMER", "修改前")
         detail_url = f"/api/v1/customers/{customer.pk}/"
-        etag = self.client.get(detail_url).headers["ETag"]
+        allowed_origin = settings.CORS_ALLOWED_ORIGINS[0]
+        detail = self.client.get(detail_url, HTTP_ORIGIN=allowed_origin)
+        etag = detail.headers["ETag"]
+        preflight = self.client.options(
+            detail_url,
+            HTTP_ORIGIN=allowed_origin,
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="PATCH",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS="content-type,if-match",
+        )
 
         missing = self.client.patch(detail_url, {"account_name": "缺少条件"}, format="json")
         stale = self.client.patch(
@@ -175,6 +648,9 @@ class CustomerApiTests(APITestCase):
         self.assertEqual(stale.status_code, 412)
         self.assertEqual(success.status_code, 200, success.data)
         self.assertEqual(empty.status_code, 400, empty.data)
+        self.assertIn("ETag", detail.headers["Access-Control-Expose-Headers"])
+        self.assertEqual(preflight.status_code, 200)
+        self.assertIn("if-match", preflight.headers["Access-Control-Allow-Headers"])
         customer.refresh_from_db()
         self.assertEqual(customer.account_name, "修改后")
         self.assertNotEqual(success.headers["ETag"], etag)
@@ -317,6 +793,44 @@ class CustomerApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["counts"]["entities"], 1)
         self.assertEqual(response.data["data"]["counts"]["contacts"], 1)
+
+    def test_customer_360_summary_counts_direct_and_indirect_open_tasks(self):
+        customer = self.create_customer("SUMMARY_TASK_CUSTOMER", "任务汇总客户")
+        direct_task = BusinessTask.objects.create(
+            assignee_employee=self.employee,
+            created_by_employee=self.employee,
+            title="客户直接任务",
+            due_at=timezone.now() + timedelta(days=1),
+        )
+        CustomerTaskLink.objects.create(
+            customer_account=customer,
+            business_task=direct_task,
+        )
+        communication = CustomerCommunication.objects.create(
+            customer_account=customer,
+            communication_type="EMAIL",
+            direction="OUTBOUND",
+            subject="任务来源沟通",
+            content="用于验证客户汇总能统计间接来源任务。",
+            occurred_at=timezone.now(),
+            created_by_employee=self.employee,
+        )
+        indirect_task = BusinessTask.objects.create(
+            assignee_employee=self.employee,
+            created_by_employee=self.employee,
+            title="沟通来源任务",
+            due_at=timezone.now() - timedelta(hours=1),
+        )
+        CommunicationTaskLink.objects.create(
+            communication=communication,
+            business_task=indirect_task,
+        )
+
+        response = self.client.get(f"/api/v1/customers/{customer.pk}/summary/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["counts"]["open_tasks"], 2)
+        self.assertEqual(response.data["data"]["counts"]["overdue_tasks"], 1)
 
     def test_collaborator_can_be_added_and_ended(self):
         customer = self.create_customer("COLLABORATOR_CUSTOMER", "协作客户")

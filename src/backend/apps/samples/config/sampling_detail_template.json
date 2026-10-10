@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "rows": [
+    { "key": "material-pipe", "type": "材料", "category": "管材" },
+    { "key": "material-pipe-coating", "type": "材料", "category": "管子喷塑" },
+    { "key": "hardware-fasteners", "type": "五金件", "category": "铁件/铆钉、螺丝" },
+    { "key": "plastic-material", "type": "塑料件", "category": "材质" },
+    { "key": "plastic-color", "type": "塑料件", "category": "颜色" },
+    { "key": "fabric-binding-material", "type": "面料-包边带", "category": "材质" },
+    { "key": "fabric-binding-color", "type": "面料-包边带", "category": "颜色" },
+    { "key": "fabric-seat-material", "type": "面料-椅面", "category": "材质" },
+    { "key": "fabric-seat-color", "type": "面料-椅面", "category": "颜色" },
+    { "key": "screen-printing", "type": "丝印", "category": "" },
+    { "key": "fabric-bag-material", "type": "面料-外袋", "category": "材质" },
+    { "key": "fabric-bag-color", "type": "面料-外袋", "category": "颜色" },
+    { "key": "packaging-care-label", "type": "包材-水洗标", "category": "" },
+    { "key": "packaging-hang-tag", "type": "包材-吊卡", "category": "" },
+    { "key": "packaging-sticker", "type": "包材-不干胶", "category": "" },
+    { "key": "packaging-instruction", "type": "包材-说明书", "category": "" },
+    { "key": "packaging-carton-size", "type": "包材-纸箱", "category": "尺寸" },
+    { "key": "packaging-carton-type", "type": "包材-纸箱", "category": "箱型" },
+    { "key": "packaging-plastic-bag", "type": "包材-塑料袋", "category": "" }
+  ]
+}

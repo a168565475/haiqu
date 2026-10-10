@@ -1,0 +1,42 @@
+@use './primitives' as primitive;
+
+@mixin emit-css-properties() {
+  --erp-color-page: var(--erp-primitive-color-page);
+  --erp-color-surface: var(--erp-primitive-color-surface);
+  --erp-color-subtle: var(--erp-primitive-color-subtle);
+  --erp-color-disabled: var(--erp-primitive-color-disabled);
+  --erp-color-hover: var(--erp-primitive-color-hover);
+  --erp-color-selected: var(--erp-primitive-color-selected);
+  --erp-color-text-primary: var(--erp-primitive-color-text-primary);
+  --erp-color-text-regular: var(--erp-primitive-color-text-regular);
+  --erp-color-text-secondary: var(--erp-primitive-color-text-secondary);
+  --erp-color-text-muted: var(--erp-primitive-color-text-muted);
+  --erp-color-text-inverse: var(--erp-primitive-color-text-inverse);
+  --erp-color-border: var(--erp-primitive-color-border);
+  --erp-color-border-strong: var(--erp-primitive-color-border-strong);
+  --erp-color-brand: var(--erp-primitive-color-brand);
+  --erp-color-brand-hover: var(--erp-primitive-color-brand-hover);
+  --erp-color-brand-pressed: var(--erp-primitive-color-brand-pressed);
+  --erp-color-brand-light-3: var(--erp-primitive-color-brand-light-3);
+  --erp-color-brand-light-5: var(--erp-primitive-color-brand-light-5);
+  --erp-color-brand-light-7: var(--erp-primitive-color-brand-light-7);
+  --erp-color-brand-light-8: var(--erp-primitive-color-brand-light-8);
+  --erp-color-brand-tag: var(--erp-primitive-color-brand-tag);
+  --erp-color-focus: var(--erp-primitive-color-focus);
+  --erp-color-success: var(--erp-primitive-color-success);
+  --erp-color-warning: var(--erp-primitive-color-warning);
+  --erp-color-danger: var(--erp-primitive-color-danger);
+  --erp-color-info: var(--erp-primitive-color-info);
+  --erp-font-body: var(--erp-primitive-font-body);
+  --erp-font-display: var(--erp-primitive-font-display);
+  --erp-space-1: var(--erp-primitive-space-1);
+  --erp-space-2: var(--erp-primitive-space-2);
+  --erp-space-3: var(--erp-primitive-space-3);
+  --erp-space-4: var(--erp-primitive-space-4);
+  --erp-space-5: var(--erp-primitive-space-5);
+  --erp-space-6: var(--erp-primitive-space-6);
+  --erp-space-7: var(--erp-primitive-space-7);
+  --erp-radius-control: var(--erp-primitive-radius-control);
+  --erp-radius-card: var(--erp-primitive-radius-card);
+  --erp-radius-pill: var(--erp-primitive-radius-pill);
+}

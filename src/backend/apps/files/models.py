@@ -9,6 +9,7 @@ class FileScanStatus(models.TextChoices):
     CLEAN = "CLEAN", "安全"
     INFECTED = "INFECTED", "风险文件"
     FAILED = "FAILED", "扫描失败"
+    SKIPPED = "SKIPPED", "已跳过"
 
 
 class BusinessFile(ArchivableModel):

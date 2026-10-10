@@ -1,0 +1,534 @@
+{
+  "date": "2026-09-30",
+  "scope": "整理用户决定并核对当前流程；未删除 Figma 节点，未修改应用代码，未推进正式业务单据。",
+  "figma_file_key": "czPqlJ7fXYn5cq4cbQyTFm",
+  "previous_audit": "outputs/sample-prototype-audit-20260930/打样全部页面对比.html",
+  "counts": {
+    "accepted": 3,
+    "later_adjustment": 2,
+    "table_redesign": 2,
+    "redesign": 2,
+    "new_design": 3,
+    "delete_prototype_keep_page": 16,
+    "total": 28
+  },
+  "decisions": [
+    {
+      "number": "01",
+      "key": "list",
+      "title": "打样申请列表",
+      "figma_node_id": "1897:18624",
+      "component": "SampleListView.vue",
+      "action": "已认可，保留",
+      "instruction": "用户本轮认为没有问题，不沿用上一轮视觉差异作为待改任务。",
+      "execution_status": "RECORDED_ACCEPTED",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "02",
+      "key": "create",
+      "title": "业务员创建申请",
+      "figma_node_id": "1851:18496",
+      "component": "SampleApplicationCreateView.vue",
+      "action": "已认可，保留",
+      "instruction": "用户本轮认为没有问题，不沿用上一轮视觉差异作为待改任务。",
+      "execution_status": "RECORDED_ACCEPTED",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "03",
+      "key": "director",
+      "title": "厂长确认／退回",
+      "figma_node_id": "1812:18474",
+      "component": "SampleDirectorReviewView.vue",
+      "action": "已认可，保留",
+      "instruction": "用户本轮认为没有问题，不沿用上一轮视觉差异作为待改任务。",
+      "execution_status": "RECORDED_ACCEPTED",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "04",
+      "key": "materials",
+      "title": "填写材料需求",
+      "figma_node_id": "1878:18504",
+      "component": "SampleMaterialRequestView.vue",
+      "action": "记录问题，稍后调整",
+      "instruction": "用料需求普通页及全屏页有问题，具体修改项结合后续流程更新确认。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "05",
+      "key": "materials-fullscreen",
+      "title": "材料需求全屏填写",
+      "figma_node_id": "1880:19771",
+      "component": "SampleMaterialRequestView.vue",
+      "action": "记录问题，稍后调整",
+      "instruction": "用料需求普通页及全屏页有问题，具体修改项结合后续流程更新确认。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "06",
+      "key": "warehouse",
+      "title": "仓库核对材料",
+      "figma_node_id": "1887:18596",
+      "component": "SampleWarehouseReviewView.vue",
+      "action": "修改原型表头和表格",
+      "instruction": "遵守项目表格规范；表格内容使用单行显示，不上下堆叠；不同数据拆分独立列。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "07",
+      "key": "warehouse-fullscreen",
+      "title": "仓库核对全屏",
+      "figma_node_id": "1891:18615",
+      "component": "SampleWarehouseReviewView.vue",
+      "action": "修改原型表头和表格",
+      "instruction": "遵守项目表格规范；表格内容使用单行显示，不上下堆叠；不同数据拆分独立列。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "08",
+      "key": "edit",
+      "title": "旧版完整打样编辑",
+      "figma_node_id": "676:9438",
+      "component": "SampleFormView.vue",
+      "action": "重新设计，先做设计图",
+      "instruction": "这是旧流程的编辑/完善页面。重设计前明确其在新版流程中是保留、替换还是仅服务历史单据，避免重复建设。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "09",
+      "key": "request-create",
+      "title": "从询盘创建样品需求",
+      "figma_node_id": "724:8509",
+      "component": "SampleApplicationCreateView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "10",
+      "key": "quotation-create",
+      "title": "从报价创建样品需求",
+      "figma_node_id": "724:8719",
+      "component": "SampleApplicationCreateView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "11",
+      "key": "complete",
+      "title": "工厂完善样品需求",
+      "figma_node_id": "724:8929",
+      "component": "SampleFormView.vue",
+      "action": "重新设计，先做设计图",
+      "instruction": "这是旧流程的编辑/完善页面。重设计前明确其在新版流程中是保留、替换还是仅服务历史单据，避免重复建设。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": false,
+      "reminder": null
+    },
+    {
+      "number": "12",
+      "key": "factory-list",
+      "title": "待工厂完善列表",
+      "figma_node_id": "724:9139",
+      "component": "SampleListView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "13",
+      "key": "detail-pmc",
+      "title": "样品详情：PMC审核",
+      "figma_node_id": "765:8900",
+      "component": "SampleDetailView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "14",
+      "key": "detail-finished",
+      "title": "样品详情：已结束",
+      "figma_node_id": "779:8870",
+      "component": "SampleDetailView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "15",
+      "key": "fees",
+      "title": "付费／免费／豁免",
+      "figma_node_id": "258:5218",
+      "component": "SampleFeeView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "16",
+      "key": "fulfillment",
+      "title": "物流、反馈与订单阻塞",
+      "figma_node_id": "258:5608",
+      "component": "SampleFulfillmentView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "17",
+      "key": "requote",
+      "title": "样品反馈创建再报价",
+      "figma_node_id": "502:7853",
+      "component": "SampleFulfillmentView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "18",
+      "key": "inventory",
+      "title": "样品库存列表",
+      "figma_node_id": "810:8933",
+      "component": "SampleInventoryView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "19",
+      "key": "outbound",
+      "title": "样品出库列表",
+      "figma_node_id": "812:8933",
+      "component": "SampleOutboundView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "20",
+      "key": "loans",
+      "title": "样品借出列表",
+      "figma_node_id": "812:9236",
+      "component": "SampleLoanView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "21",
+      "key": "receipt-dialog",
+      "title": "批量入库弹窗",
+      "figma_node_id": "814:8933",
+      "component": "SampleInventoryReceiptDialog.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "22",
+      "key": "outbound-dialog",
+      "title": "批量出库弹窗",
+      "figma_node_id": "814:9235",
+      "component": "SampleOutboundCreateDialog.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "23",
+      "key": "loan-dialog",
+      "title": "批量借出弹窗",
+      "figma_node_id": "814:9529",
+      "component": "SampleLoanCreateDialog.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "24",
+      "key": "receipt-detail",
+      "title": "入库单详情",
+      "figma_node_id": "816:8933",
+      "component": "SampleInventoryReceiptDetailView.vue",
+      "action": "无可用原型，新增设计图",
+      "instruction": "24—26 上轮找到过旧画板；本轮按用户决定不沿用，视为无可用原型。现有详情页面保留，先完成新设计图。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "25",
+      "key": "outbound-detail",
+      "title": "出库单详情",
+      "figma_node_id": "816:9236",
+      "component": "SampleOutboundDetailView.vue",
+      "action": "无可用原型，新增设计图",
+      "instruction": "24—26 上轮找到过旧画板；本轮按用户决定不沿用，视为无可用原型。现有详情页面保留，先完成新设计图。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "26",
+      "key": "loan-detail",
+      "title": "借出单详情",
+      "figma_node_id": "816:9535",
+      "component": "SampleLoanDetailView.vue",
+      "action": "无可用原型，新增设计图",
+      "instruction": "24—26 上轮找到过旧画板；本轮按用户决定不沿用，视为无可用原型。现有详情页面保留，先完成新设计图。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "27",
+      "key": "legacy-list",
+      "title": "旧SAM-01样品列表",
+      "figma_node_id": "245:5332",
+      "component": "SampleListView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    },
+    {
+      "number": "28",
+      "key": "legacy-detail",
+      "title": "旧SAM-02详情与编辑",
+      "figma_node_id": "245:5933",
+      "component": "SampleDetailView.vue",
+      "action": "删除旧原型，保留当前页面",
+      "instruction": "原型删除已列入用户确认的待执行清单；当前页面和业务代码保留。原型状态记为缺失，流程验收时提醒用户确认当前实现。",
+      "execution_status": "PENDING",
+      "prototype_deletion_executed": false,
+      "remind_during_flow_test": true,
+      "reminder": "此步骤暂无已认可原型，本轮按当前页面验业务。进入该步骤时，先提醒用户核对字段、操作和结果是否满足业务需求；本记录不代替业务确认。"
+    }
+  ],
+  "new_workflow": [
+    [
+      "1. 创建申请",
+      "手工、客户、询盘、报价入口统一进入新版申请。当前一张申请选择一个产品，填写数量、规格等资料；来源图片可沿用或替换。提交后等待厂长确认。"
+    ],
+    [
+      "2. 厂长确认或退回",
+      "确认后交打样部填写用料；退回必须留原因，由申请人修改后重提。当前没有独立的“永久拒绝”动作，退回不是关闭申请。"
+    ],
+    [
+      "3. 打样部处理用料",
+      "明确选择“无需用料”并留记录，可直接进入参数/生产阶段；需要用料则填写各分类的材料、规格、颜色、材质、数量及单位，提交后交仓库核对。空白草稿不代表无需用料。"
+    ],
+    [
+      "4. 仓库核对",
+      "逐行填写可供数量。全部足量则进入参数/生产阶段；有缺料则生成缺料需求，显示“等待采购”。仓库供料确认当前不会扣减或锁定原料库存。"
+    ],
+    [
+      "5. 采购及材料到货",
+      "创建关联采购单后，样品列表显示“采购中”（采购单草稿也算已建单）。采购确认、生成并发布采购单后进入收货/品质确认；仅合格入库数量计入齐备。部分到货继续等待，全部缺料补齐才允许生产。"
+    ],
+    [
+      "6. 参数上传与生产报工",
+      "材料齐备后允许生产并报工。参数上传按金工→裁剪顺序；生产报工可在上传前后进行。上传文件不自动勾选工序完成。两份参数齐全但工序未完成时，显示“待生产完成”。"
+    ],
+    [
+      "7. 样品入库、出库或借出",
+      "两份参数齐全且金工、裁剪都确认完成后，主流程为已结束，开放样品入库。入库数量受剩余可入数量限制；之后可以出库或借出。寄送、费用、反馈并没有自动随此路径贯通；借出归还尚无操作入口。"
+    ]
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "level": "代码已确认",
+      "title": "新版生产结束后，费用—寄送—反馈尚未接续",
+      "detail": "费用与寄送接口仍只接受旧流程状态；新版的已结束状态不能自然进入这些操作。样品出库填写快递信息也不会自动生成旧版寄送单或进入反馈状态。",
+      "recommendation": "流程更新时明确出库、寄送、费用和客户反馈的关系，再设计统一入口和状态；不要用手改状态跳过门槛。",
+      "sources": [
+        "src/frontend/src/views/samples/SampleDetailView.vue:62",
+        "src/backend/apps/samples/services.py:911",
+        "src/backend/apps/samples/services.py:1075"
+      ]
+    },
+    {
+      "id": "F02",
+      "level": "代码已确认",
+      "title": "供料确认与真实领料不是同一件事",
+      "detail": "仓库核对可供数量后可以允许生产，但当前动作不扣库存、不预留库存。其他业务仍可能使用同一批材料。",
+      "recommendation": "需要用户确定样品供料是仅确认可供，还是要领料出库/占用库存；不能把“材料齐备”解释成已经领到料。",
+      "sources": [
+        "src/backend/apps/samples/material_services.py:158"
+      ]
+    },
+    {
+      "id": "F03",
+      "level": "代码已确认，业务规则待确认",
+      "title": "生产完成标记未与报工数量一致性绑定",
+      "detail": "当前校验报工数量不超过申请数量，但完成判断仅检查两个完成标记。因此零报工或少报工也可能被标记完成；入库上限仍按申请数量计算。",
+      "recommendation": "明确完成数量、合格数量和允许入库数量的关系，再确定能否少量结案；本轮不擅自变更规则。",
+      "sources": [
+        "src/backend/apps/samples/production_services.py:40",
+        "src/backend/apps/samples/production_services.py:72",
+        "src/backend/apps/samples/inventory_selectors.py:102"
+      ]
+    },
+    {
+      "id": "F04",
+      "level": "代码路径风险，未在真实单据复现",
+      "title": "缺料采购少买或提前结束可能留下无后续入口的缺口",
+      "detail": "采购实买数量允许小于缺口，同一份缺料需求只能关联一张采购单。部分到货后采购又允许人工结束，但样品仍要求全部缺口齐备；可能出现样品等待、原采购无法继续普通收货、没有补购入口的组合。",
+      "recommendation": "补齐剩余缺料的追加采购/重开逻辑，或为样品采购增加不可提前结束的门槛；需要结合用户采购规则决定。",
+      "sources": [
+        "src/backend/apps/procurement/models.py:174",
+        "src/backend/apps/procurement/sample_purchase_services.py:109",
+        "src/backend/apps/procurement/completion_services.py:16",
+        "src/backend/apps/inventory/services.py:550"
+      ]
+    },
+    {
+      "id": "F05",
+      "level": "代码已确认",
+      "title": "借出有入口，归还尚无入口",
+      "detail": "可以创建样品借出记录，但当前借出详情没有归还操作，不能把借出到归还称作闭环。",
+      "recommendation": "借出流程验收时必须提醒用户，并确认是否需要归还、损坏或转正式出库等处理。",
+      "sources": [
+        "src/frontend/src/views/samples/SampleLoanDetailView.vue:128"
+      ]
+    },
+    {
+      "id": "F06",
+      "level": "代码路径风险，未在真实单据复现",
+      "title": "旧单参数先完成可能卡在入库之前",
+      "detail": "旧单上传裁剪参数可以直接进入已结束；此时如果两道工序未勾选完成，入库资格仍不满足，而旧单已结束后表单只读、新版报工接口又不接受旧单。",
+      "recommendation": "保留旧流程的同时，补充受控的旧单报工/纠正入口，不能批量猜测生产已完成。",
+      "sources": [
+        "src/backend/apps/samples/services.py:844",
+        "src/backend/apps/samples/form_services.py:25",
+        "src/backend/apps/samples/production_services.py:21",
+        "src/backend/apps/samples/inventory_selectors.py:75"
+      ]
+    },
+    {
+      "id": "F07",
+      "level": "代码已确认",
+      "title": "新增材料阶段缺少通用取消路径",
+      "detail": "现有取消动作的允许状态未包含新版待填用料、仓库核对、等待采购等阶段；异常终止与已采购材料如何处理尚需定义。",
+      "recommendation": "流程更新时一起决定撤回、作废与已采购单据联动，不能只设计正常推进。",
+      "sources": [
+        "src/backend/apps/samples/services.py:673"
+      ]
+    },
+    {
+      "id": "F08",
+      "level": "代码已确认，规则需复核",
+      "title": "当前管材字段比早期“简化需求”要求更细",
+      "detail": "管材已引入支/根转换、裁切长度及每根可切支数等字段，用于采购与到货换算。不能只删界面字段而保留后端必填条件。",
+      "recommendation": "明确哪些字段由打样部填写、哪些由采购或仓库补齐；04—07 的调整要同时考虑单位换算责任。",
+      "sources": [
+        "src/backend/apps/samples/pipe_materials.py:9"
+      ]
+    }
+  ],
+  "legacy_workflow": "历史待工厂完善 → 财务确认 → PMC 审核 → 金工参数 → 裁剪参数 → 已结束；历史费用/寄送/反馈还保留另一组状态约束。08、11 属于历史编辑/完善，不是新版创建后的必经页面。",
+  "verification": {
+    "backend": {
+      "total": 97,
+      "passed": 97,
+      "failed": 0,
+      "log": "outputs/sample-flow-review-20260930/backend-tests.log",
+      "database": "本次独立测试库，名称另存 test-database.txt；测试结束保留，未清理"
+    },
+    "frontend": {
+      "total": 37,
+      "passed": 35,
+      "failed": 2,
+      "log": "outputs/sample-flow-review-20260930/frontend-tests.log",
+      "failed_cases": [
+        "切换报价产品时只展示所选产品的明细图片",
+        "多张询盘图片需要选择，上传替换同时更新产品图片"
+      ],
+      "diagnosis": "已定位为测试查询范围未适配 AppWindowDialog 的 Teleport：wrapper 内卡片均为 0，document.body 内分别为 1 和 2。仅在内存中调整查询范围的诊断测试 2 通过、10 跳过，后续原有选图及上传替换断言通过。原测试未修改，正式结果仍为 35/37；此诊断不代替真实浏览器验收。"
+    },
+    "live_database": {
+      "legacy_pending_completion": 90,
+      "new_applications": 0,
+      "sample_purchase_sources": 0,
+      "sample_material_arrivals": 0,
+      "sample_inventory_lines": 0,
+      "sample_outbound": 0,
+      "sample_loans": 0
+    },
+    "boundary": "接口专项测试通过不等于真实环境完整业务验收。当前没有新版单据供整链只读验证；本轮未执行真实创建/审批/采购/入库写入，未做新一轮逐页视觉验收。未改应用代码，因此未额外运行全项目类型检查或构建。"
+  }
+}

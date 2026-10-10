@@ -16,6 +16,7 @@ from .models import (
     CustomerAccount,
     CustomerAssignment,
     CustomerContact,
+    CustomerComplaint,
     CustomerDataAccessGrant,
     CustomerDuplicateCandidate,
     CustomerDuplicateCase,
@@ -251,6 +252,7 @@ def merge_preview(*, duplicate_case, validated_data):
             "inquiries": Inquiry.objects.filter(customer_account_id__in=source_ids).count(),
             "quotations": Quotation.objects.filter(customer_account_id__in=source_ids).count(),
             "sample_requests": SampleRequest.objects.filter(customer_account_id__in=source_ids).count(),
+            "complaints": CustomerComplaint.objects.filter(customer_account_id__in=source_ids).count(),
             "timeline_events": CustomerTimelineEvent.objects.filter(customer_account_id__in=source_ids).count(),
         },
         "warnings": ["来源客户会归档；历史负责人、历史授权、审计日志和合并证据不会改写。"],
@@ -345,6 +347,11 @@ def execute_merge(*, duplicate_case, validated_data, actor_employee, request):
             sample_ids = list(SampleRequest.objects.filter(customer_account_id__in=source_ids).values_list("pk", flat=True))
             SampleRequest.objects.filter(pk__in=sample_ids).update(customer_account=survivor, updated_at=now)
             sequence = _record_group_change(operation, sequence, "SAMPLE_REQUEST", sample_ids, survivor.pk)
+
+            complaint_ids = list(CustomerComplaint.objects.filter(customer_account_id__in=source_ids).values_list("pk", flat=True))
+            # 客户合并只切换当前归属；原始客户和客诉负责人均保留，便于后续追溯。
+            CustomerComplaint.objects.filter(pk__in=complaint_ids).update(customer_account=survivor, updated_at=now)
+            sequence = _record_group_change(operation, sequence, "CUSTOMER_COMPLAINT", complaint_ids, survivor.pk)
 
             communication_ids = list(CustomerCommunication.objects.filter(customer_account_id__in=source_ids).values_list("pk", flat=True))
             CustomerCommunication.objects.filter(pk__in=communication_ids).update(customer_account=survivor, updated_at=now)

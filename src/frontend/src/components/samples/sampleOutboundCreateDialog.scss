@@ -1,0 +1,27 @@
+@use '@/styles/crm/tokens' as token;
+@use '@/styles/crm/sample-batch-dialog' as batch;
+
+.sample-outbound-overlay { background: rgba(0, 0, 0, .34); }
+.sample-outbound-create-dialog {
+  @include batch.dialog;
+  &.el-dialog { min-height: min(440px, calc(100vh - 32px)); }
+  .el-dialog__body { overflow: hidden; padding: 14px 24px; }
+  .el-dialog__footer { flex-basis: 48px; padding: 0 24px; }
+  .batch-detail-panel { height: auto; min-height: 0; margin-top: 0; }
+  .batch-detail-panel .el-table { width: 100%; margin: 0; }
+  .el-table__header th.el-table__cell { height: 44px; background: token.$crm-color-subtle; }
+  .el-table__body .el-table__row { height: 40px !important; min-height: 40px; }
+  .el-table__body-wrapper .el-table__row td.el-table__cell { height: 40px !important; min-height: 40px; padding-top: 0 !important; padding-bottom: 0 !important; }
+  .el-table .cell { padding: 0 12px; line-height: 18px; }
+  .line-input .el-input__wrapper,
+  .line-select .el-select__wrapper { height: 32px; min-height: 32px; }
+  .line-select { width: 100%; }
+  .line-select .el-select__wrapper { padding: 0 8px; }
+  .line-select.is-invalid .el-select__wrapper { box-shadow: 0 0 0 1px token.$crm-danger inset; }
+  .hidden-field { display: block; color: token.$crm-text-muted; font-size: 11px; text-align: center; }
+  .footer-status,
+  .footer-actions { display: flex; align-items: center; gap: 12px; }
+  .footer-status { color: token.$crm-text-muted; font-size: 12px; }
+  .footer-status .el-button { width: auto; padding: 0; }
+  .batch-dialog-footer .el-button { height: 32px; }
+}

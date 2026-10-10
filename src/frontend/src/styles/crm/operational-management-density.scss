@@ -1,0 +1,328 @@
+/*
+ * 样品、产品、生产管理的紧凑密度规范。
+ * 单据打印页只统一控件，不改写文档表格的换行和打印行高。
+ */
+$management-roots: ':is(.sample-list-page, .sample-create-page, .sample-inventory-page, .sample-outbound-page, .sample-loan-page, .warehouse-review-page, .material-request-page, .sample-form-page, .sample-detail-page, .sample-fee-page, .director-page, .sample-fulfillment-page, .product-page, .raw-page, .production-list-page, .production-create-page, .production-edit-page, .production-form-page, .task-detail-page, .bom-list-page, .bom-create-page, .bom-editor-page, .bom-preview-page, .receipt-detail-page, .outbound-detail-page, .loan-detail-page)';
+
+$data-table-roots: ':is(.sample-list-page, .sample-create-page, .sample-inventory-page, .sample-outbound-page, .sample-loan-page, .warehouse-review-page, .material-request-page, .sample-form-page, .sample-detail-page, .sample-fee-page, .director-page, .sample-fulfillment-page, .product-page, .raw-page, .production-list-page, .production-create-page, .production-edit-page, .production-form-page, .task-detail-page, .bom-list-page, .bom-create-page, .bom-editor-page)';
+
+$list-roots: ':is(.sample-list-page, .sample-inventory-page, .sample-outbound-page, .sample-loan-page, .product-page, .raw-page, .production-list-page, .bom-list-page)';
+
+$overlay-roots: ':is(.product-information-drawer, .raw-material-information-drawer, .product-task-dialog, .product-task-detail-dialog, .hardware-picker-dialog, .line-editor-drawer, .line-image-manager-dialog, .sample-batch-dialog, .sample-fulfillment-dialog, .sample-inventory-lookup, .sample-material-line-drawer, .sample-material-picker-dialog, .sample-production-dialog, .sample-requotation-dialog, .sample-workflow-dialog)';
+
+/* 单行交互控件统一为 32px；多行输入继续按内容自适应。 */
+#{$management-roots} :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number),
+body:has(#{$management-roots}) .el-overlay :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number),
+body:has(#{$management-roots}) .el-drawer__container :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number) {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 5px;
+}
+
+#{$management-roots} .el-input-number :is(.el-input, .el-input__wrapper),
+body:has(#{$management-roots}) .el-overlay .el-input-number :is(.el-input, .el-input__wrapper),
+body:has(#{$management-roots}) .el-drawer__container .el-input-number :is(.el-input, .el-input__wrapper) {
+  height: 32px !important;
+  min-height: 32px !important;
+}
+
+#{$management-roots} :is(.el-tag, [class*='status-tag'], .sample-page-status),
+body:has(#{$management-roots}) .el-overlay :is(.el-tag, [class*='status-tag']),
+body:has(#{$management-roots}) .el-drawer__container :is(.el-tag, [class*='status-tag']) {
+  box-sizing: border-box;
+  height: 24px !important;
+  min-height: 24px !important;
+  line-height: 22px !important;
+}
+
+/* 表单随控件高度收紧，但保留校验文字与多行输入所需空间。 */
+#{$management-roots} .el-form-item,
+body:has(#{$management-roots}) .el-overlay .el-form-item,
+body:has(#{$management-roots}) .el-drawer__container .el-form-item {
+  margin-bottom: 12px;
+}
+
+#{$management-roots} .el-form-item__label,
+body:has(#{$management-roots}) .el-overlay .el-form-item__label,
+body:has(#{$management-roots}) .el-drawer__container .el-form-item__label {
+  padding-bottom: 4px;
+  line-height: 20px;
+}
+
+/* 普通业务数据表格统一采用超紧凑参数。 */
+#{$data-table-roots} .el-table,
+body:has(#{$management-roots}) .el-overlay .el-table,
+body:has(#{$management-roots}) .el-drawer__container .el-table {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 5px;
+  --el-table-border-color: #ddd6c9;
+  --el-table-header-bg-color: #f0eadf;
+  --el-table-row-hover-bg-color: #fff6ea;
+  --el-table-current-row-bg-color: #fff4e6;
+  color: #4d4c48;
+}
+
+#{$data-table-roots} .el-table__header-wrapper th.el-table__cell,
+body:has(#{$management-roots}) .el-overlay .el-table__header-wrapper th.el-table__cell,
+body:has(#{$management-roots}) .el-drawer__container .el-table__header-wrapper th.el-table__cell {
+  box-sizing: border-box;
+  height: 44px !important;
+  padding: 0 !important;
+  color: #6f6a61 !important;
+  background: #f0eadf !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 16px !important;
+}
+
+#{$data-table-roots} .el-table__body-wrapper td.el-table__cell,
+body:has(#{$management-roots}) .el-overlay .el-table__body-wrapper td.el-table__cell,
+body:has(#{$management-roots}) .el-drawer__container .el-table__body-wrapper td.el-table__cell {
+  box-sizing: border-box;
+  height: 40px !important;
+  padding: 0 !important;
+  color: #4d4c48;
+  background: #fcfbf7;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+#{$data-table-roots} .el-table__body tr,
+body:has(#{$management-roots}) .el-overlay .el-table__body tr,
+body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
+  height: 40px !important;
+}
+
+#{$data-table-roots} .el-table__cell > .cell,
+body:has(#{$management-roots}) .el-overlay .el-table__cell > .cell,
+body:has(#{$management-roots}) .el-drawer__container .el-table__cell > .cell {
+  padding-right: 16px !important;
+  padding-left: 16px !important;
+  overflow: hidden;
+  font-size: inherit;
+  line-height: inherit;
+  text-overflow: ellipsis;
+}
+
+#{$data-table-roots} .el-table__header-wrapper .cell {
+  white-space: normal;
+}
+
+#{$data-table-roots} .el-table__body-wrapper .cell {
+  white-space: nowrap;
+}
+
+#{$data-table-roots} .el-table .el-checkbox__inner,
+body:has(#{$management-roots}) .el-overlay .el-table .el-checkbox__inner,
+body:has(#{$management-roots}) .el-drawer__container .el-table .el-checkbox__inner {
+  width: 14px;
+  height: 14px;
+}
+
+#{$data-table-roots} .el-table__body tr:hover > td.el-table__cell,
+body:has(#{$management-roots}) .el-overlay .el-table__body tr:hover > td.el-table__cell,
+body:has(#{$management-roots}) .el-drawer__container .el-table__body tr:hover > td.el-table__cell {
+  background: #fff6ea !important;
+}
+
+/* 图片、复合字段及行内编辑控件允许按内容增高，避免 40px 强制裁切。 */
+:is(.sample-create-page, .sample-form-page, .sample-detail-page, .warehouse-review-page, .material-request-page, .production-create-page, .production-edit-page, .production-form-page, .bom-create-page, .bom-editor-page) .el-table__body-wrapper td.el-table__cell,
+body:has(#{$management-roots}) .el-overlay :is(.sample-batch-dialog, .sample-production-dialog, .sample-receipt-dialog) .el-table__body-wrapper td.el-table__cell,
+body:has(#{$management-roots}) .el-drawer__container .el-table__body-wrapper td.el-table__cell {
+  height: auto !important;
+  min-height: 40px;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+:is(.sample-create-page, .sample-form-page, .sample-detail-page, .warehouse-review-page, .material-request-page, .production-create-page, .production-edit-page, .production-form-page, .bom-create-page, .bom-editor-page) .el-table__body tr,
+body:has(#{$management-roots}) .el-overlay :is(.sample-batch-dialog, .sample-production-dialog, .sample-receipt-dialog) .el-table__body tr,
+body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
+  height: auto !important;
+  min-height: 40px;
+}
+
+/* 列表工具区、表格和分页之间按已确认的垂直节奏收紧。 */
+#{$list-roots} :is(.filters, .filter-row, .filter-grid, .list-toolbar__filters) {
+  min-height: 32px;
+}
+
+#{$list-roots} :is(.table-toolbar, .list-toolbar) {
+  height: 32px !important;
+  min-height: 32px !important;
+  margin-top: 10px !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+#{$list-roots} :is(.table-card, .list-card, .list-surface) {
+  margin-top: 14px !important;
+}
+
+#{$list-roots} :is(.table-footer, .list-card__footer, .pagination-row) {
+  box-sizing: border-box;
+  height: 48px !important;
+  min-height: 48px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+#{$list-roots} .el-pagination {
+  gap: 10px;
+  --el-pagination-button-width: 38px;
+  --el-pagination-button-height: 32px;
+}
+
+#{$list-roots} .el-pagination .el-select {
+  width: 136px;
+}
+
+#{$list-roots} .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
+  box-sizing: border-box;
+  min-width: 38px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  margin: 0;
+  border-radius: 5px;
+}
+
+/* 列表统计区域：样品申请保留横向状态含义，其余卡片压缩为单行统计。 */
+.sample-list-page .quick-views,
+:is(.production-list-page, .bom-list-page) .status-tabs {
+  height: 46px !important;
+  min-height: 46px !important;
+}
+
+:is(.production-list-page, .bom-list-page) .status-tab {
+  height: 46px !important;
+}
+
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stats-grid {
+  gap: 12px;
+  margin-bottom: 17px;
+}
+
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-card {
+  box-sizing: border-box;
+  height: 46px !important;
+  align-items: center;
+  padding: 4px 14px;
+}
+
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-copy {
+  display: grid;
+  grid-template-columns: max-content auto;
+  align-items: center;
+  gap: 12px;
+}
+
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-copy strong {
+  font-size: 20px;
+  line-height: 28px;
+}
+
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-icon {
+  width: 28px;
+  height: 28px;
+  margin-top: 0;
+}
+
+/* 原生业务表格遵循同一尺寸；打印单据表格不在此选择器内。 */
+:is(.task-detail-page, .warehouse-review-page, .material-request-page) table:not(.bom-table) {
+  width: 100%;
+  border-collapse: collapse;
+  color: #4d4c48;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:is(.task-detail-page, .warehouse-review-page, .material-request-page) table:not(.bom-table) thead th {
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 16px !important;
+  color: #6f6a61;
+  background: #f0eadf;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+:is(.task-detail-page, .warehouse-review-page, .material-request-page) table:not(.bom-table) tbody td {
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 4px 16px !important;
+  font-size: 12px;
+  line-height: 18px;
+  vertical-align: middle;
+}
+
+/* 部分 Element Plus 抽屉直接传送为浮层根节点，使用其显式业务类补足作用域。 */
+#{$overlay-roots} :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number) {
+  box-sizing: border-box;
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: 5px;
+}
+
+#{$overlay-roots} .el-input-number :is(.el-input, .el-input__wrapper) {
+  height: 32px !important;
+  min-height: 32px !important;
+}
+
+#{$overlay-roots} :is(.el-tag, [class*='status-tag']) {
+  box-sizing: border-box;
+  height: 24px !important;
+  min-height: 24px !important;
+  line-height: 22px !important;
+}
+
+#{$overlay-roots} .el-form-item {
+  margin-bottom: 12px;
+}
+
+#{$overlay-roots} .el-form-item__label {
+  padding-bottom: 4px;
+  line-height: 20px;
+}
+
+#{$overlay-roots} .el-table__header-wrapper th.el-table__cell {
+  box-sizing: border-box;
+  height: 44px !important;
+  padding: 0 !important;
+  color: #6f6a61 !important;
+  background: #f0eadf !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  line-height: 16px !important;
+}
+
+#{$overlay-roots} .el-table__body tr,
+#{$overlay-roots} .el-table__body-wrapper td.el-table__cell {
+  box-sizing: border-box;
+  height: 40px !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+#{$overlay-roots} .el-table__cell > .cell {
+  padding-right: 16px !important;
+  padding-left: 16px !important;
+}
+
+:is(.sample-batch-dialog, .sample-production-dialog, .sample-receipt-dialog, .line-editor-drawer) .el-table__body tr,
+:is(.sample-batch-dialog, .sample-production-dialog, .sample-receipt-dialog, .line-editor-drawer) .el-table__body-wrapper td.el-table__cell {
+  height: auto !important;
+  min-height: 40px;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+/* 全屏材料填写页会移到 body；操作按钮仍遵守全局 32px 规范。 */
+.material-request-page.is-fullscreen :is(.fullscreen-header .el-button, .material-editor .material-toolbar .el-button) {
+  height: 32px !important;
+  min-height: 32px !important;
+}

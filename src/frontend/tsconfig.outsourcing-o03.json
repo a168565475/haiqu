@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.outsourcing-o03.tsbuildinfo"
+  },
+  "include": [
+    "src/api/outsourcing.ts",
+    "src/types/outsourcing.ts",
+    "src/components/outsourcing/OutsourcingMaterialDialog.vue",
+    "src/components/outsourcing/OutsourcingProcessingDialog.vue",
+    "src/components/outsourcing/OutsourcingSourcePlanDialog.vue",
+    "src/views/outsourcing/OutsourcingOrderFormView.vue",
+    "src/views/outsourcing/OutsourcingOrderDetailView.vue",
+    "src/views/outsourcing/OutsourcingOrderListView.vue"
+  ]
+}

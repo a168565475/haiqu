@@ -1,0 +1,932 @@
+<script setup lang="ts">
+import ElDialog from '@/components/common/AppWindowDialog.vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { AxiosError } from 'axios'
+import { useRouter } from 'vue-router'
+import {
+  ElMessage,
+  ElMessageBox,
+  type FormInstance,
+  type FormRules,
+} from 'element-plus'
+import {
+  Collection,
+  Download,
+  Edit,
+  Lock,
+  Plus,
+  Refresh,
+  Search,
+  Warning,
+} from '@element-plus/icons-vue'
+
+import {
+  archiveMasterDataRecord,
+  changeMasterDataStatus,
+  correctExchangeRate,
+  createMasterDataRecord,
+  fetchAllMasterDataRecords,
+  fetchMasterDataList,
+  fetchMasterDataRecord,
+  fetchMasterDataSummary,
+  updateMasterDataRecord,
+} from '@/api/referenceData'
+import { useAuthStore } from '@/stores/auth'
+import type {
+  CodedMasterData,
+  MasterDataInput,
+  MasterDataRecord,
+  MasterDataResource,
+  MasterDataSummary,
+  ReferenceDataApiError,
+  ReferenceStatus,
+} from '@/types/referenceData'
+
+interface CategoryDefinition {
+  key: string
+  label: string
+  resource: MasterDataResource
+  permissionModel: string
+  countKey: string
+  title: string
+  standardLabel: string
+}
+
+interface ColumnDefinition {
+  key: string
+  label: string
+  minWidth?: number
+  compactHidden?: boolean
+}
+
+interface FieldDefinition {
+  key: string
+  label: string
+  type?: 'text' | 'number' | 'date' | 'textarea' | 'select'
+  required?: boolean
+  placeholder?: string
+  options?: Array<{ value: string | number; label: string }>
+  lookup?: 'countries' | 'currencies'
+  min?: number
+  max?: number
+}
+
+const categories: CategoryDefinition[] = [
+  { key: 'country', label: '国家 / 地区', resource: 'countries', permissionModel: 'country', countKey: 'countries', title: '国家 / 地区', standardLabel: 'ISO 3166' },
+  { key: 'currency', label: '币种', resource: 'currencies', permissionModel: 'currency', countKey: 'currencies', title: '币种', standardLabel: 'ISO 4217' },
+  { key: 'exchangeRate', label: '汇率', resource: 'exchange-rates', permissionModel: 'exchangerate', countKey: 'exchange_rates', title: '汇率历史', standardLabel: '人工维护' },
+  { key: 'unit', label: '单位', resource: 'units', permissionModel: 'unit', countKey: 'units', title: '单位', standardLabel: 'UN/CEFACT Rec.20' },
+  { key: 'incoterm', label: 'Incoterms', resource: 'incoterms', permissionModel: 'incoterm', countKey: 'incoterms', title: 'Incoterms', standardLabel: 'ICC 2020' },
+  { key: 'paymentMethod', label: '付款方式', resource: 'payment-methods', permissionModel: 'paymentmethod', countKey: 'payment_methods', title: '付款方式', standardLabel: '公司维护' },
+  { key: 'transportMethod', label: '运输方式', resource: 'transport-methods', permissionModel: 'transportmethod', countKey: 'transport_methods', title: '运输方式', standardLabel: '公司维护' },
+  { key: 'port', label: '港口', resource: 'ports', permissionModel: 'port', countKey: 'ports', title: '港口', standardLabel: 'UN/LOCODE' },
+  { key: 'courier', label: '快递公司', resource: 'couriers', permissionModel: 'courier', countKey: 'couriers', title: '快递公司', standardLabel: '公司维护' },
+]
+
+const columnsByCategory: Record<string, ColumnDefinition[]> = {
+  country: [
+    { key: 'code', label: 'Alpha-2', minWidth: 90 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 130 },
+    { key: 'english_name', label: '英文名称', minWidth: 180, compactHidden: true },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'alpha3_code', label: 'Alpha-3', minWidth: 90 },
+    { key: 'numeric_code', label: '数字码', minWidth: 90, compactHidden: true },
+    { key: 'source_version', label: '标准版本', minWidth: 180 },
+  ],
+  currency: [
+    { key: 'code', label: '字母码', minWidth: 90 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 130 },
+    { key: 'english_name', label: '英文名称', minWidth: 170, compactHidden: true },
+    { key: 'symbol', label: '符号', minWidth: 80 },
+    { key: 'numeric_code', label: '数字码', minWidth: 90 },
+    { key: 'decimal_places', label: '小数位', minWidth: 80 },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'source_version', label: '标准版本', minWidth: 180 },
+  ],
+  exchangeRate: [
+    { key: 'effective_date', label: '生效日期', minWidth: 110 },
+    { key: 'base_currency_code', label: '基础币种', minWidth: 90 },
+    { key: 'quote_currency_code', label: '目标币种', minWidth: 90 },
+    { key: 'rate', label: '汇率', minWidth: 130 },
+    { key: 'source_name', label: '来源', minWidth: 130 },
+    { key: 'source_version', label: '来源版本', minWidth: 140, compactHidden: true },
+    { key: 'entered_by_name', label: '录入人', minWidth: 110 },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'created_at', label: '录入时间', minWidth: 160 },
+  ],
+  unit: [
+    { key: 'code', label: '代码', minWidth: 100 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 130 },
+    { key: 'english_name', label: '英文名称', minWidth: 160, compactHidden: true },
+    { key: 'symbol', label: '符号', minWidth: 90 },
+    { key: 'category', label: '类别', minWidth: 120 },
+    { key: 'decimal_places', label: '允许小数位', minWidth: 100 },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'source_version', label: '标准版本', minWidth: 170 },
+  ],
+  incoterm: [
+    { key: 'code', label: '代码', minWidth: 90 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 150 },
+    { key: 'english_name', label: '英文名称', minWidth: 180, compactHidden: true },
+    { key: 'rules_version', label: '规则版本', minWidth: 110 },
+    { key: 'transport_scope', label: '适用运输', minWidth: 170 },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'source_version', label: '标准版本', minWidth: 150 },
+  ],
+  paymentMethod: commonColumns(),
+  transportMethod: commonColumns(),
+  port: [
+    { key: 'code', label: 'UN/LOCODE', minWidth: 110 },
+    { key: 'country_name', label: '国家 / 地区', minWidth: 130 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 140 },
+    { key: 'english_name', label: '英文名称', minWidth: 170, compactHidden: true },
+    { key: 'administrative_area', label: '行政区', minWidth: 130 },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'source_version', label: '标准版本', minWidth: 150 },
+  ],
+  courier: [
+    { key: 'code', label: '代码', minWidth: 100 },
+    { key: 'chinese_name', label: '名称', minWidth: 150 },
+    { key: 'english_name', label: '英文名称', minWidth: 160, compactHidden: true },
+    { key: 'tracking_url_template', label: '查询地址模板', minWidth: 260 },
+    { key: 'status', label: '状态', minWidth: 86 },
+  ],
+}
+
+function commonColumns(): ColumnDefinition[] {
+  return [
+    { key: 'code', label: '代码', minWidth: 110 },
+    { key: 'chinese_name', label: '中文名称', minWidth: 150 },
+    { key: 'english_name', label: '英文名称', minWidth: 180, compactHidden: true },
+    { key: 'status', label: '状态', minWidth: 86 },
+    { key: 'description', label: '说明', minWidth: 220 },
+  ]
+}
+
+const authStore = useAuthStore()
+const router = useRouter()
+const isSuperuser = computed(() => authStore.user?.is_superuser === true)
+const selectedKey = ref(categories[0].key)
+const selectedCategory = computed(() => categories.find((item) => item.key === selectedKey.value) ?? categories[0])
+
+function permission(category: CategoryDefinition, action: 'view' | 'add' | 'change'): string {
+  return `reference_data.${action}_${category.permissionModel}`
+}
+
+function can(permissionCode: string): boolean {
+  return isSuperuser.value || authStore.hasPermission(permissionCode)
+}
+
+function canView(category: CategoryDefinition): boolean {
+  return can(permission(category, 'view'))
+}
+
+const canViewPage = computed(() => categories.some(canView))
+const canViewSelected = computed(() => canView(selectedCategory.value))
+const canAddSelected = computed(() => can(permission(selectedCategory.value, 'add')))
+const canChangeSelected = computed(() => can(permission(selectedCategory.value, 'change')))
+const isExchangeRate = computed(() => selectedCategory.value.resource === 'exchange-rates')
+
+const summary = ref<MasterDataSummary>({
+  category_counts: {},
+  standard_source_count: 5,
+  standard_sources: ['ISO 3166', 'ISO 4217', 'UN/CEFACT Rec.20', 'ICC 2020', 'UN/LOCODE'],
+  base_currency: null,
+  config_version: null,
+})
+const records = ref<MasterDataRecord[]>([])
+const loading = ref(false)
+const loadError = ref('')
+const permissionDenied = ref(false)
+const keyword = ref('')
+const statusFilter = ref<ReferenceStatus | ''>('')
+const sourceFilter = ref('')
+const compactViewport = ref(window.innerWidth < 1600)
+
+const currentColumns = computed(() => {
+  const columns = columnsByCategory[selectedCategory.value.key] ?? commonColumns()
+  return compactViewport.value ? columns.filter((column) => !column.compactHidden) : columns
+})
+
+function syncViewport(): void {
+  compactViewport.value = window.innerWidth < 1600
+}
+
+function categoryCount(category: CategoryDefinition): number {
+  return summary.value.category_counts[category.countKey] ?? 0
+}
+
+function statusCode(error: unknown): number | undefined {
+  return error instanceof AxiosError ? error.response?.status : undefined
+}
+
+function apiPayload(error: unknown): ReferenceDataApiError | undefined {
+  return error instanceof AxiosError ? error.response?.data as ReferenceDataApiError : undefined
+}
+
+function apiMessage(error: unknown, fallback: string): string {
+  return apiPayload(error)?.error?.message || fallback
+}
+
+async function loadSummary(): Promise<void> {
+  summary.value = await fetchMasterDataSummary()
+}
+
+async function loadRecords(): Promise<void> {
+  records.value = []
+  loadError.value = ''
+  permissionDenied.value = false
+  if (!canViewSelected.value) {
+    permissionDenied.value = true
+    return
+  }
+  loading.value = true
+  try {
+    records.value = await fetchAllMasterDataRecords(selectedCategory.value.resource, {
+      q: keyword.value.trim() || undefined,
+      status: statusFilter.value || undefined,
+      source: sourceFilter.value || undefined,
+    })
+  } catch (error) {
+    if (statusCode(error) === 403) permissionDenied.value = true
+    else loadError.value = apiMessage(error, '基础资料加载失败，请检查网络后重试。')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadPage(): Promise<void> {
+  if (!canViewPage.value) return
+  loading.value = true
+  loadError.value = ''
+  try {
+    await Promise.all([loadSummary(), loadRecords()])
+  } catch (error) {
+    if (statusCode(error) === 403) permissionDenied.value = true
+    else loadError.value = apiMessage(error, '基础资料中心加载失败，请稍后重试。')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function selectCategory(category: CategoryDefinition): Promise<void> {
+  selectedKey.value = category.key
+  keyword.value = ''
+  statusFilter.value = ''
+  sourceFilter.value = ''
+  await loadRecords()
+}
+
+async function searchRecords(): Promise<void> {
+  await loadRecords()
+}
+
+async function resetFilters(): Promise<void> {
+  keyword.value = ''
+  statusFilter.value = ''
+  sourceFilter.value = ''
+  await loadRecords()
+}
+
+function formatDateTime(value: unknown): string {
+  if (typeof value !== 'string' || !value) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(value))
+}
+
+function transportScopeLabel(value: unknown): string {
+  if (value === 'ANY_MODE') return '任意运输方式'
+  if (value === 'SEA_INLAND_WATERWAY') return '海运及内河运输'
+  return String(value || '—')
+}
+
+function cellValue(row: MasterDataRecord, key: string): string | number {
+  const value = (row as unknown as Record<string, unknown>)[key]
+  if (key === 'created_at' || key === 'updated_at') return formatDateTime(value)
+  if (key === 'transport_scope') return transportScopeLabel(value)
+  if (key === 'rate' && typeof value === 'string') return value.replace(/0+$/, '').replace(/\.$/, '')
+  return value === null || value === undefined || value === '' ? '—' : String(value)
+}
+
+async function fetchAllCurrentRecords(): Promise<MasterDataRecord[]> {
+  return fetchAllMasterDataRecords(selectedCategory.value.resource, {
+    q: keyword.value.trim() || undefined,
+    status: statusFilter.value || undefined,
+    source: sourceFilter.value || undefined,
+  })
+}
+
+async function exportRecords(): Promise<void> {
+  if (!canViewSelected.value) return
+  try {
+    const data = await fetchAllCurrentRecords()
+    const content = {
+      exported_at: new Date().toISOString(),
+      config_version: summary.value.config_version,
+      category: selectedCategory.value.key,
+      data,
+    }
+    const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `master-data-${selectedCategory.value.resource}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('当前分类已导出')
+  } catch (error) {
+    ElMessage.error(apiMessage(error, '导出失败'))
+  }
+}
+
+const dialogVisible = ref(false)
+const saving = ref(false)
+const editingId = ref('')
+const currentEtag = ref('')
+const correctionMode = ref(false)
+const formRef = ref<FormInstance>()
+const formData = reactive<Record<string, unknown>>({})
+const countryChoices = ref<CodedMasterData[]>([])
+const currencyChoices = ref<CodedMasterData[]>([])
+
+function baseFields(): FieldDefinition[] {
+  return [
+    { key: 'code', label: '代码', required: true, placeholder: '请输入大写稳定编码' },
+    { key: 'chinese_name', label: '中文名称', required: true },
+    { key: 'english_name', label: '英文名称' },
+    { key: 'sort_order', label: '排序', type: 'number', min: 0 },
+    { key: 'source_version', label: '标准 / 来源版本' },
+    { key: 'description', label: '说明', type: 'textarea' },
+  ]
+}
+
+const formFields = computed<FieldDefinition[]>(() => {
+  if (isExchangeRate.value) {
+    const fields: FieldDefinition[] = correctionMode.value ? [] : [
+      { key: 'base_currency', label: '基础币种', type: 'select', lookup: 'currencies', required: true },
+      { key: 'quote_currency', label: '目标币种', type: 'select', lookup: 'currencies', required: true },
+    ]
+    return [
+      ...fields,
+      { key: 'rate', label: '汇率', required: true, placeholder: '必须大于 0' },
+      { key: 'effective_date', label: '生效日期', type: 'date', required: true },
+      { key: 'source_name', label: '来源', required: true },
+      { key: 'source_version', label: '来源版本' },
+      { key: 'description', label: correctionMode.value ? '更正原因' : '说明', type: 'textarea', required: correctionMode.value },
+    ]
+  }
+  const common = baseFields()
+  const insert = (fields: FieldDefinition[]) => [common[0], ...fields, ...common.slice(1)]
+  switch (selectedCategory.value.key) {
+    case 'country':
+      return insert([
+        { key: 'alpha3_code', label: 'Alpha-3', required: true },
+        { key: 'numeric_code', label: '数字码', required: true, placeholder: '三位数字，如 156' },
+      ])
+    case 'currency':
+      return insert([
+        { key: 'numeric_code', label: '数字码', required: true, placeholder: '三位数字，如 840' },
+        { key: 'decimal_places', label: '小数位', type: 'number', min: 0, max: 6, required: true },
+        { key: 'symbol', label: '符号' },
+      ])
+    case 'unit':
+      return insert([
+        { key: 'symbol', label: '符号' },
+        { key: 'category', label: '类别' },
+        { key: 'decimal_places', label: '允许小数位', type: 'number', min: 0, max: 6, required: true },
+      ])
+    case 'incoterm':
+      return insert([
+        { key: 'rules_version', label: '规则版本', required: true, placeholder: '如 2020' },
+        {
+          key: 'transport_scope', label: '适用运输', type: 'select', required: true,
+          options: [
+            { value: 'ANY_MODE', label: '任意运输方式' },
+            { value: 'SEA_INLAND_WATERWAY', label: '海运及内河运输' },
+          ],
+        },
+      ])
+    case 'port':
+      return insert([
+        { key: 'country', label: '国家 / 地区', type: 'select', lookup: 'countries', required: true },
+        { key: 'administrative_area', label: '行政区' },
+      ])
+    case 'courier':
+      return insert([{ key: 'tracking_url_template', label: '查询地址模板', placeholder: 'https://example.com/track/{number}' }])
+    default:
+      return common
+  }
+})
+
+const formRules = computed<FormRules>(() => {
+  const rules: FormRules = {}
+  for (const field of formFields.value) {
+    if (field.required) rules[field.key] = [{ required: true, message: `请填写${field.label}`, trigger: 'change' }]
+  }
+  return rules
+})
+
+function resetFormData(): void {
+  for (const key of Object.keys(formData)) delete formData[key]
+  Object.assign(formData, {
+    sort_order: 0,
+    decimal_places: selectedCategory.value.key === 'currency' ? 2 : 0,
+    effective_date: new Date().toISOString().slice(0, 10),
+  })
+}
+
+async function loadLookup(resource: 'countries' | 'currencies', query = ''): Promise<void> {
+  if (!can(`reference_data.view_${resource === 'countries' ? 'country' : 'currency'}`)) return
+  const response = await fetchMasterDataList<CodedMasterData>(resource, {
+    page_size: 100,
+    q: query || undefined,
+    status: 'ACTIVE',
+  })
+  if (resource === 'countries') countryChoices.value = response.data
+  else currencyChoices.value = response.data
+}
+
+function fieldOptions(field: FieldDefinition): Array<{ value: string | number; label: string }> {
+  if (field.options) return field.options
+  const choices = field.lookup === 'countries' ? countryChoices.value : currencyChoices.value
+  return choices.map((item) => ({ value: item.id, label: `${item.code} · ${item.chinese_name || item.english_name}` }))
+}
+
+async function remoteLookup(field: FieldDefinition, query: string): Promise<void> {
+  if (field.lookup) await loadLookup(field.lookup, query)
+}
+
+async function openCreate(): Promise<void> {
+  if (!canAddSelected.value) return
+  if (isExchangeRate.value && !can('reference_data.view_currency')) {
+    ElMessage.warning('新增汇率前需要币种查看权限')
+    return
+  }
+  if (selectedCategory.value.key === 'port' && !can('reference_data.view_country')) {
+    ElMessage.warning('新增港口前需要国家 / 地区查看权限')
+    return
+  }
+  resetFormData()
+  editingId.value = ''
+  currentEtag.value = ''
+  correctionMode.value = false
+  try {
+    if (isExchangeRate.value) await loadLookup('currencies')
+    if (selectedCategory.value.key === 'port') await loadLookup('countries')
+  } catch (error) {
+    ElMessage.error(apiMessage(error, '关联基础资料加载失败'))
+    return
+  }
+  dialogVisible.value = true
+}
+
+async function ensureCurrentLookup(row: MasterDataRecord): Promise<void> {
+  if (selectedCategory.value.key === 'port') {
+    await loadLookup('countries', String((row as unknown as Record<string, unknown>).country_code ?? ''))
+  }
+  if (isExchangeRate.value) await loadLookup('currencies')
+}
+
+async function openEdit(row: MasterDataRecord): Promise<void> {
+  if (!canChangeSelected.value) return
+  try {
+    const response = await fetchMasterDataRecord(selectedCategory.value.resource, row.id)
+    resetFormData()
+    editingId.value = row.id
+    currentEtag.value = response.etag
+    correctionMode.value = isExchangeRate.value
+    await ensureCurrentLookup(response.data)
+    for (const field of formFields.value) {
+      const value = (response.data as unknown as Record<string, unknown>)[field.key]
+      if (value !== undefined) formData[field.key] = value
+    }
+    dialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(apiMessage(error, '记录详情加载失败'))
+  }
+}
+
+function normalizePayload(): MasterDataInput {
+  const payload: MasterDataInput = {}
+  for (const field of formFields.value) {
+    let value = formData[field.key]
+    if (['code', 'alpha3_code'].includes(field.key) && typeof value === 'string') value = value.trim().toUpperCase()
+    payload[field.key] = value ?? ''
+  }
+  return payload
+}
+
+function updateFormField(key: string, value: unknown): void {
+  formData[key] = value
+}
+
+async function saveRecord(): Promise<void> {
+  if (!formRef.value || saving.value) return
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+  const payload = normalizePayload()
+  if (isExchangeRate.value && payload.base_currency && payload.base_currency === payload.quote_currency) {
+    ElMessage.warning('基础币种和目标币种不能相同')
+    return
+  }
+  saving.value = true
+  try {
+    if (correctionMode.value) {
+      await correctExchangeRate(editingId.value, payload, currentEtag.value)
+      ElMessage.success('汇率更正已追加，原记录已保留并停用')
+    } else if (editingId.value) {
+      await updateMasterDataRecord(selectedCategory.value.resource, editingId.value, payload, currentEtag.value)
+      ElMessage.success('基础资料已更新')
+    } else {
+      await createMasterDataRecord(selectedCategory.value.resource, payload)
+      ElMessage.success(isExchangeRate.value ? '汇率记录已新增' : '基础资料已新增')
+    }
+    dialogVisible.value = false
+    await Promise.all([loadSummary(), loadRecords()])
+  } catch (error) {
+    if (statusCode(error) === 412) {
+      dialogVisible.value = false
+      await ElMessageBox.alert('该记录已被其他用户更新，请重新加载后再编辑。', '并发编辑冲突', { type: 'warning' })
+      await loadRecords()
+    } else if (statusCode(error) === 428) {
+      ElMessage.error('缺少记录版本，请关闭窗口后重新编辑')
+    } else {
+      ElMessage.error(apiMessage(error, '保存失败，请检查填写内容'))
+    }
+  } finally {
+    saving.value = false
+  }
+}
+
+async function changeStatus(row: MasterDataRecord): Promise<void> {
+  if (!canChangeSelected.value || isExchangeRate.value) return
+  const target = row.status === 'ACTIVE' ? 'deactivate' : 'activate'
+  const actionLabel = target === 'deactivate' ? '停用' : '启用'
+  try {
+    const detail = await fetchMasterDataRecord(selectedCategory.value.resource, row.id)
+    const result = await ElMessageBox.prompt(
+      target === 'deactivate'
+        ? '停用后历史数据继续显示，但新建业务不可再选择。请输入原因。'
+        : '请输入重新启用原因。',
+      `${actionLabel}${selectedCategory.value.label}`,
+      { inputValidator: (value) => Boolean(value.trim()) || '原因不能为空', confirmButtonText: actionLabel },
+    )
+    await changeMasterDataStatus(
+      selectedCategory.value.resource as Exclude<MasterDataResource, 'exchange-rates'>,
+      row.id,
+      target,
+      detail.etag,
+      result.value.trim(),
+    )
+    ElMessage.success(`${actionLabel}成功`)
+    await Promise.all([loadSummary(), loadRecords()])
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    if (statusCode(error) === 412) {
+      ElMessage.warning('记录已被其他用户修改，请刷新后重试')
+      await loadRecords()
+    } else if (statusCode(error) === 409) {
+      await ElMessageBox.alert(apiMessage(error, '该资料仍被业务引用，当前操作已阻止。'), '引用中的资料', { type: 'warning' })
+    } else {
+      ElMessage.error(apiMessage(error, `${actionLabel}失败`))
+    }
+  }
+}
+
+async function archiveRecord(row: MasterDataRecord): Promise<void> {
+  if (!canChangeSelected.value || isExchangeRate.value) return
+  try {
+    const detail = await fetchMasterDataRecord(selectedCategory.value.resource, row.id)
+    const result = await ElMessageBox.prompt('归档后默认列表不再显示该资料，请输入归档原因。', '归档资料', {
+      type: 'warning', inputValidator: (value) => Boolean(value.trim()) || '原因不能为空', confirmButtonText: '确认归档',
+    })
+    await archiveMasterDataRecord(
+      selectedCategory.value.resource as Exclude<MasterDataResource, 'exchange-rates'>,
+      row.id,
+      detail.etag,
+      result.value.trim(),
+    )
+    ElMessage.success('资料已归档')
+    await Promise.all([loadSummary(), loadRecords()])
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    if (statusCode(error) === 409) {
+      await ElMessageBox.alert(apiMessage(error, '该资料仍被业务引用，不能归档。'), '引用中的资料', { type: 'warning' })
+    } else {
+      ElMessage.error(apiMessage(error, '归档失败'))
+    }
+  }
+}
+
+onMounted(async () => {
+  window.addEventListener('resize', syncViewport)
+  const firstAccessible = categories.find(canView)
+  if (firstAccessible) selectedKey.value = firstAccessible.key
+  await loadPage()
+})
+
+onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
+</script>
+
+<template>
+  <section class="master-data-page system-settings-theme" data-testid="master-data-center">
+    <div v-if="!canViewPage" class="state-page">
+      <el-icon><Lock /></el-icon>
+      <h1>无配置权限</h1>
+      <p>当前账号没有九类基础资料的查看权限，请联系管理员授权。</p>
+    </div>
+
+    <template v-else>
+      <div class="page-breadcrumb">
+        <button type="button" @click="router.push({ name: 'reference-data-settings' })">系统配置</button>
+        <span>/</span><span>基础资料中心</span>
+      </div>
+
+      <header class="page-heading">
+        <div>
+          <h1>基础资料中心</h1>
+          <p>统一维护九类贸易主数据；标准清单记录来源版本，停用后保留历史显示</p>
+        </div>
+        <div class="page-heading__actions">
+          <el-button :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
+          <el-button v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增资料</el-button>
+        </div>
+      </header>
+
+      <div class="page-grid">
+        <aside class="category-card">
+          <h2>资料分类</h2>
+          <button
+            v-for="category in categories"
+            :key="category.key"
+            type="button"
+            class="category-item"
+            :class="{ 'is-active': selectedKey === category.key, 'is-locked': !canView(category) }"
+            @click="selectCategory(category)"
+          >
+            <span>{{ category.label }}</span>
+            <span>{{ categoryCount(category) }}</span>
+          </button>
+        </aside>
+
+        <main class="main-column">
+          <div class="metric-grid">
+            <article class="metric-card">
+              <span class="metric-card__icon metric-card__icon--blue"><el-icon><Collection /></el-icon></span>
+              <div><span>资料类型</span><strong>9</strong></div>
+            </article>
+            <article class="metric-card">
+              <span class="metric-card__icon metric-card__icon--green">＋</span>
+              <div><span>标准来源</span><strong>{{ summary.standard_source_count }}</strong></div>
+            </article>
+            <article class="metric-card">
+              <span class="metric-card__icon metric-card__icon--orange"><el-icon><Warning /></el-icon></span>
+              <div><span>公司本位币</span><strong>{{ summary.base_currency || '未配置' }}</strong></div>
+            </article>
+          </div>
+
+          <section class="filter-card" aria-label="基础资料筛选">
+            <label><span>关键词</span><el-input v-model="keyword" placeholder="输入名称或编码" clearable @keyup.enter="searchRecords" /></label>
+            <label><span>状态</span><el-select v-model="statusFilter" placeholder="全部状态" clearable>
+              <el-option label="启用" value="ACTIVE" /><el-option label="停用" value="INACTIVE" />
+            </el-select></label>
+            <label><span>标准来源</span><el-select v-model="sourceFilter" placeholder="全部来源" clearable>
+              <el-option v-for="source in summary.standard_sources" :key="source" :label="source" :value="source" />
+            </el-select></label>
+            <el-button type="primary" :icon="Search" @click="searchRecords">查询</el-button>
+            <el-button @click="resetFilters">重置</el-button>
+          </section>
+
+          <section class="data-card" v-loading="loading">
+            <div class="data-card__header">
+              <div><h2>{{ selectedCategory.title }}</h2><span>共 {{ records.length }} 项</span></div>
+              <div>
+                <el-tag class="settings-tag" effect="plain">{{ selectedCategory.standardLabel }}</el-tag>
+                <el-button v-if="canAddSelected" type="primary" size="small" @click="openCreate">
+                  {{ isExchangeRate ? '新增汇率' : `新增${selectedCategory.label}` }}
+                </el-button>
+              </div>
+            </div>
+
+            <div v-if="permissionDenied" class="card-state">
+              <el-icon><Lock /></el-icon><h3>无查看权限</h3><p>当前账号不能查看此类基础资料。</p>
+            </div>
+            <div v-else-if="loadError" class="card-state">
+              <el-icon><Warning /></el-icon><h3>资料加载失败</h3><p>{{ loadError }}</p>
+              <el-button type="primary" :icon="Refresh" @click="loadRecords">重新加载</el-button>
+            </div>
+            <div v-else-if="!loading && records.length === 0" class="card-state">
+              <el-icon><Collection /></el-icon>
+              <h3>{{ isExchangeRate ? '暂无汇率历史' : '暂无基础资料' }}</h3>
+              <p v-if="isExchangeRate && !summary.base_currency">公司本位币尚未配置，系统不会自动折算或展示本位币金额；仍可人工新增汇率历史。</p>
+              <p v-else>当前筛选条件下没有记录，可调整筛选或新增资料。</p>
+              <el-button v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">{{ isExchangeRate ? '新增汇率' : '新增资料' }}</el-button>
+            </div>
+            <template v-else-if="!permissionDenied && !loadError">
+              <el-alert
+                v-if="isExchangeRate && !summary.base_currency"
+                class="base-currency-alert"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="公司本位币未配置：仅维护汇率历史，不执行自动折算。"
+              />
+              <el-table :data="records" class="master-table" height="100%" row-key="id">
+                <el-table-column
+                  v-for="column in currentColumns"
+                  :key="column.key"
+                  :label="column.label"
+                  :min-width="column.minWidth"
+                  :class-name="column.compactHidden ? 'compact-hidden' : ''"
+                  :label-class-name="column.compactHidden ? 'compact-hidden' : ''"
+                >
+                  <template #default="{ row }">
+                    <el-tag v-if="column.key === 'status'" class="settings-tag" :type="row.status === 'ACTIVE' ? 'success' : 'info'" round>
+                      {{ row.status === 'ACTIVE' ? '启用' : '停用' }}
+                    </el-tag>
+                    <span v-else>{{ cellValue(row, column.key) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column v-if="canChangeSelected" label="操作" width="150" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link :icon="Edit" @click="openEdit(row)">{{ isExchangeRate ? '更正' : '编辑' }}</el-button>
+                    <el-dropdown v-if="!isExchangeRate" trigger="click">
+                      <el-button link>更多</el-button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item @click="changeStatus(row)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-dropdown-item>
+                          <el-dropdown-item divided @click="archiveRecord(row)">归档</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </template>
+          </section>
+
+          <section class="standards-card">
+            <div class="standards-card__heading"><h2>数据标准与维护说明</h2><span>标准清单以版本化资源离线入库，迁移运行时不联网下载</span></div>
+            <div class="standards-grid">
+              <div><span>国家 / 地区</span><strong>ISO 3166</strong><em>Alpha-2 / Alpha-3 / 数字码</em></div>
+              <div><span>币种</span><strong>ISO 4217</strong><em>字母码 / 数字码 / 小数位</em></div>
+              <div><span>单位</span><strong>UN/CEFACT Rec.20</strong><em>首版不做单位换算</em></div>
+              <div><span>Incoterms</span><strong>ICC 2020 · 11 项</strong><em>地点保存到业务快照</em></div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </template>
+
+    <el-dialog
+      v-model="dialogVisible"
+      :title="correctionMode ? '追加汇率更正' : editingId ? `编辑${selectedCategory.label}` : `新增${selectedCategory.label}`"
+      width="640px"
+      class="system-settings-dialog"
+      draggable
+      destroy-on-close
+    >
+      <el-alert v-if="correctionMode" type="warning" :closable="false" show-icon title="原汇率记录不会被覆盖；保存后原记录停用，并新增一条可追溯的更正记录。" />
+      <el-form ref="formRef" :model="formData" :rules="formRules" label-position="top" class="master-form">
+        <el-form-item v-for="field in formFields" :key="field.key" :label="field.label" :prop="field.key">
+          <el-select
+            v-if="field.type === 'select'"
+            :model-value="formData[field.key] as string | number | undefined"
+            @update:model-value="updateFormField(field.key, $event)"
+            filterable
+            :remote="Boolean(field.lookup)"
+            :remote-method="field.lookup ? (query: string) => remoteLookup(field, query) : undefined"
+            placeholder="请选择"
+            style="width: 100%"
+          >
+            <el-option v-for="option in fieldOptions(field)" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <el-input-number
+            v-else-if="field.type === 'number'"
+            :model-value="formData[field.key] as number | undefined"
+            @update:model-value="updateFormField(field.key, $event)"
+            :min="field.min ?? 0"
+            :max="field.max ?? 999999"
+            controls-position="right"
+            style="width: 100%"
+          />
+          <el-date-picker
+            v-else-if="field.type === 'date'"
+            :model-value="formData[field.key] as string | undefined"
+            @update:model-value="updateFormField(field.key, $event)"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="请选择日期"
+            style="width: 100%"
+          />
+          <el-input
+            v-else
+            :model-value="formData[field.key] as string | number | undefined"
+            @update:model-value="updateFormField(field.key, $event)"
+            :type="field.type === 'textarea' ? 'textarea' : 'text'"
+            :rows="field.type === 'textarea' ? 3 : undefined"
+            :placeholder="field.placeholder"
+            :disabled="Boolean(editingId && field.key === 'code')"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveRecord">{{ correctionMode ? '保存更正' : '保存' }}</el-button>
+      </template>
+    </el-dialog>
+  </section>
+</template>
+
+<style scoped lang="scss">
+.master-data-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
+.page-breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #667085; font-size: 12px; }
+.page-breadcrumb button { padding: 0; border: 0; color: inherit; background: none; cursor: pointer; }
+.page-breadcrumb button:hover { color: #409eff; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.page-heading h1 { margin: 0; font-size: 24px; line-height: 1.35; }
+.page-heading p { margin: 5px 0 0; color: #667085; font-size: 13px; }
+.page-heading__actions { display: flex; flex: none; gap: 10px; }
+.page-grid { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
+.category-card, .filter-card, .data-card, .standards-card, .metric-card { border: 1px solid #e4e7ed; border-radius: 10px; background: #fff; }
+.category-card { min-height: 0; padding: 14px 10px; overflow-y: auto; }
+.category-card h2 { margin: 0 5px 14px; font-size: 16px; font-weight: 600; }
+.category-item { width: 100%; height: 38px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 0 14px; border: 0; border-radius: 7px; color: #1d2129; background: #fff; cursor: pointer; font: inherit; font-size: 13px; }
+.category-item > span:last-child { color: #98a2b3; font-size: 12px; }
+.category-item:hover { background: #f5f6f8; }
+.category-item.is-active { color: #fff; background: #18181b; }
+.category-item.is-active > span:last-child { color: #fff; }
+.category-item.is-locked:not(.is-active) { color: #98a2b3; }
+.main-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.metric-card { height: 96px; display: flex; align-items: center; gap: 12px; padding: 14px; }
+.metric-card__icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; font-size: 21px; }
+.metric-card__icon--blue { color: #409eff; background: #ecf5ff; }
+.metric-card__icon--green { color: #67c23a; background: #f0f9eb; }
+.metric-card__icon--orange { color: #e6a23c; background: #fdf6ec; }
+.metric-card div { display: flex; flex-direction: column; gap: 3px; }
+.metric-card span { color: #667085; font-size: 12px; }
+.metric-card strong { font-size: 20px; }
+.filter-card { min-height: 76px; display: flex; align-items: flex-end; gap: 10px; padding: 11px 14px; }
+.filter-card label { width: 220px; display: flex; flex-direction: column; gap: 5px; color: #667085; font-size: 12px; }
+.data-card { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 12px; overflow: hidden; }
+.data-card__header { height: 38px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.data-card__header > div { display: flex; align-items: center; gap: 12px; }
+.data-card__header h2 { margin: 0; font-size: 16px; }
+.data-card__header span { color: #667085; font-size: 12px; }
+.base-currency-alert { margin: 4px 0 10px; }
+.master-table { flex: 1; min-height: 0; width: 100%; }
+.pagination-row { display: flex; justify-content: flex-end; padding: 12px 2px 0; }
+.card-state { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
+.card-state > .el-icon { font-size: 34px; color: #e6a23c; }
+.card-state h3 { margin: 12px 0 6px; color: #1d2129; font-size: 17px; }
+.card-state p { max-width: 560px; margin: 0 0 16px; font-size: 13px; line-height: 1.7; }
+.standards-card { min-height: 160px; padding: 14px 16px; }
+.standards-card__heading { display: flex; align-items: center; gap: 18px; }
+.standards-card__heading h2 { margin: 0; font-size: 16px; }
+.standards-card__heading span { color: #667085; font-size: 12px; }
+.standards-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
+.standards-grid div { display: flex; flex-direction: column; gap: 8px; }
+.standards-grid span { color: #667085; font-size: 12px; }
+.standards-grid strong { font-size: 18px; }
+.standards-grid em { color: #409eff; font-size: 12px; font-style: normal; }
+.state-page { min-height: 620px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
+.state-page > .el-icon { font-size: 42px; color: #909399; }
+.state-page h1 { margin: 16px 0 8px; color: #1d2129; }
+.state-page p { margin: 0; }
+.master-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; margin-top: 16px; }
+.master-form :deep(.el-form-item:has(textarea)) { grid-column: 1 / -1; }
+
+@media (max-width: 1599px) and (min-width: 769px) {
+  .page-grid { grid-template-columns: 156px minmax(0, 1fr); gap: 12px; }
+  .category-card { min-height: 0; }
+  .category-item { padding: 0 10px; }
+  .filter-card label { width: min(190px, 22vw); }
+  .data-card :deep(.compact-hidden) { display: none; }
+  .standards-card { height: 58px; min-height: 58px; overflow-y: auto; }
+}
+
+@media (max-height: 760px) {
+  .standards-card { height: 58px; min-height: 58px; overflow-y: auto; }
+}
+
+@media (max-width: 900px) {
+  .page-heading { align-items: flex-start; flex-direction: column; }
+  .page-grid { grid-template-columns: 1fr; }
+  .category-card { min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .category-card h2 { grid-column: 1 / -1; }
+  .category-item { margin: 0; }
+  .metric-grid { grid-template-columns: 1fr; }
+  .filter-card { align-items: stretch; flex-direction: column; }
+  .filter-card label { width: 100%; }
+  .standards-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 640px) {
+  .category-card { grid-template-columns: 1fr 1fr; }
+  .page-heading__actions { width: 100%; }
+  .master-form { grid-template-columns: 1fr; }
+  .standards-grid { grid-template-columns: 1fr; }
+}
+</style>

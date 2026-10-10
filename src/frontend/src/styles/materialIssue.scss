@@ -1,0 +1,28 @@
+@use '@/styles/crm/tokens' as token;
+
+.material-issue-page {
+  box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0;
+  overflow: auto; background: var(--erp-page-background); color: token.$crm-text-primary; font-family: token.$crm-font-body;
+}
+.material-issue-page :deep(.el-button) { height: 32px; min-height: 32px; }
+.material-issue-page :deep(.el-input), .material-issue-page :deep(.el-select), .material-issue-page :deep(.el-date-editor) { --el-component-size: 32px; }
+.material-issue-page :deep(.el-input__wrapper), .material-issue-page :deep(.el-select__wrapper), .material-issue-page :deep(.el-date-editor.el-input__wrapper) { box-sizing: border-box; height: 32px; min-height: 32px !important; }
+.material-issue-page :deep(.el-tag) { height: 24px; }
+.mi-page-head { display: flex; min-height: 54px; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.mi-page-head h1 { margin: 0; font: 500 34px/44px token.$crm-font-display; }
+.mi-page-head p { margin: 2px 0 0; color: token.$crm-text-secondary; font-size: 13px; }
+.mi-actions { display: flex; gap: 10px; }
+.mi-actions .el-button + .el-button { margin-left: 0; }
+.mi-surface { border: 1px solid token.$crm-border-default; border-radius: 6px; background: token.$crm-color-surface; }
+.mi-table-panel { min-height: 260px; overflow: hidden; }
+.mi-table-panel :deep(.el-table) { --el-table-header-bg-color: #f1ede4; --el-table-row-hover-bg-color: #fff6ea; height: 100%; }
+.mi-table-panel :deep(.el-table th.el-table__cell) { height: 44px; padding: 0; background: #f1ede4; color: token.$crm-text-primary; font-weight: 500; }
+.mi-table-panel :deep(.el-table td.el-table__cell) { height: 40px; padding: 0; font-weight: 400; }
+.mi-table-panel :deep(.el-table .cell) { padding-right: 16px !important; padding-left: 16px !important; }
+.mi-pagination { display: flex; height: 48px; align-items: center; justify-content: space-between; color: token.$crm-text-secondary; font-size: 12px; }
+.mi-pagination :deep(.el-pagination button), .mi-pagination :deep(.el-pager li), .mi-pagination :deep(.el-select__wrapper) { min-height: 32px; height: 32px; }
+.mi-card { padding: 18px 20px; }
+.mi-card h2 { margin: 0 0 14px; font-size: 16px; }
+.mi-section-title { display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 12px 16px; border-bottom: 1px solid token.$crm-border-default; font-size: 15px; }
+.mi-empty { padding: 36px; color: token.$crm-text-secondary; text-align: center; }
+.mi-error { color: token.$crm-danger; }

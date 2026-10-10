@@ -1,0 +1,121 @@
+name: haiqu-pm-qa
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:17-alpine
+    environment:
+      POSTGRES_DB: haiqu_pm_qa
+      POSTGRES_USER: haiqu_pm_qa
+      POSTGRES_PASSWORD: ${PM_QA_POSTGRES_PASSWORD:?请设置 PM_QA_POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pm_qa_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U haiqu_pm_qa -d haiqu_pm_qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--databases", "16"]
+    volumes:
+      - pm_qa_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-n", "15", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  backend:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      PM_QA_ENVIRONMENT: "product-material-20260911"
+      COMPOSE_PROJECT_NAME: "haiqu-pm-qa"
+      POSTGRES_DB: haiqu_pm_qa
+      POSTGRES_USER: haiqu_pm_qa
+      POSTGRES_PASSWORD: ${PM_QA_POSTGRES_PASSWORD:?请设置 PM_QA_POSTGRES_PASSWORD}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/15
+      CLAMAV_HOST: 127.0.0.1
+      CLAMAV_PORT: "3310"
+      DJANGO_DEBUG: "True"
+      DJANGO_SECRET_KEY: ${PM_QA_DJANGO_SECRET_KEY:?请设置 PM_QA_DJANGO_SECRET_KEY}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      CORS_ALLOWED_ORIGINS: http://localhost:18080,http://127.0.0.1:18080
+      CSRF_TRUSTED_ORIGINS: http://localhost:18080,http://127.0.0.1:18080
+      DEV_AUTO_LOGIN_ENABLED: "False"
+      PM_QA_PUBLIC_FRONTEND_URL: http://127.0.0.1:18080
+      PM_QA_PUBLIC_API_URL: http://127.0.0.1:18000
+      PM_QA_MEDIA_ROOT: /app/media
+      PM_QA_ADMIN_USERNAME: ${PM_QA_ADMIN_USERNAME:?请设置 PM_QA_ADMIN_USERNAME}
+      PM_QA_ADMIN_PASSWORD: ${PM_QA_ADMIN_PASSWORD:?请设置 PM_QA_ADMIN_PASSWORD}
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+      - type: bind
+        source: ./qa/product_material_20260911
+        target: /qa
+        read_only: true
+      - pm_qa_media:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        python /qa/verify_isolation.py &&
+        python wait_for_services.py &&
+        python manage.py migrate --noinput &&
+        python /qa/seed_qa_account.py &&
+        python /qa/seed_qa_data.py &&
+        python manage.py runserver 0.0.0.0:8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      VITE_API_BASE_URL: same-origin
+    ports:
+      - "127.0.0.1:18080:5173"
+    volumes:
+      - type: bind
+        source: ./src/frontend
+        target: /app
+      - pm_qa_frontend_node_modules:/app/node_modules
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+volumes:
+  pm_qa_postgres_data:
+  pm_qa_redis_data:
+  pm_qa_media:
+  pm_qa_frontend_node_modules:

@@ -1,3 +1,4 @@
+from apps.access_control import sales_policy
 from datetime import timedelta
 
 from django.db.models import Count, Q
@@ -24,7 +25,7 @@ SEARCH_TYPES = {"CUSTOMER", "ENTITY", "CONTACT", "INQUIRY", "QUOTATION"}
 
 
 def _has(request, permission):
-    return request.user.is_superuser or request.user.has_perm(permission)
+    return sales_policy.has_permission(request, permission)
 
 
 class GlobalSearchView(APIView):
@@ -63,7 +64,7 @@ class GlobalSearchView(APIView):
                 })
         if "ENTITY" in requested_types and _has(request, "customers.view_customertransactionentity"):
             for item in CustomerTransactionEntity.objects.filter(
-                customer_account__in=customers, archived_at__isnull=True
+                customer_account__in=accessible_customers(request, "view_customertransactionentity"), archived_at__isnull=True
             ).filter(
                 Q(entity_code__icontains=query) | Q(legal_name__icontains=query)
                 | Q(english_legal_name__icontains=query) | Q(registration_number__icontains=query)
@@ -75,7 +76,7 @@ class GlobalSearchView(APIView):
                 })
         if "CONTACT" in requested_types and _has(request, "customers.view_customercontact"):
             for item in CustomerContact.objects.filter(
-                customer_account__in=customers, archived_at__isnull=True
+                customer_account__in=accessible_customers(request, "view_customercontact"), archived_at__isnull=True
             ).filter(
                 Q(display_name__icontains=query) | Q(position_title__icontains=query)
                 | Q(methods__raw_value__icontains=query) | Q(methods__normalized_value__icontains=query)
@@ -86,7 +87,7 @@ class GlobalSearchView(APIView):
                     "url": f"/customers/{item.customer_account_id}/contacts/{item.pk}",
                 })
         if "INQUIRY" in requested_types and _has(request, "inquiries.view_inquiry"):
-            for item in Inquiry.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(
+            for item in Inquiry.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(customer_account__in=accessible_customers(request, "view_inquiry")).filter(
                 Q(inquiry_number__icontains=query) | Q(subject__icontains=query)
             ).select_related("customer_account").order_by("-received_at")[:10]:
                 results.append({
@@ -95,7 +96,7 @@ class GlobalSearchView(APIView):
                     "url": f"/inquiries/{item.pk}",
                 })
         if "QUOTATION" in requested_types and _has(request, "quotations.view_quotation"):
-            for item in Quotation.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(
+            for item in Quotation.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(customer_account__in=accessible_customers(request, "view_quotation")).filter(
                 Q(quotation_number__icontains=query) | Q(subject__icontains=query)
             ).select_related("customer_account").order_by("-created_at")[:10]:
                 results.append({
@@ -122,17 +123,26 @@ def _dashboard_payload(request, customers):
     customer_count = customers.filter(archived_at__isnull=True).count()
     inquiries = Inquiry.objects.none()
     if _has(request, "inquiries.view_inquiry"):
-        inquiries = Inquiry.objects.filter(customer_account__in=customers, archived_at__isnull=True)
+        inquiries = Inquiry.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(customer_account__in=accessible_customers(request, "view_inquiry"))
     quotations = Quotation.objects.none()
     if _has(request, "quotations.view_quotation"):
-        quotations = Quotation.objects.filter(customer_account__in=customers, archived_at__isnull=True)
+        quotations = Quotation.objects.filter(customer_account__in=customers, archived_at__isnull=True).filter(customer_account__in=accessible_customers(request, "view_quotation"))
     samples = SampleRequest.objects.none()
     if _has(request, "samples.view_samplerequest"):
         samples = SampleRequest.objects.filter(customer_account__in=customers, archived_at__isnull=True)
     tasks = BusinessTask.objects.none()
     if _has(request, "workflow.view_businesstask"):
         tasks = _customer_scoped_task_queryset(request, customers).filter(archived_at__isnull=True)
-    active_inquiry_statuses = [InquiryStatus.DRAFT, InquiryStatus.SUBMITTED, InquiryStatus.IN_PROGRESS, InquiryStatus.QUOTED]
+    # 询盘状态在 INQ-01 后已改为阶段化状态；仅统计尚未结束的真实业务阶段。
+    active_inquiry_statuses = [
+        InquiryStatus.DRAFT,
+        InquiryStatus.NEW,
+        InquiryStatus.ANALYZING,
+        InquiryStatus.READY_FOR_QUOTE,
+        InquiryStatus.QUOTING,
+        InquiryStatus.QUOTED,
+        InquiryStatus.FOLLOW_UP,
+    ]
     active_sample_statuses = [
         SampleRequestStatus.DRAFT, SampleRequestStatus.PENDING, SampleRequestStatus.PREPARING,
         SampleRequestStatus.SHIPPED, SampleRequestStatus.FEEDBACK_PENDING,
@@ -140,6 +150,7 @@ def _dashboard_payload(request, customers):
     expiring_versions = QuotationVersion.objects.none()
     if _has(request, "quotations.view_quotationversion"):
         expiring_versions = QuotationVersion.objects.filter(
+            quotation__customer_account__in=accessible_customers(request, "view_quotationversion"),
             quotation__in=quotations, status__in=[QuotationVersionStatus.ISSUED, QuotationVersionStatus.SENT],
             valid_until__gte=today, valid_until__lte=today + timedelta(days=14),
         ).select_related("quotation", "quotation__customer_account").order_by("valid_until")[:10]
@@ -192,7 +203,8 @@ class ManagerDashboardView(APIView):
 
     @extend_schema(responses=OpenApiTypes.OBJECT)
     def get(self, request):
-        if not request.user.is_superuser and not request.user.has_perm("customers.view_all_customer"):
+        scoped_manager = sales_policy.enabled() and bool(sales_policy.scopes(request, "customers.view_customeraccount") & {"TEAM", "ALL"})
+        if not scoped_manager and not request.user.is_superuser and not request.user.has_perm("customers.view_all_customer"):
             raise PermissionDenied("管理驾驶舱要求“查看全部客户”权限。")
         customers = accessible_customers(request, "view_customeraccount")
         payload = _dashboard_payload(request, customers)

@@ -1,0 +1,39 @@
+// 仅已批准的已结束详情和只读凭证，不覆盖待发、加工中或旧单。
+.tube-outsourcing-detail-page.d4-ended-page {
+  .status.success { background: #4f7d4b; }
+  .d4-ended-context .info-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px 20px; }
+  .d4-ended-meta.info-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; }
+  .d4-ended-context .info-cell, .d4-ended-meta .info-cell { grid-template-columns: 84px minmax(0, 1fr); }
+  .d4-ended-context { flex-shrink: 0; }
+  .d4-ended-workspace { overflow: hidden; gap: 14px; }
+  .d4-ended-workspace > .d4-ended-lines { flex: 1 1 auto; min-height: 86px; }
+  .section-heading, .d4-ended-meta, .d4-ended-remarks { flex-shrink: 0; }
+  .section-heading > div:first-child { display: flex; align-items: center; gap: 14px; }
+  .d4-ended-meta { border-bottom: 1px solid #eae4da; padding-bottom: 14px; }
+  .d4-ended-remarks { display: flex; flex-direction: column; gap: 8px; }
+  .d4-ended-remarks > div { display: flex; align-items: baseline; gap: 16px; }
+  .d4-ended-remarks span { width: 64px; flex-shrink: 0; }
+  .d4-ended-remarks p { margin: 0; line-height: 22px; max-height: 44px; overflow: auto; overflow-wrap: anywhere; }
+  .d4-ended-footer .totals { display: flex; align-items: baseline; gap: 28px; flex-wrap: wrap; }
+  .d4-ended-footer .totals > span { white-space: nowrap; }
+  .d4-ended-footer small { flex-basis: 100%; margin: 0; }
+  .d4-ended-fallback { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+}
+.tube-outsourcing-detail-page.d4-ended-page .d4-ended-lines,
+.tube-outsourcing-detail-dialog.d4-ended-dialog .d4-ended-receipt-lines {
+  th, td { padding: 0 10px; }
+  th.num, td.num { text-align: right; }
+  strong { font-weight: 500; }
+}
+.tube-outsourcing-detail-dialog.d4-ended-dialog {
+  .d4-ended-receipt-context.info-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; }
+  .d4-ended-receipt-context .info-cell { grid-template-columns: 84px minmax(0, 1fr); }
+  .d4-ended-receipt-heading { display: flex; gap: 14px; align-items: center; margin: 20px 0 12px; }
+  .d4-ended-receipt-lines { max-height: 440px; }
+  .d4-ended-receipt-remark { display: flex; align-items: baseline; gap: 16px; margin-top: 14px; }
+  .d4-ended-receipt-remark > span { width: 64px; flex-shrink: 0; }
+  .d4-ended-receipt-remark p { margin: 0; line-height: 22px; max-height: 66px; overflow: auto; overflow-wrap: anywhere; }
+  .d4-ended-receipt-footer { width: 100%; display: flex; align-items: center; gap: 28px; }
+  .d4-ended-receipt-footer strong { color: #c84e28; font-weight: 500; margin: 0 5px; font-size: 18px; }
+  .d4-ended-receipt-footer .el-button { margin-left: auto; }
+}

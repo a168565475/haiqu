@@ -1,0 +1,120 @@
+{
+  "created_at": "2026-09-16T14:02:01.6329691+08:00",
+  "module": "生产车间 / 生产领料",
+  "scope": "development_plan_only",
+  "execution_mode": "continuous",
+  "visual_decision": "V01_PENDING",
+  "sources": [
+    {
+      "path": "DESIGN.md",
+      "sha256": "9041c2bb69b7dde63549b705c94aeb8be620e6ff7c958e69975453edb780f309"
+    },
+    {
+      "path": "outputs/material_issue_prototype_20260916_v1/design_sources.json",
+      "sha256": "45c5112a857c33950f4588a6c4f2e5dafbb65a66c422793766ebc5961c27e8a9"
+    },
+    {
+      "path": "outputs/material_issue_prototype_20260916_v1/src/App.vue",
+      "sha256": "cd543ff49f3a39313312ce7b9d11d8bcb6c6d47719588a3e8b9f420087aea227"
+    },
+    {
+      "path": "outputs/material_issue_prototype_20260916_v1/src/style.scss",
+      "sha256": "cd3d46273207a6e0f9e8c5ae973117477fb05b85bbfcd712698d6e846ea1619c"
+    },
+    {
+      "path": "src/frontend/src/components/common/AppWindowDialog.vue",
+      "sha256": "c7e336ad7c47c075b5cd3bc2f2480325e84bee358205eec478e484d9e708a40c"
+    },
+    {
+      "path": "docs/workshop_material_issue_and_daily_reporting_prd_20260915.md",
+      "sha256": "745f5b4ddcc1aaa1f91aac38fc97e6327dc9e3ec63dc2491edbffad5bddc7d23"
+    }
+  ],
+  "plan_sha256": "98bf205fcb2756bdbc6bbf1ffa6f7f3f28660b64180b8f0ced122e66f6e88e9e",
+  "scenes": [
+    {
+      "scene": "list",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "new",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "review",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "return-modal",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "returned",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "edit",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "stock-error",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "quota-error",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "issued",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "inventory-issues",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    },
+    {
+      "scene": "inventory-purchases",
+      "implementation": "NOT_RUN",
+      "visual_acceptance": "NOT_RUN",
+      "business_acceptance": "NOT_RUN"
+    }
+  ],
+  "stages": [
+    "U0 预检与基准",
+    "U1 数据与公共账",
+    "U2 接口与事务",
+    "U3 菜单与列表",
+    "U4 新增与编辑",
+    "U5 审核与详情",
+    "U6 仓库查询",
+    "U7 全链路验收"
+  ],
+  "business_writes": [],
+  "required_gates": [
+    "V01裁定并冻结唯一视觉基准",
+    "物料身份和用量转换清晰",
+    "公共库存与委外共用事务服务",
+    "权限及并发测试通过",
+    "11场景真实页面视觉验收通过"
+  ]
+}

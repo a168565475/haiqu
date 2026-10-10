@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>D2 新建管材外发 · 实际开发截图</title>
+<style>body{margin:0;background:#f6f3ec;color:#1f1d18;font:15px/1.7 "Microsoft YaHei",sans-serif}main{max-width:1440px;margin:auto;padding:32px}h1{font-size:28px;margin:0 0 12px}nav{display:flex;flex-wrap:wrap;gap:12px}a{color:#c84e28}article{margin:28px 0;background:#fcfbf7;border:1px solid #ddd6c9;border-radius:5px;overflow:hidden}h2{font-size:18px;padding:12px 20px;margin:0;border-bottom:1px solid #ddd6c9}img{display:block;width:100%;height:auto}p{margin:8px 0 20px}.note{background:#fcfbf7;padding:16px;border:1px solid #ddd6c9;border-radius:5px}</style>
+<main><h1>新建管材外发单 · 实际开发截图</h1>
+<p class="note">来源：独立S3测试环境的真实页面与接口，1920×1080浏览器截图。原管材、公共未喷塑、厂内加工件各已保存20支测试单；保存只预留，库存及流水数量没有变化。主ERP尚未启用；确认发出、取消、回货和详情页仍需后续逐页确认。</p>
+<p>最新修订已按用户截图删除表格下方汇总条和规则说明。前三张页面及确认窗为最新截图；“真实保存成功”三张保留精简前的历史验证画面。</p>
+<nav><a href="#raw">原管材</a><a href="#semi">未喷塑半成品</a><a href="#metal">厂内加工件</a><a href="#confirm">保存复核</a><a href="#validation">气泡校验</a><a href="#date">ERP日期</a></nav>
+<div id="shots"></div></main>
+<script>
+const root='/@fs/E:/workspace/_project/project001_haiqu_ERP_CRM/qa/tube_revision_s3_20260929/';
+const shots=[['raw','公共原管材：支、根、米同表','d2-raw_pipe-1920.png'],['semi','公共未喷塑半成品：按支填写','d2-public_semi-1920.png'],['metal','厂内已加工件：受最低报工及共享额度控制','d2-metal-1920.png'],['confirm','原料保存复核','d2-raw_pipe-confirm-1920.png'],['semi-confirm','半成品保存复核','d2-public_semi-confirm-1920.png'],['metal-confirm','厂内加工件保存复核','d2-metal-confirm-1920.png'],['raw-saved','原料真实保存成功','d2-raw_pipe-saved-1920.png'],['semi-saved','半成品真实保存成功','d2-public_semi-saved-1920.png'],['metal-saved','厂内加工件真实保存成功','d2-metal-saved-1920.png'],['validation','数量气泡校验','d2-raw-validation-1920.png'],['date','沿用ERP日期控件','d2-date-picker-1920.png']];
+for(const [id,title,file] of shots){const article=document.createElement('article');article.id=id;const heading=document.createElement('h2');heading.textContent=title;const link=document.createElement('a');link.href=root+file;link.target='_blank';const img=document.createElement('img');img.src=root+file;img.alt=title;img.width=1920;img.height=1080;link.append(img);article.append(heading,link);document.querySelector('#shots').append(article)}
+</script></html>

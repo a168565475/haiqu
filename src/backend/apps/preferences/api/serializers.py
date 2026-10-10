@@ -4,11 +4,40 @@ from ..models import SavedView
 
 
 MODULE_FIELDS = {
-    "CUSTOMER": {"q", "lifecycle_stage", "primary_country_code", "owner_employee_id", "attention_level", "archived"},
-    "INQUIRY": {"q", "status", "owner_employee_id", "customer_id", "received_from", "received_to", "overdue"},
-    "QUOTATION": {"q", "outcome_status", "owner_employee_id", "customer_id", "created_from", "created_to"},
-    "SAMPLE_REQUEST": {"q", "status", "owner_employee_id", "customer_id", "requested_from", "requested_to", "overdue"},
-    "TASK": {"q", "status", "priority", "assignee_employee_id", "due_from", "due_to", "overdue"},
+    "CUSTOMER": {
+        "q", "lifecycle_stage", "country_code", "primary_country_code", "owner_id", "attention_level",
+        "customer_grade", "customer_source", "customer_type", "customer_tag",
+        "activity_status", "updated_from", "updated_to", "archived", "ordering",
+        "page_size",
+    },
+    "CONTACT": {
+        "q", "customer_id", "status", "role_type", "method_type", "is_key_contact",
+        "last_interaction", "archived", "ordering", "page_size",
+    },
+    "INQUIRY": {
+        "priority",
+        "amount_min", "amount_currency", "density",
+        "q", "status", "owner_employee_id", "customer_id", "country_code", "received_from", "received_to",
+        "assignment_status", "source_code", "product_q", "sla_state", "ordering", "page_size", "overdue", "has_quotation",
+    },
+    "QUOTATION": {
+        "q", "outcome_status", "display_status", "owner_employee_id", "customer_id",
+        "currency_code", "valid_from", "valid_to", "created_from", "created_to", "ordering", "page_size",
+    },
+    "SAMPLE_REQUEST": {
+        "q", "status", "sample_type", "tracking_number", "owner_employee_id", "customer_id",
+        "requested_from", "requested_to", "overdue", "ordering", "page_size",
+    },
+    "PRODUCTION_TASK": {
+        "search", "status", "order_source", "delivery_method", "contract_number", "customer_id",
+        "product_id", "salesperson_id", "follower_id", "delivery_from", "delivery_to",
+        "quantity_pending", "due_within_days", "ordering", "page_size",
+    },
+    "TASK": {
+        "scope", "q", "status", "display_status", "priority", "assignee_employee_id", "task_type",
+        "due_window", "due_from", "due_to", "overdue", "source_type", "customer_id", "archived",
+        "ordering", "page_size",
+    },
     "AUDIT_LOG": {"object_type", "action", "actor_employee_id", "occurred_from", "occurred_to"},
 }
 

@@ -1,0 +1,125 @@
+@use '../../../src/frontend/src/styles/crm/tokens' as t;
+* { box-sizing: border-box; }
+:root { color-scheme: light; }
+body { margin: 0; font: 13px/1.5 t.$crm-font-body; color: t.$crm-text-regular; background: t.$crm-color-page; }
+button, input, select, textarea { font: inherit; }
+button, .button, input:not([type=checkbox]), select { height: 32px; border-radius: 5px; }
+button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; background: t.$crm-color-surface; color: t.$crm-text-regular; border: 1px solid t.$crm-border-default; cursor: pointer; text-decoration: none; white-space: nowrap; }
+button:hover, .button:hover { color: t.$crm-primary; border-color: t.$crm-primary; }
+button:disabled { background: t.$crm-color-disabled; color: t.$crm-text-disabled; cursor: not-allowed; border-color: t.$crm-border-default; }
+.primary { background: t.$crm-primary; border-color: t.$crm-primary; color: #faf9f5; }
+.primary:hover { background: t.$crm-primary-hover; color: #faf9f5; }
+.primary:active { background: t.$crm-primary-pressed; }
+.link { border-color: transparent; background: transparent; color: t.$crm-primary; padding: 0 8px; }
+.icon-button { width: 32px; padding: 0; }
+input:not([type=checkbox]), select, textarea { background: t.$crm-color-surface; border: 1px solid t.$crm-border-default; color: t.$crm-text-primary; padding: 0 10px; min-width: 0; }
+input::placeholder, textarea::placeholder { color: t.$crm-text-muted; }
+input:disabled { background: #f0eadf; color: t.$crm-text-disabled; }
+textarea { border-radius: 5px; padding: 8px 10px; resize: vertical; height: 80px; }
+:is(button, a, input, select, textarea):focus-visible { outline: 2px solid t.$crm-focus; outline-offset: 1px; }
+input[type=checkbox] { appearance: none; width: 14px; height: 14px; border: 1px solid t.$crm-border-strong; border-radius: 2px; margin: 0; vertical-align: middle; position: relative; background: t.$crm-color-surface; }
+input[type=checkbox]:checked { background: t.$crm-primary; border-color: t.$crm-primary; }
+input[type=checkbox]:checked::after { content: ''; position: absolute; width: 6px; height: 3px; border-left: 1.5px solid white; border-bottom: 1.5px solid white; transform: rotate(-45deg); left: 2px; top: 3px; }
+svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.shell { height: 100vh; display: grid; grid-template-columns: 230px minmax(0, 1fr); grid-template-rows: 64px minmax(0, 1fr); }
+.sidebar { grid-row: 1 / 3; background: #1c1c1a; color: #faf9f5; display: flex; flex-direction: column; min-height: 0; }
+.brand { height: 82px; padding: 14px 24px; font: 700 32px/48px Georgia, serif; color: #faf9f5; }
+.navlist { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px; }
+.navitem { height: 44px; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-weight: 500; }
+.navitem svg { width: 18px; height: 18px; color: #c4c1b6; }
+.navitem.sub { height: 40px; padding-left: 28px; }
+.navitem.active { background: t.$crm-color-surface; color: t.$crm-text-primary; border-left: 4px solid t.$crm-primary; border-radius: 5px; padding-left: 24px; }
+.navitem.active svg { color: t.$crm-text-primary; }
+.navbottom { padding: 14px 10px; }
+.topbar { height: 64px; border-bottom: 1px solid t.$crm-border-subtle; background: t.$crm-color-surface; display: flex; align-items: center; padding: 0 24px; gap: 14px; }
+.topbar .spacer { flex: 1; }
+.topbar .global-search { width: 310px; }
+.preview-note, .muted { color: t.$crm-text-muted; font-size: 12px; }
+.content { padding: 14px; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.page-heading { display: flex; align-items: center; gap: 14px; height: 46px; flex-shrink: 0; }
+h1 { color: t.$crm-text-primary; font: 500 34px/44px t.$crm-font-display; margin: 0; }
+h2 { color: t.$crm-text-primary; font-size: 16px; line-height: 24px; font-weight: 600; margin: 0; }
+.page-heading .button { margin-left: auto; }
+.tag { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; height: 24px; min-width: 56px; padding: 0 8px; border: 0; border-radius: 999px; font: 500 12px/18px t.$crm-font-body; color: #faf9f5; white-space: nowrap; }
+.tag.brand { background: #c96442; }
+.tag.info { background: #3898ec; }
+.tag.success { background: #4f7d4b; }
+.filters { display: flex; align-items: center; gap: 14px; height: 32px; margin-top: 17px; flex-shrink: 0; }
+.filters .search { width: 410px; }
+.filters select { width: 160px; }
+.filters .date { width: 155px; }
+.toolbar { display: flex; align-items: center; gap: 14px; height: 32px; margin-top: 10px; margin-bottom: 14px; flex-shrink: 0; }
+.toolbar .refresh { margin-left: auto; }
+.records-layout { flex: 1; min-height: 0; display: flex; }
+.records-layout > .table-card { width: 100%; }
+.records-layout table { min-width: 1620px; }
+.table-card { border: 1px solid t.$crm-border-default; border-radius: 5px; overflow: hidden; background: t.$crm-color-surface; display: flex; flex-direction: column; min-height: 0; }
+.table-scroll { flex: 1; min-height: 0; overflow: auto; }
+table { width: 100%; min-width: 1100px; table-layout: fixed; border-spacing: 0; border-collapse: separate; }
+thead tr, th { height: 44px; }
+tbody tr, td { height: 40px; }
+th, td { padding: 0 16px; border: 0; border-right: 1px solid t.$crm-border-subtle; border-bottom: 1px solid t.$crm-border-default; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+th:last-child, td:last-child { border-right: 0; }
+th { background: t.$crm-color-subtle; color: t.$crm-text-secondary; font-size: 11px; line-height: 16px; font-weight: 500; }
+td { font-size: 12px; line-height: 18px; }
+td.main { font-size: 13px; line-height: 20px; color: t.$crm-text-primary; }
+td.date-cell { font-size: 13px; }
+tbody tr:hover td { background: t.$crm-color-row-hover; }
+tbody tr.selected td { background: t.$crm-color-selected; }
+td.center, th.center { text-align: center; }
+td.number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
+.quantity { width: 100%; text-align: right; }
+.action-cell { position: sticky; right: 0; background: t.$crm-color-surface; }
+.pager { height: 48px; flex: 0 0 48px; padding: 0 16px; border-top: 1px solid t.$crm-border-default; display: flex; align-items: center; gap: 10px; }
+.pager select { margin-left: auto; width: 136px; }
+.pager button { width: 38px; padding: 0; }
+.pager .current { color: t.$crm-primary; border-color: t.$crm-primary; }
+.receipt-source-window {
+  --el-color-primary: #{t.$crm-primary};
+  font-family: t.$crm-font-body;
+  .app-window-dialog__body { padding: 16px; }
+  .app-window-dialog__footer { padding: 8px 16px; }
+  .source-window-footer { display: flex; align-items: center; justify-content: space-between; }
+  .source-window-footer button { width: 110px; }
+  .source-overview { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .source-overview .muted { margin-left: auto; }
+  .source-fields { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px 24px; padding: 16px; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-page; }
+  .source-field { display: flex; gap: 12px; line-height: 24px; font-size: 12px; }
+  .source-field dt { color: t.$crm-text-secondary; flex-shrink: 0; min-width: 64px; }
+  .source-field dd { color: t.$crm-text-primary; margin: 0; overflow-wrap: anywhere; }
+  dl { margin: 0; }
+  .source-section { margin-top: 20px; }
+  .source-section h2 { font-size: 14px; margin-bottom: 12px; }
+  table { min-width: 0; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .source-snapshot { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding: 12px 16px; border-top: 1px solid t.$crm-border-default; border-bottom: 1px solid t.$crm-border-default; }
+  .source-snapshot dt { color: t.$crm-text-secondary; font-size: 12px; margin-bottom: 4px; }
+  .source-snapshot dd { color: t.$crm-text-primary; font-size: 14px; margin: 0; }
+  .source-note { display: flex; gap: 16px; margin-top: 16px; font-size: 12px; }
+  .source-note span { color: t.$crm-text-secondary; }
+}
+.form-scroll { flex: 1; min-height: 0; overflow: auto; margin-top: 17px; }
+.summary { border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; padding: 16px; }
+.order-summary { display: flex; gap: 44px; padding-bottom: 16px; border-bottom: 1px solid t.$crm-border-subtle; }
+.order-summary b { font-weight: 500; color: t.$crm-text-primary; padding-left: 8px; }
+.form-fields { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; padding-top: 16px; }
+.form-fields label { display: flex; align-items: center; gap: 14px; }
+.form-fields label > span { flex-shrink: 0; }
+.form-fields :is(input,select) { flex: 1; width: 100%; }
+.form-section { margin-top: 14px; background: t.$crm-color-surface; border: 1px solid t.$crm-border-default; border-radius: 5px; padding: 16px; }
+.section-heading { height: 32px; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.form-section .table-card { overflow: auto; }
+.form-section tbody tr:last-child td { border-bottom: 0; }
+.form-section table { min-width: 1250px; }
+.helper { color: t.$crm-text-secondary; font-size: 12px; margin: 14px 0; }
+.remark { display: flex; gap: 14px; margin-top: 20px; }
+.remark span { padding-top: 8px; }
+.remark textarea { flex: 1; }
+.form-footer { height: 64px; flex-shrink: 0; border: 1px solid t.$crm-border-default; background: t.$crm-color-surface; border-radius: 5px; padding: 0 16px; display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.form-footer .totals { margin-right: auto; }
+.form-footer strong { font-size: 16px; color: t.$crm-primary; }
+.form-footer .primary { width: 140px; }
+.form-footer .cancel { width: 110px; }
+.feedback { color: t.$crm-danger; min-height: 20px; font-size: 12px; margin-top: 8px; }
+[hidden] { display: none !important; }
+@media (max-width: 1500px) { .shell { grid-template-columns: 64px minmax(0,1fr); } .brand { font-size: 16px; padding: 18px 5px; } .navitem { padding: 0 10px; } .navitem span.label { display: none; } .navitem.sub { padding-left: 10px; } .navitem.active { padding-left: 6px; } .content { padding: 14px 24px; } .records-layout { grid-template-columns: minmax(0,1fr) 340px; } .filters .search { width: 280px; } .form-fields { grid-template-columns: repeat(2,minmax(0,1fr)); } }

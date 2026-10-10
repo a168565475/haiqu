@@ -1,0 +1,1119 @@
+{
+  "date": "2026-09-30",
+  "purpose": "逐项确认中的样品流程更新；补充此前 28 页改动清单，不表示已经开发完成。",
+  "baseline": "docs/sample-flow-update-20260930.json",
+  "confirmed_by_user": [
+    {
+      "id": "EDIT-01",
+      "decision": "需要完整的样品信息编辑页面，在任何流程步骤都能进入并编辑样品信息。",
+      "related_page": "08",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "后续影响按 EDIT-02 已确认规则处理；全阶段可编辑不等于所有人均有编辑权限。"
+    },
+    {
+      "id": "FLOW-01",
+      "decision": "厂长确认可以做后，先完善样品需求；完善需求不是填写用料。",
+      "related_page": "11",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "proposed_sequence": "创建申请 → 厂长确认／退回重提 → 完善需求 → 后续用料及材料流程",
+      "open_boundary": "操作者按 FLOW-02 已确认规则处理；详细字段及必填规则继续逐项确认。"
+    },
+    {
+      "id": "PRODUCT-01",
+      "decision": "完善需求需要明确产品类别，并真正关联产品。",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "找不到对应产品时按 PRODUCT-02 在本页新建并关联；关联字段及其他具体规则继续逐项确认。"
+    },
+    {
+      "id": "EDIT-02",
+      "decision": "选择 B：任意阶段编辑只更正当前样品资料，不联动修改已产生的材料、采购、报工和库存记录，不触发重新核对；资料与执行内容不一致暂不处理。",
+      "user_reply": "b 不一致先不管了",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "FLOW-02",
+      "decision": "厂长确认后，打样部和厂长均可以完善需求，不限定必须由其中一方填写。",
+      "user_reply": "打样部 与厂长都行",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PRODUCT-02",
+      "decision": "选择 A：完善需求时找不到对应产品，可以在本页补齐产品建档必填信息，新增产品并直接关联当前样品。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "REQUIREMENTS-01",
+      "decision": "选择 A：一张打样申请只对应一种颜色，填写一组颜色、色卡、色号；其他颜色由用户另行创建打样单，不在同一申请内拆分多颜色数量。",
+      "user_reply": "A 另一个颜色 自己创建另一个打样单",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "REQUIREMENTS-02",
+      "decision": "完善需求页不需要任务单或图纸上传，不设为必填或选填字段；继续沿用已有产品图片及已确认的图片替换方式。",
+      "user_reply": "不需要了",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "此决定针对完善需求页的任务单/图纸，不改变后续金工、裁剪参数上传流程。"
+    },
+    {
+      "id": "REQUIREMENTS-03",
+      "decision": "选择 B：完善需求时颜色、色卡、色号三项全部必填，缺少任何一项均不能提交完善需求。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-PART-01",
+      "decision": "取消使用部位：材料需求单和采购单都不设置使用部位字段，不要求采购查看或传递部位。",
+      "user_reply": "那就不需要部位了",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "supersedes": [
+        "原使用部位只在需求单显示方案",
+        "MATERIALS-PART-02 的分行/合并问题"
+      ]
+    },
+    {
+      "id": "MATERIALS-TYPE-01",
+      "decision": "选择 A：材料类型由原料档案的分类、品名或已有类型信息带出，打样人员不手工填写。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-COLOR-01",
+      "decision": "选择 A：有颜色的材料带出颜色、色卡和色号；无颜色的材料不强制填写这三项。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UNIT-01",
+      "decision": "选择 A：材料单位从原料档案带出，需求行不允许随意切换单位；管材按根数填写并显示总米数。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-03",
+      "decision": "选择 A：数量按原料单位允许小数；米、公斤等按配置精度填写，个、根等整数单位只能填整数。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-01",
+      "decision": "选择 A：材料需求页允许直接新增原材料，并在填写后用于当前材料需求。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "新增原材料是保存后立即可用于采购，还是需要资料审核后才能使用，继续确认。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-02",
+      "decision": "选择 A：材料需求页新增原材料保存成功后立即可用于当前需求和采购。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "需要严格权限、必填字段和单位校验，避免错误原料直接进入采购和库存。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-03",
+      "decision": "选择 A：新增原材料的原料编号由系统自动生成，保存时保证唯一。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-04",
+      "decision": "选择 A：新增原材料时必须选择仓库归属，保存后才能用于当前材料需求和后续库存流程。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-05",
+      "decision": "选择 A：新增原材料时材质必须填写，作为采购和库存识别信息的一部分。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-06",
+      "decision": "选择 A：新增原材料时必须从系统分类中选择材料类别，不能手工输入分类名称。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-07",
+      "decision": "选择 A：新增原材料时规格必须填写，用于采购选料、库存匹配和到货核对。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-08",
+      "decision": "选择 A：新增原材料有颜色时填写或选择颜色、色卡、色号；无颜色的原材料不强制。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-09",
+      "decision": "选择 A：新增原材料时材料名称必须填写，作为采购、库存和到货核对的基础身份信息。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-10",
+      "decision": "选择 A：新增原材料的材料名称从品名数据中选择，不允许随意手工输入；没有品名时先维护品名数据。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-11",
+      "decision": "选择 A：新增原材料的规格从规格数据中选择，规格与品名关联；没有规格时先维护规格数据。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-12",
+      "decision": "选择 A：新增原材料的单位从系统单位配置中选择，不允许手工输入单位。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-13",
+      "decision": "选择 A：新增有颜色的原材料时，颜色、色卡、色号从系统颜色数据中选择，不允许随意手工输入。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SOURCE-14",
+      "decision": "选择 A：材料需求页新增的原材料保存到全局原材料档案，后续样品、BOM、采购和库存可以复用同一原料编号。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "这是全局基础资料写入，不应只依赖前端隐藏按钮，需确认服务端新增权限。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-15",
+      "decision": "选择 A：只有具备原料资料维护权限的人，才能在材料需求页把新增原材料保存到全局原材料档案；其他可填材料的人员不能直接写入全局基础资料。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "前端按钮隐藏不能替代服务端权限校验；当前需求页的新增动作需要明确无权限时的提示和回退。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-16",
+      "decision": "选择 A：材料需求页只能选择或发起新增，原料档案的修改统一在原料资料管理页完成；材料需求页不直接编辑全局原料身份资料。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "需要区分当前需求行的临时数量编辑与全局原料身份编辑，避免修改需求数量时误改档案。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-17",
+      "decision": "选择 A：原料档案禁止删除，只允许停用；停用后不能用于新增材料需求或采购，但保留历史业务记录和原料身份。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "需要定义停用原料对进行中的历史需求、采购、到货和领料操作是否继续可用。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-18",
+      "decision": "本轮不处理停用原料对历史需求、采购、到货和领料的额外兼容逻辑；不新增停用后的历史流程设计。",
+      "user_reply": "停用的不管了，不要做这些额外的事情",
+      "implementation_status": "OUT_OF_SCOPE",
+      "scope_note": "仅保留基础资料停用限制，不扩展停用后的历史单据处理。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-04",
+      "decision": "选择 A：材料需求数量直接填写本张打样单的总用量，不按单件用量再自动换算。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-ROW-01",
+      "decision": "选择 A：同一原料身份在材料需求中自动合并为一行并累加数量，避免同一原料重复采购。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-REVIEW-02",
+      "decision": "选择 B：人工核库页面只填写仓库确认的可供数量，不额外展示系统库存参考。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "人工可供数量仍需保留提交人和操作记录；本决定只取消页面上的系统库存参考展示。"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-01",
+      "decision": "选择 A：采购按整张打样缺料单建单，一次带出该打样单全部待采购材料；供应商仍可在采购单内分配。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-02",
+      "decision": "选择 A：采购单创建后锁定打样材料需求中的需采购数量；后续调整不直接修改需求行，需通过采购单变更或退回重提处理。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-03",
+      "decision": "选择 A：同一张打样缺料单只对应一张采购单，不重复创建；继续在原采购单跟踪未到货数量。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-04",
+      "decision": "选择 A：采购单取消或驳回且仍有未到货缺口时，材料需求回到等待采购，保留缺口并允许重新发起采购。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INVENTORY-ISSUE-02",
+      "decision": "选择 A（覆盖旧规则）：实际领料时仓库能发多少就记录多少，剩余数量不再补料；本次领料按实际出库数量留痕。",
+      "user_reply": "A，能领多少是多少，不补料",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "supersedes": [
+        "INVENTORY-02"
+      ],
+      "risk_note": "需要继续确认实际领料不足时是否允许进入生产，否则可能出现材料不足但流程仍推进的业务风险。"
+    },
+    {
+      "id": "INVENTORY-ISSUE-03",
+      "decision": "选择 A：实际领料少于材料需求且不再补料时，仍允许进入生产和参数上传，按实际领料量继续处理，材料缺口只保留提示。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INVENTORY-ISSUE-04",
+      "decision": "选择 B：实际领料少于材料需求但允许生产时，材料状态仍显示已领料，不单独显示部分领料状态。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "列表状态会隐藏需求量与实际领料量差异，需要确认详情是否保留数量记录。"
+    },
+    {
+      "id": "INVENTORY-ISSUE-05",
+      "decision": "选择 A：材料状态显示已领料时，详情仍保留需求量、实际领料量和缺口三项数量记录。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-01",
+      "decision": "选择 B：金工参数和裁剪参数可以任意顺序上传，不强制先后步骤。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-02",
+      "decision": "选择 A：生产报工和金工、裁剪参数彼此独立，分别记录；只有参数齐全且报工完成后才允许样品入库。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-03",
+      "decision": "选择 A：金工或裁剪参数在样品入库前允许修改，并保留修改记录；最终以最新有效参数参与入库校验。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-04",
+      "decision": "选择 A：打样部和厂长都可以上传、修改金工或裁剪参数并执行报工，按权限保留操作记录。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-01",
+      "decision": "选择 A：样品入库由打样部发起，仓库确认入库数量和库位。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-02",
+      "decision": "样品入库不设置合格或不合格判断，只填写实际入库数量；仓库确认数量和库位。",
+      "user_reply": "没有合不合格的事情，就填写数量就行了",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "删除质量判定字段，不代表已经确认数量是否必须等于报工数量。"
+    },
+    {
+      "id": "INBOUND-03",
+      "decision": "选择 A：样品入库数量允许少于已报工完成数量，仓库按实际收到的数量填写，不增加质量判定。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-04",
+      "decision": "选择 B：同一打样单只允许一次样品入库，不支持后续补录入库数量。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-05",
+      "decision": "选择 A：单次样品入库完成后，流程状态直接结束为已入库，即使入库数量少于报工完成数量也不等待补录。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "OUTBOUND-01",
+      "decision": "选择 A：样品入库后直接沿用现有样品出库流程，复用已有权限、数量校验和库存流水。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "NO-MATERIAL-01",
+      "decision": "选择 A：无需用料时通过明确操作留存记录，直接进入参数和生产流程，不提交空白材料单。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "NO-MATERIAL-02",
+      "decision": "选择 A：无需用料操作由打样部和厂长都可以执行，系统记录实际操作者。",
+      "user_reply": "dA",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "将本次输入中的 dA 按 A 处理。"
+    },
+    {
+      "id": "NO-MATERIAL-03",
+      "decision": "选择 A：进入生产前允许撤销“无需用料”并改为填写材料需求，同时保留原无需用料操作记录。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-DRAFT-01",
+      "decision": "选择 B：材料需求必须一次填写并提交，不保留材料草稿状态；提交后才进入仓库核对或采购相关状态。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-02",
+      "decision": "选择 B：材料需求提交后仍允许修改；修改时需要重新计算仓库可供、需采购和后续进度，避免继续沿用旧数据。",
+      "user_reply": "b",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "采购单创建后继续修改会产生需求与采购单不一致，需要单独确认采购单创建后的编辑边界。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-03",
+      "decision": "选择 A：采购单创建后锁定材料需求；后续调整需通过采购单变更或取消后重新提交，不能直接修改需求行。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-04",
+      "decision": "选择 B：材料需求人工核库后只修改数量时，保留原人工核库结果，不强制重新核库。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "数量变化后旧可供结果可能与当前实际不一致；本决定仅针对数量修改，不代表更换原料身份时也保留旧核对。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-05",
+      "decision": "选择 A：材料需求人工核库后更换原料名称、规格、材质或颜色时，清除旧核库结果并重新核库。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-06",
+      "decision": "选择 B：已提交的材料需求修改数量时不强制填写修改原因，不新增额外的原因字段；是否产生基础日志按现有系统规则处理。",
+      "user_reply": "b",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-07",
+      "decision": "选择 B：不要求对材料需求、人工核库和领料数量修改统一保留专门操作记录，沿用系统已有基础记录。",
+      "user_reply": "b",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "本决定不新增统一的数量变更审计台账；已有业务操作日志和库存流水仍按现有系统规则保留。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-08",
+      "decision": "选择 A：采购单创建前允许删除已提交的材料需求行；删除后按剩余需求继续核对和采购。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "ARRIVAL-01",
+      "decision": "选择 A：采购缺料只到一部分时，可以按当前可发数量领料，不等待采购全部到齐。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "ARRIVAL-02",
+      "decision": "选择 B：样品按当前数量领料并进入生产后，样品流程不再跟踪采购单剩余未到货数量。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "risk_note": "样品不再跟踪不等于采购单自动取消，需要确认采购单剩余数量的处理方式。"
+    },
+    {
+      "id": "ARRIVAL-03",
+      "decision": "选择 A：样品停止跟踪后，采购单剩余未到货数量仍按采购模块现有流程继续收货或关闭，不由样品流程取消。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-01",
+      "decision": "选择 A：仓库可供数量最多填写本单需求数量，不把多余库存计入本单供料。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-02",
+      "decision": "选择 B：人工核库时可供数量允许留空，系统按 0 处理。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "STATUS-01",
+      "decision": "选择 A：材料状态按材料齐备、等待采购、采购中和到货进度显示；足量、缺口、建单和到货阶段分别反映当前状态。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-01",
+      "decision": "选择 A：材料需求按类别分区填写，管材、五金件、塑料件、辅料、面料和包材分别组织。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-02",
+      "decision": "选择 B：材料类别使用标签页切换，不在页面上同时展开全部分区。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-03",
+      "decision": "选择 B：各类别使用行内直接选择材料，不采用按品名分组的弹出选择层；材料名称、规格、材质和颜色仍从系统数据中选择。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "本决定覆盖此前按品名分组弹窗的交互建议，不改变材料身份字段必须来自系统数据的规则。"
+    },
+    {
+      "id": "MATERIALS-UI-04",
+      "decision": "选择 A：行内选择材料时按品名、规格、材质和颜色级联，后续字段只显示与前一项匹配的数据。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-05",
+      "decision": "选择 A：每个材料标签页通过添加材料按钮新增需求行。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "本决定覆盖此前不显示添加材料按钮的交互建议；已提交但未建采购单的删除权限仍按 MATERIALS-SUBMIT-08 执行。"
+    },
+    {
+      "id": "MATERIALS-UI-06",
+      "decision": "选择 A：材料需求行使用删除按钮，并在删除前二次确认；采购单创建前允许删除，创建后按锁定规则处理。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-07",
+      "decision": "选择 B：没有材料需求行的类别标签页直接隐藏，只显示已有材料的类别。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-08",
+      "decision": "选择 A：材料需求页面支持全屏模式，并保留页面内部滚动。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-09",
+      "decision": "选择 B：材料进度只在各材料行内显示，不在页面顶部做需求、可供、采购和到货汇总。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "REQUIREMENTS-04",
+      "decision": "选择 A：完善需求中规格必填，具体尺寸选填；已有规格和尺寸自动带入，可修改，尺寸按实际需要补充。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-01",
+      "decision": "打样材料需求参照 BOM 的分类和选料思路但简化，关联真实原材料，明确材料、材质、类型、使用部位、规格、数量和单位；可能需要重新设计现有材料页面。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-02",
+      "decision": "打样部人工检查仓库并确认可供数量，需求单同时清楚展示总需求、仓库可供、需采购及采购到货进度。缺料供采购选择打样单建单，尽量遵循当前采购规则，不擅改采购流程和代码。",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "管材计量及同人填单核库已分别按 MATERIALS-PIPE-01、MATERIALS-REVIEW-01 确认；不设置使用部位字段，采购衔接的具体适配仍需逐项确认。"
+    },
+    {
+      "id": "INVENTORY-01",
+      "decision": "打样需要领料环节，参考现有生产领料，材料由打样部自行处理，不引入半成品加工流；领料后衔接参数上传及最终样品入库。",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "领取方式按 INVENTORY-02 已确认的一次领完整单处理；实际出库确认人按 MATERIALS-ISSUE-01 已确认由仓库确认，计量和页面细节继续逐项确认。",
+      "proposal": "docs/sample-material-flow-proposal-20260930.json"
+    },
+    {
+      "id": "INVENTORY-02",
+      "decision": "选择 A：整单材料全部齐备后一次领完，不分批领取。仓库足量直接领料；存在缺料则等待全部缺料合格入库后，再一起领取。",
+      "user_reply": "A",
+      "implementation_status": "SUPERSEDED_BY_INVENTORY-ISSUE-02",
+      "scope_note": "已被后续确认的实际领料规则覆盖：不再要求等待全部齐备，也不要求补领。"
+    },
+    {
+      "id": "MATERIALS-PIPE-01",
+      "decision": "选择 A：管材按整根原料提出需求，明确所选管材规格、每根长度和需要根数，自动显示总米数；不填写管件支数、裁切长度或每根可切支数，切割由打样部自行处理。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "compatibility_boundary": "需要适配打样管材与采购的数量衔接。计量方案确认不等于授权直接修改采购代码；具体影响仍需先说明和确认，不伪造裁切参数。"
+    },
+    {
+      "id": "MATERIALS-REVIEW-01",
+      "decision": "选择 A：允许同一位有对应权限的打样人员填写材料需求、人工核对仓库可供数量并提交采购缺口，系统保留操作记录，不要求换人核对。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "只调整打样材料人工核对的同人限制，不代表放开其他审批环节的权限或本人审批限制；实际领料出库确认人另行确认。"
+    },
+    {
+      "id": "MATERIALS-ISSUE-01",
+      "decision": "选择 A：打样部发起领料，仓库实际发料后确认出库并扣减库存；领料发起人与仓库确认人的操作分别留记录。",
+      "user_reply": "A",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "scope_note": "整单材料全部齐备后一次领完；人工核库阶段不扣库存，实际出库时才重新校验合格库存并扣减。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-01",
+      "decision": "需采购数量默认按需求数量减仓库可供数量自动计算，但允许人工修改；修改后的数量需参与后续采购、到货齐备和领料进度计算。",
+      "user_reply": "A 可以自动算出 但是也能人工修改",
+      "implementation_status": "NOT_IMPLEMENTED",
+      "open_boundary": "人工修改能否超过自动缺口、能否少于自动缺口及是否需要填写原因，继续逐项确认。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-02",
+      "decision": "选择 B：需采购数量允许少于或多于自动缺口，支持整包、整根采购或备料；人工修改必须填写调整原因，少买时继续保持缺料状态。",
+      "user_reply": "B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-10",
+      "decision": "选择 A：样品信息在材料需求页面顶部固定展示，滚动填写时仍可看到打样单号、产品、规格、颜色和数量。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-11",
+      "decision": "选择 A：材料表格字段全部保持单行显示，不自动换行；长内容通过横向滚动查看。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-12",
+      "decision": "选择 A：材料需求页面的提交、返回和全屏操作栏固定在底部。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-13",
+      "decision": "选择 A：材料表格支持内部横向滚动，保持字段单行和独立列。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-14",
+      "decision": "选择 A：需求数量、仓库可供、需采购、已到货和实际领料分别独立成列。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-15",
+      "decision": "选择 A：材料状态使用项目统一的状态标签显示。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-16",
+      "decision": "选择 A：材料表格横向滚动时固定表头，纵向滚动时仍能识别每列字段。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-17",
+      "decision": "选择 A：每个材料标签页的添加材料按钮放在标签页右上角。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-18",
+      "decision": "选择 A：全屏按钮放在页面右上角，作为页面级操作。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-19",
+      "decision": "选择 B：材料行的删除操作放在更多菜单中，不在行内始终显示。",
+      "user_reply": "1B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-20",
+      "decision": "选择 A：需求数量可编辑，仓库可供、需采购、已到货和实际领料等进度数量只读。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-21",
+      "decision": "选择 A：管材标签页显示每根长度、根数和自动计算总米数专用字段。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-22",
+      "decision": "选择 B：无颜色的原材料仍保留颜色、色卡和色号字段，但置灰不可填写。",
+      "user_reply": "1B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-23",
+      "decision": "选择 A：材料需求行保留可选备注字段，用于补充采购或包装说明。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-24",
+      "decision": "选择 B：新增全局原材料入口放在材料需求页面顶部，新增后回到当前类别选择。",
+      "user_reply": "3B",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-25",
+      "decision": "选择 A：材料需求页面顶部的新增原材料入口只对有原料资料权限的人显示。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-26",
+      "decision": "选择 A：材料需求行未完成必填字段时阻止整页提交，并提示用户补齐。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-27",
+      "decision": "选择 A：材料需求页面在必填字段旁直接显示必填标记。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-28",
+      "decision": "选择 A：材料需求提交失败时使用行内错误气泡悬浮提示，同时在页面汇总未完成项。",
+      "user_reply": "1A 气泡悬浮显示",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-29",
+      "decision": "选择 A：数量精度或整数规则错误在输入时即时提示。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-30",
+      "decision": "选择 A：新增全局原材料表单以页面内抽屉或弹层打开。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-31",
+      "decision": "选择 A：新增原材料保存成功后自动回填并选中当前材料需求行。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-32",
+      "decision": "选择 A：新增原材料抽屉按基础信息、规格材质、颜色和仓库单位分区。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-33",
+      "decision": "选择 A：新增原材料保存成功后自动关闭抽屉并回填当前需求。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-01",
+      "decision": "选择 A：材料需求提交后，页面只在当前状态和用户权限允许时显示对应操作入口。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-02",
+      "decision": "选择 A：等待采购状态下，采购入口只对有采购权限的人显示。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-03",
+      "decision": "选择 A：材料可领料时，打样部显示发起领料操作，仓库显示独立的确认出库操作。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-04",
+      "decision": "选择 A：打样列表中的材料情况可直接点击进入材料需求详情。",
+      "user_reply": "1A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-05",
+      "decision": "选择 B：样品详情不显示材料流程时间线，材料状态和进度在材料详情中查看。",
+      "user_reply": "2b",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-06",
+      "decision": "选择 A：材料详情提供采购单直接查看入口。",
+      "user_reply": "3a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-07",
+      "decision": "选择 A：材料详情显示人工核库的提交人和核库时间。",
+      "user_reply": "1a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-08",
+      "decision": "选择 B：材料详情只显示采购状态，不显示采购单号和供应商信息。",
+      "user_reply": "2b",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-09",
+      "decision": "选择 A：材料详情显示实际领料数量和仓库确认人。",
+      "user_reply": "3a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "NO-MATERIAL-04",
+      "decision": "选择 A：无需用料的样品在列表和详情中显示明确的无需用料状态。",
+      "user_reply": "1a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-10",
+      "decision": "选择 A：材料详情打开时默认显示第一个有材料需求行的类别。",
+      "user_reply": "2a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-11",
+      "decision": "选择 B：材料详情顶部不显示打样产品图片。",
+      "user_reply": "3b",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-12",
+      "decision": "选择 A：材料需求尚未创建采购单时，材料详情提供编辑入口。",
+      "user_reply": "1a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-FLOW-13",
+      "decision": "选择 A：采购单创建后材料详情保留只读查看入口。",
+      "user_reply": "2A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-01",
+      "decision": "选择 A：允许生产后，样品详情显示金工和裁剪参数上传入口。",
+      "user_reply": "3A",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-02",
+      "decision": "选择 A：金工参数和裁剪参数分别使用独立分区。",
+      "user_reply": "1a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-03",
+      "decision": "选择 A：生产报工数量和完成状态使用独立字段。",
+      "user_reply": "2a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-04",
+      "decision": "选择 A：金工和裁剪参数各自显示完成状态。",
+      "user_reply": "3a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-05",
+      "decision": "选择 B：金工和裁剪参数必须一次填写完成，不提供未完成参数草稿。",
+      "user_reply": "1b",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-06",
+      "decision": "选择 A：参数完成状态由填写人手动确认。",
+      "user_reply": "2a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-07",
+      "decision": "选择 A：任一参数未完成时，样品入库按钮保持禁用。",
+      "user_reply": "3a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-08",
+      "decision": "选择 A：参数必填字段未完成时阻止提交并显示字段错误。",
+      "user_reply": "1a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-09",
+      "decision": "选择 A：报工数量默认带入打样申请数量且可修改。",
+      "user_reply": "2a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-10",
+      "decision": "选择 A：报工数量不得超过打样申请数量。",
+      "user_reply": "3a",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-11",
+      "question": "报工尚未开始时，报工数量是否允许填写 0 或保持空白？",
+      "user_reply": "1a",
+      "decision": "允许填写 0 或保持空白；保存为未开始，完成状态保持未完成。",
+      "status": "CONFIRMED"
+    },
+    {
+      "id": "PARAMETER-FLOW-12",
+      "question": "报工完成后、样品入库前，是否允许修改报工数量？",
+      "user_reply": "2a",
+      "decision": "允许修改报工数量。",
+      "status": "CONFIRMED"
+    },
+    {
+      "id": "PARAMETER-FLOW-13",
+      "question": "报工数量少于打样申请数量时，是否允许确认生产完成？",
+      "user_reply": "3a",
+      "decision": "允许确认生产完成。",
+      "status": "CONFIRMED"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-05",
+      "question": "完善需求中的“表面或工艺要求”应采用什么形式？",
+      "user_reply": "A A A（第1项）",
+      "decision": "选择 A：表面或工艺要求使用可选的多行文本字段。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-06",
+      "question": "规格尺寸在完善需求页如何展示？",
+      "user_reply": "A A A（第2项）",
+      "decision": "选择 A：按产品类别动态显示适用尺寸字段；沿用规格必填、具体尺寸选填、已有数据自动带入且可修改的规则。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-07",
+      "question": "特殊要求、工艺说明、验收要求是否合并为一个可选说明字段？",
+      "user_reply": "A A A（第3项）",
+      "decision": "选择 A：特殊要求、工艺说明、验收要求合并为“要求说明”可选多行文本。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-LIMIT-01",
+      "question": "金工和裁剪完成数量不一致时，样品入库数量的上限按哪个数量？",
+      "user_reply": "1：金工裁剪只上传图片，不需要详细填写",
+      "decision": "该回复调整了参数输入范围：金工和裁剪只上传图片，不填写详细参数；入库上限暂缓，待确认是否保留报工数量与完成状态。",
+      "status": "DEFERRED"
+    },
+    {
+      "id": "PARAMETER-FLOW-14",
+      "question": "金工和裁剪参数填写内容是否只上传图片？",
+      "user_reply": "1：金工裁剪只上传图片，不需要详细填写",
+      "decision": "金工和裁剪参数分区只上传图片，不填写详细参数；是否保留简洁报工数量和完成状态另行确认。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-03",
+      "question": "已核库后降低需求数量，导致原仓库可供量大于新需求量时，如何处理？",
+      "user_reply": "2A",
+      "decision": "选择 A：自动将本单可供量降至新需求量，保留原核库记录。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "MATERIALS-UI-34",
+      "question": "空材料类别标签页隐藏后，填写时如何添加第一个材料类别或新类别？",
+      "user_reply": "3A",
+      "decision": "选择 A：提供添加类别入口，选择后新增首行并显示该标签页。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-15",
+      "question": "金工和裁剪的图片上传数量如何限制？",
+      "user_reply": "~~a a a~~（第1项）",
+      "decision": "选择 A：每个分区允许上传多张图片。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-16",
+      "question": "只上传金工、裁剪图片后，是否仍保留简洁的报工数量和完成状态？",
+      "user_reply": "~~a a a~~（第2项）",
+      "decision": "选择 A：保留报工数量和完成状态，但不填写详细参数。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-17",
+      "question": "金工和裁剪图片上传后，样品入库前是否允许替换或删除？",
+      "user_reply": "~~a a a~~（第3项）",
+      "decision": "选择 A：样品入库前允许替换或删除图片。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-LIMIT-01",
+      "question": "金工和裁剪完成数量不一致时，样品入库数量的上限按哪个数量？",
+      "user_reply": "c a b（第1项为 C）",
+      "decision": "选择 C：样品入库数量上限仍按打样申请数量；这可能导致入库量高于某一道工序的报工数量，需另行确认冲突处理。",
+      "status": "CONFIRMED_WITH_CONFLICT"
+    },
+    {
+      "id": "PARAMETER-FLOW-18",
+      "question": "金工和裁剪参数图片是否至少各上传一张后，才能标记对应工序完成？",
+      "user_reply": "c a b（第2项为 A）",
+      "decision": "选择 A：每个分区至少上传一张图片后，才可完成对应工序。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-19",
+      "question": "金工和裁剪图片上传后，完成状态如何确认？",
+      "user_reply": "c a b（第3项为 B）",
+      "decision": "选择 B：图片上传成功后自动视为对应参数完成。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-LIMIT-02",
+      "question": "报工数量少于打样申请数量时，是否允许样品入库数量超过实际报工数量？",
+      "user_reply": "a a a（第1项为 A）",
+      "decision": "选择 A：允许，最多按打样申请数量入库。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-20",
+      "question": "金工或裁剪分区的图片全部删除后，已自动完成的参数状态是否自动退回未完成？",
+      "user_reply": "a a a（第2项为 A）",
+      "decision": "选择 A：自动退回未完成。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-21",
+      "question": "报工完成状态是否仍由填写人单独确认，不因图片上传自动完成？",
+      "user_reply": "a a a（第3项为 A）",
+      "decision": "选择 A：报工完成仍单独确认。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-22",
+      "question": "报工完成状态勾选时，该工序报工数量是否必须大于 0？",
+      "user_reply": "a",
+      "decision": "选择 A：必须大于 0。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "INBOUND-FLOW-06",
+      "question": "样品入库数量是否必须大于 0？",
+      "user_reply": "a",
+      "decision": "选择 A：必须大于 0。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-FLOW-23",
+      "question": "金工和裁剪上传图片后，是否需要在图片旁填写额外说明？",
+      "user_reply": "a",
+      "decision": "选择 A：不需要额外说明，只保留图片和上传信息。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-UI-04",
+      "question": "金工、裁剪图片上传的格式和大小是否沿用项目现有图片上传规范？",
+      "user_reply": "a a b（第1项为 A）",
+      "decision": "选择 A：沿用项目现有图片上传规范。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-UI-05",
+      "question": "已上传的金工、裁剪图片如何查看？",
+      "user_reply": "a a b（第2项为 A）",
+      "decision": "选择 A：显示缩略图，点击可预览大图。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    },
+    {
+      "id": "PARAMETER-UI-06",
+      "question": "删除金工或裁剪图片时是否需要二次确认？",
+      "user_reply": "a a b（第3项为 B）",
+      "decision": "选择 B：直接删除。",
+      "implementation_status": "NOT_IMPLEMENTED"
+    }
+  ],
+  "current_code_facts": [
+    {
+      "fact": "已有 /samples/:sampleId/edit 页面，但新版申请在旧编辑页全部只读；新版只在厂长退回时允许修改重提。",
+      "sources": [
+        "src/frontend/src/router/index.ts:726",
+        "src/backend/apps/samples/form_services.py:35",
+        "src/backend/apps/samples/application_services.py:23"
+      ]
+    },
+    {
+      "fact": "当前厂长确认直接进入 MATERIALS_PENDING，缺少新版完善需求阶段；旧完善需求提交则进入旧财务流程，不能照搬。",
+      "sources": [
+        "src/backend/apps/samples/application_services.py:186",
+        "src/backend/apps/samples/form_services.py:697"
+      ]
+    },
+    {
+      "fact": "创建页选正式产品后仅复制名称、规格；SampleProduct 没有到正式产品档案 ProductInformation 的外键。新版申请也没有保存产品类别。",
+      "sources": [
+        "src/frontend/src/views/samples/SampleApplicationCreateView.vue:204",
+        "src/backend/apps/samples/models.py:319",
+        "src/backend/apps/samples/application_services.py:134"
+      ]
+    }
+  ],
+  "proposed_completion_fields_not_yet_confirmed": [
+    {
+      "section": "产品关联",
+      "fields": [
+        "产品类别",
+        "关联产品",
+        "产品编号和名称自动带入"
+      ],
+      "note": "类别、产品关联及本页新增产品已确认；字段带入和覆盖细节未确认。"
+    },
+    {
+      "section": "规格尺寸",
+      "fields": [
+        "本次打样规格",
+        "与产品类别相适应的尺寸"
+      ],
+      "note": "已确认规格必填、具体尺寸选填，已有数据自动带入并允许修改；按产品类别动态显示适用尺寸字段，具体类别字段映射待设计核对。"
+    },
+    {
+      "section": "外观要求",
+      "fields": [
+        "颜色",
+        "色卡",
+        "色号",
+        "表面或工艺要求"
+      ],
+      "note": "已确认一张打样单一种颜色，其他颜色另建单；颜色、色卡、色号全部必填；表面或工艺要求使用选填多行文本。"
+    },
+    {
+      "section": "数量交期",
+      "fields": [
+        "打样数量",
+        "单位",
+        "样品类型",
+        "期望完成日期"
+      ],
+      "note": "沿用申请内容，完善时核对，不要求重复录入。"
+    },
+    {
+      "section": "产品图片",
+      "fields": [
+        "沿用或替换产品图片"
+      ],
+      "note": "已确认不需要任务单或图纸上传；参数阶段金工和裁剪只上传图片，不填写详细参数。"
+    },
+    {
+      "section": "要求说明",
+      "fields": [
+        "要求说明"
+      ],
+      "note": "已确认将特殊要求、工艺说明、验收要求合并为一个选填多行文本；不在这一阶段填写材料清单、报工或库存数据。"
+    }
+  ],
+  "next_question": null,
+  "next_questions": [],
+  "execution_boundary": "本轮业务规则与图片交互确认已收口；尚未修改业务代码、未写入业务数据、未修改 Figma。下一步需按确认记录整理页面/接口实施清单，并在开发前明确采用连续开发还是分单元确认。"
+}

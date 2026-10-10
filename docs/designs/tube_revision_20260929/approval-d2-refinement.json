@@ -1,0 +1,33 @@
+{
+  "revision": "D2-post-implementation-refinement",
+  "status": "approved",
+  "recordedAt": "2026-09-29T13:51:12.292Z",
+  "userConfirmation": "确认",
+  "approvedScope": "删除新建管材外发单三种来源的表下数量汇总条及静态说明；保留换算、校验、底栏和确认窗",
+  "implementationEnvironment": "qa/tube_revision_s3_20260929，仅隔离环境；不包括主ERP启用",
+  "sourceFiles": [
+    {
+      "path": "qa/tube_revision_s3_20260929/frontend/src/views/outsourcing/TubeOutsourcingFormView.vue",
+      "sha256": "cc105c8074b63b16ef4d0fd5247d0b703d9d9c145a539b1fccd0ef696de0c1c6"
+    },
+    {
+      "path": "qa/tube_revision_s3_20260929/frontend/src/styles/tubeOutsourcing.scss",
+      "sha256": "17522e56deb7769fe0f6cdecb65b059fb28e158d01347c8b22e4c715196d3694"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "qa/tube_revision_s3_20260929/d2-metal-1920.png",
+      "sha256": "76394f15d7156fa79aca8c5d0f058d98d2a53ddd2b00915506a2e86cbb04cfda"
+    },
+    {
+      "path": "qa/tube_revision_s3_20260929/d2-public_semi-1920.png",
+      "sha256": "cb7e0c99095b42ba6ab32fdedbc88f1f5522db17a02e7706632b56c70d752d08"
+    },
+    {
+      "path": "qa/tube_revision_s3_20260929/d2-raw_pipe-1920.png",
+      "sha256": "b7e322d67e10502caea8edad25bda5cdbd171b2e7e1a12f36b72fd9ee27889c1"
+    }
+  ],
+  "originalApproval": "docs/designs/tube_revision_20260929/approval-v3.json"
+}

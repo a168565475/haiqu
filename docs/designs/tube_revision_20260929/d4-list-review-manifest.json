@@ -1,0 +1,51 @@
+{
+  "status": "PENDING_USER_CONFIRMATION",
+  "createdAt": "2026-09-30T08:42:13.812Z",
+  "scope": "D4统一外发列表设计：新管材渠道、摘要、筛选、既有入口兼容；未开发业务",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "verification": {
+    "states": 13,
+    "screenshots": 16,
+    "apiRequests": 0,
+    "pageErrors": 0
+  },
+  "files": {
+    "docs/designs/tube_revision_20260929/D4UnifiedListReviewApp.vue": "5854fc3c7f15a108c2633aa43077a4f5988def884b1ece9069213ce049bfa7e1",
+    "docs/designs/tube_revision_20260929/d4-list-main.js": "2d72c441ccf066bcca282d5af63e1398a54304859e7f83c75b220a96f0f4e229",
+    "docs/designs/tube_revision_20260929/d4-list-design.scss": "dab97780729102f463f5d45dbf740e20c4964662c46876308a56f62ddbd822c7",
+    "docs/designs/tube_revision_20260929/d4-list.html": "57a699e8900753661ee5d02da870c877501c0cd714eef5af6147c6505ea6a5d0",
+    "docs/designs/tube_revision_20260929/d4-list-review.html": "1bebd443da8d0760ea20161a049fcb2077ffbbfd9cca7fe71c44c23e0f604dfa",
+    "docs/tube_revision_d4_list_design_20260930.md": "41be8b850f4921431ade55522e824771edc417e1c61d6da8d43ba2b91c62bfeb",
+    "qa/tube_revision_d4_list_design_20260930/source-before.json": "f90f4608c0867b2d1ad9477a0c746b00bd230c3e81e38d37f8a7718ea402625e",
+    "qa/tube_revision_d4_list_design_20260930/source-scope.json": "f62f8541537b828659905a7d268a027fc8843b8ff15b85773338175336e4aef8",
+    "qa/tube_revision_d4_list_design_20260930/current-evidence.json": "3503992fc820aae02c5080321cbd391b7907a4ceb592fb99c89f8b534f8bee98",
+    "qa/tube_revision_d4_list_design_20260930/current-unified-list-1920.png": "5c41503b02c2094636be23259745c0e1eb615542e00c1ff88ad9b58028985c8b",
+    "qa/tube_revision_d4_list_design_20260930/verification.json": "825d882ded96bf6e8fea9cdf3e6c5d80600f960bb69d7c7199c2f20212ee2664",
+    "qa/tube_revision_d4_list_design_20260930/prepare.cjs": "f138d173f1806282de1d35ad911ca4ba9892eae0bde95737d6abe1455984a612",
+    "qa/tube_revision_d4_list_design_20260930/capture-current.cjs": "482a14fcfc1d3da41e14880fbe02b90704ce794e262dd55810e76b8ce4333e4e",
+    "qa/tube_revision_d4_list_design_20260930/verify.cjs": "eb5d840fbc0d4b2c2f9daf833de2f8b13dc6d4182af66408426e62a5d92477fa",
+    "qa/tube_revision_d4_list_design_20260930/deliver.cjs": "32970df65638fccc3e67c4a335aea7798f466a2d754ba239d8a8899473b7c2d5",
+    "docs/designs/tube_revision_20260929/design.scss": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a",
+    "src/frontend/src/styles/crm/_tokens.scss": "d34b43114b83b968a570c3da77578d3e7e8741a7ea662fd42ce1e72b2b8aeeae",
+    "src/frontend/src/views/workshop/ProductionSchedulingFormView.vue": "698b6a76b331f56ab5e1d6accd23f3d6ea040637e23eea5f8cb3c389f4a68f51",
+    "qa/tube_revision_d4_list_design_20260930/list-normal-1920.png": "40e3fb75b82067249d60221b9a5def7a097d1f09d3fb29624646079ec1ec1b3a",
+    "qa/tube_revision_d4_list_design_20260930/list-factory-filter-1920.png": "66f86f1020d6a24f3348d00522ec8f4a1ffc2306e66d3b5b86ef78c8a8e0987c",
+    "qa/tube_revision_d4_list_design_20260930/list-source-raw-1920.png": "daabbe03192381b05889c02e6325c2ff543c5c350710baee3510fd0b6bb09d3c",
+    "qa/tube_revision_d4_list_design_20260930/list-source-public-1920.png": "184138a20504e06ba9387d0f57b1217769d931e7c334be9beac434cb4d225301",
+    "qa/tube_revision_d4_list_design_20260930/list-source-metal-1920.png": "5b03c1986bad9e65838f0c8e1756ba28351bae655c63efc95758901712e258cd",
+    "qa/tube_revision_d4_list_design_20260930/list-source-old-metal-1920.png": "2d3253d86d5b38e13fe3188d4c37eb12d9f13b37968aebf806cbffa438426715",
+    "qa/tube_revision_d4_list_design_20260930/list-source-dropdown-1920.png": "d3804e846a0654339710b1788a8d3bcb1358af38d95ef86de0abb3e87ad85d84",
+    "qa/tube_revision_d4_list_design_20260930/list-old-menu-1920.png": "f181d859da6424d5b42848f4122337b563de2d2efcde9e6c9991af3683e8c83c",
+    "qa/tube_revision_d4_list_design_20260930/list-long-first-1920.png": "c0ff514b7d9dc0aa34206e98e6394132400457c748d12a514fd22435f99e6f10",
+    "qa/tube_revision_d4_list_design_20260930/list-long-last-1920.png": "505bc43234647372c71670e5c79a4dfb0a831fdb63bc153857bfa038c8585005",
+    "qa/tube_revision_d4_list_design_20260930/list-state-empty-1920.png": "a0ade15518c07c48f4a5d792a6a36e96b0ad54a4e25249bfd3c32fd3539f6a34",
+    "qa/tube_revision_d4_list_design_20260930/list-state-loading-1920.png": "bab4cef48e8d44f78e6f979cb073698a7ee98c01227f6f94e17250654c21bfbb",
+    "qa/tube_revision_d4_list_design_20260930/list-state-error-1920.png": "008a3e4db023400d01b5d8c96caeb64012b715a6ed35cfd2e49a306b431ef92b",
+    "qa/tube_revision_d4_list_design_20260930/list-state-denied-1920.png": "cb7c707375bfb53b9d716df1913137b2027254b3e00bcf26f6416f406b06462a",
+    "qa/tube_revision_d4_list_design_20260930/list-state-missing-1920.png": "565f8fe9cbc2864d0bae72ea278e3d2886afc17b5ee539f746f0b9dbffe6764e",
+    "qa/tube_revision_d4_list_design_20260930/list-filter-empty-1920.png": "4f54bc4e4617c224a37942bc0e6fa65b7770981d648d744204e8c7416baeb003"
+  }
+}

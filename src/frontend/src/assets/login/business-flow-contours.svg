@@ -1,0 +1,14 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="1040" height="420" viewBox="0 0 1040 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Background / Business Flow Contours" opacity="0.9" clip-path="url(#clip0_0_32)">
+<path id="Vector" d="M-40 344C147 244 246 362 427 244C608 126 735 190 1080 18" stroke="#FFF6E8" stroke-opacity="0.16" stroke-width="1.5"/>
+<path id="Vector_2" d="M-80 390C123 278 266 408 458 278C650 148 783 226 1094 64" stroke="#FFF6E8" stroke-opacity="0.1" stroke-width="1.5"/>
+<path id="Vector_3" d="M-10 282C194 190 294 298 452 196C610 94 754 146 1010 -24" stroke="#FFF6E8" stroke-opacity="0.08" stroke-width="1.5"/>
+<path id="Vector_4" d="M426 249C428.761 249 431 246.761 431 244C431 241.239 428.761 239 426 239C423.239 239 421 241.239 421 244C421 246.761 423.239 249 426 249Z" fill="#FFF6E8" fill-opacity="0.28"/>
+<path id="Vector_5" d="M735 194C737.209 194 739 192.209 739 190C739 187.791 737.209 186 735 186C732.791 186 731 187.791 731 190C731 192.209 732.791 194 735 194Z" fill="#FFF6E8" fill-opacity="0.2"/>
+</g>
+<defs>
+<clipPath id="clip0_0_32">
+<rect width="1040" height="420" fill="white"/>
+</clipPath>
+</defs>
+</svg>

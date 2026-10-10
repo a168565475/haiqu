@@ -1,0 +1,9 @@
+@use '@/styles/crm/sample-document' as document;
+
+.outbound-detail-page {
+  @include document.page;
+  .lines-table-head, .lines-table-row {
+    grid-template-columns: 170px 170px 150px 180px 90px 130px 120px 170px 180px minmax(0, 1fr);
+    min-width: 1392px;
+  }
+}

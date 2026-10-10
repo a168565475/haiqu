@@ -1,0 +1,60 @@
+@use './tokens' as token;
+@use './sample-dialog' as sample;
+
+// 出库与借出共用同一选择明细区域；入库另保留成品仓目的地。
+@mixin selection-panel {
+  .batch-detail-panel { height: 458px; }
+  .batch-detail-panel .el-table { width: calc(100% - 24px); margin: 0 12px; }
+  .validation-bar { margin: 14px 12px 0; border: 0; border-radius: token.$crm-radius-2; }
+}
+
+// 批量样品操作共用结构；调用方以具名弹窗类限定 Teleport 内的样式。
+@mixin dialog {
+  @include sample.dialog;
+  --el-disabled-bg-color: #{token.$crm-color-subtle};
+  --el-disabled-text-color: #{token.$crm-text-muted};
+  --el-disabled-border-color: #{token.$crm-border-subtle};
+  &.el-dialog {
+    display: flex;
+    flex-direction: column;
+    height: min(760px, calc(100vh - 32px));
+    min-height: min(600px, calc(100vh - 32px));
+    min-width: min(980px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
+    padding: 0;
+    box-shadow: 0 12px 32px rgba(20, 20, 19, .18);
+  }
+  .el-dialog__body, .el-dialog__footer { box-sizing: border-box; min-height: 0; }
+  .el-dialog__body { flex: 1; min-height: 0; overflow: auto; padding: 14px 24px 40px; }
+  .el-dialog__footer { display: block; flex: 0 0 64px; padding: 0 24px; border-top: 1px solid token.$crm-border-subtle; }
+  .batch-dialog-footer { display: flex; align-items: center; justify-content: space-between; }
+  .batch-dialog-subtitle { margin: 0 0 10px; color: token.$crm-text-muted; font-size: 12px; line-height: 18px; }
+  .document-summary { position: relative; display: grid; grid-template-columns: 250px 250px minmax(0, 1fr); align-items: center; height: 64px; padding: 0 16px; border-radius: token.$crm-radius-2; background: token.$crm-color-subtle; }
+  .document-summary > div { display: flex; flex-direction: column; gap: 4px; }
+  .document-summary span { color: token.$crm-text-muted; font-size: 12px; }
+  .document-summary strong { color: token.$crm-text-primary; font-size: 13px; font-weight: 500; }
+  .document-summary small { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); color: token.$crm-text-muted; font-size: 11px; }
+  .rule-alert { display: flex; align-items: center; min-height: 40px; margin-top: 12px; padding: 8px 14px; border-radius: token.$crm-radius-2; color: token.$crm-success; background: token.$crm-success-soft; font-size: 12px; }
+  .batch-detail-panel { margin-top: 12px; overflow: hidden; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; }
+  .el-table { --el-table-header-bg-color: #{token.$crm-color-surface}; --el-table-tr-bg-color: #{token.$crm-color-surface}; --el-table-bg-color: #{token.$crm-color-surface}; --el-table-border-color: #{token.$crm-border-subtle}; --el-table-row-hover-bg-color: #{token.$crm-color-row-hover}; font-size: 12px; }
+  .el-table__header th.el-table__cell { height: 40px; padding: 0; color: token.$crm-text-primary; font-weight: 500; }
+  .el-table__row td.el-table__cell { height: 66px; padding: 0; color: token.$crm-text-regular; }
+  .el-table .cell { padding: 0 5px; }
+  .line-input { width: 100%; }
+  .line-input .el-input__wrapper { padding: 0 8px; }
+  .el-dialog__body .el-select .el-select__wrapper.is-disabled { background: token.$crm-color-subtle; }
+  .line-input.is-invalid .el-input__wrapper { box-shadow: 0 0 0 1px token.$crm-danger inset; }
+  .line-input.is-invalid .el-input__inner { color: token.$crm-danger; }
+  input[type='number'] { appearance: textfield; }
+  input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { margin: 0; appearance: none; }
+  .validation-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 12px; border-top: 1px solid token.$crm-border-subtle; color: token.$crm-text-regular; background: token.$crm-warning-soft; font-size: 12px; }
+  .validation-bar.has-error { color: token.$crm-danger; background: token.$crm-danger-soft; }
+  .state-note { display: flex; align-items: center; min-height: 40px; padding: 8px 12px; color: token.$crm-text-muted; font-size: 11px; }
+  .batch-dialog-footer { height: 100%; }
+  .batch-dialog-footer > span { color: token.$crm-text-muted; font-size: 12px; }
+  .batch-dialog-footer > div { display: flex; gap: 12px; }
+  .batch-dialog-footer .el-button { width: 82px; }
+  .batch-dialog-footer .el-button--primary { width: 100px; }
+}

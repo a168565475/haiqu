@@ -10,7 +10,7 @@ services:
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
       - type: bind
         source: ./data/postgres
@@ -19,8 +19,9 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
-      retries: 20
-      start_period: 10s
+      # 异常关机后的 WAL 自动恢复可能超过 100 秒，避免过早阻断后端启动。
+      retries: 40
+      start_period: 30s
     logging:
       driver: local
       options:
@@ -33,7 +34,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
-      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-16379}:6379"
     volumes:
       - type: bind
         source: ./data/redis
@@ -50,6 +51,24 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  clamav:
+    image: clamav/clamav:1.5.4
+    container_name: haiqu-clamav
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   backend:
     build:
       context: ./src/backend
@@ -60,19 +79,25 @@ services:
     env_file:
       - .env
     environment:
-      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,backend,${LAN_IP:-127.0.0.1}"
-      CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173,http://${LAN_IP:-127.0.0.1}:5173"
-      CSRF_TRUSTED_ORIGINS: "http://localhost:5173,http://127.0.0.1:5173,http://${LAN_IP:-127.0.0.1}:5173"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,backend,${LAN_IP:-127.0.0.1},.trycloudflare.com"
+      CORS_ALLOWED_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080,http://${LAN_IP:-127.0.0.1}:8080"
+      CSRF_TRUSTED_ORIGINS: "http://localhost:8080,http://127.0.0.1:8080,http://${LAN_IP:-127.0.0.1}:8080,https://*.trycloudflare.com"
+      TUBE_OUTSOURCING_ENABLED: "True"
     ports:
       - "0.0.0.0:8000:8000"
     volumes:
       - type: bind
         source: ./src/backend
         target: /app
+      - type: bind
+        source: ./data/media
+        target: /app/media
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      clamav:
         condition: service_healthy
     command: ["sh", "-c", "python wait_for_services.py && python manage.py runserver 0.0.0.0:8000"]
     healthcheck:
@@ -95,9 +120,9 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      VITE_API_BASE_URL: "http://${LAN_IP:-127.0.0.1}:8000"
+      VITE_API_BASE_URL: "same-origin"
     ports:
-      - "0.0.0.0:5173:5173"
+      - "0.0.0.0:8080:5173"
     volumes:
       - type: bind
         source: ./src/frontend
@@ -121,3 +146,4 @@ services:
 
 volumes:
   frontend_node_modules:
+  clamav_db:

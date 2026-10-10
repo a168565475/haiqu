@@ -1,0 +1,84 @@
+@use '@/styles/crm/tokens' as token;
+@use '@/styles/crm/sample-controls' as sample;
+
+.sample-create-page { @include sample.controls; display: flex; height: calc(100dvh - 64px); min-width: 0; flex-direction: column; color: token.$crm-text-primary; background: token.$crm-color-page; }
+.sample-create-content { flex: 1; min-height: 0; overflow-y: auto; padding: 28px 28px 12px; }
+.application-heading { display: flex; height: 46px; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.application-heading h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; font-weight: 700; line-height: 42px; }
+.application-heading-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 12px; }
+.application-heading-actions :deep(.el-button) { height: 32px; border-radius: 5px; font-size: 14px; line-height: 20px; }
+.application-heading-actions .cancel-button { width: 110px; background: #fff; }
+.application-heading-actions .submit-button { width: 140px; background: sample.$action-primary; border-color: sample.$action-primary; }
+.application-heading-actions .submit-error { max-width: 360px; margin: 0; color: token.$crm-danger; font-size: 13px; line-height: 20px; }
+.returned-note { margin: -4px 0 16px; padding: 10px 12px; border-left: 3px solid sample.$action-primary; color: token.$crm-text-secondary; background: token.$crm-color-surface; font-size: 13px; line-height: 20px; }
+.basic-section { height: 266px; }
+.basic-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px 28px; }
+.basic-grid :deep(.el-form-item), .product-fields > :deep(.el-form-item:not(.requirements-field)), .dimensions-grid :deep(.el-form-item) { height: 72px; }
+.application-form :deep(.el-form-item) { min-width: 0; margin: 0; }
+.application-form :deep(.el-form-item__label) { height: 22px; margin-bottom: 8px; padding: 0; color: token.$crm-text-primary; font-size: 14px; font-weight: 500; line-height: 22px; }
+.application-form :deep(.el-form-item__content) { min-width: 0; line-height: 40px; }
+.application-form :deep(.el-select), .application-form :deep(.el-date-editor.el-input) { width: 100%; }
+.application-form :deep(.el-date-editor .el-input__prefix) { order: 2; margin-left: 8px; }
+.application-form :deep(.el-date-editor .el-input__prefix-inner > :last-child) { margin-right: 0; }
+.application-form :deep(.el-input__wrapper), .application-form :deep(.el-select__wrapper) { background: token.$crm-color-surface; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
+.application-form :deep(.el-input.is-disabled .el-input__wrapper), .application-form :deep(.el-select__wrapper.is-disabled), .application-form :deep(.el-cascader.is-disabled .el-input__wrapper) { background: token.$crm-color-disabled; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
+.application-form :deep(.el-input.is-disabled .el-input__inner) { color: token.$crm-text-secondary; -webkit-text-fill-color: token.$crm-text-secondary; }
+.application-form :deep(.readonly-field.is-disabled .el-input__wrapper) { background: token.$crm-color-page; }
+.application-form :deep(.readonly-field.is-disabled .el-input__inner) { color: token.$crm-text-secondary; -webkit-text-fill-color: token.$crm-text-secondary; }
+.application-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 20px; margin-top: 20px; }
+.product-section { height: 514px; }
+.product-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); gap: 28px; }
+.product-image { display: grid; height: 238px; place-items: center; border: 1px solid token.$crm-border-subtle; border-radius: 4px; color: token.$crm-text-muted; background: token.$crm-color-page; font-size: 12px; }
+.product-fields { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.dimensions-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.requirements-field :deep(.el-textarea__inner) { height: 114px; padding: 12px; color: token.$crm-text-primary; background: token.$crm-color-surface; box-shadow: 0 0 0 1px token.$crm-border-default inset; font-size: 14px; line-height: 22px; }
+.requirements-field :deep(.el-textarea.is-disabled .el-textarea__inner) { background: token.$crm-color-disabled; }
+.requirements-field :deep(.el-textarea__inner:focus) { box-shadow: 0 0 0 1px token.$crm-focus inset; }
+.requirements-field :deep(.el-input__count) { right: 12px; bottom: 8px; color: token.$crm-text-muted; background: transparent; line-height: 22px; }
+.application-aside { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.upload-section { height: 310px; }
+.upload-section :deep(h2) { margin-bottom: 12px; }
+.field-label { margin: 0 0 8px; font-size: 14px; font-weight: 500; line-height: 22px; }
+.field-hint { margin: 8px 0 0; color: token.$crm-text-muted; font-size: 12px; line-height: 22px; }
+.upload-section :deep(.el-upload), .upload-section :deep(.el-upload-dragger) { width: 100%; }
+.upload-section :deep(.el-upload-dragger) { display: flex; height: 148px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 16px; border: 1px dashed token.$crm-border-default; border-radius: 4px; background: token.$crm-color-page; }
+.upload-icon { width: 40px; height: 36px; object-fit: contain; }
+.upload-section strong { font-size: 16px; font-weight: 500; line-height: 24px; }
+.upload-section :deep(.el-upload-dragger span) { color: token.$crm-text-muted; font-size: 12px; line-height: 22px; }
+.reference-preview { display: grid; height: 148px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; overflow: hidden; padding: 8px; border: 1px solid token.$crm-border-subtle; border-radius: 4px; background: token.$crm-color-page; }
+.reference-preview img { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; }
+.reference-preview .el-button { position: static; }
+.quantity-section { height: 190px; }
+.quantity-section :deep(h2) { margin-bottom: 10px; }
+.quantity-section :deep(.el-form-item__label) { margin-bottom: 4px; }
+.quantity-section :deep(.el-input-number) { width: calc(100% - 84px); }
+.quantity-section :deep(.el-input__inner) { text-align: left; }
+.quantity-unit { width: 84px; height: 40px; border: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; background: token.$crm-color-page; text-align: center; }
+.quantity-section .field-hint { margin-top: 4px; }
+.product-option { display: flex; min-width: 0; align-items: center; gap: 16px; }
+.product-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.product-option-spec { max-width: 65%; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; text-overflow: ellipsis; }
+.application-error { padding: 24px; color: token.$crm-danger; background: token.$crm-color-surface; }
+@media (max-width: 1440px) {
+  .sample-create-content { padding-right: 24px; padding-left: 24px; }
+  .basic-grid { gap: 16px; }
+  .product-body { grid-template-columns: 160px minmax(0, 1fr); gap: 20px; }
+  .dimensions-grid { gap: 8px; }
+}
+@media (max-width: 1200px) {
+  .basic-section, .product-section { height: auto; }
+  .basic-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .application-columns { grid-template-columns: 1fr; }
+  .application-aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.source-image-select { width: 100%; margin-bottom: 8px; }
+.sample-source-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-height: 60vh; overflow-y: auto; padding: 2px;
+  article { padding: 10px; border: 1px solid token.$crm-border-subtle; border-radius: 6px; }
+  article.is-selected { border-color: var(--el-color-primary); box-shadow: 0 0 0 1px var(--el-color-primary); }
+  .el-image { width: 100%; height: 170px; cursor: zoom-in; }
+  article > div:last-child { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+}
+.reference-image-actions { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.reference-image-actions :deep(.el-upload) { width: auto; }
+.upload-section:has(.source-image-select) .reference-preview,
+.upload-section:has(.source-image-select) :deep(.el-upload-dragger) { height: 100px; }

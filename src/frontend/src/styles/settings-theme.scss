@@ -1,0 +1,599 @@
+@use './crm/tokens' as token;
+
+$settings-surfaces: (
+  '.card-shell',
+  '.category-card',
+  '.filter-card',
+  '.data-card',
+  '.standards-card',
+  '.metric-card',
+  '.metrics article',
+  '.table-card'
+);
+
+#app .system-settings-theme {
+  min-width: 0;
+  color: token.$crm-text-primary;
+  background: transparent;
+  font-family: token.$crm-font-body;
+  --el-color-primary: var(--erp-color-brand, #{token.$crm-primary});
+  --el-color-primary-light-3: var(--erp-color-brand-light-3, #{token.$crm-primary-light-3});
+  --el-color-primary-light-5: var(--erp-color-brand-light-5, #{token.$crm-primary-light-5});
+  --el-color-primary-light-7: var(--erp-color-brand-light-7, #{token.$crm-primary-light-7});
+  --el-color-primary-light-8: var(--erp-color-brand-light-8, #{token.$crm-primary-light-8});
+  --el-color-primary-light-9: var(--erp-color-selected, #{token.$crm-color-selected});
+  --el-color-primary-dark-2: var(--erp-color-brand-pressed, #{token.$crm-primary-pressed});
+
+  h1 {
+    margin-top: 0;
+    color: token.$crm-text-primary;
+    font-family: token.$crm-font-display;
+    font-size: 34px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  h2,
+  h3,
+  h4,
+  strong,
+  b,
+  code {
+    color: token.$crm-text-primary;
+  }
+
+  .crumb,
+  .breadcrumb,
+  .page-breadcrumb,
+  .page-heading p,
+  header p,
+  .metric-card small,
+  .metric-card span,
+  .metrics span,
+  .table-card small,
+  .section-heading span,
+  .data-card__header span,
+  .table-heading span,
+  .filter-card label,
+  .filter-card__version,
+  .field-help,
+  .dialog-hint,
+  .sort-help,
+  .parameter-editor__help,
+  .parameter-editor__code,
+  .category-panel__title,
+  .category-panel__empty,
+  .pending-card p,
+  .state-page p,
+  small {
+    color: token.$crm-text-muted;
+  }
+
+  .crumb button,
+  .crumb a,
+  .breadcrumb button,
+  .breadcrumb a,
+  .page-breadcrumb button,
+  .page-breadcrumb a {
+    color: token.$crm-text-secondary;
+
+    &:hover,
+    &:focus-visible {
+      color: token.$crm-primary;
+    }
+  }
+
+  @each $surface in $settings-surfaces {
+    #{$surface} {
+      border-color: token.$crm-border-default;
+      background: token.$crm-color-surface;
+      box-shadow: none;
+    }
+  }
+
+  .metric-card {
+    strong,
+    span {
+      color: token.$crm-text-primary;
+    }
+
+    &.active,
+    &:focus-visible {
+      border-color: token.$crm-primary;
+      outline: none;
+      box-shadow: 0 0 0 1px token.$crm-primary;
+    }
+
+    &--pending {
+      border-color: token.$crm-warning-border;
+      background: token.$crm-warning-soft;
+
+      strong {
+        color: token.$crm-warning;
+      }
+    }
+
+    &__icon {
+      &--blue {
+        color: token.$crm-info;
+        background: token.$crm-info-soft;
+      }
+
+      &--green {
+        color: token.$crm-success;
+        background: token.$crm-success-soft;
+      }
+
+      &--orange {
+        color: token.$crm-warning;
+        background: token.$crm-warning-soft;
+      }
+    }
+  }
+
+  .category-button,
+  .category-item,
+  .category-panel button {
+    color: token.$crm-text-regular;
+    background: transparent;
+
+    &:hover:not(.is-active):not(.active),
+    &:focus-visible:not(.is-active):not(.active) {
+      color: token.$crm-text-primary;
+      background: token.$crm-color-row-hover;
+      outline: none;
+    }
+
+    &.is-active,
+    &.active {
+      color: token.$crm-text-inverse;
+      background: token.$crm-primary;
+
+      span,
+      em {
+        color: token.$crm-text-inverse;
+      }
+    }
+  }
+
+  .category-button__count,
+  .category-panel em {
+    color: token.$crm-text-secondary;
+    background: token.$crm-color-subtle;
+  }
+
+  .category-button.is-active .category-button__count,
+  .category-panel button.active em {
+    color: token.$crm-text-inverse;
+    background: rgb(250 248 242 / 18%);
+  }
+
+  .provider-guide {
+    border-color: token.$crm-border-default;
+    background: token.$crm-color-selected;
+  }
+
+  .provider-guide-heading p,
+  .provider-steps ol,
+  .dialog-hint {
+    color: token.$crm-text-regular;
+  }
+
+  .provider-parameters,
+  .image-preview,
+  .image-placeholder,
+  .loading-card,
+  .state-page,
+  .publish-summary {
+    border-color: token.$crm-border-default;
+    background: token.$crm-color-surface;
+  }
+
+  .provider-parameters div,
+  .parameter-grid,
+  .parameter-item,
+  .sort-row,
+  .filter-row {
+    border-color: token.$crm-border-subtle;
+  }
+
+  .state-page__icon {
+    color: token.$crm-warning;
+    background: token.$crm-warning-soft;
+
+    &--locked {
+      color: token.$crm-neutral;
+      background: token.$crm-color-subtle;
+    }
+  }
+
+  .color-thumb,
+  .file-button {
+    border-color: token.$crm-border-default;
+    background: token.$crm-color-surface;
+  }
+
+  :is(.el-button, .el-input, .el-select, .el-date-editor, .el-input-number) {
+    --el-border-radius-base: #{token.$crm-radius-2};
+  }
+
+  .el-button {
+    box-sizing: border-box;
+    height: 32px !important;
+    min-height: 32px !important;
+    border-color: token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+
+    &:not(.is-disabled):not(.el-button--primary):not(.is-link):hover,
+    &:not(.is-disabled):not(.el-button--primary):not(.is-link):focus-visible {
+      border-color: token.$crm-border-strong;
+      color: token.$crm-text-primary;
+      background: token.$crm-color-subtle;
+    }
+
+    &--primary:not(.is-disabled) {
+      border-color: token.$crm-primary;
+      color: token.$crm-text-inverse;
+      background: token.$crm-primary;
+
+      &:hover,
+      &:focus-visible {
+        border-color: token.$crm-primary-hover;
+        background: token.$crm-primary-hover;
+      }
+
+      &:active {
+        border-color: token.$crm-primary-pressed;
+        background: token.$crm-primary-pressed;
+      }
+    }
+
+    &.is-link {
+      border-color: transparent;
+      color: token.$crm-primary;
+      background: transparent;
+    }
+  }
+
+  .el-card {
+    --el-card-bg-color: #{token.$crm-color-surface};
+    --el-card-border-color: #{token.$crm-border-default};
+    border-radius: token.$crm-radius-2;
+    box-shadow: none;
+
+    &__header {
+      border-bottom-color: token.$crm-border-subtle;
+    }
+  }
+
+  .el-table {
+    --el-bg-color: #{token.$crm-color-surface};
+    --el-fill-color-lighter: #{token.$crm-color-row-hover};
+    --el-table-bg-color: #{token.$crm-color-surface};
+    --el-table-tr-bg-color: #{token.$crm-color-surface};
+    --el-table-header-bg-color: #{token.$crm-color-subtle};
+    --el-table-border-color: #{token.$crm-border-subtle};
+    --el-table-row-hover-bg-color: #{token.$crm-color-row-hover};
+    color: token.$crm-text-regular;
+    background: token.$crm-color-surface;
+
+    th.el-table__cell {
+      box-sizing: border-box;
+      height: 44px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      color: token.$crm-text-secondary;
+      background: token.$crm-color-subtle;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    td.el-table__cell {
+      box-sizing: border-box;
+      height: 40px !important;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      color: token.$crm-text-regular;
+      background: token.$crm-color-surface;
+      font-size: 12px;
+      line-height: 18px;
+    }
+
+    .el-table__body tr {
+      height: 40px !important;
+    }
+
+    .el-table__cell > .cell {
+      padding-right: 16px !important;
+      padding-left: 16px !important;
+      font-size: inherit;
+      line-height: inherit;
+    }
+
+    .el-table__body-wrapper .cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .el-table__body-wrapper .cell > :is(b, strong, small) {
+      margin-top: 0 !important;
+      margin-bottom: 0 !important;
+      font-size: 12px !important;
+      line-height: 18px !important;
+    }
+  }
+
+  .el-input:not(.el-textarea) .el-input__wrapper,
+  .el-select__wrapper,
+  .el-date-editor.el-input__wrapper,
+  .el-date-editor.el-range-editor,
+  .el-input-number,
+  input[type='time'] {
+    box-sizing: border-box;
+    height: 32px !important;
+    min-height: 32px;
+    border-color: token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  .el-input-number :is(.el-input, .el-input__wrapper) {
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+
+  .el-textarea__inner {
+    border-color: token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  .el-form-item {
+    margin-bottom: 12px;
+  }
+
+  .el-form-item__label {
+    padding-bottom: 4px;
+    line-height: 20px;
+  }
+
+  .el-tag {
+    box-sizing: border-box;
+    height: 24px !important;
+    min-height: 24px !important;
+    line-height: 22px !important;
+  }
+
+  .el-pagination {
+    gap: 10px;
+    --el-pagination-button-width: 38px;
+    --el-pagination-button-height: 32px;
+  }
+
+  .el-pagination .el-select {
+    width: 136px;
+  }
+
+  .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
+    box-sizing: border-box;
+    min-width: 38px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    margin: 0;
+    border-radius: token.$crm-radius-2;
+  }
+
+  .pagination-row {
+    box-sizing: border-box;
+    min-height: 48px;
+    align-items: center;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  /* 生产资料列表中的颜色缩略图收进 40px 数据行。 */
+  .production-table .color-thumb {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* 邮箱测试状态与时间同行显示，避免 24px 标签叠加说明后撑高数据行。 */
+  &.email-account-settings .el-table__body td:nth-child(5) .cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  &.email-account-settings .el-table__body td:nth-child(5) .cell small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 询盘时限表格包含输入控件和说明文字，按内容自适应。 */
+  &.inquiry-settings .el-table__body tr,
+  &.inquiry-settings .el-table__body td.el-table__cell {
+    height: auto !important;
+    min-height: 40px;
+  }
+
+  &.inquiry-settings .el-table__body td.el-table__cell {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+  }
+
+  .el-alert {
+    border: 1px solid token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+  }
+}
+
+$settings-tag-colors: (
+  'primary': #c96442,
+  'success': #4f7d4b,
+  'warning': #b8781e,
+  'danger': #b53333,
+  'info': #5e5d59
+);
+$settings-tag-text: #faf9f5;
+
+.settings-tag.el-tag {
+  min-width: 56px !important;
+  height: 24px !important;
+  justify-content: center;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: token.$crm-radius-pill !important;
+  color: $settings-tag-text !important;
+  font-family: token.$crm-font-body;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+
+  @each $type, $color in $settings-tag-colors {
+    &.el-tag--#{$type} {
+      --el-tag-bg-color: #{$color};
+      --el-tag-border-color: transparent;
+      --el-tag-text-color: #{$settings-tag-text};
+      border-color: transparent !important;
+      color: $settings-tag-text !important;
+      background: $color !important;
+    }
+  }
+}
+
+.system-settings-dialog {
+  --el-color-primary: var(--erp-color-brand, #{token.$crm-primary});
+  --el-color-primary-light-3: var(--erp-color-brand-light-3, #{token.$crm-primary-light-3});
+  --el-color-primary-light-5: var(--erp-color-brand-light-5, #{token.$crm-primary-light-5});
+  --el-color-primary-light-7: var(--erp-color-brand-light-7, #{token.$crm-primary-light-7});
+  --el-color-primary-light-8: var(--erp-color-brand-light-8, #{token.$crm-primary-light-8});
+  --el-color-primary-light-9: var(--erp-color-selected, #{token.$crm-color-selected});
+  --el-color-primary-dark-2: var(--erp-color-brand-pressed, #{token.$crm-primary-pressed});
+
+  &.el-dialog,
+  &.el-drawer {
+    --el-bg-color: var(--erp-color-surface, #{token.$crm-color-surface});
+    --el-text-color-primary: var(--erp-color-text-primary, #{token.$crm-text-primary});
+    --el-border-color-lighter: var(--erp-color-border, #{token.$crm-border-subtle});
+    color: var(--erp-color-text-primary, #{token.$crm-text-primary});
+    background: var(--erp-color-surface, #{token.$crm-color-surface});
+  }
+
+  .el-dialog__header,
+  .el-dialog__footer,
+  .el-drawer__header {
+    border-color: token.$crm-border-subtle;
+  }
+
+  .el-input__wrapper,
+  .el-select__wrapper,
+  .el-textarea__inner {
+    border-radius: token.$crm-radius-2;
+    background: token.$crm-color-surface;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  .el-button,
+  .el-input:not(.el-textarea) .el-input__wrapper,
+  .el-select__wrapper,
+  .el-date-editor.el-input__wrapper,
+  .el-date-editor.el-range-editor,
+  .el-input-number {
+    box-sizing: border-box;
+    height: 32px !important;
+    min-height: 32px !important;
+    border-radius: token.$crm-radius-2;
+  }
+
+  .el-button {
+    border-color: token.$crm-border-default;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+
+    &:not(.is-disabled):not(.el-button--primary):not(.is-link):hover,
+    &:not(.is-disabled):not(.el-button--primary):not(.is-link):focus-visible {
+      border-color: token.$crm-border-strong;
+      color: token.$crm-text-primary;
+      background: token.$crm-color-subtle;
+    }
+
+    &--primary:not(.is-disabled) {
+      border-color: token.$crm-primary;
+      color: token.$crm-text-inverse;
+      background: token.$crm-primary;
+
+      &:hover,
+      &:focus-visible {
+        border-color: token.$crm-primary-hover;
+        background: token.$crm-primary-hover;
+      }
+
+      &:active {
+        border-color: token.$crm-primary-pressed;
+        background: token.$crm-primary-pressed;
+      }
+    }
+
+    &.is-link {
+      border-color: transparent;
+      color: token.$crm-primary;
+      background: transparent;
+    }
+  }
+
+  .el-input-number :is(.el-input, .el-input__wrapper) {
+    height: 32px !important;
+    min-height: 32px !important;
+  }
+
+  .el-form-item {
+    margin-bottom: 12px;
+  }
+
+  .el-form-item__label {
+    padding-bottom: 4px;
+    line-height: 20px;
+  }
+
+  .el-tag {
+    box-sizing: border-box;
+    height: 24px !important;
+    min-height: 24px !important;
+    line-height: 22px !important;
+  }
+
+  .el-table__header-wrapper th.el-table__cell {
+    box-sizing: border-box;
+    height: 44px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    color: token.$crm-text-secondary;
+    background: token.$crm-color-subtle;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .el-table__body tr,
+  .el-table__body-wrapper td.el-table__cell {
+    box-sizing: border-box;
+    height: 40px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    font-size: 12px;
+    line-height: 18px;
+  }
+
+  .el-table__cell > .cell {
+    padding-right: 16px !important;
+    padding-left: 16px !important;
+  }
+}

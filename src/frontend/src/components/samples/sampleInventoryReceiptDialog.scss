@@ -1,0 +1,26 @@
+@use '@/styles/crm/tokens' as token;
+@use '@/styles/crm/sample-batch-dialog' as batch;
+
+.sample-receipt-overlay { background: rgba(0, 0, 0, .34); }
+.sample-receipt-dialog {
+  @include batch.dialog;
+  &.el-dialog { min-height: min(460px, calc(100vh - 32px)); }
+  .el-dialog__body { overflow: hidden; padding: 14px 24px; }
+  .el-dialog__footer { flex-basis: 48px; padding: 0 24px; }
+  .finished-destination { display: grid; grid-template-columns: 160px repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; min-height: 48px; margin: 0; padding: 7px 14px; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
+  .finished-destination.is-invalid { border-color: token.$crm-danger; }
+  .destination-heading { display: flex; align-items: center; }
+  .destination-heading strong { font-size: 12px; font-weight: 600; }
+  .finished-destination .el-select__wrapper,
+  .line-input .el-input__wrapper { height: 32px; min-height: 32px; }
+  .receipt-detail-panel { min-height: 0; margin-top: 14px; }
+  .el-table__header th.el-table__cell { height: 44px; background: token.$crm-color-subtle; }
+  .el-table__body .el-table__row { height: 40px !important; min-height: 40px; }
+  .el-table__body-wrapper .el-table__row td.el-table__cell { height: 40px !important; min-height: 40px; padding-top: 0 !important; padding-bottom: 0 !important; }
+  .el-table .cell { padding: 0 12px; line-height: 18px; }
+  .footer-status,
+  .footer-actions { display: flex; align-items: center; gap: 12px; }
+  .footer-status { color: token.$crm-text-muted; font-size: 12px; }
+  .footer-status .el-button { width: auto; padding: 0; }
+  .batch-dialog-footer .el-button { height: 32px; }
+}

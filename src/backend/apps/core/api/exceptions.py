@@ -18,6 +18,16 @@ class Conflict(APIException):
     default_code = "conflict"
 
 
+class BuyerAddressRequired(ValidationError):
+    """销售订单确认时买方地址缺失或已经失效。"""
+
+    api_error_code = "BUYER_ADDRESS_REQUIRED"
+    error_meta = {"field": "buyer_address_id", "recovery_action": "EDIT_BUYER_ADDRESS"}
+
+    def __init__(self, detail="确认销售订单前，请选择当前买方主体的有效地址。"):
+        super().__init__({"buyer_address_id": [detail]}, code="buyer_address_required")
+
+
 def _plain_value(value):
     if isinstance(value, dict):
         return {key: _plain_value(item) for key, item in value.items()}
@@ -45,6 +55,9 @@ def _first_message(value):
 
 
 def _error_code(exc, response):
+    custom_code = getattr(exc, "api_error_code", None)
+    if custom_code:
+        return custom_code
     if isinstance(exc, ValidationError):
         return "VALIDATION_ERROR"
     if isinstance(exc, (NotAuthenticated, AuthenticationFailed)):
@@ -75,12 +88,14 @@ def api_exception_handler(exc, context):
 
     details = _plain_value(response.data)
     field_errors = details if isinstance(exc, ValidationError) and isinstance(details, dict) else {}
-    response.data = {
-        "error": {
-            "code": _error_code(exc, response),
-            "message": _first_message(details),
-            "field_errors": field_errors,
-            "request_id": getattr(request, "request_id", None),
-        }
+    error = {
+        "code": _error_code(exc, response),
+        "message": _first_message(details),
+        "field_errors": field_errors,
+        "request_id": getattr(request, "request_id", None),
     }
+    error_meta = getattr(exc, "error_meta", None)
+    if error_meta is not None:
+        error["meta"] = _plain_value(error_meta)
+    response.data = {"error": error}
     return response

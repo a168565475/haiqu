@@ -1,0 +1,233 @@
+{
+  "status": "approved-for-S2",
+  "confirmedAt": "2026-09-29T11:41:39.418Z",
+  "userInstruction": "表格的高度 有没有按照设计的高度来 有的话 就确认进行下一步",
+  "verification": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "pages": 14,
+    "headerPx": 44,
+    "rowPx": 40,
+    "controlsPx": 32,
+    "scrollAndFixedFooter": true,
+    "apiRequests": 0
+  },
+  "manifestSha256": "adf2f63e516561caba9e61aef627a65b7a52e1b7d6fa5e8817e94ddf5aff53de",
+  "manifest": "manifest.json",
+  "screenshots": [
+    {
+      "file": "metal-plan-menu-1920.png",
+      "displayedSha256": "7cae0839ce35100e32ca5e5ed1df9621fe6a740681e8f6d4036b3ac72d9b25c9",
+      "verificationSha256": "7cae0839ce35100e32ca5e5ed1df9621fe6a740681e8f6d4036b3ac72d9b25c9",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "metal-1920.png",
+      "displayedSha256": "f7ed757cdd6ec3e2809763b6cd482407f279755fbad37ce0a8f688282e51366b",
+      "verificationSha256": "f7ed757cdd6ec3e2809763b6cd482407f279755fbad37ce0a8f688282e51366b",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "metal-plan-picker-1920.png",
+      "displayedSha256": "8dccb14eecfc6ab540c95e4dbf3f7903176d7ef45561bc296d9f7aca32c862dc",
+      "verificationSha256": "8dccb14eecfc6ab540c95e4dbf3f7903176d7ef45561bc296d9f7aca32c862dc",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "metal-operation-basis-1920.png",
+      "displayedSha256": "3f47f44b2860a8b92ed233050c44e044e0fc997c3aafc0c3e0c9a87d81735767",
+      "verificationSha256": "b18432a8cfa7de2d653b8bfc539935e5edc063a9baa80c3001ae8cbc7506d0ff",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "metal-limit-toast-1920.png",
+      "displayedSha256": "6281196f03b810beb37561c696db3062309c50f3d63df57b240879ac83bb7191",
+      "verificationSha256": "6281196f03b810beb37561c696db3062309c50f3d63df57b240879ac83bb7191",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-metal-1920.png",
+      "displayedSha256": "4b733f8c739afbe6cad9590e48f8c6751d924acdfa786a61b4a2d6ba3b25ac7f",
+      "verificationSha256": "4b733f8c739afbe6cad9590e48f8c6751d924acdfa786a61b4a2d6ba3b25ac7f",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-semi-1920.png",
+      "displayedSha256": "b3756441ad73356392993aedd045fbf25ba13d6f881f0a4909845b413714a1b0",
+      "verificationSha256": "b3756441ad73356392993aedd045fbf25ba13d6f881f0a4909845b413714a1b0",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-raw-1920.png",
+      "displayedSha256": "ea20e8afb4e6291b9e77cb2213c9cefda3443d7c1c98821b2d582c524ad3091f",
+      "verificationSha256": "ea20e8afb4e6291b9e77cb2213c9cefda3443d7c1c98821b2d582c524ad3091f",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-source-picker-1920.png",
+      "displayedSha256": "b0d027dd2ee5f6f463b91751b0069dc39c68fd487846f71e7eee7e59bf646db5",
+      "verificationSha256": "866006c59c346dbae5e13c173e19f52f579e42e67e36686805d4e8110d8368c2",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "dispatch-metal-parts-1920.png",
+      "displayedSha256": "955548ea4d09717609c4bb7dc1d825b44dfa1b352163b0f96d90b385fe36d4cd",
+      "verificationSha256": "955548ea4d09717609c4bb7dc1d825b44dfa1b352163b0f96d90b385fe36d4cd",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-semi-parts-1920.png",
+      "displayedSha256": "2f38da273261e3ac8f97c92a0aa59ec78169883d902d9f26c1a1037671555316",
+      "verificationSha256": "2f38da273261e3ac8f97c92a0aa59ec78169883d902d9f26c1a1037671555316",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-raw-parts-1920.png",
+      "displayedSha256": "f7d9cb670d8ee89f105f6f4556e5f4c6c73f0410664d4c4506bc35f47ca6bbb9",
+      "verificationSha256": "f7d9cb670d8ee89f105f6f4556e5f4c6c73f0410664d4c4506bc35f47ca6bbb9",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-confirm-1920.png",
+      "displayedSha256": "4bfae9384beceac365dd761991f292dd7e7006b616af6a315fdd323fc9827d51",
+      "verificationSha256": "4bfae9384beceac365dd761991f292dd7e7006b616af6a315fdd323fc9827d51",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "dispatch-cancel-1920.png",
+      "displayedSha256": "669852f81c2963c7584e7241b1482edda9b68266646818432139df352d81bb3a",
+      "verificationSha256": "d9ad6a8bceb87cc188c09ef4e99b2452ed1d420280913480132441f5ccb2021f",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "receipt-picker-1920.png",
+      "displayedSha256": "3b8cb510e289a78a87a304e3a610b5af739fc6f6c6dcd7dbe4369b784b25b3a4",
+      "verificationSha256": "3b8cb510e289a78a87a304e3a610b5af739fc6f6c6dcd7dbe4369b784b25b3a4",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "receipt-1920.png",
+      "displayedSha256": "bcb2bbd2287bd9f010d12393e3caaf26e33f1859f2914b0052f493373fe86c1f",
+      "verificationSha256": "bcb2bbd2287bd9f010d12393e3caaf26e33f1859f2914b0052f493373fe86c1f",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "receipt-confirm-1920.png",
+      "displayedSha256": "2b7ce7805325db17745f03584c4f8a4c02f219dd1fe3548fe80b910668fb9e8f",
+      "verificationSha256": "32ec85f50e4c08713ef03c09d482e6d0e7698e5c2fe443efc17898ba2dd9a8e1",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "receipt-zero-1920.png",
+      "displayedSha256": "5f051455b01b47d9cdfc18ceb414b1e85cb6f63c16dae8e963144bf12243390b",
+      "verificationSha256": "5f051455b01b47d9cdfc18ceb414b1e85cb6f63c16dae8e963144bf12243390b",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "receipt-zero-confirm-1920.png",
+      "displayedSha256": "dd8aa5e24e218b129ac447f8e14f647bea264a7da7e5c4374f72cfe6f3a74bcf",
+      "verificationSha256": "3a6c8af21976dd2402e22235ff93af2d191ba8ecf7e6f784fc6d92cbc584a333",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "detail-pending-1920.png",
+      "displayedSha256": "c1e330f0929d5596117875c5be69e35ef8a3bbb334c7cdc7d6cf62d6e073981c",
+      "verificationSha256": "c1e330f0929d5596117875c5be69e35ef8a3bbb334c7cdc7d6cf62d6e073981c",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "detail-1920.png",
+      "displayedSha256": "cbb701da35e93ee3720d115ef01ac40d0682873a15ce6b7fcd2d32d371572a47",
+      "verificationSha256": "cbb701da35e93ee3720d115ef01ac40d0682873a15ce6b7fcd2d32d371572a47",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "detail-ended-1920.png",
+      "displayedSha256": "62805d636a7e781db0986e5d222a8bf90fe1d06e060f2c9da7141aa958ca623a",
+      "verificationSha256": "62805d636a7e781db0986e5d222a8bf90fe1d06e060f2c9da7141aa958ca623a",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "history-1920.png",
+      "displayedSha256": "44c66a1400395e87dbeba231d38291d9c50b4b017bd547598d3db1c35b79811b",
+      "verificationSha256": "44c66a1400395e87dbeba231d38291d9c50b4b017bd547598d3db1c35b79811b",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "stock-1920.png",
+      "displayedSha256": "d406900c4dac75c583cb173c4c388509ff22f029e2a7dc3faabb2be4ddf29483",
+      "verificationSha256": "d406900c4dac75c583cb173c4c388509ff22f029e2a7dc3faabb2be4ddf29483",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "records-1920.png",
+      "displayedSha256": "10dd49357ff9ff22660df6a4659628cbc71398e9c30941ba55df518cc7c65f7f",
+      "verificationSha256": "10dd49357ff9ff22660df6a4659628cbc71398e9c30941ba55df518cc7c65f7f",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "record-source-1920.png",
+      "displayedSha256": "526143287a05f26da7566886ee9c5ae8027268ea01e37020ede75983a3c07ea1",
+      "verificationSha256": "526143287a05f26da7566886ee9c5ae8027268ea01e37020ede75983a3c07ea1",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "issue-1920.png",
+      "displayedSha256": "ac84fc82602b7c23b68731fb34698053b01b0ee1cbc1c3a73263d8f2a4e41aa1",
+      "verificationSha256": "ac84fc82602b7c23b68731fb34698053b01b0ee1cbc1c3a73263d8f2a4e41aa1",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "issue-picker-1920.png",
+      "displayedSha256": "ce00ec119c61f04ae79f81c820a870e93ccc5dc08f600cfb3e1bbe0b21273b10",
+      "verificationSha256": "ce00ec119c61f04ae79f81c820a870e93ccc5dc08f600cfb3e1bbe0b21273b10",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "issue-over-limit-1920.png",
+      "displayedSha256": "9169f9ab3e683a0d31e3c28f51ed3d6a9dc4d483be127d72a075abf267e7a905",
+      "verificationSha256": "9169f9ab3e683a0d31e3c28f51ed3d6a9dc4d483be127d72a075abf267e7a905",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "issue-confirm-1920.png",
+      "displayedSha256": "8063337681f425c9af12d1ded7831339afc8fef4a4358587da207754d66de4eb",
+      "verificationSha256": "6af925ac1a5401019d184d53a92a3a82a3031c24b4044ee275259e631b1007b8",
+      "recapturedByVerification": true
+    },
+    {
+      "file": "erp-date-picker-1920.png",
+      "displayedSha256": "f8df8a32e66a7ea3193c9f2ae31de64e078efbf8716268b7fdce9f22ea4dd88b",
+      "verificationSha256": "f8df8a32e66a7ea3193c9f2ae31de64e078efbf8716268b7fdce9f22ea4dd88b",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "erp-select-1920.png",
+      "displayedSha256": "f9e63b121786e0f63c219ebf550107d8c3430b864866aee19dd1457ee6b31278",
+      "verificationSha256": "f9e63b121786e0f63c219ebf550107d8c3430b864866aee19dd1457ee6b31278",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "metal-input-focus-1920.png",
+      "displayedSha256": "872e58cd912058749802da37443f90ceded69b09b68b9c1b8ff300840a182146",
+      "verificationSha256": "872e58cd912058749802da37443f90ceded69b09b68b9c1b8ff300840a182146",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "controls-1920.png",
+      "displayedSha256": "ba7f48ae8b42ee74e4c78ebbd067821957c382d68dae57cf7d22878cf794aa06",
+      "verificationSha256": "ba7f48ae8b42ee74e4c78ebbd067821957c382d68dae57cf7d22878cf794aa06",
+      "recapturedByVerification": false
+    },
+    {
+      "file": "metal-long-table-1920.png",
+      "displayedSha256": "3a6e70b9627ddac598b25f0e829fac501f33c655ea0a6e1784b7ecdfb105e16c",
+      "verificationSha256": "3a6e70b9627ddac598b25f0e829fac501f33c655ea0a6e1784b7ecdfb105e16c",
+      "recapturedByVerification": false
+    }
+  ],
+  "screenshotNote": "源文件指纹逐项相同。验证脚本重拍交互状态，气泡消失/鼠标悬停时机可造成截图字节变化；原交付指纹与复验指纹分别保存，不将重拍视为改稿。",
+  "scope": "D1-D5确认稿冻结；S2数量基础与报工联动在隔离副本实施，主系统接续仍为S7。"
+}

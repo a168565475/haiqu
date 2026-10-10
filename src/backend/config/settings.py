@@ -1,5 +1,8 @@
 import os
+import json
 from pathlib import Path
+
+from corsheaders.defaults import default_headers
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -15,6 +18,11 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-development-only")
 DEBUG = env_bool("DJANGO_DEBUG", True)
+# 第 4 步仅独立环境开启；正式切换须等完整库存写入链验收。
+PUBLIC_STOCK_ISSUES_ENABLED = env_bool("PUBLIC_STOCK_ISSUES_ENABLED", False)
+PUBLIC_STOCK_FLOW_ENABLED = env_bool("PUBLIC_STOCK_FLOW_ENABLED", False)
+TUBE_OUTSOURCING_ENABLED = env_bool("TUBE_OUTSOURCING_ENABLED", False)
+PUBLIC_STOCK_CUTOVER_ALLOWED_TARGETS = json.loads(os.getenv("PUBLIC_STOCK_CUTOVER_ALLOWED_TARGETS", "[]"))
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,backend")
 
 INSTALLED_APPS = [
@@ -30,27 +38,43 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "apps.core",
     "apps.reference_data",
+    "apps.products",
     "apps.organizations",
+    "apps.access_control",
     "apps.files",
     "apps.workflow",
     "apps.customers",
     "apps.inquiries",
     "apps.quotations",
     "apps.samples",
+    "apps.sales_orders",
+    "apps.production_tasks",
+    "apps.production_scheduling",
+    "apps.outsourcing",
+    "apps.boms",
+    "apps.procurement",
+    "apps.inventory",
+    "apps.material_issues",
+    "apps.workshop_config",
+    "apps.workshop_reporting",
     "apps.crm",
     "apps.audit",
     "apps.imports",
     "apps.preferences",
+    "apps.email_accounts",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "apps.core.middleware.RequestIdMiddleware",
+    "apps.core.debug_timing.ProductionReadTimingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.middleware.ErpSessionAccessMiddleware",
+    "apps.inventory.cutover_middleware.PublicStockCutoverMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -94,23 +118,37 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
+AUTHENTICATION_BACKENDS = ["apps.core.auth.ErpModelBackend"]
+
+# Stage-gated rollout: enable only after migration and reviewed activation.
+ACCESS_MANAGEMENT_ENABLED = env_bool("ACCESS_MANAGEMENT_ENABLED", False)
+SALES_ACCESS_ENABLED = env_bool("SALES_ACCESS_ENABLED", False)
+MODULE_ACCESS_ENABLED = env_bool("MODULE_ACCESS_ENABLED", False)
+ACCESS_RESOURCE_SCOPES_ENABLED = env_bool("ACCESS_RESOURCE_SCOPES_ENABLED", False)
+WORK_REPORT_DELETION_ENABLED = env_bool("WORK_REPORT_DELETION_ENABLED", False)
+WORK_REPORT_HISTORY_ENABLED = env_bool("WORK_REPORT_HISTORY_ENABLED", False)
+
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = "/media/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
+    "http://localhost:8080,http://127.0.0.1:8080",
 )
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (*default_headers, "if-match")
+CORS_EXPOSE_HEADERS = ["ETag", "X-Export-Count"]
 
 CSRF_TRUSTED_ORIGINS = env_list(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
+    "http://localhost:8080,http://127.0.0.1:8080",
 )
 
 REST_FRAMEWORK = {
@@ -146,11 +184,55 @@ SPECTACULAR_SETTINGS = {
         "ApprovalStatusEnum": "apps.workflow.models.ApprovalStatus.choices",
         "QuotationVersionStatusEnum": "apps.quotations.models.QuotationVersionStatus.choices",
         "SampleRequestStatusEnum": "apps.samples.models.SampleRequestStatus.choices",
+        "SalesOrderStatusEnum": "apps.sales_orders.models.SalesOrderStatus.choices",
+        "ProductionTaskStatusEnum": "apps.production_tasks.models.ProductionTaskStatus.choices",
+        "BomStatusEnum": "apps.boms.models.BomStatus.choices",
+        "BomCreationMethodEnum": "apps.boms.models.BomCreationMethod.choices",
+        "SupplierTypeEnum": "apps.procurement.models.SupplierType.choices",
+        "SupplierCategoryEnum": "apps.procurement.models.SupplierCategory.choices",
+        "SupplierPaymentCycleEnum": "apps.procurement.models.SupplierPaymentCycle.choices",
+        "InventoryRecordStatusEnum": "apps.inventory.models.RecordStatus.choices",
+        "WarehouseTypeEnum": "apps.inventory.models.WarehouseType.choices",
+        "WorkshopConfigRecordStatusEnum": "apps.workshop_config.models.RecordStatus.choices",
+        "WorkshopEmployeeStatusEnum": "apps.workshop_config.models.WorkshopEmployeeStatus.choices",
+        "WorkshopCraftTypeEnum": "apps.workshop_config.models.CraftType.choices",
+        "ProductionScheduleStatusEnum": "apps.production_scheduling.models.ScheduleStatus.choices",
+        "ProductionPlanCategoryEnum": "apps.workshop_config.models.PlanCategory.choices",
         "CustomerTransferStatusEnum": "apps.customers.models.TransferStatus.choices",
         "CustomerDuplicateCaseStatusEnum": "apps.customers.models.DuplicateCaseStatus.choices",
         "CustomerDuplicateDecisionEnum": "apps.customers.models.DuplicateDecision.choices",
         "CustomerMergeStatusEnum": "apps.customers.models.MergeStatus.choices",
+        "ComplaintStatusEnum": "apps.customers.models.ComplaintStatus.choices",
     },
 }
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+
+# 独立配置缓存，避免改变认证/会话等其他缓存策略。
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    "configuration": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "KEY_PREFIX": "haiqu:configuration:v1",
+        "OPTIONS": {"socket_connect_timeout": 0.2, "socket_timeout": 0.2},
+    },
+}
+
+CLAMAV_HOST = os.getenv("CLAMAV_HOST", "clamav")
+CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
+CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "15"))
+CONTACT_IMPORT_MAX_BYTES = int(os.getenv("CONTACT_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
+CONTACT_IMPORT_MAX_ROWS = int(os.getenv("CONTACT_IMPORT_MAX_ROWS", "500"))
+BOM_IMPORT_MAX_BYTES = int(os.getenv("BOM_IMPORT_MAX_BYTES", str(100 * 1024 * 1024)))
+
+# 账户级邮件 SMTP 授权码加密密钥。第一个用于写入，后续密钥用于轮换期解密。
+EMAIL_ACCOUNT_FERNET_KEYS = env_list("EMAIL_ACCOUNT_FERNET_KEYS")
+
+# 仅用于本机开发演示。生产环境即使误设环境变量，也会因 DEBUG=False 而保持关闭。
+DEV_AUTO_LOGIN_ENABLED = DEBUG and env_bool("DEV_AUTO_LOGIN_ENABLED", False)
+DEV_AUTO_LOGIN_USERNAME = os.getenv("DEV_AUTO_LOGIN_USERNAME", "admin").strip()
+DEV_AUTO_LOGIN_ALLOWED_HOSTS = env_list(
+    "DEV_AUTO_LOGIN_ALLOWED_HOSTS",
+    "localhost,127.0.0.1,[::1]",
+)

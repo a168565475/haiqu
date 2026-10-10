@@ -1,0 +1,275 @@
+body, button, input, select, textarea, .receipt-source-window {
+  font-family: "Noto Sans SC Variable", "Microsoft YaHei", sans-serif;
+}
+
+h1 {
+  font-family: "Noto Serif SC Variable", serif;
+}
+
+.info-field {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+.info-field span {
+  color: #6f6a61;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.info-field b {
+  color: #1f1d18;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.context-grid, .identity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.identity-grid {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #eae4da;
+}
+
+.quota-line {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+.quota-line .info-field {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.quota-line .info-field b {
+  font-size: 20px;
+  line-height: 28px;
+}
+.quota-line .info-field small {
+  font-size: 12px;
+  color: #6f6a61;
+  font-weight: 400;
+}
+.quota-line .info-field:last-child b {
+  color: #c84e28;
+}
+
+.quota-section .section-heading {
+  margin-bottom: 12px;
+}
+
+.helper {
+  margin: 12px 0 0;
+}
+
+.receipt-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+.receipt-grid.five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.location-grid {
+  margin-top: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.field > span {
+  font-size: 12px;
+  color: #6f6a61;
+}
+.field i {
+  color: #b53333;
+  font-style: normal;
+}
+.field input, .field select {
+  width: 100%;
+}
+.field input[readonly] {
+  background: #f6f3ec;
+  color: #6f6a61;
+}
+
+.form-section h2 {
+  font-size: 14px;
+}
+
+.remark-section {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.remark-section label {
+  width: 55px;
+  padding-top: 6px;
+}
+.remark-section textarea {
+  height: 60px;
+  width: 100%;
+}
+
+.form-footer {
+  min-height: 72px;
+}
+.form-footer .totals p {
+  margin: 4px 0 0;
+}
+.form-footer b {
+  font-weight: 500;
+  color: #1f1d18;
+}
+.form-footer .footer-sep {
+  color: #968f84;
+  margin: 0 14px;
+}
+
+.feedback:empty {
+  display: none;
+}
+
+.heading-actions {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+}
+.heading-actions .button {
+  margin-left: 0;
+  min-width: 110px;
+}
+
+.tabs {
+  display: flex;
+  gap: 32px;
+  border-bottom: 1px solid #ddd6c9;
+  height: 40px;
+  margin-top: 8px;
+  flex: 0 0 40px;
+}
+.tabs button {
+  height: 32px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0 6px;
+  background: transparent;
+  color: #6f6a61;
+  margin-top: 8px;
+}
+.tabs button.active {
+  color: #c84e28;
+  border-bottom: 2px solid #c84e28;
+  font-weight: 600;
+}
+
+.stock-card {
+  flex: 1;
+}
+
+#stockTableWrap, #recordTableWrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+#stockTableWrap .table-scroll, #recordTableWrap .table-scroll {
+  width: 100%;
+}
+
+table {
+  min-width: 1620px;
+}
+
+.source-window-section table {
+  min-width: 0;
+}
+
+#emptyState, #recordEmptyState {
+  text-align: center;
+  padding: 80px 16px;
+  color: #6f6a61;
+}
+
+.receipt-source-window .app-window-dialog__body {
+  padding: 16px;
+}
+.receipt-source-window .source-fields {
+  gap: 14px 24px;
+}
+.receipt-source-window .source-field {
+  display: block;
+}
+.receipt-source-window .source-field dt {
+  margin-bottom: 5px;
+}
+.receipt-source-window .source-field dd {
+  margin: 0;
+}
+.receipt-source-window .source-window-section {
+  margin-top: 20px;
+}
+.receipt-source-window .source-window-section h2 {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.receipt-source-window .table-card {
+  display: block;
+}
+
+#notice {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fcfbf7;
+  border: 1px solid #ddd6c9;
+  border-radius: 5px;
+  padding: 12px 20px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1333333333);
+  z-index: 5000;
+}
+
+.draft-note {
+  color: #6f6a61;
+  font-size: 12px;
+  margin: 16px 0 0;
+}
+
+.receipt-source-window .summary-line {
+  display: flex;
+  gap: 36px;
+  background: #f6f3ec;
+  border: 1px solid #ddd6c9;
+  border-radius: 5px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+@media (max-width: 1500px) {
+  .context-grid, .identity-grid {
+    gap: 12px;
+  }
+  .receipt-grid {
+    gap: 14px;
+  }
+  .receipt-grid.five {
+    gap: 14px;
+  }
+  .info-field {
+    gap: 8px;
+  }
+  #tableHint {
+    max-width: 520px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+}

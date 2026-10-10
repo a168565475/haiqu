@@ -1,5 +1,9 @@
 import uuid
 
+from django.contrib.auth import logout as django_logout
+
+from .auth import can_access_erp
+
 
 class RequestIdMiddleware:
     header_name = "HTTP_X_REQUEST_ID"
@@ -22,3 +26,13 @@ class RequestIdMiddleware:
             except (TypeError, ValueError, AttributeError):
                 pass
         return str(uuid.uuid4())
+
+
+class ErpSessionAccessMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.user.is_authenticated and not can_access_erp(request.user):
+            django_logout(request)
+        return self.get_response(request)

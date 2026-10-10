@@ -18,6 +18,10 @@ def quotations_with_context(queryset=None):
         "source_inquiry",
         "owner_employee",
         "accepted_version",
+        "acceptance__quotation_version",
+        "acceptance__price_basis",
+        "acceptance__customer_contact",
+        "acceptance__recorded_by_employee",
     ).prefetch_related("versions")
 
 
@@ -30,11 +34,19 @@ def versions_with_context(queryset=None):
         "quotation__transaction_entity",
         "quotation__owner_employee",
         "quotation_template",
+        "parent_version",
         "locked_by_employee",
     ).prefetch_related(
         "lines__quantity_tiers",
+        "lines__basis_prices__price_basis",
+        "lines__product_image",
+        "lines__packaging",
+        "lines__container_tiers__container_config",
         "documents__business_file",
         "dispatch_records__dispatched_by_employee",
+        "dispatch_records__price_basis",
+        "dispatch_records__evidence_file",
+        "price_bases__line_prices",
         "approval_links__approval_request__current_approver_employee",
         "approval_links__approval_request__requested_by_employee",
         "task_links__business_task",

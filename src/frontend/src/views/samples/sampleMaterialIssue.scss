@@ -1,0 +1,52 @@
+@use '@/styles/crm/tokens' as token;
+
+.sample-material-issue-page {
+  min-height: calc(100vh - 64px);
+  width: 100%;
+  background: token.$crm-color-page;
+  color: token.$crm-text-primary;
+  display: flex;
+  flex-direction: column;
+}
+
+.sample-material-issue-content { flex: 1; min-width: 0; padding: 14px 14px 84px; overflow: auto; }
+.issue-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 14px; }
+.issue-heading > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.issue-heading h1 { margin: 0; display: inline-block; font-family: token.$crm-font-display; font-size: 34px; line-height: 44px; font-weight: 500; }
+.issue-heading p, .issue-intro { margin: 6px 0 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 20px; }
+.issue-context { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.3fr) minmax(220px, 1.3fr) 180px 140px 150px; gap: 14px; align-items: center; min-height: 76px; padding: 14px 16px; border: 1px solid token.$crm-border-subtle; border-radius: 5px; background: token.$crm-color-surface; }
+.issue-context-field { min-width: 0; }
+.issue-context-field label { display: block; margin-bottom: 5px; color: token.$crm-text-secondary; font-size: 12px; line-height: 16px; }
+.issue-context-field strong { display: block; overflow: hidden; color: token.$crm-text-primary; font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.issue-error { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid token.$crm-border-subtle; border-radius: 5px; background: token.$crm-color-surface; color: token.$crm-danger; }
+.issue-card { margin-top: 16px; }
+.issue-tabs { display: flex; align-items: stretch; gap: 22px; height: 40px; margin: 14px 0 0; border-bottom: 1px solid token.$crm-border-subtle; }
+.issue-tabs button { height: 40px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; color: token.$crm-text-secondary; background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.issue-tabs button.active { border-bottom-color: token.$crm-primary; color: token.$crm-primary; font-weight: 600; }
+.issue-table-wrap { overflow-x: auto; border: 1px solid token.$crm-border-subtle; border-radius: 5px; background: token.$crm-color-surface; }
+.issue-table { width: 100%; min-width: 1680px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.issue-table th { height: 44px; padding: 0 12px; text-align: left; background: token.$crm-color-page; color: token.$crm-text-secondary; font-weight: 500; white-space: nowrap; border-bottom: 1px solid token.$crm-border-subtle; }
+.issue-table td { height: 34px; padding: 0 12px; border-bottom: 1px solid token.$crm-border-subtle; white-space: nowrap; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+.issue-table tbody tr:last-child td { border-bottom: 0; }
+.issue-table .primary-text { color: token.$crm-text-primary; font-weight: 500; }
+.issue-table .specification { width: 220px; white-space: nowrap; }
+.issue-table th:nth-child(1), .issue-table td:nth-child(1) { width: 96px; }
+.issue-table th:nth-child(2), .issue-table td:nth-child(2) { width: 148px; }
+.issue-table th:nth-child(3), .issue-table td:nth-child(3) { width: 220px; }
+.issue-table th:nth-child(4), .issue-table td:nth-child(4) { width: 118px; }
+.issue-table th:nth-child(5), .issue-table td:nth-child(5) { width: 180px; }
+.issue-table th:nth-child(6), .issue-table td:nth-child(6),
+.issue-table th:nth-child(7), .issue-table td:nth-child(7),
+.issue-table th:nth-child(8), .issue-table td:nth-child(8),
+.issue-table th:nth-child(9), .issue-table td:nth-child(9),
+.issue-table th:nth-child(10), .issue-table td:nth-child(10),
+.issue-table th:nth-child(11), .issue-table td:nth-child(11) { width: 92px; }
+.issue-table th:nth-child(12), .issue-table td:nth-child(12) { width: 62px; }
+.issue-table th:nth-child(13), .issue-table td:nth-child(13) { width: 110px; }
+.issue-note { margin-top: 16px; max-width: 720px; }
+.issue-note label { display: block; margin-bottom: 6px; color: token.$crm-text-secondary; font-size: 13px; }
+.issue-actions { position: sticky; bottom: 0; min-height: 58px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 14px; border-top: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; z-index: 10; }
+.action-error { flex: 1; color: token.$crm-danger; font-size: 13px; }
+
+:deep(.el-button) { height: 32px; border-radius: 5px; }
+:deep(.el-input__wrapper) { min-height: 32px; border-radius: 5px; box-shadow: 0 0 0 1px token.$crm-border-subtle inset; }

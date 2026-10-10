@@ -1,0 +1,67 @@
+{
+  "revision": "v2",
+  "updatedAt": "2026-09-29T12:19:46.235Z",
+  "status": "awaiting-per-page-confirmation",
+  "previousApproval": "approval.json",
+  "note": "第一版审批不覆盖当前修订；未经逐页确认不得开发。",
+  "pages": [
+    {
+      "id": "D1-metal",
+      "status": "awaiting-user-confirmation",
+      "screenshots": [
+        {
+          "path": "qa/tube_revision_design_v2_20260929/metal-v2-1920.png",
+          "sha256": "42c59ba23d78a4ec15bcfed25d7a8d2550e193fd00c442e4efa3908ac9b376dd"
+        },
+        {
+          "path": "qa/tube_revision_design_v2_20260929/metal-v2-confirm-1920.png",
+          "sha256": "9e7e5c95ae114718ec617ca218725672032d28aba8a4b7673eebd756e10d92e7"
+        },
+        {
+          "path": "qa/tube_revision_design_v2_20260929/metal-v2-limit-toast-1920.png",
+          "sha256": "79015312d5de558ad5137821652965d04476cfdbe95e06cfbcbafad34a2f66b9"
+        }
+      ]
+    },
+    {
+      "id": "D2",
+      "status": "awaiting-revision-and-confirmation"
+    },
+    {
+      "id": "D3",
+      "status": "awaiting-revision-and-confirmation"
+    },
+    {
+      "id": "D4",
+      "status": "awaiting-revision-and-confirmation"
+    },
+    {
+      "id": "D5",
+      "status": "awaiting-revision-and-confirmation"
+    }
+  ],
+  "sources": [
+    {
+      "path": "docs/designs/tube_revision_20260929/App.vue",
+      "sha256": "ff892585e631afd0cec21138180b2360468c78a0eb3bd8b140f8183f3370b297"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/DesignTable.vue",
+      "sha256": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/design.scss",
+      "sha256": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/design_contract.md",
+      "sha256": "03f129cee45b0c134a12f5a77d984980b64f004b0f2773fceda85d7796d17dd2"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/review.html",
+      "sha256": "ad831db24863bbec1808e425c94ed3caec2c8a6b358046f2d1e7d4cf1a669904"
+    }
+  ],
+  "verification": "qa/tube_revision_design_v2_20260929/verification.json",
+  "businessApiCalls": 0
+}

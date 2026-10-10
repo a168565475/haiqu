@@ -13,6 +13,11 @@ export async function login(credentials: LoginCredentials): Promise<AuthResponse
   return data
 }
 
+export async function requestDevelopmentAutoLogin(): Promise<AuthResponse> {
+  const { data } = await apiClient.post<AuthResponse>('/api/auth/development-auto-login/')
+  return data
+}
+
 export async function logout(): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>('/api/auth/logout/')
   return data
@@ -69,4 +74,26 @@ export function getAuthErrorMessage(error: unknown): string {
   }
 
   return '登录失败，请稍后重试'
+}
+
+export function getLogoutErrorMessage(error: unknown): string {
+  if (!isAxiosError(error)) {
+    return '退出失败，请稍后重试'
+  }
+
+  if (!error.response) {
+    return error.code === 'ECONNABORTED'
+      ? '退出请求超时，请检查网络后重试'
+      : '无法连接服务器，暂时不能安全退出'
+  }
+
+  if (error.response.status === 403) {
+    return '退出请求已失效，请刷新页面后重试'
+  }
+
+  if (error.response.status >= 500) {
+    return '服务器暂时无法处理退出，请稍后重试'
+  }
+
+  return '退出失败，请稍后重试'
 }

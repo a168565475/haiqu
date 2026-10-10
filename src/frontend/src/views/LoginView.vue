@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Lock, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 
 import { getAuthErrorMessage } from '@/api/auth'
+import businessFlowContours from '@/assets/login/business-flow-contours.svg'
+import goldBloom from '@/assets/login/gold-bloom.svg'
+import lockIcon from '@/assets/login/lock.svg'
+import previewOpenIcon from '@/assets/login/preview-open.svg'
+import shieldIcon from '@/assets/login/shield.svg'
+import statusDot from '@/assets/login/status-dot.svg'
+import terracottaHalo from '@/assets/login/terracotta-halo.svg'
+import userIcon from '@/assets/login/user.svg'
 import { useAuthStore } from '@/stores/auth'
 
 interface LoginForm {
@@ -18,6 +25,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const passwordVisible = ref(false)
 const form = reactive<LoginForm>({
   username: '',
   password: '',
@@ -72,207 +80,450 @@ async function submitLogin() {
 
 <template>
   <main class="login-page">
-    <section class="login-card" aria-labelledby="login-title">
-      <div class="card-content">
-        <header class="login-header">
-          <h1 id="login-title">欢迎回来</h1>
-          <p>登录企业ERP管理平台</p>
-        </header>
+    <div class="ambient ambient-gold" aria-hidden="true">
+      <img :src="goldBloom" alt="" />
+    </div>
+    <div class="ambient ambient-terracotta" aria-hidden="true">
+      <img :src="terracottaHalo" alt="" />
+    </div>
+    <div class="form-contrast-scrim" aria-hidden="true"></div>
+    <img
+      class="business-flow-contours"
+      :src="businessFlowContours"
+      alt=""
+      aria-hidden="true"
+    />
 
-        <ElForm
-          ref="formRef"
-          :model="form"
-          :rules="rules"
-          size="large"
-          class="login-form"
-          @keyup.enter="submitLogin"
-        >
+    <div class="login-brand" aria-label="HiTree">HiTree</div>
+
+    <section class="login-hero" aria-labelledby="login-hero-title">
+      <p class="hero-kicker">企业运营协同平台</p>
+      <h1 id="login-hero-title">客户、订单、生产<br />在一条链路上协同</h1>
+      <p class="hero-description">清晰记录每一次跟进、每一笔订单与每一个交付节点。</p>
+      <ul class="business-modules" aria-label="平台业务模块">
+        <li>客户管理</li>
+        <li>询盘与报价</li>
+        <li>销售订单</li>
+        <li>生产协同</li>
+      </ul>
+    </section>
+
+    <footer class="login-footer">
+      <img :src="shieldIcon" alt="" aria-hidden="true" />
+      <span>企业数据仅供授权人员使用</span>
+    </footer>
+
+    <section class="login-panel" aria-labelledby="login-title">
+      <header class="login-header">
+        <div class="secure-label">
+          <img :src="statusDot" alt="" aria-hidden="true" />
+          <span>安全登录</span>
+        </div>
+        <h2 id="login-title">欢迎回来</h2>
+      </header>
+
+      <ElForm
+
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        class="login-form"
+        @keyup.enter="submitLogin"
+      >
+        <div class="login-field">
+          <label for="login-username">账号</label>
           <ElFormItem prop="username">
             <ElInput
+              id="login-username"
               v-model="form.username"
               autocomplete="username"
               aria-label="账号"
               maxlength="150"
-              placeholder="账号"
-              clearable
+              placeholder="请输入账号"
               :disabled="loading"
             >
               <template #prefix>
-                <ElIcon><User /></ElIcon>
+                <img class="field-icon" :src="userIcon" alt="" aria-hidden="true" />
               </template>
             </ElInput>
           </ElFormItem>
+        </div>
 
+        <div class="login-field">
+          <label for="login-password">密码</label>
           <ElFormItem prop="password">
             <ElInput
+              id="login-password"
               v-model="form.password"
-              type="password"
+              :type="passwordVisible ? 'text' : 'password'"
               autocomplete="current-password"
               aria-label="密码"
               maxlength="128"
-              placeholder="密码"
-              show-password
+              placeholder="请输入密码"
               :disabled="loading"
             >
               <template #prefix>
-                <ElIcon><Lock /></ElIcon>
+                <img class="field-icon" :src="lockIcon" alt="" aria-hidden="true" />
+              </template>
+              <template #suffix>
+                <button
+                  type="button"
+                  class="password-toggle"
+                  :aria-label="passwordVisible ? '隐藏密码' : '显示密码'"
+                  :aria-pressed="passwordVisible"
+                  :disabled="loading"
+                  @click="passwordVisible = !passwordVisible"
+                >
+                  <img :src="previewOpenIcon" alt="" aria-hidden="true" />
+                </button>
               </template>
             </ElInput>
           </ElFormItem>
+        </div>
 
+        <div class="login-actions">
           <ElButton
             type="primary"
-            size="large"
             class="login-button"
             :loading="loading"
             @click="submitLogin"
           >
             登录
           </ElButton>
-        </ElForm>
+          <p>如无法登录，请联系系统管理员。</p>
+        </div>
+      </ElForm>
 
-        <p class="login-help">如无法登录，请联系系统管理员。</p>
-      </div>
+
     </section>
   </main>
 </template>
 
-<style scoped>
+<style lang="scss" scoped>
 .login-page {
+  position: relative;
+  width: 100vw;
+  min-width: 1200px;
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 48px clamp(56px, 19.4vw, 340px) 48px 48px;
-  background-color: #eaf3ff;
-  background-image: url('@/assets/login-city-background.png');
-  background-position: center;
-  background-size: cover;
+  overflow: hidden;
+  color: #38130d;
+  background: linear-gradient(90deg, #e8c76b 0%, #d67a38 38%, #ab4029 68%, #4a1a13 100%);
 }
 
-.login-card {
-  width: 366px;
-  padding: 54px 44px 34px;
-  border: 1px solid rgba(195, 214, 238, 0.86);
+.ambient {
+  position: absolute;
+  pointer-events: none;
+}
+
+.ambient img {
+  position: absolute;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ambient-gold {
+  top: -480px;
+  left: -360px;
+  width: 1080px;
+  height: 1080px;
+}
+
+.ambient-gold img {
+  inset: -6.48%;
+  width: 112.96%;
+  height: 112.96%;
+}
+
+.ambient-terracotta {
+  top: 520px;
+  left: 520px;
+  width: 980px;
+  height: 980px;
+}
+
+.ambient-terracotta img {
+  inset: -9.18%;
+  width: 118.36%;
+  height: 118.36%;
+}
+
+.form-contrast-scrim {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 900px;
+  background: linear-gradient(90deg, rgba(51, 14, 10, 0), rgba(51, 14, 10, 0.18) 38%, rgba(51, 14, 10, 0.48));
+  pointer-events: none;
+}
+
+.business-flow-contours {
+  position: absolute;
+  top: 660px;
+  left: 0;
+  width: 1040px;
+  height: 420px;
+  pointer-events: none;
+}
+
+.login-brand {
+  position: absolute;
+  top: 72px;
+  left: 120px;
+  width: 113px;
+  height: 48px;
+  overflow: hidden;
+  font-family: "Bodoni Moda", "Bodoni MT", Didot, Georgia, serif;
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 44px;
+  letter-spacing: -0.8px;
+}
+
+.login-hero {
+  position: absolute;
+  top: 270px;
+  left: 120px;
+  width: 820px;
+  height: 470px;
+  overflow: hidden;
+}
+
+.hero-kicker {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: 1.6px;
+}
+
+.login-hero h1 {
+  width: 800px;
+  height: 160px;
+  margin: 0;
+  font-size: 58px;
+  font-weight: 700;
+  line-height: 76px;
+}
+
+.hero-description {
+  width: 720px;
+  height: 60px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 30px;
+}
+
+.business-modules {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+
+.business-modules li {
+  height: 36px;
+  padding: 0 16px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 22px 60px rgba(82, 126, 188, 0.18);
-  backdrop-filter: blur(10px);
+  background: rgba(255, 241, 218, 0.82);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 36px;
+  white-space: nowrap;
+}
+
+.login-footer {
+  position: absolute;
+  top: 986px;
+  left: 120px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 185px;
+  height: 32px;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.login-footer img {
+  width: 20px;
+  height: 20px;
+}
+
+.login-panel {
+  position: absolute;
+  top: 214px;
+  left: calc(100vw - 600px);
+  width: 440px;
+  min-height: 620px;
+  color: #fff8ec;
 }
 
 .login-header {
-  margin-bottom: 34px;
+  height: 120px;
+  overflow: hidden;
 }
 
-.login-header h1 {
+.secure-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 24px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  letter-spacing: 1.2px;
+}
+
+.secure-label img {
+  width: 8px;
+  height: 8px;
+}
+
+.login-header h2 {
   margin: 0;
-  color: #131820;
-  font-size: 32px;
-  font-weight: 800;
-  line-height: 1.35;
-  letter-spacing: 0.02em;
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 68px;
 }
 
-.login-header p {
-  margin: 12px 0 0;
-  color: #566475;
-  font-size: 16px;
-  line-height: 1.6;
+.login-form {
+  width: 440px;
 }
 
-.login-form :deep(.el-form-item) {
+.login-field {
+  height: 93px;
+}
+
+.login-field:first-child {
   margin-bottom: 18px;
 }
 
+.login-field label {
+  display: block;
+  height: 31px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.login-form :deep(.el-form-item) {
+  margin: 0;
+}
+
 .login-form :deep(.el-input__wrapper) {
-  min-height: 46px;
-  padding: 0 16px;
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 0 1px #d6dce4 inset;
+  height: 60px;
+  padding: 0 18px;
+  border-radius: 14px;
+  background: rgba(255, 246, 232, 0.14);
+  box-shadow: none;
+}
+
+.login-form :deep(.el-input__wrapper:hover) {
+  background: rgba(255, 246, 232, 0.18);
+  box-shadow: none;
 }
 
 .login-form :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px #2e82f4 inset;
+  background: rgba(255, 246, 232, 0.2);
+  box-shadow: 0 0 0 1px rgba(255, 241, 218, 0.42) inset;
 }
 
-.login-form :deep(.el-input__prefix) {
-  margin-right: 9px;
-  color: #76818e;
-  font-size: 21px;
+.login-form :deep(.el-input__prefix-inner) {
+  margin-right: 12px;
+}
+
+.field-icon {
+  display: block;
+  width: 22px;
+  height: 22px;
 }
 
 .login-form :deep(.el-input__inner) {
-  color: #283442;
+  height: 60px;
+  color: #fff8ec;
   font-size: 16px;
+  line-height: 24px;
 }
 
 .login-form :deep(.el-input__inner::placeholder) {
-  color: #8e98a3;
+  color: rgba(255, 248, 236, 0.72);
+}
+
+.login-form :deep(.el-input__suffix-inner) {
+  margin-left: 12px;
+}
+
+.password-toggle {
+  display: grid;
+  width: 24px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  place-items: center;
+  cursor: pointer;
+}
+
+.password-toggle:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgba(255, 241, 218, 0.8);
+  outline-offset: 2px;
+}
+
+.password-toggle img {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.login-form :deep(.el-form-item__error) {
+  top: 60px;
+  color: #fff1da;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.login-actions {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 18px;
+  height: 128px;
+  padding: 28px 0 6px;
 }
 
 .login-button {
   width: 100%;
-  min-height: 46px;
-  margin-top: 11px;
-  border-color: #2479f2;
-  border-radius: 27px;
-  background: #2479f2;
-  box-shadow: 0 10px 24px rgba(36, 121, 242, 0.26);
+  height: 56px;
+  margin: 0;
+  border: 0;
+  border-radius: 14px;
+  color: #38130d;
+  background: #fff1da;
+  box-shadow: none;
   font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  letter-spacing: 1.6px;
 }
 
 .login-button:hover,
 .login-button:focus {
-  border-color: #176de3;
-  background: #176de3;
+  border: 0;
+  color: #38130d;
+  background: #fff7e9;
 }
 
-.login-help {
-  margin: 20px 0 0;
-  color: #84909e;
+.login-actions p {
+  margin: 0;
+  color: rgba(255, 248, 236, 0.72);
   font-size: 13px;
-  text-align: center;
+  line-height: 20px;
 }
 
-@media (max-width: 900px) {
-  .login-page {
-    justify-content: center;
-    padding: 28px 20px;
-    background-position: 38% center;
-  }
-
-  .login-card {
-    width: min(366px, 100%);
-    min-height: 0;
-    padding: 30px 30px 36px;
-    background: rgba(255, 255, 255, 0.94);
-  }
-}
-
-@media (max-width: 480px) {
-  .login-page {
-    align-items: flex-end;
-    padding: 18px;
-  }
-
-  .login-card {
-    padding: 26px 24px 30px;
-    border-radius: 16px;
-  }
-
-  .login-header {
-    margin-bottom: 28px;
-  }
-
-  .login-header h1 {
-    font-size: 30px;
-  }
-
-  .login-header p {
-    font-size: 15px;
-  }
-}
 </style>

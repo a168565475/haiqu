@@ -74,6 +74,7 @@ class ImportRecord(TimeStampedModel):
         default=ImportRecordStatus.PENDING,
     )
     raw_data = models.JSONField(default=dict)
+    warning_messages = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
     target_type = models.CharField(max_length=80, blank=True, validators=[uppercase_code_validator])
     target_id = models.UUIDField(null=True, blank=True)

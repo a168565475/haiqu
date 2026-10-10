@@ -1,0 +1,157 @@
+{
+  "revision": "D4-new-order-detail-dispatch-cancel-20260930",
+  "status": "pending_user_confirmation",
+  "recordedAt": "2026-09-30T02:41:32.120Z",
+  "userBusinessConfirmation": "全部A：整单原保存量一次发出；调整取消重建；喷塑整单全0有差额原因可结束",
+  "approvalRequestedScope": [
+    "三来源待发/加工中/已取消详情",
+    "整单实际发出确认弹窗",
+    "待发取消确认弹窗",
+    "当前最低报工查看及必要异常状态"
+  ],
+  "notIncluded": [
+    "D3喷塑回货业务与设计审批",
+    "结束及旧单详情",
+    "主ERP启用",
+    "真实发出取消或库存写入"
+  ],
+  "sourceFiles": [
+    {
+      "path": "docs/designs/tube_revision_20260929/D4ReviewApp.vue",
+      "sha256": "a9c2c5a059681b0cfeb30db909ac7d4ef5ed1440e8ebd0c0ae626dd32456f984"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d4-main.js",
+      "sha256": "a4db2f2101100dfa3d445571089c05ccb7f54d1b8f672af5d00392b7af710a8b"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d4.html",
+      "sha256": "792ec851659dfa5becfa95b8c926f3d580d60f342af78772f2823f1839a728e2"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d4-design.scss",
+      "sha256": "4e856f2e1f7a04c93058d271b1daa109dcdd422cfff869589156ce64df63d8ef"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/d4-review.html",
+      "sha256": "89611cd41a43559dd3c50636c2c0d1ff778a8c22cee6c7f2498599400d919356"
+    }
+  ],
+  "reusedFiles": [
+    {
+      "path": "docs/designs/tube_revision_20260929/design.scss",
+      "sha256": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/DesignTable.vue",
+      "sha256": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb"
+    },
+    {
+      "path": "src/frontend/src/components/common/AppWindowDialog.vue",
+      "sha256": "bf1a9b2c308d3ed12f00a6b863b1078b697e11d892c8578c114b6e38db97d2e7"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "qa/tube_revision_d4_design_20260930/raw_pipe-pending-1920.png",
+      "sha256": "6335f74cfe0cf7cd8300255a753474709f75258891fee1ef2884b520d2830210",
+      "title": "原材料：待外发详情"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/raw_pipe-dispatch-1920.png",
+      "sha256": "466a44b3a34560e50a18939a7751866c76d3ba21997666b089f1c720a753b458",
+      "title": "原材料：整单实际发出确认"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/dispatch-date-1920.png",
+      "sha256": "8ae2acf31ddae3ef4b80e089f483c259f85694c2571a34e8b12d69684008ecd6",
+      "title": "ERP日期选择与主题聚焦"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/public_semi-pending-1920.png",
+      "sha256": "29816357f4e3f9d25a77d71f80a4a0e30a3af283cb226d97b2299d1c8b186c61",
+      "title": "未喷塑半成品：待外发详情"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/public_semi-dispatch-1920.png",
+      "sha256": "d48ebf742ad43a1bd5ce487631ae4c1469160525b6922dff036e4b31f4977acb",
+      "title": "未喷塑半成品：整单实际发出确认"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/metal-pending-1920.png",
+      "sha256": "1315870d0ab54b5e7c28840abff9b3cb2decb5618c620d828c519387230b5772",
+      "title": "未入库半成品：待外发详情"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/metal-dispatch-1920.png",
+      "sha256": "66373c4e3560bb4f67297cf54f4b0d85de71203c658761f97eb87b54b5f84c8b",
+      "title": "未入库半成品：整单实际发出确认"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/metal-basis-1920.png",
+      "sha256": "1984e37c7857e1ab65106544d575aedb9ffacd667c9fd1c59dfd84533ed1d74d",
+      "title": "未入库半成品：当前最低报工依据"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/pending-cancel-1920.png",
+      "sha256": "12006d22160d8fafab76425780cb74ed6873a45d8254aea0d843e235d7655165",
+      "title": "待发取消确认：释放预留，原单保留"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/cancelled-1920.png",
+      "sha256": "ab90846c0fcc18520e2831584f71e2565d29c372746c6ab6ce214147d93fcf91",
+      "title": "已取消详情：原单折算数量保留，未扣库存"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/metal-processing-1920.png",
+      "sha256": "e2f133e3240b4f66046d59a6a53b926430b5b284af077f5878de86680105e3af",
+      "title": "加工中详情：实际发出日期，后续喷塑入库入口"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/long-lines-1920.png",
+      "sha256": "779b9df3ceffd004a85b5283ebe5740e7bf7d8f12f68a59e8832e6b7e5940e09",
+      "title": "多明细：只滚动表格，底栏固定可见"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-empty-1920.png",
+      "sha256": "a17424c76efdda56a08f92a253d7fe0644661162c8a8fdd0ac3ba1382d104fd3",
+      "title": "无明细"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-error-1920.png",
+      "sha256": "d7982ec0f4577fafed92830cd74404e64aa078a0de4c9125ea59788914022449",
+      "title": "读取失败"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-forbidden-1920.png",
+      "sha256": "15ae9e044492c34f1251348968ee37f04904b7c9b84a07b046921975af3e4e80",
+      "title": "无权限"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-result-1920.png",
+      "sha256": "e529ec9fb15f8896c13f131c943453b9101ee652bc79808a9d666513da9393c9",
+      "title": "提交结果待核对"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-stale-1920.png",
+      "sha256": "0070920cb74a4e11d01cb444fd89b2290f707c47add453789fd1d596848c0106",
+      "title": "库存或资料复核失败"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/state-loading-1920.png",
+      "sha256": "a09faf52307fd5efa656e1ef9659c0a92a10cddfc54a1e2984a93004bc5be9ac",
+      "title": "读取中"
+    },
+    {
+      "path": "qa/tube_revision_d4_design_20260930/source-select-1920.png",
+      "sha256": "3a896d58d7242fa87bad874d6d5847ad661fdf948f531c4870ba2053a2d9b370",
+      "title": "ERP来源下拉：最新名称与顺序"
+    }
+  ],
+  "verification": {
+    "path": "qa/tube_revision_d4_design_20260930/verification.json",
+    "sha256": "d8758103f8add17834713e8c7403997c1c080de01822cc574b0663ea1a80d8b4"
+  },
+  "preview": "http://127.0.0.1:8104/d4.html",
+  "gallery": "http://127.0.0.1:8104/d4-review.html"
+}

@@ -1,0 +1,215 @@
+{
+  "recordedAt": "2026-09-30T07:55:01.244Z",
+  "status": "implemented_in_isolated_s3",
+  "mainActivated": false,
+  "scope": "已确认的新管材已结束详情与只读入库凭证；统一列表、旧历史接续和主系统启用为后续步骤",
+  "approvedDesignManifest": {
+    "file": "docs/designs/tube_revision_20260929/d4-ended-review-manifest.json",
+    "sha256": "8290f72395bd0f1dde24f5229d919a9d2f2ad9f854412e113dc2abaae606e52e"
+  },
+  "userConfirmation": {
+    "file": "qa/tube_revision_d4_ended_implementation_20260930/authorization.json",
+    "sha256": "afd18128d248f550ef730d370bb32f0390b44a382ea9b0a212997d8f756a7e63"
+  },
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "gallery": "http://127.0.0.1:8104/d4-ended-implementation.html",
+  "sources": [
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/views/outsourcing/TubeOutsourcingDetailView.vue",
+      "sha256": "cff4643f4d0341f9e909b4441d5c3e800dba6bf26f441758760f95eeddef171a"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/views/outsourcing/TubeOutsourcingDetailView.spec.ts",
+      "sha256": "47b53d0d600d6efbe74cfd2e842ae6c9ec876e02379442f7b286696ff158882c"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/components/outsourcing/TubeOutsourcingEndedResult.vue",
+      "sha256": "dd7cc62bc4d4e6bc4b9d53a6b0e6aa7e9547773a7acbc8eed2db9c38929e2b60"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/styles/tubeOutsourcingEnded.scss",
+      "sha256": "ea45f6e169a84657a2321b9142716e631bc6995c06eefc0e9c07f8ac8132b86d"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/utils/tubeEndedReceipt.ts",
+      "sha256": "95e913434aa9dd9d8d6d4de471dbfcdd84bbeabd1aa1f21e82b0b51362d9e1dd"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/frontend/src/views/outsourcing/TubeOutsourcingEndedView.spec.ts",
+      "sha256": "c9ccfcba7165a989bbaba9f23286407e1158c7b3cde577bda5d018086cd0ec3d"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/backend/apps/outsourcing/tube_selectors.py",
+      "sha256": "3f9fab40c3db5f0b49860f5fb5896355fecdedc6b12c65f51f79338c345e0999"
+    },
+    {
+      "file": "qa/tube_revision_s3_20260929/backend/apps/outsourcing/tests/test_tube_ended_reads.py",
+      "sha256": "353ce57214f2af9e1af8742b16b0f6667a6d2f9cbbbc27e72a392253844337d6"
+    }
+  ],
+  "evidence": [
+    {
+      "file": "docs/tube_revision_d4_ended_implementation_20260930.md",
+      "sha256": "b047a5ab99a09a1ae05060113a01ffefc287643ef7e83a965638c8c48a649470"
+    },
+    {
+      "file": "docs/designs/tube_revision_20260929/d4-ended-implementation.html",
+      "sha256": "8c7e11658b2abaf2e35d4fe3dc51f8495b4ad11102123cc6f3ffb329c23eaba2"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/authorization.json",
+      "sha256": "afd18128d248f550ef730d370bb32f0390b44a382ea9b0a212997d8f756a7e63"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/source-before.json",
+      "sha256": "be7f3f94995d5715896abd7bdcf520639651d3eb3f413183ac77886450253c2d"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/review-summary.md",
+      "sha256": "7e1fe3e267ba5003103ce7a95d3d5b911c8f44b4dd8fd67f2f882435c430fe10"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/frontend-unit.log",
+      "sha256": "5c9209cbc0853665ac1b34c90d6f590f9c9bc3a3446133c13920386db4ccaad2"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/frontend-type-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/frontend-build.log",
+      "sha256": "5770739be44124ed173c109585084498d3c98c6d0a3d847fbbe7363fc988609b"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/backend-ended-red.log",
+      "sha256": "ec05e676189cdc870f141bef23ea70241701539b774668ef2e4f96db8dcf75fd"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/backend-ended-green.log",
+      "sha256": "be28a502061e5bc9534cd413fe8903539af88e86e74ed5ae5dd5205f5d92af02"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/backend-checks.json",
+      "sha256": "e034cf4d540bb4636fd8a916bd8de918384000014387c3b1919b35cc47b6ed49"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/browser-verification.json",
+      "sha256": "b7aafedec3b38b3116d6ba5e84a8d56d5cb8db174c4e45f87e23e45f24ed118b"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/browser-qa.cjs",
+      "sha256": "87b32f93a7f48f542e686c20ebad9b6181ad25156fa65fdda0c3e77e905d575d"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/live-receipts-before.json",
+      "sha256": "a01d2b4eb2fd75add39846c606047bd079a5550d6e078a195be42843ba59ff12"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/live-receipts-after.json",
+      "sha256": "863907dec0d733c7d3f278a175f169ddc2a1d430115c98d140d062ccb18ed114"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/check-scope.cjs",
+      "sha256": "61c8f99ec4a5e4cc1eef289db6d6d1008a02c99eb1df7ba3c92d44f5c0da012b"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/build-gallery.cjs",
+      "sha256": "7f07dacb0d37b79326f6b1533017d8818136691fd92ebb9640622174e260f6b8"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/freeze-implementation.cjs",
+      "sha256": "dfe1aa3f036c87e613f06199c5f0923b5dbddeb2e78487a04638a635488b28ac"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/verify-delivery.cjs",
+      "sha256": "476f43dc17f7e396400af995966cb40751ec2366ca6278cd657277252f91b146"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/raw_pipe-ended-detail-1920.png",
+      "sha256": "01bff923fe1b888c3fb81c0e5eef2cffeab702fcb15bc118a1a3606fd4f0f340"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/raw_pipe-receipt-1920.png",
+      "sha256": "09664302b32c34a2a63880a052d0a410aa063901d1e2be7d62b232b379b41bb1"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/public_semi-ended-detail-1920.png",
+      "sha256": "a27cac3ede5167a58598329c6ed6fe75e2f217a3986bb1d329d03f193111b9f4"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/public_semi-receipt-1920.png",
+      "sha256": "0376c54b646093cb7ad384f2679554dc7b4f461e8433fd43b77f1d8022b9c7ec"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/metal-ended-detail-1920.png",
+      "sha256": "6e2a1618158de7b08925a816bc663229861eb93cdebee18d85fccd7c21d088f0"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/metal-receipt-1920.png",
+      "sha256": "4286f74a92e4dd287d16b271c1825501f429168dae5ddbc3db4973d3816bcb15"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-long-table-first-1920.png",
+      "sha256": "9f3adb9f05d4f9f2e0ea24b091aec28eff9db1660aa191c163b6a4082b5ef38c"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-long-table-last-1920.png",
+      "sha256": "ce415d710dc3da7e68c1ad321e857c2732c7867e863d775c80378738393cef3f"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-long-receipt-first-1920.png",
+      "sha256": "db534ae469a0f85ecb30e883f4e311e142a298eb89a132606349f60ac1fe6eb4"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-long-receipt-last-1920.png",
+      "sha256": "b913ca5d555e8891271e7bf00db23159532d593e18e73138c7f74d155be537b6"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-missing-frozen-fields-1920.png",
+      "sha256": "b7f6fc5325705966727fdc1cf7ae985e3fe40f2e64b4090ed7b358f680460ce1"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-missing-receipt-1920.png",
+      "sha256": "bcdea2089440d0a27e4bf9579c3a5e86fda6217de2ff843911853a2cc29aa510"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-wrong-receipt-order-1920.png",
+      "sha256": "a1a9403afb9ca368e274d22f3e917b6bbaecf148723bb5abd853297fc11eceba"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-missing-receipt-line-1920.png",
+      "sha256": "53c4934d0c007e1c4abd2589115f50d6c8d4d2df93d4fa0cc6b0d46b79cd7c63"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-wrong-receipt-line-1920.png",
+      "sha256": "f57a614f84be4de7cbecf1c227296a51a864d1dfbdfe2af00f37afaafc842723"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-missing-order-lines-1920.png",
+      "sha256": "a1a9403afb9ca368e274d22f3e917b6bbaecf148723bb5abd853297fc11eceba"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-read-500-1920.png",
+      "sha256": "6af2403c9f97516a0dc714762b7459172de7a0ada13bcd966a79a8b660936636"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-read-403-1920.png",
+      "sha256": "985b18e8c3f56d39b08bf74da026c010a3765962298829420637779b1167a436"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-read-404-1920.png",
+      "sha256": "0d2d82b161a56479e17bf2b12b11a35149adb8c0a3c798b3d421766a4f1bc5c1"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/simulated-loading-1920.png",
+      "sha256": "05ea2475a1d392d09debd1f74e9e87410e535be1a9d288bc34d28525cdcaa274"
+    },
+    {
+      "file": "qa/tube_revision_d4_ended_implementation_20260930/pending-raw-readonly-regression-1920.png",
+      "sha256": "5ac7f3f8829deaa538e4a752c268d00f19b3046d4162aa56d20e03e818e373b3"
+    }
+  ]
+}

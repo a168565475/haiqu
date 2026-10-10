@@ -1,8 +1,13 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
+from django.contrib.sessions.models import Session
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
-from apps.organizations.models import Employee, EmployeeStatus
+from apps.organizations.models import Employee, EmployeeRoleAssignment, EmployeeStatus, RoleProfile
 
 
 class AuthenticationApiTests(APITestCase):
@@ -48,6 +53,51 @@ class AuthenticationApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    @override_settings(DEV_AUTO_LOGIN_ENABLED=False)
+    def test_development_auto_login_is_disabled_without_explicit_configuration(self):
+        token = self.csrf_token()
+
+        response = self.client.post(
+            "/api/auth/development-auto-login/",
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    @override_settings(
+        DEV_AUTO_LOGIN_ENABLED=True,
+        DEV_AUTO_LOGIN_USERNAME="test_admin",
+        DEV_AUTO_LOGIN_ALLOWED_HOSTS=["testserver"],
+    )
+    def test_development_auto_login_cannot_create_session_even_with_old_flags(self):
+        token = self.csrf_token()
+
+        response = self.client.post(
+            "/api/auth/development-auto-login/",
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertNotIn("sessionid", self.client.cookies)
+
+    def test_logout_requires_csrf_and_preserves_session(self):
+        token = self.csrf_token()
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"username": self.user.username, "password": "StrongTestPassword123!"},
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(login_response.status_code, 200)
+
+        logout_response = self.client.post("/api/auth/logout/", format="json")
+        self.assertEqual(logout_response.status_code, 403)
+
+        me_response = self.client.get("/api/auth/me/")
+        self.assertTrue(me_response.data["authenticated"])
+
     def test_login_me_and_logout_session_flow(self):
         token = self.csrf_token()
         login_response = self.client.post(
@@ -61,6 +111,7 @@ class AuthenticationApiTests(APITestCase):
         self.assertTrue(login_response.data["authenticated"])
         self.assertEqual(login_response.data["user"]["username"], "test_admin")
         self.assertEqual(login_response.data["user"]["display_name"], "测试 管理员")
+        self.assertFalse(login_response.data["user"]["is_superuser"])
         self.assertEqual(login_response.data["user"]["employee"]["status"], EmployeeStatus.ACTIVE)
 
         me_response = self.client.get("/api/auth/me/")
@@ -157,6 +208,93 @@ class AuthenticationApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["authenticated"])
         self.assertIsNone(response.data["user"]["employee"])
+
+    def test_existing_session_is_revoked_when_employee_becomes_inactive(self):
+        token = self.csrf_token()
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"username": self.user.username, "password": "StrongTestPassword123!"},
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(login_response.status_code, 200)
+
+        self.employee.status = EmployeeStatus.INACTIVE
+        self.employee.save(update_fields=["status", "updated_at"])
+
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.data, {"authenticated": False, "user": None})
+        self.assertEqual(Session.objects.count(), 0)
+
+    def test_existing_session_is_revoked_when_employee_is_archived(self):
+        token = self.csrf_token()
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"username": self.user.username, "password": "StrongTestPassword123!"},
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual(login_response.status_code, 200)
+
+        self.employee.archived_at = timezone.now()
+        self.employee.save(update_fields=["archived_at", "updated_at"])
+
+        response = self.client.get("/api/auth/me/")
+        self.assertEqual(response.data, {"authenticated": False, "user": None})
+        self.assertEqual(Session.objects.count(), 0)
+
+    def test_active_employee_role_assignment_grants_group_permissions(self):
+        permission = Permission.objects.get(
+            content_type__app_label="customers",
+            codename="view_customeraccount",
+        )
+        group = Group.objects.create(name="测试业务员角色")
+        group.permissions.add(permission)
+        role = RoleProfile.objects.create(
+            auth_group=group,
+            role_code="TEST_SALES_ROLE",
+            display_name="测试业务员角色",
+        )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.employee,
+            role_profile=role,
+            effective_from=timezone.now() - timedelta(minutes=1),
+        )
+
+        token = self.csrf_token()
+        login_response = self.client.post(
+            "/api/auth/login/",
+            {"username": self.user.username, "password": "StrongTestPassword123!"},
+            format="json",
+            HTTP_X_CSRFTOKEN=token,
+        )
+
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn("customers.view_customeraccount", login_response.data["user"]["permissions"])
+        self.assertTrue(get_user_model().objects.get(pk=self.user.pk).has_perm("customers.view_customeraccount"))
+
+    def test_expired_employee_role_assignment_does_not_grant_permissions(self):
+        permission = Permission.objects.get(
+            content_type__app_label="customers",
+            codename="view_customeraccount",
+        )
+        group = Group.objects.create(name="测试过期角色")
+        group.permissions.add(permission)
+        role = RoleProfile.objects.create(
+            auth_group=group,
+            role_code="TEST_EXPIRED_ROLE",
+            display_name="测试过期角色",
+        )
+        now = timezone.now()
+        EmployeeRoleAssignment.objects.create(
+            employee=self.employee,
+            role_profile=role,
+            effective_from=now - timedelta(days=2),
+            effective_to=now - timedelta(days=1),
+        )
+
+        fresh_user = get_user_model().objects.get(pk=self.user.pk)
+        self.assertFalse(fresh_user.has_perm("customers.view_customeraccount"))
 
     def test_login_validates_required_fields(self):
         token = self.csrf_token()

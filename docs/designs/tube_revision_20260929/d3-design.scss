@@ -1,0 +1,66 @@
+// D3 单页图稿：只补充本页布局及本页浮层主题，不改共享规范或已有批准图稿。
+.d3-topbar { gap: 12px; }
+.d3-topbar .crumb, .d3-current-user { white-space: nowrap; }
+.d3-source-picker { width: 160px; }
+.d3-entry-picker { width: 145px; }
+.d3-state-picker { width: 140px; }
+.d3-order-code { color: #6f6a61; font-size: 13px; font-variant-numeric: tabular-nums; }
+.d3-context .info-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px 20px; }
+.d3-context .info-cell { grid-template-columns: 84px minmax(0, 1fr); }
+.d3-workspace { overflow: hidden; }
+.d3-section-heading, .d3-receipt-fields, .d3-remark { flex-shrink: 0; }
+.d3-section-heading { gap: 20px; }
+.d3-section-heading > div { gap: 14px; }
+.d3-receipt-fields { grid-template-columns: 230px 260px 230px 230px; gap: 24px; }
+.d3-receipt-fields small, .d3-remark small { margin-left: 8px; font-size: 11px; }
+.d3-workspace > .d3-lines { flex: 1 1 auto; min-height: 86px; }
+.d3-lines .design-table th, .d3-lines .design-table td,
+.d3-confirm-lines .design-table th, .d3-confirm-lines .design-table td { padding-left: 10px; padding-right: 10px; }
+.d3-lines strong, .d3-confirm-lines strong { font-weight: 500; }
+.d3-lines .el-input, .d3-lines .el-select { width: 100%; }
+.d3-lines .el-input__wrapper { padding-left: 8px; padding-right: 8px; }
+.d3-lines .el-input__suffix-inner { font-size: 11px; color: #968f84; }
+.d3-lines .el-select__placeholder { font-size: 12px; }
+.d3-remark .el-textarea__inner { resize: none; }
+.d3-footer-total { display: flex; align-items: baseline; gap: 28px; flex-wrap: wrap; }
+.d3-footer-total > span { white-space: nowrap; }
+.d3-footer-total > small { flex-basis: 100%; margin: 0; }
+.d3-fallback { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.d3-confirm-context.info-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 24px; margin-bottom: 16px; }
+.d3-confirm-context .info-cell { grid-template-columns: 84px minmax(0, 1fr); }
+.d3-confirm-lines { max-height: 440px; }
+.d3-confirm-remark { display: flex; align-items: baseline; gap: 16px; margin-top: 14px; }
+.d3-confirm-remark > span { width: 64px; flex-shrink: 0; }
+.d3-confirm-remark p { margin: 0; max-height: 66px; overflow: auto; overflow-wrap: anywhere; }
+.d3-once-note { margin-top: 16px; }
+.d3-confirm-footer { display: flex; align-items: center; gap: 12px; width: 100%; }
+.d3-confirm-footer > div { margin-right: auto; display: flex; gap: 28px; }
+.d3-confirm-footer strong { font-size: 16px; margin: 0 5px; color: #c84e28; font-weight: 600; }
+.d3-picker-filter { margin-bottom: 16px; }
+.d3-picker-filter .el-input { width: 380px; }
+.d3-picker-filter .el-select { width: 170px; }
+.d3-picker-lines { min-height: 166px; max-height: 440px; }
+.d3-picker-lines .design-table th, .d3-picker-lines .design-table td { padding-left: 10px; padding-right: 10px; }
+.d3-picker-lines .el-button.is-link { min-height: 32px; height: 32px; }
+.d3-warehouse-confirm p { margin: 0 0 14px; }
+.d3-warehouse-confirm p:last-child { margin-bottom: 0; }
+.d3-warehouse-confirm strong { font-weight: 600; margin: 0 5px; }
+.d3-shell .el-input__wrapper.is-focus,
+.d3-shell .el-date-editor.el-input__wrapper:focus-within,
+.d3-shell .el-select__wrapper.is-focused,
+.d3-shell .el-textarea__inner:focus { box-shadow: 0 0 0 1px #c84e28 inset !important; }
+.d3-select-popper, .d3-date-popper {
+  --el-color-primary: #c84e28;
+  --el-color-primary-light-3: #d87a5b;
+  --el-color-primary-light-5: #e3a08a;
+  --el-color-primary-light-7: #efc9bc;
+  --el-color-primary-light-8: #f5ddd5;
+  --el-color-primary-light-9: #fff4e6;
+  --el-color-primary-dark-2: #9f351a;
+  font-family: 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif;
+}
+.d3-select-popper .el-select-dropdown__item.is-selected,
+.d3-date-popper .el-date-table td.today .el-date-table-cell__text,
+.d3-date-popper .el-date-table td.available:hover .el-date-table-cell__text { color: #c84e28; }
+.d3-date-popper .el-date-table td.current:not(.disabled) .el-date-table-cell__text { color: #fcfbf7; background: #c84e28; }
+.d3-select-popper .el-select-dropdown__item.is-hovering { background: #f0eadf; }

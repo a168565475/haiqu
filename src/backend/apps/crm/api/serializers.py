@@ -1,3 +1,5 @@
+from apps.access_control.sales_sources import require_file
+from apps.access_control import sales_policy
 from drf_spectacular.utils import extend_schema_field
 from django.db.models import Q
 from rest_framework import serializers
@@ -10,6 +12,7 @@ from apps.files.models import BusinessFile
 from apps.inquiries.models import Inquiry
 from apps.organizations.models import Employee
 from apps.quotations.models import QuotationVersion
+from apps.reference_data.services import published_dictionary_code_is_active
 from apps.samples.models import SampleRequest
 
 from ..models import (
@@ -108,10 +111,14 @@ class CommunicationDetailSerializer(CommunicationListSerializer):
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
     def get_inquiry_ids(self, obj):
+        if sales_policy.enabled() and not sales_policy.can_customer(self.context["request"], "inquiries.view_inquiry", obj.customer_account_id):
+            return []
         return [link.inquiry_id for link in obj.inquiry_links.all()]
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
     def get_quotation_version_ids(self, obj):
+        if sales_policy.enabled() and not sales_policy.can_customer(self.context["request"], "quotations.view_quotationversion", obj.customer_account_id):
+            return []
         return [link.quotation_version_id for link in obj.quotation_links.all()]
 
     @extend_schema_field(serializers.ListField(child=serializers.UUIDField()))
@@ -188,6 +195,12 @@ class CommunicationCreateSerializer(serializers.ModelSerializer):
         ]
         validators = []
 
+    def validate_communication_type(self, value):
+        normalized = value.strip().upper()
+        if not published_dictionary_code_is_active("COMMUNICATION_TYPE", normalized):
+            raise serializers.ValidationError("沟通方式不存在、已停用或尚未发布。")
+        return normalized
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get("request")
@@ -231,6 +244,13 @@ class CommunicationCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         customer = attrs["customer_account"]
+        request = self.context.get("request")
+        if attrs.get("inquiry"):
+            sales_policy.require_customer(request, "inquiries.view_inquiry", attrs["inquiry"].customer_account)
+        if attrs.get("quotation_version"):
+            sales_policy.require_customer(request, "quotations.view_quotationversion", attrs["quotation_version"].quotation.customer_account)
+        for contact in attrs.get("participant_contacts", []):
+            sales_policy.require_customer(request, "customers.view_customercontact", contact.customer_account)
         source_system = attrs.get("source_system", "")
         external_id = attrs.get("external_id", "")
         errors = {}
@@ -273,6 +293,7 @@ class CommunicationCreateSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         actor_employee = getattr(request, "employee", None) if request else None
         for business_file in business_files:
+            require_file(request, business_file)
             linked_customer_ids = set(
                 business_file.customer_links.values_list("customer_account_id", flat=True)
             )
@@ -337,6 +358,14 @@ class CommunicationUpdateSerializer(serializers.ModelSerializer):
             "external_id",
         ]
         validators = []
+
+    def validate_communication_type(self, value):
+        normalized = value.strip().upper()
+        if normalized == self.instance.communication_type or published_dictionary_code_is_active(
+            "COMMUNICATION_TYPE", normalized
+        ):
+            return normalized
+        raise serializers.ValidationError("沟通方式不存在、已停用或尚未发布。")
 
     def validate(self, attrs):
         if not attrs:

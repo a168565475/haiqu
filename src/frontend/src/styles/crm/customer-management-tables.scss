@@ -1,0 +1,219 @@
+/* 客户管理数据表格统一超紧凑规范。仅匹配客户管理菜单及其业务详情页。 */
+$customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-page, .customer-detail-list-shell, .complaint-page, .inquiry-page, .inquiry-detail-page, .inquiry-editor, .quotation-list-page, .quotation-editor-page, .price-history-page, .quotation-preview-page, .quotation-packaging-page, .order-page, .sales-order-editor-page, .sales-detail-page, .task-center)';
+
+#{$customer-table-roots} .el-table,
+.customer-management-table-dialog .el-table,
+.quotation-price-dialog .el-table,
+.sales-order-dialog .el-table {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 5px;
+  --el-table-border-color: #ddd6c9;
+  --el-table-header-bg-color: #f0eadf;
+  --el-table-row-hover-bg-color: #fff6ea;
+  --el-table-current-row-bg-color: #fff4e6;
+  color: #4d4c48;
+}
+
+#{$customer-table-roots} .el-table__header-wrapper th.el-table__cell,
+.customer-management-table-dialog .el-table__header-wrapper th.el-table__cell,
+.quotation-price-dialog .el-table__header-wrapper th.el-table__cell,
+.sales-order-dialog .el-table__header-wrapper th.el-table__cell {
+  box-sizing: border-box;
+  height: 44px !important;
+  padding: 0 !important;
+  color: #6f6a61 !important;
+  background: #f0eadf !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 18px !important;
+}
+
+#{$customer-table-roots} .el-table__header-wrapper th.el-table__cell > .cell,
+.customer-management-table-dialog .el-table__header-wrapper th.el-table__cell > .cell,
+.quotation-price-dialog .el-table__header-wrapper th.el-table__cell > .cell,
+.sales-order-dialog .el-table__header-wrapper th.el-table__cell > .cell {
+  padding-right: 16px !important;
+  padding-left: 16px !important;
+  color: #6f6a61 !important;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell,
+.customer-management-table-dialog .el-table__body-wrapper td.el-table__cell,
+.quotation-price-dialog .el-table__body-wrapper td.el-table__cell,
+.sales-order-dialog .el-table__body-wrapper td.el-table__cell {
+  box-sizing: border-box;
+  height: 40px !important;
+  padding: 0 !important;
+  color: #4d4c48;
+  background: #fcfbf7;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell > .cell,
+.customer-management-table-dialog .el-table__body-wrapper td.el-table__cell > .cell,
+.quotation-price-dialog .el-table__body-wrapper td.el-table__cell > .cell,
+.sales-order-dialog .el-table__body-wrapper td.el-table__cell > .cell {
+  padding-right: 16px !important;
+  padding-left: 16px !important;
+  font-size: 12px !important;
+  line-height: 18px !important;
+}
+
+#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell > .cell,
+.customer-management-table-dialog .el-table__body-wrapper td.el-table__cell > .cell,
+.quotation-price-dialog .el-table__body-wrapper td.el-table__cell > .cell,
+.sales-order-dialog .el-table__body-wrapper td.el-table__cell > .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#{$customer-table-roots} .el-table__body tr:hover > td.el-table__cell,
+.customer-management-table-dialog .el-table__body tr:hover > td.el-table__cell,
+.quotation-price-dialog .el-table__body tr:hover > td.el-table__cell,
+.sales-order-dialog .el-table__body tr:hover > td.el-table__cell {
+  background: #fff6ea !important;
+}
+
+#{$customer-table-roots} .el-table .el-checkbox__inner,
+.customer-management-table-dialog .el-table .el-checkbox__inner,
+.quotation-price-dialog .el-table .el-checkbox__inner,
+.sales-order-dialog .el-table .el-checkbox__inner {
+  width: 14px;
+  height: 14px;
+}
+
+#{$customer-table-roots} .el-table .el-tag,
+#{$customer-table-roots} .el-table [class*='status-tag'],
+#{$customer-table-roots} .el-table .solid-tag,
+.customer-management-table-dialog .el-table .el-tag,
+.quotation-price-dialog .el-table .el-tag,
+.sales-order-dialog .el-table .el-tag {
+  box-sizing: border-box;
+  height: 24px !important;
+  line-height: 22px !important;
+}
+
+#{$customer-table-roots} .el-table td .cell > b,
+#{$customer-table-roots} .el-table td .cell > strong,
+#{$customer-table-roots} .el-table .identity strong,
+#{$customer-table-roots} .el-table .product-cell b,
+#{$customer-table-roots} .el-table .order-link,
+#{$customer-table-roots} .el-table .quotation-link,
+#{$customer-table-roots} .el-table .task-link,
+#{$customer-table-roots} .el-table .code-link,
+#{$customer-table-roots} .el-table .contact-name strong,
+#{$customer-table-roots} .el-table .customer-identity__name,
+#{$customer-table-roots} .products-table tbody th[scope='row'] {
+  font-size: 13px !important;
+  line-height: 20px !important;
+}
+
+#{$customer-table-roots} .el-table td small,
+#{$customer-table-roots} .el-table .identity small,
+#{$customer-table-roots} .el-table .product-cell small,
+#{$customer-table-roots} .el-table .customer-identity__meta {
+  margin-top: 0 !important;
+  font-size: 11px;
+  line-height: 16px !important;
+}
+
+#{$customer-table-roots} .el-table .muted {
+  margin-top: 0 !important;
+  font-size: 11px !important;
+  line-height: 16px !important;
+}
+
+/* 复合编辑行保留内容自适应，但取消旧版 88/112px 固定行高。 */
+.sales-order-editor-page .product-table .el-table__body-wrapper td.el-table__cell,
+.quotation-editor-page .editor-card .el-table__body-wrapper td.el-table__cell,
+.quotation-price-dialog .price-matrix-table .el-table__body-wrapper td.el-table__cell {
+  height: auto !important;
+  min-height: 40px;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.quotation-editor-page .product-thumb {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+/* 原生表格与 Element Plus 表格使用同一套尺寸和字体参数。 */
+#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table),
+.sales-order-dialog .mini-table {
+  width: 100%;
+  overflow: hidden;
+  border-collapse: collapse;
+  border-radius: 5px;
+  color: #4d4c48;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) thead th,
+.sales-order-dialog .mini-table thead th {
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 16px !important;
+  color: #6f6a61;
+  background: #f0eadf;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) tbody td,
+#{$customer-table-roots} .products-table tbody th,
+.sales-order-dialog .mini-table tbody td {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 4px 16px !important;
+  border-bottom: 1px solid #ddd6c9;
+  color: #4d4c48;
+  background: #fcfbf7;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+#{$customer-table-roots} :is(.products-table, .quotation-lines-table, .quotation-container-table, .mini-table) :is(th, td),
+.sales-order-dialog .mini-table :is(th, td) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.quotation-preview-page :is(.quotation-product-image, .quotation-image-placeholder) {
+  display: grid !important;
+  box-sizing: border-box;
+  width: 30px !important;
+  height: 30px !important;
+}
+
+.quotation-preview-page .quotation-product-info b {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.quotation-preview-page .quotation-product-info {
+  height: 36px;
+  align-content: center;
+  gap: 0 !important;
+  overflow: hidden;
+}
+
+.quotation-preview-page :is(.quotation-lines-table, .quotation-container-table) tbody td {
+  height: 40px !important;
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+}
+
+.quotation-preview-page .quotation-product-info span {
+  font-size: 11px;
+  line-height: 16px;
+}

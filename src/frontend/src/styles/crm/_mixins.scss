@@ -1,0 +1,23 @@
+@use './tokens' as token;
+
+@mixin focus-ring {
+  outline: 2px solid token.$crm-focus;
+  outline-offset: 2px;
+}
+
+@mixin text-ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@mixin reset-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+}
+

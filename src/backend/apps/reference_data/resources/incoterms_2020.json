@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "source": {
+    "standard": "Incoterms 2020",
+    "publisher": "International Chamber of Commerce",
+    "url": "https://iccwbo.org/business-solutions/incoterms-rules/incoterms-2020/",
+    "rules_version": "2020",
+    "snapshot_date": "2026-08-26",
+    "translation_note": "中文名称为系统显示译名，不替代 ICC 正式规则文本。"
+  },
+  "records": [
+    {
+      "code": "EXW",
+      "chinese_name": "工厂交货",
+      "english_name": "Ex Works",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 10
+    },
+    {
+      "code": "FCA",
+      "chinese_name": "货交承运人",
+      "english_name": "Free Carrier",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 20
+    },
+    {
+      "code": "CPT",
+      "chinese_name": "运费付至",
+      "english_name": "Carriage Paid To",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 30
+    },
+    {
+      "code": "CIP",
+      "chinese_name": "运费和保险费付至",
+      "english_name": "Carriage and Insurance Paid To",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 40
+    },
+    {
+      "code": "DAP",
+      "chinese_name": "目的地交货",
+      "english_name": "Delivered at Place",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 50
+    },
+    {
+      "code": "DPU",
+      "chinese_name": "卸货地交货",
+      "english_name": "Delivered at Place Unloaded",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 60
+    },
+    {
+      "code": "DDP",
+      "chinese_name": "完税后交货",
+      "english_name": "Delivered Duty Paid",
+      "transport_scope": "ANY_MODE",
+      "sort_order": 70
+    },
+    {
+      "code": "FAS",
+      "chinese_name": "船边交货",
+      "english_name": "Free Alongside Ship",
+      "transport_scope": "SEA_INLAND_WATERWAY",
+      "sort_order": 80
+    },
+    {
+      "code": "FOB",
+      "chinese_name": "船上交货",
+      "english_name": "Free On Board",
+      "transport_scope": "SEA_INLAND_WATERWAY",
+      "sort_order": 90
+    },
+    {
+      "code": "CFR",
+      "chinese_name": "成本加运费",
+      "english_name": "Cost and Freight",
+      "transport_scope": "SEA_INLAND_WATERWAY",
+      "sort_order": 100
+    },
+    {
+      "code": "CIF",
+      "chinese_name": "成本、保险费加运费",
+      "english_name": "Cost Insurance and Freight",
+      "transport_scope": "SEA_INLAND_WATERWAY",
+      "sort_order": 110
+    }
+  ]
+}

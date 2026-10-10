@@ -74,16 +74,16 @@ docker compose exec redis redis-cli ping
 
 ## 访问地址
 
-- Frontend：http://localhost:5173
+- Frontend：http://localhost:8080
 - Backend：http://localhost:8000
 - Health API：http://localhost:8000/api/health/
-- 局域网 Frontend：http://192.168.1.103:5173
+- 局域网 Frontend：http://192.168.1.103:8080
 - 局域网 Backend：http://192.168.1.103:8000
 - 局域网 Health API：http://192.168.1.103:8000/api/health/
-- PostgreSQL：127.0.0.1:5432
-- Redis：127.0.0.1:6380（容器内部 `redis:6379`）
+- PostgreSQL：127.0.0.1:15432
+- Redis：127.0.0.1:16379（容器内部 `redis:6379`）
 
-一键启动会检测当前局域网 IPv4。防火墙仅允许 `192.168.1.0/24` 访问 5173/8000，5432/6380 始终仅限本机。
+一键启动会检测当前局域网 IPv4。防火墙仅允许 `192.168.1.0/24` 访问 8080/8000，15432/16379 始终仅限本机。
 
 ## 数据位置
 

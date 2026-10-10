@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
-    [string]$RemoteSubnet = '192.168.1.0/24'
+    [string]$RemoteSubnet = '192.168.0.0/24'
 )
 
 $ErrorActionPreference = 'Stop'
 $rules = @(
-    @{ Name = 'haiqu ERP Frontend (LAN)'; Port = 5173 },
+    @{ Name = 'haiqu ERP Frontend (LAN)'; Port = 8080 },
     @{ Name = 'haiqu ERP Backend (LAN)'; Port = 8000 }
 )
 
@@ -24,4 +24,4 @@ foreach ($rule in $rules) {
         -Profile Any | Out-Null
 }
 
-Write-Host "haiqu ERP firewall rules created for $RemoteSubnet on TCP 5173 and 8000." -ForegroundColor Green
+Write-Host "haiqu ERP firewall rules created for $RemoteSubnet on TCP 8080 and 8000." -ForegroundColor Green

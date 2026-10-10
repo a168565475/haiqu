@@ -1,0 +1,210 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { reactive } from 'vue'
+import ElementPlus, { ElMessageBox } from 'element-plus'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import OutsourcingOrderListView from './OutsourcingOrderListView.vue'
+
+const api = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn(), fetch: vi.fn(), remove: vi.fn(), revoke: vi.fn(), push: vi.fn(), replace: vi.fn(), sources: vi.fn(), source: vi.fn() }))
+const permissions = vi.hoisted(() => ({ superuser: true, values: [] as string[] }))
+const route = reactive({ query: {} as Record<string, string> })
+vi.mock('@/api/outsourcing', () => ({
+  fetchOutsourcingOrder: api.fetch,
+  deleteOutsourcingOrder: api.remove, revokeDispatchedOutsourcingOrder: api.revoke,
+}))
+vi.mock('@/api/unifiedOutsourcing', async (original) => ({ ...await original<object>(), fetchUnifiedOutsourcingOrders: api.list, fetchUnifiedOutsourcingOptions: api.options }))
+vi.mock('@/api/metalProcessingP4', () => ({ fetchP4Sources: api.sources, fetchP4Source: api.source }))
+vi.mock('./MetalProcessingP4View.vue', () => ({ default: { props: ['mode', 'embedded'], template: '<div data-testid="sources-workspace">来源工作区</div>' } }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { get is_superuser() { return permissions.superuser } }, hasPermission: (name: string) => permissions.values.includes(name) }) }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
+
+const row = {
+  id: 'order-1', order_number: 'WW-001', direct_handoff: false, can_delete: false, can_revoke_dispatched: true,
+  row_key: 'ORIGINAL:order-1', record_type: 'ORIGINAL', source_kind: 'RAW', source_label: '仓库原料', detail_access: 'REGULAR',
+  dispatched_quantities: [{ quantity: '183.75', unit: '米' }], returned_quantities: [{ quantity: '120', unit: '套' }],
+  schedule_number: 'PLAN-001', production_task_number: 'HT-001', product: { product_name: '折叠椅' },
+  craft: { name: '喷塑' }, factory_names: ['加工厂'], factory_count: 1,
+  processing_count: 1, returned_processing_count: 0, delivery_date: '2026-10-01',
+  status: 'PROCESSING', status_display: '加工中', updated_at: '2026-09-27T00:00:00Z',
+}
+
+const wrappers: ReturnType<typeof mount>[] = []
+
+async function createView(initialRow = row) {
+  api.list.mockResolvedValue({ data: [initialRow], meta: { total: 1 } })
+  api.options.mockResolvedValue({ statuses: [], crafts: [], factories: [] })
+  api.sources.mockResolvedValue({ data: [], meta: { total: 0 } })
+  const wrapper = mount(OutsourcingOrderListView, { global: { plugins: [ElementPlus], stubs: { RouterLink: true } } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  return wrapper
+}
+
+beforeEach(() => { vi.resetAllMocks(); permissions.superuser = true; permissions.values = []; route.query = {} })
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
+
+describe('普通外发单列表删除入口', () => {
+  it('已发料单按服务端许可撤销并退料，操作前重新读取详情和版本', async () => {
+    const wrapper = await createView()
+    api.fetch.mockResolvedValue({ data: { id: row.id, direct_handoff: false, can_delete: false, can_revoke_dispatched: true }, etag: '"fresh"' })
+    api.revoke.mockResolvedValue({ data: { id: row.id, status: 'CANCELLED' }, etag: '"new"' })
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: ' 误发退料 ', action: 'confirm' } as never)
+    await wrapper.find('[aria-label="WW-001 更多操作"]').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.includes('撤销并退料'))).toBe(true))
+    const revokeItem = [...document.querySelectorAll('.el-dropdown-menu__item')].find(item => item.textContent?.includes('撤销并退料'))
+    expect(revokeItem).toBeDefined()
+    revokeItem!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(api.fetch).toHaveBeenCalledWith('order-1')
+    expect(api.revoke).toHaveBeenCalledWith('order-1', '误发退料', expect.any(String), '"fresh"')
+    expect(api.remove).not.toHaveBeenCalled()
+    expect(api.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('直接交接和服务端未开放撤销的单据不能触发删除', async () => {
+    const wrapper = await createView()
+    await (wrapper.vm as any).removeRow({ ...row, direct_handoff: true })
+    await (wrapper.vm as any).removeRow({ ...row, can_revoke_dispatched: false })
+    expect(api.fetch).not.toHaveBeenCalled()
+    expect(api.remove).not.toHaveBeenCalled()
+    expect(api.revoke).not.toHaveBeenCalled()
+  })
+
+  it('直接交接单的操作列显示查看详情并可进入详情', async () => {
+    const wrapper = await createView({ ...row, direct_handoff: true, can_revoke_dispatched: false })
+    await wrapper.find('[aria-label="WW-001 更多操作"]').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(document.querySelectorAll('.el-dropdown-menu__item')).toHaveLength(1))
+    const menuItems = [...document.querySelectorAll('.el-dropdown-menu__item')]
+    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['查看详情'])
+    menuItems[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(api.push).toHaveBeenCalledExactlyOnceWith('/workshop/outsourcing/order-1')
+    expect(api.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('统一外发列表及来源入口', () => {
+  it('发出米数与回货套数分别显示，不计算跨单位进度', async () => {
+    const wrapper = await createView()
+    expect(wrapper.text()).toContain('生产任务单')
+    expect(wrapper.text()).toContain('HT-001')
+    expect(wrapper.text()).not.toContain('PLAN-001')
+    expect(wrapper.find('.table-product .line-art-thumb').exists()).toBe(false)
+    expect(wrapper.find('.table-product small').exists()).toBe(false)
+    expect(wrapper.text()).toContain('183.75 米')
+    expect(wrapper.text()).toContain('120 套')
+    expect(wrapper.find('.return-progress').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('管材外发闭环')
+    expect(wrapper.text()).toContain('材料来源')
+  })
+
+  it('重加工进入独立详情，金工可见投影进入金工原单详情，均禁止普通删除', async () => {
+    const wrapper = await createView({ ...row, record_type: 'REWORK', source_kind: 'REWORK', source_label: '重加工件' })
+    const vm = wrapper.vm as any
+    vm.openDetail({ ...row, record_type: 'REWORK' })
+    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/rework/order-1')
+    vm.openDetail({ ...row, detail_access: 'METAL' })
+    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/order-1?view=metal')
+    await vm.removeRow({ ...row, record_type: 'REWORK' })
+    await vm.removeRow({ ...row, detail_access: 'METAL' })
+    expect(api.fetch).not.toHaveBeenCalled()
+  })
+
+  it('来源筛选与页码交给统一接口，每次筛选重置页码', async () => {
+    const wrapper = await createView()
+    const vm = wrapper.vm as any
+    vm.page = 3; vm.sourceKind = 'REWORK'; vm.search = ' WF-001 '
+    vm.applyFilters()
+    await flushPromises()
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50, source_group: 'REWORK', search: 'WF-001' }))
+  })
+
+  it('只有金工查看权限只保留来源tab，不加载普通外发列表；不出现普通新建和加工厂管理', async () => {
+    permissions.superuser = false
+    permissions.values = ['material_issues.view_metalprocessingsource']
+    const wrapper = await createView()
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('待外发材料')
+    expect(wrapper.text()).not.toContain('新建外发单')
+    expect(wrapper.find('[to="/workshop/outsourcing/factories"]').exists()).toBe(false)
+    route.query = { tab: 'sources', issue_id: 'issue-1' }
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sources-workspace"]').exists()).toBe(true)
+  })
+
+  it('只有普通权限不显示来源区，无查看权限不请求列表或options', async () => {
+    permissions.superuser = false
+    permissions.values = ['outsourcing.view_outsourcingorder']
+    let wrapper = await createView()
+    expect(wrapper.text()).not.toContain('待外发材料')
+    wrapper.unmount()
+    api.list.mockClear(); api.options.mockClear()
+    permissions.values = []
+    wrapper = await createView()
+    expect(wrapper.text()).toContain('暂无委外加工查看权限')
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
+  })
+
+  it('接口失败清除旧行并可重试，旧请求晚返回不会覆盖最新筛选', async () => {
+    const wrapper = await createView()
+    const vm = wrapper.vm as any
+    let finishOld!: (value: unknown) => void
+    api.list.mockReturnValueOnce(new Promise(resolve => { finishOld = resolve }))
+    const old = vm.load()
+    api.list.mockResolvedValueOnce({ data: [{ ...row, id: 'new-order' }], meta: { total: 1 } })
+    await vm.load()
+    finishOld({ data: [row], meta: { total: 1 } }); await old
+    expect(vm.rows[0].id).toBe('new-order')
+    api.list.mockRejectedValueOnce(new Error('offline'))
+    await vm.load()
+    expect(vm.rows).toEqual([])
+    expect(wrapper.text()).toContain('外发单列表加载失败')
+    api.list.mockResolvedValueOnce({ data: [row], meta: { total: 1 } })
+    await vm.load()
+    expect(vm.rows[0].id).toBe(row.id)
+  })
+
+  it('空列表保留筛选及新建入口并展示真实零总数', async () => {
+    const wrapper = await createView()
+    api.list.mockResolvedValueOnce({ data: [], meta: { total: 0 } })
+    await (wrapper.vm as any).load()
+    expect(wrapper.text()).toContain('暂无外发单')
+    expect(wrapper.text()).toContain('共 0 条')
+    expect(wrapper.text()).toContain('新建外发单')
+  })
+
+  it('金工新建来源必须真实读取且有可用支数，下一步只带来源定位', async () => {
+    const wrapper = await createView()
+    const vm = wrapper.vm as any
+    await vm.openCreate()
+    vm.createSourceKind = 'METAL'; await flushPromises()
+    expect(vm.canContinueCreate).toBe(false)
+    api.source.mockResolvedValueOnce({ issue_line_id: 'line-1', issue_number: 'LL-001', part_name: '前脚管', status: 'OPEN', available_pieces: 20, completed_pieces: 20 })
+    await vm.selectCreateSource('line-1')
+    expect(vm.canContinueCreate).toBe(true)
+    vm.continueCreate()
+    expect(api.push).toHaveBeenLastCalledWith({ path: '/workshop/outsourcing/new', query: { source_kind: 'METAL', source_issue_line_id: 'line-1' } })
+    expect(api.remove).not.toHaveBeenCalled()
+    expect(api.revoke).not.toHaveBeenCalled()
+  })
+
+  it('重加工从真实退回历史选择剩余可分配记录，不将原来源可用量作为新单额度', async () => {
+    const wrapper = await createView()
+    const vm = wrapper.vm as any
+    await vm.openCreate(); vm.createSourceKind = 'REWORK'; await flushPromises()
+    api.source.mockResolvedValueOnce({ issue_line_id: 'line-2', issue_number: 'LL-002', part_name: '后脚管', status: 'CLOSED', available_pieces: 0, completed_pieces: 100,
+      original_handoffs: [{ unsprayed_returns: [{ return_date: '2026-09-27', returned_pieces: 20, reworks: [
+        { id: 'exhausted', remaining_allocatable_pieces: 0 }, { id: 'rework-2', remaining_allocatable_pieces: 8, completion_date: '2026-09-27' },
+      ] }] }],
+    })
+    await vm.selectCreateSource('line-2')
+    expect(vm.selectableReworks.map((item: { id: string }) => item.id)).toEqual(['rework-2'])
+    expect(vm.canContinueCreate).toBe(false)
+    vm.createReworkId = 'rework-2'; await flushPromises()
+    vm.continueCreate()
+    expect(api.push).toHaveBeenLastCalledWith({ path: '/workshop/outsourcing', query: { tab: 'sources', source_issue_line_id: 'line-2', source_action: 'rework', rework_id: 'rework-2' } })
+  })
+})

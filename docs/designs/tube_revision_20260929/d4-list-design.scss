@@ -1,0 +1,43 @@
+// 本页独立图稿；不覆盖已确认的其他页面和业务样式。
+.d4-list-shell {
+  .topbar { gap: 14px; }
+  .topbar .view-picker { width: 160px; }
+  .topbar > span { white-space: nowrap; }
+}
+.d4-list-page {
+  gap: 14px;
+  .tabs { min-height: 40px; flex-shrink: 0; }
+  .tab-count { margin-left: 8px; font-size: 12px; }
+  .d4-list-filters .search { width: 320px; }
+  .d4-list-filters .el-select { width: 168px; }
+  .d4-list-filters .factory-picker { width: 180px; }
+  .d4-list-toolbar { min-height: 32px; }
+  .factory-note { color: #6f6a61; font-size: 12px; }
+  .d4-list-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid #ddd6c9; border-radius: 5px; overflow: hidden; background: #fcfbf7; }
+  .d4-list-table-area { flex: 1; min-height: 0; }
+  .d4-list-table { --el-table-header-bg-color: #eee8dc; --el-table-tr-bg-color: #fcfbf7; --el-table-bg-color: #fcfbf7; --el-table-row-hover-bg-color: #fff6ea; --el-table-border-color: #eae4da; font-size: 12px; border: 0; }
+  // 外框唯一负责四边，关闭组件自带的边缘补线，避免双边框。
+  .el-table::before, .el-table::after, .el-table__inner-wrapper::before, .el-table__border-left-patch { display: none; }
+  .el-table th.el-table__cell { height: 44px; padding: 0; font-size: 11px; font-weight: 500; color: #6f6a61; }
+  .el-table td.el-table__cell { height: 40px; padding: 0; }
+  .el-table .cell { padding: 0 10px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .el-table th.el-table__cell:last-child, .el-table td.el-table__cell:last-child { border-right: 0; }
+  .el-table tbody tr:last-child td.el-table__cell { border-bottom: 0; }
+  .el-table__body tr { cursor: pointer; }
+  .el-scrollbar__bar.is-horizontal { display: none; }
+  .cell-actions { height: 32px; display: flex; align-items: center; }
+  .cell-actions .el-button.is-link { height: 32px; padding: 0; color: #3478af; }
+  .cell-actions .el-icon { margin-left: 3px; }
+  .source-tag { display: inline-flex; align-items: center; height: 24px; max-width: 100%; padding: 0 7px; border: 1px solid #ddd6c9; border-radius: 5px; background: #f6f3ec; color: #6f6a61; }
+  .craft-tag { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 0 8px; border-radius: 999px; color: #faf9f5; }
+  .craft-tag.spray { background: #4f7d4b; }
+  .craft-tag.sewing { background: #c84e28; }
+  .status { min-width: 56px; padding: 0 7px; }
+  .d4-list-empty { min-height: 240px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; line-height: 20px; color: #968f84; }
+  .d4-list-empty strong { font-size: 14px; font-weight: 500; color: #6f6a61; }
+  .d4-list-empty .el-icon { font-size: 22px; }
+  .el-table__empty-block { height: 100% !important; }
+  .el-table__empty-text { width: 100%; }
+  .d4-list-pager { border-top: 1px solid #eae4da; border-radius: 0; height: 48px; padding: 0 14px; }
+  .el-pagination { --el-pagination-button-height: 32px; --el-pagination-button-width: 32px; --el-pagination-button-bg-color: #f6f3ec; --el-pagination-hover-color: #c84e28; }
+}

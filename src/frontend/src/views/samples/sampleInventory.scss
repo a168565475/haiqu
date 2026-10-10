@@ -1,0 +1,31 @@
+@use '@/styles/crm/sample-library' as library;
+@include library.page('.sample-inventory-page');
+
+.sample-inventory-page {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sample-inventory-page .table-card {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-inventory-page .table-card :deep(.el-card__body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-inventory-page .table-card :deep(.el-table) {
+  min-height: 0;
+  flex: 1;
+}
+
+.sample-inventory-page .table-footer {
+  flex: none;
+}

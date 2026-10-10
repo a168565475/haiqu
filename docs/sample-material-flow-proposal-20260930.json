@@ -1,0 +1,1278 @@
+{
+  "date": "2026-09-30",
+  "status": "PROPOSAL_CONFIRMED_PENDING_DESIGN_AND_IMPLEMENTATION",
+  "scope": "按最新用户说明整理材料需求、人工核库、现有采购接入、到货、样品领料及后续流程。只读代码核查和方案记录，未开发、未写 Figma、未提交业务单据。",
+  "decisions_file": "docs/sample-flow-update-20260930-clarifications.json",
+  "user_confirmed_direction": [
+    "材料需求使用真实原材料档案，按 BOM 思路分类和选料，但不复制完整 BOM 计算。",
+    "明确告诉采购需要什么材料、材质、类型、规格及数量单位；不设置使用部位字段。",
+    "打样部人工检查仓库，明确仓库可供量和需采购量。",
+    "采购可以选择打样单，沿用当前采购业务规则；涉及冲突先逐项确认，不擅自更改采购。",
+    "同一需求单展示需求、供料、缺料采购和采购到货进度，并有状态。",
+    "增加打样领料，参考生产领料；不引入半成品加工流程，打样部自行处理。",
+    "领料后衔接参数上传及最终样品入库。",
+    "已确认整单材料全部齐备后一次领完，不分批；有缺料需等全部合格入库，无缺料可直接领料。",
+    "已确认管材按整根原料填写，明确规格、每根长度、根数，自动显示总米数；裁切由打样部自行处理，不填写管件裁切参数。",
+    "已确认允许同一位有对应权限的打样人员填写需求、人工核库并提交采购缺口，保留操作记录；实际出库由仓库确认并扣减库存。",
+    "金工和裁剪参数改为只上传图片，不填写详细参数；报工数量与完成状态是否保留单独确认。",
+    "已核库后降低需求数量时，本单可供量自动降至新需求量并保留核库记录。",
+    "空材料类别隐藏时提供添加类别入口，选择后新增首行并显示标签页。",
+    "金工和裁剪每个分区允许上传多张图片；入库前允许替换或删除。",
+    "保留简洁报工数量和完成状态，但不填写详细参数。",
+    "样品入库数量上限仍按打样申请数量；报工少于申请量时的冲突待确认。",
+    "每个金工、裁剪分区至少上传一张图片后完成，图片上传成功自动视为参数完成。",
+    "报工少于申请量时仍允许入库到申请数量上限；删除该分区全部图片会退回参数未完成；报工完成单独确认。",
+    "报工完成和样品入库数量均必须大于 0；图片只保留图片和上传信息，不增加说明字段。"
+  ],
+  "interpretations_requiring_confirmation": [
+    "需求数量拟按本次整张打样单总用量填写，而非 BOM 单件用量。",
+    "需采购量默认按需求减去人工可供计算，已确认允许少买或多买；人工修改必须有原因，少买保持缺料状态。"
+  ],
+  "page_proposal": {
+    "affected_audit_pages": [
+      "04",
+      "05",
+      "06",
+      "07"
+    ],
+    "concept": "同一份材料需求单，分别提供填写、人工核对、进度查看；普通和全屏共用同一数据。新增样品领料视图另行设计。",
+    "sample_header": [
+      "打样单号",
+      "产品",
+      "规格",
+      "颜色",
+      "打样数量",
+      "交期",
+      "已有产品图片"
+    ],
+    "categories": [
+      "管材",
+      "五金",
+      "塑料件",
+      "辅料",
+      "面料",
+      "包材"
+    ],
+    "material_identity_columns": [
+      "原料品号",
+      "材料名称",
+      "类型",
+      "规格",
+      "材质",
+      "颜色",
+      "适用时的色卡",
+      "适用时的色号"
+    ],
+    "editable_requirement_columns": [
+      "本单总需求数量",
+      "单位",
+      "备注"
+    ],
+    "picking_interaction": "各类别行内直接选择真实原料。名称、规格、材质、颜色及单位仍从档案数据选择；更换材料通过重新选择档案完成，不把改过的名称或规格冒充原原料。字段是否级联按 MATERIALS-UI-04 确认。",
+    "identity_rules": [
+      "类型先使用材料分类/品名中的已有信息；圆管、方管等含义应明确，避免重复的自由输入字段。",
+      "不设置使用部位字段；同一原料的需求按材料身份和总数量记录。",
+      "原料档案中缺失的结构化色卡/色号不能从拼接文字猜测补造。",
+      "成品样品颜色、色卡、色号全必填的已确认规则，不自动扩展为每种原材料全部必填。"
+    ],
+    "visual_rules": "以当前 DESIGN.md 第10章为准；单行独立列，表头44px、数据行34px、控件32px、状态标签24px随内容扩展；列多时表格内部滚动，支持全屏。实际页面和部分旧Token落后于规范，不能照搬。"
+  },
+  "quantity_ledger_proposal": [
+    {
+      "column": "需求数量",
+      "source": "打样需求人工填写",
+      "meaning": "该行本次打样总用量"
+    },
+    {
+      "column": "仓库可供",
+      "source": "人工查库确认",
+      "meaning": "计划使用现有仓存的数量，不等于已领料，也不表示库存已被占用"
+    },
+    {
+      "column": "需采购",
+      "source": "拟由需求量减去仓库可供量",
+      "meaning": "需要提交采购的缺口；只比较同一计量口径"
+    },
+    {
+      "column": "采购已合格入库",
+      "source": "真实采购验收入库回写",
+      "meaning": "合格到货量，退回或未质检数量不计入"
+    },
+    {
+      "column": "采购未到齐",
+      "source": "需采购减已合格入库，下限为0",
+      "meaning": "未补齐的缺口，不把采购单人工结束当作齐备"
+    },
+    {
+      "column": "实际已领",
+      "source": "新增样品领料库存流水",
+      "meaning": "真实从仓库发给打样部的数量"
+    },
+    {
+      "column": "待领",
+      "source": "拟按需求量与实际领料量计算",
+      "meaning": "尚未发给打样部的数量；已确认整单齐备后一次领完，管材按根核对并显示对应米数"
+    },
+    {
+      "column": "单位",
+      "source": "原材料档案及已确认的转换依据",
+      "meaning": "非管材沿用库存单位；新版管材需求、可供、缺口和领料按根核对，另按每根长度显示总米数。现有采购接口仍需适配，不能混用旧支数口径"
+    }
+  ],
+  "flow_proposal": [
+    {
+      "step": "创建申请 → 厂长确认／退回 → 完善需求",
+      "status": "沿用本轮已经确认的新版前段方案"
+    },
+    {
+      "step": "填写材料需求 → 人工核对库存",
+      "status": "需求草稿 → 待核库存"
+    },
+    {
+      "step": "全部由现有仓存供料",
+      "status": "材料齐备 → 待领料"
+    },
+    {
+      "step": "存在缺料，确认并提交缺料来源",
+      "status": "等待采购"
+    },
+    {
+      "step": "采购选择打样单并建单",
+      "status": "采购中；继续沿用当前建单后即显示采购中的规则"
+    },
+    {
+      "step": "沿用采购确认、发布、收货、品质确认",
+      "status": "到货进度独立显示未到货／部分入库／全部齐备"
+    },
+    {
+      "step": "全部材料齐备后一次领取整单材料",
+      "status": "待领料 → 已领料；已确认不分批领取"
+    },
+    {
+      "step": "金工参数 → 裁剪参数，并记录生产完成",
+      "status": "保留先前参数齐全且生产均完成才可入库的门槛，不因本次省略描述而取消报工条件"
+    },
+    {
+      "step": "样品成品入库",
+      "status": "沿用样品入库及后续出库能力"
+    }
+  ],
+  "previous_rules_preserved": [
+    "明确无需用料的分支此前已确认保留；本轮没有要求取消，后续应跳过材料采购和领料。",
+    "各阶段可编辑当前样品资料，历史材料、采购、报工、库存不联动，不一致暂不处理。",
+    "历史申请不自动迁移到新版流程。",
+    "不存在采购完成就自动视为全部合格到货的规则。"
+  ],
+  "current_reuse_and_gaps": [
+    {
+      "fact": "现有样品材料需求已支持六分类、真实原料、人工可供、冻结缺料、采购选择样品及合格入库回写。",
+      "sources": [
+        "src/backend/apps/samples/material_services.py:111",
+        "src/backend/apps/procurement/sample_purchase_services.py:35",
+        "src/backend/apps/samples/material_arrival_services.py:48"
+      ]
+    },
+    {
+      "fact": "现有采购一份样品缺料需求对应一张采购单，必须覆盖全部缺料行；供应商可以分配到不同供应商采购表，不等于可追加第二张采购单。",
+      "sources": [
+        "src/backend/apps/procurement/models.py:174",
+        "src/backend/apps/procurement/sample_purchase_services.py:129"
+      ]
+    },
+    {
+      "fact": "当前管材强制支数、裁切长度、每根支数，按整根采购并按米计价，到货按合格根数转换成支数；包含既有BOM余量/备料算法。只填任意米数不能直接接当前契约。",
+      "sources": [
+        "src/backend/apps/samples/pipe_materials.py:9",
+        "src/backend/apps/boms/material_flow_calculations.py:71",
+        "src/backend/apps/procurement/pipe_purchase.py:53"
+      ]
+    },
+    {
+      "fact": "部位字段目前不存在于打样材料行；采购part_name实际是材料名，行备注也未传入采购。不能通过拼接材料名称来传部位，否则破坏身份和到货校验。",
+      "sources": [
+        "src/backend/apps/samples/api/material_serializers.py:34",
+        "src/backend/apps/procurement/sample_purchase_services.py:81",
+        "src/backend/apps/samples/material_arrival_services.py:75"
+      ]
+    },
+    {
+      "fact": "当前库存参考为入库汇总，不是准确可领余额；管材不返回候选数量。人工可供确认不扣减、不占用库存，实际领料必须重新校验合格余额。",
+      "sources": [
+        "src/backend/apps/samples/material_services.py:54",
+        "src/backend/apps/samples/material_services.py:196"
+      ]
+    },
+    {
+      "fact": "现有仓库核对在启用对应权限体系时禁止需求提交者核对自己的需求；若打样部同一人完成两步，需调整打样侧规则。",
+      "sources": [
+        "src/backend/apps/samples/material_services.py:162",
+        "src/backend/apps/access_control/module_policy.py:115"
+      ]
+    },
+    {
+      "fact": "现生产领料必须有作业计划、生产订单、BOM、车间和工序，不能直接作为样品领料。可复用库存底层扣减、加锁、幂等与部分界面，需要真实的样品领料来源和记录。",
+      "sources": [
+        "src/backend/apps/material_issues/api/serializers.py:43",
+        "src/backend/apps/material_issues/services.py:187",
+        "src/backend/apps/inventory/stock_services.py:295",
+        "src/backend/apps/inventory/public_stock_services.py:311"
+      ]
+    },
+    {
+      "fact": "当前材料齐备直接进入参数阶段；必须在打样侧增加实际领料门槛。采购主流程不需要因此改变。",
+      "sources": [
+        "src/backend/apps/samples/material_services.py:187",
+        "src/backend/apps/samples/material_arrival_services.py:98"
+      ]
+    }
+  ],
+  "procurement_compatibility_boundary": {
+    "target": "复用现有采购选样品来源、供应商分配、确认发布、收货质检和到货回写，不擅自改变采购规则或代码。",
+    "sample_side_work": "改人工核库角色规则、增加领料及状态、适配原料稳定ID和合法计量口径。",
+    "not_yet_guaranteed": "简化管材计量仍需适配当前采购数量契约。先确认业务，必要的最小兼容变更须先告知用户。不得伪造裁切参数来过校验。",
+    "part_display_fallback": "用户已明确不需要使用部位字段，需求单和采购单均不展示。"
+  },
+  "confirmation_queue": [
+    {
+      "id": "INVENTORY-02",
+      "priority": 1,
+      "question": "等整单材料全部齐备后一次领完，还是允许先领现有材料后续补领？",
+      "status": "SUPERSEDED_BY_INVENTORY-ISSUE-02",
+      "decision": "原规则为全部齐备后一次领完；已被后续实际领料规则覆盖。"
+    },
+    {
+      "id": "MATERIALS-PIPE-01",
+      "priority": 2,
+      "question": "管材按整根原料填写并显示总米数，还是按管件支数和裁切参数换算？",
+      "status": "CONFIRMED_A",
+      "decision": "按整根原料需求，显示每根长度和总米数，不填写管件裁切参数；采购代码的具体适配另行说明确认。"
+    },
+    {
+      "id": "MATERIALS-REVIEW-01",
+      "priority": 3,
+      "question": "是否允许同一位有权限的打样员工填写需求、人工核库存并提交采购缺口？",
+      "status": "CONFIRMED_A",
+      "decision": "允许同一人完成，保留操作记录；不扩展为其他审批或实际出库的授权。"
+    },
+    {
+      "id": "MATERIALS-ISSUE-01",
+      "priority": 4,
+      "question": "样品实际领料出库由谁确认？",
+      "status": "CONFIRMED_A",
+      "decision": "打样部发起、仓库确认出库并扣减库存。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-01",
+      "priority": 5,
+      "question": "需采购数量是差额自动计算，还是允许人工调整并同步校验供料数量？",
+      "status": "CONFIRMED_MIXED",
+      "decision": "自动按差额计算，但允许人工修改。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-02",
+      "priority": 6,
+      "question": "人工修改需采购数量时，允许采购数量超过或少于自动计算的缺口吗？",
+      "status": "CONFIRMED_B",
+      "decision": "允许少买或多买；必须填写调整原因，少买保持缺料状态。"
+    },
+    {
+      "id": "MATERIALS-PART-01",
+      "priority": 7,
+      "question": "使用部位只在来源需求查看，还是采购单也必须独立展示？",
+      "status": "CANCELLED_BY_USER",
+      "decision": "取消使用部位字段，需求单和采购单均不设置。"
+    },
+    {
+      "id": "MATERIALS-PART-02",
+      "priority": 8,
+      "question": "同一种原材料用于两个不同部位时，材料需求分行还是合并？",
+      "status": "CANCELLED_BY_USER",
+      "decision": "因取消使用部位字段，该问题不再适用。"
+    },
+    {
+      "id": "MATERIALS-TYPE-01",
+      "priority": 9,
+      "question": "材料需求里的“类型”怎么填写？",
+      "status": "CONFIRMED_A",
+      "decision": "从原料档案带出，不手工填写。"
+    },
+    {
+      "id": "MATERIALS-COLOR-01",
+      "priority": 10,
+      "question": "材料需求里的颜色、色卡、色号怎么处理？",
+      "status": "CONFIRMED_A",
+      "decision": "有颜色的材料带出颜色、色卡、色号；无颜色材料不强制。"
+    },
+    {
+      "id": "MATERIALS-UNIT-01",
+      "priority": 11,
+      "question": "材料需求的单位怎么填写？",
+      "status": "CONFIRMED_A",
+      "decision": "从原料档案带出；管材按根并显示总米数。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-03",
+      "priority": 12,
+      "question": "材料需求数量是否允许填写小数？",
+      "status": "CONFIRMED_A",
+      "decision": "按原料单位和配置精度允许小数，整数单位限制整数。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-01",
+      "priority": 13,
+      "question": "材料需求里找不到对应原材料时，是否允许直接新增原材料？",
+      "status": "CONFIRMED_A",
+      "decision": "允许在材料需求页直接新增，并用于当前需求。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-02",
+      "priority": 14,
+      "question": "材料需求页新增原材料后，什么时候可以用于采购？",
+      "status": "CONFIRMED_A",
+      "decision": "保存后立即可用于当前需求和采购，但需严格权限和必填校验。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-03",
+      "priority": 15,
+      "question": "新增原材料的原料编号由谁填写？",
+      "status": "CONFIRMED_A",
+      "decision": "系统自动生成唯一编号。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-04",
+      "priority": 16,
+      "question": "新增原材料时，仓库归属是否必须选择？",
+      "status": "CONFIRMED_A",
+      "decision": "必须选择仓库归属。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-05",
+      "priority": 17,
+      "question": "新增原材料时，材质是否必须填写？",
+      "status": "CONFIRMED_A",
+      "decision": "材质必填。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-06",
+      "priority": 18,
+      "question": "新增原材料时，材料类别是否必须从系统分类中选择？",
+      "status": "CONFIRMED_A",
+      "decision": "必须从系统分类选择。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-07",
+      "priority": 19,
+      "question": "新增原材料时，规格是否必须填写？",
+      "status": "CONFIRMED_A",
+      "decision": "规格必填。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-08",
+      "priority": 20,
+      "question": "新增原材料时，颜色、色卡、色号怎么填写？",
+      "status": "CONFIRMED_A",
+      "decision": "有颜色时填写；无颜色不强制。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-09",
+      "priority": 21,
+      "question": "新增原材料时，材料名称是否必须填写？",
+      "status": "CONFIRMED_A",
+      "decision": "材料名称必填。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-10",
+      "priority": 22,
+      "question": "新增原材料时，材料名称怎么录入？",
+      "status": "CONFIRMED_A",
+      "decision": "从品名数据选择，不允许随意手工输入。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-11",
+      "priority": 23,
+      "question": "新增原材料时，规格怎么录入？",
+      "status": "CONFIRMED_A",
+      "decision": "从规格数据选择，且与品名关联。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-12",
+      "priority": 24,
+      "question": "新增原材料时，单位怎么选择？",
+      "status": "CONFIRMED_A",
+      "decision": "从单位配置选择，不手工输入。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-13",
+      "priority": 25,
+      "question": "新增有颜色的原材料时，颜色、色卡、色号怎么录入？",
+      "status": "CONFIRMED_A",
+      "decision": "从系统颜色数据选择。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-14",
+      "priority": 26,
+      "question": "在材料需求页新增的原材料，是否保存到全局原材料档案？",
+      "status": "CONFIRMED_A",
+      "decision": "保存到全局原材料档案，后续业务复用。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-15",
+      "priority": 27,
+      "question": "谁可以在材料需求页新增全局原材料？",
+      "status": "CONFIRMED_A",
+      "decision": "只有具备原料资料维护权限的人才能保存全局原材料档案；其他可填材料人员不能直接写入全局基础资料。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-16",
+      "priority": 28,
+      "question": "新增全局原材料后，若发现名称、规格、材质或颜色等基础资料有误，是否允许在材料需求页直接编辑原料档案？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求页只能选择或发起新增，原料档案的修改统一在原料资料管理页完成；材料需求页不直接编辑全局原料身份资料。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-17",
+      "priority": 29,
+      "question": "已经被样品、BOM、采购或库存使用的原材料，后续不再使用时应如何处理？",
+      "status": "CONFIRMED_A",
+      "decision": "原料档案禁止删除，只允许停用；停用后不能用于新增材料需求或采购，但保留历史业务记录和原料身份。"
+    },
+    {
+      "id": "MATERIALS-SOURCE-18",
+      "priority": 30,
+      "question": "原料停用后，已经在进行中的历史材料需求或采购单应如何处理？",
+      "status": "CANCELLED_BY_USER",
+      "decision": "本轮不处理停用原料对历史需求、采购、到货和领料的额外兼容逻辑，不新增停用后的历史流程设计。"
+    },
+    {
+      "id": "MATERIALS-QUANTITY-04",
+      "priority": 31,
+      "question": "材料需求数量按什么口径填写？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求数量直接填写本张打样单的总用量，不按单件用量再自动换算。"
+    },
+    {
+      "id": "MATERIALS-ROW-01",
+      "priority": 32,
+      "question": "同一原料在材料需求中被再次选择时，怎么处理？",
+      "status": "CONFIRMED_A",
+      "decision": "同一原料身份在材料需求中自动合并为一行并累加数量，避免同一原料重复采购。"
+    },
+    {
+      "id": "MATERIALS-REVIEW-02",
+      "priority": 33,
+      "question": "人工核库时，系统库存参考和仓库可供数量怎么展示？",
+      "status": "CONFIRMED_B",
+      "decision": "人工核库页面只填写仓库确认的可供数量，不额外展示系统库存参考；保留提交人和操作记录。"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-01",
+      "priority": 34,
+      "question": "采购从打样缺料需求建采购单时，按什么范围选择？",
+      "status": "CONFIRMED_A",
+      "decision": "采购按整张打样缺料单建单，一次带出该打样单全部待采购材料；供应商仍可在采购单内分配。"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-02",
+      "priority": 35,
+      "question": "采购单创建后，打样材料需求中的需采购数量是否还能直接修改？",
+      "status": "CONFIRMED_A",
+      "decision": "采购单创建后锁定打样材料需求中的需采购数量；后续调整不直接修改需求行，需通过采购单变更或退回重提处理。"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-03",
+      "priority": 36,
+      "question": "同一张打样缺料单已经创建采购单后，如果仍有缺料，是否允许再次创建新的采购单？",
+      "status": "CONFIRMED_A",
+      "decision": "同一张打样缺料单只对应一张采购单，不重复创建；继续在原采购单跟踪未到货数量。"
+    },
+    {
+      "id": "PROCUREMENT-SAMPLE-04",
+      "priority": 37,
+      "question": "采购单被取消或驳回，但仍有未到货缺口时，打样材料需求状态怎么处理？",
+      "status": "CONFIRMED_A",
+      "decision": "采购单取消或驳回且仍有未到货缺口时，材料需求回到等待采购，保留缺口并允许重新发起采购。"
+    },
+    {
+      "id": "INVENTORY-ISSUE-02",
+      "priority": 38,
+      "question": "打样实际领料确认时，如果仓库实时可发数量不足，怎么处理？",
+      "status": "CONFIRMED_A_OVERRIDE",
+      "decision": "实际领料时仓库能发多少就记录多少，剩余数量不再补料；本次领料按实际出库数量留痕。",
+      "supersedes": [
+        "INVENTORY-02"
+      ]
+    },
+    {
+      "id": "INVENTORY-ISSUE-03",
+      "priority": 39,
+      "question": "实际领料少于材料需求、且不再补料时，是否仍允许进入生产和参数上传？",
+      "status": "CONFIRMED_A",
+      "decision": "实际领料少于材料需求且不再补料时，仍允许进入生产和参数上传，按实际领料量继续处理，材料缺口只保留提示。"
+    },
+    {
+      "id": "INVENTORY-ISSUE-04",
+      "priority": 40,
+      "question": "实际领料少于材料需求但已经允许生产时，材料状态怎么显示？",
+      "status": "CONFIRMED_B",
+      "decision": "实际领料少于材料需求但允许生产时，材料状态仍显示已领料，不单独显示部分领料状态。"
+    },
+    {
+      "id": "INVENTORY-ISSUE-05",
+      "priority": 41,
+      "question": "材料状态显示“已领料”时，详情里是否仍保留需求量、实际领料量和缺口记录？",
+      "status": "CONFIRMED_A",
+      "decision": "材料状态显示已领料时，详情仍保留需求量、实际领料量和缺口三项数量记录。"
+    },
+    {
+      "id": "PARAMETER-01",
+      "priority": 42,
+      "question": "金工参数和裁剪参数的上传顺序怎么处理？",
+      "status": "CONFIRMED_B",
+      "decision": "金工参数和裁剪参数可以任意顺序上传，不强制先后步骤。"
+    },
+    {
+      "id": "PARAMETER-02",
+      "priority": 43,
+      "question": "生产报工完成与金工、裁剪参数上传之间是否互相限制？",
+      "status": "CONFIRMED_A",
+      "decision": "生产报工和金工、裁剪参数彼此独立，分别记录；只有参数齐全且报工完成后才允许样品入库。"
+    },
+    {
+      "id": "PARAMETER-03",
+      "priority": 44,
+      "question": "金工或裁剪参数上传后，在样品入库前是否允许修改？",
+      "status": "CONFIRMED_A",
+      "decision": "金工或裁剪参数在样品入库前允许修改，并保留修改记录；最终以最新有效参数参与入库校验。"
+    },
+    {
+      "id": "PARAMETER-04",
+      "priority": 45,
+      "question": "金工、裁剪参数上传和报工操作由谁可以执行？",
+      "status": "CONFIRMED_A",
+      "decision": "打样部和厂长都可以上传、修改金工或裁剪参数并执行报工，按权限保留操作记录。"
+    },
+    {
+      "id": "INBOUND-01",
+      "priority": 46,
+      "question": "样品最终入库由谁发起、谁确认？",
+      "status": "CONFIRMED_A",
+      "decision": "样品入库由打样部发起，仓库确认入库数量和库位。"
+    },
+    {
+      "id": "INBOUND-02",
+      "priority": 47,
+      "question": "样品最终入库数量以什么口径填写？",
+      "status": "CONFIRMED_SIMPLIFIED",
+      "decision": "样品入库不设置合格或不合格判断，只填写实际入库数量；仓库确认数量和库位。"
+    },
+    {
+      "id": "INBOUND-03",
+      "priority": 48,
+      "question": "样品入库数量是否允许少于已报工完成数量？",
+      "status": "CONFIRMED_A",
+      "decision": "样品入库数量允许少于已报工完成数量，仓库按实际收到的数量填写，不增加质量判定。"
+    },
+    {
+      "id": "INBOUND-04",
+      "priority": 49,
+      "question": "同一打样单是否允许多次补录样品入库数量？",
+      "status": "CONFIRMED_B",
+      "decision": "同一打样单只允许一次样品入库，不支持后续补录入库数量。"
+    },
+    {
+      "id": "INBOUND-05",
+      "priority": 50,
+      "question": "单次入库数量少于报工完成数量时，流程状态是否直接结束为“已入库”？",
+      "status": "CONFIRMED_A",
+      "decision": "单次样品入库完成后，流程状态直接结束为已入库，即使入库数量少于报工完成数量也不等待补录。"
+    },
+    {
+      "id": "OUTBOUND-01",
+      "priority": 51,
+      "question": "样品入库后是否直接沿用现有样品出库流程？",
+      "status": "CONFIRMED_A",
+      "decision": "样品入库后直接沿用现有样品出库流程，复用已有权限、数量校验和库存流水。"
+    },
+    {
+      "id": "NO-MATERIAL-01",
+      "priority": 52,
+      "question": "如果本次打样确认无需用料，是否通过明确操作直接进入参数和生产流程？",
+      "status": "CONFIRMED_A",
+      "decision": "无需用料时通过明确操作留存记录，直接进入参数和生产流程，不提交空白材料单。"
+    },
+    {
+      "id": "NO-MATERIAL-02",
+      "priority": 53,
+      "question": "“无需用料”操作由谁可以执行？",
+      "status": "CONFIRMED_A",
+      "decision": "无需用料操作由打样部和厂长都可以执行，系统记录实际操作者。",
+      "user_reply": "dA，按 A 处理"
+    },
+    {
+      "id": "NO-MATERIAL-03",
+      "priority": 54,
+      "question": "误选“无需用料”后，在进入生产前是否允许撤销并改为填写材料需求？",
+      "status": "CONFIRMED_A",
+      "decision": "进入生产前允许撤销“无需用料”并改为填写材料需求，同时保留原无需用料操作记录。"
+    },
+    {
+      "id": "MATERIALS-DRAFT-01",
+      "priority": 55,
+      "question": "材料需求页面是否允许先保存草稿，之后再提交仓库核对或采购？",
+      "status": "CONFIRMED_B",
+      "decision": "材料需求必须一次填写并提交，不保留材料草稿状态；提交后才进入仓库核对或采购相关状态。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-02",
+      "priority": 56,
+      "question": "材料需求提交后是否锁定，后续只能通过退回或重新提交修改？",
+      "status": "CONFIRMED_B",
+      "decision": "材料需求提交后仍允许修改；修改时需要重新计算仓库可供、需采购和后续进度，避免继续沿用旧数据。",
+      "user_reply": "b"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-03",
+      "priority": 57,
+      "question": "采购单已经创建后，材料需求是否仍允许直接修改？",
+      "status": "CONFIRMED_A",
+      "decision": "采购单创建后锁定材料需求；后续调整需通过采购单变更或取消后重新提交，不能直接修改需求行。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-04",
+      "priority": 58,
+      "question": "材料需求已经人工核库后，如果需求数量被修改，是否要重新核对仓库可供数量？",
+      "status": "CONFIRMED_B",
+      "decision": "材料需求人工核库后只修改数量时，保留原人工核库结果，不强制重新核库。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-05",
+      "priority": 59,
+      "question": "材料需求人工核库后，如果更换了原料名称、规格、材质或颜色，怎么处理旧核库结果？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求人工核库后更换原料名称、规格、材质或颜色时，清除旧核库结果并重新核库。"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-06",
+      "priority": 60,
+      "question": "已提交的材料需求修改数量时，是否必须填写修改原因？",
+      "status": "CONFIRMED_B",
+      "decision": "已提交的材料需求修改数量时不强制填写修改原因，不新增额外的原因字段；是否产生基础日志按现有系统规则处理。",
+      "user_reply": "b"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-07",
+      "priority": 61,
+      "question": "材料需求、人工核库和领料数量修改时，是否都必须保留操作记录？",
+      "status": "CONFIRMED_B",
+      "decision": "不要求对材料需求、人工核库和领料数量修改统一保留专门操作记录，沿用系统已有基础记录。",
+      "user_reply": "b"
+    },
+    {
+      "id": "MATERIALS-SUBMIT-08",
+      "priority": 62,
+      "question": "材料需求已提交但尚未创建采购单时，是否允许删除材料需求行？",
+      "status": "CONFIRMED_A",
+      "decision": "采购单创建前允许删除已提交的材料需求行；删除后按剩余需求继续核对和采购。"
+    },
+    {
+      "id": "ARRIVAL-01",
+      "priority": 63,
+      "question": "采购缺料只到一部分时，是否可以直接按当前可发数量领料？",
+      "status": "CONFIRMED_A",
+      "decision": "采购缺料只到一部分时，可以按当前可发数量领料，不等待采购全部到齐。"
+    },
+    {
+      "id": "ARRIVAL-02",
+      "priority": 64,
+      "question": "样品已经按当前数量领料并进入生产后，采购单剩余未到货数量是否还继续跟踪？",
+      "status": "CONFIRMED_B",
+      "decision": "样品按当前数量领料并进入生产后，样品流程不再跟踪采购单剩余未到货数量。"
+    },
+    {
+      "id": "ARRIVAL-03",
+      "priority": 65,
+      "question": "样品停止跟踪后，采购单剩余未到货数量怎么处理？",
+      "status": "CONFIRMED_A",
+      "decision": "样品停止跟踪后，采购单剩余未到货数量仍按采购模块现有流程继续收货或关闭，不由样品流程取消。"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-01",
+      "priority": 66,
+      "question": "仓库可供数量填写时，如果实际库存多于本单需求，是否最多填写本单需求数量？",
+      "status": "CONFIRMED_A",
+      "decision": "仓库可供数量最多填写本单需求数量，不把多余库存计入本单供料。"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-02",
+      "priority": 67,
+      "question": "人工核库提交时，可供数量是否必须逐行填写？",
+      "status": "CONFIRMED_B",
+      "decision": "人工核库时可供数量允许留空，系统按 0 处理。"
+    },
+    {
+      "id": "STATUS-01",
+      "priority": 68,
+      "question": "仓库核对后的材料状态是否按“材料齐备 → 等待采购 → 采购中 → 到货进度”显示？",
+      "status": "CONFIRMED_A",
+      "decision": "材料状态按材料齐备、等待采购、采购中和到货进度显示；足量、缺口、建单和到货阶段分别反映当前状态。"
+    },
+    {
+      "id": "MATERIALS-UI-01",
+      "priority": 69,
+      "question": "材料需求页面按什么方式组织不同材料类别？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求按类别分区填写，管材、五金件、塑料件、辅料、面料和包材分别组织。"
+    },
+    {
+      "id": "MATERIALS-UI-02",
+      "priority": 70,
+      "question": "材料类别分区在页面上如何展开？",
+      "status": "CONFIRMED_B",
+      "decision": "材料类别使用标签页切换，不在页面上同时展开全部分区。"
+    },
+    {
+      "id": "MATERIALS-UI-03",
+      "priority": 71,
+      "question": "各类别选择原材料时，是否使用按品名分组的弹出选择层？",
+      "status": "CONFIRMED_B",
+      "decision": "各类别使用行内直接选择材料，不采用按品名分组的弹出选择层；材料名称、规格、材质和颜色仍从系统数据中选择。"
+    },
+    {
+      "id": "MATERIALS-UI-04",
+      "priority": 72,
+      "question": "行内选择材料时，品名、规格、材质和颜色是否按级联顺序选择？",
+      "status": "CONFIRMED_A",
+      "decision": "行内选择材料时按品名、规格、材质和颜色级联，后续字段只显示与前一项匹配的数据。"
+    },
+    {
+      "id": "MATERIALS-UI-05",
+      "priority": 73,
+      "question": "每个材料标签页如何新增材料需求行？",
+      "status": "CONFIRMED_A",
+      "decision": "每个材料标签页通过添加材料按钮新增需求行。"
+    },
+    {
+      "id": "MATERIALS-UI-06",
+      "priority": 74,
+      "question": "材料需求行删除时，页面采用什么交互？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求行使用删除按钮，并在删除前二次确认；采购单创建前允许删除，创建后按锁定规则处理。"
+    },
+    {
+      "id": "MATERIALS-UI-07",
+      "priority": 75,
+      "question": "没有材料需求行的类别标签页如何显示？",
+      "status": "CONFIRMED_B",
+      "decision": "没有材料需求行的类别标签页直接隐藏，只显示已有材料的类别。"
+    },
+    {
+      "id": "MATERIALS-UI-08",
+      "priority": 76,
+      "question": "材料需求页面是否需要全屏模式？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求页面支持全屏模式，并保留页面内部滚动。"
+    },
+    {
+      "id": "MATERIALS-UI-09",
+      "priority": 77,
+      "question": "材料需求页面是否在顶部汇总显示需求、仓库可供、需采购和已到货数量？",
+      "status": "CONFIRMED_B",
+      "decision": "材料进度只在各材料行内显示，不在页面顶部做需求、可供、采购和到货汇总。"
+    },
+    {
+      "id": "MATERIALS-UI-10",
+      "priority": 78,
+      "question": "样品信息是否在材料需求页面顶部固定展示？",
+      "status": "CONFIRMED_A",
+      "decision": "样品信息在材料需求页面顶部固定展示，滚动填写时仍可看到打样单号、产品、规格、颜色和数量。"
+    },
+    {
+      "id": "MATERIALS-UI-11",
+      "priority": 79,
+      "question": "材料表格中的字段是否保持单行显示，不自动换行？",
+      "status": "CONFIRMED_A",
+      "decision": "材料表格字段全部保持单行显示，不自动换行；长内容通过横向滚动查看。"
+    },
+    {
+      "id": "MATERIALS-UI-12",
+      "priority": 80,
+      "question": "材料需求页面的提交、返回和全屏操作栏放在哪里？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求页面的提交、返回和全屏操作栏固定在底部。"
+    },
+    {
+      "id": "MATERIALS-UI-13",
+      "priority": 81,
+      "question": "材料表格内容较宽时，是否支持表格内部横向滚动？",
+      "status": "CONFIRMED_A",
+      "decision": "材料表格支持内部横向滚动，保持字段单行和独立列。"
+    },
+    {
+      "id": "MATERIALS-UI-14",
+      "priority": 82,
+      "question": "需求数量、仓库可供、需采购、已到货和实际领料是否分别独立成列？",
+      "status": "CONFIRMED_A",
+      "decision": "需求数量、仓库可供、需采购、已到货和实际领料分别独立成列。"
+    },
+    {
+      "id": "MATERIALS-UI-15",
+      "priority": 83,
+      "question": "材料状态是否使用项目统一的状态标签显示？",
+      "status": "CONFIRMED_A",
+      "decision": "材料状态使用项目统一的状态标签显示。"
+    },
+    {
+      "id": "MATERIALS-UI-16",
+      "priority": 84,
+      "question": "材料表格横向滚动时，表头是否固定在顶部？",
+      "status": "CONFIRMED_A",
+      "decision": "材料表格横向滚动时固定表头，纵向滚动时仍能识别每列字段。"
+    },
+    {
+      "id": "MATERIALS-UI-17",
+      "priority": 85,
+      "question": "每个材料标签页的“添加材料”按钮放在哪里？",
+      "status": "CONFIRMED_A",
+      "decision": "每个材料标签页的添加材料按钮放在标签页右上角。"
+    },
+    {
+      "id": "MATERIALS-UI-18",
+      "priority": 86,
+      "question": "全屏按钮放在哪里？",
+      "status": "CONFIRMED_A",
+      "decision": "全屏按钮放在页面右上角，作为页面级操作。"
+    },
+    {
+      "id": "MATERIALS-UI-19",
+      "priority": 87,
+      "question": "材料行的删除操作如何显示？",
+      "status": "CONFIRMED_B",
+      "decision": "材料行的删除操作放在更多菜单中，不在行内始终显示。"
+    },
+    {
+      "id": "MATERIALS-UI-20",
+      "priority": 88,
+      "question": "数量字段是否按“可编辑需求数量 + 只读进度数量”区分？",
+      "status": "CONFIRMED_A",
+      "decision": "需求数量可编辑，仓库可供、需采购、已到货和实际领料等进度数量只读。"
+    },
+    {
+      "id": "MATERIALS-UI-21",
+      "priority": 89,
+      "question": "管材标签页是否显示每根长度、根数和总米数专用字段？",
+      "status": "CONFIRMED_A",
+      "decision": "管材标签页显示每根长度、根数和自动计算总米数专用字段。"
+    },
+    {
+      "id": "MATERIALS-UI-22",
+      "priority": 90,
+      "question": "无颜色的原材料是否隐藏颜色、色卡和色号字段？",
+      "status": "CONFIRMED_B",
+      "decision": "无颜色的原材料仍保留颜色、色卡和色号字段，但置灰不可填写。"
+    },
+    {
+      "id": "MATERIALS-UI-23",
+      "priority": 91,
+      "question": "材料需求行是否保留可选的备注字段？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求行保留可选备注字段，用于补充采购或包装说明。"
+    },
+    {
+      "id": "MATERIALS-UI-24",
+      "priority": 92,
+      "question": "材料需求页新增全局原材料的入口放在哪里？",
+      "status": "CONFIRMED_B",
+      "decision": "新增全局原材料入口放在材料需求页面顶部，新增后回到当前类别选择。"
+    },
+    {
+      "id": "MATERIALS-UI-25",
+      "priority": 93,
+      "question": "材料需求页顶部的新增原材料入口是否只对有原料资料权限的人显示？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求页面顶部的新增原材料入口只对有原料资料权限的人显示。"
+    },
+    {
+      "id": "MATERIALS-UI-26",
+      "priority": 94,
+      "question": "材料需求行未完成必填字段时，是否阻止整页提交？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求行未完成必填字段时阻止整页提交，并提示用户补齐。"
+    },
+    {
+      "id": "MATERIALS-UI-27",
+      "priority": 95,
+      "question": "材料需求页面是否在必填字段旁直接显示必填标记？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求页面在必填字段旁直接显示必填标记。"
+    },
+    {
+      "id": "MATERIALS-UI-28",
+      "priority": 96,
+      "question": "材料需求提交失败时，错误提示采用什么方式？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求提交失败时使用行内错误气泡悬浮提示，同时在页面汇总未完成项。"
+    },
+    {
+      "id": "MATERIALS-UI-29",
+      "priority": 97,
+      "question": "数量精度或整数规则错误时，是否在输入时立即提示？",
+      "status": "CONFIRMED_A",
+      "decision": "数量精度或整数规则错误在输入时即时提示。"
+    },
+    {
+      "id": "MATERIALS-UI-30",
+      "priority": 98,
+      "question": "新增全局原材料表单以什么形式打开？",
+      "status": "CONFIRMED_A",
+      "decision": "新增全局原材料表单以页面内抽屉或弹层打开。"
+    },
+    {
+      "id": "MATERIALS-UI-31",
+      "priority": 99,
+      "question": "新增原材料保存成功后，是否自动回填当前材料需求？",
+      "status": "CONFIRMED_A",
+      "decision": "新增原材料保存成功后自动回填并选中当前材料需求行。"
+    },
+    {
+      "id": "MATERIALS-UI-32",
+      "priority": 100,
+      "question": "新增原材料抽屉里的字段是否按基础信息、规格材质、颜色和仓库单位分区？",
+      "status": "CONFIRMED_A",
+      "decision": "新增原材料抽屉按基础信息、规格材质、颜色和仓库单位分区。"
+    },
+    {
+      "id": "MATERIALS-UI-33",
+      "priority": 101,
+      "question": "新增原材料保存成功后，抽屉是否自动关闭？",
+      "status": "CONFIRMED_A",
+      "decision": "新增原材料保存成功后自动关闭抽屉并回填当前需求。"
+    },
+    {
+      "id": "MATERIALS-FLOW-01",
+      "priority": 102,
+      "question": "材料需求提交后，页面是否只在当前状态显示对应操作入口？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求提交后，页面只在当前状态和用户权限允许时显示对应操作入口。"
+    },
+    {
+      "id": "MATERIALS-FLOW-02",
+      "priority": 103,
+      "question": "等待采购状态下，采购入口是否只对有采购权限的人显示？",
+      "status": "CONFIRMED_A",
+      "decision": "等待采购状态下，采购入口只对有采购权限的人显示。"
+    },
+    {
+      "id": "MATERIALS-FLOW-03",
+      "priority": 104,
+      "question": "材料可领料时，打样部发起和仓库确认是否分别显示不同操作？",
+      "status": "CONFIRMED_A",
+      "decision": "材料可领料时，打样部显示发起领料操作，仓库显示独立的确认出库操作。"
+    },
+    {
+      "id": "MATERIALS-FLOW-04",
+      "priority": 105,
+      "question": "打样列表中的“材料情况”是否可以直接点击进入材料需求详情？",
+      "status": "CONFIRMED_A",
+      "decision": "打样列表中的材料情况可直接点击进入材料需求详情。"
+    },
+    {
+      "id": "MATERIALS-FLOW-05",
+      "priority": 106,
+      "question": "样品详情是否显示材料流程时间线？",
+      "status": "CONFIRMED_B",
+      "decision": "样品详情不显示材料流程时间线，材料状态和进度在材料详情中查看。"
+    },
+    {
+      "id": "MATERIALS-FLOW-06",
+      "priority": 107,
+      "question": "材料详情是否提供采购单的直接查看入口？",
+      "status": "CONFIRMED_A",
+      "decision": "材料详情提供采购单直接查看入口。"
+    },
+    {
+      "id": "MATERIALS-FLOW-07",
+      "priority": 108,
+      "question": "材料详情是否显示人工核库的提交人和核库时间？",
+      "status": "CONFIRMED_A",
+      "decision": "材料详情显示人工核库的提交人和核库时间。"
+    },
+    {
+      "id": "MATERIALS-FLOW-08",
+      "priority": 109,
+      "question": "材料详情是否显示采购单号和供应商信息？",
+      "status": "CONFIRMED_B",
+      "decision": "材料详情只显示采购状态，不显示采购单号和供应商信息。"
+    },
+    {
+      "id": "MATERIALS-FLOW-09",
+      "priority": 110,
+      "question": "材料详情是否显示实际领料数量和仓库确认人？",
+      "status": "CONFIRMED_A",
+      "decision": "材料详情显示实际领料数量和仓库确认人。"
+    },
+    {
+      "id": "NO-MATERIAL-04",
+      "priority": 111,
+      "question": "无需用料的样品在列表和详情中是否显示明确的“无需用料”状态？",
+      "status": "CONFIRMED_A",
+      "decision": "无需用料的样品在列表和详情中显示明确的无需用料状态。"
+    },
+    {
+      "id": "MATERIALS-FLOW-10",
+      "priority": 112,
+      "question": "材料详情打开时，默认显示哪个材料类别？",
+      "status": "CONFIRMED_A",
+      "decision": "材料详情打开时默认显示第一个有材料需求行的类别。"
+    },
+    {
+      "id": "MATERIALS-FLOW-11",
+      "priority": 113,
+      "question": "材料详情顶部是否显示打样产品图片？",
+      "status": "CONFIRMED_B",
+      "decision": "材料详情顶部不显示打样产品图片。"
+    },
+    {
+      "id": "MATERIALS-FLOW-12",
+      "priority": 114,
+      "question": "材料需求尚未创建采购单时，材料详情是否提供编辑入口？",
+      "status": "CONFIRMED_A",
+      "decision": "材料需求尚未创建采购单时，材料详情提供编辑入口。"
+    },
+    {
+      "id": "MATERIALS-FLOW-13",
+      "priority": 115,
+      "question": "采购单创建后，材料详情是否保留只读查看入口？",
+      "status": "CONFIRMED_A",
+      "decision": "采购单创建后材料详情保留只读查看入口。"
+    },
+    {
+      "id": "PARAMETER-FLOW-01",
+      "priority": 116,
+      "question": "允许生产后，样品详情是否显示金工和裁剪参数上传入口？",
+      "status": "CONFIRMED_A",
+      "decision": "允许生产后，样品详情显示金工和裁剪参数上传入口。"
+    },
+    {
+      "id": "PARAMETER-FLOW-02",
+      "priority": 117,
+      "question": "金工参数和裁剪参数是否分别使用独立分区？",
+      "status": "CONFIRMED_A",
+      "decision": "金工参数和裁剪参数分别使用独立分区。"
+    },
+    {
+      "id": "PARAMETER-FLOW-03",
+      "priority": 118,
+      "question": "生产报工数量和完成状态是否使用独立字段？",
+      "status": "CONFIRMED_A",
+      "decision": "生产报工数量和完成状态使用独立字段。"
+    },
+    {
+      "id": "PARAMETER-FLOW-04",
+      "priority": 119,
+      "question": "金工和裁剪参数是否需要显示各自的完成状态？",
+      "status": "CONFIRMED_A",
+      "decision": "金工和裁剪参数各自显示完成状态。"
+    },
+    {
+      "id": "PARAMETER-FLOW-05",
+      "priority": 120,
+      "question": "金工和裁剪参数是否允许先保存未完成内容？",
+      "status": "CONFIRMED_B",
+      "decision": "金工和裁剪参数必须一次填写完成，不提供未完成参数草稿。"
+    },
+    {
+      "id": "PARAMETER-FLOW-06",
+      "priority": 121,
+      "question": "参数完成状态由谁确认？",
+      "status": "CONFIRMED_A",
+      "decision": "参数完成状态由填写人手动确认。"
+    },
+    {
+      "id": "PARAMETER-FLOW-07",
+      "priority": 122,
+      "question": "参数未完成时，样品入库按钮是否保持禁用？",
+      "status": "CONFIRMED_A",
+      "decision": "任一参数未完成时，样品入库按钮保持禁用。"
+    },
+    {
+      "id": "PARAMETER-FLOW-08",
+      "priority": 123,
+      "question": "参数必填字段未完成时，提交是否阻止并显示字段错误？",
+      "status": "CONFIRMED_A",
+      "decision": "参数必填字段未完成时阻止提交并显示字段错误。"
+    },
+    {
+      "id": "PARAMETER-FLOW-09",
+      "priority": 124,
+      "question": "报工数量是否默认带入打样申请数量？",
+      "status": "CONFIRMED_A",
+      "decision": "报工数量默认带入打样申请数量且可修改。"
+    },
+    {
+      "id": "PARAMETER-FLOW-10",
+      "priority": 125,
+      "question": "报工数量是否禁止超过打样申请数量？",
+      "status": "CONFIRMED_A",
+      "decision": "报工数量不得超过打样申请数量。"
+    },
+    {
+      "id": "PARAMETER-FLOW-11",
+      "priority": 126,
+      "question": "报工尚未开始时，报工数量是否允许填写 0 或保持空白？",
+      "status": "CONFIRMED_A"
+    },
+    {
+      "id": "PARAMETER-FLOW-12",
+      "priority": 127,
+      "question": "报工完成后、样品入库前，是否允许修改报工数量？",
+      "status": "CONFIRMED_A"
+    },
+    {
+      "id": "PARAMETER-FLOW-13",
+      "priority": 128,
+      "question": "报工数量少于打样申请数量时，是否允许确认生产完成？",
+      "status": "CONFIRMED_A"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-05",
+      "priority": 129,
+      "question": "完善需求中的“表面或工艺要求”应采用什么形式？",
+      "status": "CONFIRMED_A",
+      "decision": "表面或工艺要求使用可选的多行文本字段。"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-06",
+      "priority": 130,
+      "question": "规格尺寸在完善需求页如何展示？",
+      "status": "CONFIRMED_A",
+      "decision": "按产品类别动态显示适用尺寸字段，具体尺寸选填；已有数据自动带入且可修改。"
+    },
+    {
+      "id": "REQUIREMENTS-FLOW-07",
+      "priority": 131,
+      "question": "特殊要求、工艺说明、验收要求是否合并为一个可选说明字段？",
+      "status": "CONFIRMED_A",
+      "decision": "特殊要求、工艺说明、验收要求合并为“要求说明”可选多行文本。"
+    },
+    {
+      "id": "INBOUND-LIMIT-01",
+      "priority": 132,
+      "question": "金工和裁剪完成数量不一致时，样品入库数量的上限按哪个数量？",
+      "status": "CONFIRMED_C_WITH_CONFLICT",
+      "decision": "样品入库数量上限仍按打样申请数量；报工少于申请量时可能出现入库量高于报工量，冲突待确认。"
+    },
+    {
+      "id": "WAREHOUSE-QUANTITY-03",
+      "priority": 133,
+      "question": "已核库后降低需求数量，导致原仓库可供量大于新需求量时，如何处理？",
+      "status": "CONFIRMED_A",
+      "decision": "自动将本单可供量降至新需求量，保留原核库记录。"
+    },
+    {
+      "id": "MATERIALS-UI-34",
+      "priority": 134,
+      "question": "空材料类别标签页隐藏后，填写时如何添加第一个材料类别或新类别？",
+      "status": "CONFIRMED_A",
+      "decision": "提供添加类别入口，选择后新增首行并显示该标签页。"
+    },
+    {
+      "id": "PARAMETER-FLOW-15",
+      "priority": 135,
+      "question": "金工和裁剪的图片上传数量如何限制？",
+      "status": "CONFIRMED_A",
+      "decision": "每个金工、裁剪分区允许上传多张图片。"
+    },
+    {
+      "id": "PARAMETER-FLOW-16",
+      "priority": 136,
+      "question": "只上传金工、裁剪图片后，是否仍保留简洁的报工数量和完成状态？",
+      "status": "CONFIRMED_A",
+      "decision": "保留简洁报工数量和完成状态，但不填写详细参数。"
+    },
+    {
+      "id": "PARAMETER-FLOW-17",
+      "priority": 137,
+      "question": "金工和裁剪图片上传后，样品入库前是否允许替换或删除？",
+      "status": "CONFIRMED_A",
+      "decision": "样品入库前允许替换或删除金工、裁剪图片。"
+    },
+    {
+      "id": "PARAMETER-FLOW-18",
+      "priority": 138,
+      "question": "金工和裁剪参数图片是否至少各上传一张后，才能标记对应工序完成？",
+      "status": "CONFIRMED_A",
+      "decision": "每个金工、裁剪分区至少上传一张图片后才能标记对应工序完成。"
+    },
+    {
+      "id": "PARAMETER-FLOW-19",
+      "priority": 139,
+      "question": "金工和裁剪图片上传后，完成状态如何确认？",
+      "status": "CONFIRMED_A",
+      "decision": "金工、裁剪图片上传成功后自动视为对应参数完成。"
+    },
+    {
+      "id": "INBOUND-LIMIT-02",
+      "priority": 140,
+      "question": "报工数量少于打样申请数量时，是否允许样品入库数量超过实际报工数量？",
+      "status": "CONFIRMED_A",
+      "decision": "报工少于申请量时仍允许入库，最多按打样申请数量。"
+    },
+    {
+      "id": "PARAMETER-FLOW-20",
+      "priority": 141,
+      "question": "金工或裁剪分区的图片全部删除后，已自动完成的参数状态是否自动退回未完成？",
+      "status": "CONFIRMED_A",
+      "decision": "删除该分区全部图片后，参数状态自动退回未完成。"
+    },
+    {
+      "id": "PARAMETER-FLOW-21",
+      "priority": 142,
+      "question": "报工完成状态是否仍由填写人单独确认，不因图片上传自动完成？",
+      "status": "CONFIRMED_A",
+      "decision": "报工完成状态由填写人单独确认，不因图片上传自动完成。"
+    },
+    {
+      "id": "PARAMETER-FLOW-22",
+      "priority": 143,
+      "question": "报工完成状态勾选时，该工序报工数量是否必须大于 0？",
+      "status": "CONFIRMED_A",
+      "decision": "报工完成必须有大于 0 的该工序报工数量。"
+    },
+    {
+      "id": "INBOUND-FLOW-06",
+      "priority": 144,
+      "question": "样品入库数量是否必须大于 0？",
+      "status": "CONFIRMED_A",
+      "decision": "样品入库数量必须大于 0。"
+    },
+    {
+      "id": "PARAMETER-FLOW-23",
+      "priority": 145,
+      "question": "金工和裁剪上传图片后，是否需要在图片旁填写额外说明？",
+      "status": "CONFIRMED_A",
+      "decision": "图片不需要额外说明，只保留图片和上传信息。"
+    },
+    {
+      "id": "PARAMETER-UI-04",
+      "priority": 146,
+      "question": "金工、裁剪图片上传的格式和大小是否沿用项目现有图片上传规范？",
+      "status": "CONFIRMED_A",
+      "decision": "沿用项目现有图片上传规范。"
+    },
+    {
+      "id": "PARAMETER-UI-05",
+      "priority": 147,
+      "question": "已上传的金工、裁剪图片如何查看？",
+      "status": "CONFIRMED_A",
+      "decision": "显示图片缩略图，点击可预览大图。"
+    },
+    {
+      "id": "PARAMETER-UI-06",
+      "priority": 148,
+      "question": "删除金工或裁剪图片时是否需要二次确认？",
+      "status": "CONFIRMED_B",
+      "decision": "删除图片直接执行，不需要二次确认。"
+    }
+  ],
+  "verification_boundary": "业务规则与图片交互已完成当前确认批次；本轮未修改业务代码、未写入业务数据、未修改 Figma。实施前仍需按 AGENTS.md 明确开发节奏，并执行对应测试和视觉验收。"
+}

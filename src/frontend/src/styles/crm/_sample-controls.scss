@@ -1,0 +1,57 @@
+@use './tokens' as token;
+@use './mixins' as mixin;
+
+// 已确认的 V3 表单提交按钮（列表仍使用 CRM 主色）。
+$action-primary: #c96442;
+
+// Teleport 弹层没有页面的 scoped 属性，允许在限定类名内生成普通选择器。
+@function control-selector($selector, $scoped) {
+  @if $scoped { @return ':deep(#{$selector})'; }
+  @return $selector;
+}
+
+// 仅在打样页面或指定弹层根元素内包含此 mixin，不覆盖其他模块。
+@mixin controls($scoped: true) {
+  --el-color-primary: #{token.$crm-primary};
+  --el-color-primary-light-3: #{token.$crm-primary-light-3};
+  --el-color-primary-light-5: #{token.$crm-primary-light-5};
+  --el-color-primary-light-7: #{token.$crm-primary-light-7};
+  --el-color-primary-light-8: #{token.$crm-primary-light-8};
+  --el-color-primary-light-9: #{token.$crm-color-selected};
+  --el-border-color: #{token.$crm-border-default};
+  --el-text-color-primary: #{token.$crm-text-primary};
+  --el-text-color-regular: #{token.$crm-text-regular};
+  --el-text-color-placeholder: #{token.$crm-text-muted};
+  --el-fill-color-blank: #{token.$crm-color-surface};
+  --el-border-radius-base: #{token.$crm-radius-2};
+  font-family: token.$crm-font-body;
+
+  #{control-selector('.el-button', $scoped)} {
+    height: token.$crm-control-height;
+    margin: 0;
+    padding: 0 token.$crm-space-4;
+    border-color: token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  #{control-selector('.el-button:not(.is-disabled):hover', $scoped)} { background: token.$crm-color-subtle; border-color: token.$crm-border-strong; }
+  #{control-selector('.el-button--primary', $scoped)} { color: token.$crm-text-inverse; background: token.$crm-primary; border-color: token.$crm-primary; }
+  #{control-selector('.el-button--primary:not(.is-disabled):hover', $scoped)} { background: token.$crm-primary-hover; border-color: token.$crm-primary-hover; }
+  #{control-selector('.el-button--primary:not(.is-disabled):active', $scoped)} { background: token.$crm-primary-pressed; }
+  #{control-selector('.el-button.is-link', $scoped)} { height: auto; padding: 0; color: token.$crm-primary; background: transparent; border: 0; }
+  #{control-selector('.el-button.is-disabled', $scoped)} { color: token.$crm-text-muted; opacity: .55; }
+  #{control-selector('.el-button:focus-visible', $scoped)}, button:focus-visible { @include mixin.focus-ring; }
+  #{control-selector('.el-input__wrapper', $scoped)}, #{control-selector('.el-select__wrapper', $scoped)} {
+    min-height: 40px;
+    padding: 0 12px;
+    border-radius: token.$crm-radius-2;
+    background: #fff;
+    box-shadow: 0 0 0 1px #e8e6dc inset;
+    font-size: 14px;
+  }
+  #{control-selector('.el-input__wrapper.is-focus', $scoped)}, #{control-selector('.el-select__wrapper.is-focused', $scoped)} { box-shadow: 0 0 0 1px token.$crm-focus inset; }
+  #{control-selector('.el-checkbox__inner', $scoped)} { width: 14px; height: 14px; border-color: token.$crm-border-default; border-radius: token.$crm-radius-1; }
+}

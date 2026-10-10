@@ -70,3 +70,25 @@ class GovernanceDiscoveryApiTests(APITestCase):
         allowed = self.client.get("/api/v1/dashboard/manager/")
         self.assertEqual(allowed.status_code, 200, allowed.data)
         self.assertEqual(allowed.data["meta"]["scope"], "MANAGER")
+
+    def test_quotation_saved_view_accepts_current_list_filters(self):
+        response = self.client.post(
+            "/api/v1/saved-views/",
+            {
+                "module_code": "QUOTATION",
+                "view_name": "我的待发送报价",
+                "filter_definition": {
+                    "display_status": "READY_TO_SEND",
+                    "owner_employee_id": str(self.employee.pk),
+                    "currency_code": "USD",
+                    "valid_to": "2026-09-30",
+                    "ordering": "-updated_at",
+                    "page_size": 20,
+                },
+                "column_definition": ["currency", "incoterm", "owner", "amount"],
+                "sort_definition": ["-updated_at"],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(SavedView.objects.filter(employee=self.employee, module_code="QUOTATION").exists())

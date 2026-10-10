@@ -1,0 +1,32 @@
+@use '@/styles/crm/sample-library' as library;
+@include library.page('.sample-outbound-page');
+
+.sample-outbound-page {
+  display: flex;
+  height: calc(100dvh - 92px);
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sample-outbound-page .table-card {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-outbound-page .table-card :deep(.el-card__body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-outbound-page .table-card :deep(.el-table) {
+  min-height: 0;
+  flex: 1;
+}
+
+.sample-outbound-page .table-footer {
+  flex: none;
+}

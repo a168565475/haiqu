@@ -1,0 +1,55 @@
+@use './crm/tokens' as t;
+.access-page {
+  height: 100%; min-height: 0; display: flex; flex-direction: column; color: t.$crm-text-primary; font: 13px/1.5 t.$crm-font-body;
+  .muted { color: t.$crm-text-secondary; }
+  p { margin: 4px 0; }
+}
+.access-page, .access-dialog, .access-dialog-footer {
+  button, input:not([type='checkbox']), select { height: 32px; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; color: t.$crm-text-primary; padding: 0 12px; font: 13px t.$crm-font-body; }
+  button { cursor: pointer; white-space: nowrap; &:hover {background: t.$crm-color-selected;} }
+  button:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {outline: 2px solid t.$crm-focus; outline-offset: 2px;}
+  .primary { background: t.$crm-primary; border-color: t.$crm-primary; color: #faf9f5; &:hover {background: t.$crm-primary-hover;} }
+  input[type='checkbox'] {width:14px;height:14px;padding:0;margin:0;vertical-align:middle;accent-color:t.$crm-primary;flex:none;}
+  input::placeholder {color:t.$crm-text-muted;}
+  .text-button {border:0;padding:0;color:t.$crm-primary;background:transparent;font-size:12px;}
+  .access-tag {display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:24px;padding:0 8px;border-radius:999px;background:t.$crm-success;color:#faf9f5;font:500 12px/18px t.$crm-font-body;vertical-align:middle;&.neutral{background:t.$crm-neutral;}}
+  table {width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;border:1px solid t.$crm-border-default;border-radius:5px;text-align:left;}
+  th, td {padding:0 16px;border-bottom:1px solid t.$crm-border-default;}
+  th {height:44px;font-size:11px;line-height:16px;font-weight:500;background:t.$crm-color-subtle;color:t.$crm-text-secondary;position:sticky;top:0;z-index:1;}
+  td {height:40px;font-size:12px;line-height:18px;color:t.$crm-text-regular;}
+  tr:last-child td {border-bottom:0;}
+  tbody tr:hover {background:t.$crm-color-row-hover;}
+  .permission-cell {display:flex;align-items:center;gap:8px;&.has-resource-scope{gap:4px;}select{width:104px;padding:0 4px;font-size:12px;} select.restricted-select{width:74px;} .scope-configure{width:32px;padding:0;flex:none;} }
+}
+.access-title {display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex:none;p{color:t.$crm-text-secondary;}h1{margin:0;font:600 34px/44px t.$crm-font-display;}}
+.access-title-line {display:flex;align-items:center;gap:14px;span{color:t.$crm-text-secondary;}}
+.access-tabs {display:flex;gap:28px;border-bottom:1px solid t.$crm-border-default;margin-bottom:14px;flex:none;button{border:0;border-radius:0;background:none;padding:0 2px;color:t.$crm-text-secondary;&.active{border-bottom:2px solid t.$crm-primary;color:t.$crm-primary;font-weight:600;}}}
+.access-role-layout, .access-team-layout {display:grid;grid-template-columns:236px minmax(0,1fr);gap:14px;flex:1;min-height:0;}
+.access-box {border:1px solid t.$crm-border-default;border-radius:5px;background:t.$crm-color-surface;min-width:0;overflow:hidden;}
+.access-role-list {display:flex;flex-direction:column;>input{margin:14px 14px 10px;width:calc(100% - 28px);flex:none;}footer{padding:12px 14px;border-top:1px solid t.$crm-border-default;font-size:11px;color:t.$crm-text-secondary;}}
+.access-boxhead {padding:14px;border-bottom:1px solid t.$crm-border-default;flex:none;}
+.access-role-scroll {padding:8px;flex:1;min-height:0;overflow:auto;scrollbar-width:thin;}
+.access-page .access-role {display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;border:0;background:none;padding:0 12px;margin-bottom:4px;text-align:left;small{color:t.$crm-text-muted;font-size:11px;}&.current{background:t.$crm-color-selected;color:t.$crm-primary;box-shadow:inset 3px 0 t.$crm-primary;font-weight:600;} }
+.access-editor, .access-widebox {display:flex;flex-direction:column;flex:1;min-height:0;}
+.access-editorhead {display:flex;justify-content:space-between;align-items:center;gap:14px;padding:16px;border-bottom:1px solid t.$crm-border-default;flex:none;h2{margin:0 0 6px;font:600 20px/28px t.$crm-font-display;.access-tag{margin-left:8px;}}}
+.access-actions {display:flex;align-items:center;gap:14px;}
+.access-notice {margin:14px 16px 0;padding:8px 12px;background:t.$crm-color-subtle;border-left:3px solid t.$crm-primary;color:t.$crm-text-regular;font-size:12px;flex:none;}
+.access-toolbar {padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex:none;}
+.access-tablewrap {flex:1;min-height:0;overflow:auto;padding:0 16px 14px;scrollbar-width:thin;overscroll-behavior:contain;}
+.access-matrix {min-width:1240px;}
+.access-main-cell {font-size:13px!important;line-height:20px!important;color:t.$crm-text-primary!important;small{display:block;font-size:11px;line-height:16px;color:t.$crm-text-muted;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}
+.access-role-tags {overflow:hidden;white-space:nowrap;.access-tag{margin-right:4px;}}
+.access-row-actions {gap:12px;}
+.access-editorfoot {height:60px;padding:14px 16px;border-top:1px solid t.$crm-border-default;display:flex;align-items:center;justify-content:space-between;flex:none;}
+.access-pagination {height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-top:1px solid t.$crm-border-default;color:t.$crm-text-secondary;font-size:12px;flex:none;}
+.access-state, .access-empty {padding:70px 20px;text-align:center;color:t.$crm-text-secondary;}
+.access-state {background:t.$crm-color-surface;border:1px solid t.$crm-border-default;border-radius:5px;}
+.access-warning {padding:10px 14px;background:t.$crm-warning-soft;color:t.$crm-warning;margin-bottom:14px;button{margin-left:14px;}}
+.access-dialog {font:13px/1.5 t.$crm-font-body;.muted{color:t.$crm-text-secondary;}p{margin:8px 0;} >label{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}textarea{font:13px t.$crm-font-body;color:t.$crm-text-primary;border:1px solid t.$crm-border-default;border-radius:5px;padding:8px;background:t.$crm-color-surface;resize:vertical;}.access-notice{margin:14px 0;}td{overflow-wrap:anywhere;} }
+.access-dialog-footer {justify-content:flex-end;}
+.access-check-grid {display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;label{display:flex;align-items:center;gap:8px;} }
+.access-diff {padding:12px 0;border-bottom:1px solid t.$crm-border-default;}
+.access-special-row {display:flex;justify-content:space-between;align-items:center;gap:14px;min-height:44px;border-bottom:1px solid t.$crm-border-default;}
+.access-audit-columns {display:grid;grid-template-columns:1fr 1fr;gap:16px;pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 t.$crm-font-body;color:t.$crm-text-regular;background:t.$crm-color-subtle;padding:12px;border-radius:5px;} }
+.access-audit-value {white-space:pre-line;overflow-wrap:anywhere;border-bottom:1px solid t.$crm-border-default;padding:8px 0;color:t.$crm-text-regular;}

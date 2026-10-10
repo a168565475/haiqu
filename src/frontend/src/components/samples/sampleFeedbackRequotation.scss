@@ -1,0 +1,21 @@
+@use '@/styles/crm/tokens' as token;
+.requote-dialog { display: grid; gap: 12px; }
+.requote-intro { margin: -8px 0 6px; color: token.$crm-text-secondary; font-size: 12px; }
+.feedback-source { padding: 12px; border-radius: 4px; background: token.$crm-color-subtle; }
+.feedback-source div { display: inline; margin-right: 12px; font-size: 13px; }
+.feedback-source span { margin-right: 6px; }
+.feedback-source b { font-weight: 500; }
+.feedback-source p { margin: 6px 0 0; font-size: 12px; line-height: 20px; }
+.feedback-source small { display: block; margin-top: 4px; color: token.$crm-text-secondary; }
+.history-section { padding: 12px; border: 1px solid token.$crm-border-subtle; border-radius: 4px; }
+.history-section h3 { margin: 0 0 8px; font-size: 13px; font-weight: 500; }
+.quote-options { display: grid; width: 100%; max-height: 220px; gap: 8px; overflow-y: auto; }
+.quote-options :deep(.el-radio) { display: flex; width: 100%; height: auto; min-height: 30px; margin: 0; padding: 5px 8px; border: 0; border-radius: 3px; background: token.$crm-color-subtle; }
+.quote-options :deep(.el-radio__label) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; white-space: normal; font-size: 12px; }
+.option-main { display: inline-flex; align-items: center; gap: 6px; }
+.option-main b { font-size: 12px; font-weight: 500; }
+.option-main em { color: token.$crm-text-secondary; font-size: 11px; font-style: normal; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.requote-form :deep(.el-form-item) { margin-bottom: 10px; }
+.requote-notes { font-size: 12px; color: token.$crm-text-secondary; summary { margin-bottom: 6px; cursor: pointer; } }
+.requote-error { display: grid; gap: 10px; color: token.$crm-danger; }

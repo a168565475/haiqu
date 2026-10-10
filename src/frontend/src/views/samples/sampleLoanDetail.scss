@@ -1,0 +1,11 @@
+@use '@/styles/crm/sample-document' as document;
+@use '@/styles/crm/tokens' as token;
+
+.loan-detail-page {
+  @include document.page;
+  .lines-table-head, .lines-table-row {
+    grid-template-columns: 170px 170px 160px 190px 90px 120px 360px 130px minmax(0, 1fr);
+    min-width: 1422px;
+  }
+  .status-field strong, .inventory-impact, .prototype-note strong { color: token.$crm-warning; }
+}

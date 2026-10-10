@@ -28,21 +28,21 @@
 
 | 服务 | 容器名 | 地址 / 端口 |
 |---|---|---|
-| Frontend | `haiqu-frontend` | http://localhost:5173 |
+| Frontend | `haiqu-frontend` | http://localhost:8080 |
 | Backend | `haiqu-backend` | http://localhost:8000 |
 | Health API | `haiqu-backend` | http://localhost:8000/api/health/ |
-| PostgreSQL | `haiqu-postgres` | 127.0.0.1:5432 |
-| Redis | `haiqu-redis` | 容器内 `redis:6379`；宿主机 `127.0.0.1:6380` |
+| PostgreSQL | `haiqu-postgres` | 127.0.0.1:15432 |
+| Redis | `haiqu-redis` | 容器内 `redis:6379`；宿主机 `127.0.0.1:16379` |
 
 当前局域网地址：
 
-- Frontend：http://192.168.1.103:5173
+- Frontend：http://192.168.1.103:8080
 - Backend：http://192.168.1.103:8000
 - Health API：http://192.168.1.103:8000/api/health/
 
 前端和后端监听 `0.0.0.0`，PostgreSQL 与 Redis 仍只监听 `127.0.0.1`，不会向局域网暴露数据库端口。
 
-宿主机 `6379` 已由 Windows 服务 `Redis` 占用，因此本项目 Redis 的宿主端口安全调整为 `6380`。后端通过 Docker 网络连接 `redis:6379`，不受影响。
+Windows 当前保留了 `5151–5550` 与 `63434–63833` 等 TCP 端口范围，原先的 5173、5432、6380 均不可稳定绑定。本项目改用宿主机端口 8080、15432、16379；后端仍通过 Docker 网络连接 `postgres:5432` 和 `redis:6379`，不受影响。
 
 ## 4. 数据持久化与防误删
 
@@ -102,12 +102,12 @@ PostgreSQL dump 已恢复到独立临时数据库，恢复后查询到 18 条 mi
 1. 检查 Docker CLI；Docker 引擎未运行时自动启动 Docker Desktop。
 2. 自动检测带默认网关的局域网 IPv4，并注入 Django、CORS、CSRF 和前端 API 配置。
 3. 最长等待 Docker 引擎 180 秒。
-4. 验证 Compose 配置，并检查 5432、6380、8000、5173 端口。
+4. 验证 Compose 配置，并检查 15432、16379、8000、8080 端口。
 5. 已运行的本项目容器允许继续；其他进程占用端口时显示 PID 和进程名，但不会结束进程。
 6. 执行 `docker compose up -d`。首次运行或镜像缺失时由 Compose 自动构建，日常启动复用现有镜像。
 7. 最长等待四个容器健康 240 秒，顺序由 Compose 健康依赖保证：PostgreSQL / Redis → Backend → Frontend。
 8. 验证主机数据挂载、本机与局域网 Health API、数据库连接、Redis PONG、CORS 和前端 HTTP 200。
-9. 全部成功后打开 http://localhost:5173，窗口 5 秒后关闭，并显示当前局域网访问地址。
+9. 全部成功后打开 http://localhost:8080，窗口 5 秒后关闭，并显示当前局域网访问地址。
 
 每次运行都会写入 `logs/startup_yyyyMMdd_HHmmss.log`。失败时窗口保持打开，并显示服务状态、最近 80 行日志和排查提示；完整文件记录最近 200 行容器日志。
 
@@ -217,7 +217,7 @@ Get-FileHash ".\backups\redis\redis_$stamp.rdb" -Algorithm SHA256
 
 原因：Windows Redis 服务已使用 6379。
 
-处理：项目 Redis 宿主端口使用 6380，容器内仍为 6379。不要停止未知系统服务。
+处理：项目 Redis 容器内仍为 6379，宿主机端口使用 16379。不要停止未知系统服务。
 
 ### 一键启动提示端口被占用
 
@@ -233,7 +233,7 @@ Get-FileHash ".\backups\redis\redis_$stamp.rdb" -Algorithm SHA256
 
 当前 Windows 网络为“公用网络”，未修改系统网络分类。项目使用两条精确防火墙规则，仅允许当前 `192.168.1.0/24` 子网访问：
 
-- `haiqu ERP Frontend (LAN)`：TCP 5173
+- `haiqu ERP Frontend (LAN)`：TCP 8080
 - `haiqu ERP Backend (LAN)`：TCP 8000
 
 先确认访问设备与本机连接同一局域网，且地址仍属于 `192.168.1.x`。一键启动会自动适应本机 IP 变化；如果切换到不同子网，需要以管理员身份重新运行：
@@ -242,7 +242,7 @@ Get-FileHash ".\backups\redis\redis_$stamp.rdb" -Algorithm SHA256
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure_lan_firewall.ps1 -RemoteSubnet '新的子网/前缀'
 ```
 
-不要开放 TCP 5432 或 6380，不要配置路由器公网端口映射。Django/Vite 当前是开发服务器，仅适合可信的办公或家庭局域网。
+不要开放 TCP 15432 或 16379，不要配置路由器公网端口映射。Django/Vite 当前是开发服务器，仅适合可信的办公或家庭局域网。
 
 ### 容器不健康或反复重启
 
@@ -262,7 +262,7 @@ docker system df
 - Frontend TypeScript + Vite build：成功
 - npm audit：0 vulnerabilities
 - Health API：HTTP 200
-- CORS：允许 `http://localhost:5173`
+- CORS：允许 `http://localhost:8080`
 - 浏览器 QA：Edge 无头模式实际渲染成功，无 console / page error
 - 截图：`qa/runtime/frontend_home.png`
 - 持久化重启：成功
@@ -270,7 +270,7 @@ docker system df
 - 一键启动：从 Docker Desktop 未运行状态自动启动成功
 - 一键启动验证：四容器 healthy、主机数据挂载、Health API、PostgreSQL、Redis、Frontend 全部成功
 - 局域网验证：192.168.1.103 的 Frontend、Health API、Django Host 与 CORS 全部成功
-- Windows 防火墙：仅 192.168.1.0/24 可访问 TCP 5173/8000；数据库端口未开放
+- Windows 防火墙：仅 192.168.1.0/24 可访问 TCP 8080/8000；数据库端口未开放
 
 ## 10. 当前限制
 

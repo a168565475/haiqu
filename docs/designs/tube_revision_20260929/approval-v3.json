@@ -1,0 +1,99 @@
+{
+  "revision": "v3-D2",
+  "updatedAt": "2026-09-29T12:47:14.019Z",
+  "status": "approved",
+  "approvedBusinessRules": [
+    "one-product-per-order",
+    "one-factory-per-BOM-component",
+    "different-components-can-use-different-factories",
+    "raw-integer-roots-in-one-table",
+    "positive-quantity-without-checkboxes",
+    "spray-blank-means-zero"
+  ],
+  "pages": [
+    {
+      "id": "D2-raw",
+      "status": "approved",
+      "screenshots": [
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-raw-v3-1920.png",
+          "sha256": "8203b456df39688f21c5a63672246e3b37492b734438b02889b3a74f72973704"
+        },
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-raw-confirm-v3-1920.png",
+          "sha256": "57c285e6bd90693ece49084a58af1b30babd0b1455c3edca640558a57cd2cd6f"
+        },
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-raw-whole-root-v3-1920.png",
+          "sha256": "4c7168a246103484181dcf80142e2c1fe1068e74953f0b6838285a4fb23cc95b"
+        }
+      ]
+    },
+    {
+      "id": "D2-semi",
+      "status": "approved",
+      "screenshots": [
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-semi-v3-1920.png",
+          "sha256": "20c628987b8a7ba627a3592df4468a7df7f73f82d27432f6154ded2d8953d519"
+        },
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-semi-confirm-v3-1920.png",
+          "sha256": "569dd36cf5ecfcfb829608f5327d11a4ec37855bfbba8494720595c2984e1738"
+        }
+      ]
+    },
+    {
+      "id": "D2-metal",
+      "status": "approved",
+      "screenshots": [
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-metal-v3-1920.png",
+          "sha256": "834c92f667aa529aa2ec8d50c45d87fc69b101f0858b64085bed018cdda20e00"
+        },
+        {
+          "path": "qa/tube_revision_design_v3_20260929/dispatch-metal-confirm-v3-1920.png",
+          "sha256": "a9a1946be15160d5fbde19719e729659f8d37729688496a27ec905bc2eb51d79"
+        }
+      ]
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "docs/designs/tube_revision_20260929/App.vue",
+      "sha256": "1797ede86fa54bb375887a576451bbb98097218befd71af2028de3e2d3f8c096"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/DispatchDesign.vue",
+      "sha256": "7ecd3f00918ebbe4c4c0f21451ffebfc255699c79cfcdf49a6717e75e51da410"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/DesignTable.vue",
+      "sha256": "5d42e6a17f9b4b88cf1f239ed02e7799b96a44d8da8a4abf9be3ac5680becbeb"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/design.scss",
+      "sha256": "4383cd88385076a1cead8a541148853c0e47cce8f0e10b6313181f1442bf589a"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/design_contract.md",
+      "sha256": "5bedd3418fb5b1f7b22201485375b73a62424e7314961a359852e4911b0dc90b"
+    },
+    {
+      "path": "docs/designs/tube_revision_20260929/review.html",
+      "sha256": "d23df759f671a97e8824310ef36fb897d3ce954620091a9a43ef91a84eeccca7"
+    }
+  ],
+  "priorApproval": [
+    "approval.json",
+    "approval-v2.json"
+  ],
+  "pending": [
+    "D3整单全部空白或0能否结束，待明确例外"
+  ],
+  "verification": "qa/tube_revision_design_v3_20260929/verification.json",
+  "businessApiCalls": 0,
+  "approvedAt": "2026-09-29T13:02:18.619Z",
+  "userConfirmation": "确认",
+  "approvedScope": "D2三来源新建管材外发及保存确认窗；按已确认图开发；其他页须逐页确认"
+}

@@ -31,3 +31,21 @@ qa/runtime/
 qa/browser_profile*/
 qa/chrome_cdp*/
 qa/chrome_profile*/
+
+# Local credentials for isolated permissions browser acceptance.
+/src/backend/.tmp/access_stage3_runtime.json
+
+/src/backend/.tmp/access_stage4_runtime.json
+
+# 本地运行数据、备份和浏览器/验收生成物，禁止提交到 Git。
+data/
+backups/
+.tmp/
+tmp/
+output/
+outputs/
+src/backend/media/
+src/backend/tmp/
+src/backend/outputs/
+src/frontend/qa/
+qa/

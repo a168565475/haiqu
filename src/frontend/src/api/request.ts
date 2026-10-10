@@ -3,6 +3,10 @@ import axios from 'axios'
 function resolveApiBaseUrl(): string {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
+  if (configuredUrl === 'same-origin' && typeof window !== 'undefined') {
+    return window.location.origin
+  }
+
   if (!import.meta.env.DEV || typeof window === 'undefined') {
     return configuredUrl
   }

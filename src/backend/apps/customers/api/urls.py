@@ -9,6 +9,7 @@ from .governance_views import (
     CustomerMergeOperationViewSet,
     CustomerTransferRequestViewSet,
 )
+from .complaint_views import ComplaintViewSet
 
 from .views import (
     AddressUsageViewSet,
@@ -36,6 +37,7 @@ router.register("customer-access-grants", CustomerAccessGrantViewSet, basename="
 router.register("customer-duplicate-cases", CustomerDuplicateCaseViewSet, basename="customer-duplicate-case")
 router.register("customer-duplicate-candidates", CustomerDuplicateCandidateViewSet, basename="customer-duplicate-candidate")
 router.register("customer-merges", CustomerMergeOperationViewSet, basename="customer-merge")
+router.register("complaints", ComplaintViewSet, basename="complaint")
 
 customer_access_grants = CustomerAccessGrantNestedViewSet.as_view({"get": "list", "post": "create"})
 

@@ -1,0 +1,6 @@
+@use '@/styles/crm/sample-document' as document;
+
+.receipt-detail-page {
+  @include document.page;
+  .lines-table-head, .lines-table-row { grid-template-columns: 170px 120px 160px 190px 90px 100px 100px 260px 210px minmax(0, 1fr); min-width: 1432px; }
+}

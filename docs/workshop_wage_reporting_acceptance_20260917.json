@@ -1,0 +1,409 @@
+{
+  "version": "1.0",
+  "date": "2026-09-17",
+  "executionMode": "CONTINUOUS",
+  "documentType": "DEVELOPMENT_PLAN_ACCEPTANCE_CHECKLIST",
+  "businessConfirmed": {
+    "quantityUpperLimit": null,
+    "quantityRule": "FINITE_DECIMAL_GREATER_THAN_ZERO",
+    "priceVersionBasis": "PRODUCTION_DATE",
+    "wageSchemeScope": "ONE_SCHEME_LINEAGE_PER_PRODUCT_LINE_AND_WORKSHOP_WITH_MULTIPLE_CRAFTS",
+    "versionTransition": "NEW_EFFECTIVE_DATE_CLOSES_PREVIOUS_DAY_SAME_DAY_REPLACEMENT_FORBIDDEN",
+    "clothHolePlanMapping": "NOT_CONNECTED_TO_EXISTING_FOUR_PLAN_CATEGORIES",
+    "lateReportingTaskStatuses": [
+      "READY",
+      "IN_PRODUCTION",
+      "PAUSED",
+      "COMPLETED",
+      "CANCELLED"
+    ],
+    "workReportCorrection": "DIRECT_EDIT_WITH_ETAG_AND_REPRICE",
+    "reportingMode": "INDEPENDENT_EMPLOYEE_PIECEWORK",
+    "requiresReportApproval": false,
+    "deductStockOnReport": false
+  },
+  "prototype": {
+    "path": "outputs/work_reporting_prototype_20260917_v1",
+    "revision": "controls-r2",
+    "manifestSha256": "bd10741e6b943814f02bad977a4aa493bbc7d84432e41b041a57a15da705b947",
+    "specSha256": "9041c2bb69b7dde63549b705c94aeb8be620e6ff7c958e69975453edb780f309",
+    "implementationHashes": {
+      "src\\App.vue": "0d1276db30f812c10f0ac3212c672b487c263256f6470f3dfeade01810bb85dd",
+      "src\\AppWindowDialog.vue": "689bd27b1b0cd1a3f61a5bf56ec01c12aa528371505f80d94ee2191758c05d7d",
+      "src\\CraftPicker.vue": "f7949055b3ee2bc34058714e6f78e22e3381b723122d8a79c9f599ea9fb0cb93",
+      "src\\data.js": "05ce8558896e0bbe8d27ac5792600295e977dd00a6289ba787e8676a537ad270",
+      "src\\main.js": "f6ab746283782104a50c1b1100408c0ac819335604a19bd8de619fc749c625d4",
+      "src\\standards.scss": "2b7f9228693222239126cccd0cfd0af0b691704b83230f6de468d5e33616e197",
+      "src\\style.scss": "f2887b4507ae6303797d83e33586579ddc65cdbeaa4a970eca4072b6f5b7dd50",
+      "src\\TableScroll.vue": "b3e8071e5422b707b42d223e13f1ca6cdb3ac01b1bcef85671b0ba58db863a1c",
+      "src\\WageTable.vue": "c56e85f7135394bb9a557a11853ae024941f3b663ae1df9bf6ff965de2577bcb"
+    }
+  },
+  "applicationStatus": {
+    "development": "PARTIAL_IMPLEMENTED_BLOCKED_BY_D05",
+    "migrations": "ISOLATED_TEST_DATABASE_PASS_SHARED_NOT_RUN",
+    "apiAcceptance": "PARTIAL_AUTOMATED_15_PASS_FULL_NOT_RUN",
+    "visualAcceptance": "NOT_RUN"
+  },
+  "pages": [
+    {
+      "id": "G01",
+      "prototypeHashRoute": "G01",
+      "proposedApplicationRoute": "/workshop/wage-schemes",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/G01.png",
+      "sha256": "7df761a17a5be17ad5cf0c5b43a4657d919de1a9a63e4dd7049cfdf877578fcf",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "G02",
+      "prototypeHashRoute": "G02",
+      "proposedApplicationRoute": "/workshop/wage-schemes/new",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/G02.png",
+      "sha256": "a8268bdc1b1a061961414d7c61cf9d5e6a601e359935ee05650c68bb3805e167",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "G03",
+      "prototypeHashRoute": "G03",
+      "proposedApplicationRoute": "G02/G04 内历史弹窗",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/G03.png",
+      "sha256": "83bbab106afa41797fe2af42c3b1edafa1e94ab264b1e454a6f37a7ec8b976d6",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "G04",
+      "prototypeHashRoute": "G04",
+      "proposedApplicationRoute": "/workshop/wage-schemes/:schemeId/change",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/G04.png",
+      "sha256": "355bc425edbab30ac85a80b503135230fd60e9365c880f81f733abe22eda9a51",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "G05",
+      "prototypeHashRoute": "G05",
+      "proposedApplicationRoute": "/workshop/wage-schemes/:schemeId",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/G05.png",
+      "sha256": "048b9ad53be848c28861c8d47b07d4bd1f62da37c8172fa24d83fc5773a88588",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "B01",
+      "prototypeHashRoute": "B01",
+      "proposedApplicationRoute": "/workshop/plans/{metalworking,cutting,sewing,assembly}",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/B01.png",
+      "sha256": "53def550e21d9d12c0b00f4d9c77aa5da0865139e1b3606a4e54683bcf5f427a",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "B02",
+      "prototypeHashRoute": "B02",
+      "proposedApplicationRoute": "/workshop/work-reports/new",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/B02.png",
+      "sha256": "151ef1dec602878c2da51904e3cf76a7e1edef1742213fc21dd1bdeba2b9b47f",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "B03",
+      "prototypeHashRoute": "B03",
+      "proposedApplicationRoute": "/workshop/work-reports",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/B03.png",
+      "sha256": "45a322488d80670335d624c8a9116d6e44f654560aec0040c1c37af6d83017ba",
+      "applicationVisualAcceptance": "NOT_RUN"
+    },
+    {
+      "id": "B04",
+      "prototypeHashRoute": "B04",
+      "proposedApplicationRoute": "/workshop/work-reports/days/:productionDate",
+      "referenceScreenshot": "outputs/work_reporting_prototype_20260917_v1/public/qa/B04.png",
+      "sha256": "c1ce452227709c251bb733fbdbe2e41d0c86a415e0debcf5257f3c59ab358126",
+      "applicationVisualAcceptance": "NOT_RUN"
+    }
+  ],
+  "cases": [
+    {
+      "id": "S01",
+      "category": "设计基线",
+      "expected": "原型源码与九页截图哈希一致，controls-r2 未被替换",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S02",
+      "category": "视觉",
+      "expected": "1920×1080/DPR1，221项旧原型计数只作参考；正式可见业务控件全部32px、圆角5px",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S03",
+      "category": "视觉",
+      "expected": "表头44px、普通行40px、表头11px/正文12px、单元格水平内边距16px",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S04",
+      "category": "视觉",
+      "expected": "展示Tag24px、Strong语义色、分页48px；可编辑状态选择器32px",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S05",
+      "category": "视觉",
+      "expected": "九页及历史弹窗截图与修正版基准逐页核对，保留并排和差异图",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S06",
+      "category": "视觉",
+      "expected": "无整页缩放及横向溢出；1440/1202辅助尺寸内部滚动，控件仍32px",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "S07",
+      "category": "视觉",
+      "expected": "弹窗内输入/按钮/表格遵循同一尺寸与字体；拖动、最大化、还原、焦点无异常",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W01",
+      "category": "工价",
+      "expected": "任务单只能关联自己的产品行，工序候选按厂内车间＋工艺＋品名过滤",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W02",
+      "category": "工价",
+      "expected": "历史不匹配时禁止引用，不继承源订单、审批和累计数量",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W03",
+      "category": "工价",
+      "expected": "修改工价任意有效填写不改变申报工价和合计",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W04",
+      "category": "工价",
+      "expected": "正常申报价直接相加，作废不计；空价不默认为零",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W05",
+      "category": "工价",
+      "expected": "单位缺失不能送审；裁剪名称整套不意味着以套计价",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W06",
+      "category": "工价",
+      "expected": "非厂长直接请求批准返回403，待审批内容的ETag防覆盖",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W07",
+      "category": "工价",
+      "expected": "重复送审/批准及并发变更不产生冲突有效版本",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W08",
+      "category": "工价",
+      "expected": "同目录工序不同部位和价格，以及已有行改选同工序，按scheme_line_id正确取价",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "W09",
+      "category": "工价",
+      "expected": "调价沿用稳定工作项，累计数量不归零，原报工单价不改变",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "E01",
+      "category": "入口",
+      "expected": "四类计划带入真实排产产品；已有生产领料和主计划入口保留",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "E02",
+      "category": "入口",
+      "expected": "新产品方案批准后计划状态与报工按钮实时变化，禁止硬编码产品ID",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R01",
+      "category": "报工",
+      "expected": "方案正常明细自动生成平铺行，员工/工序/线别同一行，无嵌套子表",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R02",
+      "category": "报工",
+      "expected": "新增行仅选当前方案明细，能够区分同名工序的不同部位和价格",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R03",
+      "category": "报工",
+      "expected": "数量0、负数、NaN及Infinity拒绝；数量大于订单量但合法有效允许保存",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R04",
+      "category": "报工",
+      "expected": "只记录独立计件；没有共同产量分摊、计时或套数换算入口",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R05",
+      "category": "报工",
+      "expected": "非本车间/无效员工拒绝；装配必须选1/2/3线，其他车间不强制",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R06",
+      "category": "报工",
+      "expected": "按生产日期匹配批准版本；老生产日补录不取最新涨价版本",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R07",
+      "category": "报工",
+      "expected": "生产日期无适用版本阻止保存；日期改变重新取价，不保留失效单价",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R08",
+      "category": "报工",
+      "expected": "保存前版本变化返回冲突，不静默换价或写入客户端篡改单价",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R09",
+      "category": "报工",
+      "expected": "整单保存立即生效，没有待审核状态；任一行失败整单回滚",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R10",
+      "category": "报工",
+      "expected": "同UUID同内容重试一次入账，不同内容冲突；真实第二次报工合法独立保存",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R11",
+      "category": "报工",
+      "expected": "并发提交不丢明细，后端Decimal计算后逐行到分再汇总",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "R12",
+      "category": "报工",
+      "expected": "成功报工不扣库存、不自动入成品、不标记工资已支付",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "D01",
+      "category": "日期查询",
+      "expected": "按生产日期分页汇总，金额和人数/订单/产品去重口径与真实明细一致",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "D02",
+      "category": "日期查询",
+      "expected": "点击日期看到所有可见报工记录的逐行明细，保留原记录身份和快照",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "D03",
+      "category": "日期查询",
+      "expected": "日期筛选不改已报工总累计，工序各单位数量不混合成成品量",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "D04",
+      "category": "日期查询",
+      "expected": "修改主数据名称或以后批准价格不改变历史快照",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "P01",
+      "category": "权限",
+      "expected": "列表/选项/详情/汇总均检查同一车间权限，无法猜ID跨范围读写",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "P02",
+      "category": "权限",
+      "expected": "登录录入人和车间计件员工分别记录，不按名字匹配账号授权",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "F01",
+      "category": "异常",
+      "expected": "无数据、无方案、请求失败重试、无权限、保存中和冲突反馈真实且保留输入",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "F02",
+      "category": "持久化",
+      "expected": "刷新浏览器仍可查询成功报工；禁止以内存Mock替代API",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "Q01",
+      "category": "交付",
+      "expected": "专项测试、类型检查、构建、迁移检查有最终日志；失败与未跑项明示",
+      "status": "NOT_RUN",
+      "evidence": []
+    },
+    {
+      "id": "Q02",
+      "category": "交付",
+      "expected": "真实写入仅在隔离测试库；共享库迁移/正式上线状态另列",
+      "status": "NOT_RUN",
+      "evidence": []
+    }
+  ],
+  "remainingDecisions": [
+    "D05_HISTORY_DRAFT_DETAILS"
+  ],
+  "sourceOfTruth": "用户最新业务确认 > DESIGN.md 控件规范 > controls-r2 原型 > 未被覆盖的旧 PRD",
+  "passRule": "全部必需正式用例通过、逐页视觉复核完成且关键业务决策关闭；不继承原型 PASS 状态"
+}

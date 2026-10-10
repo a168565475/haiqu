@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管材外发来源名称 · 实际页面</title>
+<style>body{margin:0;background:#f6f3ec;color:#1f1d18;font:15px/1.7 "Microsoft YaHei",sans-serif}main{max-width:1440px;margin:auto;padding:28px}h1{font-size:26px;margin:0 0 12px}a{color:#c84e28}article{margin:24px 0;background:#fcfbf7;border:1px solid #ddd6c9;border-radius:5px;overflow:hidden}h2{font-size:17px;margin:0;padding:12px 18px}img{display:block;width:100%;height:auto}</style>
+<main><h1>管材外发 · 材料来源名称修订</h1><p>2026-09-30实际隔离页面。顺序：原材料、未喷塑半成品、未入库半成品。三种来源及保存复核已核对，未确认保存，不产生业务写入。表头44px、行40px、控件32px。</p><p><a href="http://127.0.0.2:8105/workshop/outsourcing/tube/new?schedule_product_id=ded17f54-297f-44ea-ac11-aeebb696d67e">打开实际测试页面</a></p><div id="shots"></div></main>
+<script>
+const root='/@fs/E:/workspace/_project/project001_haiqu_ERP_CRM/qa/tube_source_names_20260930/';
+const shots=[['三个来源顺序','sources-dropdown-1920.png'],['原材料','raw_pipe-1920.png'],['原材料保存复核','raw_pipe-confirm-1920.png'],['未喷塑半成品','public_semi-1920.png'],['未喷塑半成品保存复核','public_semi-confirm-1920.png'],['未入库半成品','metal-1920.png'],['未入库半成品保存复核','metal-confirm-1920.png']];
+for(const [title,file] of shots){const article=document.createElement('article');const heading=document.createElement('h2');heading.textContent=title;const link=document.createElement('a');link.href=root+file;link.target='_blank';const img=document.createElement('img');img.src=root+file;img.alt=title;img.width=1920;img.height=1080;link.append(img);article.append(heading,link);document.getElementById('shots').append(article)}
+</script></html>

@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.utils import timezone
@@ -13,12 +15,14 @@ from apps.crm.models import (
 from apps.inquiries.models import Inquiry
 from apps.organizations.models import Employee
 from apps.quotations.models import Quotation
+from apps.reference_data.models import ReferenceDictionary
 from apps.samples.models import SampleRequest
 
 from ..models import (
     CustomerAccount,
     CustomerAssignment,
     CustomerContact,
+    CustomerComplaint,
     CustomerDataAccessGrant,
     CustomerMergeOperation,
     CustomerTransactionEntity,
@@ -51,8 +55,28 @@ class CustomerGovernanceApiTests(APITestCase):
         )
         return customer
 
+    def create_complaint(self, customer, owner, code):
+        now = timezone.now()
+        return CustomerComplaint.objects.create(
+            customer_account=customer,
+            original_customer_account=customer,
+            complaint_code=code,
+            complaint_type_item=ReferenceDictionary.objects.get(
+                category_code="COMPLAINT_TYPE", item_code="QUALITY"
+            ),
+            severity_item=ReferenceDictionary.objects.get(
+                category_code="COMPLAINT_SEVERITY", item_code="GENERAL"
+            ),
+            title="治理流程客诉",
+            issue_description="验证客户转移和合并行为。",
+            owner_employee=owner,
+            first_response_due_at=now + timedelta(hours=24),
+            target_completion_at=now + timedelta(days=7),
+        )
+
     def test_transfer_approval_preserves_owner_history(self):
         customer = self.create_customer("GOV_TRANSFER", "转移客户")
+        complaint = self.create_complaint(customer, self.employee, "CS-2026-9101")
         created = self.client.post(
             "/api/v1/customer-transfer-requests/",
             {"customer_id": str(customer.pk), "to_employee_id": str(self.new_owner.pk), "reason": "区域调整"},
@@ -70,6 +94,8 @@ class CustomerGovernanceApiTests(APITestCase):
         self.assertIsNotNone(assignments.first().effective_to)
         self.assertEqual(assignments.last().employee_id, self.new_owner.pk)
         self.assertIsNone(assignments.last().effective_to)
+        complaint.refresh_from_db()
+        self.assertEqual(complaint.owner_employee_id, self.employee.pk)
 
     def test_customer_access_grant_and_revoke_use_exact_permission(self):
         customer = self.create_customer("GOV_GRANT", "授权客户")
@@ -98,6 +124,7 @@ class CustomerGovernanceApiTests(APITestCase):
     def test_duplicate_case_decision_and_merge_are_transactional(self):
         survivor = self.create_customer("GOV_SURVIVOR", "合并后客户")
         source = self.create_customer("GOV_SOURCE", "来源客户")
+        complaint = self.create_complaint(source, self.new_owner, "CS-2026-9102")
         entity = CustomerTransactionEntity.objects.create(
             customer_account=source, entity_code="GOV_SOURCE_ENTITY", legal_name="来源主体"
         )
@@ -169,6 +196,7 @@ class CustomerGovernanceApiTests(APITestCase):
         )
         self.assertEqual(preview.status_code, 200, preview.data)
         self.assertEqual(preview.data["data"]["move_counts"]["transaction_entities"], 1)
+        self.assertEqual(preview.data["data"]["move_counts"]["complaints"], 1)
 
         merged = self.client.post(
             f"/api/v1/customer-duplicate-cases/{case_id}/merge/",
@@ -186,6 +214,7 @@ class CustomerGovernanceApiTests(APITestCase):
         quotation.refresh_from_db()
         sample.refresh_from_db()
         communication.refresh_from_db()
+        complaint.refresh_from_db()
         self.assertIsNotNone(source.archived_at)
         self.assertEqual(entity.customer_account_id, survivor.pk)
         self.assertEqual(contact.customer_account_id, survivor.pk)
@@ -195,6 +224,9 @@ class CustomerGovernanceApiTests(APITestCase):
         self.assertEqual(quotation.customer_account_id, survivor.pk)
         self.assertEqual(sample.customer_account_id, survivor.pk)
         self.assertEqual(communication.customer_account_id, survivor.pk)
+        self.assertEqual(complaint.customer_account_id, survivor.pk)
+        self.assertEqual(complaint.original_customer_account_id, source.pk)
+        self.assertEqual(complaint.owner_employee_id, self.new_owner.pk)
         self.assertTrue(CustomerMergeOperation.objects.filter(pk=merged.data["data"]["id"], status="COMPLETED").exists())
         self.assertTrue(AuditLog.objects.filter(object_type="CUSTOMER_MERGE_OPERATION", action="COMPLETED").exists())
         merge_detail = self.client.get(f"/api/v1/customer-merges/{merged.data['data']['id']}/")

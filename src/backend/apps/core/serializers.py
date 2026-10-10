@@ -34,9 +34,13 @@ class AuthUserSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     username = serializers.CharField()
     display_name = serializers.CharField()
+    is_superuser = serializers.BooleanField()
     employee = EmployeeSummarySerializer(allow_null=True)
     permissions = serializers.ListField(child=serializers.CharField())
     data_scope = serializers.CharField()
+    effective_access = serializers.DictField(required=False)
+    sales_access_enabled = serializers.BooleanField(required=False)
+    module_access_enabled = serializers.BooleanField(required=False)
 
 
 class AuthenticationStateSerializer(serializers.Serializer):

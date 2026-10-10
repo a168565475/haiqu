@@ -1,0 +1,17 @@
+@use './tokens' as token;
+@use './sample-controls' as sample;
+
+// 仅为移到 body 的这两个材料弹层应用打样控件规范。
+.sample-material-picker-dialog, .sample-material-line-drawer {
+  @include sample.controls($scoped: false);
+  --el-dialog-bg-color: #{token.$crm-color-surface};
+  --el-drawer-bg-color: #{token.$crm-color-surface};
+  --el-dialog-border-radius: 4px;
+  color: token.$crm-text-primary;
+
+  .el-dialog__footer, .el-drawer__footer { display: flex; justify-content: flex-end; gap: 12px; }
+}
+.sample-material-line-drawer {
+  .el-drawer__header { margin-bottom: 0; padding: 20px; border-bottom: 1px solid token.$crm-border-subtle; color: token.$crm-text-primary; font-weight: 600; }
+  .el-drawer__footer { padding: 16px 20px; border-top: 1px solid token.$crm-border-subtle; }
+}

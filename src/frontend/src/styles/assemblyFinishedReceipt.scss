@@ -1,0 +1,70 @@
+@use './crm/tokens' as t;
+
+// 成品入库已确认稿：顶部五列对齐，主操作区独立滚动。
+.assembly-receipt-page {
+  gap: 14px;
+  font-family: t.$crm-font-body;
+  font-size: 12px;
+  .fg-form-footer { margin-top: 0; }
+  .ar-order-strip { flex-shrink: 0; overflow: hidden; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; }
+  .ar-info-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); column-gap: 12px; padding-left: 16px; padding-right: 16px; }
+  .ar-identities { padding-top: 14px; padding-bottom: 6px; }
+  .ar-product { padding-top: 4px; padding-bottom: 14px; }
+  .ar-info-cell { display: grid; grid-template-columns: 72px minmax(0,1fr); column-gap: 6px; align-items: baseline; min-width: 0; line-height: 18px;
+    >span:first-child { color: t.$crm-text-secondary; white-space: nowrap; }
+    >b,>.ar-info-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+    >b { font-size: 12px; font-weight: 500; color: t.$crm-text-primary; }
+  }
+  .ar-quota { min-height: 42px; box-sizing: border-box; border-top: 1px solid t.$crm-border-subtle; padding-top: 10px; padding-bottom: 10px; background: #f9f6f0; color: t.$crm-text-secondary;
+    b { font-size: 14px; font-weight: 600; color: t.$crm-text-primary; margin-right: 4px; font-variant-numeric: tabular-nums; }
+    .ar-emphasis b { color: t.$crm-primary; }
+  }
+  .ar-quota-rule { color: t.$crm-text-muted; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  .ar-workspace { flex: 1; min-height: 0; overflow: auto; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; padding: 20px 24px;
+    >.el-alert { margin-bottom: 16px; }
+  }
+  .ar-workspace-heading { display: flex; align-items: center; gap: 16px; padding-bottom: 22px;
+    h2 { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600; color: t.$crm-text-primary; }
+    >span { color: t.$crm-text-muted; }
+  }
+  .ar-fields { display: grid; grid-template-columns: 1fr 1fr 1fr 1.5fr; gap: 24px; }
+  .ar-form {
+    .el-form-item { min-width: 0; margin-bottom: 0; }
+    .el-form-item__label { font-size: 12px; line-height: 18px; height: 18px; padding: 0; margin-bottom: 8px; color: t.$crm-text-secondary; }
+    .el-form-item__content { display: block; line-height: 18px; }
+    .el-input,.el-date-editor,.el-select,.el-cascader { width: 100%; height: 32px; --el-component-size: 32px; }
+    // 与计划排产保持相同的控件高度、底色、边框和圆角。
+    .el-input__wrapper,.el-select__wrapper { box-sizing: border-box; min-height: 32px; height: 32px; border-radius: 5px; background: t.$crm-color-surface; box-shadow: 0 0 0 1px t.$crm-border-default inset; }
+    .el-input__inner { height: 30px; font: 12px/18px t.$crm-font-body; }
+    .el-input__wrapper.is-focus,.el-select__wrapper.is-focused,.el-cascader.is-focus .el-input__wrapper { box-shadow: 0 0 0 1px t.$crm-focus inset; }
+    .el-textarea__inner { min-height: 84px; padding: 9px 12px; border-radius: 5px; font: 12px/22px t.$crm-font-body; background: t.$crm-color-surface; box-shadow: 0 0 0 1px t.$crm-border-default inset; }
+    .el-textarea__inner:focus { box-shadow: 0 0 0 1px t.$crm-focus inset; }
+    .is-disabled .el-input__wrapper,.el-select__wrapper.is-disabled,.el-textarea.is-disabled .el-textarea__inner { background: t.$crm-color-page; }
+  }
+  .ar-help { margin: 8px 0 0; color: t.$crm-text-muted; font-size: 11px; line-height: 18px; b { color: t.$crm-primary; font-weight: 500; } }
+  .ar-result { display: flex; align-items: center; gap: 30px; padding: 14px 16px; margin-top: 24px; border-radius: 5px; background: t.$crm-color-page; color: t.$crm-text-secondary;
+    b { color: t.$crm-text-primary; font-size: 15px; margin: 0 5px; }
+    i { width: 1px; height: 16px; background: t.$crm-border-default; }
+  }
+  .ar-packing,.ar-remark { border-top: 1px solid t.$crm-border-subtle; padding-top: 22px; margin-top: 26px; }
+  .ar-subheading { display: flex; align-items: center; gap: 14px; margin-bottom: 18px;
+    h3 { margin: 0; font-size: 14px; line-height: 20px; color: t.$crm-text-primary; font-weight: 600; }
+    >span { color: t.$crm-text-muted; }
+  }
+  .ar-packing-fields { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1.2fr; gap: 32px; align-items: start; }
+  .ar-stat { display: flex; flex-direction: column; gap: 8px; border-left: 1px solid t.$crm-border-subtle; padding-left: 24px;
+    span { color: t.$crm-text-secondary; }
+    b { font-size: 14px; line-height: 32px; font-weight: 500; color: t.$crm-text-primary; }
+  }
+  .el-button:focus-visible,.ar-quota-rule:focus-visible { outline: 2px solid t.$crm-primary; outline-offset: 2px; }
+}
+
+// 浮层挂载到 body，仅使用本页专用类，不覆盖排产或其他模块。
+.ar-popper {
+  font-family: t.$crm-font-body;
+  --el-color-primary: #{t.$crm-primary};
+  .el-cascader-menu { min-width: 160px; height: 216px; }
+  .el-cascader-menu:last-child { min-width: 260px; }
+  .el-cascader-node { height: 34px; }
+  .ar-location-capacity { margin-left: 24px; font-size: 11px; color: t.$crm-text-muted; }
+}

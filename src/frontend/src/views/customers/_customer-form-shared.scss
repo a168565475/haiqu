@@ -1,0 +1,130 @@
+@use '@/styles/crm/tokens' as token;
+
+@mixin element-form-controls($control-height, $label-size, $body-size, $label-gap) {
+  :deep(.el-form-item) {
+    margin: 0;
+  }
+
+  :deep(.el-form-item__label) {
+    height: 20px;
+    margin-bottom: $label-gap;
+    padding: 0;
+    color: token.$crm-text-secondary;
+    font-family: token.$crm-font-body;
+    font-size: $label-size;
+    font-weight: 500;
+    line-height: 20px;
+  }
+
+  :deep(.el-form-item.is-required .el-form-item__label::before) {
+    display: none;
+  }
+
+  :deep(.el-form-item.is-required .el-form-item__label::after) {
+    margin-left: 3px;
+    color: token.$crm-primary;
+    content: '*';
+  }
+
+  :deep(.el-form-item__content) {
+    line-height: $control-height;
+  }
+
+  :deep(.el-input),
+  :deep(.el-select) {
+    width: 100%;
+    --el-input-height: #{$control-height};
+  }
+
+  :deep(.el-input__wrapper),
+  :deep(.el-select__wrapper) {
+    min-height: $control-height;
+    padding: 0 10px;
+    border-radius: token.$crm-radius-2;
+    background: token.$crm-color-surface;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  :deep(.el-input__wrapper:hover),
+  :deep(.el-select__wrapper:hover) {
+    box-shadow: 0 0 0 1px token.$crm-border-strong inset;
+  }
+
+  :deep(.el-input__inner),
+  :deep(.el-select__selected-item),
+  :deep(.el-textarea__inner) {
+    color: token.$crm-text-primary;
+    font-family: token.$crm-font-body;
+    font-size: $body-size;
+  }
+
+  :deep(.el-textarea__inner) {
+    border-radius: token.$crm-radius-2;
+    background: token.$crm-color-surface;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  :deep(.el-textarea__inner:hover) {
+    box-shadow: 0 0 0 1px token.$crm-border-strong inset;
+  }
+
+  :deep(.el-input__wrapper.is-focus),
+  :deep(.el-select__wrapper.is-focused),
+  :deep(.el-textarea__inner:focus) {
+    box-shadow: 0 0 0 1px token.$crm-focus inset, 0 0 0 2px rgba(token.$crm-focus, 0.12);
+  }
+
+  :deep(.el-input.is-disabled .el-input__wrapper),
+  :deep(.el-select.is-disabled .el-select__wrapper) {
+    background: token.$crm-color-disabled;
+    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+  }
+
+  :deep(.el-form-item.is-error .el-input__wrapper),
+  :deep(.el-form-item.is-error .el-select__wrapper) {
+    box-shadow: 0 0 0 1px token.$crm-danger inset;
+  }
+
+  :deep(.el-form-item__error) {
+    top: calc(100% + 2px);
+    color: token.$crm-danger;
+    font-size: 11px;
+    line-height: 16px;
+  }
+}
+
+@mixin crm-buttons {
+  :deep(.el-button) {
+    height: 32px;
+    min-height: 32px;
+    margin: 0;
+    padding: 0 16px;
+    border-color: token.$crm-border-default;
+    border-radius: token.$crm-radius-2;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-surface;
+    font-family: token.$crm-font-body;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  :deep(.el-button:hover),
+  :deep(.el-button:focus-visible) {
+    border-color: token.$crm-border-strong;
+    color: token.$crm-text-primary;
+    background: token.$crm-color-row-hover;
+  }
+
+  :deep(.el-button--primary),
+  :deep(.el-button--primary:hover),
+  :deep(.el-button--primary:focus-visible) {
+    border-color: token.$crm-primary;
+    color: token.$crm-text-inverse;
+    background: token.$crm-primary;
+  }
+
+  :deep(.el-button--primary:active) {
+    border-color: token.$crm-primary-pressed;
+    background: token.$crm-primary-pressed;
+  }
+}

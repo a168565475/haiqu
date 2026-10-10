@@ -1,0 +1,4990 @@
+{
+  "schema_version": 1,
+  "source": {
+    "standard": "ISO 3166-1 codes via UN M49",
+    "publisher": "United Nations Statistics Division",
+    "url": "https://unstats.un.org/unsd/methodology/m49/overview/",
+    "snapshot_date": "2026-08-26",
+    "raw_sha256": "b9048114f6e7f2abda83bf03d4263c9d7cd1bd7230e3d0461025ee7839a7a1fb",
+    "supplemental_iso_record": {
+      "code": "TW",
+      "source": "https://unece.org/trade/cefact/unlocode-code-list-country-and-territory",
+      "display_name_source": "Unicode CLDR 48.2 zh"
+    }
+  },
+  "records": [
+    {
+      "code": "AD",
+      "alpha3_code": "AND",
+      "numeric_code": "020",
+      "chinese_name": "安道尔",
+      "english_name": "Andorra",
+      "sort_order": 10,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AE",
+      "alpha3_code": "ARE",
+      "numeric_code": "784",
+      "chinese_name": "阿拉伯联合酋长国",
+      "english_name": "United Arab Emirates",
+      "sort_order": 20,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AF",
+      "alpha3_code": "AFG",
+      "numeric_code": "004",
+      "chinese_name": "阿富汗",
+      "english_name": "Afghanistan",
+      "sort_order": 30,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AG",
+      "alpha3_code": "ATG",
+      "numeric_code": "028",
+      "chinese_name": "安提瓜和巴布达",
+      "english_name": "Antigua and Barbuda",
+      "sort_order": 40,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "AI",
+      "alpha3_code": "AIA",
+      "numeric_code": "660",
+      "chinese_name": "安圭拉",
+      "english_name": "Anguilla",
+      "sort_order": 50,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "AL",
+      "alpha3_code": "ALB",
+      "numeric_code": "008",
+      "chinese_name": "阿尔巴尼亚",
+      "english_name": "Albania",
+      "sort_order": 60,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AM",
+      "alpha3_code": "ARM",
+      "numeric_code": "051",
+      "chinese_name": "亚美尼亚",
+      "english_name": "Armenia",
+      "sort_order": 70,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AO",
+      "alpha3_code": "AGO",
+      "numeric_code": "024",
+      "chinese_name": "安哥拉",
+      "english_name": "Angola",
+      "sort_order": 80,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AQ",
+      "alpha3_code": "ATA",
+      "numeric_code": "010",
+      "chinese_name": "南极洲",
+      "english_name": "Antarctica",
+      "sort_order": 90,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "",
+        "region_name": "",
+        "subregion_code": "",
+        "subregion_name": "",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AR",
+      "alpha3_code": "ARG",
+      "numeric_code": "032",
+      "chinese_name": "阿根廷",
+      "english_name": "Argentina",
+      "sort_order": 100,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AS",
+      "alpha3_code": "ASM",
+      "numeric_code": "016",
+      "chinese_name": "美属萨摩亚",
+      "english_name": "American Samoa",
+      "sort_order": 110,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "AT",
+      "alpha3_code": "AUT",
+      "numeric_code": "040",
+      "chinese_name": "奥地利",
+      "english_name": "Austria",
+      "sort_order": 120,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AU",
+      "alpha3_code": "AUS",
+      "numeric_code": "036",
+      "chinese_name": "澳大利亚",
+      "english_name": "Australia",
+      "sort_order": 130,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AW",
+      "alpha3_code": "ABW",
+      "numeric_code": "533",
+      "chinese_name": "阿鲁巴",
+      "english_name": "Aruba",
+      "sort_order": 140,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "AX",
+      "alpha3_code": "ALA",
+      "numeric_code": "248",
+      "chinese_name": "奥兰群岛",
+      "english_name": "Åland Islands",
+      "sort_order": 150,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "AZ",
+      "alpha3_code": "AZE",
+      "numeric_code": "031",
+      "chinese_name": "阿塞拜疆",
+      "english_name": "Azerbaijan",
+      "sort_order": 160,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BA",
+      "alpha3_code": "BIH",
+      "numeric_code": "070",
+      "chinese_name": "波斯尼亚和黑塞哥维那",
+      "english_name": "Bosnia and Herzegovina",
+      "sort_order": 170,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BB",
+      "alpha3_code": "BRB",
+      "numeric_code": "052",
+      "chinese_name": "巴巴多斯",
+      "english_name": "Barbados",
+      "sort_order": 180,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "BD",
+      "alpha3_code": "BGD",
+      "numeric_code": "050",
+      "chinese_name": "孟加拉国",
+      "english_name": "Bangladesh",
+      "sort_order": 190,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BE",
+      "alpha3_code": "BEL",
+      "numeric_code": "056",
+      "chinese_name": "比利时",
+      "english_name": "Belgium",
+      "sort_order": 200,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BF",
+      "alpha3_code": "BFA",
+      "numeric_code": "854",
+      "chinese_name": "布基纳法索",
+      "english_name": "Burkina Faso",
+      "sort_order": 210,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BG",
+      "alpha3_code": "BGR",
+      "numeric_code": "100",
+      "chinese_name": "保加利亚",
+      "english_name": "Bulgaria",
+      "sort_order": 220,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BH",
+      "alpha3_code": "BHR",
+      "numeric_code": "048",
+      "chinese_name": "巴林",
+      "english_name": "Bahrain",
+      "sort_order": 230,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BI",
+      "alpha3_code": "BDI",
+      "numeric_code": "108",
+      "chinese_name": "布隆迪",
+      "english_name": "Burundi",
+      "sort_order": 240,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BJ",
+      "alpha3_code": "BEN",
+      "numeric_code": "204",
+      "chinese_name": "贝宁",
+      "english_name": "Benin",
+      "sort_order": 250,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BL",
+      "alpha3_code": "BLM",
+      "numeric_code": "652",
+      "chinese_name": "圣巴泰勒米",
+      "english_name": "Saint Barthélemy",
+      "sort_order": 260,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BM",
+      "alpha3_code": "BMU",
+      "numeric_code": "060",
+      "chinese_name": "百慕大",
+      "english_name": "Bermuda",
+      "sort_order": 270,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "021",
+        "subregion_name": "Northern America",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BN",
+      "alpha3_code": "BRN",
+      "numeric_code": "096",
+      "chinese_name": "文莱达鲁萨兰国",
+      "english_name": "Brunei Darussalam",
+      "sort_order": 280,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BO",
+      "alpha3_code": "BOL",
+      "numeric_code": "068",
+      "chinese_name": "多民族玻利维亚国",
+      "english_name": "Bolivia (Plurinational State of)",
+      "sort_order": 290,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BQ",
+      "alpha3_code": "BES",
+      "numeric_code": "535",
+      "chinese_name": "博纳尔，圣俄斯塔休斯和萨巴",
+      "english_name": "Bonaire, Sint Eustatius and Saba",
+      "sort_order": 300,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "BR",
+      "alpha3_code": "BRA",
+      "numeric_code": "076",
+      "chinese_name": "巴西",
+      "english_name": "Brazil",
+      "sort_order": 310,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BS",
+      "alpha3_code": "BHS",
+      "numeric_code": "044",
+      "chinese_name": "巴哈马",
+      "english_name": "Bahamas",
+      "sort_order": 320,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "BT",
+      "alpha3_code": "BTN",
+      "numeric_code": "064",
+      "chinese_name": "不丹",
+      "english_name": "Bhutan",
+      "sort_order": 330,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BV",
+      "alpha3_code": "BVT",
+      "numeric_code": "074",
+      "chinese_name": "布维岛",
+      "english_name": "Bouvet Island",
+      "sort_order": 340,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BW",
+      "alpha3_code": "BWA",
+      "numeric_code": "072",
+      "chinese_name": "博茨瓦纳",
+      "english_name": "Botswana",
+      "sort_order": 350,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "018",
+        "intermediate_region_name": "Southern Africa",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BY",
+      "alpha3_code": "BLR",
+      "numeric_code": "112",
+      "chinese_name": "白俄罗斯",
+      "english_name": "Belarus",
+      "sort_order": 360,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "BZ",
+      "alpha3_code": "BLZ",
+      "numeric_code": "084",
+      "chinese_name": "伯利兹",
+      "english_name": "Belize",
+      "sort_order": 370,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "CA",
+      "alpha3_code": "CAN",
+      "numeric_code": "124",
+      "chinese_name": "加拿大",
+      "english_name": "Canada",
+      "sort_order": 380,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "021",
+        "subregion_name": "Northern America",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CC",
+      "alpha3_code": "CCK",
+      "numeric_code": "166",
+      "chinese_name": "科科斯（基林）群岛",
+      "english_name": "Cocos (Keeling) Islands",
+      "sort_order": 390,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CD",
+      "alpha3_code": "COD",
+      "numeric_code": "180",
+      "chinese_name": "刚果民主共和国",
+      "english_name": "Democratic Republic of the Congo",
+      "sort_order": 400,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CF",
+      "alpha3_code": "CAF",
+      "numeric_code": "140",
+      "chinese_name": "中非共和国",
+      "english_name": "Central African Republic",
+      "sort_order": 410,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CG",
+      "alpha3_code": "COG",
+      "numeric_code": "178",
+      "chinese_name": "刚果",
+      "english_name": "Congo",
+      "sort_order": 420,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CH",
+      "alpha3_code": "CHE",
+      "numeric_code": "756",
+      "chinese_name": "瑞士",
+      "english_name": "Switzerland",
+      "sort_order": 430,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CI",
+      "alpha3_code": "CIV",
+      "numeric_code": "384",
+      "chinese_name": "科特迪瓦",
+      "english_name": "Côte d’Ivoire",
+      "sort_order": 440,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CK",
+      "alpha3_code": "COK",
+      "numeric_code": "184",
+      "chinese_name": "库克群岛",
+      "english_name": "Cook Islands",
+      "sort_order": 450,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "CL",
+      "alpha3_code": "CHL",
+      "numeric_code": "152",
+      "chinese_name": "智利",
+      "english_name": "Chile",
+      "sort_order": 460,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CM",
+      "alpha3_code": "CMR",
+      "numeric_code": "120",
+      "chinese_name": "喀麦隆",
+      "english_name": "Cameroon",
+      "sort_order": 470,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CN",
+      "alpha3_code": "CHN",
+      "numeric_code": "156",
+      "chinese_name": "中国",
+      "english_name": "China",
+      "sort_order": 480,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CO",
+      "alpha3_code": "COL",
+      "numeric_code": "170",
+      "chinese_name": "哥伦比亚",
+      "english_name": "Colombia",
+      "sort_order": 490,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CR",
+      "alpha3_code": "CRI",
+      "numeric_code": "188",
+      "chinese_name": "哥斯达黎加",
+      "english_name": "Costa Rica",
+      "sort_order": 500,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CU",
+      "alpha3_code": "CUB",
+      "numeric_code": "192",
+      "chinese_name": "古巴",
+      "english_name": "Cuba",
+      "sort_order": 510,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "CV",
+      "alpha3_code": "CPV",
+      "numeric_code": "132",
+      "chinese_name": "佛得角",
+      "english_name": "Cabo Verde",
+      "sort_order": 520,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "CW",
+      "alpha3_code": "CUW",
+      "numeric_code": "531",
+      "chinese_name": "库拉索",
+      "english_name": "Curaçao",
+      "sort_order": 530,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "CX",
+      "alpha3_code": "CXR",
+      "numeric_code": "162",
+      "chinese_name": "圣诞岛",
+      "english_name": "Christmas Island",
+      "sort_order": 540,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CY",
+      "alpha3_code": "CYP",
+      "numeric_code": "196",
+      "chinese_name": "塞浦路斯",
+      "english_name": "Cyprus",
+      "sort_order": 550,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "CZ",
+      "alpha3_code": "CZE",
+      "numeric_code": "203",
+      "chinese_name": "捷克",
+      "english_name": "Czechia",
+      "sort_order": 560,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "DE",
+      "alpha3_code": "DEU",
+      "numeric_code": "276",
+      "chinese_name": "德国",
+      "english_name": "Germany",
+      "sort_order": 570,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "DJ",
+      "alpha3_code": "DJI",
+      "numeric_code": "262",
+      "chinese_name": "吉布提",
+      "english_name": "Djibouti",
+      "sort_order": 580,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "DK",
+      "alpha3_code": "DNK",
+      "numeric_code": "208",
+      "chinese_name": "丹麦",
+      "english_name": "Denmark",
+      "sort_order": 590,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "DM",
+      "alpha3_code": "DMA",
+      "numeric_code": "212",
+      "chinese_name": "多米尼克",
+      "english_name": "Dominica",
+      "sort_order": 600,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "DO",
+      "alpha3_code": "DOM",
+      "numeric_code": "214",
+      "chinese_name": "多米尼加",
+      "english_name": "Dominican Republic",
+      "sort_order": 610,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "DZ",
+      "alpha3_code": "DZA",
+      "numeric_code": "012",
+      "chinese_name": "阿尔及利亚",
+      "english_name": "Algeria",
+      "sort_order": 620,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "EC",
+      "alpha3_code": "ECU",
+      "numeric_code": "218",
+      "chinese_name": "厄瓜多尔",
+      "english_name": "Ecuador",
+      "sort_order": 630,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "EE",
+      "alpha3_code": "EST",
+      "numeric_code": "233",
+      "chinese_name": "爱沙尼亚",
+      "english_name": "Estonia",
+      "sort_order": 640,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "EG",
+      "alpha3_code": "EGY",
+      "numeric_code": "818",
+      "chinese_name": "埃及",
+      "english_name": "Egypt",
+      "sort_order": 650,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "EH",
+      "alpha3_code": "ESH",
+      "numeric_code": "732",
+      "chinese_name": "西撒哈拉",
+      "english_name": "Western Sahara",
+      "sort_order": 660,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ER",
+      "alpha3_code": "ERI",
+      "numeric_code": "232",
+      "chinese_name": "厄立特里亚",
+      "english_name": "Eritrea",
+      "sort_order": 670,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ES",
+      "alpha3_code": "ESP",
+      "numeric_code": "724",
+      "chinese_name": "西班牙",
+      "english_name": "Spain",
+      "sort_order": 680,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ET",
+      "alpha3_code": "ETH",
+      "numeric_code": "231",
+      "chinese_name": "埃塞俄比亚",
+      "english_name": "Ethiopia",
+      "sort_order": 690,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "FI",
+      "alpha3_code": "FIN",
+      "numeric_code": "246",
+      "chinese_name": "芬兰",
+      "english_name": "Finland",
+      "sort_order": 700,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "FJ",
+      "alpha3_code": "FJI",
+      "numeric_code": "242",
+      "chinese_name": "斐济",
+      "english_name": "Fiji",
+      "sort_order": 710,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "054",
+        "subregion_name": "Melanesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "FK",
+      "alpha3_code": "FLK",
+      "numeric_code": "238",
+      "chinese_name": "福克兰群岛（马尔维纳斯）",
+      "english_name": "Falkland Islands (Malvinas)",
+      "sort_order": 720,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "FM",
+      "alpha3_code": "FSM",
+      "numeric_code": "583",
+      "chinese_name": "密克罗尼西亚联邦",
+      "english_name": "Micronesia (Federated States of)",
+      "sort_order": 730,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "FO",
+      "alpha3_code": "FRO",
+      "numeric_code": "234",
+      "chinese_name": "法罗群岛",
+      "english_name": "Faroe Islands",
+      "sort_order": 740,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "FR",
+      "alpha3_code": "FRA",
+      "numeric_code": "250",
+      "chinese_name": "法国",
+      "english_name": "France",
+      "sort_order": 750,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GA",
+      "alpha3_code": "GAB",
+      "numeric_code": "266",
+      "chinese_name": "加蓬",
+      "english_name": "Gabon",
+      "sort_order": 760,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GB",
+      "alpha3_code": "GBR",
+      "numeric_code": "826",
+      "chinese_name": "大不列颠及北爱尔兰联合王国",
+      "english_name": "United Kingdom of Great Britain and Northern Ireland",
+      "sort_order": 770,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GD",
+      "alpha3_code": "GRD",
+      "numeric_code": "308",
+      "chinese_name": "格林纳达",
+      "english_name": "Grenada",
+      "sort_order": 780,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "GE",
+      "alpha3_code": "GEO",
+      "numeric_code": "268",
+      "chinese_name": "格鲁吉亚",
+      "english_name": "Georgia",
+      "sort_order": 790,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GF",
+      "alpha3_code": "GUF",
+      "numeric_code": "254",
+      "chinese_name": "法属圭亚那",
+      "english_name": "French Guiana",
+      "sort_order": 800,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GG",
+      "alpha3_code": "GGY",
+      "numeric_code": "831",
+      "chinese_name": "格恩西",
+      "english_name": "Guernsey",
+      "sort_order": 810,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GH",
+      "alpha3_code": "GHA",
+      "numeric_code": "288",
+      "chinese_name": "加纳",
+      "english_name": "Ghana",
+      "sort_order": 820,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GI",
+      "alpha3_code": "GIB",
+      "numeric_code": "292",
+      "chinese_name": "直布罗陀",
+      "english_name": "Gibraltar",
+      "sort_order": 830,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GL",
+      "alpha3_code": "GRL",
+      "numeric_code": "304",
+      "chinese_name": "格陵兰",
+      "english_name": "Greenland",
+      "sort_order": 840,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "021",
+        "subregion_name": "Northern America",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GM",
+      "alpha3_code": "GMB",
+      "numeric_code": "270",
+      "chinese_name": "冈比亚",
+      "english_name": "Gambia",
+      "sort_order": 850,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GN",
+      "alpha3_code": "GIN",
+      "numeric_code": "324",
+      "chinese_name": "几内亚",
+      "english_name": "Guinea",
+      "sort_order": 860,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GP",
+      "alpha3_code": "GLP",
+      "numeric_code": "312",
+      "chinese_name": "瓜德罗普",
+      "english_name": "Guadeloupe",
+      "sort_order": 870,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GQ",
+      "alpha3_code": "GNQ",
+      "numeric_code": "226",
+      "chinese_name": "赤道几内亚",
+      "english_name": "Equatorial Guinea",
+      "sort_order": 880,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GR",
+      "alpha3_code": "GRC",
+      "numeric_code": "300",
+      "chinese_name": "希腊",
+      "english_name": "Greece",
+      "sort_order": 890,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GS",
+      "alpha3_code": "SGS",
+      "numeric_code": "239",
+      "chinese_name": "南乔治亚岛和南桑德韦奇岛",
+      "english_name": "South Georgia and the South Sandwich Islands",
+      "sort_order": 900,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GT",
+      "alpha3_code": "GTM",
+      "numeric_code": "320",
+      "chinese_name": "危地马拉",
+      "english_name": "Guatemala",
+      "sort_order": 910,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "GU",
+      "alpha3_code": "GUM",
+      "numeric_code": "316",
+      "chinese_name": "关岛",
+      "english_name": "Guam",
+      "sort_order": 920,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "GW",
+      "alpha3_code": "GNB",
+      "numeric_code": "624",
+      "chinese_name": "几内亚比绍",
+      "english_name": "Guinea-Bissau",
+      "sort_order": 930,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "GY",
+      "alpha3_code": "GUY",
+      "numeric_code": "328",
+      "chinese_name": "圭亚那",
+      "english_name": "Guyana",
+      "sort_order": 940,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "HK",
+      "alpha3_code": "HKG",
+      "numeric_code": "344",
+      "chinese_name": "中国香港特别行政区",
+      "english_name": "China, Hong Kong Special Administrative Region",
+      "sort_order": 950,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "HM",
+      "alpha3_code": "HMD",
+      "numeric_code": "334",
+      "chinese_name": "赫德岛和麦克唐纳岛",
+      "english_name": "Heard Island and McDonald Islands",
+      "sort_order": 960,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "HN",
+      "alpha3_code": "HND",
+      "numeric_code": "340",
+      "chinese_name": "洪都拉斯",
+      "english_name": "Honduras",
+      "sort_order": 970,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "HR",
+      "alpha3_code": "HRV",
+      "numeric_code": "191",
+      "chinese_name": "克罗地亚",
+      "english_name": "Croatia",
+      "sort_order": 980,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "HT",
+      "alpha3_code": "HTI",
+      "numeric_code": "332",
+      "chinese_name": "海地",
+      "english_name": "Haiti",
+      "sort_order": 990,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "HU",
+      "alpha3_code": "HUN",
+      "numeric_code": "348",
+      "chinese_name": "匈牙利",
+      "english_name": "Hungary",
+      "sort_order": 1000,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ID",
+      "alpha3_code": "IDN",
+      "numeric_code": "360",
+      "chinese_name": "印度尼西亚",
+      "english_name": "Indonesia",
+      "sort_order": 1010,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IE",
+      "alpha3_code": "IRL",
+      "numeric_code": "372",
+      "chinese_name": "爱尔兰",
+      "english_name": "Ireland",
+      "sort_order": 1020,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IL",
+      "alpha3_code": "ISR",
+      "numeric_code": "376",
+      "chinese_name": "以色列",
+      "english_name": "Israel",
+      "sort_order": 1030,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IM",
+      "alpha3_code": "IMN",
+      "numeric_code": "833",
+      "chinese_name": "马恩岛",
+      "english_name": "Isle of Man",
+      "sort_order": 1040,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IN",
+      "alpha3_code": "IND",
+      "numeric_code": "356",
+      "chinese_name": "印度",
+      "english_name": "India",
+      "sort_order": 1050,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IO",
+      "alpha3_code": "IOT",
+      "numeric_code": "086",
+      "chinese_name": "英属印度洋领土",
+      "english_name": "British Indian Ocean Territory",
+      "sort_order": 1060,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IQ",
+      "alpha3_code": "IRQ",
+      "numeric_code": "368",
+      "chinese_name": "伊拉克",
+      "english_name": "Iraq",
+      "sort_order": 1070,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IR",
+      "alpha3_code": "IRN",
+      "numeric_code": "364",
+      "chinese_name": "伊朗伊斯兰共和国",
+      "english_name": "Iran (Islamic Republic of)",
+      "sort_order": 1080,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IS",
+      "alpha3_code": "ISL",
+      "numeric_code": "352",
+      "chinese_name": "冰岛",
+      "english_name": "Iceland",
+      "sort_order": 1090,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "IT",
+      "alpha3_code": "ITA",
+      "numeric_code": "380",
+      "chinese_name": "意大利",
+      "english_name": "Italy",
+      "sort_order": 1100,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "JE",
+      "alpha3_code": "JEY",
+      "numeric_code": "832",
+      "chinese_name": "泽西",
+      "english_name": "Jersey",
+      "sort_order": 1110,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "JM",
+      "alpha3_code": "JAM",
+      "numeric_code": "388",
+      "chinese_name": "牙买加",
+      "english_name": "Jamaica",
+      "sort_order": 1120,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "JO",
+      "alpha3_code": "JOR",
+      "numeric_code": "400",
+      "chinese_name": "约旦",
+      "english_name": "Jordan",
+      "sort_order": 1130,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "JP",
+      "alpha3_code": "JPN",
+      "numeric_code": "392",
+      "chinese_name": "日本",
+      "english_name": "Japan",
+      "sort_order": 1140,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KE",
+      "alpha3_code": "KEN",
+      "numeric_code": "404",
+      "chinese_name": "肯尼亚",
+      "english_name": "Kenya",
+      "sort_order": 1150,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KG",
+      "alpha3_code": "KGZ",
+      "numeric_code": "417",
+      "chinese_name": "吉尔吉斯斯坦",
+      "english_name": "Kyrgyzstan",
+      "sort_order": 1160,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "143",
+        "subregion_name": "Central Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KH",
+      "alpha3_code": "KHM",
+      "numeric_code": "116",
+      "chinese_name": "柬埔寨",
+      "english_name": "Cambodia",
+      "sort_order": 1170,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KI",
+      "alpha3_code": "KIR",
+      "numeric_code": "296",
+      "chinese_name": "基里巴斯",
+      "english_name": "Kiribati",
+      "sort_order": 1180,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "KM",
+      "alpha3_code": "COM",
+      "numeric_code": "174",
+      "chinese_name": "科摩罗",
+      "english_name": "Comoros",
+      "sort_order": 1190,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "KN",
+      "alpha3_code": "KNA",
+      "numeric_code": "659",
+      "chinese_name": "圣基茨和尼维斯",
+      "english_name": "Saint Kitts and Nevis",
+      "sort_order": 1200,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "KP",
+      "alpha3_code": "PRK",
+      "numeric_code": "408",
+      "chinese_name": "朝鲜民主主义人民共和国",
+      "english_name": "Democratic People's Republic of Korea",
+      "sort_order": 1210,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KR",
+      "alpha3_code": "KOR",
+      "numeric_code": "410",
+      "chinese_name": "大韩民国",
+      "english_name": "Republic of Korea",
+      "sort_order": 1220,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KW",
+      "alpha3_code": "KWT",
+      "numeric_code": "414",
+      "chinese_name": "科威特",
+      "english_name": "Kuwait",
+      "sort_order": 1230,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KY",
+      "alpha3_code": "CYM",
+      "numeric_code": "136",
+      "chinese_name": "开曼群岛",
+      "english_name": "Cayman Islands",
+      "sort_order": 1240,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "KZ",
+      "alpha3_code": "KAZ",
+      "numeric_code": "398",
+      "chinese_name": "哈萨克斯坦",
+      "english_name": "Kazakhstan",
+      "sort_order": 1250,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "143",
+        "subregion_name": "Central Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LA",
+      "alpha3_code": "LAO",
+      "numeric_code": "418",
+      "chinese_name": "老挝人民民主共和国",
+      "english_name": "Lao People's Democratic Republic",
+      "sort_order": 1260,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LB",
+      "alpha3_code": "LBN",
+      "numeric_code": "422",
+      "chinese_name": "黎巴嫩",
+      "english_name": "Lebanon",
+      "sort_order": 1270,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LC",
+      "alpha3_code": "LCA",
+      "numeric_code": "662",
+      "chinese_name": "圣卢西亚",
+      "english_name": "Saint Lucia",
+      "sort_order": 1280,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "LI",
+      "alpha3_code": "LIE",
+      "numeric_code": "438",
+      "chinese_name": "列支敦士登",
+      "english_name": "Liechtenstein",
+      "sort_order": 1290,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LK",
+      "alpha3_code": "LKA",
+      "numeric_code": "144",
+      "chinese_name": "斯里兰卡",
+      "english_name": "Sri Lanka",
+      "sort_order": 1300,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LR",
+      "alpha3_code": "LBR",
+      "numeric_code": "430",
+      "chinese_name": "利比里亚",
+      "english_name": "Liberia",
+      "sort_order": 1310,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LS",
+      "alpha3_code": "LSO",
+      "numeric_code": "426",
+      "chinese_name": "莱索托",
+      "english_name": "Lesotho",
+      "sort_order": 1320,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "018",
+        "intermediate_region_name": "Southern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LT",
+      "alpha3_code": "LTU",
+      "numeric_code": "440",
+      "chinese_name": "立陶宛",
+      "english_name": "Lithuania",
+      "sort_order": 1330,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LU",
+      "alpha3_code": "LUX",
+      "numeric_code": "442",
+      "chinese_name": "卢森堡",
+      "english_name": "Luxembourg",
+      "sort_order": 1340,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LV",
+      "alpha3_code": "LVA",
+      "numeric_code": "428",
+      "chinese_name": "拉脱维亚",
+      "english_name": "Latvia",
+      "sort_order": 1350,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "LY",
+      "alpha3_code": "LBY",
+      "numeric_code": "434",
+      "chinese_name": "利比亚",
+      "english_name": "Libya",
+      "sort_order": 1360,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MA",
+      "alpha3_code": "MAR",
+      "numeric_code": "504",
+      "chinese_name": "摩洛哥",
+      "english_name": "Morocco",
+      "sort_order": 1370,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MC",
+      "alpha3_code": "MCO",
+      "numeric_code": "492",
+      "chinese_name": "摩纳哥",
+      "english_name": "Monaco",
+      "sort_order": 1380,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MD",
+      "alpha3_code": "MDA",
+      "numeric_code": "498",
+      "chinese_name": "摩尔多瓦共和国",
+      "english_name": "Republic of Moldova",
+      "sort_order": 1390,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ME",
+      "alpha3_code": "MNE",
+      "numeric_code": "499",
+      "chinese_name": "黑山",
+      "english_name": "Montenegro",
+      "sort_order": 1400,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MF",
+      "alpha3_code": "MAF",
+      "numeric_code": "663",
+      "chinese_name": "圣马丁（法属）",
+      "english_name": "Saint Martin (French Part)",
+      "sort_order": 1410,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MG",
+      "alpha3_code": "MDG",
+      "numeric_code": "450",
+      "chinese_name": "马达加斯加",
+      "english_name": "Madagascar",
+      "sort_order": 1420,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MH",
+      "alpha3_code": "MHL",
+      "numeric_code": "584",
+      "chinese_name": "马绍尔群岛",
+      "english_name": "Marshall Islands",
+      "sort_order": 1430,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "MK",
+      "alpha3_code": "MKD",
+      "numeric_code": "807",
+      "chinese_name": "北马其顿",
+      "english_name": "North Macedonia",
+      "sort_order": 1440,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ML",
+      "alpha3_code": "MLI",
+      "numeric_code": "466",
+      "chinese_name": "马里",
+      "english_name": "Mali",
+      "sort_order": 1450,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MM",
+      "alpha3_code": "MMR",
+      "numeric_code": "104",
+      "chinese_name": "缅甸",
+      "english_name": "Myanmar",
+      "sort_order": 1460,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MN",
+      "alpha3_code": "MNG",
+      "numeric_code": "496",
+      "chinese_name": "蒙古",
+      "english_name": "Mongolia",
+      "sort_order": 1470,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MO",
+      "alpha3_code": "MAC",
+      "numeric_code": "446",
+      "chinese_name": "中国澳门特别行政区",
+      "english_name": "China, Macao Special Administrative Region",
+      "sort_order": 1480,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "030",
+        "subregion_name": "Eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MP",
+      "alpha3_code": "MNP",
+      "numeric_code": "580",
+      "chinese_name": "北马里亚纳群岛",
+      "english_name": "Northern Mariana Islands",
+      "sort_order": 1490,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "MQ",
+      "alpha3_code": "MTQ",
+      "numeric_code": "474",
+      "chinese_name": "马提尼克",
+      "english_name": "Martinique",
+      "sort_order": 1500,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MR",
+      "alpha3_code": "MRT",
+      "numeric_code": "478",
+      "chinese_name": "毛里塔尼亚",
+      "english_name": "Mauritania",
+      "sort_order": 1510,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MS",
+      "alpha3_code": "MSR",
+      "numeric_code": "500",
+      "chinese_name": "蒙特塞拉特",
+      "english_name": "Montserrat",
+      "sort_order": 1520,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "MT",
+      "alpha3_code": "MLT",
+      "numeric_code": "470",
+      "chinese_name": "马耳他",
+      "english_name": "Malta",
+      "sort_order": 1530,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MU",
+      "alpha3_code": "MUS",
+      "numeric_code": "480",
+      "chinese_name": "毛里求斯",
+      "english_name": "Mauritius",
+      "sort_order": 1540,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "MV",
+      "alpha3_code": "MDV",
+      "numeric_code": "462",
+      "chinese_name": "马尔代夫",
+      "english_name": "Maldives",
+      "sort_order": 1550,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "MW",
+      "alpha3_code": "MWI",
+      "numeric_code": "454",
+      "chinese_name": "马拉维",
+      "english_name": "Malawi",
+      "sort_order": 1560,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MX",
+      "alpha3_code": "MEX",
+      "numeric_code": "484",
+      "chinese_name": "墨西哥",
+      "english_name": "Mexico",
+      "sort_order": 1570,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MY",
+      "alpha3_code": "MYS",
+      "numeric_code": "458",
+      "chinese_name": "马来西亚",
+      "english_name": "Malaysia",
+      "sort_order": 1580,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "MZ",
+      "alpha3_code": "MOZ",
+      "numeric_code": "508",
+      "chinese_name": "莫桑比克",
+      "english_name": "Mozambique",
+      "sort_order": 1590,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NA",
+      "alpha3_code": "NAM",
+      "numeric_code": "516",
+      "chinese_name": "纳米比亚",
+      "english_name": "Namibia",
+      "sort_order": 1600,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "018",
+        "intermediate_region_name": "Southern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NC",
+      "alpha3_code": "NCL",
+      "numeric_code": "540",
+      "chinese_name": "新喀里多尼亚",
+      "english_name": "New Caledonia",
+      "sort_order": 1610,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "054",
+        "subregion_name": "Melanesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "NE",
+      "alpha3_code": "NER",
+      "numeric_code": "562",
+      "chinese_name": "尼日尔",
+      "english_name": "Niger",
+      "sort_order": 1620,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NF",
+      "alpha3_code": "NFK",
+      "numeric_code": "574",
+      "chinese_name": "诺福克岛",
+      "english_name": "Norfolk Island",
+      "sort_order": 1630,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NG",
+      "alpha3_code": "NGA",
+      "numeric_code": "566",
+      "chinese_name": "尼日利亚",
+      "english_name": "Nigeria",
+      "sort_order": 1640,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NI",
+      "alpha3_code": "NIC",
+      "numeric_code": "558",
+      "chinese_name": "尼加拉瓜",
+      "english_name": "Nicaragua",
+      "sort_order": 1650,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NL",
+      "alpha3_code": "NLD",
+      "numeric_code": "528",
+      "chinese_name": "荷兰王国",
+      "english_name": "Netherlands (Kingdom of the)",
+      "sort_order": 1660,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "155",
+        "subregion_name": "Western Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NO",
+      "alpha3_code": "NOR",
+      "numeric_code": "578",
+      "chinese_name": "挪威",
+      "english_name": "Norway",
+      "sort_order": 1670,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NP",
+      "alpha3_code": "NPL",
+      "numeric_code": "524",
+      "chinese_name": "尼泊尔",
+      "english_name": "Nepal",
+      "sort_order": 1680,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "NR",
+      "alpha3_code": "NRU",
+      "numeric_code": "520",
+      "chinese_name": "瑙鲁",
+      "english_name": "Naoero",
+      "sort_order": 1690,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "NU",
+      "alpha3_code": "NIU",
+      "numeric_code": "570",
+      "chinese_name": "纽埃",
+      "english_name": "Niue",
+      "sort_order": 1700,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "NZ",
+      "alpha3_code": "NZL",
+      "numeric_code": "554",
+      "chinese_name": "新西兰",
+      "english_name": "New Zealand",
+      "sort_order": 1710,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "053",
+        "subregion_name": "Australia and New Zealand",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "OM",
+      "alpha3_code": "OMN",
+      "numeric_code": "512",
+      "chinese_name": "阿曼",
+      "english_name": "Oman",
+      "sort_order": 1720,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PA",
+      "alpha3_code": "PAN",
+      "numeric_code": "591",
+      "chinese_name": "巴拿马",
+      "english_name": "Panama",
+      "sort_order": 1730,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PE",
+      "alpha3_code": "PER",
+      "numeric_code": "604",
+      "chinese_name": "秘鲁",
+      "english_name": "Peru",
+      "sort_order": 1740,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PF",
+      "alpha3_code": "PYF",
+      "numeric_code": "258",
+      "chinese_name": "法属波利尼西亚",
+      "english_name": "French Polynesia",
+      "sort_order": 1750,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "PG",
+      "alpha3_code": "PNG",
+      "numeric_code": "598",
+      "chinese_name": "巴布亚新几内亚",
+      "english_name": "Papua New Guinea",
+      "sort_order": 1760,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "054",
+        "subregion_name": "Melanesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "PH",
+      "alpha3_code": "PHL",
+      "numeric_code": "608",
+      "chinese_name": "菲律宾",
+      "english_name": "Philippines",
+      "sort_order": 1770,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PK",
+      "alpha3_code": "PAK",
+      "numeric_code": "586",
+      "chinese_name": "巴基斯坦",
+      "english_name": "Pakistan",
+      "sort_order": 1780,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "034",
+        "subregion_name": "Southern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PL",
+      "alpha3_code": "POL",
+      "numeric_code": "616",
+      "chinese_name": "波兰",
+      "english_name": "Poland",
+      "sort_order": 1790,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PM",
+      "alpha3_code": "SPM",
+      "numeric_code": "666",
+      "chinese_name": "圣皮埃尔和密克隆",
+      "english_name": "Saint Pierre and Miquelon",
+      "sort_order": 1800,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "021",
+        "subregion_name": "Northern America",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PN",
+      "alpha3_code": "PCN",
+      "numeric_code": "612",
+      "chinese_name": "皮特凯恩",
+      "english_name": "Pitcairn",
+      "sort_order": 1810,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PR",
+      "alpha3_code": "PRI",
+      "numeric_code": "630",
+      "chinese_name": "波多黎各",
+      "english_name": "Puerto Rico",
+      "sort_order": 1820,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "PS",
+      "alpha3_code": "PSE",
+      "numeric_code": "275",
+      "chinese_name": "巴勒斯坦国",
+      "english_name": "State of Palestine",
+      "sort_order": 1830,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PT",
+      "alpha3_code": "PRT",
+      "numeric_code": "620",
+      "chinese_name": "葡萄牙",
+      "english_name": "Portugal",
+      "sort_order": 1840,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "PW",
+      "alpha3_code": "PLW",
+      "numeric_code": "585",
+      "chinese_name": "帕劳",
+      "english_name": "Palau",
+      "sort_order": 1850,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "PY",
+      "alpha3_code": "PRY",
+      "numeric_code": "600",
+      "chinese_name": "巴拉圭",
+      "english_name": "Paraguay",
+      "sort_order": 1860,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "QA",
+      "alpha3_code": "QAT",
+      "numeric_code": "634",
+      "chinese_name": "卡塔尔",
+      "english_name": "Qatar",
+      "sort_order": 1870,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "RE",
+      "alpha3_code": "REU",
+      "numeric_code": "638",
+      "chinese_name": "留尼汪",
+      "english_name": "Réunion",
+      "sort_order": 1880,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "RO",
+      "alpha3_code": "ROU",
+      "numeric_code": "642",
+      "chinese_name": "罗马尼亚",
+      "english_name": "Romania",
+      "sort_order": 1890,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "RS",
+      "alpha3_code": "SRB",
+      "numeric_code": "688",
+      "chinese_name": "塞尔维亚",
+      "english_name": "Serbia",
+      "sort_order": 1900,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "RU",
+      "alpha3_code": "RUS",
+      "numeric_code": "643",
+      "chinese_name": "俄罗斯联邦",
+      "english_name": "Russian Federation",
+      "sort_order": 1910,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "RW",
+      "alpha3_code": "RWA",
+      "numeric_code": "646",
+      "chinese_name": "卢旺达",
+      "english_name": "Rwanda",
+      "sort_order": 1920,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SA",
+      "alpha3_code": "SAU",
+      "numeric_code": "682",
+      "chinese_name": "沙特阿拉伯",
+      "english_name": "Saudi Arabia",
+      "sort_order": 1930,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SB",
+      "alpha3_code": "SLB",
+      "numeric_code": "090",
+      "chinese_name": "所罗门群岛",
+      "english_name": "Solomon Islands",
+      "sort_order": 1940,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "054",
+        "subregion_name": "Melanesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SC",
+      "alpha3_code": "SYC",
+      "numeric_code": "690",
+      "chinese_name": "塞舌尔",
+      "english_name": "Seychelles",
+      "sort_order": 1950,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SD",
+      "alpha3_code": "SDN",
+      "numeric_code": "729",
+      "chinese_name": "苏丹",
+      "english_name": "Sudan",
+      "sort_order": 1960,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SE",
+      "alpha3_code": "SWE",
+      "numeric_code": "752",
+      "chinese_name": "瑞典",
+      "english_name": "Sweden",
+      "sort_order": 1970,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SG",
+      "alpha3_code": "SGP",
+      "numeric_code": "702",
+      "chinese_name": "新加坡",
+      "english_name": "Singapore",
+      "sort_order": 1980,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SH",
+      "alpha3_code": "SHN",
+      "numeric_code": "654",
+      "chinese_name": "圣赫勒拿",
+      "english_name": "Saint Helena",
+      "sort_order": 1990,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SI",
+      "alpha3_code": "SVN",
+      "numeric_code": "705",
+      "chinese_name": "斯洛文尼亚",
+      "english_name": "Slovenia",
+      "sort_order": 2000,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SJ",
+      "alpha3_code": "SJM",
+      "numeric_code": "744",
+      "chinese_name": "斯瓦尔巴群岛和扬马延岛",
+      "english_name": "Svalbard and Jan Mayen Islands",
+      "sort_order": 2010,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "154",
+        "subregion_name": "Northern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SK",
+      "alpha3_code": "SVK",
+      "numeric_code": "703",
+      "chinese_name": "斯洛伐克",
+      "english_name": "Slovakia",
+      "sort_order": 2020,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SL",
+      "alpha3_code": "SLE",
+      "numeric_code": "694",
+      "chinese_name": "塞拉利昂",
+      "english_name": "Sierra Leone",
+      "sort_order": 2030,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SM",
+      "alpha3_code": "SMR",
+      "numeric_code": "674",
+      "chinese_name": "圣马力诺",
+      "english_name": "San Marino",
+      "sort_order": 2040,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SN",
+      "alpha3_code": "SEN",
+      "numeric_code": "686",
+      "chinese_name": "塞内加尔",
+      "english_name": "Senegal",
+      "sort_order": 2050,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SO",
+      "alpha3_code": "SOM",
+      "numeric_code": "706",
+      "chinese_name": "索马里",
+      "english_name": "Somalia",
+      "sort_order": 2060,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SR",
+      "alpha3_code": "SUR",
+      "numeric_code": "740",
+      "chinese_name": "苏里南",
+      "english_name": "Suriname",
+      "sort_order": 2070,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SS",
+      "alpha3_code": "SSD",
+      "numeric_code": "728",
+      "chinese_name": "南苏丹",
+      "english_name": "South Sudan",
+      "sort_order": 2080,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ST",
+      "alpha3_code": "STP",
+      "numeric_code": "678",
+      "chinese_name": "圣多美和普林西比",
+      "english_name": "Sao Tome and Principe",
+      "sort_order": 2090,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SV",
+      "alpha3_code": "SLV",
+      "numeric_code": "222",
+      "chinese_name": "萨尔瓦多",
+      "english_name": "El Salvador",
+      "sort_order": 2100,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "013",
+        "intermediate_region_name": "Central America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SX",
+      "alpha3_code": "SXM",
+      "numeric_code": "534",
+      "chinese_name": "圣马丁（荷属）",
+      "english_name": "Sint Maarten (Dutch part)",
+      "sort_order": 2110,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "SY",
+      "alpha3_code": "SYR",
+      "numeric_code": "760",
+      "chinese_name": "阿拉伯叙利亚共和国",
+      "english_name": "Syrian Arab Republic",
+      "sort_order": 2120,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "SZ",
+      "alpha3_code": "SWZ",
+      "numeric_code": "748",
+      "chinese_name": "斯威士兰",
+      "english_name": "Eswatini",
+      "sort_order": 2130,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "018",
+        "intermediate_region_name": "Southern Africa",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TC",
+      "alpha3_code": "TCA",
+      "numeric_code": "796",
+      "chinese_name": "特克斯和凯科斯群岛",
+      "english_name": "Turks and Caicos Islands",
+      "sort_order": 2140,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TD",
+      "alpha3_code": "TCD",
+      "numeric_code": "148",
+      "chinese_name": "乍得",
+      "english_name": "Chad",
+      "sort_order": 2150,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "017",
+        "intermediate_region_name": "Middle Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TF",
+      "alpha3_code": "ATF",
+      "numeric_code": "260",
+      "chinese_name": "法属南方领地",
+      "english_name": "French Southern Territories",
+      "sort_order": 2160,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TG",
+      "alpha3_code": "TGO",
+      "numeric_code": "768",
+      "chinese_name": "多哥",
+      "english_name": "Togo",
+      "sort_order": 2170,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "011",
+        "intermediate_region_name": "Western Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TH",
+      "alpha3_code": "THA",
+      "numeric_code": "764",
+      "chinese_name": "泰国",
+      "english_name": "Thailand",
+      "sort_order": 2180,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TJ",
+      "alpha3_code": "TJK",
+      "numeric_code": "762",
+      "chinese_name": "塔吉克斯坦",
+      "english_name": "Tajikistan",
+      "sort_order": 2190,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "143",
+        "subregion_name": "Central Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TK",
+      "alpha3_code": "TKL",
+      "numeric_code": "772",
+      "chinese_name": "托克劳",
+      "english_name": "Tokelau",
+      "sort_order": 2200,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TL",
+      "alpha3_code": "TLS",
+      "numeric_code": "626",
+      "chinese_name": "东帝汶",
+      "english_name": "Timor-Leste",
+      "sort_order": 2210,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "TM",
+      "alpha3_code": "TKM",
+      "numeric_code": "795",
+      "chinese_name": "土库曼斯坦",
+      "english_name": "Turkmenistan",
+      "sort_order": 2220,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "143",
+        "subregion_name": "Central Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TN",
+      "alpha3_code": "TUN",
+      "numeric_code": "788",
+      "chinese_name": "突尼斯",
+      "english_name": "Tunisia",
+      "sort_order": 2230,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "015",
+        "subregion_name": "Northern Africa",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TO",
+      "alpha3_code": "TON",
+      "numeric_code": "776",
+      "chinese_name": "汤加",
+      "english_name": "Tonga",
+      "sort_order": 2240,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "TR",
+      "alpha3_code": "TUR",
+      "numeric_code": "792",
+      "chinese_name": "土耳其",
+      "english_name": "Türkiye",
+      "sort_order": 2250,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "TT",
+      "alpha3_code": "TTO",
+      "numeric_code": "780",
+      "chinese_name": "特立尼达和多巴哥",
+      "english_name": "Trinidad and Tobago",
+      "sort_order": 2260,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "TV",
+      "alpha3_code": "TUV",
+      "numeric_code": "798",
+      "chinese_name": "图瓦卢",
+      "english_name": "Tuvalu",
+      "sort_order": 2270,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "TW",
+      "alpha3_code": "TWN",
+      "numeric_code": "158",
+      "chinese_name": "台湾",
+      "english_name": "Taiwan (Province of China)",
+      "sort_order": 2280,
+      "extra_data": {
+        "m49_not_separately_listed": true,
+        "supplemental_code_source": "ISO 3166-1 / UNECE Recommendation 3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TZ",
+      "alpha3_code": "TZA",
+      "numeric_code": "834",
+      "chinese_name": "坦桑尼亚联合共和国",
+      "english_name": "United Republic of Tanzania",
+      "sort_order": 2290,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "UA",
+      "alpha3_code": "UKR",
+      "numeric_code": "804",
+      "chinese_name": "乌克兰",
+      "english_name": "Ukraine",
+      "sort_order": 2300,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "151",
+        "subregion_name": "Eastern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "UG",
+      "alpha3_code": "UGA",
+      "numeric_code": "800",
+      "chinese_name": "乌干达",
+      "english_name": "Uganda",
+      "sort_order": 2310,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "UM",
+      "alpha3_code": "UMI",
+      "numeric_code": "581",
+      "chinese_name": "美国本土外小岛屿",
+      "english_name": "United States Minor Outlying Islands",
+      "sort_order": 2320,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "057",
+        "subregion_name": "Micronesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "US",
+      "alpha3_code": "USA",
+      "numeric_code": "840",
+      "chinese_name": "美利坚合众国",
+      "english_name": "United States of America",
+      "sort_order": 2330,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "021",
+        "subregion_name": "Northern America",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "UY",
+      "alpha3_code": "URY",
+      "numeric_code": "858",
+      "chinese_name": "乌拉圭",
+      "english_name": "Uruguay",
+      "sort_order": 2340,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "UZ",
+      "alpha3_code": "UZB",
+      "numeric_code": "860",
+      "chinese_name": "乌兹别克斯坦",
+      "english_name": "Uzbekistan",
+      "sort_order": 2350,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "143",
+        "subregion_name": "Central Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "VA",
+      "alpha3_code": "VAT",
+      "numeric_code": "336",
+      "chinese_name": "教廷",
+      "english_name": "Holy See",
+      "sort_order": 2360,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "150",
+        "region_name": "Europe",
+        "subregion_code": "039",
+        "subregion_name": "Southern Europe",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "VC",
+      "alpha3_code": "VCT",
+      "numeric_code": "670",
+      "chinese_name": "圣文森特和格林纳丁斯",
+      "english_name": "Saint Vincent and the Grenadines",
+      "sort_order": 2370,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "VE",
+      "alpha3_code": "VEN",
+      "numeric_code": "862",
+      "chinese_name": "委内瑞拉玻利瓦尔共和国",
+      "english_name": "Venezuela (Bolivarian Republic of)",
+      "sort_order": 2380,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "005",
+        "intermediate_region_name": "South America",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "VG",
+      "alpha3_code": "VGB",
+      "numeric_code": "092",
+      "chinese_name": "英属维尔京群岛",
+      "english_name": "British Virgin Islands",
+      "sort_order": 2390,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "VI",
+      "alpha3_code": "VIR",
+      "numeric_code": "850",
+      "chinese_name": "美属维尔京群岛",
+      "english_name": "United States Virgin Islands",
+      "sort_order": 2400,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "019",
+        "region_name": "Americas",
+        "subregion_code": "419",
+        "subregion_name": "Latin America and the Caribbean",
+        "intermediate_region_code": "029",
+        "intermediate_region_name": "Caribbean",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "VN",
+      "alpha3_code": "VNM",
+      "numeric_code": "704",
+      "chinese_name": "越南",
+      "english_name": "Viet Nam",
+      "sort_order": 2410,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "035",
+        "subregion_name": "South-eastern Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "VU",
+      "alpha3_code": "VUT",
+      "numeric_code": "548",
+      "chinese_name": "瓦努阿图",
+      "english_name": "Vanuatu",
+      "sort_order": 2420,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "054",
+        "subregion_name": "Melanesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "WF",
+      "alpha3_code": "WLF",
+      "numeric_code": "876",
+      "chinese_name": "瓦利斯群岛和富图纳群岛",
+      "english_name": "Wallis and Futuna Islands",
+      "sort_order": 2430,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "WS",
+      "alpha3_code": "WSM",
+      "numeric_code": "882",
+      "chinese_name": "萨摩亚",
+      "english_name": "Samoa",
+      "sort_order": 2440,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "009",
+        "region_name": "Oceania",
+        "subregion_code": "061",
+        "subregion_name": "Polynesia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": true
+      }
+    },
+    {
+      "code": "YE",
+      "alpha3_code": "YEM",
+      "numeric_code": "887",
+      "chinese_name": "也门",
+      "english_name": "Yemen",
+      "sort_order": 2450,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "142",
+        "region_name": "Asia",
+        "subregion_code": "145",
+        "subregion_name": "Western Asia",
+        "intermediate_region_code": "",
+        "intermediate_region_name": "",
+        "least_developed": true,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "YT",
+      "alpha3_code": "MYT",
+      "numeric_code": "175",
+      "chinese_name": "马约特",
+      "english_name": "Mayotte",
+      "sort_order": 2460,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ZA",
+      "alpha3_code": "ZAF",
+      "numeric_code": "710",
+      "chinese_name": "南非",
+      "english_name": "South Africa",
+      "sort_order": 2470,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "018",
+        "intermediate_region_name": "Southern Africa",
+        "least_developed": false,
+        "land_locked_developing": false,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ZM",
+      "alpha3_code": "ZMB",
+      "numeric_code": "894",
+      "chinese_name": "赞比亚",
+      "english_name": "Zambia",
+      "sort_order": 2480,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": true,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    },
+    {
+      "code": "ZW",
+      "alpha3_code": "ZWE",
+      "numeric_code": "716",
+      "chinese_name": "津巴布韦",
+      "english_name": "Zimbabwe",
+      "sort_order": 2490,
+      "extra_data": {
+        "global_code": "001",
+        "region_code": "002",
+        "region_name": "Africa",
+        "subregion_code": "202",
+        "subregion_name": "Sub-Saharan Africa",
+        "intermediate_region_code": "014",
+        "intermediate_region_name": "Eastern Africa",
+        "least_developed": false,
+        "land_locked_developing": true,
+        "small_island_developing": false
+      }
+    }
+  ]
+}

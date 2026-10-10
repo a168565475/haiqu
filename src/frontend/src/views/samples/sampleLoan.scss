@@ -1,0 +1,33 @@
+@use '@/styles/crm/sample-library' as library;
+
+@include library.page('.sample-loan-page');
+
+.sample-loan-page {
+  display: flex;
+  height: calc(100dvh - 92px);
+  min-height: 0;
+  flex-direction: column;
+}
+
+.sample-loan-page .table-card {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-loan-page .table-card :deep(.el-card__body) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.sample-loan-page .table-card :deep(.el-table) {
+  min-height: 0;
+  flex: 1;
+}
+
+.sample-loan-page .table-footer {
+  flex: none;
+}

@@ -1,0 +1,27 @@
+// 只补 D1 页面布局，沿用既有管材图稿与 ERP 控件，不修改已批准 D2 样式。
+.d1-page .d1-context .info-cell { grid-template-columns: 88px minmax(0, 1fr); }
+.d1-workspace { overflow: hidden; }
+.d1-workspace > .d1-lines { flex: 0 1 auto; min-height: 86px; }
+.d1-fields { margin-bottom: 0; flex-shrink: 0; }
+.d1-lines .design-table th, .d1-lines .design-table td { padding-right: 8px; padding-left: 8px; }
+.d1-lines strong { font-weight: 500; }
+.d1-unit { margin-left: 4px; }
+.d1-remark { flex-shrink: 0; }
+.d1-remark small { margin-left: 8px; font-size: 11px; }
+.d1-remark .el-textarea__inner { resize: none; }
+.d1-basis .info-grid, .d1-confirm .info-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.d1-basis .info-cell, .d1-confirm .info-cell { grid-template-columns: 88px minmax(0, 1fr); }
+.d1-operations, .d1-confirm-lines { margin-top: 16px; }
+.d1-basis-note { margin: 12px 0 0; font-size: 12px; line-height: 22px; }
+.d1-cap-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 1.35fr; margin-top: 16px; padding: 14px 0; background: #f6f3ec; border-radius: 5px; }
+.d1-cap-grid > div { padding: 0 18px; display: flex; flex-direction: column; gap: 8px; border-right: 1px solid #ddd6c9; }
+.d1-cap-grid > div:last-child { border-right: 0; }
+.d1-cap-grid span { color: #6f6a61; }
+.d1-cap-grid strong { font-size: 18px; font-weight: 600; line-height: 24px; font-variant-numeric: tabular-nums; }
+.d1-cap-grid small { font-size: 12px; font-weight: 400; color: #6f6a61; }
+.d1-occupied { margin-top: 10px; }
+.d1-confirm-total { margin-top: 16px; font-size: 14px; }
+.d1-confirm-total strong { font-size: 20px; margin: 0 6px; }
+.d1-confirm-remark { overflow-wrap: anywhere; }
+.d1-fallback { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.schedule-date-popper { font-family: 'Noto Sans SC Variable', 'Noto Sans SC', sans-serif; }

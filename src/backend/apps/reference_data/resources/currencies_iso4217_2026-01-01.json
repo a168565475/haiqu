@@ -1,0 +1,2961 @@
+{
+  "schema_version": 1,
+  "source": {
+    "standard": "ISO 4217 List One",
+    "publisher": "SIX Group, ISO 4217 Maintenance Agency",
+    "url": "https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml",
+    "published_date": "2026-01-01",
+    "raw_sha256": "838dfb991648cf36df939edd5fe3811737962b75a32252847d239cedd1e291c9",
+    "display_name_source": "Unicode CLDR 48.2 zh",
+    "display_name_source_sha256": "b1ef8bcadcf19fa8914d9ba812a7bcec124c72fecbf4acea02e4c8bd2fe51866"
+  },
+  "records": [
+    {
+      "code": "AED",
+      "numeric_code": "784",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿联酋迪拉姆",
+      "english_name": "UAE Dirham",
+      "sort_order": 10,
+      "extra_data": {
+        "entities": [
+          "UNITED ARAB EMIRATES (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AFN",
+      "numeric_code": "971",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿富汗尼",
+      "english_name": "Afghani",
+      "sort_order": 20,
+      "extra_data": {
+        "entities": [
+          "AFGHANISTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ALL",
+      "numeric_code": "008",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿尔巴尼亚列克",
+      "english_name": "Lek",
+      "sort_order": 30,
+      "extra_data": {
+        "entities": [
+          "ALBANIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AMD",
+      "numeric_code": "051",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "亚美尼亚德拉姆",
+      "english_name": "Armenian Dram",
+      "sort_order": 40,
+      "extra_data": {
+        "entities": [
+          "ARMENIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AOA",
+      "numeric_code": "973",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "安哥拉宽扎",
+      "english_name": "Kwanza",
+      "sort_order": 50,
+      "extra_data": {
+        "entities": [
+          "ANGOLA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ARS",
+      "numeric_code": "032",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿根廷比索",
+      "english_name": "Argentine Peso",
+      "sort_order": 60,
+      "extra_data": {
+        "entities": [
+          "ARGENTINA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AUD",
+      "numeric_code": "036",
+      "decimal_places": 2,
+      "symbol": "AU$",
+      "chinese_name": "澳大利亚元",
+      "english_name": "Australian Dollar",
+      "sort_order": 70,
+      "extra_data": {
+        "entities": [
+          "AUSTRALIA",
+          "CHRISTMAS ISLAND",
+          "COCOS (KEELING) ISLANDS (THE)",
+          "HEARD ISLAND AND McDONALD ISLANDS",
+          "KIRIBATI",
+          "NAURU",
+          "NORFOLK ISLAND",
+          "TUVALU"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AWG",
+      "numeric_code": "533",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿鲁巴弗罗林",
+      "english_name": "Aruban Florin",
+      "sort_order": 80,
+      "extra_data": {
+        "entities": [
+          "ARUBA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "AZN",
+      "numeric_code": "944",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿塞拜疆马纳特",
+      "english_name": "Azerbaijan Manat",
+      "sort_order": 90,
+      "extra_data": {
+        "entities": [
+          "AZERBAIJAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BAM",
+      "numeric_code": "977",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "波斯尼亚-黑塞哥维那可兑换马克",
+      "english_name": "Convertible Mark",
+      "sort_order": 100,
+      "extra_data": {
+        "entities": [
+          "BOSNIA AND HERZEGOVINA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BBD",
+      "numeric_code": "052",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴巴多斯元",
+      "english_name": "Barbados Dollar",
+      "sort_order": 110,
+      "extra_data": {
+        "entities": [
+          "BARBADOS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BDT",
+      "numeric_code": "050",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "孟加拉塔卡",
+      "english_name": "Taka",
+      "sort_order": 120,
+      "extra_data": {
+        "entities": [
+          "BANGLADESH"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BHD",
+      "numeric_code": "048",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "巴林第纳尔",
+      "english_name": "Bahraini Dinar",
+      "sort_order": 130,
+      "extra_data": {
+        "entities": [
+          "BAHRAIN"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BIF",
+      "numeric_code": "108",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "布隆迪法郎",
+      "english_name": "Burundi Franc",
+      "sort_order": 140,
+      "extra_data": {
+        "entities": [
+          "BURUNDI"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BMD",
+      "numeric_code": "060",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "百慕大元",
+      "english_name": "Bermudian Dollar",
+      "sort_order": 150,
+      "extra_data": {
+        "entities": [
+          "BERMUDA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BND",
+      "numeric_code": "096",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "文莱元",
+      "english_name": "Brunei Dollar",
+      "sort_order": 160,
+      "extra_data": {
+        "entities": [
+          "BRUNEI DARUSSALAM"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BOB",
+      "numeric_code": "068",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "玻利维亚诺",
+      "english_name": "Boliviano",
+      "sort_order": 170,
+      "extra_data": {
+        "entities": [
+          "BOLIVIA (PLURINATIONAL STATE OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BOV",
+      "numeric_code": "984",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "玻利维亚 Mvdol（资金）",
+      "english_name": "Mvdol",
+      "sort_order": 180,
+      "extra_data": {
+        "entities": [
+          "BOLIVIA (PLURINATIONAL STATE OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BRL",
+      "numeric_code": "986",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴西雷亚尔",
+      "english_name": "Brazilian Real",
+      "sort_order": 190,
+      "extra_data": {
+        "entities": [
+          "BRAZIL"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BSD",
+      "numeric_code": "044",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴哈马元",
+      "english_name": "Bahamian Dollar",
+      "sort_order": 200,
+      "extra_data": {
+        "entities": [
+          "BAHAMAS (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BTN",
+      "numeric_code": "064",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "不丹努尔特鲁姆",
+      "english_name": "Ngultrum",
+      "sort_order": 210,
+      "extra_data": {
+        "entities": [
+          "BHUTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BWP",
+      "numeric_code": "072",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "博茨瓦纳普拉",
+      "english_name": "Pula",
+      "sort_order": 220,
+      "extra_data": {
+        "entities": [
+          "BOTSWANA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BYN",
+      "numeric_code": "933",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "白俄罗斯卢布",
+      "english_name": "Belarusian Ruble",
+      "sort_order": 230,
+      "extra_data": {
+        "entities": [
+          "BELARUS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "BZD",
+      "numeric_code": "084",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "伯利兹元",
+      "english_name": "Belize Dollar",
+      "sort_order": 240,
+      "extra_data": {
+        "entities": [
+          "BELIZE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CAD",
+      "numeric_code": "124",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "加拿大元",
+      "english_name": "Canadian Dollar",
+      "sort_order": 250,
+      "extra_data": {
+        "entities": [
+          "CANADA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CDF",
+      "numeric_code": "976",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "刚果法郎",
+      "english_name": "Congolese Franc",
+      "sort_order": 260,
+      "extra_data": {
+        "entities": [
+          "CONGO (THE DEMOCRATIC REPUBLIC OF THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CHE",
+      "numeric_code": "947",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "欧元 (WIR)",
+      "english_name": "WIR Euro",
+      "sort_order": 270,
+      "extra_data": {
+        "entities": [
+          "SWITZERLAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CHF",
+      "numeric_code": "756",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "瑞士法郎",
+      "english_name": "Swiss Franc",
+      "sort_order": 280,
+      "extra_data": {
+        "entities": [
+          "LIECHTENSTEIN",
+          "SWITZERLAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CHW",
+      "numeric_code": "948",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "法郎 (WIR)",
+      "english_name": "WIR Franc",
+      "sort_order": 290,
+      "extra_data": {
+        "entities": [
+          "SWITZERLAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CLF",
+      "numeric_code": "990",
+      "decimal_places": 4,
+      "symbol": "",
+      "chinese_name": "智利（资金）",
+      "english_name": "Unidad de Fomento",
+      "sort_order": 300,
+      "extra_data": {
+        "entities": [
+          "CHILE"
+        ],
+        "minor_unit_raw": "4",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CLP",
+      "numeric_code": "152",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "智利比索",
+      "english_name": "Chilean Peso",
+      "sort_order": 310,
+      "extra_data": {
+        "entities": [
+          "CHILE"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CNY",
+      "numeric_code": "156",
+      "decimal_places": 2,
+      "symbol": "¥",
+      "chinese_name": "人民币",
+      "english_name": "Yuan Renminbi",
+      "sort_order": 320,
+      "extra_data": {
+        "entities": [
+          "CHINA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "COP",
+      "numeric_code": "170",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "哥伦比亚比索",
+      "english_name": "Colombian Peso",
+      "sort_order": 330,
+      "extra_data": {
+        "entities": [
+          "COLOMBIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "COU",
+      "numeric_code": "970",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "哥伦比亚币",
+      "english_name": "Unidad de Valor Real",
+      "sort_order": 340,
+      "extra_data": {
+        "entities": [
+          "COLOMBIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CRC",
+      "numeric_code": "188",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "哥斯达黎加科朗",
+      "english_name": "Costa Rican Colon",
+      "sort_order": 350,
+      "extra_data": {
+        "entities": [
+          "COSTA RICA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CUP",
+      "numeric_code": "192",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "古巴比索",
+      "english_name": "Cuban Peso",
+      "sort_order": 360,
+      "extra_data": {
+        "entities": [
+          "CUBA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CVE",
+      "numeric_code": "132",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "佛得角埃斯库多",
+      "english_name": "Cabo Verde Escudo",
+      "sort_order": 370,
+      "extra_data": {
+        "entities": [
+          "CABO VERDE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "CZK",
+      "numeric_code": "203",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "捷克克朗",
+      "english_name": "Czech Koruna",
+      "sort_order": 380,
+      "extra_data": {
+        "entities": [
+          "CZECHIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "DJF",
+      "numeric_code": "262",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "吉布提法郎",
+      "english_name": "Djibouti Franc",
+      "sort_order": 390,
+      "extra_data": {
+        "entities": [
+          "DJIBOUTI"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "DKK",
+      "numeric_code": "208",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "丹麦克朗",
+      "english_name": "Danish Krone",
+      "sort_order": 400,
+      "extra_data": {
+        "entities": [
+          "DENMARK",
+          "FAROE ISLANDS (THE)",
+          "GREENLAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "DOP",
+      "numeric_code": "214",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "多米尼加比索",
+      "english_name": "Dominican Peso",
+      "sort_order": 410,
+      "extra_data": {
+        "entities": [
+          "DOMINICAN REPUBLIC (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "DZD",
+      "numeric_code": "012",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "阿尔及利亚第纳尔",
+      "english_name": "Algerian Dinar",
+      "sort_order": 420,
+      "extra_data": {
+        "entities": [
+          "ALGERIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "EGP",
+      "numeric_code": "818",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "埃及镑",
+      "english_name": "Egyptian Pound",
+      "sort_order": 430,
+      "extra_data": {
+        "entities": [
+          "EGYPT"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ERN",
+      "numeric_code": "232",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "厄立特里亚纳克法",
+      "english_name": "Nakfa",
+      "sort_order": 440,
+      "extra_data": {
+        "entities": [
+          "ERITREA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ETB",
+      "numeric_code": "230",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "埃塞俄比亚比尔",
+      "english_name": "Ethiopian Birr",
+      "sort_order": 450,
+      "extra_data": {
+        "entities": [
+          "ETHIOPIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "EUR",
+      "numeric_code": "978",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "欧元",
+      "english_name": "Euro",
+      "sort_order": 460,
+      "extra_data": {
+        "entities": [
+          "ANDORRA",
+          "AUSTRIA",
+          "BELGIUM",
+          "BULGARIA",
+          "CROATIA",
+          "CYPRUS",
+          "ESTONIA",
+          "EUROPEAN UNION",
+          "FINLAND",
+          "FRANCE",
+          "FRENCH GUIANA",
+          "FRENCH SOUTHERN TERRITORIES (THE)",
+          "GERMANY",
+          "GREECE",
+          "GUADELOUPE",
+          "HOLY SEE (THE)",
+          "IRELAND",
+          "ITALY",
+          "LATVIA",
+          "LITHUANIA",
+          "LUXEMBOURG",
+          "MALTA",
+          "MARTINIQUE",
+          "MAYOTTE",
+          "MONACO",
+          "MONTENEGRO",
+          "NETHERLANDS (THE)",
+          "PORTUGAL",
+          "RÉUNION",
+          "SAINT BARTHÉLEMY",
+          "SAINT MARTIN (FRENCH PART)",
+          "SAINT PIERRE AND MIQUELON",
+          "SAN MARINO",
+          "SLOVAKIA",
+          "SLOVENIA",
+          "SPAIN",
+          "ÅLAND ISLANDS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "FJD",
+      "numeric_code": "242",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "斐济元",
+      "english_name": "Fiji Dollar",
+      "sort_order": 470,
+      "extra_data": {
+        "entities": [
+          "FIJI"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "FKP",
+      "numeric_code": "238",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "福克兰群岛镑",
+      "english_name": "Falkland Islands Pound",
+      "sort_order": 480,
+      "extra_data": {
+        "entities": [
+          "FALKLAND ISLANDS (THE) [MALVINAS]"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GBP",
+      "numeric_code": "826",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "英镑",
+      "english_name": "Pound Sterling",
+      "sort_order": 490,
+      "extra_data": {
+        "entities": [
+          "GUERNSEY",
+          "ISLE OF MAN",
+          "JERSEY",
+          "UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GEL",
+      "numeric_code": "981",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "格鲁吉亚拉里",
+      "english_name": "Lari",
+      "sort_order": 500,
+      "extra_data": {
+        "entities": [
+          "GEORGIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GHS",
+      "numeric_code": "936",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "加纳塞地",
+      "english_name": "Ghana Cedi",
+      "sort_order": 510,
+      "extra_data": {
+        "entities": [
+          "GHANA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GIP",
+      "numeric_code": "292",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "直布罗陀镑",
+      "english_name": "Gibraltar Pound",
+      "sort_order": 520,
+      "extra_data": {
+        "entities": [
+          "GIBRALTAR"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GMD",
+      "numeric_code": "270",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "冈比亚达拉西",
+      "english_name": "Dalasi",
+      "sort_order": 530,
+      "extra_data": {
+        "entities": [
+          "GAMBIA (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GNF",
+      "numeric_code": "324",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "几内亚法郎",
+      "english_name": "Guinean Franc",
+      "sort_order": 540,
+      "extra_data": {
+        "entities": [
+          "GUINEA"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GTQ",
+      "numeric_code": "320",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "危地马拉格查尔",
+      "english_name": "Quetzal",
+      "sort_order": 550,
+      "extra_data": {
+        "entities": [
+          "GUATEMALA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "GYD",
+      "numeric_code": "328",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "圭亚那元",
+      "english_name": "Guyana Dollar",
+      "sort_order": 560,
+      "extra_data": {
+        "entities": [
+          "GUYANA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "HKD",
+      "numeric_code": "344",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "港元",
+      "english_name": "Hong Kong Dollar",
+      "sort_order": 570,
+      "extra_data": {
+        "entities": [
+          "HONG KONG"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "HNL",
+      "numeric_code": "340",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "洪都拉斯伦皮拉",
+      "english_name": "Lempira",
+      "sort_order": 580,
+      "extra_data": {
+        "entities": [
+          "HONDURAS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "HTG",
+      "numeric_code": "332",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "海地古德",
+      "english_name": "Gourde",
+      "sort_order": 590,
+      "extra_data": {
+        "entities": [
+          "HAITI"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "HUF",
+      "numeric_code": "348",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "匈牙利福林",
+      "english_name": "Forint",
+      "sort_order": 600,
+      "extra_data": {
+        "entities": [
+          "HUNGARY"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "IDR",
+      "numeric_code": "360",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "印度尼西亚卢比",
+      "english_name": "Rupiah",
+      "sort_order": 610,
+      "extra_data": {
+        "entities": [
+          "INDONESIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ILS",
+      "numeric_code": "376",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "以色列新谢克尔",
+      "english_name": "New Israeli Sheqel",
+      "sort_order": 620,
+      "extra_data": {
+        "entities": [
+          "ISRAEL"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "INR",
+      "numeric_code": "356",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "印度卢比",
+      "english_name": "Indian Rupee",
+      "sort_order": 630,
+      "extra_data": {
+        "entities": [
+          "BHUTAN",
+          "INDIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "IQD",
+      "numeric_code": "368",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "伊拉克第纳尔",
+      "english_name": "Iraqi Dinar",
+      "sort_order": 640,
+      "extra_data": {
+        "entities": [
+          "IRAQ"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "IRR",
+      "numeric_code": "364",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "伊朗里亚尔",
+      "english_name": "Iranian Rial",
+      "sort_order": 650,
+      "extra_data": {
+        "entities": [
+          "IRAN (ISLAMIC REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ISK",
+      "numeric_code": "352",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "冰岛克朗",
+      "english_name": "Iceland Krona",
+      "sort_order": 660,
+      "extra_data": {
+        "entities": [
+          "ICELAND"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "JMD",
+      "numeric_code": "388",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "牙买加元",
+      "english_name": "Jamaican Dollar",
+      "sort_order": 670,
+      "extra_data": {
+        "entities": [
+          "JAMAICA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "JOD",
+      "numeric_code": "400",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "约旦第纳尔",
+      "english_name": "Jordanian Dinar",
+      "sort_order": 680,
+      "extra_data": {
+        "entities": [
+          "JORDAN"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "JPY",
+      "numeric_code": "392",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "日元",
+      "english_name": "Yen",
+      "sort_order": 690,
+      "extra_data": {
+        "entities": [
+          "JAPAN"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KES",
+      "numeric_code": "404",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "肯尼亚先令",
+      "english_name": "Kenyan Shilling",
+      "sort_order": 700,
+      "extra_data": {
+        "entities": [
+          "KENYA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KGS",
+      "numeric_code": "417",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "吉尔吉斯斯坦索姆",
+      "english_name": "Som",
+      "sort_order": 710,
+      "extra_data": {
+        "entities": [
+          "KYRGYZSTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KHR",
+      "numeric_code": "116",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "柬埔寨瑞尔",
+      "english_name": "Riel",
+      "sort_order": 720,
+      "extra_data": {
+        "entities": [
+          "CAMBODIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KMF",
+      "numeric_code": "174",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "科摩罗法郎",
+      "english_name": "Comorian Franc",
+      "sort_order": 730,
+      "extra_data": {
+        "entities": [
+          "COMOROS (THE)"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KPW",
+      "numeric_code": "408",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "朝鲜元",
+      "english_name": "North Korean Won",
+      "sort_order": 740,
+      "extra_data": {
+        "entities": [
+          "KOREA (THE DEMOCRATIC PEOPLE’S REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KRW",
+      "numeric_code": "410",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "韩元",
+      "english_name": "Won",
+      "sort_order": 750,
+      "extra_data": {
+        "entities": [
+          "KOREA (THE REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KWD",
+      "numeric_code": "414",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "科威特第纳尔",
+      "english_name": "Kuwaiti Dinar",
+      "sort_order": 760,
+      "extra_data": {
+        "entities": [
+          "KUWAIT"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KYD",
+      "numeric_code": "136",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "开曼元",
+      "english_name": "Cayman Islands Dollar",
+      "sort_order": 770,
+      "extra_data": {
+        "entities": [
+          "CAYMAN ISLANDS (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "KZT",
+      "numeric_code": "398",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "哈萨克斯坦坚戈",
+      "english_name": "Tenge",
+      "sort_order": 780,
+      "extra_data": {
+        "entities": [
+          "KAZAKHSTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LAK",
+      "numeric_code": "418",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "老挝基普",
+      "english_name": "Lao Kip",
+      "sort_order": 790,
+      "extra_data": {
+        "entities": [
+          "LAO PEOPLE’S DEMOCRATIC REPUBLIC (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LBP",
+      "numeric_code": "422",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "黎巴嫩镑",
+      "english_name": "Lebanese Pound",
+      "sort_order": 800,
+      "extra_data": {
+        "entities": [
+          "LEBANON"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LKR",
+      "numeric_code": "144",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "斯里兰卡卢比",
+      "english_name": "Sri Lanka Rupee",
+      "sort_order": 810,
+      "extra_data": {
+        "entities": [
+          "SRI LANKA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LRD",
+      "numeric_code": "430",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "利比里亚元",
+      "english_name": "Liberian Dollar",
+      "sort_order": 820,
+      "extra_data": {
+        "entities": [
+          "LIBERIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LSL",
+      "numeric_code": "426",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "莱索托洛蒂",
+      "english_name": "Loti",
+      "sort_order": 830,
+      "extra_data": {
+        "entities": [
+          "LESOTHO"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "LYD",
+      "numeric_code": "434",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "利比亚第纳尔",
+      "english_name": "Libyan Dinar",
+      "sort_order": 840,
+      "extra_data": {
+        "entities": [
+          "LIBYA"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MAD",
+      "numeric_code": "504",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "摩洛哥迪拉姆",
+      "english_name": "Moroccan Dirham",
+      "sort_order": 850,
+      "extra_data": {
+        "entities": [
+          "MOROCCO",
+          "WESTERN SAHARA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MDL",
+      "numeric_code": "498",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "摩尔多瓦列伊",
+      "english_name": "Moldovan Leu",
+      "sort_order": 860,
+      "extra_data": {
+        "entities": [
+          "MOLDOVA (THE REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MGA",
+      "numeric_code": "969",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "马达加斯加阿里亚里",
+      "english_name": "Malagasy Ariary",
+      "sort_order": 870,
+      "extra_data": {
+        "entities": [
+          "MADAGASCAR"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MKD",
+      "numeric_code": "807",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "马其顿第纳尔",
+      "english_name": "Denar",
+      "sort_order": 880,
+      "extra_data": {
+        "entities": [
+          "NORTH MACEDONIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MMK",
+      "numeric_code": "104",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "缅甸元",
+      "english_name": "Kyat",
+      "sort_order": 890,
+      "extra_data": {
+        "entities": [
+          "MYANMAR"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MNT",
+      "numeric_code": "496",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "蒙古图格里克",
+      "english_name": "Tugrik",
+      "sort_order": 900,
+      "extra_data": {
+        "entities": [
+          "MONGOLIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MOP",
+      "numeric_code": "446",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "澳门币",
+      "english_name": "Pataca",
+      "sort_order": 910,
+      "extra_data": {
+        "entities": [
+          "MACAO"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MRU",
+      "numeric_code": "929",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "毛里塔尼亚乌吉亚",
+      "english_name": "Ouguiya",
+      "sort_order": 920,
+      "extra_data": {
+        "entities": [
+          "MAURITANIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MUR",
+      "numeric_code": "480",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "毛里求斯卢比",
+      "english_name": "Mauritius Rupee",
+      "sort_order": 930,
+      "extra_data": {
+        "entities": [
+          "MAURITIUS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MVR",
+      "numeric_code": "462",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "马尔代夫卢菲亚",
+      "english_name": "Rufiyaa",
+      "sort_order": 940,
+      "extra_data": {
+        "entities": [
+          "MALDIVES"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MWK",
+      "numeric_code": "454",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "马拉维克瓦查",
+      "english_name": "Malawi Kwacha",
+      "sort_order": 950,
+      "extra_data": {
+        "entities": [
+          "MALAWI"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MXN",
+      "numeric_code": "484",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "墨西哥比索",
+      "english_name": "Mexican Peso",
+      "sort_order": 960,
+      "extra_data": {
+        "entities": [
+          "MEXICO"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MXV",
+      "numeric_code": "979",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "墨西哥（资金）",
+      "english_name": "Mexican Unidad de Inversion (UDI)",
+      "sort_order": 970,
+      "extra_data": {
+        "entities": [
+          "MEXICO"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MYR",
+      "numeric_code": "458",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "马来西亚林吉特",
+      "english_name": "Malaysian Ringgit",
+      "sort_order": 980,
+      "extra_data": {
+        "entities": [
+          "MALAYSIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "MZN",
+      "numeric_code": "943",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "莫桑比克美提卡",
+      "english_name": "Mozambique Metical",
+      "sort_order": 990,
+      "extra_data": {
+        "entities": [
+          "MOZAMBIQUE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NAD",
+      "numeric_code": "516",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "纳米比亚元",
+      "english_name": "Namibia Dollar",
+      "sort_order": 1000,
+      "extra_data": {
+        "entities": [
+          "NAMIBIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NGN",
+      "numeric_code": "566",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "尼日利亚奈拉",
+      "english_name": "Naira",
+      "sort_order": 1010,
+      "extra_data": {
+        "entities": [
+          "NIGERIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NIO",
+      "numeric_code": "558",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "尼加拉瓜科多巴",
+      "english_name": "Cordoba Oro",
+      "sort_order": 1020,
+      "extra_data": {
+        "entities": [
+          "NICARAGUA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NOK",
+      "numeric_code": "578",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "挪威克朗",
+      "english_name": "Norwegian Krone",
+      "sort_order": 1030,
+      "extra_data": {
+        "entities": [
+          "BOUVET ISLAND",
+          "NORWAY",
+          "SVALBARD AND JAN MAYEN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NPR",
+      "numeric_code": "524",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "尼泊尔卢比",
+      "english_name": "Nepalese Rupee",
+      "sort_order": 1040,
+      "extra_data": {
+        "entities": [
+          "NEPAL"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "NZD",
+      "numeric_code": "554",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "新西兰元",
+      "english_name": "New Zealand Dollar",
+      "sort_order": 1050,
+      "extra_data": {
+        "entities": [
+          "COOK ISLANDS (THE)",
+          "NEW ZEALAND",
+          "NIUE",
+          "PITCAIRN",
+          "TOKELAU"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "OMR",
+      "numeric_code": "512",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "阿曼里亚尔",
+      "english_name": "Rial Omani",
+      "sort_order": 1060,
+      "extra_data": {
+        "entities": [
+          "OMAN"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PAB",
+      "numeric_code": "590",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴拿马巴波亚",
+      "english_name": "Balboa",
+      "sort_order": 1070,
+      "extra_data": {
+        "entities": [
+          "PANAMA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PEN",
+      "numeric_code": "604",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "秘鲁索尔",
+      "english_name": "Sol",
+      "sort_order": 1080,
+      "extra_data": {
+        "entities": [
+          "PERU"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PGK",
+      "numeric_code": "598",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴布亚新几内亚基那",
+      "english_name": "Kina",
+      "sort_order": 1090,
+      "extra_data": {
+        "entities": [
+          "PAPUA NEW GUINEA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PHP",
+      "numeric_code": "608",
+      "decimal_places": 2,
+      "symbol": "PHP",
+      "chinese_name": "菲律宾比索",
+      "english_name": "Philippine Peso",
+      "sort_order": 1100,
+      "extra_data": {
+        "entities": [
+          "PHILIPPINES (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PKR",
+      "numeric_code": "586",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "巴基斯坦卢比",
+      "english_name": "Pakistan Rupee",
+      "sort_order": 1110,
+      "extra_data": {
+        "entities": [
+          "PAKISTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PLN",
+      "numeric_code": "985",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "波兰兹罗提",
+      "english_name": "Zloty",
+      "sort_order": 1120,
+      "extra_data": {
+        "entities": [
+          "POLAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "PYG",
+      "numeric_code": "600",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "巴拉圭瓜拉尼",
+      "english_name": "Guarani",
+      "sort_order": 1130,
+      "extra_data": {
+        "entities": [
+          "PARAGUAY"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "QAR",
+      "numeric_code": "634",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "卡塔尔里亚尔",
+      "english_name": "Qatari Rial",
+      "sort_order": 1140,
+      "extra_data": {
+        "entities": [
+          "QATAR"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "RON",
+      "numeric_code": "946",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "罗马尼亚列伊",
+      "english_name": "Romanian Leu",
+      "sort_order": 1150,
+      "extra_data": {
+        "entities": [
+          "ROMANIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "RSD",
+      "numeric_code": "941",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "塞尔维亚第纳尔",
+      "english_name": "Serbian Dinar",
+      "sort_order": 1160,
+      "extra_data": {
+        "entities": [
+          "SERBIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "RUB",
+      "numeric_code": "643",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "俄罗斯卢布",
+      "english_name": "Russian Ruble",
+      "sort_order": 1170,
+      "extra_data": {
+        "entities": [
+          "RUSSIAN FEDERATION (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "RWF",
+      "numeric_code": "646",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "卢旺达法郎",
+      "english_name": "Rwanda Franc",
+      "sort_order": 1180,
+      "extra_data": {
+        "entities": [
+          "RWANDA"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SAR",
+      "numeric_code": "682",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "沙特里亚尔",
+      "english_name": "Saudi Riyal",
+      "sort_order": 1190,
+      "extra_data": {
+        "entities": [
+          "SAUDI ARABIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SBD",
+      "numeric_code": "090",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "所罗门群岛元",
+      "english_name": "Solomon Islands Dollar",
+      "sort_order": 1200,
+      "extra_data": {
+        "entities": [
+          "SOLOMON ISLANDS"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SCR",
+      "numeric_code": "690",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "塞舌尔卢比",
+      "english_name": "Seychelles Rupee",
+      "sort_order": 1210,
+      "extra_data": {
+        "entities": [
+          "SEYCHELLES"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SDG",
+      "numeric_code": "938",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "苏丹镑",
+      "english_name": "Sudanese Pound",
+      "sort_order": 1220,
+      "extra_data": {
+        "entities": [
+          "SUDAN (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SEK",
+      "numeric_code": "752",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "瑞典克朗",
+      "english_name": "Swedish Krona",
+      "sort_order": 1230,
+      "extra_data": {
+        "entities": [
+          "SWEDEN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SGD",
+      "numeric_code": "702",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "新加坡元",
+      "english_name": "Singapore Dollar",
+      "sort_order": 1240,
+      "extra_data": {
+        "entities": [
+          "SINGAPORE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SHP",
+      "numeric_code": "654",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "圣赫勒拿群岛磅",
+      "english_name": "Saint Helena Pound",
+      "sort_order": 1250,
+      "extra_data": {
+        "entities": [
+          "SAINT HELENA, ASCENSION AND TRISTAN DA CUNHA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SLE",
+      "numeric_code": "925",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "塞拉利昂新利昂",
+      "english_name": "Leone",
+      "sort_order": 1260,
+      "extra_data": {
+        "entities": [
+          "SIERRA LEONE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SOS",
+      "numeric_code": "706",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "索马里先令",
+      "english_name": "Somali Shilling",
+      "sort_order": 1270,
+      "extra_data": {
+        "entities": [
+          "SOMALIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SRD",
+      "numeric_code": "968",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "苏里南元",
+      "english_name": "Surinam Dollar",
+      "sort_order": 1280,
+      "extra_data": {
+        "entities": [
+          "SURINAME"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SSP",
+      "numeric_code": "728",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "南苏丹镑",
+      "english_name": "South Sudanese Pound",
+      "sort_order": 1290,
+      "extra_data": {
+        "entities": [
+          "SOUTH SUDAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "STN",
+      "numeric_code": "930",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "圣多美和普林西比多布拉",
+      "english_name": "Dobra",
+      "sort_order": 1300,
+      "extra_data": {
+        "entities": [
+          "SAO TOME AND PRINCIPE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SVC",
+      "numeric_code": "222",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "萨尔瓦多科朗",
+      "english_name": "El Salvador Colon",
+      "sort_order": 1310,
+      "extra_data": {
+        "entities": [
+          "EL SALVADOR"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SYP",
+      "numeric_code": "760",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "叙利亚镑",
+      "english_name": "Syrian Pound",
+      "sort_order": 1320,
+      "extra_data": {
+        "entities": [
+          "SYRIAN ARAB REPUBLIC"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "SZL",
+      "numeric_code": "748",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "斯威士兰里兰吉尼",
+      "english_name": "Lilangeni",
+      "sort_order": 1330,
+      "extra_data": {
+        "entities": [
+          "ESWATINI"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "THB",
+      "numeric_code": "764",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "泰铢",
+      "english_name": "Baht",
+      "sort_order": 1340,
+      "extra_data": {
+        "entities": [
+          "THAILAND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TJS",
+      "numeric_code": "972",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "塔吉克斯坦索莫尼",
+      "english_name": "Somoni",
+      "sort_order": 1350,
+      "extra_data": {
+        "entities": [
+          "TAJIKISTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TMT",
+      "numeric_code": "934",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "土库曼斯坦马纳特",
+      "english_name": "Turkmenistan New Manat",
+      "sort_order": 1360,
+      "extra_data": {
+        "entities": [
+          "TURKMENISTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TND",
+      "numeric_code": "788",
+      "decimal_places": 3,
+      "symbol": "",
+      "chinese_name": "突尼斯第纳尔",
+      "english_name": "Tunisian Dinar",
+      "sort_order": 1370,
+      "extra_data": {
+        "entities": [
+          "TUNISIA"
+        ],
+        "minor_unit_raw": "3",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TOP",
+      "numeric_code": "776",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "汤加潘加",
+      "english_name": "Pa’anga",
+      "sort_order": 1380,
+      "extra_data": {
+        "entities": [
+          "TONGA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TRY",
+      "numeric_code": "949",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "土耳其里拉",
+      "english_name": "Turkish Lira",
+      "sort_order": 1390,
+      "extra_data": {
+        "entities": [
+          "TÜRKİYE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TTD",
+      "numeric_code": "780",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "特立尼达和多巴哥元",
+      "english_name": "Trinidad and Tobago Dollar",
+      "sort_order": 1400,
+      "extra_data": {
+        "entities": [
+          "TRINIDAD AND TOBAGO"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TWD",
+      "numeric_code": "901",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "新台币",
+      "english_name": "New Taiwan Dollar",
+      "sort_order": 1410,
+      "extra_data": {
+        "entities": [
+          "TAIWAN (PROVINCE OF CHINA)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "TZS",
+      "numeric_code": "834",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "坦桑尼亚先令",
+      "english_name": "Tanzanian Shilling",
+      "sort_order": 1420,
+      "extra_data": {
+        "entities": [
+          "TANZANIA, UNITED REPUBLIC OF"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UAH",
+      "numeric_code": "980",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "乌克兰格里夫纳",
+      "english_name": "Hryvnia",
+      "sort_order": 1430,
+      "extra_data": {
+        "entities": [
+          "UKRAINE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UGX",
+      "numeric_code": "800",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "乌干达先令",
+      "english_name": "Uganda Shilling",
+      "sort_order": 1440,
+      "extra_data": {
+        "entities": [
+          "UGANDA"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "USD",
+      "numeric_code": "840",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "美元",
+      "english_name": "US Dollar",
+      "sort_order": 1450,
+      "extra_data": {
+        "entities": [
+          "AMERICAN SAMOA",
+          "BONAIRE, SINT EUSTATIUS AND SABA",
+          "BRITISH INDIAN OCEAN TERRITORY (THE)",
+          "ECUADOR",
+          "EL SALVADOR",
+          "GUAM",
+          "HAITI",
+          "MARSHALL ISLANDS (THE)",
+          "MICRONESIA (FEDERATED STATES OF)",
+          "NORTHERN MARIANA ISLANDS (THE)",
+          "PALAU",
+          "PANAMA",
+          "PUERTO RICO",
+          "TIMOR-LESTE",
+          "TURKS AND CAICOS ISLANDS (THE)",
+          "UNITED STATES MINOR OUTLYING ISLANDS (THE)",
+          "UNITED STATES OF AMERICA (THE)",
+          "VIRGIN ISLANDS (BRITISH)",
+          "VIRGIN ISLANDS (U.S.)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "USN",
+      "numeric_code": "997",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "美元（次日）",
+      "english_name": "US Dollar (Next day)",
+      "sort_order": 1460,
+      "extra_data": {
+        "entities": [
+          "UNITED STATES OF AMERICA (THE)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UYI",
+      "numeric_code": "940",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "乌拉圭比索（索引单位）",
+      "english_name": "Uruguay Peso en Unidades Indexadas (UI)",
+      "sort_order": 1470,
+      "extra_data": {
+        "entities": [
+          "URUGUAY"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UYU",
+      "numeric_code": "858",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "乌拉圭比索",
+      "english_name": "Peso Uruguayo",
+      "sort_order": 1480,
+      "extra_data": {
+        "entities": [
+          "URUGUAY"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UYW",
+      "numeric_code": "927",
+      "decimal_places": 4,
+      "symbol": "",
+      "chinese_name": "Unidad Previsional",
+      "english_name": "Unidad Previsional",
+      "sort_order": 1490,
+      "extra_data": {
+        "entities": [
+          "URUGUAY"
+        ],
+        "minor_unit_raw": "4",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "UZS",
+      "numeric_code": "860",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "乌兹别克斯坦苏姆",
+      "english_name": "Uzbekistan Sum",
+      "sort_order": 1500,
+      "extra_data": {
+        "entities": [
+          "UZBEKISTAN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "VED",
+      "numeric_code": "926",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "Bolívar Soberano",
+      "english_name": "Bolívar Soberano",
+      "sort_order": 1510,
+      "extra_data": {
+        "entities": [
+          "VENEZUELA (BOLIVARIAN REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "VES",
+      "numeric_code": "928",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "委内瑞拉玻利瓦尔",
+      "english_name": "Bolívar Soberano",
+      "sort_order": 1520,
+      "extra_data": {
+        "entities": [
+          "VENEZUELA (BOLIVARIAN REPUBLIC OF)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "VND",
+      "numeric_code": "704",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "越南盾",
+      "english_name": "Dong",
+      "sort_order": 1530,
+      "extra_data": {
+        "entities": [
+          "VIET NAM"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "VUV",
+      "numeric_code": "548",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "瓦努阿图瓦图",
+      "english_name": "Vatu",
+      "sort_order": 1540,
+      "extra_data": {
+        "entities": [
+          "VANUATU"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "WST",
+      "numeric_code": "882",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "萨摩亚塔拉",
+      "english_name": "Tala",
+      "sort_order": 1550,
+      "extra_data": {
+        "entities": [
+          "SAMOA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XAD",
+      "numeric_code": "396",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "Arab Accounting Dinar",
+      "english_name": "Arab Accounting Dinar",
+      "sort_order": 1560,
+      "extra_data": {
+        "entities": [
+          "ARAB MONETARY FUND"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XAF",
+      "numeric_code": "950",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "中非法郎",
+      "english_name": "CFA Franc BEAC",
+      "sort_order": 1570,
+      "extra_data": {
+        "entities": [
+          "CAMEROON",
+          "CENTRAL AFRICAN REPUBLIC (THE)",
+          "CHAD",
+          "CONGO (THE)",
+          "EQUATORIAL GUINEA",
+          "GABON"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XAG",
+      "numeric_code": "961",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "银",
+      "english_name": "Silver",
+      "sort_order": 1580,
+      "extra_data": {
+        "entities": [
+          "ZZ11_Silver"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XAU",
+      "numeric_code": "959",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "黄金",
+      "english_name": "Gold",
+      "sort_order": 1590,
+      "extra_data": {
+        "entities": [
+          "ZZ08_Gold"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XBA",
+      "numeric_code": "955",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "欧洲复合单位",
+      "english_name": "Bond Markets Unit European Composite Unit (EURCO)",
+      "sort_order": 1600,
+      "extra_data": {
+        "entities": [
+          "ZZ01_Bond Markets Unit European_EURCO"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XBB",
+      "numeric_code": "956",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "欧洲货币联盟",
+      "english_name": "Bond Markets Unit European Monetary Unit (E.M.U.-6)",
+      "sort_order": 1610,
+      "extra_data": {
+        "entities": [
+          "ZZ02_Bond Markets Unit European_EMU-6"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XBC",
+      "numeric_code": "957",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "欧洲计算单位 (XBC)",
+      "english_name": "Bond Markets Unit European Unit of Account 9 (E.U.A.-9)",
+      "sort_order": 1620,
+      "extra_data": {
+        "entities": [
+          "ZZ03_Bond Markets Unit European_EUA-9"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XBD",
+      "numeric_code": "958",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "欧洲计算单位 (XBD)",
+      "english_name": "Bond Markets Unit European Unit of Account 17 (E.U.A.-17)",
+      "sort_order": 1630,
+      "extra_data": {
+        "entities": [
+          "ZZ04_Bond Markets Unit European_EUA-17"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XCD",
+      "numeric_code": "951",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "东加勒比元",
+      "english_name": "East Caribbean Dollar",
+      "sort_order": 1640,
+      "extra_data": {
+        "entities": [
+          "ANGUILLA",
+          "ANTIGUA AND BARBUDA",
+          "DOMINICA",
+          "GRENADA",
+          "MONTSERRAT",
+          "SAINT KITTS AND NEVIS",
+          "SAINT LUCIA",
+          "SAINT VINCENT AND THE GRENADINES"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XCG",
+      "numeric_code": "532",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "加勒比盾",
+      "english_name": "Caribbean Guilder",
+      "sort_order": 1650,
+      "extra_data": {
+        "entities": [
+          "CURAÇAO",
+          "SINT MAARTEN (DUTCH PART)"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XDR",
+      "numeric_code": "960",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "特别提款权",
+      "english_name": "SDR (Special Drawing Right)",
+      "sort_order": 1660,
+      "extra_data": {
+        "entities": [
+          "INTERNATIONAL MONETARY FUND (IMF)"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XOF",
+      "numeric_code": "952",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "西非法郎",
+      "english_name": "CFA Franc BCEAO",
+      "sort_order": 1670,
+      "extra_data": {
+        "entities": [
+          "BENIN",
+          "BURKINA FASO",
+          "CÔTE D'IVOIRE",
+          "GUINEA-BISSAU",
+          "MALI",
+          "NIGER (THE)",
+          "SENEGAL",
+          "TOGO"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XPD",
+      "numeric_code": "964",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "钯",
+      "english_name": "Palladium",
+      "sort_order": 1680,
+      "extra_data": {
+        "entities": [
+          "ZZ09_Palladium"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XPF",
+      "numeric_code": "953",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "太平洋法郎",
+      "english_name": "CFP Franc",
+      "sort_order": 1690,
+      "extra_data": {
+        "entities": [
+          "FRENCH POLYNESIA",
+          "NEW CALEDONIA",
+          "WALLIS AND FUTUNA"
+        ],
+        "minor_unit_raw": "0",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XPT",
+      "numeric_code": "962",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "铂",
+      "english_name": "Platinum",
+      "sort_order": 1700,
+      "extra_data": {
+        "entities": [
+          "ZZ10_Platinum"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XSU",
+      "numeric_code": "994",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "Sucre",
+      "english_name": "Sucre",
+      "sort_order": 1710,
+      "extra_data": {
+        "entities": [
+          "SISTEMA UNITARIO DE COMPENSACION REGIONAL DE PAGOS \"SUCRE\""
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XTS",
+      "numeric_code": "963",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "测试货币代码",
+      "english_name": "Codes specifically reserved for testing purposes",
+      "sort_order": 1720,
+      "extra_data": {
+        "entities": [
+          "ZZ06_Testing_Code"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XUA",
+      "numeric_code": "965",
+      "decimal_places": 0,
+      "symbol": "",
+      "chinese_name": "ADB Unit of Account",
+      "english_name": "ADB Unit of Account",
+      "sort_order": 1730,
+      "extra_data": {
+        "entities": [
+          "MEMBER COUNTRIES OF THE AFRICAN DEVELOPMENT BANK GROUP"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "XXX",
+      "numeric_code": "999",
+      "decimal_places": 0,
+      "symbol": "XXX",
+      "chinese_name": "未知货币",
+      "english_name": "The codes assigned for transactions where no currency is involved",
+      "sort_order": 1740,
+      "extra_data": {
+        "entities": [
+          "ZZ07_No_Currency"
+        ],
+        "minor_unit_raw": "N.A.",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "YER",
+      "numeric_code": "886",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "也门里亚尔",
+      "english_name": "Yemeni Rial",
+      "sort_order": 1750,
+      "extra_data": {
+        "entities": [
+          "YEMEN"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ZAR",
+      "numeric_code": "710",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "南非兰特",
+      "english_name": "Rand",
+      "sort_order": 1760,
+      "extra_data": {
+        "entities": [
+          "LESOTHO",
+          "NAMIBIA",
+          "SOUTH AFRICA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ZMW",
+      "numeric_code": "967",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "赞比亚克瓦查",
+      "english_name": "Zambian Kwacha",
+      "sort_order": 1770,
+      "extra_data": {
+        "entities": [
+          "ZAMBIA"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    },
+    {
+      "code": "ZWG",
+      "numeric_code": "924",
+      "decimal_places": 2,
+      "symbol": "",
+      "chinese_name": "津巴布韦金元",
+      "english_name": "Zimbabwe Gold",
+      "sort_order": 1780,
+      "extra_data": {
+        "entities": [
+          "ZIMBABWE"
+        ],
+        "minor_unit_raw": "2",
+        "name_source": "Unicode CLDR 48.2"
+      }
+    }
+  ]
+}

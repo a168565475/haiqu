@@ -1,0 +1,24 @@
+@use './tokens' as token;
+@use './sample-controls' as sample;
+
+// 材料填写与仓库核对共用同一个桌面工作区节奏。
+@mixin frame {
+  @include sample.controls;
+  display: flex;
+  height: calc(100dvh - 64px);
+  flex-direction: column;
+  color: token.$crm-text-primary;
+  background: token.$crm-color-page;
+}
+
+@mixin footer {
+  display: flex;
+  height: 76px;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 28px;
+  background: token.$crm-color-surface;
+
+  :deep(.el-button) { height: 44px; flex: none; border-radius: 4px; font-size: 14px; }
+}

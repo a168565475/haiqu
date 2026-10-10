@@ -1,0 +1,86 @@
+// Primitive values are the source palette for the approved ERP theme.
+// Keep future theme palettes in their own files; do not make disabled themes
+// look selectable by adding fallback values here.
+
+$color-page: #f6f3ec;
+$color-surface: #fcfbf7;
+$color-subtle: #f0eadf;
+$color-disabled: #e8e1d5;
+$color-hover: #fff6ea;
+$color-selected: #fff4e6;
+$color-text-primary: #1f1d18;
+$color-text-regular: #4d4c48;
+$color-text-secondary: #6f6a61;
+$color-text-muted: #968f84;
+$color-text-inverse: #faf9f5;
+$color-border: #ddd6c9;
+$color-border-strong: #c9c0b2;
+$color-brand: #c84e28;
+$color-brand-hover: #b94320;
+$color-brand-pressed: #9f351a;
+$color-brand-light-3: #d87a5b;
+$color-brand-light-5: #e3a08a;
+$color-brand-light-7: #efc9bc;
+$color-brand-light-8: #f5ddd5;
+$color-brand-tag: #c96442;
+$color-focus: #3898ec;
+$color-success: #4f7d4b;
+$color-warning: #b8781e;
+$color-danger: #b53333;
+$color-info: #3898ec;
+
+$font-body: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+$font-display: 'Noto Serif SC', 'STSong', serif;
+
+$space-1: 4px;
+$space-2: 8px;
+$space-3: 12px;
+$space-4: 16px;
+$space-5: 20px;
+$space-6: 24px;
+$space-7: 28px;
+
+$radius-control: 5px;
+$radius-card: 5px;
+$radius-pill: 999px;
+
+@mixin emit-css-properties() {
+  --erp-primitive-color-page: #{$color-page};
+  --erp-primitive-color-surface: #{$color-surface};
+  --erp-primitive-color-subtle: #{$color-subtle};
+  --erp-primitive-color-disabled: #{$color-disabled};
+  --erp-primitive-color-hover: #{$color-hover};
+  --erp-primitive-color-selected: #{$color-selected};
+  --erp-primitive-color-text-primary: #{$color-text-primary};
+  --erp-primitive-color-text-regular: #{$color-text-regular};
+  --erp-primitive-color-text-secondary: #{$color-text-secondary};
+  --erp-primitive-color-text-muted: #{$color-text-muted};
+  --erp-primitive-color-text-inverse: #{$color-text-inverse};
+  --erp-primitive-color-border: #{$color-border};
+  --erp-primitive-color-border-strong: #{$color-border-strong};
+  --erp-primitive-color-brand: #{$color-brand};
+  --erp-primitive-color-brand-hover: #{$color-brand-hover};
+  --erp-primitive-color-brand-pressed: #{$color-brand-pressed};
+  --erp-primitive-color-brand-light-3: #{$color-brand-light-3};
+  --erp-primitive-color-brand-light-5: #{$color-brand-light-5};
+  --erp-primitive-color-brand-light-7: #{$color-brand-light-7};
+  --erp-primitive-color-brand-light-8: #{$color-brand-light-8};
+  --erp-primitive-color-brand-tag: #{$color-brand-tag};
+  --erp-primitive-color-focus: #{$color-focus};
+  --erp-primitive-color-success: #{$color-success};
+  --erp-primitive-color-warning: #{$color-warning};
+  --erp-primitive-color-danger: #{$color-danger};
+  --erp-primitive-color-info: #{$color-info};
+  --erp-primitive-font-body: #{$font-body};
+  --erp-primitive-font-display: #{$font-display};
+  --erp-primitive-space-1: #{$space-1};
+  --erp-primitive-space-2: #{$space-2};
+  --erp-primitive-space-3: #{$space-3};
+  --erp-primitive-space-4: #{$space-4};
+  --erp-primitive-space-5: #{$space-5};
+  --erp-primitive-space-6: #{$space-6};
+  --erp-primitive-space-7: #{$space-7};
+  --erp-primitive-radius-control: #{$radius-control};
+  --erp-primitive-radius-card: #{$radius-card};
+  --erp-primitive-radius-pill: #{$radius-pill};
+}

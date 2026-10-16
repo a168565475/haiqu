@@ -8,7 +8,7 @@ from apps.core.models import uppercase_code_validator
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
-from apps.files.models import BusinessFile
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inquiries.models import Inquiry
 from apps.organizations.models import Employee
 from apps.quotations.models import QuotationVersion
@@ -165,7 +165,7 @@ class CommunicationCreateSerializer(serializers.ModelSerializer):
         source="business_files",
         many=True,
         required=False,
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
     )
     source_system = serializers.CharField(
         required=False,
@@ -240,6 +240,7 @@ class CommunicationCreateSerializer(serializers.ModelSerializer):
             )
             | Q(sample_links__sample_request__customer_account__in=allowed_customers),
             archived_at__isnull=True,
+            scan_status__in=USABLE_FILE_SCAN_STATUSES,
         ).distinct()
 
     def validate(self, attrs):

@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient, APIRequestFactory, APITestCase
@@ -43,6 +44,7 @@ from ..services import create_bom, update_bom_lines
 PNG_BYTES = b"\x89PNG\r\n\x1a\nBOM image test"
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class BomLineImageApiTests(APITestCase):
     def setUp(self):
         self.media_dir = TemporaryDirectory()
@@ -365,6 +367,21 @@ class BomLineImageApiTests(APITestCase):
         self.assertEqual(content_response.status_code, 200)
         self.assertEqual(content_response["Cache-Control"], "private, max-age=300")
         self.assertEqual(b"".join(content_response.streaming_content), PNG_BYTES)
+
+    @override_settings(FILE_VIRUS_SCAN_ENABLED=False)
+    def test_skipped_image_is_readable_but_pending_failed_and_infected_are_not(self):
+        with patch("apps.files.uploads._clamav_scan", side_effect=AssertionError("扫描不应执行")) as scanner:
+            response = self.post_images([self.upload()])
+            self.assertEqual(response.status_code, 201, response.data)
+            scanner.assert_not_called()
+        image = BomLineImage.objects.get()
+        self.assertEqual(image.business_file.scan_status, FileScanStatus.SKIPPED)
+        result = self.client.get(self.content_url(image))
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(b"".join(result.streaming_content), PNG_BYTES)
+        for state in [FileScanStatus.PENDING, FileScanStatus.FAILED, FileScanStatus.INFECTED]:
+            BusinessFile.objects.filter(pk=image.business_file_id).update(scan_status=state)
+            self.assertEqual(self.client.get(self.content_url(image)).status_code, 404)
 
     def test_write_requires_permission_and_matching_etag(self):
         missing = self.client.post(

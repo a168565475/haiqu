@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework.test import APITestCase
 from apps.files.models import BusinessFile
 from apps.inquiries.models import InquiryFileLink
@@ -12,6 +13,7 @@ from apps.samples.models import SampleRequest
 from . import test_application_api as application_tests
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class SampleApplicationImageTests(APITestCase):
     setUp = application_tests.SampleApplicationApiTests.setUp
     create_customer = application_tests.SampleApplicationApiTests.create_customer
@@ -34,7 +36,7 @@ class SampleApplicationImageTests(APITestCase):
 
     def test_inherits_selected_source_image_and_sample_can_read_it(self):
         inquiry, item = self.create_inquiry_with_item()
-        image = self.image(inquiry)
+        image = self.image(inquiry, scan_status='SKIPPED')
         with TemporaryDirectory() as folder, self.settings(MEDIA_ROOT=folder):
             path = Path(folder) / image.storage_key
             path.parent.mkdir(parents=True)

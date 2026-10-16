@@ -85,6 +85,7 @@ export interface SampleFormContext {
     id: string
     source_inquiry_item_id: string | null
     source_quotation_line_id: string | null
+    product_id?: string | null
     product_name: string
     specification: string
     source_quantity: string
@@ -302,6 +303,7 @@ export interface SampleProduct {
   line_number: number
   source_inquiry_item_id: string | null
   source_quotation_line_id: string | null
+  product_id?: string | null
   category_id: string | null
   category_name: string
   product_name: string

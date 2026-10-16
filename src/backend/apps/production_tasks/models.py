@@ -71,6 +71,8 @@ class ProductionTask(ArchivableModel):
     source_request_key = models.UUIDField(null=True, blank=True, unique=True)
     customer_account = models.ForeignKey(
         "customers.CustomerAccount",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="production_tasks",
     )
@@ -93,6 +95,7 @@ class ProductionTask(ArchivableModel):
         related_name="production_tasks",
     )
     includes_tax = models.BooleanField()
+    tax_rate = models.PositiveSmallIntegerField(null=True, blank=True, choices=[(3, "3%"), (5, "5%"), (7, "7%")])
     order_tolerance_percent = models.DecimalField(
         max_digits=5,
         decimal_places=2,
@@ -176,6 +179,10 @@ class ProductionTask(ArchivableModel):
             ("start_productiontask", "可开始生产任务单"),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(tax_rate__isnull=True) | Q(includes_tax=True, tax_rate__in=[3, 5, 7]),
+                name="prod_task_tax_rate_valid",
+            ),
             models.CheckConstraint(condition=Q(status__in=ProductionTaskStatus.values), name="prod_task_status_valid"),
             models.CheckConstraint(condition=Q(order_source__in=OrderSource.values), name="prod_task_source_valid"),
             models.CheckConstraint(condition=Q(delivery_method__in=DeliveryMethod.values), name="prod_task_delivery_valid"),
@@ -248,6 +255,13 @@ class ProductionTaskProduct(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="production_task_lines",
     )
+    product_category = models.ForeignKey(
+        "reference_data.ProductCategory",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="production_task_line_categories",
+    )
     sales_order_delivery_batch_line = models.ForeignKey(
         "sales_orders.SalesOrderDeliveryBatchLine",
         null=True,
@@ -255,9 +269,9 @@ class ProductionTaskProduct(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="production_task_products",
     )
-    product_number_snapshot = models.CharField(max_length=100)
+    product_number_snapshot = models.CharField(max_length=100, blank=True)
     product_code_snapshot = models.CharField(max_length=100, blank=True)
-    item_number_snapshot = models.CharField(max_length=100)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
     product_name_snapshot = models.CharField(max_length=200)
     specification_snapshot = models.CharField(max_length=300)
     # 销售/BOM 之前允许只记录客户输入的产品信息；这些字段保留原始输入，
@@ -265,6 +279,7 @@ class ProductionTaskProduct(TimeStampedModel):
     customer_product_name_snapshot = models.CharField(max_length=200, blank=True)
     customer_specification_snapshot = models.CharField(max_length=300, blank=True)
     customer_color_snapshot = models.CharField(max_length=200, blank=True)
+    material_snapshot = models.TextField(blank=True)
     image_file = models.ForeignKey(
         "files.BusinessFile",
         null=True,
@@ -295,7 +310,12 @@ class ProductionTaskProduct(TimeStampedModel):
     )
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
     total_amount = models.DecimalField(max_digits=22, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
-    exchange_rate = models.DecimalField(max_digits=20, decimal_places=3, validators=[MinValueValidator(Decimal("0.001"))])
+    exchange_rate = models.DecimalField(max_digits=25, decimal_places=8, validators=[MinValueValidator(Decimal("0.00000001"))])
+    exchange_rate_record = models.ForeignKey(
+        "reference_data.ExchangeRate", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="production_task_products",
+    )
+    exchange_rate_snapshot = models.JSONField(default=dict, blank=True)
     special_requirements = models.TextField(blank=True)
     packaging_method = models.TextField(blank=True)
 
@@ -308,6 +328,10 @@ class ProductionTaskProduct(TimeStampedModel):
             models.CheckConstraint(condition=Q(unit_price__gte=0), name="prod_task_product_price_nonnegative"),
             models.CheckConstraint(condition=Q(total_amount__gte=0), name="prod_task_product_total_nonnegative"),
             models.CheckConstraint(condition=Q(exchange_rate__gt=0), name="prod_task_product_rate_positive"),
+        ]
+        indexes = [
+            models.Index(fields=["sales_order_delivery_batch_line", "id"], name="prod_task_source_line_idx"),
+            models.Index(fields=["product", "id"], name="prod_task_product_idx"),
         ]
 
     def clean(self):

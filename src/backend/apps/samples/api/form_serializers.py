@@ -7,6 +7,7 @@ from apps.core.models import uppercase_code_validator
 from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
+from apps.products.models import ProductInformation, ProductStatus
 from apps.reference_data.models import (
     ProductCategory,
     ProductColor,
@@ -65,6 +66,12 @@ class SampleFormProductSerializer(serializers.Serializer):
     client_key = serializers.RegexField(r"^[A-Za-z0-9_-]{1,64}$")
     source_inquiry_item_id = serializers.UUIDField(required=False, allow_null=True)
     source_quotation_line_id = serializers.UUIDField(required=False, allow_null=True)
+    product_id = serializers.PrimaryKeyRelatedField(
+        source="product",
+        queryset=ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
     category_id = serializers.PrimaryKeyRelatedField(
         source="category",
         queryset=ProductCategory.objects.filter(
@@ -228,6 +235,12 @@ class SampleFormProductReadSerializer(serializers.Serializer):
     line_number = serializers.IntegerField()
     source_inquiry_item_id = serializers.UUIDField(allow_null=True)
     source_quotation_line_id = serializers.UUIDField(allow_null=True)
+    product_id = serializers.UUIDField(allow_null=True)
+    product_number_snapshot = serializers.CharField()
+    product_code_snapshot = serializers.CharField()
+    item_number_snapshot = serializers.CharField()
+    material_snapshot = serializers.CharField()
+    product_image_id = serializers.UUIDField(allow_null=True)
     category_id = serializers.UUIDField(allow_null=True)
     category_name = serializers.CharField(source="category_name_snapshot")
     product_name = serializers.CharField()

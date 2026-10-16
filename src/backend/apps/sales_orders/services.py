@@ -33,6 +33,7 @@ from .models import (
     SalesOrderStatus,
     SalesOrderVersion,
 )
+from .pricing import cny_line_amounts, freeze_sales_rate, validate_cny_total
 
 
 MONEY_QUANT = Decimal("0.0001")
@@ -138,6 +139,8 @@ def sales_order_snapshot(order):
         "direct_order_reason": order.direct_order_reason,
         "currency_code": order.currency_code,
         "exchange_rate": str(order.exchange_rate),
+        "exchange_rate_record_id": str(order.exchange_rate_record_id) if order.exchange_rate_record_id else None,
+        "exchange_rate_snapshot": order.exchange_rate_snapshot,
         "incoterm_code": order.incoterm_code,
         "payment_terms": order.payment_terms,
         "deposit_required": order.deposit_required,
@@ -153,6 +156,7 @@ def sales_order_snapshot(order):
         "salesperson": _employee_snapshot(order.salesperson),
         "merchandiser": _employee_snapshot(order.merchandiser),
         "total_amount": str(order.total_amount),
+        "total_amount_cny": str(order.total_amount_cny) if order.total_amount_cny is not None else None,
         "lines": [
             {
                 "id": str(line.pk),
@@ -170,6 +174,8 @@ def sales_order_snapshot(order):
                 "quoted_unit_price": str(line.quoted_unit_price) if line.quoted_unit_price is not None else None,
                 "unit_price": str(line.unit_price),
                 "line_total": str(line.line_total),
+                "unit_price_cny": str(line.unit_price_cny) if line.unit_price_cny is not None else None,
+                "line_total_cny": str(line.line_total_cny) if line.line_total_cny is not None else None,
             }
             for line in order.lines.order_by("line_number", "id")
         ],
@@ -257,18 +263,25 @@ def _line_identity(values, product, quote_line):
     customer_spec_input = values.pop("customer_specification_snapshot", None)
     customer_color_input = values.pop("customer_color_snapshot", None)
     unit_code_input = values.pop("unit_code", None)
+    category_input = values.pop("product_category", None)
+    unit_input = values.pop("product_unit", None)
+    color_input = values.pop("product_color", None)
+    image_input = values.pop("product_image", None)
+    material_input = values.pop("material", None)
     quotation_color = str(getattr(quote_line, "color_snapshot", None) or "").strip()
 
     if product is not None:
-        product_name = product.product_name
-        specification = product.specification
-        product_number = product.product_number
-        product_code = product.product_code
-        unit_code = product.unit.unit_code
+        inherited_quote = quote_line is not None and getattr(quote_line, "product_id", None) == getattr(product, "pk", None)
+        product_name = (getattr(quote_line, "product_description_snapshot", "") if inherited_quote else "") or product.product_name
+        specification = (getattr(quote_line, "specification_snapshot", "") if inherited_quote else "") or product.specification
+        product_number = (getattr(quote_line, "product_number_snapshot", "") if inherited_quote else "") or product.product_number
+        product_code = (getattr(quote_line, "product_code_snapshot", "") if inherited_quote else "") or product.product_code
+        unit_code = (getattr(quote_line, "unit_code", "") if inherited_quote else "") or product.unit.unit_code
+        product_category = (getattr(quote_line, "product_category", None) if inherited_quote else None) or category_input or product.category
+        product_unit = (getattr(quote_line, "product_unit", None) if inherited_quote else None) or unit_input or product.unit
+        item_number = (getattr(quote_line, "item_number_snapshot", "") if inherited_quote else "") or product.product_item.item_number
         customer_name = str(customer_name_input).strip() if customer_name_input is not None else product_name
-        customer_specification = (
-            str(customer_spec_input).strip() if customer_spec_input is not None else specification
-        )
+        customer_specification = str(customer_spec_input).strip() if customer_spec_input is not None else specification
         customer_color = str(customer_color_input or "").strip() or quotation_color
     else:
         product_name = str(customer_name_input or "").strip()
@@ -289,9 +302,18 @@ def _line_identity(values, product, quote_line):
         unit_code = str(unit_code_input or (quote_line.unit_code if quote_line is not None else "PCS")).strip().upper()
         if not unit_code:
             unit_code = "PCS"
+        product_category = category_input or (getattr(quote_line, "product_category", None) if quote_line is not None else None)
+        product_unit = unit_input or (getattr(quote_line, "product_unit", None) if quote_line is not None else None)
+        item_number = getattr(quote_line, "item_number_snapshot", "") if quote_line is not None else ""
 
     return {
         "product": product,
+        "product_category": product_category,
+        "product_unit": product_unit,
+        "product_color": color_input or (getattr(quote_line, "product_color", None) if quote_line is not None else None),
+        "product_image": image_input or (getattr(quote_line, "product_image", None) if quote_line is not None else None),
+        "item_number_snapshot": item_number,
+        "material_snapshot": material_input or (getattr(quote_line, "material_snapshot", "") if quote_line is not None else ""),
         "customer_product_name_snapshot": customer_name,
         "customer_specification_snapshot": customer_specification,
         "customer_color_snapshot": customer_color,
@@ -312,6 +334,7 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
 
     lines_by_key = {}
     total = Decimal("0")
+    total_cny = Decimal("0")
     for line_number, submitted in enumerate(lines, start=1):
         values = dict(submitted)
         client_key = values.pop("client_key")
@@ -321,6 +344,7 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
         quote_price = _quote_unit_price(quote_line, order.source_quotation_version) if quote_line else None
         unit_price = Decimal(values["unit_price"])
         quantity = Decimal(values["quantity"])
+        unit_price_cny, line_total_cny = cny_line_amounts(unit_price, quantity, order.exchange_rate)
         difference = unit_price - quote_price if quote_price is not None else Decimal("0")
         difference_rate = (difference / quote_price).quantize(RATE_QUANT) if quote_price else None
         line = SalesOrderLine.objects.create(
@@ -330,6 +354,8 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
             quoted_quantity_snapshot=quote_line.quantity if quote_line else None,
             quoted_unit_price=quote_price,
             line_total=_money(quantity * unit_price),
+            unit_price_cny=unit_price_cny,
+            line_total_cny=line_total_cny,
             price_difference=_money(difference),
             price_difference_rate=difference_rate,
             **identity,
@@ -337,6 +363,7 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
         )
         lines_by_key[client_key] = line
         total += line.line_total
+        total_cny += line.line_total_cny
 
     allocated = defaultdict(lambda: Decimal("0"))
     for batch_number, submitted in enumerate(batches, start=1):
@@ -373,7 +400,9 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
             uploaded_by_employee=actor_employee,
         )
     order.total_amount = _money(total)
-    order.save(update_fields=["total_amount", "updated_at"])
+    validate_cny_total(total_cny)
+    order.total_amount_cny = total_cny
+    order.save(update_fields=["total_amount", "total_amount_cny", "updated_at"])
 
 
 def _authorize_order_inputs(request, values, permission, previous=None):
@@ -400,6 +429,7 @@ def create_sales_order(*, validated_data, actor_employee, request=None):
     _validate_source(validated_data, lines)
     quote_version = validated_data.get("source_quotation_version")
     _lock_and_validate_quote_capacity(quote_version, lines)
+    freeze_sales_rate(validated_data)
     order = SalesOrder.objects.create(
         order_number=next_business_number("SALES_ORDER", validated_data["order_date"]),
         status=SalesOrderStatus.DRAFT,
@@ -444,6 +474,7 @@ def update_sales_order(*, order, validated_data, actor_employee, request=None):
         exclude_order_id=order.pk,
     )
     before = sales_order_snapshot(order)
+    freeze_sales_rate(validated_data, previous=order)
     for field_name, value in validated_data.items():
         setattr(order, field_name, value)
     order.buyer_snapshot = _entity_snapshot(order.transaction_entity)
@@ -460,6 +491,60 @@ def update_sales_order(*, order, validated_data, actor_employee, request=None):
         actor_employee=actor_employee,
         before_data=before,
         after_data=sales_order_snapshot(order),
+        request=request,
+    )
+    return order
+
+
+@transaction.atomic
+def set_sales_order_line_product_image(*, order, line, business_file, actor_employee, request=None):
+    """为草稿销售订单行保存产品主图，并记录订单级审计。"""
+    order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+    require_matching_etag(request, order)
+    if order.status != SalesOrderStatus.DRAFT:
+        raise Conflict("销售订单确认后不能直接修改产品图片，请发起订单变更。")
+    line = SalesOrderLine.objects.select_for_update().get(pk=line.pk, sales_order=order)
+    before_image_id = str(line.product_image_id) if line.product_image_id else None
+    line.product_image = business_file
+    line.save(update_fields=["product_image", "updated_at"])
+    order.updated_at = timezone.now()
+    order.save(update_fields=["updated_at"])
+    write_audit_log(
+        object_type="SALES_ORDER_LINE",
+        object_id=line.pk,
+        context_type="CUSTOMER_ACCOUNT",
+        context_id=order.customer_account_id,
+        action="PRODUCT_IMAGE_UPDATED",
+        actor_employee=actor_employee,
+        before_data={"product_image_id": before_image_id},
+        after_data={"product_image_id": str(business_file.pk)},
+        request=request,
+    )
+    return order
+
+
+@transaction.atomic
+def remove_sales_order_line_product_image(*, order, line, actor_employee, request=None):
+    """移除草稿销售订单行产品主图，并记录订单级审计。"""
+    order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+    require_matching_etag(request, order)
+    if order.status != SalesOrderStatus.DRAFT:
+        raise Conflict("销售订单确认后不能直接修改产品图片，请发起订单变更。")
+    line = SalesOrderLine.objects.select_for_update().get(pk=line.pk, sales_order=order)
+    before_image_id = str(line.product_image_id) if line.product_image_id else None
+    line.product_image = None
+    line.save(update_fields=["product_image", "updated_at"])
+    order.updated_at = timezone.now()
+    order.save(update_fields=["updated_at"])
+    write_audit_log(
+        object_type="SALES_ORDER_LINE",
+        object_id=line.pk,
+        context_type="CUSTOMER_ACCOUNT",
+        context_id=order.customer_account_id,
+        action="PRODUCT_IMAGE_REMOVED",
+        actor_employee=actor_employee,
+        before_data={"product_image_id": before_image_id},
+        after_data={"product_image_id": None},
         request=request,
     )
     return order
@@ -561,6 +646,7 @@ def _update_confirmed_children_in_place(order, lines, batches):
         raise ValidationError({"lines": "订单确认后不能新增、删除或重复订单产品，只能调整数量、价格和要求。"})
 
     total = Decimal("0")
+    total_cny = Decimal("0")
     for line_number, submitted in enumerate(lines, start=1):
         values = dict(submitted)
         line = existing_lines[str(values.pop("client_key"))]
@@ -596,11 +682,13 @@ def _update_confirmed_children_in_place(order, lines, batches):
         line.line_number = line_number
         line.quoted_unit_price = quote_price
         line.line_total = _money(quantity * unit_price)
+        line.unit_price_cny, line.line_total_cny = cny_line_amounts(unit_price, quantity, order.exchange_rate)
         line.price_difference = _money(difference)
         line.price_difference_rate = difference_rate
         line.full_clean()
         line.save()
         total += line.line_total
+        total_cny += line.line_total_cny
 
     existing_batches = {str(item.pk): item for item in order.delivery_batches.select_for_update().all()}
     submitted_batch_keys = [str(item.get("client_key") or "") for item in batches]
@@ -642,7 +730,9 @@ def _update_confirmed_children_in_place(order, lines, batches):
                 )
             })
     order.total_amount = _money(total)
-    order.save(update_fields=["total_amount", "updated_at"])
+    validate_cny_total(total_cny)
+    order.total_amount_cny = total_cny
+    order.save(update_fields=["total_amount", "total_amount_cny", "updated_at"])
 
 
 @transaction.atomic
@@ -686,6 +776,7 @@ def change_confirmed_sales_order(*, order, validated_data, actor_employee, reque
     before = sales_order_snapshot(order)
     preserved_buyer_snapshot = order.buyer_snapshot
     preserved_buyer_address_snapshot = order.buyer_address_snapshot
+    freeze_sales_rate(order_values, previous=order)
     for field_name, value in order_values.items():
         setattr(order, field_name, value)
     order.buyer_snapshot = (
@@ -806,6 +897,8 @@ def confirm_sales_order(*, order, actor_employee, request=None):
     require_matching_etag(request, order)
     if order.status != SalesOrderStatus.DRAFT:
         raise Conflict("只有草稿销售订单可以确认。")
+    if order.total_amount_cny is None or not order.exchange_rate_snapshot:
+        raise ValidationError({"exchange_rate": "历史销售订单尚未补算人民币金额，请先完成一次性补算。"})
     lines = list(order.lines.select_related("source_quotation_line").all())
     _lock_and_validate_quote_capacity(
         order.source_quotation_version,

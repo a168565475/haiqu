@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppHeader from '@/components/navigation/AppHeader.vue'
@@ -34,33 +34,16 @@ watch(() => [authStore.user?.id, JSON.stringify({
 watch(() => route.fullPath, () => pageTabs.recordRoute(route))
 useReferenceCacheSync()
 const invalidateAuthenticationCheck = () => authStore.invalidateAuthenticationCheck()
-const narrowSidebarViewport = ref(typeof window !== 'undefined'
-  && window.innerWidth >= 769
-  && window.innerWidth <= 1440)
-const sidebarManuallyExpanded = ref(false)
-
-const updateSidebarViewport = () => {
-  narrowSidebarViewport.value = window.innerWidth >= 769 && window.innerWidth <= 1440
-}
 
 onMounted(() => {
-  updateSidebarViewport()
-  window.addEventListener('resize', updateSidebarViewport)
   window.addEventListener('focus', invalidateAuthenticationCheck)
   document.addEventListener('visibilitychange', invalidateAuthenticationCheck)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateSidebarViewport)
   window.removeEventListener('focus', invalidateAuthenticationCheck)
   document.removeEventListener('visibilitychange', invalidateAuthenticationCheck)
 })
-watch(() => route.fullPath, () => { sidebarManuallyExpanded.value = false })
 
-const sidebarCollapsed = computed(() => !sidebarManuallyExpanded.value
-  && narrowSidebarViewport.value)
-const expandSidebar = () => {
-  if (sidebarCollapsed.value) sidebarManuallyExpanded.value = true
-}
 const quotationRoutes = ['quotations', 'quotation-edit', 'quotation-preview', 'quotation-versions', 'quotation-packaging', 'quotation-price-history']
 const quotationRoute = computed(() => quotationRoutes.includes(String(route.name || '')))
 const wageSchemeRoute = computed(() => ['wage-schemes', 'wage-scheme-new', 'wage-scheme-change', 'wage-scheme-detail'].includes(String(route.name || '')))
@@ -94,7 +77,7 @@ const contentScrollRoutes = [
   'customer-transfer',
   'bom-edit',
   'complaint-detail',
-  'production-task-create', 'production-task-edit', 'production-task-detail',
+  'production-task-create', 'production-task-manual-create', 'production-task-edit', 'production-task-detail',
   'sample-fees', 'sample-fulfillment', 'sample-material-detail',
   'task-detail',
   'wage-scheme-new', 'wage-scheme-change',
@@ -125,17 +108,12 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         'viewport-table-layout': viewportTableRoute,
         'content-scroll-layout': contentScrollRoute,
       }"
-      :compact-sidebar="sidebarCollapsed"
-      :sidebar-expanded="sidebarManuallyExpanded"
     >
       <template #sidebar>
-        <AppSidebar :compact="sidebarCollapsed" :expanded="sidebarManuallyExpanded" />
+        <AppSidebar />
       </template>
       <template #header>
-        <AppHeader
-          :compact="sidebarCollapsed"
-          @expand-sidebar="expandSidebar"
-        />
+        <AppHeader />
       </template>
       <PageContainer
         :key="pageInstanceKey(route, authStore.user?.id)"

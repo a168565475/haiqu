@@ -10,6 +10,7 @@ import type {
   SalesOrder,
   SalesOrderInput,
   SalesOrderOptions,
+  SalesOrderExchangeRatePreview,
   VersionedSalesOrder,
 } from '@/types/salesOrder'
 
@@ -28,6 +29,12 @@ export async function fetchSalesOrder(id: string): Promise<VersionedSalesOrder> 
 }
 export async function fetchSalesOrderOptions(): Promise<SalesOrderOptions> {
   const { data } = await apiClient.get<DataResponse<SalesOrderOptions>>(`${basePath}options/`)
+  return data.data
+}
+export async function fetchSalesOrderExchangeRate(currencyCode: string): Promise<SalesOrderExchangeRatePreview> {
+  const { data } = await apiClient.get<DataResponse<SalesOrderExchangeRatePreview>>(`${basePath}exchange-rate-preview/`, {
+    params: { currency_code: currencyCode },
+  })
   return data.data
 }
 export async function fetchQuotationOrderContext(versionId: string): Promise<QuotationOrderContext> {
@@ -99,6 +106,23 @@ export async function uploadSalesOrderEvidence(id: string, file: File, etag: str
   return versioned(await apiClient.post<DataResponse<SalesOrder>>(
     `${basePath}${encodeURIComponent(id)}/evidence/`, body, { headers: { 'If-Match': etag }, timeout: 120_000 },
   ))
+}
+export async function uploadSalesOrderLineProductImage(orderId: string, lineId: string, file: File, etag: string): Promise<VersionedSalesOrder> {
+  const body = new FormData()
+  body.append('file', file)
+  return versioned(await apiClient.post<DataResponse<SalesOrder>>(
+    `${basePath}${encodeURIComponent(orderId)}/lines/${encodeURIComponent(lineId)}/product-image/`,
+    body, { headers: { 'If-Match': etag }, timeout: 120_000 },
+  ))
+}
+export async function removeSalesOrderLineProductImage(orderId: string, lineId: string, etag: string): Promise<VersionedSalesOrder> {
+  return versioned(await apiClient.delete<DataResponse<SalesOrder>>(
+    `${basePath}${encodeURIComponent(orderId)}/lines/${encodeURIComponent(lineId)}/product-image/`,
+    { headers: { 'If-Match': etag } },
+  ))
+}
+export function salesOrderLineProductImageUrl(orderId: string, lineId: string): string {
+  return apiClient.getUri({ url: `${basePath}${encodeURIComponent(orderId)}/lines/${encodeURIComponent(lineId)}/product-image/` })
 }
 export function salesOrderEvidenceUrl(orderId: string, fileId: string): string {
   return `${apiClient.defaults.baseURL || ''}${basePath}${encodeURIComponent(orderId)}/business-files/${encodeURIComponent(fileId)}/`

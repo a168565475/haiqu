@@ -3,6 +3,7 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from django.conf import settings
@@ -10,6 +11,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.files.models import BusinessFile, FileScanStatus
+from apps.imports.security import _clamav_scan, scan_upload
 
 
 @dataclass
@@ -21,6 +23,9 @@ class PreparedBomUpload:
     content_hash: str
     temporary_path: Path
     quarantine_dir: Path
+    scan_status: str
+    scan_message: str
+    scanned_at: datetime | None
 
     def cleanup(self):
         if self.temporary_path.exists():
@@ -64,6 +69,8 @@ def prepare_bom_upload(uploaded_file):
         if suffix == ".xls" and signature != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
             raise ValidationError({"workbook": "XLS 文件签名不正确。"})
 
+        # 预览和正式导入都在解析前应用扫描策略，持久化时复用本次结果。
+        scan_status, scan_message = scan_upload(temporary_path, scanner=_clamav_scan)
         return PreparedBomUpload(
             original_name=original_name,
             suffix=suffix,
@@ -72,6 +79,9 @@ def prepare_bom_upload(uploaded_file):
             content_hash=digest.hexdigest(),
             temporary_path=temporary_path,
             quarantine_dir=quarantine_dir,
+            scan_status=scan_status,
+            scan_message=scan_message,
+            scanned_at=timezone.now() if scan_status == FileScanStatus.CLEAN else None,
         )
     except Exception:
         if temporary_path.exists():
@@ -96,9 +106,9 @@ def persist_prepared_bom_upload(prepared, actor_employee):
             content_type=prepared.content_type,
             size_bytes=prepared.size_bytes,
             content_hash=prepared.content_hash,
-            scan_status=FileScanStatus.SKIPPED,
-            scanned_at=None,
-            scan_message="BOM 上传已关闭病毒扫描。",
+            scan_status=prepared.scan_status,
+            scanned_at=prepared.scanned_at,
+            scan_message=("BOM 上传已关闭病毒扫描。" if prepared.scan_status == FileScanStatus.SKIPPED else str(prepared.scan_message)[:500]),
         )
         return business_file, final_path
     except Exception:

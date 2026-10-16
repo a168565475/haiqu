@@ -25,6 +25,7 @@ from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.inquiries.images import inquiry_reference_images
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from rest_framework import serializers
 from apps.customers.hard_delete import permanently_delete_quotation
 from apps.customers.api.views import CustomerApiViewSetBase
@@ -70,6 +71,7 @@ from ..services import (
     remove_line_product_image,
     set_line_product_image,
     simulate_dispatch_version,
+    sync_quotation_line_to_inquiry,
     submit_version_approval,
     transition_quotation,
     update_line,
@@ -97,6 +99,8 @@ from .serializers import (
     QuotationDocumentCreateSerializer,
     QuotationDocumentSerializer,
     QuotationLineSerializer,
+    QuotationLineSyncInquirySerializer,
+    QuotationLineSyncInquiryResponseSerializer,
     QuotationLinePackagingSerializer,
     QuotationPriceMatrixSerializer,
     QuotationLineUpdateSerializer,
@@ -1107,6 +1111,8 @@ class QuotationVersionViewSet(
         document = version.documents.select_related("business_file").filter(is_formal=True).first()
         if document is None:
             raise ValidationError({"detail": "当前版本尚未生成或登记正式报价文件。"})
+        if document.business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+            raise ValidationError({"detail": "正式报价文件尚未通过安全扫描，暂时无法下载。"})
         media_root = Path(settings.MEDIA_ROOT).resolve()
         file_path = (media_root / document.business_file.storage_key).resolve()
         if media_root not in file_path.parents or not file_path.is_file():
@@ -1368,6 +1374,7 @@ class QuotationLineViewSet(
         "product_image.GET": "quotations.view_quotationline",
         "product_image.POST": "quotations.change_quotationline",
         "product_image.DELETE": "quotations.change_quotationline",
+        "sync_inquiry": "quotations.change_quotationline",
     }
 
     def get_queryset(self):
@@ -1397,6 +1404,27 @@ class QuotationLineViewSet(
         except IntegrityError as exc:
             self.raise_integrity_validation_error(exc)
         return self.response_with_etag({"data": QuotationLineSerializer(line).data}, version)
+
+    @extend_schema(request=QuotationLineSyncInquirySerializer, responses=QuotationLineSyncInquiryResponseSerializer)
+    @action(detail=True, methods=["post"], url_path="sync-inquiry")
+    def sync_inquiry(self, request, pk=None):
+        line = self.get_object()
+        serializer = QuotationLineSyncInquirySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            inquiry_item, inquiry = sync_quotation_line_to_inquiry(
+                line=line,
+                inquiry_etag=serializer.validated_data["inquiry_etag"],
+                actor_employee=self.actor_employee(),
+                request=request,
+            )
+        except IntegrityError as exc:
+            self.raise_integrity_validation_error(exc)
+        response = self.response_with_etag(
+            {"data": {"inquiry_item_id": str(inquiry_item.pk), "inquiry_etag": etag_for_instance(inquiry)}},
+            line.quotation_version,
+        )
+        return response
 
     def destroy(self, request, *args, **kwargs):
         line = self.get_object()
@@ -1517,7 +1545,7 @@ class QuotationLineViewSet(
             image = line.product_image
             if image is None:
                 return Response(status=status.HTTP_404_NOT_FOUND)
-            if image.scan_status != "CLEAN":
+            if image.scan_status not in USABLE_FILE_SCAN_STATUSES:
                 return Response({"detail": "图片未通过安全扫描。"}, status=status.HTTP_409_CONFLICT)
             path = Path(settings.MEDIA_ROOT) / image.storage_key
             if not path.is_file():

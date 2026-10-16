@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import filters, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -22,11 +22,11 @@ from rest_framework.response import Response
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.customers.selectors import accessible_customers
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
-from apps.reference_data.models import Currency, ProductColor, ProductionUnit, ReferenceStatus
-from apps.sales_orders.selectors import accessible_sales_orders
+from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
+from apps.sales_orders.selectors import sales_orders_with_context
 from apps.samples.sampling_detail_config import load_sampling_detail_template
 
 from ..models import (
@@ -34,15 +34,17 @@ from ..models import (
     OrderSource,
     ProductionDeliveryBatch,
     ProductionTaskProduct,
+    ProductionTaskFollower,
     ProductionTaskStatus,
 )
-from ..selectors import accessible_production_tasks, production_tasks_with_context
+from ..selectors import accessible_production_tasks, production_sales_order_sources, production_tasks_with_context
 from ..services import (
     close_production_task,
     complete_production_order,
     create_production_order_from_sales_order,
     create_production_task,
     decide_production_order_by_pmc,
+    delete_production_task,
     reserve_contract_number,
     start_production_order,
     submit_production_task,
@@ -59,6 +61,8 @@ from .serializers import (
     ProductionTaskPmcDecisionSerializer,
     ProductionTaskStartSerializer,
     ProductionTaskWriteSerializer,
+    ProductionSalesSourceSerializer,
+    ProductionSalesSourceSummarySerializer,
 )
 
 
@@ -83,8 +87,11 @@ class ProductionTaskViewSet(
         "business_file": "production_tasks.view_productiontask",
         "create": "production_tasks.add_productiontask",
         "create_from_sales_order": "production_tasks.add_productiontask",
+        "sales_order_sources": "production_tasks.add_productiontask",
+        "sales_order_source_image": "production_tasks.add_productiontask",
         "reserve_contract_number": "production_tasks.add_productiontask",
         "partial_update": "production_tasks.change_productiontask",
+        "destroy": "production_tasks.delete_productiontask",
         "options": "production_tasks.view_productiontask",
         "stats": "production_tasks.view_productiontask",
         "export": "production_tasks.view_productiontask",
@@ -267,11 +274,7 @@ class ProductionTaskViewSet(
     @action(detail=False, methods=["post"], url_path="create-from-sales-order")
     def create_from_sales_order(self, request):
         context = self.get_serializer_context()
-        from apps.access_control import module_policy
-        from apps.sales_orders.models import SalesOrder
-        sources = accessible_sales_orders(request)
-        if module_policy.enabled() and module_policy.has_module_grant(request, 'production_tasks'):
-            sources = SalesOrder.objects.filter(archived_at__isnull=True, customer_account__archived_at__isnull=True)
+        sources = production_sales_order_sources(request)
         context['accessible_sales_order_ids'] = set(sources.values_list('id', flat=True))
         serializer = ProductionTaskCreateFromSalesOrderSerializer(data=request.data, context=context)
         serializer.is_valid(raise_exception=True)
@@ -284,6 +287,62 @@ class ProductionTaskViewSet(
         response = Response({"data": ProductionTaskReadSerializer(task).data}, status=status.HTTP_201_CREATED)
         response["ETag"] = etag_for_instance(task)
         return response
+
+    @extend_schema(
+        parameters=[OpenApiParameter("q", str), OpenApiParameter("sales_order_id", OpenApiTypes.UUID)],
+        responses={200: OpenApiTypes.OBJECT},
+        description="生产建单来源白名单。默认 data 为最多 100 条可继续分配的订单摘要；传 sales_order_id 时 data 为单个订单的生产必要字段，不包含客户资料。",
+    )
+    @action(detail=False, methods=["get"], url_path="sales-order-sources")
+    def sales_order_sources(self, request):
+        queryset = sales_orders_with_context(production_sales_order_sources(request))
+        order_id = request.query_params.get("sales_order_id")
+        if order_id:
+            try:
+                order_id = UUID(order_id)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"sales_order_id": "销售订单编号格式不正确。"}) from exc
+            order = get_object_or_404(queryset, pk=order_id)
+            return Response({"data": ProductionSalesSourceSerializer(order).data})
+        search = request.query_params.get("q", "").strip()
+        if search:
+            queryset = queryset.filter(order_number__icontains=search)
+        result = []
+        serializer = ProductionSalesSourceSummarySerializer()
+        for order in queryset.order_by("-order_date", "-created_at", "-id").iterator(chunk_size=100):
+            if serializer.get_has_remaining_production_capacity(order):
+                result.append(ProductionSalesSourceSummarySerializer(order).data)
+                if len(result) >= 100:
+                    break
+        return Response({"data": result})
+
+    @extend_schema(
+        parameters=[OpenApiParameter("sales_order_id", OpenApiTypes.UUID, required=True), OpenApiParameter("line_id", OpenApiTypes.UUID, required=True)],
+        responses={200: OpenApiTypes.BINARY},
+    )
+    @action(detail=False, methods=["get"], url_path="sales-order-source-image")
+    def sales_order_source_image(self, request):
+        try:
+            order_id = UUID(request.query_params.get("sales_order_id", ""))
+            line_id = UUID(request.query_params.get("line_id", ""))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"line_id": "销售订单或产品明细编号格式不正确。"}) from exc
+        order = get_object_or_404(production_sales_order_sources(request), pk=order_id)
+        line = get_object_or_404(order.lines.select_related("product_image"), pk=line_id)
+        image = line.product_image
+        if image is None or image.archived_at is not None:
+            raise Http404("产品图片不存在。")
+        if image.scan_status not in USABLE_FILE_SCAN_STATUSES:
+            raise ValidationError({"image": "产品图片尚未通过安全扫描。"})
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        storage_path = (media_root / image.storage_key).resolve()
+        try:
+            storage_path.relative_to(media_root)
+        except ValueError as exc:
+            raise Http404("图片路径无效。") from exc
+        if not storage_path.is_file():
+            raise Http404("图片文件不存在。")
+        return FileResponse(storage_path.open("rb"), content_type=image.content_type)
 
     @action(detail=False, methods=["post"], url_path="reserve-contract-number")
     def reserve_contract_number(self, request):
@@ -321,7 +380,7 @@ class ProductionTaskViewSet(
                 archived_at__isnull=True,
             ).distinct()
         )
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise ValidationError({"file": "文件尚未通过安全扫描，暂不能查看。"})
         media_root = Path(settings.MEDIA_ROOT).resolve()
         storage_path = (media_root / business_file.storage_key).resolve()
@@ -337,6 +396,13 @@ class ProductionTaskViewSet(
             as_attachment=request.query_params.get("download") == "1",
             filename=business_file.original_name,
         )
+
+    @extend_schema(responses={204: None}, description="物理删除已取消、无下游且未实际生产的任务；必须提供 If-Match。")
+    def destroy(self, request, *args, **kwargs):
+        task = self.get_object()
+        require_matching_etag(request, task)
+        delete_production_task(task=task, actor_employee=request.employee, request=request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def partial_update(self, request, *args, **kwargs):
         current = self.get_object()
@@ -374,7 +440,8 @@ class ProductionTaskViewSet(
         employees = Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True).order_by("employee_code")[:500]
         products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related(
             "unit", "product_item"
-        ).order_by("product_number")[:1000]
+        ).filter(category__item_type=ProductItemType.FINISHED, category__status=ReferenceStatus.ACTIVE,
+                 category__archived_at__isnull=True).order_by("product_number")[:1000]
         currencies = Currency.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True).order_by("sort_order", "code")
         units = ProductionUnit.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True).order_by("sort_order", "unit_code")
         colors = ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True).order_by("sort_order", "color_card", "color_code")
@@ -388,11 +455,19 @@ class ProductionTaskViewSet(
                 "id": str(item.pk), "product_number": item.product_number, "product_code": item.product_code,
                 "item_number": item.product_item.item_number, "product_name": item.product_name,
                 "specification": item.specification, "default_unit_id": str(item.unit_id),
+                "category_id": str(item.category_id), "unit_code": item.unit.unit_code, "unit_name": item.unit.unit_name,
             } for item in products],
         }
         if scope == "filters":
             return Response({"data": data})
         data.update({
+            "categories": [{"id": str(item.pk), "category_name": item.category_name} for item in
+                ProductCategory.objects.filter(item_type=ProductItemType.FINISHED, status=ReferenceStatus.ACTIVE,
+                    archived_at__isnull=True).order_by("sort_order", "category_name", "id")],
+            "recent_task_numbers": sorted(
+                accessible_production_tasks(request).filter(archived_at__isnull=True)
+                .order_by("-created_at", "-id").values_list("task_number", flat=True)[:5]
+            ),
             "boolean_options": [{"value": True, "label": "是"}, {"value": False, "label": "否"}],
             "currencies": [{"id": str(item.pk), "code": item.code, "name": item.chinese_name, "symbol": item.symbol} for item in currencies],
             "units": [{"id": str(item.pk), "unit_code": item.unit_code, "unit_name": item.unit_name} for item in units],
@@ -450,14 +525,19 @@ class ProductionTaskViewSet(
             "task_number",
             "order_number",
             "sales_order__order_number",
-            "customer_account__account_name",
             "delivery_date",
+            "order_date",
             "salesperson__display_name",
             "status",
         ))
         task_ids = [row["id"] for row in rows]
         product_names = {}
         total_quantities = {}
+        follower_names = {}
+        for link in ProductionTaskFollower.objects.filter(production_task_id__in=task_ids).order_by(
+            "production_task_id", "employee__employee_code"
+        ).values("production_task_id", "employee__display_name"):
+            follower_names.setdefault(link["production_task_id"], []).append(link["employee__display_name"])
         for product in ProductionTaskProduct.objects.filter(production_task_id__in=task_ids).order_by(
             "production_task_id", "line_number", "id"
         ).values("production_task_id", "product_name_snapshot", "quantity"):
@@ -467,17 +547,18 @@ class ProductionTaskViewSet(
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response.write("\ufeff")
         writer = csv.writer(response)
-        writer.writerow(["生产任务编号", "销售订单", "客户", "产品", "数量", "交期", "业务员", "状态"])
+        writer.writerow(["生产任务编号", "销售订单", "产品", "数量", "下单日期", "交期", "业务员", "跟单员", "状态"])
         for row in rows:
             product_text = "；".join(filter(None, product_names.get(row["id"], [])))
             writer.writerow([
                 self._csv_cell(row["task_number"]),
-                self._csv_cell(row["sales_order__order_number"] or row["order_number"]),
-                self._csv_cell(row["customer_account__account_name"]),
+                self._csv_cell(row["sales_order__order_number"] or ""),
                 self._csv_cell(product_text),
                 total_quantities.get(row["id"], 0),
+                row["order_date"],
                 row["delivery_date"],
                 self._csv_cell(row["salesperson__display_name"]),
+                self._csv_cell("；".join(follower_names.get(row["id"], []))),
                 self._csv_cell(ProductionTaskStatus(row["status"]).label),
             ])
         response["Content-Disposition"] = 'attachment; filename="production_tasks.csv"'
@@ -508,22 +589,20 @@ class ProductionTaskViewSet(
     @action(detail=True, methods=["post"])
     def confirm(self, request, *args, **kwargs):
         current = self.get_object()
-        if current.sales_order_id:
-            payload = dict(request.data)
-            payload["decision"] = "CONFIRM"
-            serializer = ProductionTaskPmcDecisionSerializer(data=payload)
-            serializer.is_valid(raise_exception=True)
-            task = decide_production_order_by_pmc(
-                task=current,
-                validated_data=serializer.validated_data,
-                actor_employee=request.employee,
-                request=request,
-            )
-            task = production_tasks_with_context().get(pk=task.pk)
-            response = Response({"data": ProductionTaskReadSerializer(task).data})
-            response["ETag"] = etag_for_instance(task)
-            return response
-        return self._transition(request, ProductionTaskStatus.READY)
+        payload = dict(request.data)
+        payload["decision"] = "CONFIRM"
+        serializer = ProductionTaskPmcDecisionSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        task = decide_production_order_by_pmc(
+            task=current,
+            validated_data=serializer.validated_data,
+            actor_employee=request.employee,
+            request=request,
+        )
+        task = production_tasks_with_context().get(pk=task.pk)
+        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response["ETag"] = etag_for_instance(task)
+        return response
 
     @action(detail=True, methods=["post"], url_path="pmc-decision")
     def pmc_decision(self, request, *args, **kwargs):

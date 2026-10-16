@@ -190,7 +190,7 @@ onBeforeUnmount(()=>window.removeEventListener('beforeunload',leaving))
 
 <template>
   <div class="access-page">
-    <div class="access-title"><div><div class="access-title-line"><h1>权限管理</h1><span>{{ roles.length }} 个角色</span></div><p>配置岗位权限、员工账号与销售团队，按实际职责授权。</p></div>
+    <div class="access-title"><div><div class="access-title-line"><h1>权限管理</h1><span>{{ roles.length }} 个角色</span></div></div>
       <button v-if="permitted && !error" class="primary" :disabled="loading||saving||dirty" @click="open(tab==='roles'?'newRole':tab==='employees'?'account':'newTeam')" v-show="tab!=='history'">{{ tab==='roles'?'＋ 新建角色':tab==='employees'?'＋ 关联员工并创建账号':'＋ 新建团队' }}</button>
     </div>
     <div v-if="!permitted" class="access-state"><h2>无权限管理权限</h2><p>当前账号不能查看或维护授权，请联系 admin。</p></div>

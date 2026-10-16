@@ -3,7 +3,10 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { createInquiry, fetchInquiry, fetchInquiryOptions, saveInquiryDraft, submitInquiry, uploadInquiryAttachment } from '@/api/inquiries'
+import { createInquiry, fetchInquiry, fetchInquiryOptions, inquiryProductImageUrl, removeInquiryProductImage, saveInquiryDraft, submitInquiry, uploadInquiryAttachment, uploadInquiryProductImage } from '@/api/inquiries'
+import { fetchAllProductionDataRecords } from '@/api/productionData'
+import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
+import ProductImage from '@/components/products/ProductImage.vue'
 import { fetchCustomerContacts, fetchContact, fetchContactOptions } from '@/api/contacts'
 import { fetchCustomers, fetchCustomer } from '@/api/customers'
 import { fetchAllMasterDataRecords } from '@/api/referenceData'
@@ -12,6 +15,7 @@ import type { ContactListItem, ContactOption } from '@/types/contact'
 import type { CustomerListItem } from '@/types/customer'
 import type { InquiryDetail, InquiryDraftInput, InquiryItem, InquiryOptions, InquiryFile } from '@/types/inquiry'
 import type { Currency, Incoterm } from '@/types/referenceData'
+import type { ProductCategory, ProductColor, ProductionUnit } from '@/types/productionData'
 import { blankProduct, decimalUnits, newInquiryKey, productAmount, quantitySummary, validateAttachment, validateProducts } from './inquiryEditorState'
 import { formatEstimatedAmount } from './inquiryListState'
 import checkIcon from '@/assets/inquiries/create-check.svg'
@@ -28,6 +32,10 @@ const options = ref<InquiryOptions | null>(null)
 const languages = ref<ContactOption[]>([])
 const currencies = ref<Currency[]>([]), incoterms = ref<Incoterm[]>([])
 const files = ref<InquiryFile[]>([])
+const productCategories = ref<ProductCategory[]>([]), productUnits = ref<ProductionUnit[]>([]), productColors = ref<ProductColor[]>([])
+const catalogError = ref(''), productDialogVisible = ref(false), productDialogItem = ref<InquiryItem | null>(null)
+const productDialogIndex = ref(-1)
+const pendingProductImages = reactive<Record<number, { file: File | null; remove: boolean; preview: string }>>({})
 const pendingFiles = ref<Array<{ id: string; file: File; error: string }>>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const inquiryNumber = ref(''), draftVersion = ref(0), inquiryStatus = ref('DRAFT')
@@ -37,6 +45,7 @@ const form = reactive({ customer_account_id: '', customer_contact_id: '', inquir
 const canSave = computed(() => ready.value && inquiryStatus.value === 'DRAFT' && !!auth.user?.employee && auth.hasPermission(savedId.value ? 'inquiries.change_inquiry' : 'inquiries.add_inquiry'))
 const canSubmit = computed(() => canSave.value && auth.hasPermission('inquiries.change_inquiry'))
 const canUpload = computed(() => auth.hasPermission('inquiries.add_inquiryfilelink') && auth.hasPermission('inquiries.change_inquiry'))
+const canUploadProductImage = computed(() => auth.hasPermission('inquiries.change_inquiryitem') && auth.hasPermission('inquiries.change_inquiry'))
 const disabled = computed(() => busy.value || !canSave.value)
 const uncertainSave = ref(false)
 const formLocked = computed(() => disabled.value || uncertainSave.value)
@@ -58,8 +67,8 @@ let nextLineNumber = 1
 const initialSnapshot = ref('')
 let idempotencyKey = newInquiryKey(), attemptPayload: InquiryDraftInput | null = null
 const snapshot = () => JSON.stringify(form)
-const dirty = computed(() => ready.value && (snapshot() !== initialSnapshot.value || pendingFiles.value.length > 0))
-function emptyItem(): InquiryItem { return { line_number: nextLineNumber++, product_description: '', specification: '', color: '', material: '', quantity: '1', unit_code: 'PCS', target_unit_price: null, target_currency_code: '', expected_date: null, product_match_status: 'PENDING', notes: '' } }
+const dirty = computed(() => ready.value && (snapshot() !== initialSnapshot.value || pendingFiles.value.length > 0 || Object.keys(pendingProductImages).length > 0))
+function emptyItem(): InquiryItem { return { line_number: nextLineNumber++, product_id: null, product_category_id: null, product_unit_id: null, product_color_id: null, product_description: '', specification: '', color: '', material: '', quantity: '1', unit_code: 'PCS', target_unit_price: null, target_currency_code: '', expected_date: null, product_match_status: 'PENDING', notes: '' } }
 function errorText(error: any): string {
   const status = error?.response?.status
   if (status === 412 || status === 428) return '记录版本已变化，请先保留当前填写内容，再重新打开草稿。'
@@ -67,6 +76,7 @@ function errorText(error: any): string {
   if (status === 401) return '登录状态已失效，请重新登录。'
   return error?.response?.data?.error?.message || (error instanceof Error ? error.message : '') || '请求失败，请稍后重试。'
 }
+function trimSentenceEnd(value: string) { return value.replace(/[。！？.!?]+$/g, '') }
 function plainDescription(value: string) {
   const body = new DOMParser().parseFromString(value, 'text/html').body
   body.querySelectorAll('br').forEach(node => node.replaceWith('\n'))
@@ -123,7 +133,13 @@ async function load() {
     if (stopped) return
     languages.value = contactOptions.language_options; options.value = inquiryOptions; currencies.value = currencyRows; incoterms.value = tradeRows
     if (savedId.value) { const result = await fetchInquiry(savedId.value); if (stopped) return; etag.value = result.etag || ''; populate(result.data) }
-    else { form.items = [emptyItem()]; form.customer_account_id = typeof route.query.customer_id === 'string' ? route.query.customer_id : '' }
+    else { form.items = []; form.customer_account_id = typeof route.query.customer_id === 'string' ? route.query.customer_id : '' }
+    const catalog = await Promise.allSettled([fetchAllProductionDataRecords<ProductCategory>('product-categories'), fetchAllProductionDataRecords<ProductionUnit>('production-units'), fetchAllProductionDataRecords<ProductColor>('product-colors')])
+    if (stopped) return
+    productCategories.value = catalog[0].status === 'fulfilled' ? catalog[0].value.filter(row => row.item_type === 'FINISHED') : []
+    productUnits.value = catalog[1].status === 'fulfilled' ? catalog[1].value : []
+    productColors.value = catalog[2].status === 'fulfilled' ? catalog[2].value : []
+    catalogError.value = catalog.some(result => result.status === 'rejected') ? '产品维护选项加载失败或缺少权限，请重新加载页面。已填写内容可保留。' : ''
     if (form.customer_account_id) {
       const result = await fetchCustomer(form.customer_account_id)
       if (stopped) return
@@ -136,8 +152,39 @@ async function load() {
   } catch (error) { if (!stopped) errorMessage.value = errorText(error) }
   finally { if (!stopped) loading.value = false }
 }
-function addItem() { if (!formLocked.value && form.items.length < 200) form.items.push(emptyItem()) }
-function removeItem(index: number) { if (!formLocked.value && index >= 0 && index < form.items.length) form.items.splice(index, 1) }
+function addItem() { if (!formLocked.value && form.items.length < 200) { productDialogIndex.value = -1; productDialogItem.value = emptyItem(); productDialogVisible.value = true } }
+function editItem(index: number) { if (!formLocked.value && form.items[index]) { productDialogIndex.value = index; productDialogItem.value = { ...form.items[index]! }; productDialogVisible.value = true } }
+function clearPendingImage(line: number) { const pending = pendingProductImages[line]; if (pending?.preview) URL.revokeObjectURL(pending.preview); delete pendingProductImages[line] }
+function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; imageFile: File | null; removeImage: boolean }) {
+  if (formLocked.value) return
+  if (productDialogIndex.value < 0) form.items.push(value.item)
+  else form.items[productDialogIndex.value] = value.item
+  if (value.imageChanged) {
+    const line = value.item.line_number!
+    clearPendingImage(line)
+    pendingProductImages[line] = { file: value.imageFile, remove: value.removeImage, preview: value.imageFile ? URL.createObjectURL(value.imageFile) : '' }
+  }
+}
+function productImageSource(item: InquiryItem) {
+  const pending = pendingProductImages[item.line_number!]
+  if (pending) return pending.preview
+  return item.id && item.product_image_id ? `${inquiryProductImageUrl(item.id)}?v=${item.product_image_id}` : ''
+}
+function removeItem(index: number) { if (!formLocked.value && index >= 0 && index < form.items.length) { clearPendingImage(form.items[index]!.line_number!); form.items.splice(index, 1) } }
+async function saveProductImages() {
+  for (const key of Object.keys(pendingProductImages)) {
+    const line = Number(key), pending = pendingProductImages[line]!
+    const index = form.items.findIndex(item => item.line_number === line)
+    const item = form.items[index]
+    if (!item?.id) throw new Error('产品明细尚未保存，图片已保留，请重试保存。')
+    try {
+      const result = pending.file ? await uploadInquiryProductImage(item.id, pending.file, etag.value) : pending.remove && item.product_image_id ? await removeInquiryProductImage(item.id, etag.value) : null
+      if (result) { form.items[index] = result.data; etag.value = result.etag || '' }
+      clearPendingImage(line)
+      initialSnapshot.value = snapshot()
+    } catch (error) { throw new Error(`草稿已保存，第 ${index + 1} 条产品图片保存失败：${trimSentenceEnd(errorText(error))}。当前图片已保留，可重试保存。`) }
+  }
+}
 function pickFiles(event: Event) {
   const input = event.target as HTMLInputElement
   if (!formLocked.value && canUpload.value) for (const file of Array.from(input.files || [])) {
@@ -181,6 +228,7 @@ async function save(submit = false) {
       const result = savedId.value ? await saveInquiryDraft(savedId.value, attemptPayload, etag.value) : await createInquiry({ ...attemptPayload, customer_account_id: form.customer_account_id })
       etag.value = result.etag || ''; populate(result.data); initialSnapshot.value = snapshot(); attemptPayload = null; uncertainSave.value = false; idempotencyKey = newInquiryKey()
     }
+    await saveProductImages()
     while (pendingFiles.value.length) {
       const pending = pendingFiles.value[0]!
       pending.error = ''
@@ -214,7 +262,7 @@ function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || busy.value)
 watch(form, () => { if (validationError.value) { errorMessage.value = ''; validationError.value = false } })
 onBeforeRouteLeave(allowLeave)
 onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void load() })
-onBeforeUnmount(() => { stopped = true; customerRequest++; contactRequest++; window.removeEventListener('beforeunload', beforeUnload) })
+onBeforeUnmount(() => { stopped = true; customerRequest++; contactRequest++; Object.keys(pendingProductImages).forEach(key => clearPendingImage(Number(key))); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 <template>
   <section v-loading="loading" class="inquiry-editor">
@@ -241,18 +289,19 @@ onBeforeUnmount(() => { stopped = true; customerRequest++; contactRequest++; win
           <p v-if="contactError" class="inline-error">联系人加载失败：{{ contactError }} <button class="text-link" :disabled="busy" @click="loadContacts(form.customer_account_id)">重试</button></p>
           <p class="responsibility-note">责任角色：业务员 · {{ ownerName || '当前账号未关联员工' }}{{ savedId ? '' : '（当前登录人）' }}</p>
         </section>
-        <section class="editor-panel products-panel"><div class="panel-heading"><h2>产品需求</h2><el-button :icon="Plus" :disabled="formLocked || form.items.length >= 200" @click="addItem">添加产品行</el-button></div>
-          <el-form :disabled="formLocked"><div class="item-table"><table><colgroup><col style="width:4%"/><col style="width:15%"/><col style="width:16%"/><col style="width:12%"/><col style="width:11%"/><col style="width:8%"/><col style="width:7%"/><col style="width:14%"/><col style="width:9%"/><col style="width:4%"/></colgroup><thead><tr><th>序号</th><th>产品名称 *</th><th>规格</th><th>颜色</th><th>材质</th><th>数量 *</th><th>单位 *</th><th>目标价</th><th>期望日期</th><th>操作</th></tr></thead><tbody><tr v-for="(item, index) in form.items" :key="item.id || item.line_number" class="product-row"><td>{{ index + 1 }}</td><td><el-input v-model="item.product_description" :aria-label="`第${index + 1}行产品名称`" placeholder="产品名称" maxlength="500" /></td><td><el-input v-model="item.specification" :aria-label="`第${index + 1}行规格`" placeholder="规格" maxlength="5000" /></td><td><el-input v-model="item.color" :aria-label="`第${index + 1}行颜色`" placeholder="颜色" maxlength="5000" /></td><td><el-input v-model="item.material" :aria-label="`第${index + 1}行材质`" placeholder="材质" maxlength="5000" /></td><td><el-input v-model="item.quantity" :aria-label="`第${index + 1}行数量`" inputmode="decimal" maxlength="19" /></td><td><el-input v-model="item.unit_code" :aria-label="`第${index + 1}行单位`" maxlength="30" /></td><td><div class="price-input"><el-input v-model="item.target_unit_price" :aria-label="`第${index + 1}行目标单价`" inputmode="decimal" maxlength="19" placeholder="待填写"/><el-select v-model="item.target_currency_code" :aria-label="`第${index + 1}行币种`" filterable clearable placeholder="币种"><el-option v-if="item.target_currency_code && !currencies.some(currency => currency.code === item.target_currency_code)" :value="item.target_currency_code" :label="item.target_currency_code" disabled/><el-option v-for="currency in currencies" :key="currency.code" :value="currency.code" :label="currency.code" /></el-select></div></td><td><el-date-picker v-model="item.expected_date" :aria-label="`第${index + 1}行期望日期`" type="date" value-format="YYYY-MM-DD" placeholder="可选" /></td><td><el-button link type="primary" :aria-label="`删除第${index + 1}行`" @click="removeItem(index)">删除</el-button></td></tr><tr v-if="!form.items.length"><td colspan="10" class="empty-state">暂无产品需求，可添加产品行，或先保存草稿。</td></tr></tbody></table></div></el-form>
+        <section class="editor-panel products-panel"><div class="panel-heading"><h2>产品需求</h2><el-button :icon="Plus" :disabled="formLocked || form.items.length >= 200" @click="addItem">添加产品</el-button></div>
+          <div class="item-table"><table><colgroup><col style="width:9%"/><col style="width:16%"/><col style="width:15%"/><col style="width:9%"/><col style="width:9%"/><col style="width:9%"/><col style="width:10%"/><col style="width:10%"/><col style="width:5%"/><col style="width:8%"/></colgroup><thead><tr><th>类别</th><th>品名</th><th>规格</th><th>颜色</th><th>材质</th><th>数量 / 单位</th><th>目标价</th><th>期望日期</th><th>图片</th><th>操作</th></tr></thead><tbody><tr v-for="(item, index) in form.items" :key="item.id || item.line_number" class="product-row"><td>{{ productCategories.find(row => row.id === item.product_category_id)?.category_name || '—' }}</td><td :title="`${item.product_description} · ${item.product_number_snapshot || '手填定制产品'}`">{{ item.product_description }}</td><td :title="item.specification">{{ item.specification || '—' }}</td><td :title="item.color">{{ item.color || '—' }}</td><td :title="item.material">{{ item.material || '—' }}</td><td>{{ item.quantity }} {{ item.unit_code }}</td><td>{{ item.target_unit_price === null || item.target_unit_price === '' ? '—' : `${item.target_unit_price} ${item.target_currency_code}` }}</td><td>{{ item.expected_date || '—' }}</td><td><ProductImage v-if="productImageSource(item)" :src="productImageSource(item)" :name="`${item.product_description}产品图片`"/><span v-else>无图</span></td><td class="product-actions"><el-button link type="primary" :disabled="formLocked" :aria-label="`编辑第${index + 1}行`" @click="editItem(index)">编辑</el-button><el-button link type="primary" :disabled="formLocked" :aria-label="`删除第${index + 1}行`" @click="removeItem(index)">删除</el-button></td></tr><tr v-if="!form.items.length"><td colspan="10" class="empty-state">暂无产品需求，可添加产品，或先保存草稿。</td></tr></tbody></table></div>
           <p class="items-summary">已录入 {{ activeItems.length }} 个产品需求 · 合计数量 {{ quantities }} · 目标价格仅供需求记录，不直接生成报价</p>
         </section>
         <section class="editor-panel notes-panel"><h2>需求备注</h2><el-input v-model="form.description" :disabled="formLocked" aria-label="需求备注" type="textarea" :rows="6" maxlength="5000" show-word-limit placeholder="记录客户原始需求、包装要求及其他补充说明" /></section>
       </div>
       <aside class="editor-right">
         <section class="editor-panel trade-panel"><h2>贸易与预算</h2><el-form :disabled="formLocked" label-position="top" class="trade-form"><el-form-item label="贸易条款"><el-select v-model="form.trade_term_code" aria-label="贸易条款" filterable clearable placeholder="请选择"><el-option v-if="form.trade_term_code && !incoterms.some(term => term.code === form.trade_term_code)" :value="form.trade_term_code" :label="form.trade_term_code" disabled/><el-option v-for="term in incoterms" :key="term.code" :value="term.code" :label="term.code" /></el-select></el-form-item><el-form-item label="交货地点"><el-input v-model="form.trade_term_place" aria-label="交货地点" maxlength="150" placeholder="例如 Ningbo" /></el-form-item><el-form-item label="目标交期"><el-input v-model="form.delivery_requirement" aria-label="目标交期" maxlength="250" placeholder="例如 下单后 45 天" /></el-form-item><el-form-item label="预估金额（产品合计）"><div class="product-total" aria-live="polite">{{ estimatedAmount }}</div></el-form-item><el-form-item label="客户预算（选填）" class="budget-field"><div class="budget-input"><el-input v-model="form.estimated_amount_min" aria-label="客户预算下限" inputmode="decimal" maxlength="19" placeholder="下限"/><span>至</span><el-input v-model="form.estimated_amount_max" aria-label="客户预算上限" inputmode="decimal" maxlength="19" placeholder="上限"/><el-select v-model="form.estimated_currency_code" aria-label="客户预算币种" filterable clearable placeholder="币种"><el-option v-if="form.estimated_currency_code && !currencies.some(currency => currency.code === form.estimated_currency_code)" :value="form.estimated_currency_code" :label="form.estimated_currency_code" disabled/><el-option v-for="currency in currencies" :key="currency.code" :value="currency.code" :label="currency.code"/></el-select></div></el-form-item></el-form></section>
-        <section class="editor-panel attachments-panel"><div class="panel-heading"><h2>客户附件</h2><el-button :disabled="formLocked || !canUpload || files.length + pendingFiles.length >= 100" @click="fileInput?.click()">上传附件</el-button><input ref="fileInput" class="file-input" type="file" accept=".pdf,.xlsx,.jpg,.jpeg,.png" multiple aria-label="选择客户附件" :disabled="formLocked || !canUpload" @change="pickFiles" /></div><p class="file-hint">PDF、XLSX、JPG、PNG，每个不超过 10 MB；保存时上传。</p><div class="attachment-list"><div v-for="file in files" :key="file.id" class="attachment-row"><span class="file-badge" :class="{ sheet: file.original_name.toLowerCase().endsWith('.xlsx') }">{{ file.original_name.split('.').pop()?.toUpperCase() }}</span><div><strong :title="file.original_name">{{ file.original_name }}</strong><small>{{ (file.size_bytes / 1024 / 1024).toFixed(2) }} MB · {{ file.scan_status === 'CLEAN' ? '已上传' : '待处理' }}</small></div></div><div v-for="(pending, index) in pendingFiles" :key="pending.id" class="attachment-row" :class="{ failed: pending.error }"><span class="file-badge" :class="{ sheet: pending.file.name.toLowerCase().endsWith('.xlsx') }">{{ pending.file.name.split('.').pop()?.toUpperCase() }}</span><div><strong :title="pending.file.name">{{ pending.file.name }}</strong><small>{{ (pending.file.size / 1024 / 1024).toFixed(2) }} MB · {{ pending.error ? '上传失败，可重试保存' : busy ? '等待上传 / 扫描中' : '待上传' }}</small></div><el-button link :disabled="formLocked" :aria-label="`移除附件${pending.file.name}`" @click="pendingFiles.splice(index, 1)">移除</el-button></div><p v-if="!files.length && !pendingFiles.length" class="empty-state">暂无附件</p></div></section>
+        <section class="editor-panel attachments-panel"><div class="panel-heading"><h2>客户附件</h2><el-button :disabled="formLocked || !canUpload || files.length + pendingFiles.length >= 100" @click="fileInput?.click()">上传附件</el-button><input ref="fileInput" class="file-input" type="file" accept=".pdf,.xlsx,.jpg,.jpeg,.png" multiple aria-label="选择客户附件" :disabled="formLocked || !canUpload" @change="pickFiles" /></div><p class="file-hint">PDF、XLSX、JPG、PNG，每个不超过 10 MB；保存时按当前文件策略处理。</p><div class="attachment-list"><div v-for="file in files" :key="file.id" class="attachment-row"><span class="file-badge" :class="{ sheet: file.original_name.toLowerCase().endsWith('.xlsx') }">{{ file.original_name.split('.').pop()?.toUpperCase() }}</span><div><strong :title="file.original_name">{{ file.original_name }}</strong><small>{{ (file.size_bytes / 1024 / 1024).toFixed(2) }} MB · {{ file.scan_status === 'SKIPPED' ? '内部上传，未扫描' : file.scan_status === 'CLEAN' ? '已上传' : '待处理' }}</small></div></div><div v-for="(pending, index) in pendingFiles" :key="pending.id" class="attachment-row" :class="{ failed: pending.error }"><span class="file-badge" :class="{ sheet: pending.file.name.toLowerCase().endsWith('.xlsx') }">{{ pending.file.name.split('.').pop()?.toUpperCase() }}</span><div><strong :title="pending.file.name">{{ pending.file.name }}</strong><small>{{ (pending.file.size / 1024 / 1024).toFixed(2) }} MB · {{ pending.error ? '上传失败，可重试保存' : busy ? '等待上传 / 当前策略处理中' : '待上传' }}</small></div><el-button link :disabled="formLocked" :aria-label="`移除附件${pending.file.name}`" @click="pendingFiles.splice(index, 1)">移除</el-button></div><p v-if="!files.length && !pendingFiles.length" class="empty-state">暂无附件</p></div></section>
         <section class="editor-panel check-panel"><h2>提交检查</h2><ul><li v-for="check in checks" :key="check.label" :class="{ complete: check.ok }"><span v-if="check.ok" class="checked" role="img" aria-label="已完成"><img :src="checkIcon" alt=""/><span aria-hidden="true">✓</span></span><span v-else class="unchecked" aria-label="待完成"/>{{ check.label }}</li></ul><p>正式提交后进入待首响，由当前负责人跟进。</p></section>
       </aside>
     </div>
+    <InquiryProductDialog v-if="productDialogItem" v-model="productDialogVisible" :item="productDialogItem" :categories="productCategories" :units="productUnits" :colors="productColors" :currencies="currencies" :can-upload="canUploadProductImage" :catalog-error="catalogError" :pending-image="pendingProductImages[productDialogItem.line_number!]?.file" :pending-removal="pendingProductImages[productDialogItem.line_number!]?.remove" @confirm="confirmProduct"/>
   </section>
 </template>
 <style scoped lang="scss">
@@ -264,7 +313,11 @@ h1,h2,p { margin: 0; } h1 { font: 700 34px/40px token.$crm-font-display; } h2 { 
 .inquiry-editor :deep(.el-form-item) { margin-bottom: 12px; min-width: 0; }.inquiry-editor :deep(.el-form-item__label) { font-size: 12px; line-height: 18px; height: auto; padding: 0; margin-bottom: 5px; color: token.$crm-text-secondary; }.inquiry-editor :deep(.el-input__wrapper),.inquiry-editor :deep(.el-select__wrapper) { background: token.$crm-color-surface; min-height: 32px; font-size: 12px; border-radius: 4px; }.inquiry-editor :deep(.el-input.is-disabled .el-input__wrapper) { background: #e8e6dc; }.inquiry-editor :deep(.el-select),.inquiry-editor :deep(.el-date-editor.el-input) { width: 100%; min-width: 0; }.inquiry-editor :deep(.el-button) { font-family: inherit; border-radius: 4px; }.inquiry-editor :deep(.el-button--primary:not(.is-link):not(.is-text)) { background: token.$crm-primary; border-color: token.$crm-primary; color: token.$crm-text-inverse; }
 .products-panel { min-height: 310px; }.item-table { max-height: 350px; overflow: auto; }.item-table table { width: 100%; min-width: 980px; table-layout: fixed; border-collapse: collapse; font-size: 12px; }.item-table th { position: sticky; top: 0; z-index: 1; background: token.$crm-color-subtle; text-align: left; font-weight: 400; height: 36px; color: token.$crm-text-secondary; }.item-table th,.item-table td { padding: 6px 4px; }.item-table td { border-bottom: 1px solid token.$crm-border-subtle; height: 44px; }.item-table :deep(.el-input__wrapper) { padding: 1px 6px; }.item-table :deep(.el-input__prefix) { display: none; }.price-input { display: grid; grid-template-columns: minmax(0,1fr) 78px; gap: 4px; }.price-input :deep(.el-select__wrapper) { padding: 4px 6px; }.items-summary { margin-top: 12px; padding: 12px; min-height: 42px; background: token.$crm-color-subtle; color: token.$crm-text-muted; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }.notes-panel :deep(textarea) { font-family: inherit; font-size: 12px; line-height: 22px; background: token.$crm-color-surface; color: token.$crm-text-primary; min-height: 156px; }.notes-panel :deep(.el-input__count) { background: token.$crm-color-surface; }
 .trade-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 12px; }.trade-form .budget-field { grid-column: 1 / -1; margin-bottom: 0; }.budget-input { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) 86px; gap: 6px; align-items: center; width: 100%; }.product-total { min-height: 32px; width: 100%; padding: 6px 10px; border: 1px solid token.$crm-border-default; border-radius: 4px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }.file-input { display: none; }.file-hint,.check-panel p { font-size: 12px; color: token.$crm-text-muted; line-height: 20px; }.attachment-list { display: grid; gap: 6px; max-height: 250px; overflow: auto; margin-top: 10px; }.attachment-row { min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px; border: 1px solid token.$crm-border-default; border-radius: 3px; }.attachment-row > div { min-width: 0; flex: 1; }.attachment-row strong { font-size: 12px; font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.attachment-row small { display: block; margin-top: 5px; color: token.$crm-text-muted; font-size: 11px; }.file-badge { width: 36px; height: 36px; flex-shrink: 0; display: grid; place-items: center; border-radius: 3px; color: token.$crm-primary; background: #f8e0da; font-size: 10px; font-weight: 700; }.file-badge.sheet { color: #2d893d; background: #e0f1dd; }.failed { border-color: token.$crm-danger; }.empty-state { padding: 20px 6px; color: token.$crm-text-muted; text-align: center; font-size: 12px; }.check-panel ul { list-style: none; padding: 0; margin: 14px 0 18px; display: grid; gap: 14px; }.check-panel li { display: flex; align-items: center; gap: 10px; color: token.$crm-text-muted; font-size: 12px; }.check-panel li.complete { color: token.$crm-text-secondary; }.check-panel img,.unchecked { width: 18px; height: 18px; flex-shrink: 0; }.checked { position: relative; width: 18px; height: 18px; flex-shrink: 0; }.checked > span { position: absolute; inset: 0; display: grid; place-items: center; color: token.$crm-text-inverse; font-size: 12px; font-weight: 700; }.unchecked { border: 1px solid token.$crm-border-strong; border-radius: 50%; }
-.item-table col:first-child { width: 4% !important; }
-.item-table col:last-child { width: 4% !important; }
-.item-table :is(th, td):is(:first-child, :last-child) { padding-left: 4px !important; padding-right: 4px !important; }
+.products-panel .item-table { border: 1px solid token.$crm-border-default; border-radius: 5px; }
+.products-panel .item-table table { min-width: 780px; border-collapse: separate; border-spacing: 0; }
+.products-panel .item-table th { height: 44px; padding: 0 8px !important; font-weight: 500; border-bottom: 1px solid token.$crm-border-default; }
+.products-panel .item-table td { height: 34px !important; padding: 0 8px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom-color: token.$crm-border-default; }
+.products-panel .item-table tbody tr:last-child td { border-bottom: 0; }
+.products-panel .item-table tbody tr:hover td { background: token.$crm-color-row-hover; }
+.product-actions :deep(.el-button) { margin: 0 4px 0 0; padding: 0; font-size: 12px; }
 </style>

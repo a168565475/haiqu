@@ -48,5 +48,10 @@ src/backend/media/
 src/backend/tmp/
 src/backend/outputs/
 src/frontend/qa/
-qa/
+# 历史 QA 证据和运行产物默认忽略；统一入口及其契约测试保留为源码。
+qa/*
+!qa/
+!qa/run.py
+!qa/runner_manifest.json
+!qa/test_run.py
 tmp_bom_serializer_excerpt.txt

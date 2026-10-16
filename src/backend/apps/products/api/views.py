@@ -31,6 +31,7 @@ from apps.reference_data.models import (
 from .serializers import (
     ProductInformationSerializer,
     ProductOptionsResponseSerializer,
+    ProductSelectionResponseSerializer,
     RawMaterialInformationSerializer,
     RawMaterialOptionsResponseSerializer,
 )
@@ -89,6 +90,91 @@ class ProductOptionsView(viewsets.ViewSet):
                             "category_name": item.category.category_name,
                         }
                         for item in items
+                    ],
+                }
+            }
+        )
+
+
+class ProductSelectionOptionsView(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated, HasActiveEmployee, ProductOptionsPermission]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("category_id", UUID, OpenApiParameter.QUERY, required=True),
+            OpenApiParameter("product_name", str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter("specification", str, OpenApiParameter.QUERY, required=False),
+        ],
+        responses=ProductSelectionResponseSerializer,
+    )
+    def list(self, request):
+        category_id = request.query_params.get("category_id", "").strip()
+        if not category_id:
+            raise ValidationError({"category_id": "请选择产品类别。"})
+        try:
+            category_uuid = UUID(category_id)
+        except ValueError as exc:
+            raise ValidationError({"category_id": "产品类别编号格式不正确。"}) from exc
+
+        category = ProductCategory.objects.filter(
+            pk=category_uuid,
+            item_type=ProductItemType.FINISHED,
+            status=ReferenceStatus.ACTIVE,
+            archived_at__isnull=True,
+        ).first()
+        if category is None:
+            raise ValidationError({"category_id": "产品类别不存在或不可用。"})
+
+        product_name = request.query_params.get("product_name", "").strip()
+        specification = request.query_params.get("specification", "").strip()
+        if len(product_name) > 200:
+            raise ValidationError({"product_name": "品名查询条件过长。"})
+        if len(specification) > 300:
+            raise ValidationError({"specification": "规格查询条件过长。"})
+
+        products = ProductInformation.objects.filter(
+            category=category,
+            status=ProductStatus.ACTIVE,
+            archived_at__isnull=True,
+        ).select_related("category", "unit", "product_item")
+        if product_name:
+            products = products.filter(product_name__iexact=product_name)
+        if specification:
+            products = products.filter(specification__iexact=specification)
+        products = products.order_by("product_name", "specification", "product_number", "id")
+
+        groups = {}
+        for product in products:
+            group = groups.setdefault(product.product_name, {})
+            group.setdefault(product.specification, []).append(
+                {
+                    "id": product.pk,
+                    "product_number": product.product_number,
+                    "product_code": product.product_code,
+                    "item_number": product.product_item.item_number,
+                    "product_name": product.product_name,
+                    "specification": product.specification,
+                    "unit_id": product.unit_id,
+                    "unit_code": product.unit.unit_code,
+                    "unit_name": product.unit.unit_name,
+                    "category_id": product.category_id,
+                    "category_name": product.category.category_name,
+                }
+            )
+
+        return Response(
+            {
+                "data": {
+                    "category": {"id": category.pk, "category_name": category.category_name},
+                    "groups": [
+                        {
+                            "product_name": name,
+                            "specifications": [
+                                {"specification": spec, "products": rows}
+                                for spec, rows in specifications.items()
+                            ],
+                        }
+                        for name, specifications in groups.items()
                     ],
                 }
             }

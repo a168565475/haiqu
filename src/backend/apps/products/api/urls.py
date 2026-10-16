@@ -5,6 +5,7 @@ from django.urls import path
 from .views import (
     ProductInformationViewSet,
     ProductOptionsView,
+    ProductSelectionOptionsView,
     RawMaterialInformationViewSet,
     RawMaterialOptionsView,
 )
@@ -16,6 +17,11 @@ router.register("raw-materials", RawMaterialInformationViewSet, basename="raw-ma
 
 urlpatterns = [
     path("products/options/", ProductOptionsView.as_view({"get": "list"}), name="product-options"),
+    path(
+        "products/selection-options/",
+        ProductSelectionOptionsView.as_view({"get": "list"}),
+        name="product-selection-options",
+    ),
     path(
         "raw-materials/options/",
         RawMaterialOptionsView.as_view({"get": "list"}),

@@ -19,7 +19,13 @@ from .models import (
     SampleRequestStatus,
     SampleWorkflowStage,
 )
-from .services import SAMPLE_FIELDS, _record_workflow_stage, _start_sla, _write_sample_records
+from .services import (
+    SAMPLE_FIELDS,
+    _record_workflow_stage,
+    _start_sla,
+    _write_sample_records,
+    sample_product_values_from_source,
+)
 
 
 TERMINAL_FORM_STATUSES = {
@@ -256,6 +262,10 @@ def _create_products(*, sample_request, products, task_files, sampling_image_fil
         if task_file is None:
             raise ValidationError({f"task_sheet_{client_key}": "每个产品必须上传一张任务单图片。"})
         source_inquiry_item, source_quotation_line = _validate_product_source(product_data, source_relations)
+        source = source_quotation_line or source_inquiry_item
+        if source is not None:
+            for field_name, value in sample_product_values_from_source(source).items():
+                product_data.setdefault(field_name, value)
         category = product_data.pop("category")
         product = SampleProduct.objects.create(
             sample_request=sample_request,

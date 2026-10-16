@@ -222,6 +222,8 @@ CACHES = {
 CLAMAV_HOST = os.getenv("CLAMAV_HOST", "clamav")
 CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
 CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "15"))
+# 默认开启；内部开发环境可通过 .env 显式关闭，文件仍保留格式、签名、大小和权限校验。
+FILE_VIRUS_SCAN_ENABLED = env_bool("FILE_VIRUS_SCAN_ENABLED", True)
 CONTACT_IMPORT_MAX_BYTES = int(os.getenv("CONTACT_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
 CONTACT_IMPORT_MAX_ROWS = int(os.getenv("CONTACT_IMPORT_MAX_ROWS", "500"))
 BOM_IMPORT_MAX_BYTES = int(os.getenv("BOM_IMPORT_MAX_BYTES", str(100 * 1024 * 1024)))

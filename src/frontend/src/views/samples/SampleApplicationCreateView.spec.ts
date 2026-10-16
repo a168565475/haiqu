@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElMessage, ElSelect, ElUpload } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SampleApplicationCreateView from './SampleApplicationCreateView.vue'
@@ -109,7 +109,7 @@ describe('创建打样申请客户查询', () => {
     await wrapper.find('.source-image-select').trigger('click')
     await flushPromises()
 
-    const cards = wrapper.findAll('.sample-source-images article')
+    const cards = new DOMWrapper(document.body).findAll('.sample-source-images article')
     expect(cards).toHaveLength(1)
     expect(cards[0]!.findComponent({ name: 'ElImage' }).props('src')).toBe('/chair.png')
     expect(wrapper.text()).not.toContain('行军床.png')
@@ -135,7 +135,7 @@ describe('创建打样申请客户查询', () => {
     const wrapper = await render()
     expect(wrapper.find('.product-image img').exists()).toBe(false)
     await wrapper.find('.source-image-select').trigger('click'); await flushPromises()
-    const cards = wrapper.findAll('.sample-source-images article')
+    const cards = new DOMWrapper(document.body).findAll('.sample-source-images article')
     expect(cards).toHaveLength(2)
     expect(cards[1]!.findComponent({ name: 'ElImage' }).props('src')).toBe('/source-2.png')
     expect(cards[1]!.findComponent({ name: 'ElImage' }).props('previewSrcList')).toEqual(['/source-1.png', '/source-2.png'])
@@ -146,7 +146,7 @@ describe('创建打样申请客户查询', () => {
     wrapper.findComponent(ElUpload).props('onChange')!({ raw: new File(['png'], 'new.png', { type: 'image/png' }) } as never, [])
     await flushPromises()
     expect(wrapper.find('.product-image img').attributes('src')).toBe('blob:replacement')
-    expect(wrapper.findAll('.sample-source-images article.is-selected')).toHaveLength(0)
+    expect(new DOMWrapper(document.body).findAll('.sample-source-images article.is-selected')).toHaveLength(0)
   })
   it('无需输入即可下拉选择现有产品，并带入名称和规格', async () => {
     const wrapper = await render()

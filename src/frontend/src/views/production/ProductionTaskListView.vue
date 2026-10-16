@@ -4,11 +4,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ArrowDown, DocumentCopy, Operation, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   cancelProductionTask,
-  decideProductionTaskByPmc,
+  deleteProductionTask,
   exportProductionTasks,
   fetchProductionTask,
   fetchProductionTaskFilterOptions,
@@ -30,13 +30,14 @@ import type {
 } from '@/types/productionTask'
 import type { SavedView } from '@/types/savedView'
 
+import { productLabels, productSpecifications, quantityWithUnits, localAmountTotal } from './productionTaskDisplay'
+
 type StatusTabKey = 'all' | 'pending' | 'draft' | 'ready' | 'production' | 'completed' | 'paused' | 'cancelled'
-type OptionalColumnKey = 'customer' | 'product' | 'quantity' | 'delivery' | 'business' | 'status' | 'bomStatus' | 'purchaseStatus'
+type OptionalColumnKey = 'product' | 'quantity' | 'delivery' | 'salesperson' | 'followers' | 'localAmount' | 'status' | 'bomStatus' | 'purchaseStatus'
 type LifecycleAction = 'cancel' | 'finish'
 
 interface AdvancedFilters {
   contract_number: string
-  customer_id: string
   product_id: string
   salesperson_id: string
   follower_id: string
@@ -86,22 +87,19 @@ const completionGoodQuantity = ref('0')
 const completionBatches = ref<Array<{ batch_number: string; planned_quantity: string; actual_quantity: string; good_quantity: string; note: string }>>([])
 const scheduleDialogVisible = ref(false)
 const scheduleTarget = ref<ProductionTask | null>(null)
-const pmcConfirmVisible = ref(false)
-const pmcConfirmLoading = ref(false)
-const pmcConfirmTarget = ref<ProductionTask | null>(null)
-const pmcConfirmEtag = ref('')
-const pmcConfirmForm = reactive({ planned_start_date: '', planned_end_date: '' })
+
 
 const advancedFilters = reactive<AdvancedFilters>({
-  contract_number: '', customer_id: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '',
+  contract_number: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '',
 })
 
 const optionalColumns: Array<{ key: OptionalColumnKey; label: string; width: number; align?: 'left' | 'center' }> = [
-  { key: 'customer', label: '客户 / 订单', width: 180 },
-  { key: 'product', label: '产品信息', width: 300 },
-  { key: 'quantity', label: '数量 / 金额', width: 190 },
-  { key: 'delivery', label: '交期', width: 160 },
-  { key: 'business', label: '业务 / 跟单', width: 200 },
+  { key: 'product', label: '产品信息', width: 178 },
+  { key: 'quantity', label: '数量', width: 88 },
+  { key: 'localAmount', label: '人民币金额合计', width: 105 },
+  { key: 'delivery', label: '交期', width: 102 },
+  { key: 'salesperson', label: '业务员', width: 78 },
+  { key: 'followers', label: '跟单员', width: 78 },
   { key: 'status', label: '状态', width: 140, align: 'center' },
   { key: 'bomStatus', label: 'BOM状态', width: 120, align: 'center' },
   { key: 'purchaseStatus', label: '采购状态', width: 130, align: 'center' },
@@ -109,6 +107,16 @@ const optionalColumns: Array<{ key: OptionalColumnKey; label: string; width: num
 const columnOrder = ref<OptionalColumnKey[]>(optionalColumns.map((item) => item.key))
 const visibleColumnKeys = ref<OptionalColumnKey[]>(optionalColumns.map((item) => item.key))
 
+const canDelete = computed(() => authStore.hasPermission('production_tasks.delete_productiontask'))
+const deletingId = ref('')
+const hoveredRowElement = ref<HTMLElement>()
+const hoveredProductDetails = ref('')
+const rowTooltipVisible = ref(false)
+function showRowProducts(row: ProductionTask, _column: unknown, cell: HTMLElement) {
+  hoveredRowElement.value = cell.parentElement || cell
+  hoveredProductDetails.value = productSpecifications(row.products)
+  rowTooltipVisible.value = row.products.length > 0
+}
 const canEdit = computed(() => authStore.hasPermission('production_tasks.change_productiontask'))
 const canCreate = computed(() => authStore.hasPermission('production_tasks.add_productiontask'))
 const canConfirm = computed(() => authStore.hasPermission('production_tasks.confirm_productiontask'))
@@ -123,7 +131,7 @@ const lifecycleReasonLabel = computed(() => lifecycleAction.value === 'cancel' ?
 const lifecycleConfirmText = computed(() => lifecycleAction.value === 'cancel' ? '确认取消' : '确认结束')
 const titleCount = computed(() => statsReady.value ? stats.value.all : total.value)
 const advancedFilterCount = computed(() => [
-  advancedFilters.contract_number, advancedFilters.customer_id, advancedFilters.product_id,
+  advancedFilters.contract_number, advancedFilters.product_id,
   advancedFilters.salesperson_id, advancedFilters.follower_id, advancedFilters.order_source,
   advancedFilters.delivery_method, deliveryRange.value.length ? 'range' : '',
 ].filter(Boolean).length)
@@ -140,7 +148,7 @@ function apiError(error: unknown) {
   if (!(error instanceof AxiosError)) return error instanceof Error ? error.message : '请求失败，请稍后重试。'
   if (!error.response) return '网络连接异常，请检查后端服务。'
   const data = error.response.data as { error?: { message?: string }; detail?: string }
-  if (error.response.status === 403) return '当前账号没有查看生产任务单的权限。'
+  if (error.response.status === 403) return data.error?.message || data.detail || '当前账号没有执行此操作的权限。'
   return data.error?.message || data.detail || '生产任务单加载失败。'
 }
 
@@ -161,7 +169,6 @@ function buildQuery(): ProductionTaskQuery {
     search: searchText.value.trim() || undefined, ...statusQuery(),
   }
   if (advancedFilters.contract_number.trim()) query.contract_number = advancedFilters.contract_number.trim()
-  if (advancedFilters.customer_id) query.customer_id = advancedFilters.customer_id
   if (advancedFilters.product_id) query.product_id = advancedFilters.product_id
   if (advancedFilters.salesperson_id) query.salesperson_id = advancedFilters.salesperson_id
   if (advancedFilters.follower_id) query.follower_id = advancedFilters.follower_id
@@ -270,7 +277,7 @@ function search() { page.value = 1; void Promise.all([loadRows(), loadStats()]) 
 function applyStatusTab(key: StatusTabKey) { activeStatusTab.value = key; page.value = 1; void loadRows() }
 function applyAdvancedFilters() { advancedVisible.value = false; search() }
 function resetAdvancedFilters() {
-  Object.assign(advancedFilters, { contract_number: '', customer_id: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '' })
+  Object.assign(advancedFilters, { contract_number: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '' })
   deliveryRange.value = []
 }
 async function refresh() {
@@ -294,21 +301,11 @@ function progressStatusClass(status?: string) {
   if (status === 'ORDER_PURCHASING') return 'info'
   return 'warning'
 }
-function quantity(value: string) {
-  const number = Number(value)
-  return Number.isFinite(number) ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(number) : '—'
-}
-function productTitle(row: ProductionTask) {
-  if (!row.products.length) return '未添加产品'
-  const first = row.products[0]
-  const productCount = new Set(row.products.map((item) => item.product_id)).size
-  if (productCount > 1) return `${first.product_name} 等 ${productCount} 个产品`
-  return `${first.product_name}，共 ${row.products.length} 条颜色`
-}
 function openCreate() { void router.push({ name: 'production-task-create' }) }
 function openTask(row: ProductionTask, edit = false) { void router.push({ name: edit ? 'production-task-edit' : 'production-task-detail', params: { taskId: row.id } }) }
 function canChangeLifecycle(row: ProductionTask) { return canEdit.value && row.status !== 'CANCELLED' && row.status !== 'COMPLETED' }
 function handleRowAction(command: string, row: ProductionTask) {
+  if (command === 'delete') { void deleteTask(row); return }
   if (command === 'view') { openTask(row); return }
   if (command === 'edit') { openTask(row, true); return }
   if (command === 'confirm') { void openPmcConfirm(row); return }
@@ -326,6 +323,24 @@ function handleRowAction(command: string, row: ProductionTask) {
   lifecycleTarget.value = row
   lifecycleReason.value = ''
   lifecycleDialogVisible.value = true
+}
+async function deleteTask(row: ProductionTask) {
+  if (!canDelete.value || row.status !== 'CANCELLED' || deletingId.value) return
+  deletingId.value = row.id
+  try {
+    const current = await fetchProductionTask(row.id)
+    if (current.data.status !== 'CANCELLED') { ElMessage.warning('任务状态已变化，请刷新后重试。'); return }
+    if (!current.etag) { ElMessage.error('未取得任务版本，请刷新后重试。'); return }
+    await ElMessageBox.confirm(`确定删除任务单 ${row.task_number}？删除后不可恢复。存在 BOM、排产、采购等下游记录时将无法删除。`, '删除生产任务单', { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' })
+    await deleteProductionTask(row.id, current.etag)
+    selectedRows.value = selectedRows.value.filter((item) => item.id !== row.id)
+    ElMessage.success('生产任务单已删除。')
+    await Promise.all([loadRows(), loadStats()])
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    if (error instanceof AxiosError && [409, 412, 428].includes(error.response?.status || 0)) ElMessage.error(`${apiError(error)} 请刷新列表后重试。`)
+    else ElMessage.error(apiError(error))
+  } finally { deletingId.value = '' }
 }
 async function prepareLinkedFinish(row: ProductionTask) {
   lifecycleLoading.value = true
@@ -347,49 +362,8 @@ async function prepareLinkedFinish(row: ProductionTask) {
   } catch (error) { ElMessage.error(apiError(error)) } finally { lifecycleLoading.value = false }
 }
 async function openPmcConfirm(row: ProductionTask) {
-  if (row.status !== 'PENDING_VALIDATION' || !canConfirm.value || pmcConfirmLoading.value) return
-  pmcConfirmLoading.value = true
-  try {
-    const current = await fetchProductionTask(row.id)
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date())
-    pmcConfirmTarget.value = current.data
-    pmcConfirmEtag.value = current.etag
-    pmcConfirmForm.planned_start_date = current.data.planned_start_date || today
-    pmcConfirmForm.planned_end_date = current.data.planned_end_date || pmcConfirmForm.planned_start_date
-    pmcConfirmVisible.value = true
-  } catch (error) {
-    ElMessage.error(apiError(error))
-  } finally {
-    pmcConfirmLoading.value = false
-  }
-}
-
-async function confirmPmcTask() {
-  const target = pmcConfirmTarget.value
-  if (!target || pmcConfirmLoading.value) return
-  if (!pmcConfirmForm.planned_start_date || !pmcConfirmForm.planned_end_date) {
-    ElMessage.warning('请填写计划开始和计划完工日期。')
-    return
-  }
-  if (pmcConfirmForm.planned_end_date < pmcConfirmForm.planned_start_date) {
-    ElMessage.warning('计划完工日期不能早于计划开始日期。')
-    return
-  }
-  pmcConfirmLoading.value = true
-  try {
-    await decideProductionTaskByPmc(target.id, {
-      decision: 'CONFIRM',
-      planned_start_date: pmcConfirmForm.planned_start_date,
-      planned_end_date: pmcConfirmForm.planned_end_date,
-    }, pmcConfirmEtag.value)
-    pmcConfirmVisible.value = false
-    ElMessage.success('生产任务单已由 PMC 确认。')
-    await Promise.all([loadRows(), loadStats()])
-  } catch (error) {
-    ElMessage.error(apiError(error))
-  } finally {
-    pmcConfirmLoading.value = false
-  }
+  if (row.status !== 'PENDING_VALIDATION' || !canConfirm.value) return
+  await router.push({ name: 'production-task-detail', params: { taskId: row.id }, query: { pmc: 'confirm' } })
 }
 
 async function handleScheduleSaved() {
@@ -470,7 +444,6 @@ function applySavedView(view: SavedView) {
   dueSoon.value = definition.due_within_days === 30
   Object.assign(advancedFilters, {
     contract_number: typeof definition.contract_number === 'string' ? definition.contract_number : '',
-    customer_id: typeof definition.customer_id === 'string' ? definition.customer_id : '',
     product_id: typeof definition.product_id === 'string' ? definition.product_id : '',
     salesperson_id: typeof definition.salesperson_id === 'string' ? definition.salesperson_id : '',
     follower_id: typeof definition.follower_id === 'string' ? definition.follower_id : '',
@@ -490,7 +463,7 @@ function applySavedView(view: SavedView) {
               : status === 'CANCELLED' ? 'cancelled' : 'all'
   if (typeof definition.page_size === 'number') pageSize.value = definition.page_size
   if (view.sort_definition[0]) ordering.value = view.sort_definition[0]
-  const savedOptional = view.column_definition.filter((key): key is OptionalColumnKey => optionalColumns.some((column) => column.key === key))
+  const savedOptional = view.column_definition.flatMap((key) => key === 'business' ? ['salesperson', 'followers'] : [key]).filter((key): key is OptionalColumnKey => optionalColumns.some((column) => column.key === key))
   if (savedOptional.length) {
     columnOrder.value = [...savedOptional, ...columnOrder.value.filter((key) => !savedOptional.includes(key))]
     visibleColumnKeys.value = [...savedOptional]
@@ -556,7 +529,7 @@ onBeforeUnmount(() => {
 
     <section class="list-toolbar" aria-label="列表筛选与视图设置">
       <div class="list-toolbar__filters">
-        <ElInput v-model="searchText" clearable :prefix-icon="Search" placeholder="搜索任务单号、订单号、客户或产品" @keyup.enter="search" @clear="search" />
+        <ElInput v-model="searchText" clearable :prefix-icon="Search" placeholder="搜索任务单号、订单号或产品" @keyup.enter="search" @clear="search" />
         <ElSelect v-model="activeStatusTab" aria-label="状态筛选" @change="() => applyStatusTab(activeStatusTab)">
           <ElOption v-for="tab in statusTabs" :key="tab.key" :label="`状态：${tab.label}`" :value="tab.key" />
           <ElOption label="状态：已暂停" value="paused" />
@@ -575,7 +548,6 @@ onBeforeUnmount(() => {
             <header><strong>更多筛选</strong><span>按业务字段组合筛选生产任务单</span></header>
             <div class="advanced-filter-grid">
               <label><span>合同编号</span><ElInput v-model="advancedFilters.contract_number" clearable placeholder="输入合同编号" /></label>
-              <label><span>客户</span><ElSelect v-model="advancedFilters.customer_id" filterable clearable placeholder="全部客户"><ElOption v-for="item in options?.customers || []" :key="item.id" :label="`${item.account_name}（${item.account_code}）`" :value="item.id" /></ElSelect></label>
               <label><span>产品</span><ElSelect v-model="advancedFilters.product_id" filterable clearable placeholder="全部产品"><ElOption v-for="item in options?.products || []" :key="item.id" :label="`${item.product_code} · ${item.item_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
               <label><span>业务员</span><ElSelect v-model="advancedFilters.salesperson_id" filterable clearable placeholder="全部业务员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
               <label><span>跟单员</span><ElSelect v-model="advancedFilters.follower_id" filterable clearable placeholder="全部跟单员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
@@ -610,22 +582,22 @@ onBeforeUnmount(() => {
 
     <section class="table-card">
       <ElAlert v-if="errorMessage" class="list-error" type="error" :title="errorMessage" show-icon :closable="false"><ElButton size="small" @click="refresh">重试</ElButton></ElAlert>
-      <ElTable v-else v-loading="loading" :data="rows" border row-key="id" empty-text="暂无生产任务单" @selection-change="selectedRows = $event" @sort-change="handleSortChange">
-        <ElTableColumn type="selection" width="48" align="center" />
+      <ElTable v-else v-loading="loading" :data="rows" row-key="id" empty-text="暂无生产任务单" @cell-mouse-enter="showRowProducts" @cell-mouse-leave="rowTooltipVisible = false" @selection-change="selectedRows = $event" @sort-change="handleSortChange">
+        <ElTableColumn type="selection" width="40" align="center" />
         <ElTableColumn
           prop="task_number"
-          label="生产任务编号"
-          :width="visibleColumnKeys.includes('product') ? 178 : undefined"
-          :min-width="visibleColumnKeys.includes('product') ? undefined : 178"
+          label="任务编号"
+          min-width="110"
           sortable="custom"
         ><template #default="{ row }"><button class="link-button" type="button" @click="openTask(row)">{{ row.task_number }}</button></template></ElTableColumn>
-        <ElTableColumn label="销售订单" width="176"><template #default="{ row }">{{ row.is_historical_unlinked ? '历史未关联' : (row.source_sales_order_number || row.order_number) }}</template></ElTableColumn>
+        <ElTableColumn label="销售订单" min-width="128" show-overflow-tooltip><template #default="{ row }">{{ row.source_sales_order_number || '手动创建' }}</template></ElTableColumn>
         <template v-for="key in columnOrder" :key="key">
-          <ElTableColumn v-if="key === 'customer' && visibleColumnKeys.includes(key)" label="客户" width="150" show-overflow-tooltip><template #default="{ row }">{{ row.customer_name }}</template></ElTableColumn>
-          <ElTableColumn v-else-if="key === 'product' && visibleColumnKeys.includes(key)" label="产品" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ productTitle(row) }}</template></ElTableColumn>
-          <ElTableColumn v-else-if="key === 'quantity' && visibleColumnKeys.includes(key)" label="数量" width="100" align="right"><template #default="{ row }">{{ quantity(row.total_quantity) }}</template></ElTableColumn>
-          <ElTableColumn v-else-if="key === 'delivery' && visibleColumnKeys.includes(key)" prop="delivery_date" label="交期" width="130" sortable="custom"><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
-          <ElTableColumn v-else-if="key === 'business' && visibleColumnKeys.includes(key)" label="业务员" width="125"><template #default="{ row }">{{ row.salesperson.display_name }}</template></ElTableColumn>
+          <ElTableColumn v-if="key === 'product' && visibleColumnKeys.includes(key)" label="产品" min-width="178"><template #default="{ row }"><ElTooltip trigger="focus" :content="productSpecifications(row.products)" placement="top" popper-class="production-product-tooltip"><div class="product-summary" tabindex="0"><div v-for="(label, index) in productLabels(row.products)" :key="index">{{ label }}</div><span v-if="!row.products.length">未添加产品</span></div></ElTooltip></template></ElTableColumn>
+          <ElTableColumn v-else-if="key === 'quantity' && visibleColumnKeys.includes(key)" label="数量" min-width="88" show-overflow-tooltip align="right"><template #default="{ row }">{{ quantityWithUnits(row.products) }}</template></ElTableColumn>
+          <ElTableColumn v-else-if="key === 'delivery' && visibleColumnKeys.includes(key)" prop="delivery_date" label="交期" min-width="102" sortable="custom"><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
+          <ElTableColumn v-else-if="key === 'localAmount' && visibleColumnKeys.includes(key)" label="人民币金额合计" min-width="125" show-overflow-tooltip align="right"><template #default="{ row }">¥ {{ localAmountTotal(row.products) }}</template></ElTableColumn>
+          <ElTableColumn v-else-if="key === 'salesperson' && visibleColumnKeys.includes(key)" label="业务员" min-width="78" show-overflow-tooltip><template #default="{ row }">{{ row.salesperson.display_name }}</template></ElTableColumn>
+          <ElTableColumn v-else-if="key === 'followers' && visibleColumnKeys.includes(key)" label="跟单员" min-width="78" show-overflow-tooltip><template #default="{ row }">{{ row.followers.map((item: { display_name: string }) => item.display_name).join('、') || '待选择' }}</template></ElTableColumn>
           <ElTableColumn v-else-if="key === 'status' && visibleColumnKeys.includes(key)" label="状态" width="110" align="center"><template #default="{ row }"><ElTag class="status-tag" :class="`status-tag--${statusClass(row.status)}`" effect="dark">{{ row.status_display }}</ElTag></template></ElTableColumn>
           <ElTableColumn v-else-if="key === 'bomStatus' && visibleColumnKeys.includes(key)" label="BOM状态" width="120" align="center"><template #default="{ row }"><ElTag class="status-tag progress-status-tag" :class="`status-tag--${progressStatusClass(row.bom_status)}`" effect="dark">{{ row.bom_status_display || '未建立' }}</ElTag></template></ElTableColumn>
           <ElTableColumn v-else-if="key === 'purchaseStatus' && visibleColumnKeys.includes(key)" label="采购状态" width="130" align="center"><template #default="{ row }"><ElTag class="status-tag progress-status-tag" :class="`status-tag--${progressStatusClass(row.purchase_status)}`" effect="dark">{{ row.purchase_status_display || '未发起' }}</ElTag></template></ElTableColumn>
@@ -645,6 +617,7 @@ onBeforeUnmount(() => {
                     <ElDropdownItem v-if="row.status === 'READY' && canSchedule" command="schedule">计划排产</ElDropdownItem>
                     <ElDropdownItem v-if="canChangeLifecycle(row) && row.status === 'IN_PRODUCTION'" command="finish">完结生产</ElDropdownItem>
                     <ElDropdownItem v-if="canChangeLifecycle(row)" command="cancel" class="danger-menu-item" divided>取消订单</ElDropdownItem>
+                    <ElDropdownItem v-if="canDelete" command="delete" :disabled="row.status !== 'CANCELLED' || !!deletingId" class="danger-menu-item">删除</ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
               </ElDropdown>
@@ -652,6 +625,7 @@ onBeforeUnmount(() => {
           </template>
         </ElTableColumn>
       </ElTable>
+      <ElTooltip virtual-triggering :virtual-ref="hoveredRowElement" :visible="rowTooltipVisible" :content="hoveredProductDetails" popper-class="production-product-tooltip" placement="top" />
       <footer class="table-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search" /></footer>
     </section>
 
@@ -661,14 +635,7 @@ onBeforeUnmount(() => {
       <template #footer><ElButton @click="saveDialogVisible = false">取消</ElButton><ElButton type="primary" :loading="saveViewLoading" @click="saveCurrentView">保存</ElButton></template>
     </ElDialog>
 
-    <ElDialog v-model="pmcConfirmVisible" :title="`PMC 确认生产任务${pmcConfirmTarget?.task_number ? ` · ${pmcConfirmTarget.task_number}` : ''}`" :width="620" :height="320" :close-on-click-modal="!pmcConfirmLoading" :close-on-press-escape="!pmcConfirmLoading" class="production-pmc-confirm-dialog" destroy-on-close>
-      <p class="pmc-confirm-note">确认后才能创建 BOM、采购订单，并可继续计划排产。</p>
-      <div class="pmc-confirm-grid">
-        <label><span>计划开始日期 *</span><ElDatePicker v-model="pmcConfirmForm.planned_start_date" value-format="YYYY-MM-DD" placeholder="选择日期" /></label>
-        <label><span>计划完工日期 *</span><ElDatePicker v-model="pmcConfirmForm.planned_end_date" value-format="YYYY-MM-DD" placeholder="选择日期" /></label>
-      </div>
-      <template #footer><ElButton :disabled="pmcConfirmLoading" @click="pmcConfirmVisible = false">取消</ElButton><ElButton type="primary" :loading="pmcConfirmLoading" @click="confirmPmcTask">确认通过</ElButton></template>
-    </ElDialog>
+
 
     <ProductionTaskScheduleDialog v-model="scheduleDialogVisible" :task="scheduleTarget" @saved="handleScheduleSaved" />
 
@@ -689,14 +656,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.production-list-page { box-sizing: border-box; min-width: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 26px 28px 18px; color: #1f1d18; background: var(--erp-page-background); --el-color-primary: #c84e28; }
+.production-list-page { box-sizing: border-box; min-width: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0; color: #1f1d18; background: var(--erp-page-background); --el-color-primary: #c84e28; }
 .page-heading, .page-heading__title, .page-heading__actions, .status-tabs, .status-tab, .list-toolbar, .list-toolbar__filters, .list-toolbar__views, .table-footer, .row-actions, .saved-view-list { display: flex; align-items: center; }
 .page-heading { height: 46px; flex: none; justify-content: space-between; }
 .page-heading__title { gap: 14px; }
 .page-heading h1 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 34px; font-weight: 700; line-height: 46px; }
 .page-heading__title > span { color: #6f6a61; font-size: 13px; }
 .page-heading__actions { gap: 12px; }
-.page-heading__actions :deep(.el-button) { height: 36px; margin: 0; border-radius: 5px; }
+.page-heading__actions :deep(.el-button) { height: 32px; margin: 0; border-radius: 5px; }
 .page-heading__actions :deep(.el-button--primary) { min-width: 174px; border-color: #c84e28; background: #c84e28; }
 .status-tabs { height: 53px; flex: none; margin-top: 4px; border: 1px solid #e3dfd7; border-radius: 5px; background: #efebe3; }
 .status-tab { position: relative; min-width: 142px; height: 53px; justify-content: center; gap: 7px; padding: 0 18px; border: 0; color: #6f6a61; background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
@@ -710,15 +677,20 @@ onBeforeUnmount(() => {
 .list-toolbar__filters { flex-wrap: wrap; }
 .list-toolbar__filters :deep(.el-input) { width: 410px; }
 .list-toolbar__filters :deep(.el-select) { width: 142px; }
-.list-toolbar :deep(.el-input__wrapper), .list-toolbar :deep(.el-select__wrapper), .list-toolbar :deep(.el-button) { min-height: 38px; border-radius: 5px; }
+.list-toolbar :deep(.el-input__wrapper), .list-toolbar :deep(.el-select__wrapper), .list-toolbar :deep(.el-button) { min-height: 32px; border-radius: 5px; }
 .list-toolbar :deep(.el-button) { margin: 0; padding: 0 13px; }
 .list-toolbar__views { margin-left: auto; }
 .selected-count { margin-right: 6px; color: #6f6a61; font-size: 12px; }
-.table-card { min-height: 0; flex: 1; display: flex; flex-direction: column; margin-top: 22px; overflow: hidden; border: 1px solid #e3dfd7; border-radius: 5px; background: #fdfcf9; }
-.table-card :deep(.el-table) { min-height: 0; flex: 1; color: #1f1d18; }
-.table-card :deep(.el-table__header-wrapper th) { height: 44px; padding: 0; color: #6f6a61; background: #efebe3; font-size: 11px; font-weight: 500; }
-.table-card :deep(.el-table__body tr) { height: 52px; font-size: 12px; }
-.table-card :deep(.el-table__cell) { padding: 0; }
+.product-summary { padding: 0; line-height: 20px; }
+.product-summary > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.product-summary:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.table-card { min-height: 0; flex: 1; display: flex; flex-direction: column; margin-top: 22px; overflow: hidden; border: 1px solid #ddd6c9; border-radius: 5px; background: #fdfcf9; }
+.table-card :deep(.el-table) { min-height: 0; flex: 1; color: #1f1d18; --el-table-border-color: #ddd6c9; }
+.table-card :deep(.el-table__inner-wrapper::before) { display: none; }
+.table-card :deep(.el-table__body tbody tr:last-child > td) { border-bottom: 0; }
+.table-card :deep(.el-table__header-wrapper th) { height: 44px; padding: 0; color: #6f6a61; background: #f0eadf; font-size: 11px; font-weight: 500; }
+.production-list-page .table-card :deep(.el-table__body tr), .production-list-page .table-card :deep(.el-table__body td.el-table__cell) { height: 34px !important; font-size: 12px; }
+.table-card :deep(.el-table__cell) { padding: 0; border-right: 0; }
 .table-card :deep(.el-table .cell) { padding: 0 16px; }
 .table-card :deep(.el-table__row:hover > td) { background: #fff6ea; }
 .table-card :deep(.status-tag) { min-width: 56px; height: 24px; justify-content: center; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; font-size: 12px; font-weight: 500; line-height: 18px; }
@@ -728,15 +700,15 @@ onBeforeUnmount(() => {
 .table-card :deep(.status-tag--warning) { background: #b8781e; }
 .table-card :deep(.status-tag--danger) { background: #b53333; }
 .table-card :deep(.status-tag--neutral) { background: #5e5d59; }
-.link-button { overflow: hidden; padding: 0; border: 0; color: #1f1d18; background: transparent; font: inherit; font-size: 12px; font-weight: 500; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.link-button { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: #1f1d18; background: transparent; font: inherit; font-size: 12px; font-weight: 500; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .link-button:hover { text-decoration: underline; }
 .row-actions { justify-content: center; }
-.row-action-trigger { display: grid; width: 30px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; color: #1f1d18; background: transparent; cursor: pointer; }
+.row-action-trigger { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 0; border-radius: 5px; color: #1f1d18; background: transparent; cursor: pointer; }
 .row-action-trigger:hover { background: #efebe3; }
-.row-action-trigger:focus-visible { outline: 2px solid #c84e28; outline-offset: 1px; }
+.row-action-trigger:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
 .row-action-dots { display: inline-flex; align-items: center; gap: 3px; }
 .row-action-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
-.table-footer { height: 52px; flex: none; justify-content: space-between; padding: 0 16px; border-top: 1px solid #e3dfd7; color: #6f6a61; font-size: 12px; }
+.table-footer { height: 52px; flex: none; justify-content: space-between; padding: 0 16px; border-top: 1px solid #ddd6c9; color: #6f6a61; font-size: 12px; }
 .table-footer :deep(.el-pagination) { --el-pagination-button-bg-color: #fdfcf9; }
 .table-footer :deep(.is-active) { color: #c84e28; background: #fdfcf9; border: 1px solid #c84e28; }
 .list-error { margin: 16px; }
@@ -752,6 +724,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="scss">
+.production-product-tooltip { white-space: pre-line; max-width: min(560px, calc(100vw - 32px)); }
 .production-filter-popper, .production-columns-popper { padding: 0 !important; border-radius: 10px !important; }
 .advanced-filter-panel { padding: 18px; }
 .advanced-filter-panel header, .column-settings header { display: flex; flex-direction: column; gap: 3px; margin-bottom: 16px; }

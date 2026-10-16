@@ -13,7 +13,7 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerAccount, CustomerContact, CustomerEntityAddress, CustomerTransactionEntity
 from apps.customers.selectors import accessible_customers
-from apps.files.models import BusinessFile
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inquiries.models import Inquiry, InquiryItem
 from apps.organizations.models import Employee
 from apps.reference_data.models import Currency, ReferenceStatus
@@ -623,7 +623,7 @@ class SampleWorkflowActionSerializer(serializers.Serializer):
 class SampleFileLinkCreateSerializer(serializers.Serializer):
     file_id = serializers.PrimaryKeyRelatedField(
         source="business_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
     )
     file_role = serializers.CharField(max_length=50, validators=[uppercase_code_validator])
 
@@ -643,6 +643,7 @@ class SampleFileLinkCreateSerializer(serializers.Serializer):
             | Q(quotation_links__quotation_version__quotation__customer_account=sample_request.customer_account)
             | Q(sample_links__sample_request__customer_account=sample_request.customer_account),
             archived_at__isnull=True,
+            scan_status__in=USABLE_FILE_SCAN_STATUSES,
         ).distinct()
 
     def validate_file_id(self, business_file):

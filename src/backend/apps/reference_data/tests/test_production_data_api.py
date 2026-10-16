@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import IntegrityError, transaction
+from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 from unittest.mock import patch
 
@@ -276,7 +277,7 @@ class ProductionDataApiTests(APITestCase):
         )
         self.assertEqual(too_large.status_code, 400, too_large.data)
 
-        with patch("apps.files.uploads._clamav_scan", side_effect=ScannerUnavailable()):
+        with override_settings(FILE_VIRUS_SCAN_ENABLED=True), patch("apps.files.uploads._clamav_scan", side_effect=ScannerUnavailable()):
             scan_unavailable = self.client.post(
                 image_url,
                 {

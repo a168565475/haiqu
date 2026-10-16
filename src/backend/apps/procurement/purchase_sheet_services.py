@@ -190,6 +190,9 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
                 "part_name": line.part_name_snapshot,
                 "specification": line.specification_snapshot,
                 "material": line.raw_material_snapshot if order.source_type == "SAMPLE" else line.material_snapshot,
+                "section_type": line.section_type_snapshot,
+                "section_title": line.section_title_snapshot,
+                "material_attributes_snapshot": deepcopy(line.material_attributes_snapshot) if isinstance(line.material_attributes_snapshot, dict) else {},
                 "quantity": format(line.actual_purchase_quantity, "f") if line.actual_purchase_quantity is not None else "",
                 "unit": line.source_unit_text,
                 "unit_price": format(line.unit_price, "f") if line.unit_price is not None else "",
@@ -234,6 +237,8 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
 
 
 def _purchase_request_content(purchase_request, supplier, allocations, template_version, sheet_number):
+    from .material_attribute_snapshot import build_material_attribute_snapshot
+
     config = deepcopy(template_version.content_config) if isinstance(template_version.content_config, dict) else {}
     settlement_mode = config.get("settlement_mode")
     if settlement_mode not in ALLOWED_SETTLEMENT_MODES:
@@ -253,6 +258,12 @@ def _purchase_request_content(purchase_request, supplier, allocations, template_
                 "part_name": request_line.material_snapshot,
                 "specification": request_line.specification_snapshot,
                 "material": request_line.material_snapshot,
+                "section_type": request_line.bom_line.section.section_type,
+                "section_title": request_line.bom_line.section.title,
+                "material_attributes_snapshot": build_material_attribute_snapshot(
+                    request_line.bom_line,
+                    request_line.bom_line.section,
+                ),
                 "quantity": format(allocation.quantity, "f"),
                 "unit": request_line.unit_snapshot,
                 "unit_price": "",
@@ -345,7 +356,7 @@ def generate_supplier_purchase_sheet_from_request(
 
     allocations = list(
         PurchaseRequestAllocation.objects.select_for_update()
-        .select_related("purchase_request_line__bom_line")
+        .select_related("purchase_request_line__bom_line__section")
         .prefetch_related("purchase_request_line__bom_line__images__business_file")
         .filter(
             purchase_request_line__purchase_request=purchase_request,
@@ -461,6 +472,7 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
     amounts = []
     for index, item in enumerate(submitted_lines, start=1):
         source_id = str(item.get("source_purchase_order_line_id"))
+        source_line = original_by_id[source_id]
         pipe_fields = normalize_pipe_sheet_line(original_by_id[source_id], item, settlement_mode)
         if pipe_fields:
             item = {**item, **{key: original_by_id[source_id][key] for key in ('quantity', 'unit', 'unit_price')}}
@@ -485,6 +497,9 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
                 "part_name": _string(item.get("part_name"), field_name=f"lines.{index}.part_name", max_length=300, allow_blank=not for_publish),
                 "specification": _string(item.get("specification"), field_name=f"lines.{index}.specification", max_length=500),
                 "material": _string(item.get("material"), field_name=f"lines.{index}.material", max_length=500 if (current.get("order") or {}).get("source_type") == "SAMPLE" else 200),
+                "section_type": str(source_line.get("section_type") or "").strip(),
+                "section_title": str(source_line.get("section_title") or "").strip(),
+                "material_attributes_snapshot": deepcopy(source_line.get("material_attributes_snapshot")) if isinstance(source_line.get("material_attributes_snapshot"), dict) else {},
                 "quantity": format(quantity, "f") if quantity is not None else "",
                 "unit": _string(item.get("unit"), field_name=f"lines.{index}.unit", max_length=50),
                 "unit_price": format(unit_price, "f") if unit_price is not None else "",

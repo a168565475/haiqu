@@ -269,11 +269,43 @@ class QuotationLine(TimeStampedModel):
     )
     lineage_id = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True, null=True, blank=True)
     line_number = models.PositiveIntegerField()
+    product = models.ForeignKey(
+        "products.ProductInformation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="quotation_lines",
+    )
+    product_category = models.ForeignKey(
+        "reference_data.ProductCategory",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="quotation_lines",
+    )
+    product_unit = models.ForeignKey(
+        "reference_data.ProductionUnit",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="quotation_lines",
+    )
+    product_color = models.ForeignKey(
+        "reference_data.ProductColor",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="quotation_lines",
+    )
     product_description_snapshot = models.CharField(max_length=500)
     specification_snapshot = models.TextField(blank=True)
     # 颜色从规格文本中独立出来，允许询盘/报价阶段保留客户原始填写值。
     # 允许为空以兼容历史报价明细；后续新流程可按需填写。
     color_snapshot = models.TextField(null=True, blank=True)
+    product_number_snapshot = models.CharField(max_length=100, blank=True)
+    product_code_snapshot = models.CharField(max_length=100, blank=True)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
+    material_snapshot = models.TextField(blank=True)
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
     unit_code = models.CharField(max_length=30, validators=[uppercase_code_validator])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
@@ -306,6 +338,10 @@ class QuotationLine(TimeStampedModel):
                 condition=Q(line_total__isnull=True) | Q(line_total__gte=0),
                 name="quotation_line_total_nonneg",
             ),
+        ]
+        indexes = [
+            models.Index(fields=["source_inquiry_item", "lineage_id"], name="quote_line_source_idx"),
+            models.Index(fields=["product", "id"], name="quote_line_product_idx"),
         ]
 
 

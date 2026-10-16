@@ -192,12 +192,55 @@ class Inquiry(ArchivableModel):
 class InquiryItem(TimeStampedModel):
     inquiry = models.ForeignKey(Inquiry, on_delete=models.PROTECT, related_name="items")
     line_number = models.PositiveIntegerField()
+    product = models.ForeignKey(
+        "products.ProductInformation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inquiry_items",
+    )
+    product_category = models.ForeignKey(
+        "reference_data.ProductCategory",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inquiry_items",
+    )
+    product_unit = models.ForeignKey(
+        "reference_data.ProductionUnit",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inquiry_items",
+    )
+    product_color = models.ForeignKey(
+        "reference_data.ProductColor",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inquiry_items",
+    )
     product_description = models.CharField(max_length=500)
     specification = models.TextField(blank=True)
     color = models.TextField(blank=True, default="")
     material = models.TextField(blank=True, default="")
+    product_number_snapshot = models.CharField(max_length=100, blank=True)
+    product_code_snapshot = models.CharField(max_length=100, blank=True)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
+    customer_product_name_snapshot = models.CharField(max_length=500, blank=True)
+    customer_specification_snapshot = models.TextField(blank=True)
+    customer_unit_code_snapshot = models.CharField(max_length=30, blank=True)
+    customer_color_snapshot = models.TextField(blank=True)
+    customer_material_snapshot = models.TextField(blank=True)
+    product_image = models.ForeignKey(
+        "files.BusinessFile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="inquiry_item_product_images",
+    )
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
-    unit_code = models.CharField(max_length=30, validators=[uppercase_code_validator])
+    unit_code = models.CharField(max_length=30)
     target_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     target_currency_code = models.CharField(max_length=3, blank=True, validators=[currency_code_validator])
     expected_date = models.DateField(null=True, blank=True)
@@ -218,6 +261,9 @@ class InquiryItem(TimeStampedModel):
                 condition=Q(target_unit_price__isnull=True) | Q(target_unit_price__gte=0),
                 name="inquiry_item_target_price_nonneg",
             ),
+        ]
+        indexes = [
+            models.Index(fields=["inquiry", "product", "line_number"], name="inquiry_item_product_idx"),
         ]
 
 

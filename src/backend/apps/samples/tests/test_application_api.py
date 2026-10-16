@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.middleware.csrf import _get_new_csrf_string
 from rest_framework.test import APIClient, APITestCase
 from apps.audit.models import AuditLog
@@ -11,6 +12,7 @@ from ..models import SampleRequest, SampleRequestStatus
 from . import test_sample_api as legacy_tests
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class SampleApplicationApiTests(APITestCase):
     setUp = legacy_tests.SampleApiTests.setUp
     create_customer = legacy_tests.SampleApiTests.create_customer

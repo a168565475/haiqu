@@ -24,7 +24,7 @@ from apps.customers.hard_delete import permanently_delete_sample
 from apps.customers.api.views import CustomerApiViewSetBase
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.reference_data.models import ProductCategory, ProductColor, ProductItemType, ReferenceStatus
 from apps.quotations.models import QuotationOutcomeStatus, QuotationVersion, QuotationVersionStatus
 from apps.quotations.selectors import accessible_quotations
@@ -1258,7 +1258,7 @@ class SampleRequestViewSet(
                 archived_at__isnull=True,
             ).distinct()
         )
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise ValidationError({"file": "文件尚未通过安全扫描，暂不能查看。"})
         media_root = Path(settings.MEDIA_ROOT).resolve()
         storage_path = (media_root / business_file.storage_key).resolve()

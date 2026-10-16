@@ -7,6 +7,7 @@ from zipfile import ZipFile
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from openpyxl import load_workbook
 from PIL import Image
@@ -39,6 +40,7 @@ from ..models import (
 )
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class QuotationApiTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()

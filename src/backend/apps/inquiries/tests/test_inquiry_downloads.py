@@ -62,10 +62,13 @@ class InquiryDownloadTests(APITestCase):
             file = self.attach(inquiry_id, folder, 'unsafe.pdf', scan='PENDING')
             single = f'/api/v1/inquiries/{inquiry_id}/files/{file.pk}/download/'
             bulk = f'/api/v1/inquiries/{inquiry_id}/files-download/'
-            for state in ['PENDING', 'INFECTED', 'FAILED', 'SKIPPED']:
+            for state in ['PENDING', 'INFECTED', 'FAILED']:
                 BusinessFile.objects.filter(pk=file.pk).update(scan_status=state)
                 self.assertEqual(self.client.get(single).status_code, 400)
                 self.assertEqual(self.client.get(bulk).status_code, 400)
+            BusinessFile.objects.filter(pk=file.pk).update(scan_status='SKIPPED')
+            self.assertEqual(self.client.get(single).status_code, 200)
+            self.assertEqual(self.client.get(bulk).status_code, 200)
             BusinessFile.objects.filter(pk=file.pk).update(scan_status='CLEAN', storage_key='missing.pdf')
             self.assertEqual(self.client.get(single).status_code, 404)
             self.assertEqual(self.client.get(bulk).status_code, 404)

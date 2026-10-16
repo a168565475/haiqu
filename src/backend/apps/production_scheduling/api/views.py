@@ -15,7 +15,7 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.customers.selectors import accessible_customers
 from apps.boms.models import Bom, BomStatus
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.procurement.models import PurchaseOrderStatus
 from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_tasks_with_context
@@ -258,7 +258,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                 archived_at__isnull=True,
             ).distinct()
         )
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise ValidationError({"file": "文件尚未通过安全扫描，暂不能查看。"})
         media_root = Path(settings.MEDIA_ROOT).resolve()
         storage_path = (media_root / business_file.storage_key).resolve()
@@ -365,7 +365,8 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         payload = {
             "id": str(task.pk), "task_number": task.task_number, "order_number": task.order_number,
             "sales_order_number": task.sales_order.order_number if task.sales_order_id else None,
-            "customer_id": str(task.customer_account_id), "customer_name": task.customer_account.account_name,
+            "customer_id": str(task.customer_account_id) if task.customer_account_id else None,
+            "customer_name": task.customer_account.account_name if task.customer_account_id else "",
             "order_date": task.order_date, "delivery_date": task.delivery_date,
             "salesperson_name": task.salesperson.display_name,
             "follower_names": [employee.display_name for employee in task.followers.all()],

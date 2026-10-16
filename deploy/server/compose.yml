@@ -1,0 +1,151 @@
+name: haiqu-erp-server
+
+x-logging: &logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-haiqu_erp}
+      POSTGRES_USER: ${POSTGRES_USER:-haiqu_erp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - type: bind
+        source: /srv/haiqu-erp/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+    mem_limit: 768m
+    cpus: 0.75
+    shm_size: 128m
+    networks: [erp]
+    logging: *logging
+
+  redis:
+    image: public.ecr.aws/docker/library/redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - type: bind
+        source: /srv/haiqu-erp/redis
+        target: /data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 192m
+    cpus: 0.25
+    networks: [erp]
+    logging: *logging
+
+  clamav:
+    image: clamav/clamav:1.5.4
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/haiqu-erp/clamav
+        target: /var/lib/clamav
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 180s
+    mem_limit: 4g
+    cpus: 1.25
+    networks: [erp]
+    logging: *logging
+
+  backend:
+    image: haiqu-erp-server-backend:${RELEASE_TAG:?RELEASE_TAG is required}
+    build:
+      context: ${ERP_BUILD_CONTEXT:?ERP_BUILD_CONTEXT is required}
+      dockerfile: deployment/Dockerfile.backend
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${ERP_ENV_FILE:-/etc/haiqu-erp/server.env}
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings_server
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+    volumes:
+      - type: bind
+        source: /srv/haiqu-erp/media
+        target: /app/media
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/haiqu-erp/staticfiles
+        target: /app/staticfiles
+        bind:
+          create_host_path: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/api/health/', headers={'X-Forwarded-Proto':'https'}); urllib.request.urlopen(r, timeout=5)"]
+      interval: 15s
+      timeout: 7s
+      retries: 12
+      start_period: 60s
+    mem_limit: 800m
+    cpus: 1.0
+    networks: [erp]
+    logging: *logging
+
+  web:
+    image: haiqu-erp-server-web:${RELEASE_TAG:?RELEASE_TAG is required}
+    build:
+      context: ${ERP_BUILD_CONTEXT:?ERP_BUILD_CONTEXT is required}
+      dockerfile: deployment/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:80"
+    volumes:
+      - type: bind
+        source: /srv/haiqu-erp/staticfiles
+        target: /app/staticfiles
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/__health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    mem_limit: 96m
+    cpus: 0.25
+    networks: [erp]
+    logging: *logging
+
+networks:
+  erp:
+    driver: bridge

@@ -20,7 +20,8 @@ const fixtures = vi.hoisted(() => ({
     {
       id: 'country-cn', code: 'CN', alpha3_code: 'CHN', numeric_code: '156',
       chinese_name: '中国', english_name: 'China', status: 'ACTIVE', sort_order: 0,
-      source_version: 'UN M49 2026-08-26 / ISO 3166-1', description: '', extra_data: {},
+      source_version: 'UN M49 2026-08-26 / ISO 3166-1', description: '',
+      extra_data: { region_name: 'Asia' },
       created_at: '2026-08-26T00:00:00Z', updated_at: '2026-08-26T00:00:00Z', archived_at: null,
     },
   ],
@@ -44,6 +45,9 @@ vi.mock('@/api/referenceData', () => ({
       ? { data: fixtures.countries, meta: { page: 1, page_size: 10, total: 249, total_pages: 25 } }
       : { data: [], meta: { page: 1, page_size: 10, total: 0, total_pages: 0 } },
   )),
+  fetchAllMasterDataRecords: vi.fn().mockImplementation((resource: string) => Promise.resolve(
+    resource === 'countries' ? fixtures.countries : [],
+  )),
   fetchMasterDataRecord: vi.fn(),
   createMasterDataRecord: vi.fn(),
   updateMasterDataRecord: vi.fn(),
@@ -60,7 +64,7 @@ describe('MasterDataCenterView', () => {
     }
   })
 
-  it('展示九类真实数量、标准来源和国家标准字段', async () => {
+  it('移除重复层级并展示国家国旗与洲别', async () => {
     const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     await flushPromises()
@@ -69,11 +73,17 @@ describe('MasterDataCenterView', () => {
     expect(wrapper.text()).toContain('国家 / 地区249')
     expect(wrapper.text()).toContain('币种178')
     expect(wrapper.text()).toContain('Incoterms11')
-    expect(wrapper.text()).toContain('标准来源5')
-    expect(wrapper.text()).toContain('公司本位币未配置')
     expect(wrapper.text()).toContain('CN')
     expect(wrapper.text()).toContain('CHN')
-    expect(wrapper.text()).toContain('ISO 3166')
+    expect(wrapper.text()).toContain('亚洲')
+    expect(wrapper.find('.page-breadcrumb').exists()).toBe(false)
+    expect(wrapper.find('.page-heading p').exists()).toBe(false)
+    expect(wrapper.find('.metric-grid').exists()).toBe(false)
+    expect(wrapper.find('.standards-card').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="country-flag"]').attributes('src')).toBe('https://flagcdn.com/24x18/cn.png')
+    expect(wrapper.find('[data-testid="country-flag"]').attributes('alt')).toBe('中国国旗')
+    expect(wrapper.find('.data-card__header .settings-tag').exists()).toBe(false)
+    expect(wrapper.find('.data-card__header button').exists()).toBe(false)
   })
 
   it('没有任一基础资料查看权限时显示独立无权限状态且不请求汇总', async () => {
@@ -89,7 +99,7 @@ describe('MasterDataCenterView', () => {
     expect(fetchMasterDataSummary).not.toHaveBeenCalled()
   })
 
-  it('汇率为空且未配置本位币时明确禁止自动折算', async () => {
+  it('汇率为空时区分生产人民币换算和公司本位币配置', async () => {
     const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     const exchangeButton = wrapper.findAll('button').find((button) => button.text().includes('汇率'))
@@ -98,7 +108,7 @@ describe('MasterDataCenterView', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无汇率历史')
-    expect(wrapper.text()).toContain('不会自动折算或展示本位币金额')
-    expect(wrapper.text()).toContain('仍可人工新增汇率历史')
+    expect(wrapper.text()).toContain('可人工维护外币兑人民币汇率')
+    expect(wrapper.text()).toContain('不影响生产任务的人民币换算')
   })
 })

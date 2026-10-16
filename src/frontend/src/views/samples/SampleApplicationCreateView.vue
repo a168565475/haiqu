@@ -44,6 +44,7 @@ const imagePreview = ref('')
 const sourceImageVisible = ref(false)
 const uploadKey = ref(0)
 const selectedProduct = ref('')
+const linkedProductSnapshot = ref<{ name: string; specification: string } | null>(null)
 const initialValue = ref('')
 const submissionKey = createClientUuid()
 const editingId = computed(() => typeof route.query.editApplication === 'string' ? route.query.editApplication : '')
@@ -54,7 +55,7 @@ let customersRequest = 0
 let productsRequest = 0
 let submitted = false
 const form = reactive<SampleApplicationDraft>({
-  sourceType: null, sourceId: '', sourceProductId: '', customerId: '', contactId: '', ownerId: '',
+  sourceType: null, sourceId: '', sourceProductId: '', productId: '', customerId: '', contactId: '', ownerId: '',
   sampleType: '', shippingMethod: '', deliveryBatch: '', repeatOrder: null, orderDate: '', dueDate: '',
   productName: '', specification: '', lengthCm: '', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
   requirements: '', quantity: null, referenceImage: null,
@@ -115,6 +116,7 @@ async function loadPage() {
         sampleType: sample.sample_type, shippingMethod: sample.shipping_method, deliveryBatch: sample.delivery_batch,
         repeatOrder: sample.is_repeat_order, orderDate: sample.order_date || '', dueDate: sample.sample_due_date || '',
         sourceProductId: product.source_quotation_line_id || product.source_inquiry_item_id || '',
+        productId: product.product_id || '',
         productName: product.product_name, specification: product.specification, requirements: sample.purpose,
         lengthCm: product.length_cm || '', armrestWidthCm: product.armrest_width_cm || '', seatWidthCm: product.seat_width_cm || '',
         backHeightCm: product.back_height_cm || '', seatHeightCm: product.seat_height_cm || '', quantity: product.total_sample_quantity,
@@ -135,6 +137,7 @@ async function loadPage() {
         }
       }
       selectedProduct.value = product.product_name
+      linkedProductSnapshot.value = product.product_id ? { name: product.product_name, specification: product.specification } : null
       if (!sourceLocked.value) await loadContacts()
       if (sample.reference_image) imagePreview.value = `/api/v1/sample-requests/${sample.id}/business-files/${sample.reference_image}/`
     }
@@ -203,16 +206,28 @@ function openProductOptions(visible: boolean) {
 
 function chooseProduct(value: string) {
   const product = products.value.find(item => item.id === value)
+  form.productId = product?.id || ''
   form.productName = product?.product_name || value
   form.specification = product?.specification || ''
+  linkedProductSnapshot.value = product ? { name: product.product_name, specification: product.specification } : null
+}
+
+function clearProductLinkIfEdited() {
+  if (!form.productId || !linkedProductSnapshot.value) return
+  if (form.productName !== linkedProductSnapshot.value.name || form.specification !== linkedProductSnapshot.value.specification) {
+    form.productId = ''
+    linkedProductSnapshot.value = null
+  }
 }
 
 function chooseSourceProduct(id: string) {
   const product = context.value?.products.find(item => item.id === id)
   const productChanged = form.sourceProductId !== (product?.id || '')
   form.sourceProductId = product?.id || ''
+  form.productId = product?.product_id || ''
   form.productName = product?.product_name || ''
   form.specification = product?.specification || ''
+  linkedProductSnapshot.value = product?.product_id ? { name: form.productName, specification: form.specification } : null
   if (!productChanged) return
   const images = context.value?.source_type === 'quotation'
     ? product?.reference_images || []
@@ -319,7 +334,7 @@ onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++
                   <ElSelect v-if="sourceLocked" :model-value="form.sourceProductId" aria-label="产品名称" placeholder="请选择来源样品" @change="chooseSourceProduct"><ElOption v-for="product in context?.products" :key="product.id" :value="product.id" :label="product.product_name"><span class="product-option"><span class="product-option-name" :title="product.product_name">{{ product.product_name }}</span><span class="product-option-spec" :title="product.specification || '暂无规格'">{{ product.specification || '暂无规格' }}</span></span></ElOption></ElSelect>
                   <ElSelect v-else v-model="selectedProduct" aria-label="产品名称" filterable remote allow-create default-first-option :remote-method="searchProducts" :loading="productsLoading" placeholder="选择成品或输入产品名称" @visible-change="openProductOptions" @change="chooseProduct"><ElOption v-for="product in products" :key="product.id" :value="product.id" :label="product.product_name"><span class="product-option"><span class="product-option-name" :title="product.product_name">{{ product.product_name }}</span><span class="product-option-spec" :title="product.specification || '暂无规格'">{{ product.specification || '暂无规格' }}</span></span></ElOption></ElSelect>
                 </ElFormItem>
-                <ElFormItem label="规格"><ElInput v-model="form.specification" aria-label="规格" :disabled="sourceLocked" placeholder="请输入规格" maxlength="2000" /></ElFormItem>
+                <ElFormItem label="规格"><ElInput v-model="form.specification" aria-label="规格" :disabled="sourceLocked" placeholder="请输入规格" maxlength="2000" @input="clearProductLinkIfEdited" /></ElFormItem>
                 <div class="dimensions-grid"><ElFormItem v-for="field in sampleDimensionFields" :key="field.key" :label="field.label"><ElInput v-model="form[field.key]" :aria-label="field.label" inputmode="decimal" placeholder="选填" maxlength="11" /></ElFormItem></div>
                 <ElFormItem label="特殊要求（选填）" class="requirements-field"><ElInput v-model="form.requirements" aria-label="特殊要求" type="textarea" :rows="4" resize="none" maxlength="2000" show-word-limit placeholder="请输入颜色、包装或工艺要求" /></ElFormItem>
               </div>

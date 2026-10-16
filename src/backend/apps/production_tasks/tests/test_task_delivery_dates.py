@@ -13,7 +13,10 @@ from . import test_production_task_api as fixtures
 
 
 class ProductionTaskDeliveryDateTests(APITestCase):
-    setUp = fixtures.ProductionTaskApiTests.setUp
+    def setUp(self):
+        fixtures.ProductionTaskApiTests.setUp(self)
+        from apps.reference_data.models import Currency
+        self.currency = Currency.objects.get(code="CNY")
     payload = fixtures.ProductionTaskApiTests.payload
     create_task = fixtures.ProductionTaskApiTests.create_task
 
@@ -75,6 +78,7 @@ class ProductionTaskDeliveryDateTests(APITestCase):
         submitted = self.client.post(url + "submit/", {}, format="json", HTTP_IF_MATCH=response["ETag"])
         self.assertEqual(submitted.status_code, 200, submitted.data)
         confirmed = self.client.post(url + "pmc-decision/", {
+            "follower_ids": [str(self.follower.pk)], "tax_rate": 3,
             "decision": "CONFIRM", "planned_start_date": timezone.localdate().isoformat(),
             "planned_end_date": (timezone.localdate() + timedelta(days=14)).isoformat(),
         }, format="json", HTTP_IF_MATCH=submitted["ETag"])

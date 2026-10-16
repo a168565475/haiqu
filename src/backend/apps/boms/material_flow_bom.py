@@ -1,9 +1,11 @@
 """BOM 保存、导入、复制和确认共用的材料数量规则。"""
 from decimal import Decimal, localcontext
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError
 
-from apps.products.material_identity import resolve_bom_line_raw_material, resolve_cutting_fabric_material
+from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, resolve_bom_line_raw_material, resolve_cutting_fabric_material
+from apps.reference_data.models import FabricMaterial
 from .material_flow_calculations import (
     CUTTING_USAGE_FIELDS, MaterialFlowValueError, cutting_usage_plan, decimal_quantity, pipe_plan, positive_integer,
 )
@@ -106,6 +108,10 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
         line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": ""}
     if require_complete and line.section.title.strip() != "裁剪明细":
         if (expected and (material is None or material.item_type != "MATERIAL")) or not line.unit.strip() or line.unit.strip() in {"-", "—", "/"}:
+            if line.section.section_type == "PROFILE" and material is None:
+                raise ValidationError({"sections": f"{label}尚未关联有效管材原料，请在该行的“对应原料”中匹配并选择原料后再确认 BOM。"})
+            if is_meter_fabric_section(line.section) and material is None:
+                raise ValidationError({"sections": f"{label}尚未关联有效原材料，请在该面料行的“来源原材料”中选择类别为面料、单位为米的库存原料后再确认 BOM。"})
             raise ValidationError({"sections": f"{label}请关联有效原材料并补齐单位。"})
 
 
@@ -118,12 +124,27 @@ def validate_fabric_links(lines, *, require_complete=False):
             continue
         if line.fabric_source_line_id:
             source = current.get(line.fabric_source_line_id)
-            if source is None or not is_meter_fabric_section(source.section):
+            if (source is None or source.section.bom_id != line.section.bom_id
+                    or not is_meter_fabric_section(source.section)):
                 raise ValidationError({"sections": f"裁剪第 {line.line_number} 行须选择本 BOM 保留的面料行。"})
             line.fabric_source_line = source
             material, error = resolve_cutting_fabric_material(line)
             if error or material is None:
-                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行的来源须为有效米制面料原料。"})
+                source_values = source.raw_values or {}
+                # 草稿允许尚未建立库存映射；已填但失效的原料、错误来源及正式确认仍须拦截。
+                unmapped_draft = (not require_complete and not source.fabric_source_line_id
+                                  and not any(source_values.get(key) for key in DIRECT_RAW_MATERIAL_SOURCE_KEYS)
+                                  and not source_values.get("source_accessory_material_id"))
+                if unmapped_draft and source_values.get("source_fabric_material_id"):
+                    try:
+                        unmapped_draft = FabricMaterial.objects.filter(
+                            pk=source_values["source_fabric_material_id"], archived_at__isnull=True,
+                            inventory_raw_material_id__isnull=True,
+                        ).exists()
+                    except (DjangoValidationError, TypeError, ValueError):
+                        unmapped_draft = False
+                if not unmapped_draft:
+                    raise ValidationError({"sections": f"裁剪第 {line.line_number} 行的来源面料第 {source.line_number} 行未关联有效米制面料原料，请检查该面料行的“来源原材料”。"})
         if require_complete and (not line.fabric_source_line_id or not line.fabric_meters_per_set):
             raise ValidationError({"sections": f"裁剪第 {line.line_number} 行请关联来源面料并填写每套耗米。"})
         if line.fabric_meters_per_set is not None:

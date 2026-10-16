@@ -189,6 +189,7 @@ describe('ProductionDataView', () => {
     expect(wrapper.text()).toContain('类别维护')
     expect(wrapper.text()).toContain('50')
     expect(wrapper.text()).toContain('324')
+    expect(wrapper.findComponent({ name: 'ElTable' }).props('height')).toBe('100%')
 
     const colorButton = wrapper.findAll('button').find((button) => button.text().includes('颜色维护'))
     expect(colorButton).toBeTruthy()

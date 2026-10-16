@@ -8,6 +8,8 @@ import type {
   InquiryListResult,
   InquiryMetrics,
   InquiryOptions,
+  InquiryItem,
+  InquiryProductSelectionOptions,
   InquiryRow,
   InquiryTimelineEvent,
   VersionedInquiry,
@@ -34,6 +36,20 @@ export async function setInquiryPriority(id: string, etag: string, priority: str
   return dataOf<InquiryRow>(await apiClient.post(`${path}${encodeURIComponent(id)}/priority/`, { priority }, { headers: { 'If-Match': etag } }))
 }
 export async function fetchInquiryOptions(params: Record<string, unknown> = {}) { return dataOf<InquiryOptions>(await apiClient.get(`${path}options/`, { params })) }
+export async function fetchInquiryProductSelectionOptions(categoryId: string, params: { product_name?: string; specification?: string } = {}): Promise<InquiryProductSelectionOptions> {
+  return dataOf<InquiryProductSelectionOptions>(await apiClient.get('/api/v1/products/selection-options/', { params: { category_id: categoryId, ...params } }))
+}
+export const inquiryProductImageUrl = (itemId: string) => apiClient.getUri({ url: `/api/v1/inquiry-items/${encodeURIComponent(itemId)}/product-image/` })
+export async function uploadInquiryProductImage(itemId: string, file: File, etag: string): Promise<VersionedInquiry<InquiryItem>> {
+  const payload = new FormData()
+  payload.append('file', file)
+  const response = await apiClient.post(inquiryProductImageUrl(itemId), payload, { headers: { 'If-Match': etag } })
+  return { data: response.data.data, etag: response.headers.etag || null }
+}
+export async function removeInquiryProductImage(itemId: string, etag: string): Promise<VersionedInquiry<InquiryItem>> {
+  const response = await apiClient.delete(inquiryProductImageUrl(itemId), { headers: { 'If-Match': etag } })
+  return { data: response.data.data, etag: response.headers.etag || null }
+}
 export async function downloadInquiryFile(id: string, fileId?: string): Promise<Blob> {
   const suffix = fileId ? `files/${encodeURIComponent(fileId)}/download/` : 'files-download/'
   return (await apiClient.get<Blob>(`${path}${encodeURIComponent(id)}/${suffix}`, { responseType: 'blob', timeout: 60000 })).data

@@ -69,3 +69,15 @@ class InquiryProductImageTests(APITestCase):
             self.user.__dict__.pop(name, None)
         self.assertEqual(self.client.get(self.list_url).data['data'], [])
         self.assertEqual(self.select(self.image.pk).status_code, 400)
+
+    def test_skipped_source_image_can_be_selected_but_failed_and_infected_cannot(self):
+        skipped = self.add_image('skipped.png', scan='SKIPPED')
+        for state in ['FAILED', 'INFECTED']:
+            image = self.add_image(f'{state}.png', scan=state)
+            self.assertEqual(self.select(image.pk).status_code, 400)
+        listing = self.client.get(self.list_url)
+        self.assertIn(str(skipped.pk), [item['id'] for item in listing.data['data']])
+        response = self.select(skipped.pk)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.product_image_id, skipped.pk)

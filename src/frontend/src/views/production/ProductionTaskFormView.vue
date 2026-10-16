@@ -14,19 +14,16 @@ import { useAuthStore } from '@/stores/auth'
 import type { ProductInformation } from '@/types/product'
 import {
   createProductionTask,
-  decideProductionTaskByPmc,
   fetchProductionTask,
   fetchProductionTaskOptions,
   productionTaskBusinessFileUrl,
   reserveProductionTaskContractNumber,
   submitProductionTask,
-  transitionProductionTask,
   updateProductionTask,
 } from '@/api/productionTasks'
 import type {
   ProductOption,
   ProductionDeliveryMethod,
-  ProductionOrderSource,
   ProductionTask,
   ProductionTaskDetailInput,
   ProductionTaskInput,
@@ -59,6 +56,7 @@ interface ProductDraft {
   customer_product_name: string
   customer_specification: string
   customer_color: string
+  material: string
   unit_label: string
   color_card: string
   color_name: string
@@ -161,12 +159,12 @@ const workflowNotice = computed(() => {
 })
 const today = new Date().toISOString().slice(0, 10)
 const form = reactive({
-  order_source: '' as ProductionOrderSource | '',
-  order_number: '', customer_account_id: '', order_date: today, delivery_date: '', salesperson_id: '',
-  follower_ids: [] as string[], currency_id: '', includes_tax: false, order_tolerance_percent: '0',
+  task_number_suffix: '', order_date: today, delivery_date: '', salesperson_id: '',
+  follower_ids: [] as string[], currency_id: '', includes_tax: false, tax_rate: null as 3 | 5 | 7 | null, order_tolerance_percent: '0',
   is_repeat_order: false, preproduction_sample_required: false, delivery_method: '' as ProductionDeliveryMethod | '',
   special_requirements_html: '', freight_amount: '0', other_fee_amount: '0',
 })
+watch(() => form.includes_tax, (includesTax) => { if (!includesTax) form.tax_rate = null })
 const products = ref<ProductDraft[]>([])
 const hasSourceLockedProducts = computed(() => products.value.some((row) => row.sourceLocked))
 const sourceHeaderLocked = computed(() => isEditing.value && hasSourceLockedProducts.value)
@@ -232,6 +230,7 @@ function blankProduct(product?: ProductOption): ProductDraft {
     customer_product_name: product?.product_name || '',
     customer_specification: product?.specification || '',
     customer_color: '',
+    material: '',
     unit_label: product ? productUnitLabel(product.default_unit_id) : '',
     color_card: '', color_name: '', product_color_id: '', color_code: '', quantity: '',
     unit_id: product?.default_unit_id || '', currency_id: form.currency_id, unit_price: '',
@@ -298,7 +297,7 @@ function normalizeIntegerQuantity(row: ProductDraft) {
 }
 function formatExchangeRate(row: ProductDraft) {
   const value = Number(row.exchange_rate)
-  if (Number.isFinite(value) && value > 0) row.exchange_rate = value.toFixed(3)
+  if (Number.isFinite(value) && value > 0) row.exchange_rate = value.toFixed(8)
 }
 function rowImageCount(row: ProductDraft) { return row.existingImages.length + row.newImages.length }
 function firstImageUrl(row: ProductDraft) {
@@ -561,10 +560,10 @@ function applyExisting(task: ProductionTask) {
   existing.value = task
   contractNumber.value = task.contract_number
   Object.assign(form, {
-    order_source: task.order_source, order_number: task.order_number, customer_account_id: task.customer_id,
+    task_number_suffix: task.task_number.replace(/^HT/, ''),
     order_date: task.order_date, delivery_date: task.delivery_date, salesperson_id: task.salesperson.id,
     follower_ids: task.followers.map((item) => item.id), currency_id: task.currency_id || '',
-    includes_tax: task.includes_tax ?? false, order_tolerance_percent: task.order_tolerance_percent || '0',
+    includes_tax: task.includes_tax ?? false, tax_rate: task.tax_rate ?? null, order_tolerance_percent: task.order_tolerance_percent || '0',
     is_repeat_order: task.is_repeat_order ?? false,
     preproduction_sample_required: task.preproduction_sample_required ?? false,
     delivery_method: task.delivery_method, special_requirements_html: task.special_requirements_html || '',
@@ -575,11 +574,11 @@ function applyExisting(task: ProductionTask) {
     product_name: item.product_name, specification: item.specification,
     customer_product_name: item.customer_product_name || item.product_name,
     customer_specification: item.customer_specification || item.specification,
-    customer_color: item.customer_color || item.color_name || '',
+     customer_color: item.customer_color ?? item.color_name ?? '', material: item.material || '',
     unit_label: `${item.unit_code} · ${item.unit_name}`, color_card: item.color_card || '', color_name: item.color_name || '',
     product_color_id: item.product_color_id || '', color_code: item.color_code, quantity: String(item.quantity),
     unit_id: item.unit_id, currency_id: form.currency_id, unit_price: item.unit_price,
-    exchange_rate: Number(item.exchange_rate).toFixed(3),
+    exchange_rate: Number(item.exchange_rate).toFixed(8),
     existingImages: item.images || [], newImages: [],
   })) : [blankProduct()]
   for (const item of task.products) {
@@ -622,22 +621,23 @@ function validate() {
   if (!isEditing.value && !contractNumberToken.value) return '合同编号尚未生成，请刷新页面后重试。'
   contractNumber.value = contractNumber.value.trim().toUpperCase()
   if (!/^[A-Z0-9][A-Z0-9._-]{0,49}$/.test(contractNumber.value)) return '合同编号只能包含大写字母、数字、点、下划线和连字符。'
-  if (!form.order_number.trim()) return '请填写订单号。'
-  if (!form.order_source) return '请选择订单来源。'
-  if (!form.customer_account_id) return '请选择客户。'
+  if (!/^[0-9]+(?:-[0-9]+)*$/.test(form.task_number_suffix) || form.task_number_suffix.length > 48) return '请填写有效生产任务单号，例如 26199 或 26199-1。'
+  if (!form.follower_ids.length) return '请选择跟单员。'
   if (!form.order_date || !form.delivery_date) return '请选择下单日期和交期日期。'
   if (form.delivery_date < form.order_date) return '交期日期不能早于下单日期。'
   if (!form.salesperson_id || !form.currency_id) return '请选择业务员和币种。'
   if (!form.delivery_method) return '请选择交货方式。'
+  if (form.includes_tax && ![3, 5, 7].includes(Number(form.tax_rate))) return '含税时请选择税率。'
   const tolerance = Number(form.order_tolerance_percent)
   if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 100) return '订单误差必须是 0 到 100 之间的百分比。'
   for (const [label, value] of [['运费', form.freight_amount], ['其他费用', form.other_fee_amount]]) {
     const amount = Number(value)
     if (!Number.isFinite(amount) || amount < 0) return `${label}必须是大于或等于 0 的金额。`
   }
-  if (!products.value.length || products.value.some((row) => !row.product_id && (!row.customer_product_name.trim() || !row.customer_specification.trim()))) return '请为每个产品填写客户产品名称和规格，或选择产品主档。'
+  if (!products.value.length) return '请录入至少一条产品。'
   for (const [index, row] of products.value.entries()) {
     const lineNumber = index + 1
+    if (!row.customer_product_name.trim() || !row.customer_specification.trim() || !row.unit_id) return `请补齐第 ${lineNumber} 条明细的名称、规格和单位。`
     if (row.product_id) {
       if (!row.color_card || !row.color_name || !row.product_color_id || !row.color_code) return `请按顺序选择第 ${lineNumber} 条明细的色卡、颜色和色号。`
     } else if (!row.customer_color.trim()) {
@@ -646,13 +646,13 @@ function validate() {
     if (!/^[1-9]\d*$/.test(row.quantity)) return `第 ${lineNumber} 条明细的订单数量必须是大于 0 的整数。`
     if (row.currency_id !== form.currency_id) return `第 ${lineNumber} 条明细的币种与基础信息不一致。`
     if (row.unit_price === '' || !(Number(row.unit_price) >= 0)) return `第 ${lineNumber} 条明细的售价不能小于 0。`
-    if (!/^\d+(\.\d{1,3})?$/.test(row.exchange_rate) || !(Number(row.exchange_rate) > 0)) return `第 ${lineNumber} 条明细的汇率必须大于 0，且最多保留 3 位小数。`
+    if (!/^\d+(\.\d{1,8})?$/.test(row.exchange_rate) || !(Number(row.exchange_rate) > 0)) return `第 ${lineNumber} 条明细的汇率必须大于 0，且最多保留 8 位小数。`
     if (isCnyCurrency(row.currency_id) && Number(row.exchange_rate) !== 1) return `第 ${lineNumber} 条明细使用 CNY 时汇率必须为 1。`
   }
   for (const [index, row] of products.value.entries()) {
     const draft = lineTaskDrafts[row.clientKey]
     const colorLabel = [row.color_name, row.color_code].filter(Boolean).join(' / ') || `第 ${index + 1} 条颜色明细`
-    if (!draft.details.length || draft.details.some((item) => !item.detail_type.trim())) return `请补齐“${row.product_name} · ${colorLabel}”的生产任务单明细类型。`
+    if (!draft || !draft.details.length || draft.details.some((item) => !item.detail_type.trim())) return `请补齐“${row.product_name} · ${colorLabel}”的生产任务单明细类型。`
   }
   return ''
 }
@@ -663,9 +663,9 @@ function productPayload(): ProductionTaskProductInput[] {
     return {
       client_key: row.clientKey, product_id: row.product_id || null, product_color_id: row.product_color_id || null,
       color_code: row.color_code, customer_product_name: row.customer_product_name.trim(),
-      customer_specification: row.customer_specification.trim(), customer_color: row.customer_color.trim(),
+      customer_specification: row.customer_specification.trim(), customer_color: row.customer_color.trim(), material: row.material.trim(),
       quantity: row.quantity, unit_id: row.unit_id, currency_id: row.currency_id,
-      unit_price: row.unit_price, exchange_rate: Number(row.exchange_rate).toFixed(3),
+      unit_price: row.unit_price, exchange_rate: Number(row.exchange_rate).toFixed(8),
       special_requirements: draft?.special_requirements.trim() || '',
       packaging_method: draft?.packaging_method.trim() || '',
       retained_image_ids: row.existingImages.map((item) => item.id),
@@ -682,12 +682,13 @@ function originalProductPayload(task: ProductionTask): ProductionTaskProductInpu
     color_code: row.color_code,
     customer_product_name: row.customer_product_name || row.product_name,
     customer_specification: row.customer_specification || row.specification,
-    customer_color: row.customer_color || row.color_name,
+    customer_color: row.customer_color ?? row.color_name,
+    material: row.material || '',
     quantity: String(row.quantity),
     unit_id: row.unit_id,
     currency_id: row.currency_id,
     unit_price: row.unit_price,
-    exchange_rate: Number(row.exchange_rate).toFixed(3),
+    exchange_rate: Number(row.exchange_rate).toFixed(8),
     special_requirements: row.special_requirements || '',
     packaging_method: row.packaging_method || '',
     retained_image_ids: (row.images || []).map((item) => item.id),
@@ -703,13 +704,16 @@ function originalProductPayload(task: ProductionTask): ProductionTaskProductInpu
 }
 
 function payload(): ProductionTaskInput {
+  const { task_number_suffix, ...fields } = form
   return {
-    ...form,
+    ...fields,
+    task_number: `HT${task_number_suffix}`,
+    tax_rate: form.includes_tax ? form.tax_rate : null,
     ...(!isEditing.value ? { contract_number_token: contractNumberToken.value } : {}),
     contract_number: contractNumber.value,
-    order_source: form.order_source as ProductionOrderSource,
+    order_source: form.is_repeat_order ? 'REPEAT' : 'NEW',
     delivery_method: form.delivery_method as ProductionDeliveryMethod,
-    order_number: form.order_number.trim(),
+    order_number: `HT${form.task_number_suffix}`,
     freight_amount: form.freight_amount || '0',
     other_fee_amount: form.other_fee_amount || '0',
     products: productPayload(),
@@ -805,51 +809,10 @@ async function submitCurrentTask() {
 }
 
 async function confirmCurrentTask() {
-  if (!existing.value || !canConfirmFromDetail.value || workflowLoading.value) return
-  try {
-    await ElMessageBox.confirm(
-      '请确认已核对本次完善后的生产任务内容。确认后，关联 BOM 才能继续提交。',
-      'PMC 确认',
-      { type: 'warning', confirmButtonText: '确认通过', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
-  workflowLoading.value = true
-  try {
-    let result
-    if (existing.value.sales_order_id) {
-      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date())
-      const startPrompt = await ElMessageBox.prompt('请输入计划开始日期（YYYY-MM-DD）。', 'PMC 确认生产任务', {
-        inputValue: existing.value.planned_start_date || today,
-        inputPattern: /^\d{4}-\d{2}-\d{2}$/,
-        inputErrorMessage: '请输入 YYYY-MM-DD 格式的日期。',
-        confirmButtonText: '下一步', cancelButtonText: '取消',
-      }).catch(() => null)
-      if (!startPrompt) return
-      const startDate = startPrompt.value.trim()
-      const endPrompt = await ElMessageBox.prompt('请输入计划完工日期（不得早于计划开始日期）。', 'PMC 确认生产任务', {
-        inputValue: existing.value.planned_end_date || startDate,
-        inputValidator: (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && value >= startDate,
-        inputErrorMessage: '请输入有效日期，且不得早于计划开始日期。',
-        confirmButtonText: '确认通过', cancelButtonText: '取消',
-      }).catch(() => null)
-      if (!endPrompt) return
-      result = await decideProductionTaskByPmc(existing.value.id, {
-        decision: 'CONFIRM', planned_start_date: startDate, planned_end_date: endPrompt.value.trim(),
-      }, etag.value)
-    } else {
-      result = await transitionProductionTask(existing.value.id, 'confirm', etag.value)
-    }
-    etag.value = result.etag
-    applyExisting(result.data)
-    ElMessage.success('生产任务单已由 PMC 确认。')
-  } catch (error) {
-    ElMessage.error(apiError(error))
-  } finally {
-    workflowLoading.value = false
-  }
+  if (!existing.value || !canConfirmTask.value) return
+  await router.push({ name: 'production-task-detail', params: { taskId: existing.value.id }, query: { pmc: 'confirm' } })
 }
+
 function back() { void router.push({ name: 'production-tasks' }) }
 
 watch(() => form.currency_id, (currencyId) => {
@@ -897,25 +860,25 @@ onBeforeUnmount(revokeAllProductPreviews)
         show-icon
         :closable="false"
         title="销售订单来源字段已锁定"
-        description="来源、客户、销售产品、颜色、数量及成交价格必须回到销售订单交付批次调整；本页可维护交期、跟单员和生产要求。"
+        description="来源、销售产品、颜色、数量及成交价格必须回到销售订单交付批次调整；本页可维护交期、跟单员和生产要求。"
       />
 
+      <nav v-if="!isEditing" class="creation-modes" aria-label="创建方式"><ElButton @click="router.push({ name: 'production-task-create' })">从销售订单创建</ElButton><ElButton type="primary" disabled>手动创建</ElButton></nav>
       <section class="basic-card">
         <div class="section-bar"><h2>基础信息</h2><span aria-hidden="true"></span></div>
         <ElForm label-position="top">
           <div class="field-grid">
             <ElFormItem label="合同编号" required><ElInput v-model="contractNumber" maxlength="50" placeholder="正在生成" :disabled="isReadOnly || sourceHeaderLocked" @blur="contractNumber = contractNumber.trim().toUpperCase()" /></ElFormItem>
-            <ElFormItem label="订单来源" required><ElSelect v-model="form.order_source" :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择"><ElOption v-for="item in options?.order_sources || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem>
-            <ElFormItem label="订单号" required><ElInput v-model="form.order_number" :disabled="isReadOnly || sourceHeaderLocked" maxlength="100" placeholder="请输入订单号" /></ElFormItem>
-            <ElFormItem label="选择客户" required><ElSelect v-model="form.customer_account_id" filterable :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择客户"><ElOption v-for="item in options?.customers || []" :key="item.id" :label="`${item.account_code} · ${item.account_name}`" :value="item.id" /></ElSelect></ElFormItem>
+            <ElFormItem label="生产任务单号" required><ElInput v-model="form.task_number_suffix" :disabled="isEditing" maxlength="48" placeholder="例如 26199 或 26199-1"><template #prepend>HT</template></ElInput><small>最近 5 笔：{{ options?.recent_task_numbers?.join('、') || '暂无历史编号' }}</small></ElFormItem>
             <ElFormItem label="下单日期" required><ElDatePicker v-model="form.order_date" type="date" value-format="YYYY-MM-DD" placeholder="请选择下单日期" :disabled="isReadOnly || sourceHeaderLocked" /></ElFormItem>
             <ElFormItem label="交期日期" required><ElDatePicker v-model="form.delivery_date" type="date" value-format="YYYY-MM-DD" placeholder="请选择交期日期" :disabled="isReadOnly" /></ElFormItem>
             <ElFormItem label="业务员" required><ElSelect v-model="form.salesperson_id" filterable :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择业务员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem>
-            <ElFormItem label="跟单员"><ElSelect v-model="form.follower_ids" multiple filterable collapse-tags :disabled="isReadOnly" placeholder="请选择跟单员"><ElOption v-for="item in options?.employees.filter(employee => employee.id !== form.salesperson_id) || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem>
+            <ElFormItem label="跟单员" required><ElSelect v-model="form.follower_ids" multiple filterable collapse-tags :disabled="isReadOnly" placeholder="请选择跟单员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem>
             <ElFormItem label="币种" required><ElSelect v-model="form.currency_id" filterable :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择币种"><ElOption v-for="item in options?.currencies || []" :key="item.id" :label="`${item.code} · ${item.name}`" :value="item.id" /></ElSelect></ElFormItem>
             <ElFormItem label="是否含税" required><ElSelect v-model="form.includes_tax" :disabled="isReadOnly || sourceHeaderLocked"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></ElFormItem>
+            <ElFormItem v-if="form.includes_tax" label="税率" required><ElSelect v-model="form.tax_rate" :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择税率"><ElOption v-for="rate in [3, 5, 7]" :key="rate" :label="`${rate}%`" :value="rate" /></ElSelect></ElFormItem>
             <ElFormItem label="订单误差" required><ElInput v-model="form.order_tolerance_percent" :disabled="isReadOnly || sourceHeaderLocked" placeholder="例如 3"><template #append>%</template></ElInput></ElFormItem>
-            <ElFormItem label="翻单" required><ElSelect v-model="form.is_repeat_order" :disabled="isReadOnly || sourceHeaderLocked"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></ElFormItem>
+            <ElFormItem label="是否返单" required><ElSelect v-model="form.is_repeat_order" :disabled="isReadOnly || sourceHeaderLocked"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></ElFormItem>
             <ElFormItem label="产前确认样" required><ElSelect v-model="form.preproduction_sample_required" :disabled="isReadOnly || sourceHeaderLocked"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></ElFormItem>
             <ElFormItem label="交货方式" required><ElSelect v-model="form.delivery_method" :disabled="isReadOnly || sourceHeaderLocked" placeholder="请选择"><ElOption v-for="item in options?.delivery_methods || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem>
           </div>
@@ -937,8 +900,8 @@ onBeforeUnmount(revokeAllProductPreviews)
               <div class="fixed-product-content">
                 <strong class="fixed-product-name">{{ group.rows[0].customer_product_name || group.rows[0].product_name || '请选择产品' }}</strong>
                 <div v-if="!group.productId" class="manual-product-inputs">
-                  <ElInput v-model="group.rows[0].customer_product_name" :disabled="isReadOnly || group.rows[0].sourceLocked" placeholder="客户产品名称" />
-                  <ElInput v-model="group.rows[0].customer_specification" :disabled="isReadOnly || group.rows[0].sourceLocked" placeholder="客户规格" />
+                  <ElInput v-model="group.rows[0].customer_product_name" :disabled="isReadOnly || group.rows[0].sourceLocked" placeholder="产品名称" />
+                  <ElInput v-model="group.rows[0].customer_specification" :disabled="isReadOnly || group.rows[0].sourceLocked" placeholder="产品规格" />
                 </div>
                 <div class="fixed-product-meta">
                   <div><span>产品编码</span><strong>{{ group.rows[0].product_code || '—' }}</strong></div>
@@ -964,7 +927,7 @@ onBeforeUnmount(revokeAllProductPreviews)
                 <tbody><tr v-for="row in group.rows" :key="row.clientKey">
                   <td><ElButton size="small" :icon="Picture" aria-label="管理明细图片" @click="openImageManager(row)">图片</ElButton></td>
                   <td v-if="row.product_id"><ElSelect v-model="row.color_card" :disabled="isReadOnly || row.sourceLocked" placeholder="请选择" @change="changeColorCard(row)"><ElOption v-for="item in colorCards" :key="item" :label="item" :value="item" /></ElSelect></td>
-                  <td v-else><ElInput v-model="row.customer_color" :disabled="isReadOnly || row.sourceLocked" placeholder="客户颜色" /></td>
+                  <td v-else><ElInput v-model="row.customer_color" :disabled="isReadOnly || row.sourceLocked" placeholder="产品颜色" /></td>
                   <td v-if="row.product_id"><ElSelect v-model="row.color_name" :disabled="isReadOnly || row.sourceLocked || !row.color_card" placeholder="请选择" @change="changeColorName(row)"><ElOption v-for="item in colorNames(row)" :key="item" :label="item" :value="item" /></ElSelect></td>
                   <td v-else class="manual-color-note">手工颜色</td>
                   <td v-if="row.product_id"><ElSelect v-model="row.product_color_id" :disabled="isReadOnly || row.sourceLocked || !row.color_name" placeholder="请选择色号" @change="selectColorCode(row)"><ElOption v-for="item in colorCodes(row)" :key="item.id" :label="item.color_code" :value="item.id" /></ElSelect></td>
@@ -1037,6 +1000,7 @@ onBeforeUnmount(revokeAllProductPreviews)
 </template>
 
 <style scoped lang="scss">
+.creation-modes { display: flex; gap: 12px; margin-bottom: 16px; }
 .production-form-page {
   min-width: 1180px;
   min-height: calc(100vh - 56px);

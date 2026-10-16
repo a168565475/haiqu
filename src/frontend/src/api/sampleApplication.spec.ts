@@ -33,7 +33,7 @@ describe('V3 快捷分类真实统计', () => {
 
 describe('申请提交和厂长审核接口', () => {
   const draft: SampleApplicationDraft = {
-    sourceType: null, sourceId: '', sourceProductId: '', customerId: 'customer', contactId: '', ownerId: 'owner',
+    sourceType: null, sourceId: '', sourceProductId: '', productId: 'product-id', customerId: 'customer', contactId: '', ownerId: 'owner',
     sampleType: 'PRE_SALES', shippingMethod: 'MAIL', deliveryBatch: 'SINGLE', repeatOrder: false,
     orderDate: '', dueDate: '', productName: '折叠椅', specification: '黑色', lengthCm: '50', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
     requirements: '包装要求', quantity: 2, referenceImage: null,
@@ -46,7 +46,7 @@ describe('申请提交和厂长审核接口', () => {
     const [url, body] = post.mock.calls[0]!
     expect(url).toBe('/api/v1/sample-requests/applications/')
     expect(body.get('reference_image')).toBe(image)
-    expect(JSON.parse(body.get('payload'))).toMatchObject({ idempotency_key: 'stable-key', quantity: 2, length_cm: '50', sample_due_date: null, purpose: '包装要求' })
+    expect(JSON.parse(body.get('payload'))).toMatchObject({ idempotency_key: 'stable-key', quantity: 2, product_id: 'product-id', length_cm: '50', sample_due_date: null, purpose: '包装要求' })
   })
   it('审核及退回重提都携带 If-Match，服务失败不会返回假成功', async () => {
     post.mockRejectedValue(new Error('断网'))

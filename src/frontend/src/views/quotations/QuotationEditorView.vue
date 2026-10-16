@@ -1,23 +1,28 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { Box, Check, EditPen, Plus, Upload, Warning } from '@element-plus/icons-vue'
+import { Box, Check, EditPen, Plus, Warning } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
-import { fetchQuotationInquiryImages, selectQuotationInquiryImage, type QuotationInquiryImage } from '@/api/quotations'
+import { syncQuotationLineToInquiry } from '@/api/quotations'
 import { AxiosError } from 'axios'
 
 import { fetchCustomerEntity, fetchEntityAddresses } from '@/api/customers'
 import { createQuotationLine, deleteQuotationLine, deleteQuotationLineProductImage, fetchQuotation, fetchQuotationVersion, quotationLineProductImageUrl, saveQuotationPriceMatrix, updateQuotation, updateQuotationLine, updateQuotationVersion, uploadQuotationLineProductImage } from '@/api/quotations'
 import { fetchAllMasterDataRecords } from '@/api/referenceData'
+import { fetchAllProductionDataRecords } from '@/api/productionData'
+import { fetchInquiry } from '@/api/inquiries'
 import type { CustomerAddress, CustomerEntity } from '@/types/customer'
-import type { QuotationDetail, QuotationLine, QuotationLinePayload, QuotationPriceBasisPayload, QuotationTemplate, QuotationVersionDetail } from '@/types/quotation'
+import type { InquiryItem } from '@/types/inquiry'
+import type { QuotationDetail, QuotationLine, QuotationPriceBasisPayload, QuotationTemplate, QuotationVersionDetail } from '@/types/quotation'
 import type { Currency, Incoterm } from '@/types/referenceData'
+import type { ProductCategory, ProductColor, ProductionUnit } from '@/types/productionData'
 import { useAuthStore } from '@/stores/auth'
 import BuyerMasterDataDialog from '@/components/business/BuyerMasterDataDialog.vue'
 import SellerProfileDialog from '@/components/business/SellerProfileDialog.vue'
 import SellerSubjectCard from '@/components/business/SellerSubjectCard.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
 
 interface PriceBasisDraft {
   key: string
@@ -38,42 +43,6 @@ const version = ref<QuotationVersionDetail | null>(null)
 const quotationEtag = ref('')
 const versionEtag = ref('')
 const loading = ref(true)
-const sourceImages=ref<QuotationInquiryImage[]>([])
-const sourceImageVisible=ref(false), sourceImagesLoading=ref(false), sourceImageSaving=ref(false), sourceImageError=ref('')
-const sourceImageLine=ref<QuotationLine | null>(null)
-async function openSourceImages(line: QuotationLine) {
-  if(!editable.value || !quotation.value?.source_inquiry)return
-  sourceImageLine.value=line;sourceImageVisible.value=true;sourceImagesLoading.value=true;sourceImageError.value='';sourceImages.value=[]
-  try{sourceImages.value=await fetchQuotationInquiryImages(quotationId.value)}catch(error){sourceImageError.value=getErrorMessage(error)}finally{sourceImagesLoading.value=false}
-}
-async function reloadSourceImages() {
-  if(!sourceImageLine.value || !version.value || sourceImagesLoading.value || sourceImageSaving.value)return
-  if(hasUnsavedChanges.value){
-    try{
-      await ElMessageBox.confirm('重新加载报价将丢弃本页尚未保存的修改，并读取其他人的最新修改。是否继续？','重新加载报价',{type:'warning',confirmButtonText:'重新加载',cancelButtonText:'保留当前输入'})
-    }catch{return}
-  }
-  sourceImagesLoading.value=true;sourceImageError.value=''
-  try{
-    await loadEditor()
-    if(errorMessage.value){sourceImageError.value=errorMessage.value;return}
-    const currentLine=version.value.lines.find(line=>line.id===sourceImageLine.value?.id)
-    if(!currentLine || !editable.value){sourceImageError.value='该产品已被移除或报价版本已锁定，请关闭后查看最新报价。';return}
-    sourceImageLine.value=currentLine
-    sourceImages.value=await fetchQuotationInquiryImages(quotationId.value)
-  }catch(error){sourceImageError.value=getErrorMessage(error)}finally{sourceImagesLoading.value=false}
-}
-async function useSourceImage(imageId:string) {
-  if(!sourceImageLine.value||!editable.value||sourceImageSaving.value)return
-  sourceImageSaving.value=true;sourceImageError.value=''
-  try{
-    const result=await selectQuotationInquiryImage(sourceImageLine.value.id,imageId,versionEtag.value)
-    versionEtag.value=result.etag
-    if(version.value) version.value.lines=version.value.lines.map(line=>line.id===result.data.id?result.data:line)
-    sourceImageVisible.value=false
-    ElMessage.success('已选用询盘图片，可继续上传新图替换。')
-  }catch(error){sourceImageError.value=getErrorMessage(error)}finally{sourceImageSaving.value=false}
-}
 const saving = ref(false)
 const errorMessage = ref('')
 const originalPayload = ref('')
@@ -89,15 +58,17 @@ const form = reactive({
 const lineDialogVisible = ref(false)
 const lineSaving = ref(false)
 const editingLine = ref<QuotationLine | null>(null)
-const pendingProductImage = ref<UploadFile | null>(null)
-const pendingProductImageUrl = ref('')
+const productDialogItem = ref<(InquiryItem & { discount_rate?: string | number }) | null>(null)
 const priceDialogVisible = ref(false)
 const priceSaving = ref(false)
 const priceBasisDrafts = ref<PriceBasisDraft[]>([])
 const currencies = ref<Currency[]>([])
 const incoterms = ref<Incoterm[]>([])
+const productCategories = ref<ProductCategory[]>([])
+const productUnits = ref<ProductionUnit[]>([])
+const productColors = ref<ProductColor[]>([])
+const catalogError = ref('')
 const referenceLoading = ref(false)
-const lineForm = reactive<QuotationLinePayload>({ product_description_snapshot: '', specification_snapshot: '', quantity: '1', unit_code: 'PCS', unit_price: '0', discount_rate: '0', notes: '' })
 const sellerDialogVisible = ref(false)
 const buyerDialogVisible = ref(false)
 const buyerDialogTab = ref<'entity' | 'address' | 'contact'>('entity')
@@ -194,12 +165,21 @@ function incotermChoices(currentCode: string) {
 async function loadReferenceOptions() {
   referenceLoading.value = true
   try {
-    const [currencyRows, incotermRows] = await Promise.all([
+    const [currencyRows, incotermRows, catalog] = await Promise.all([
       fetchAllMasterDataRecords<Currency>('currencies', { status: 'ACTIVE' }),
       fetchAllMasterDataRecords<Incoterm>('incoterms', { status: 'ACTIVE' }),
+      Promise.allSettled([
+        fetchAllProductionDataRecords<ProductCategory>('product-categories'),
+        fetchAllProductionDataRecords<ProductionUnit>('production-units'),
+        fetchAllProductionDataRecords<ProductColor>('product-colors'),
+      ]),
     ])
     currencies.value = currencyRows
     incoterms.value = incotermRows
+    productCategories.value = catalog[0].status === 'fulfilled' ? catalog[0].value.filter(row => row.item_type === 'FINISHED') : []
+    productUnits.value = catalog[1].status === 'fulfilled' ? catalog[1].value : []
+    productColors.value = catalog[2].status === 'fulfilled' ? catalog[2].value : []
+    catalogError.value = catalog.some(result => result.status === 'rejected') ? '产品维护选项加载失败或缺少权限，仍可手工录入，但暂时不能选择产品库记录。' : ''
   } catch (error) {
     ElMessage.warning(`币种或贸易术语加载失败：${getErrorMessage(error)}`)
   } finally {
@@ -299,24 +279,35 @@ async function refreshVersion() {
 }
 
 function resetLineForm(line?: QuotationLine) {
-  clearPendingProductImage()
   editingLine.value = line || null
-  Object.assign(lineForm, line ? {
-    product_description_snapshot: line.product_description_snapshot,
-    specification_snapshot: line.specification_snapshot,
+  productDialogItem.value = line ? {
+    id: line.id,
+    line_number: line.line_number,
+    product_id: line.product_id || null,
+    product_category_id: line.product_category_id || null,
+    product_unit_id: line.product_unit_id || null,
+    product_color_id: line.product_color_id || null,
+    product_image_id: line.product_image?.id || null,
+    product_image: line.product_image ? { id: line.product_image.id, original_name: line.product_image.original_name, content_type: 'image/*', size_bytes: 0, scan_status: line.product_image.scan_status } : null,
+    product_description: line.product_description_snapshot,
+    specification: line.specification_snapshot || line.product_specification || '',
+    color: line.color_snapshot || '',
+    material: line.material_snapshot || '',
     quantity: line.quantity,
     unit_code: line.unit_code,
-    unit_price: line.unit_price || '0',
-    discount_rate: line.discount_rate,
+    target_unit_price: line.unit_price,
+    target_currency_code: version.value?.currency_code || '',
+    expected_date: null,
+    product_match_status: line.product_id ? 'MATCHED' : 'NOT_REQUIRED',
     notes: line.notes,
-  } : { product_description_snapshot: '', specification_snapshot: '', quantity: '1', unit_code: 'PCS', unit_price: '0', discount_rate: '0', notes: '' })
+    discount_rate: line.discount_rate,
+  } : {
+    product_id: null, product_category_id: null, product_unit_id: null, product_color_id: null,
+    product_description: '', specification: '', color: '', material: '', quantity: '1', unit_code: 'PCS',
+    target_unit_price: null, target_currency_code: version.value?.currency_code || '', expected_date: null,
+    product_match_status: 'PENDING', notes: '', discount_rate: '0',
+  }
   lineDialogVisible.value = true
-}
-
-function clearPendingProductImage() {
-  if (pendingProductImageUrl.value) URL.revokeObjectURL(pendingProductImageUrl.value)
-  pendingProductImage.value = null
-  pendingProductImageUrl.value = ''
 }
 
 function validateProductImage(file: File): boolean {
@@ -330,13 +321,6 @@ function validateProductImage(file: File): boolean {
     return false
   }
   return true
-}
-
-function handlePendingProductImageChange(file: UploadFile) {
-  if (!file.raw || !validateProductImage(file.raw)) return
-  clearPendingProductImage()
-  pendingProductImage.value = file
-  pendingProductImageUrl.value = URL.createObjectURL(file.raw)
 }
 
 async function openPackaging(line: QuotationLine) {
@@ -365,26 +349,46 @@ function packagingSummary(line: QuotationLine): string {
   return `${item.length_cm} × ${item.width_cm} × ${item.height_cm} cm · ${item.carton_count} 箱`
 }
 
-async function saveLine() {
-  if (!version.value || !editable.value) return
-  if (!lineForm.product_description_snapshot.trim()) {
-    ElMessage.warning('请填写产品或描述。')
+function identityOfLine(line: QuotationLine | null) {
+  if (!line) return ''
+  return JSON.stringify([line.product_id || null, line.product_category_id || null, line.product_unit_id || null, line.product_color_id || null, line.product_description_snapshot, line.specification_snapshot || line.product_specification || '', line.color_snapshot || '', line.material_snapshot || '', line.unit_code])
+}
+
+async function saveLine(result: { item: InquiryItem & { discount_rate?: string | number }; imageFile: File | null; imageChanged: boolean; removeImage: boolean }) {
+  if (!version.value || !editable.value || !productDialogItem.value) return
+  const draft = result.item
+  if (draft.target_unit_price === null || draft.target_unit_price === '') {
+    ElMessage.warning('报价单价不能为空；询盘目标价不会自动成为正式报价。')
     return
   }
+  const discount = String(draft.discount_rate ?? '0').trim() || '0'
+  if (!/^\d{1,2}(?:\.\d{1,6})?$/.test(discount) || Number(discount) < 0 || Number(discount) > 1) {
+    ElMessage.warning('折扣率须为 0 到 1 之间、最多 6 位小数。')
+    return
+  }
+  const beforeIdentity = identityOfLine(editingLine.value)
   lineSaving.value = true
   try {
     const payload = {
-      ...lineForm,
-      product_description_snapshot: lineForm.product_description_snapshot.trim(),
-      specification_snapshot: lineForm.specification_snapshot?.trim(),
-      unit_code: lineForm.unit_code.trim().toUpperCase(),
-      notes: lineForm.notes?.trim(),
+      product_description_snapshot: draft.product_description.trim(),
+      specification_snapshot: draft.specification?.trim(),
+      color_snapshot: draft.color?.trim(),
+      material_snapshot: draft.material?.trim(),
+      product_id: draft.product_id || null,
+      product_category_id: draft.product_category_id || null,
+      product_unit_id: draft.product_unit_id || null,
+      product_color_id: draft.product_color_id || null,
+      quantity: String(draft.quantity),
+      unit_code: draft.unit_code.trim().toUpperCase(),
+      unit_price: String(draft.target_unit_price),
+      discount_rate: discount,
+      notes: draft.notes?.trim(),
     }
     const lineResult = editingLine.value
       ? await updateQuotationLine(editingLine.value.id, payload, versionEtag.value)
       : await createQuotationLine(version.value.id, payload, versionEtag.value)
     versionEtag.value = lineResult.etag
-    const imageFile = pendingProductImage.value?.raw
+    const imageFile = result.imageFile
     if (imageFile) {
       try {
         const imageResult = await uploadQuotationLineProductImage(lineResult.data.id, imageFile, versionEtag.value)
@@ -392,15 +396,30 @@ async function saveLine() {
       } catch (imageError) {
         await refreshVersion()
         lineDialogVisible.value = false
-        clearPendingProductImage()
+        productDialogItem.value = null
         ElMessage.warning(`产品已保存，但主图上传失败：${getErrorMessage(imageError)}。可在产品列表中重试。`)
         return
       }
     }
+    if (result.removeImage && !imageFile && editingLine.value?.product_image) {
+      versionEtag.value = await deleteQuotationLineProductImage(lineResult.data.id, versionEtag.value)
+    }
     await refreshVersion()
     lineDialogVisible.value = false
-    clearPendingProductImage()
+    productDialogItem.value = null
     ElMessage.success(editingLine.value ? '产品明细已更新。' : '产品明细已新增。')
+    const savedLine = version.value?.lines.find(line => line.id === lineResult.data.id) || null
+    if (editingLine.value && savedLine && savedLine.source_inquiry_item && beforeIdentity !== identityOfLine(savedLine) && quotation.value?.source_inquiry) {
+      try {
+        await ElMessageBox.confirm('报价产品身份已变更，是否同步更新来源询盘的产品信息？数量、目标价、日期和图片不会被同步。', '同步询盘产品信息', { type: 'warning', confirmButtonText: '同步', cancelButtonText: '仅保留报价修改' })
+        const inquiryResult = await fetchInquiry(quotation.value.source_inquiry)
+        const syncResult = await syncQuotationLineToInquiry(savedLine.id, inquiryResult.etag || '', versionEtag.value)
+        versionEtag.value = syncResult.quotationEtag || versionEtag.value
+        ElMessage.success('来源询盘产品信息已同步。')
+      } catch (syncError) {
+        if (syncError !== 'cancel' && syncError !== 'close') ElMessage.warning(`报价已保存，但询盘同步失败：${getErrorMessage(syncError)}`)
+      }
+    }
   } catch (error) {
     ElMessage.error(getErrorMessage(error))
   } finally {
@@ -424,6 +443,7 @@ async function removeEditingLine() {
   if (!editingLine.value) return
   await removeLine(editingLine.value)
   lineDialogVisible.value = false
+  productDialogItem.value = null
 }
 
 async function uploadProductImage(line: QuotationLine, file: File) {
@@ -433,7 +453,7 @@ async function uploadProductImage(line: QuotationLine, file: File) {
     const result = await uploadQuotationLineProductImage(line.id, file, versionEtag.value)
     versionEtag.value = result.etag
     await refreshVersion()
-    ElMessage.success('产品主图已上传并通过安全扫描。')
+    ElMessage.success('产品主图已上传并登记。')
   } catch (error) {
     ElMessage.error(getErrorMessage(error))
   }
@@ -441,17 +461,6 @@ async function uploadProductImage(line: QuotationLine, file: File) {
 
 function handleProductImageChange(line: QuotationLine, file: UploadFile) {
   if (file.raw) void uploadProductImage(line, file.raw)
-}
-
-async function removeProductImage(line: QuotationLine) {
-  if (!version.value || !editable.value) return
-  try {
-    versionEtag.value = await deleteQuotationLineProductImage(line.id, versionEtag.value)
-    await refreshVersion()
-    ElMessage.success('产品主图已移除。')
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error))
-  }
 }
 
 function openSellerDialog() {
@@ -670,7 +679,7 @@ onBeforeUnmount(() => {
               <ElTableColumn label="单价" width="112"><template #default="{ row }">{{ version.currency_code }} {{ formatMoney(row.unit_price) }}</template></ElTableColumn>
               <ElTableColumn label="金额" width="120"><template #default="{ row }"><b>{{ version.currency_code }} {{ formatMoney(row.line_total) }}</b></template></ElTableColumn>
               <ElTableColumn label="包装摘要" min-width="150"><template #default="{ row }"><span>{{ packagingSummary(row) }}</span><small v-if="row.packaging" class="packaging-ready">包装已配置</small></template></ElTableColumn>
-              <ElTableColumn label="操作" width="240" fixed="right"><template #default="{ row }"><div class="line-action-buttons"><ElButton size="small" :disabled="!editable" @click="openPackaging(row)">配置</ElButton><ElButton v-if="editable && quotation?.source_inquiry" size="small" @click="openSourceImages(row)">选择询盘图片</ElButton><ElButton v-if="row.product_image && editable" size="small" type="danger" plain @click="removeProductImage(row)">移除图片</ElButton></div></template></ElTableColumn>
+              <ElTableColumn label="操作" width="112" fixed="right"><template #default="{ row }"><div class="line-action-buttons"><ElButton size="small" :disabled="!editable" @click="openPackaging(row)">配置</ElButton></div></template></ElTableColumn>
             </ElTable>
             <div v-if="missingPriceLines.length" class="table-footnote warning-note"><ElIcon><Warning /></ElIcon> 有 {{ missingPriceLines.length }} 行尚未录入单价，报价总额暂不完整。</div>
             <div v-else class="table-footnote">行金额按数量 × 默认口径单价计算 · 商品小计 {{ version.currency_code }} {{ formatMoney(version.subtotal_amount) }}</div>
@@ -698,35 +707,25 @@ onBeforeUnmount(() => {
           <small class="next-help">为已添加的产品配置包装信息。</small>
         </aside>
       </div>
-      <AppWindowDialog v-model="sourceImageVisible" title="选择询盘产品图片" :width="720" :height="620" :close-on-click-modal="!sourceImageSaving" :close-on-press-escape="!sourceImageSaving" :show-close="!sourceImageSaving">
-        <p>为“{{ sourceImageLine?.product_description_snapshot }}”选择图片。点击缩略图可放大查看，再点击“选用此图”。</p>
-        <ElAlert v-if="sourceImageError" :title="sourceImageError" type="error" :closable="false" />
-        <div v-loading="sourceImagesLoading || sourceImageSaving" class="source-images-grid">
-          <article v-for="(image, index) in sourceImages" :key="image.id">
-            <ElImage :src="image.url" :alt="`询盘图片 ${index + 1}`" fit="contain" :preview-src-list="sourceImages.map(item => item.url)" :initial-index="index" preview-teleported><template #error><span>图片加载失败</span></template></ElImage>
-            <div><span>图片 {{ index + 1 }}</span><ElButton :disabled="sourceImagesLoading || sourceImageSaving" @click="useSourceImage(image.id)">选用此图</ElButton></div>
-          </article>
-          <ElEmpty v-if="!sourceImagesLoading && !sourceImages.length" description="暂无可用的询盘产品图片，可直接上传新图。"/>
-        </div>
-        <template #footer><ElButton v-if="sourceImageError && sourceImageLine" :disabled="sourceImagesLoading || sourceImageSaving" @click="reloadSourceImages">重新加载</ElButton><ElButton :disabled="sourceImageSaving" @click="sourceImageVisible=false">关闭</ElButton></template>
-      </AppWindowDialog>
-      <AppWindowDialog v-model="lineDialogVisible" class="quotation-product-dialog" :title="editingLine ? '编辑产品' : '添加产品'" :width="820" :height="720" :close-on-click-modal="false">
-        <p class="product-dialog-lead">录入产品信息，保存后添加至当前报价。</p>
-        <ElForm label-position="top" class="line-form">
-          <ElFormItem v-if="editingLine" label="产品主图">
-            <div class="dialog-image-tools"><ElImage v-if="editingLine.product_image" :src="quotationLineProductImageUrl(editingLine.id)" fit="cover" class="dialog-product-image"/><span v-else class="dialog-image-empty">暂无图片</span><ElUpload v-if="editable" :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/webp" @change="handleProductImageChange(editingLine!, $event)"><ElButton :icon="Upload">上传图片</ElButton></ElUpload><ElButton v-if="editable && editingLine.product_image" text type="danger" @click="removeProductImage(editingLine)">移除</ElButton></div>
-          </ElFormItem>
-          <ElFormItem v-else label="产品主图">
-            <div class="dialog-image-tools"><ElImage v-if="pendingProductImageUrl" :src="pendingProductImageUrl" fit="cover" class="dialog-product-image"/><span v-else class="dialog-image-empty">可选主图</span><ElUpload :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/webp" @change="handlePendingProductImageChange"><ElButton :icon="Upload">选择图片</ElButton></ElUpload><ElButton v-if="pendingProductImage" text type="danger" @click="clearPendingProductImage">移除</ElButton></div>
-            <p class="image-field-help">仅支持 JPG、PNG、WebP，单张不超过 5MB。保存产品后自动上传。</p>
-          </ElFormItem>
-          <ElFormItem label="产品 / 描述 *"><ElInput v-model="lineForm.product_description_snapshot" maxlength="500" /></ElFormItem>
-          <ElFormItem label="规格"><ElInput v-model="lineForm.specification_snapshot" maxlength="2000" placeholder="请输入规格、材质或尺寸" /></ElFormItem>
-          <div class="line-form__numbers"><ElFormItem label="数量 *"><ElInput v-model="lineForm.quantity" inputmode="decimal" /></ElFormItem><ElFormItem label="单位 *"><ElInput v-model="lineForm.unit_code" maxlength="30" /></ElFormItem><ElFormItem label="单价 *"><ElInput v-model="lineForm.unit_price" inputmode="decimal" /></ElFormItem><ElFormItem label="折扣率"><ElInput v-model="lineForm.discount_rate" inputmode="decimal" /></ElFormItem></div>
-          <ElFormItem label="备注"><ElInput v-model="lineForm.notes" type="textarea" :rows="2" maxlength="2000" show-word-limit /></ElFormItem>
-        </ElForm>
-        <template #footer><ElButton v-if="editingLine" type="danger" text @click="removeEditingLine">删除</ElButton><ElButton @click="lineDialogVisible = false">取消</ElButton><ElButton class="black-button" :loading="lineSaving" @click="saveLine">保存产品</ElButton></template>
-      </AppWindowDialog>
+      <InquiryProductDialog
+        v-if="productDialogItem"
+        v-model="lineDialogVisible"
+        :item="productDialogItem"
+        scene="quotation"
+        :quotation-currency="version.currency_code"
+        :image-url="editingLine ? quotationLineProductImageUrl(editingLine.id) : undefined"
+        :categories="productCategories"
+        :units="productUnits"
+        :colors="productColors"
+        :currencies="currencies"
+        :can-upload="editable"
+        :catalog-error="catalogError"
+        :close-on-confirm="false"
+        :busy="lineSaving"
+        :allow-delete="!!editingLine"
+        @confirm="saveLine"
+        @delete="removeEditingLine"
+      />
       <SellerProfileDialog v-model="sellerDialogVisible" :template-id="version.quotation_template" context-name="报价" @saved="handleSellerSaved" />
       <BuyerMasterDataDialog
         v-model="buyerDialogVisible"
@@ -766,7 +765,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.source-images-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; min-height:180px; max-height:60vh; overflow-y:auto; margin-top:16px; article { padding:10px; background:#fff; border:1px solid #dedbd4; border-radius:6px; } .el-image { width:100%; height:170px; cursor:zoom-in; } article > div:last-child { display:flex; align-items:center; justify-content:space-between; margin-top:10px; } .el-empty { grid-column:1/-1; } }
 .quotation-editor-page { min-width:0; color:#24272d; --el-color-primary:#0877e1; }
 .editor-header { display:flex; min-height:82px; align-items:center; justify-content:space-between; gap:24px; }
 .back-link { display:flex; align-items:center; gap:4px; padding:0; border:0; color:#0877e1; background:transparent; font-size:12px; cursor:pointer; }

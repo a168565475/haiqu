@@ -5,9 +5,10 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.customers.models import CustomerAccount, CustomerEntityAddress, CustomerTransactionEntity
-from apps.files.models import BusinessFile
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
+from apps.reference_data.models import ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 from apps.quotations.models import QuotationLine, QuotationVersion
 
 from ..models import (
@@ -26,12 +27,23 @@ from ..models import (
     SalesOrderStatus,
     SalesOrderVersion,
 )
+from ..presentation import specification_display
 
 
 class SalesOrderEmployeeSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = ["id", "employee_code", "display_name"]
+
+
+class SalesOrderExchangeRatePreviewSerializer(serializers.Serializer):
+    exchange_rate_record_id = serializers.UUIDField(allow_null=True)
+    exchange_rate = serializers.DecimalField(max_digits=22, decimal_places=8)
+    exchange_rate_snapshot = serializers.JSONField()
+
+
+class SalesOrderExchangeRatePreviewResponseSerializer(serializers.Serializer):
+    data = SalesOrderExchangeRatePreviewSerializer()
 
 
 class PriceExceptionSerializer(serializers.ModelSerializer):
@@ -57,9 +69,17 @@ class PriceExceptionSerializer(serializers.ModelSerializer):
 
 
 class SalesOrderLineReadSerializer(serializers.ModelSerializer):
+    specification_display = serializers.SerializerMethodField()
     source_quotation_line_id = serializers.UUIDField(read_only=True, allow_null=True)
     product_id = serializers.UUIDField(read_only=True)
+    product_category_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_unit_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_color_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_image_id = serializers.UUIDField(read_only=True, allow_null=True)
     price_exceptions = PriceExceptionSerializer(many=True, read_only=True)
+
+    def get_specification_display(self, instance) -> str:
+        return specification_display(instance)
 
     class Meta:
         model = SalesOrderLine
@@ -68,19 +88,28 @@ class SalesOrderLineReadSerializer(serializers.ModelSerializer):
             "line_number",
             "source_quotation_line_id",
             "product_id",
+            "product_category_id",
+            "product_unit_id",
+            "product_color_id",
+            "product_image_id",
             "customer_product_name_snapshot",
             "customer_specification_snapshot",
             "customer_color_snapshot",
             "product_number_snapshot",
             "product_code_snapshot",
+            "item_number_snapshot",
             "product_name_snapshot",
             "specification_snapshot",
+            "specification_display",
+            "material_snapshot",
             "unit_code_snapshot",
             "quantity",
             "quoted_quantity_snapshot",
             "quoted_unit_price",
             "unit_price",
             "line_total",
+            "unit_price_cny",
+            "line_total_cny",
             "price_difference",
             "price_difference_rate",
             "lower_price_reason",
@@ -146,8 +175,8 @@ class DeliveryBatchLineReadSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.DecimalField(max_digits=18, decimal_places=4))
     def get_remaining_quantity(self, line):
-        maximum = Decimal(self.get_maximum_quantity(line))
-        return format(max(maximum - self._allocated_quantity(line), Decimal("0")), "f")
+        # 误差允许生产数量浮动，但不增加销售订单的待分配数量。
+        return format(max(Decimal(line.quantity) - self._allocated_quantity(line), Decimal("0")), "f")
 
 
 class DeliveryBatchReadSerializer(serializers.ModelSerializer):
@@ -299,9 +328,18 @@ class SalesOrderListSerializer(SalesAccessSerializerMixin, serializers.ModelSeri
     customer_name = serializers.CharField(source="customer_account.account_name", read_only=True)
     salesperson = SalesOrderEmployeeSummarySerializer(read_only=True)
     merchandiser = SalesOrderEmployeeSummarySerializer(read_only=True)
+    has_remaining_production_capacity = serializers.SerializerMethodField()
     line_count = serializers.IntegerField(read_only=True)
     delivery_batch_count = serializers.IntegerField(read_only=True)
     next_delivery_date = serializers.DateField(read_only=True, allow_null=True)
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_remaining_production_capacity(self, instance):
+        return any(
+            DeliveryBatchLineReadSerializer._allocated_quantity(line) < Decimal(line.quantity)
+            for batch in instance.delivery_batches.all() if batch.status == "ACTIVE"
+            for line in batch.lines.all()
+        )
 
     class Meta:
         model = SalesOrder
@@ -321,8 +359,10 @@ class SalesOrderListSerializer(SalesAccessSerializerMixin, serializers.ModelSeri
             "order_date",
             "currency_code",
             "total_amount",
+            "total_amount_cny",
             "salesperson",
             "merchandiser",
+            "has_remaining_production_capacity",
             "line_count",
             "delivery_batch_count",
             "next_delivery_date",
@@ -332,6 +372,7 @@ class SalesOrderListSerializer(SalesAccessSerializerMixin, serializers.ModelSeri
 
 
 class SalesOrderDetailSerializer(SalesOrderListSerializer):
+    exchange_rate_record_id = serializers.UUIDField(read_only=True, allow_null=True)
     source_quotation_version_id = serializers.UUIDField(read_only=True, allow_null=True)
     source_quotation_number = serializers.CharField(
         source="source_quotation_version.quotation.quotation_number",
@@ -366,6 +407,8 @@ class SalesOrderDetailSerializer(SalesOrderListSerializer):
             "buyer_address_snapshot",
             "direct_order_reason",
             "exchange_rate",
+            "exchange_rate_record_id",
+            "exchange_rate_snapshot",
             "incoterm_code",
             "payment_terms",
             "deposit_required",
@@ -408,9 +451,34 @@ class SalesOrderLineInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    product_category_id = serializers.PrimaryKeyRelatedField(
+        source="product_category",
+        queryset=ProductCategory.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_unit_id = serializers.PrimaryKeyRelatedField(
+        source="product_unit",
+        queryset=ProductionUnit.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_color_id = serializers.PrimaryKeyRelatedField(
+        source="product_color",
+        queryset=ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_image_id = serializers.PrimaryKeyRelatedField(
+        source="product_image",
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
+        required=False,
+        allow_null=True,
+    )
     customer_product_name_snapshot = serializers.CharField(max_length=200, required=False, allow_blank=True)
     customer_specification_snapshot = serializers.CharField(max_length=500, required=False, allow_blank=True)
     customer_color_snapshot = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    material = serializers.CharField(max_length=2000, required=False, allow_blank=True)
     unit_code = serializers.CharField(max_length=30, required=False, allow_blank=True)
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
@@ -421,7 +489,31 @@ class SalesOrderLineInputSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         product = attrs.get("product")
+        quote_line = attrs.get("source_quotation_line")
         customer_name = str(attrs.get("customer_product_name_snapshot") or "").strip()
+        if product is not None:
+            submitted_name = customer_name
+            submitted_specification = str(attrs.get("customer_specification_snapshot") or "").strip()
+            submitted_unit_code = str(attrs.get("unit_code") or "").strip().upper()
+            inherited_quote_snapshot = bool(
+                quote_line is not None
+                and quote_line.product_id == product.pk
+                and submitted_name == str(quote_line.product_description_snapshot or "").strip()
+                and submitted_specification == str(quote_line.specification_snapshot or "").strip()
+                and submitted_unit_code in {"", str(quote_line.unit_code or "").strip().upper()}
+            )
+            if submitted_name and submitted_name != product.product_name and not inherited_quote_snapshot:
+                raise serializers.ValidationError(
+                    {"customer_product_name_snapshot": "已关联产品的名称发生变化，请重新选择产品或解除关联后手工录入。"}
+                )
+            if submitted_specification and submitted_specification != (product.specification or "").strip() and not inherited_quote_snapshot:
+                raise serializers.ValidationError(
+                    {"customer_specification_snapshot": "已关联产品的规格发生变化，请重新选择产品或解除关联后手工录入。"}
+                )
+            if submitted_unit_code and submitted_unit_code != product.unit.unit_code and not inherited_quote_snapshot:
+                raise serializers.ValidationError(
+                    {"unit_code": "已关联产品的单位发生变化，请重新选择产品或解除关联后手工录入。"}
+                )
         if product is None and not customer_name:
             source_line = attrs.get("source_quotation_line")
             if source_line is None or not str(source_line.product_description_snapshot or "").strip():
@@ -492,7 +584,8 @@ class SalesOrderWriteSerializer(serializers.Serializer):
     order_date = serializers.DateField()
     direct_order_reason = serializers.CharField(required=False, allow_blank=True)
     currency_code = serializers.CharField(max_length=3)
-    exchange_rate = serializers.DecimalField(max_digits=20, decimal_places=6, min_value=Decimal("0.000001"), default=Decimal("1"))
+    exchange_rate = serializers.DecimalField(max_digits=22, decimal_places=8, read_only=True)
+    exchange_rate_record_id = serializers.UUIDField(required=False, allow_null=True)
     incoterm_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
     payment_terms = serializers.CharField(required=False, allow_blank=True)
     deposit_required = serializers.BooleanField(default=False)
@@ -511,7 +604,7 @@ class SalesOrderWriteSerializer(serializers.Serializer):
     confirmation_summary = serializers.CharField(required=False, allow_blank=True)
     evidence_file_ids = serializers.PrimaryKeyRelatedField(
         source="evidence_files",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
         many=True,
         required=False,
         write_only=True,
@@ -546,7 +639,7 @@ class ConfirmedSalesOrderChangeSerializer(serializers.Serializer):
     customer_facing_change = serializers.BooleanField(default=False)
     change_evidence_file_id = serializers.PrimaryKeyRelatedField(
         source="change_evidence_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
         required=False,
         allow_null=True,
     )
@@ -575,7 +668,7 @@ class CollaborationEventInputSerializer(serializers.Serializer):
     occurred_at = serializers.DateTimeField()
     evidence_file_id = serializers.PrimaryKeyRelatedField(
         source="evidence_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
         required=False,
         allow_null=True,
         write_only=True,
@@ -592,7 +685,7 @@ class DeliveryBatchCancelSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=1000)
     evidence_file_id = serializers.PrimaryKeyRelatedField(
         source="evidence_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
     )
 
 

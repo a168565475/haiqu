@@ -383,6 +383,9 @@ export interface SupplierPurchaseSheetLine {
   actual_bar_count?: number
   actual_purchase_meters?: string
   source_purchase_order_line_id: string
+  section_type?: string
+  section_title?: string
+  material_attributes_snapshot?: MaterialAttributeSnapshot
   product_name: string
   product_specification: string
   part_name: string

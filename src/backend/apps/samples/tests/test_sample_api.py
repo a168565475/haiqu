@@ -6,6 +6,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient, APITestCase
@@ -35,6 +36,7 @@ from apps.workflow.models import BusinessTask, SlaPolicy, SlaTrackingStatus, Tas
 from ..models import SampleFeedback, SampleFeeRecord, SampleRequest, SampleRequestStatus, SampleShipmentEvent
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class SampleApiTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()

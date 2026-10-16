@@ -13,11 +13,12 @@ from apps.core.numbering import next_business_number
 from apps.customers.services import model_snapshot
 from apps.customers.selectors import accessible_customers
 from apps.files.uploads import save_scanned_image
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.quotations.models import QuotationLine
 from .form_selectors import resolve_form_source, inquiry_reference_images
 from .form_services import _source_relations, _validate_source_tampering, _legacy_datetime
 from .models import SampleItem, SampleProduct, SampleRequest, SampleRequestStatus
-from .services import SAMPLE_FIELDS, _write_sample_records
+from .services import SAMPLE_FIELDS, _write_sample_records, sample_product_values_from_source
 
 
 def application_actions(sample, request):
@@ -75,12 +76,15 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
 
     source_type, source_id = data.pop('source_type'), data.pop('source_id')
     source_product_id = data.pop('source_product_id')
+    selected_product = data.pop('product', None)
     if sample:
         original_type = 'quotation' if sample.source_quotation_version_id else 'inquiry' if sample.source_inquiry_id else None
         if source_type != original_type:
             raise ValidationError({'source_type': '退回补充不能更换申请来源类型。'})
     relations = {}
     product_source = {}
+    source_product_values = {}
+    source_model = None
     if source_type:
         permission = 'inquiries.view_inquiry' if source_type == 'inquiry' else 'quotations.view_quotationversion'
         if not request.user.has_perm(permission):
@@ -94,14 +98,38 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 raise ValidationError({'source_id': '退回补充不能更换申请来源或来源产品。'})
             relations = {field: getattr(sample, field) for field in ['customer_account', 'customer_contact', 'owner_employee', 'transaction_entity', 'source_inquiry', 'source_quotation_version']}
             source_product = {'product_name': original.product_name, 'specification': original.specification, 'source_inquiry_item_id': original.source_inquiry_item_id, 'source_quotation_line_id': original.source_quotation_line_id}
+            source_model = original
         else:
             context = resolve_form_source(request=request, source_type=source_type, source_id=source_id)
             relations = _source_relations(source_type, source_id)
             source_product = next((p for p in context['products'] if p['id'] == str(source_product_id)), None)
+            source_model = (
+                relations['inquiry_items'].get(str(source_product_id))
+                if source_type == 'inquiry'
+                else relations['quotation_lines'].get(str(source_product_id))
+            )
         _validate_source_tampering(data, relations)
         if source_product is None or data['product_name'] != source_product['product_name'] or data['specification'] != source_product['specification']:
             raise ValidationError({'source_product_id': '产品必须与当前来源中的产品一致。'})
         product_source = {'source_inquiry_item_id': source_product['source_inquiry_item_id'], 'source_quotation_line_id': source_product['source_quotation_line_id']}
+        if source_model is not None:
+            source_values = sample_product_values_from_source(source_model)
+            source_product_values = {
+                field: source_values[field]
+                for field in ['product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
+            }
+    elif selected_product is not None and (
+        data['product_name'].strip() != selected_product.product_name
+        or data['specification'] != selected_product.specification
+    ):
+        # 产品名称或规格改成了另一种产品身份，不能继续挂着原产品 ID。
+        selected_product = None
+    if not source_type and selected_product is not None:
+        source_values = sample_product_values_from_source(selected_product)
+        source_product_values = {
+            field: source_values[field]
+            for field in ['product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
+        }
     if sample and (sample.source_inquiry_id != (relations.get('source_inquiry').pk if relations.get('source_inquiry') else None) or sample.source_quotation_version_id != (relations.get('source_quotation_version').pk if relations.get('source_quotation_version') else None)):
         raise ValidationError({'source_id': '退回补充不能更换申请来源。'})
 
@@ -121,7 +149,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                     pk=source_product_id,
                     quotation_version_id=source_id,
                     product_image_id=source_image_id,
-                    product_image__scan_status='CLEAN',
+                    product_image__scan_status__in=USABLE_FILE_SCAN_STATUSES,
                     product_image__archived_at__isnull=True,
                 )
                 .select_related('product_image')
@@ -141,7 +169,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
         if sample is None:
             number = next_business_number('SAMPLE_INTAKE')
             sample = SampleRequest.objects.create(**data, request_number=number, intake_number=number, requested_at=timezone.now(), requested_by_employee=actor, created_by_employee=actor, creation_idempotency_key=key, application_payload_hash=fingerprint, reference_image=saved_image or inherited_image)
-            product = SampleProduct.objects.create(sample_request=sample, line_number=1, **product_fields, **product_source)
+            product = SampleProduct.objects.create(sample_request=sample, line_number=1, **product_fields, **source_product_values, **product_source)
             SampleItem.objects.create(sample_request=sample, sample_product=product, line_number=1, product_description_snapshot=product.product_name, specification_snapshot=product.specification, requested_quantity=quantity, sample_quantity=quantity, unit_code='PCS', **product_source)
         else:
             for field, value in data.items():
@@ -150,7 +178,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 sample.reference_image = saved_image or inherited_image
             sample.save()
             product = sample.products.get(line_number=1)
-            for field, value in {**product_fields, **product_source}.items():
+            for field, value in {**product_fields, **source_product_values, **product_source}.items():
                 setattr(product, field, value)
             product.save()
             item = sample.items.get(line_number=1)

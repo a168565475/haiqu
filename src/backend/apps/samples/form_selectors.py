@@ -5,6 +5,7 @@ from apps.customers.models import CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.inquiries.models import Inquiry, InquiryStatus, format_inquiry_item_specification
 from apps.inquiries.images import inquiry_reference_images
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.quotations.models import QuotationVersion, QuotationVersionStatus
 
 from .models import SampleRequest, SampleRequestStatus, SampleType
@@ -68,7 +69,7 @@ def _source_basic_info(inquiry):
 
 def _quotation_line_reference_images(line):
     image = line.product_image
-    if image is None or image.archived_at is not None or image.scan_status != "CLEAN":
+    if image is None or image.archived_at is not None or image.scan_status not in USABLE_FILE_SCAN_STATUSES:
         return []
     return [{
         "id": str(image.pk),
@@ -133,6 +134,7 @@ def resolve_form_source(*, request, source_type, source_id):
                     "id": str(item.pk),
                     "source_inquiry_item_id": str(item.pk),
                     "source_quotation_line_id": None,
+                    "product_id": str(item.product_id) if item.product_id else None,
                     "product_name": item.product_description,
                     "specification": format_inquiry_item_specification(item.specification, item.color, item.material),
                     "source_quantity": str(item.quantity),
@@ -206,6 +208,7 @@ def resolve_form_source(*, request, source_type, source_id):
                 "id": str(line.pk),
                 "source_inquiry_item_id": str(line.source_inquiry_item_id) if line.source_inquiry_item_id else None,
                 "source_quotation_line_id": str(line.pk),
+                "product_id": str(line.product_id) if line.product_id else None,
                 "product_name": line.product_description_snapshot,
                 "specification": line.specification_snapshot,
                 "source_quantity": str(line.quantity),

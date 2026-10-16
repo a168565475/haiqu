@@ -61,6 +61,13 @@ export interface InquiryListResult { data: InquiryRow[]; meta: { total: number; 
 export interface InquiryItem {
   id?: string
   line_number?: number
+  product_id?: string | null
+  product_category_id?: string | null
+  product_category_name?: string
+  product_unit_id?: string | null
+  product_color_id?: string | null
+  product_image_id?: string | null
+  product_image?: { id: string; original_name: string; content_type: string; size_bytes: number; scan_status: string } | null
   product_description: string
   specification: string
   color: string
@@ -72,6 +79,43 @@ export interface InquiryItem {
   expected_date: string | null
   product_match_status: 'PENDING' | 'MATCHED' | 'NOT_REQUIRED'
   notes: string
+  product_number_snapshot?: string
+  product_code_snapshot?: string
+  item_number_snapshot?: string
+  customer_product_name_snapshot?: string
+  customer_specification_snapshot?: string
+  customer_unit_code_snapshot?: string
+  customer_color_snapshot?: string
+  customer_material_snapshot?: string
+}
+
+export interface InquiryProductCandidate {
+  id: string
+  product_number: string
+  product_code: string
+  item_number: string
+  product_name: string
+  specification: string
+  unit_id: string
+  unit_code: string
+  unit_name: string
+  category_id: string
+  category_name: string
+}
+
+export interface InquiryProductSpecificationGroup {
+  specification: string
+  products: InquiryProductCandidate[]
+}
+
+export interface InquiryProductNameGroup {
+  product_name: string
+  specifications: InquiryProductSpecificationGroup[]
+}
+
+export interface InquiryProductSelectionOptions {
+  category: { id: string; category_name: string }
+  groups: InquiryProductNameGroup[]
 }
 
 export interface InquiryFile {

@@ -119,6 +119,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start_haiqu_erp.ps1 -N
 
 脚本不会停止未知进程，也不包含 `down -v`、`prune` 或删除 `data` / `backups` 的操作。
 
+### 文件扫描策略
+
+各上传入口保留现有的扩展名、大小、签名等文件校验，再按 `FILE_VIRUS_SCAN_ENABLED` 决定是否调用 ClamAV。该变量默认是 `true`；当前内部开发环境 `.env` 显式设为 `false`，上传文件会记录为 `SKIPPED`（已跳过病毒扫描），仍受业务权限、客户数据范围、路径安全和文件校验约束。读取和复用只允许 `CLEAN` 或 `SKIPPED`，`PENDING`、`FAILED`、`INFECTED` 继续拒绝。
+
+重新启用扫描时，将 `.env` 中的 `FILE_VIRUS_SCAN_ENABLED` 改为 `true`，确认 `clamav` 容器健康后重启后端：
+
+```powershell
+docker compose up -d clamav
+docker compose up -d backend
+docker compose ps
+```
+
+关闭扫描只适用于受控的内部环境；对外部或生产环境应保持开启，并在切换后重新验证上传、下载和复用链路。
+
 ### 手动启动与状态
 
 ```powershell

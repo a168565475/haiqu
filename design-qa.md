@@ -308,3 +308,35 @@ final result: passed
 证据：`qa/page_navigation_folder_style_20260930/after-report.json`、`browser-report.json`、`execution_log.md`、`tests.log`、`build.log`、`style-diff.patch`。未覆盖原始 before 证据或旧任务截图。
 
 final result: passed
+
+# 全局侧栏视觉差异修正（2026-10-15）
+
+source visual truth: `C:/Users/ADMINI~1/AppData/Local/Temp/codex-clipboard-6fdcee2f-2542-403f-93d8-dd3fa226a7e8.png`
+
+implementation screenshot: `output/playwright/sidebar_visual_correction_20261015/sidebar-final.png`
+
+full-view comparison: `output/playwright/sidebar_visual_correction_20261015/reference-before-after.png`
+
+viewport: 实装1920×855，DPR1，截图只截280×855的全局侧栏；补充1280×700与1920×1080检查。参考1122×1402按主栏175→80等比归一，仅裁取左侧570px；同屏页面以CSS展示原图，没有改动原始像素。参考两栏总宽260.6与实装280的差异来自已确认80/200布局。状态为车间展开、内部计划选中；实际二级栏为悬停浮层。
+
+重点区域在同屏图中以相同主栏比例清晰可读，包含品牌、模块标题/副标题、7个车间图标及选中状态、主栏选中块和底部管理入口，另有实际计算样式证据，故未再制作重复放大裁图。
+
+五项检查：字体保留实际可用Noto Sans SC并修正字号/字重/字色；布局校正品牌比例、增加副标题并保持80/200宽；背景/选中/指示色按采样值修正；图标改为语义对应的现有库和官方SVG并保存许可；主栏名称与业务文案保留，补车间作业。
+
+比较历史：旧版图标/配色/字体层级差异为修正对象；首轮实装出现SVG蒙版无效（P1）和图标底板压缩（P2），已修正CSS URL引号与flex约束；第二轮重新截图并断言蒙版非none、底板40×36，问题消除。最终同屏检查无待处理P0/P1/P2。P3保留工厂窗格数量、文档短线数量和柱图底线等现成图标细节，原参考字体未知，不声称像素级完全一致。
+
+主交互已验证：悬停打开、跨栏保持、移出收起且内容宽度不变、短窗口滚动与底部入口可见、减少动态效果、唯一全局菜单。捕获控制台错误0。独立headless未运行（缺少授权测试账号），不得把此视觉检查写成全量端到端验收通过。
+
+完整参数、命令结果、清理记录：[侧栏修正报告](docs/qa/sidebar_visual_correction_20261015.md)。上方历史任务记录保持原样。
+
+final result: passed
+
+## 侧栏前景色追加复核（2026-10-15）
+
+用户再次指出图标与菜单文字颜色不对。本轮只改前景色：主栏普通图标改暖灰白#f1ede6，文字柔白#f4f3f0；二级标题工厂独立暖炭黑#22221f，标题字墨蓝黑#0c1520。上一轮把标题图标和正文共色、标题文字近纯黑的处理与参考存在偏差，已纠正。其余前景色经采样及DOM核对已经接近，未整体重调。
+
+来源仍为上述用户参考图；最新实际图为 `output/playwright/sidebar_color_followup_20261015/sidebar-colors.png`（1920×911视口、DPR1、截280×911侧栏，车间展开且内部计划选中）。上一轮全局同屏对照仍提供形状/布局证据，本轮重点使用原始参考前景样本及 `computed-colors.json` 检查独立颜色，字号、间距、图片路径和文案不变。截图中主栏选中图标的蓝色光晕属于指针提示，未用其污染像素定色。
+
+五类变化的实际计算color断言全部通过；21项相关测试及包含类型检查的构建通过，控制台错误0。独立headless仍未执行，不扩大验收结论。专用浏览器标签已关闭，无业务数据或临时资源残留。详见 `docs/qa/sidebar_color_followup_20261015.md`。
+
+final result: passed

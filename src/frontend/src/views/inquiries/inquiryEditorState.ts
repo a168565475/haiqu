@@ -1,4 +1,4 @@
-import type { InquiryItem, InquiryRow } from '@/types/inquiry'
+import type { InquiryItem, InquiryProductCandidate, InquiryRow } from '@/types/inquiry'
 import { formatInquiryNumber } from './inquiryDetailState'
 
 export function newInquiryKey(): string {
@@ -9,6 +9,31 @@ export function newInquiryKey(): string {
   bytes[8] = (bytes[8]! & 63) | 128
   const text = [...bytes].map(value => value.toString(16).padStart(2, '0')).join('')
   return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`
+}
+
+export function applyExistingProduct(item: InquiryItem, product: InquiryProductCandidate): InquiryItem {
+  return {
+    ...item,
+    product_id: product.id,
+    product_category_id: product.category_id,
+    product_unit_id: product.unit_id,
+    product_description: product.product_name,
+    specification: product.specification,
+    unit_code: product.unit_code,
+    product_number_snapshot: product.product_number,
+    product_code_snapshot: product.product_code,
+    item_number_snapshot: product.item_number,
+  }
+}
+
+export function invalidateProductLink(item: InquiryItem): InquiryItem {
+  return {
+    ...item,
+    product_id: null,
+    product_number_snapshot: '',
+    product_code_snapshot: '',
+    item_number_snapshot: '',
+  }
 }
 
 export function decimalUnits(value: unknown, decimals = 4, integerDigits = 14): bigint | null {
@@ -51,7 +76,7 @@ export function validateProducts(items: InquiryItem[]) {
     if (!item.product_description.trim()) return `${prefix}产品名称不能为空。`
     const quantity = decimalUnits(item.quantity)
     if (quantity === null || quantity <= 0n) return `${prefix}数量须大于零，最多 14 位整数和 4 位小数。`
-    if (!/^[A-Z0-9][A-Z0-9_-]{0,29}$/.test(item.unit_code)) return `${prefix}单位请使用大写字母、数字、下划线或短横线。`
+    if (!item.unit_code.trim() || item.unit_code.length > 30) return `${prefix}单位不能为空，最多 30 个字符。`
     if (item.target_unit_price !== null && item.target_unit_price !== '') {
       if (decimalUnits(item.target_unit_price) === null) return `${prefix}目标价须为非负数，最多 14 位整数和 4 位小数。`
       if (!item.target_currency_code) return `${prefix}填写目标价后请选择币种。`
@@ -62,5 +87,10 @@ export function validateProducts(items: InquiryItem[]) {
 export function validateAttachment(file: Pick<File, 'name' | 'size'>) {
   if (!/\.(pdf|xlsx|jpe?g|png)$/i.test(file.name)) return '附件仅支持 PDF、XLSX、JPG、JPEG、PNG。'
   if (!file.size || file.size > 10 * 1024 * 1024) return '附件必须大于 0 字节且不超过 10 MB。'
+  return ''
+}
+export function validateProductImage(file: Pick<File, 'name' | 'size'>) {
+  if (!/\.(jpe?g|png)$/i.test(file.name)) return '产品图片仅支持 JPG、JPEG、PNG。'
+  if (!file.size || file.size > 10 * 1024 * 1024) return '产品图片必须大于 0 字节且不超过 10 MB。'
   return ''
 }

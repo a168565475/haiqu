@@ -599,7 +599,7 @@ async function uploadFormal(file: File) {
     applyVersion(result.data, result.etag)
     documentWorkflow.reset('F02-S05')
     await refreshServerState()
-    ElMessage.success('正式报价文件已安全扫描并登记。')
+    ElMessage.success('正式报价文件已校验并登记。')
   } catch (error) {
     documentWorkflow.reset('F02-S06')
     workflowDetail.value = readableError(error)
@@ -1123,4 +1123,13 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshWhenVi
   .quotation-document { min-height: 680px; }
 }
 .quotation-lines-table tbody td:nth-child(n + 3) { padding-left: 4px !important; padding-right: 4px !important; }
+.send-card :deep(.el-alert),
+.lock-guidance { min-height: 0; padding: 8px 10px; }
+.send-card :deep(.el-alert__icon),
+.lock-guidance :deep(.el-alert__icon) { margin-right: 8px; font-size: 16px; }
+.send-card :deep(.el-alert__title),
+.lock-guidance :deep(.el-alert__title) { font-size: 12px; font-weight: 500; line-height: 18px; }
+.send-card :deep(.el-alert__description),
+.lock-guidance :deep(.el-alert__description) { margin-top: 1px; font-size: 11px; line-height: 16px; }
+.send-card :deep(.workflow-status) { min-height: 56px; height: auto; align-self: start; box-sizing: border-box; }
 </style>

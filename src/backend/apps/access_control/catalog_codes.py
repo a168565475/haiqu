@@ -160,6 +160,7 @@ PERMISSION_CODES = (
     "production_tasks.add_productiontask",
     "production_tasks.change_productiontask",
     "production_tasks.confirm_productiontask",
+    "production_tasks.delete_productiontask",
     "production_tasks.start_productiontask",
     "production_tasks.submit_productiontask",
     "production_tasks.view_productiontask",

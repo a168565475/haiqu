@@ -2,17 +2,30 @@ from apps.access_control.sales_sources import require_file
 from apps.access_control import sales_policy
 from apps.access_control.sales_policy import SalesAccessSerializerMixin
 from functools import cached_property
+from decimal import Decimal
 
 from django.db.models import Q
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.core.models import currency_code_validator, uppercase_code_validator
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerAccount, CustomerContact, CustomerTransactionEntity
 from apps.customers.selectors import accessible_customers
-from apps.files.models import BusinessFile
+from apps.files.models import BusinessFile, FileScanStatus, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee
-from apps.reference_data.models import Currency, Incoterm, ReferenceDictionary, ReferenceStatus
+from apps.products.models import ProductInformation, ProductStatus
+from apps.reference_data.models import (
+    Currency,
+    Incoterm,
+    ProductCategory,
+    ProductColor,
+    ProductItemType,
+    ProductionUnit,
+    ReferenceDictionary,
+    ReferenceStatus,
+)
 from apps.reference_data.services import (
     published_dictionary_code_is_active,
     published_dictionary_options,
@@ -24,9 +37,60 @@ from ..rich_text import rich_text_plain_text, sanitize_rich_text
 from ..selectors import inquiry_display_stage, inquiry_product_amount, inquiry_sla_summary
 
 
+class InquiryProductImageUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+
+class InquiryProductImageMetadataSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    original_name = serializers.CharField()
+    content_type = serializers.CharField()
+    size_bytes = serializers.IntegerField(min_value=0)
+    scan_status = serializers.ChoiceField(choices=FileScanStatus.choices)
+
+
 class InquiryItemSerializer(serializers.ModelSerializer):
     line_number = serializers.IntegerField(required=False, min_value=1)
-    unit_code = serializers.CharField(max_length=30, validators=[uppercase_code_validator])
+    product_category_name = serializers.CharField(source="product_category.category_name", read_only=True, default="")
+    product_id = serializers.PrimaryKeyRelatedField(
+        source="product",
+        queryset=ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_category_id = serializers.PrimaryKeyRelatedField(
+        source="product_category",
+        queryset=ProductCategory.objects.filter(item_type=ProductItemType.FINISHED, status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_unit_id = serializers.PrimaryKeyRelatedField(
+        source="product_unit",
+        queryset=ProductionUnit.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_color_id = serializers.PrimaryKeyRelatedField(
+        source="product_color",
+        queryset=ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_image_id = serializers.PrimaryKeyRelatedField(
+        source="product_image",
+        read_only=True,
+        allow_null=True,
+    )
+    product_image = serializers.SerializerMethodField()
+    unit_code = serializers.CharField(max_length=30)
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    target_unit_price = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0"),
+        required=False,
+        allow_null=True,
+    )
     target_currency_code = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -39,6 +103,13 @@ class InquiryItemSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "line_number",
+            "product_id",
+            "product_category_id",
+            "product_category_name",
+            "product_unit_id",
+            "product_color_id",
+            "product_image_id",
+            "product_image",
             "product_description",
             "specification",
             "color",
@@ -50,10 +121,59 @@ class InquiryItemSerializer(serializers.ModelSerializer):
             "expected_date",
             "product_match_status",
             "notes",
+            "product_number_snapshot",
+            "product_code_snapshot",
+            "item_number_snapshot",
+            "customer_product_name_snapshot",
+            "customer_specification_snapshot",
+            "customer_unit_code_snapshot",
+            "customer_color_snapshot",
+            "customer_material_snapshot",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "product_number_snapshot",
+            "product_code_snapshot",
+            "item_number_snapshot",
+            "customer_product_name_snapshot",
+            "customer_specification_snapshot",
+            "customer_unit_code_snapshot",
+            "customer_color_snapshot",
+            "customer_material_snapshot",
+            "created_at",
+            "updated_at",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._available_relation_querysets = {
+            name: self.fields[name].queryset
+            for name in ("product_id", "product_category_id", "product_unit_id", "product_color_id")
+        }
+        self._saved_item = None
+
+    def to_internal_value(self, data):
+        current = self.instance if isinstance(self.instance, InquiryItem) else None
+        inquiry = getattr(self.root, "instance", None)
+        if current is None and isinstance(inquiry, Inquiry) and isinstance(data, dict) and data.get("id"):
+            try:
+                item_id = self.fields["id"].run_validation(data["id"])
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({"id": exc.detail}) from exc
+            current = InquiryItem.objects.filter(inquiry=inquiry, pk=item_id).select_related(
+                "product", "product_unit", "product_color",
+            ).first()
+        self._saved_item = current
+        for name, available in self._available_relation_querysets.items():
+            # 只允许本条已保存的关联继续使用；每条明细重置，避免向新明细放开停用项。
+            queryset = available.all()
+            saved_id = getattr(current, name, None)
+            if saved_id is not None:
+                queryset = queryset | queryset.model.objects.filter(pk=saved_id)
+            self.fields[name].queryset = queryset
+        return super().to_internal_value(data)
 
     def _validate_reference_codes(self, attrs, current=None):
         target_currency = attrs.get(
@@ -75,8 +195,85 @@ class InquiryItemSerializer(serializers.ModelSerializer):
             )
         return attrs
 
+    @extend_schema_field(InquiryProductImageMetadataSerializer(allow_null=True))
+    def get_product_image(self, item) -> dict | None:
+        image = item.product_image
+        if image is None:
+            return None
+        return {
+            "id": str(image.pk),
+            "original_name": image.original_name,
+            "content_type": image.content_type,
+            "size_bytes": image.size_bytes,
+            "scan_status": image.scan_status,
+        }
+
+    def _validate_item_rules(self, attrs, current=None):
+        attrs = self._validate_reference_codes(attrs, current)
+        errors = {}
+        unit = attrs.get("product_unit", getattr(current, "product_unit", None))
+        unit_text = attrs.get("unit_code", getattr(current, "unit_code", ""))
+        unchanged_unit = current is not None and unit is not None and current.product_unit_id == unit.pk and unit_text == current.unit_code
+        if unit is not None and not unchanged_unit:
+            if unit.status != ReferenceStatus.ACTIVE or unit.archived_at is not None:
+                errors["product_unit_id"] = "单位已停用或归档，只能保留原关联及原文字。"
+            elif unit_text != unit.unit_code:
+                errors["product_unit_id"] = "单位关联与填写内容不一致；手填单位请清除维护项关联。"
+        color = attrs.get("product_color", getattr(current, "product_color", None))
+        color_text = attrs.get("color", getattr(current, "color", ""))
+        unchanged_color = current is not None and color is not None and current.product_color_id == color.pk and color_text == current.color
+        if color is not None and not unchanged_color:
+            if color.status != ReferenceStatus.ACTIVE or color.archived_at is not None:
+                errors["product_color_id"] = "颜色已停用或归档，只能保留原关联及原文字。"
+            elif color_text != color.color_name:
+                errors["product_color_id"] = "颜色关联与填写内容不一致；手填颜色请清除维护项关联。"
+        product = attrs.get("product", getattr(current, "product", None))
+        if product is not None:
+            unchanged_link = current is not None and current.product_id == product.pk
+            if not unchanged_link and (
+                product.category.status != ReferenceStatus.ACTIVE
+                or product.category.archived_at is not None
+                or product.unit.status != ReferenceStatus.ACTIVE
+                or product.unit.archived_at is not None
+            ):
+                errors["product_id"] = "产品的类别或单位已停用或归档，不能建立新的产品关联。"
+            category_id = current.product_category_id if unchanged_link else product.category_id
+            unit_id = current.product_unit_id if unchanged_link else product.unit_id
+            product_name = current.product_description if unchanged_link else product.product_name
+            specification = current.specification if unchanged_link else product.specification
+            unit_code = current.unit_code if unchanged_link else product.unit.unit_code
+            category = attrs.get("product_category")
+            if "product_category" in attrs and (category is None or category.pk != category_id):
+                errors["product_id"] = "产品类别、产品主档不匹配；如需改规格或单位，请先解除产品关联。"
+            unit = attrs.get("product_unit")
+            if "product_unit" in attrs and (unit is None or unit.pk != unit_id):
+                errors["product_id"] = "产品单位、产品主档不匹配；如需改单位，请先解除产品关联。"
+            if attrs.get("product_description", getattr(current, "product_description", product_name)).strip() != product_name:
+                errors["product_id"] = "已关联产品不能直接改名；请解除关联后作为定制产品保存。"
+            if attrs.get("specification", getattr(current, "specification", specification)).strip() != specification:
+                errors["product_id"] = "已关联产品不能直接改规格；不同规格应选择或建立另一条产品记录。"
+            if attrs.get("unit_code", getattr(current, "unit_code", unit_code)).strip() != unit_code:
+                errors["product_id"] = "已关联产品不能直接改单位；请解除关联后再保存。"
+
+        target_price = attrs.get("target_unit_price", getattr(current, "target_unit_price", None))
+        target_currency = attrs.get(
+            "target_currency_code",
+            getattr(current, "target_currency_code", ""),
+        )
+        if target_price is not None and not target_currency:
+            errors["target_currency_code"] = "填写目标价后必须选择币种。"
+
+        expected_date = attrs.get("expected_date")
+        if expected_date is not None and expected_date < timezone.localdate():
+            current_date = getattr(current, "expected_date", None)
+            if current_date != expected_date:
+                errors["expected_date"] = "新录入的期望日期不能早于今天。"
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
     def validate(self, attrs):
-        return self._validate_reference_codes(attrs, self.instance)
+        return self._validate_item_rules(attrs, self._saved_item)
 
 
 class InquiryItemUpdateSerializer(InquiryItemSerializer):
@@ -90,13 +287,10 @@ class InquiryDraftItemSerializer(InquiryItemSerializer):
     id = serializers.UUIDField(required=False)
 
     class Meta(InquiryItemSerializer.Meta):
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = [field for field in InquiryItemSerializer.Meta.read_only_fields if field != "id"]
 
     def validate(self, attrs):
-        current = None
-        if attrs.get("id"):
-            current = InquiryItem.objects.filter(pk=attrs["id"]).first()
-        return self._validate_reference_codes(attrs, current)
+        return self._validate_item_rules(attrs, self._saved_item)
 
 
 class InquiryFileLinkSerializer(serializers.ModelSerializer):
@@ -123,7 +317,7 @@ class InquiryFileLinkSerializer(serializers.ModelSerializer):
 class InquiryFileLinkCreateSerializer(serializers.Serializer):
     file_id = serializers.PrimaryKeyRelatedField(
         source="business_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
     )
     file_role = serializers.CharField(max_length=50, validators=[uppercase_code_validator])
 
@@ -143,6 +337,7 @@ class InquiryFileLinkCreateSerializer(serializers.Serializer):
             | Q(quotation_links__quotation_version__quotation__customer_account=inquiry.customer_account)
             | Q(sample_links__sample_request__customer_account=inquiry.customer_account),
             archived_at__isnull=True,
+            scan_status__in=USABLE_FILE_SCAN_STATUSES,
         ).distinct()
 
     def validate_file_id(self, business_file):
@@ -745,6 +940,11 @@ class InquiryDraftSaveSerializer(InquiryWritableSerializer):
         model = Inquiry
         fields = InquiryUpdateSerializer.Meta.fields + ["items", "idempotency_key"]
         validators = []
+
+    def validate(self, attrs):
+        if not attrs.get("idempotency_key"):
+            raise serializers.ValidationError({"idempotency_key": "草稿保存必须提供幂等键。"})
+        return super().validate(attrs)
 
     def validate_items(self, items):
         if len(items) > 200:

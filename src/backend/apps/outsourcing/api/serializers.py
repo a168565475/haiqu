@@ -590,7 +590,7 @@ class OutsourcingOrderDetailSerializer(serializers.Serializer):
             ),
             "customer_name": (
                 source.get("customer_name")
-                or production_task.customer_account.account_name
+                or (production_task.customer_account.account_name if production_task.customer_account_id else "")
             ),
             "order_date": source.get("order_date") or production_task.order_date.isoformat(),
             "craft": {

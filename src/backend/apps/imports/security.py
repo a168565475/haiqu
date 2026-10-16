@@ -25,6 +25,14 @@ class ScannerUnavailable(APIException):
     default_code = "scanner_unavailable"
 
 
+def scan_upload(path, *, scanner=None):
+    """按全局开关扫描临时文件，并返回状态与说明。"""
+    if not settings.FILE_VIRUS_SCAN_ENABLED:
+        return FileScanStatus.SKIPPED, "病毒扫描已关闭，文件未执行病毒扫描。"
+    scan = scanner or _clamav_scan
+    return FileScanStatus.CLEAN, scan(path)
+
+
 def _clamav_scan(path):
     host = settings.CLAMAV_HOST
     port = settings.CLAMAV_PORT
@@ -88,7 +96,7 @@ def save_and_scan_upload(uploaded_file, actor_employee):
 
         virtual_key = f"quarantine/{quarantine_dir.name}/{original_name}"
         try:
-            scan_message = _clamav_scan(temporary_path)
+            scan_status, scan_message = scan_upload(temporary_path)
         except InfectedFile as exc:
             BusinessFile.objects.create(
                 uploaded_by_employee=actor_employee,
@@ -120,17 +128,21 @@ def save_and_scan_upload(uploaded_file, actor_employee):
         final_path = Path(settings.MEDIA_ROOT) / relative_key
         final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temporary_path), str(final_path))
-        business_file = BusinessFile.objects.create(
-            uploaded_by_employee=actor_employee,
-            original_name=original_name,
-            storage_key=relative_key.as_posix(),
-            content_type=uploaded_file.content_type or "application/octet-stream",
-            size_bytes=size,
-            content_hash=digest.hexdigest(),
-            scan_status=FileScanStatus.CLEAN,
-            scanned_at=timezone.now(),
-            scan_message=scan_message[:500],
-        )
+        try:
+            business_file = BusinessFile.objects.create(
+                uploaded_by_employee=actor_employee,
+                original_name=original_name,
+                storage_key=relative_key.as_posix(),
+                content_type=uploaded_file.content_type or "application/octet-stream",
+                size_bytes=size,
+                content_hash=digest.hexdigest(),
+                scan_status=scan_status,
+                scanned_at=timezone.now() if scan_status == FileScanStatus.CLEAN else None,
+                scan_message=scan_message[:500],
+            )
+        except Exception:
+            final_path.unlink(missing_ok=True)
+            raise
         return business_file, final_path
     finally:
         if temporary_path.exists():

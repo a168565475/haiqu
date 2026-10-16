@@ -76,6 +76,13 @@ describe('采购订单中的供应商入口与权限边界', () => {
     const { sidebar, page } = mountNavigation(permissions, superuser)
     await flushPromises()
 
+    const procurementGroup = sidebar.find('[data-menu-key="procurement-management"]')
+    expect(procurementGroup.exists()).toBe(purchase || supplier)
+    if (purchase || supplier) {
+      await procurementGroup.trigger('focus')
+      expect(procurementGroup.attributes('aria-expanded')).toBe('true')
+    }
+
     expect(sidebar.text()).not.toContain('供应商')
     const purchaseLink = sidebar.findAllComponents(RouterLinkStub)
       .find((link) => {

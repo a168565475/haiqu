@@ -3,6 +3,7 @@ export interface SampleApplicationDraft {
   sourceType: 'inquiry' | 'quotation' | null
   sourceId: string
   sourceProductId: string
+  productId: string
   customerId: string
   contactId: string
   ownerId: string

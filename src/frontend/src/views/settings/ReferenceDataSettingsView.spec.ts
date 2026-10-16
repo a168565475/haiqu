@@ -72,19 +72,19 @@ describe('ReferenceDataSettingsView', () => {
     fixtures.granted.add('reference_data.view_configrelease')
   })
 
-  it('展示真实汇总、稳定大写编码和当前分类数量', async () => {
+  it('列表页移除统计与业务参数卡并保留字典表', async () => {
     const wrapper = mount(ReferenceDataSettingsView, { global: { plugins: [createPinia(), ElementPlus] } })
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('启用字典项')
-    expect(wrapper.text()).toContain('67')
-    expect(wrapper.text()).toContain('待发布变更')
     expect(wrapper.text()).toContain('CUSTOMER_LEVEL')
     expect(wrapper.text()).toContain('客户等级')
-    expect(wrapper.text()).toContain('默认语言')
     expect(wrapper.text()).toContain('当前版本 v3')
     expect(wrapper.text()).not.toContain('customer_level')
+    expect(wrapper.find('.metric-grid').exists()).toBe(false)
+    expect(wrapper.find('.parameter-card').exists()).toBe(false)
+    expect(wrapper.find('.dictionary-table').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="open-parameters"]').exists()).toBe(true)
   })
 
   it('没有任一配置查看权限时显示独立无权限状态且不请求数据', async () => {

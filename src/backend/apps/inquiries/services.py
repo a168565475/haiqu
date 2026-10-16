@@ -73,7 +73,63 @@ ITEM_FIELDS = [
     "expected_date",
     "product_match_status",
     "notes",
+    "product",
+    "product_category",
+    "product_unit",
+    "product_color",
+    "product_image",
+    "product_number_snapshot",
+    "product_code_snapshot",
+    "item_number_snapshot",
+    "customer_product_name_snapshot",
+    "customer_specification_snapshot",
+    "customer_unit_code_snapshot",
+    "customer_color_snapshot",
+    "customer_material_snapshot",
 ]
+
+
+def prepare_inquiry_item_data(item_data, *, existing=None):
+    """保存询盘产品时装配主档快照，同时保留客户原始文字。"""
+    data = dict(item_data)
+    product = data.get("product")
+    if product is not None:
+        # 同一关联的编辑继续使用单据快照，不重新套用后来变过的产品库默认值。
+        if existing is not None and existing.product_id == product.pk:
+            data["product_number_snapshot"] = existing.product_number_snapshot
+            data["product_code_snapshot"] = existing.product_code_snapshot
+            data["item_number_snapshot"] = existing.item_number_snapshot
+        else:
+            data["product_category"] = product.category
+            data["product_unit"] = product.unit
+            data["product_number_snapshot"] = product.product_number
+            data["product_code_snapshot"] = product.product_code
+            data["item_number_snapshot"] = product.product_item.item_number
+    elif "product" in data:
+        data["product_number_snapshot"] = ""
+        data["product_code_snapshot"] = ""
+        data["item_number_snapshot"] = ""
+    data.setdefault(
+        "customer_product_name_snapshot",
+        getattr(existing, "customer_product_name_snapshot", data.get("product_description", "")),
+    )
+    data.setdefault(
+        "customer_specification_snapshot",
+        getattr(existing, "customer_specification_snapshot", data.get("specification", "")),
+    )
+    data.setdefault(
+        "customer_unit_code_snapshot",
+        getattr(existing, "customer_unit_code_snapshot", data.get("unit_code", "")),
+    )
+    data.setdefault(
+        "customer_color_snapshot",
+        getattr(existing, "customer_color_snapshot", data.get("color", "")),
+    )
+    data.setdefault(
+        "customer_material_snapshot",
+        getattr(existing, "customer_material_snapshot", data.get("material", "")),
+    )
+    return data
 
 
 def _touch_inquiry(inquiry):
@@ -172,7 +228,7 @@ def create_inquiry(*, validated_data, actor_employee, request):
     used_numbers = {item["line_number"] for item in items if "line_number" in item}
     created_items = []
     for index, item_data in enumerate(items, start=1):
-        item_data = dict(item_data)
+        item_data = prepare_inquiry_item_data(item_data)
         created_items.append(
             InquiryItem(
                 inquiry=inquiry,
@@ -220,8 +276,9 @@ def save_inquiry_draft(*, inquiry, validated_data, actor_employee, request):
         retained_ids = set()
         used_numbers = set()
         for index, raw_item in enumerate(items_data, start=1):
-            item_data = dict(raw_item)
-            item_id = str(item_data.pop("id", ""))
+            item_id = str(raw_item.get("id", ""))
+            item_data = prepare_inquiry_item_data(raw_item, existing=existing.get(item_id))
+            item_id = str(item_data.pop("id", item_id))
             line_number = _line_number(item_data, used_numbers, index)
             if item_id:
                 item = existing.get(item_id)
@@ -286,7 +343,7 @@ def create_inquiry_item(*, inquiry, validated_data, actor_employee, request):
     _ensure_draft(inquiry)
     if inquiry.items.count() >= 200:
         raise ValidationError({"detail": "单张询价最多包含 200 条明细。"})
-    item_data = dict(validated_data)
+    item_data = prepare_inquiry_item_data(validated_data)
     if "line_number" not in item_data:
         current_max = inquiry.items.aggregate(value=Max("line_number"))["value"] or 0
         item_data["line_number"] = current_max + 1
@@ -320,6 +377,7 @@ def update_inquiry_item(*, item, validated_data, actor_employee, request):
     _ensure_draft(inquiry)
     item = InquiryItem.objects.select_for_update().get(pk=item.pk)
     before_data = model_snapshot(item, ITEM_FIELDS)
+    validated_data = prepare_inquiry_item_data(validated_data, existing=item)
     for field_name, value in validated_data.items():
         setattr(item, field_name, value)
     item.save(update_fields=[*validated_data.keys(), "updated_at"])
@@ -336,6 +394,54 @@ def update_inquiry_item(*, item, validated_data, actor_employee, request):
         request=request,
     )
     return item, inquiry
+
+
+@transaction.atomic
+def set_inquiry_item_product_image(*, item, business_file, actor_employee, request):
+    inquiry = Inquiry.objects.select_for_update().get(pk=item.inquiry_id)
+    require_matching_etag(request, inquiry)
+    _ensure_draft(inquiry)
+    item = InquiryItem.objects.select_for_update().get(pk=item.pk)
+    before_data = model_snapshot(item, ITEM_FIELDS)
+    item.product_image = business_file
+    item.save(update_fields=["product_image", "updated_at"])
+    _touch_inquiry(inquiry)
+    write_audit_log(
+        object_type="INQUIRY_ITEM",
+        object_id=item.pk,
+        context_type="CUSTOMER_ACCOUNT",
+        context_id=inquiry.customer_account_id,
+        action="PRODUCT_IMAGE_UPDATED",
+        actor_employee=actor_employee,
+        before_data=before_data,
+        after_data=model_snapshot(item, ITEM_FIELDS),
+        request=request,
+    )
+    return item, inquiry
+
+
+@transaction.atomic
+def remove_inquiry_item_product_image(*, item, actor_employee, request):
+    inquiry = Inquiry.objects.select_for_update().get(pk=item.inquiry_id)
+    require_matching_etag(request, inquiry)
+    _ensure_draft(inquiry)
+    item = InquiryItem.objects.select_for_update().get(pk=item.pk)
+    before_data = model_snapshot(item, ITEM_FIELDS)
+    item.product_image = None
+    item.save(update_fields=["product_image", "updated_at"])
+    _touch_inquiry(inquiry)
+    write_audit_log(
+        object_type="INQUIRY_ITEM",
+        object_id=item.pk,
+        context_type="CUSTOMER_ACCOUNT",
+        context_id=inquiry.customer_account_id,
+        action="PRODUCT_IMAGE_REMOVED",
+        actor_employee=actor_employee,
+        before_data=before_data,
+        after_data=model_snapshot(item, ITEM_FIELDS),
+        request=request,
+    )
+    return inquiry
 
 
 @transaction.atomic

@@ -76,7 +76,17 @@ def inquiries_with_context(queryset=None, *, list_mode=False, request=None):
     current_sla = InquirySlaLink.objects.filter(is_current=True).select_related("sla_tracking__sla_policy")
     primary_owners = CustomerAssignment.objects.filter(current_period, assignment_role=AssignmentRole.PRIMARY_OWNER).select_related("employee")
     queryset = queryset.select_related("customer_account", "transaction_entity", "customer_contact", "owner_employee").prefetch_related(
-        Prefetch("items", queryset=InquiryItem.objects.order_by("line_number", "id"), to_attr="list_items"),
+        Prefetch(
+            "items",
+            queryset=InquiryItem.objects.select_related(
+                "product",
+                "product_category",
+                "product_unit",
+                "product_color",
+                "product_image",
+            ).order_by("line_number", "id"),
+            to_attr="list_items",
+        ),
         Prefetch("sla_links", queryset=current_sla, to_attr="current_sla_links"),
         Prefetch("customer_account__assignments", queryset=primary_owners, to_attr="current_primary_owners"),
     )

@@ -9,6 +9,7 @@ from pathlib import Path
 from decimal import Decimal
 
 from django.conf import settings
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -49,7 +50,7 @@ def _page_footer(canvas, document):
 def _product_image_cell(line, style):
     """返回安全降级的产品主图单元格，所有转码仅在内存中完成。"""
     business_file = getattr(line, "product_image", None)
-    if business_file is None or business_file.scan_status != "CLEAN":
+    if business_file is None or business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
         return Paragraph("-", style)
     try:
         media_root = Path(settings.MEDIA_ROOT).resolve()

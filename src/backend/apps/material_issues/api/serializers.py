@@ -224,7 +224,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                     "id": str(task.pk),
                     "task_number": task.task_number,
                     "order_number": task.order_number,
-                    "customer_name": task.customer_account.account_name,
+                    "customer_name": task.customer_account.account_name if task.customer_account_id else "",
                 }
                 if task
                 else None

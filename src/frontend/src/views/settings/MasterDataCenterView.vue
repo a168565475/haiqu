@@ -2,7 +2,6 @@
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { AxiosError } from 'axios'
-import { useRouter } from 'vue-router'
 import {
   ElMessage,
   ElMessageBox,
@@ -49,7 +48,6 @@ interface CategoryDefinition {
   permissionModel: string
   countKey: string
   title: string
-  standardLabel: string
 }
 
 interface ColumnDefinition {
@@ -72,21 +70,22 @@ interface FieldDefinition {
 }
 
 const categories: CategoryDefinition[] = [
-  { key: 'country', label: '国家 / 地区', resource: 'countries', permissionModel: 'country', countKey: 'countries', title: '国家 / 地区', standardLabel: 'ISO 3166' },
-  { key: 'currency', label: '币种', resource: 'currencies', permissionModel: 'currency', countKey: 'currencies', title: '币种', standardLabel: 'ISO 4217' },
-  { key: 'exchangeRate', label: '汇率', resource: 'exchange-rates', permissionModel: 'exchangerate', countKey: 'exchange_rates', title: '汇率历史', standardLabel: '人工维护' },
-  { key: 'unit', label: '单位', resource: 'units', permissionModel: 'unit', countKey: 'units', title: '单位', standardLabel: 'UN/CEFACT Rec.20' },
-  { key: 'incoterm', label: 'Incoterms', resource: 'incoterms', permissionModel: 'incoterm', countKey: 'incoterms', title: 'Incoterms', standardLabel: 'ICC 2020' },
-  { key: 'paymentMethod', label: '付款方式', resource: 'payment-methods', permissionModel: 'paymentmethod', countKey: 'payment_methods', title: '付款方式', standardLabel: '公司维护' },
-  { key: 'transportMethod', label: '运输方式', resource: 'transport-methods', permissionModel: 'transportmethod', countKey: 'transport_methods', title: '运输方式', standardLabel: '公司维护' },
-  { key: 'port', label: '港口', resource: 'ports', permissionModel: 'port', countKey: 'ports', title: '港口', standardLabel: 'UN/LOCODE' },
-  { key: 'courier', label: '快递公司', resource: 'couriers', permissionModel: 'courier', countKey: 'couriers', title: '快递公司', standardLabel: '公司维护' },
+  { key: 'country', label: '国家 / 地区', resource: 'countries', permissionModel: 'country', countKey: 'countries', title: '国家 / 地区' },
+  { key: 'currency', label: '币种', resource: 'currencies', permissionModel: 'currency', countKey: 'currencies', title: '币种' },
+  { key: 'exchangeRate', label: '汇率', resource: 'exchange-rates', permissionModel: 'exchangerate', countKey: 'exchange_rates', title: '汇率历史' },
+  { key: 'unit', label: '单位', resource: 'units', permissionModel: 'unit', countKey: 'units', title: '单位' },
+  { key: 'incoterm', label: 'Incoterms', resource: 'incoterms', permissionModel: 'incoterm', countKey: 'incoterms', title: 'Incoterms' },
+  { key: 'paymentMethod', label: '付款方式', resource: 'payment-methods', permissionModel: 'paymentmethod', countKey: 'payment_methods', title: '付款方式' },
+  { key: 'transportMethod', label: '运输方式', resource: 'transport-methods', permissionModel: 'transportmethod', countKey: 'transport_methods', title: '运输方式' },
+  { key: 'port', label: '港口', resource: 'ports', permissionModel: 'port', countKey: 'ports', title: '港口' },
+  { key: 'courier', label: '快递公司', resource: 'couriers', permissionModel: 'courier', countKey: 'couriers', title: '快递公司' },
 ]
 
 const columnsByCategory: Record<string, ColumnDefinition[]> = {
   country: [
     { key: 'code', label: 'Alpha-2', minWidth: 90 },
     { key: 'chinese_name', label: '中文名称', minWidth: 130 },
+    { key: 'continent', label: '洲别', minWidth: 90 },
     { key: 'english_name', label: '英文名称', minWidth: 180, compactHidden: true },
     { key: 'status', label: '状态', minWidth: 86 },
     { key: 'alpha3_code', label: 'Alpha-3', minWidth: 90 },
@@ -164,7 +163,6 @@ function commonColumns(): ColumnDefinition[] {
 }
 
 const authStore = useAuthStore()
-const router = useRouter()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
 const selectedKey = ref(categories[0].key)
 const selectedCategory = computed(() => categories.find((item) => item.key === selectedKey.value) ?? categories[0])
@@ -201,6 +199,7 @@ const permissionDenied = ref(false)
 const keyword = ref('')
 const statusFilter = ref<ReferenceStatus | ''>('')
 const sourceFilter = ref('')
+const continentFilter = ref('')
 const compactViewport = ref(window.innerWidth < 1600)
 
 const currentColumns = computed(() => {
@@ -274,6 +273,7 @@ async function selectCategory(category: CategoryDefinition): Promise<void> {
   keyword.value = ''
   statusFilter.value = ''
   sourceFilter.value = ''
+  continentFilter.value = ''
   await loadRecords()
 }
 
@@ -285,6 +285,7 @@ async function resetFilters(): Promise<void> {
   keyword.value = ''
   statusFilter.value = ''
   sourceFilter.value = ''
+  continentFilter.value = ''
   await loadRecords()
 }
 
@@ -308,6 +309,44 @@ function cellValue(row: MasterDataRecord, key: string): string | number {
   if (key === 'rate' && typeof value === 'string') return value.replace(/0+$/, '').replace(/\.$/, '')
   return value === null || value === undefined || value === '' ? '—' : String(value)
 }
+
+const continentLabels: Record<string, string> = {
+  Africa: '非洲',
+  Americas: '美洲',
+  Asia: '亚洲',
+  Europe: '欧洲',
+  Oceania: '大洋洲',
+  Antarctica: '南极洲',
+  SOUTHEAST_ASIA: '亚洲',
+}
+
+function countryContinent(row: MasterDataRecord): string {
+  const extraData = (row as unknown as { extra_data?: Record<string, unknown> }).extra_data
+  const region = typeof extraData?.region_name === 'string'
+    ? extraData.region_name
+    : typeof extraData?.region === 'string' ? extraData.region : ''
+  return continentLabels[region] || region || '其他'
+}
+
+function countryFlag(code: unknown): string {
+  if (typeof code !== 'string' || !/^[A-Za-z]{2}$/.test(code)) return '🌐'
+  return code.toUpperCase().split('').map((letter) => String.fromCodePoint(127397 + letter.charCodeAt(0))).join('')
+}
+
+function countryFlagUrl(code: unknown): string {
+  if (typeof code !== 'string' || !/^[A-Za-z]{2}$/.test(code)) return ''
+  return `https://flagcdn.com/24x18/${code.toLowerCase()}.png`
+}
+
+const visibleRecords = computed(() => {
+  if (selectedCategory.value.key !== 'country' || !continentFilter.value) return records.value
+  return records.value.filter((row) => countryContinent(row) === continentFilter.value)
+})
+
+const continentOptions = computed(() => {
+  if (selectedCategory.value.key !== 'country') return []
+  return [...new Set(records.value.map(countryContinent))].sort((left, right) => left.localeCompare(right, 'zh-CN'))
+})
 
 async function fetchAllCurrentRecords(): Promise<MasterDataRecord[]> {
   return fetchAllMasterDataRecords(selectedCategory.value.resource, {
@@ -638,15 +677,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
     </div>
 
     <template v-else>
-      <div class="page-breadcrumb">
-        <button type="button" @click="router.push({ name: 'reference-data-settings' })">系统配置</button>
-        <span>/</span><span>基础资料中心</span>
-      </div>
-
       <header class="page-heading">
         <div>
           <h1>基础资料中心</h1>
-          <p>统一维护九类贸易主数据；标准清单记录来源版本，停用后保留历史显示</p>
         </div>
         <div class="page-heading__actions">
           <el-button :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
@@ -671,21 +704,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
         </aside>
 
         <main class="main-column">
-          <div class="metric-grid">
-            <article class="metric-card">
-              <span class="metric-card__icon metric-card__icon--blue"><el-icon><Collection /></el-icon></span>
-              <div><span>资料类型</span><strong>9</strong></div>
-            </article>
-            <article class="metric-card">
-              <span class="metric-card__icon metric-card__icon--green">＋</span>
-              <div><span>标准来源</span><strong>{{ summary.standard_source_count }}</strong></div>
-            </article>
-            <article class="metric-card">
-              <span class="metric-card__icon metric-card__icon--orange"><el-icon><Warning /></el-icon></span>
-              <div><span>公司本位币</span><strong>{{ summary.base_currency || '未配置' }}</strong></div>
-            </article>
-          </div>
-
           <section class="filter-card" aria-label="基础资料筛选">
             <label><span>关键词</span><el-input v-model="keyword" placeholder="输入名称或编码" clearable @keyup.enter="searchRecords" /></label>
             <label><span>状态</span><el-select v-model="statusFilter" placeholder="全部状态" clearable>
@@ -694,19 +712,16 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
             <label><span>标准来源</span><el-select v-model="sourceFilter" placeholder="全部来源" clearable>
               <el-option v-for="source in summary.standard_sources" :key="source" :label="source" :value="source" />
             </el-select></label>
+            <label v-if="selectedCategory.key === 'country'"><span>洲别</span><el-select v-model="continentFilter" placeholder="全部洲别" clearable>
+              <el-option v-for="continent in continentOptions" :key="continent" :label="continent" :value="continent" />
+            </el-select></label>
             <el-button type="primary" :icon="Search" @click="searchRecords">查询</el-button>
             <el-button @click="resetFilters">重置</el-button>
           </section>
 
           <section class="data-card" v-loading="loading">
             <div class="data-card__header">
-              <div><h2>{{ selectedCategory.title }}</h2><span>共 {{ records.length }} 项</span></div>
-              <div>
-                <el-tag class="settings-tag" effect="plain">{{ selectedCategory.standardLabel }}</el-tag>
-                <el-button v-if="canAddSelected" type="primary" size="small" @click="openCreate">
-                  {{ isExchangeRate ? '新增汇率' : `新增${selectedCategory.label}` }}
-                </el-button>
-              </div>
+              <div><h2>{{ selectedCategory.title }}</h2><span>共 {{ visibleRecords.length }} 项</span></div>
             </div>
 
             <div v-if="permissionDenied" class="card-state">
@@ -719,7 +734,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
             <div v-else-if="!loading && records.length === 0" class="card-state">
               <el-icon><Collection /></el-icon>
               <h3>{{ isExchangeRate ? '暂无汇率历史' : '暂无基础资料' }}</h3>
-              <p v-if="isExchangeRate && !summary.base_currency">公司本位币尚未配置，系统不会自动折算或展示本位币金额；仍可人工新增汇率历史。</p>
+              <p v-if="isExchangeRate && !summary.base_currency">可人工维护外币兑人民币汇率，供生产任务折算使用。公司本位币尚未配置，不影响生产任务的人民币换算。</p>
               <p v-else>当前筛选条件下没有记录，可调整筛选或新增资料。</p>
               <el-button v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">{{ isExchangeRate ? '新增汇率' : '新增资料' }}</el-button>
             </div>
@@ -730,9 +745,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                 type="warning"
                 :closable="false"
                 show-icon
-                title="公司本位币未配置：仅维护汇率历史，不执行自动折算。"
+                title="公司本位币未配置；生产任务仍按已维护的兑人民币汇率换算，汇率不会自动更新。"
               />
-              <el-table :data="records" class="master-table" height="100%" row-key="id">
+              <el-table :data="visibleRecords" class="master-table" data-testid="master-data-table" height="100%" row-key="id">
                 <el-table-column
                   v-for="column in currentColumns"
                   :key="column.key"
@@ -742,10 +757,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                   :label-class-name="column.compactHidden ? 'compact-hidden' : ''"
                 >
                   <template #default="{ row }">
+                    <template v-if="selectedCategory.key === 'country' && column.key === 'chinese_name'">
+                      <span class="country-name-cell"><img v-if="countryFlagUrl(row.code)" class="country-flag" data-testid="country-flag" :src="countryFlagUrl(row.code)" :alt="`${row.chinese_name}国旗`" loading="lazy"><span v-else class="country-flag" data-testid="country-flag" :aria-label="`${row.chinese_name}国旗`">{{ countryFlag(row.code) }}</span><span>{{ row.chinese_name }}</span></span>
+                    </template>
+                    <span v-else-if="selectedCategory.key === 'country' && column.key === 'continent'">{{ countryContinent(row) }}</span>
                     <el-tag v-if="column.key === 'status'" class="settings-tag" :type="row.status === 'ACTIVE' ? 'success' : 'info'" round>
                       {{ row.status === 'ACTIVE' ? '启用' : '停用' }}
                     </el-tag>
-                    <span v-else>{{ cellValue(row, column.key) }}</span>
+                    <span v-else-if="!(selectedCategory.key === 'country' && ['chinese_name', 'continent'].includes(column.key))">{{ cellValue(row, column.key) }}</span>
                   </template>
                 </el-table-column>
                 <el-table-column v-if="canChangeSelected" label="操作" width="150" fixed="right">
@@ -764,16 +783,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                 </el-table-column>
               </el-table>
             </template>
-          </section>
-
-          <section class="standards-card">
-            <div class="standards-card__heading"><h2>数据标准与维护说明</h2><span>标准清单以版本化资源离线入库，迁移运行时不联网下载</span></div>
-            <div class="standards-grid">
-              <div><span>国家 / 地区</span><strong>ISO 3166</strong><em>Alpha-2 / Alpha-3 / 数字码</em></div>
-              <div><span>币种</span><strong>ISO 4217</strong><em>字母码 / 数字码 / 小数位</em></div>
-              <div><span>单位</span><strong>UN/CEFACT Rec.20</strong><em>首版不做单位换算</em></div>
-              <div><span>Incoterms</span><strong>ICC 2020 · 11 项</strong><em>地点保存到业务快照</em></div>
-            </div>
           </section>
         </main>
       </div>
@@ -841,15 +850,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 
 <style scoped lang="scss">
 .master-data-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
-.page-breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: #667085; font-size: 12px; }
-.page-breadcrumb button { padding: 0; border: 0; color: inherit; background: none; cursor: pointer; }
-.page-breadcrumb button:hover { color: #409eff; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
 .page-heading h1 { margin: 0; font-size: 24px; line-height: 1.35; }
-.page-heading p { margin: 5px 0 0; color: #667085; font-size: 13px; }
 .page-heading__actions { display: flex; flex: none; gap: 10px; }
 .page-grid { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
-.category-card, .filter-card, .data-card, .standards-card, .metric-card { border: 1px solid #e4e7ed; border-radius: 10px; background: #fff; }
+.category-card, .filter-card, .data-card { border: 1px solid #e4e7ed; border-radius: 10px; background: #fff; }
 .category-card { min-height: 0; padding: 14px 10px; overflow-y: auto; }
 .category-card h2 { margin: 0 5px 14px; font-size: 16px; font-weight: 600; }
 .category-item { width: 100%; height: 38px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 0 14px; border: 0; border-radius: 7px; color: #1d2129; background: #fff; cursor: pointer; font: inherit; font-size: 13px; }
@@ -859,16 +864,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 .category-item.is-active > span:last-child { color: #fff; }
 .category-item.is-locked:not(.is-active) { color: #98a2b3; }
 .main-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.metric-card { height: 96px; display: flex; align-items: center; gap: 12px; padding: 14px; }
-.metric-card__icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; font-size: 21px; }
-.metric-card__icon--blue { color: #409eff; background: #ecf5ff; }
-.metric-card__icon--green { color: #67c23a; background: #f0f9eb; }
-.metric-card__icon--orange { color: #e6a23c; background: #fdf6ec; }
-.metric-card div { display: flex; flex-direction: column; gap: 3px; }
-.metric-card span { color: #667085; font-size: 12px; }
-.metric-card strong { font-size: 20px; }
-.filter-card { min-height: 76px; display: flex; align-items: flex-end; gap: 10px; padding: 11px 14px; }
+.filter-card { min-height: 76px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 11px 14px; }
 .filter-card label { width: 220px; display: flex; flex-direction: column; gap: 5px; color: #667085; font-size: 12px; }
 .data-card { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 12px; overflow: hidden; }
 .data-card__header { height: 38px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
@@ -877,20 +873,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 .data-card__header span { color: #667085; font-size: 12px; }
 .base-currency-alert { margin: 4px 0 10px; }
 .master-table { flex: 1; min-height: 0; width: 100%; }
+.master-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
+.country-name-cell { display: inline-flex; align-items: center; gap: 7px; }
+.country-flag { display: inline-flex; width: 16px; height: 12px; justify-content: center; object-fit: cover; font-size: 15px; line-height: 1; }
 .pagination-row { display: flex; justify-content: flex-end; padding: 12px 2px 0; }
 .card-state { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
 .card-state > .el-icon { font-size: 34px; color: #e6a23c; }
 .card-state h3 { margin: 12px 0 6px; color: #1d2129; font-size: 17px; }
 .card-state p { max-width: 560px; margin: 0 0 16px; font-size: 13px; line-height: 1.7; }
-.standards-card { min-height: 160px; padding: 14px 16px; }
-.standards-card__heading { display: flex; align-items: center; gap: 18px; }
-.standards-card__heading h2 { margin: 0; font-size: 16px; }
-.standards-card__heading span { color: #667085; font-size: 12px; }
-.standards-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin-top: 24px; }
-.standards-grid div { display: flex; flex-direction: column; gap: 8px; }
-.standards-grid span { color: #667085; font-size: 12px; }
-.standards-grid strong { font-size: 18px; }
-.standards-grid em { color: #409eff; font-size: 12px; font-style: normal; }
 .state-page { min-height: 620px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
 .state-page > .el-icon { font-size: 42px; color: #909399; }
 .state-page h1 { margin: 16px 0 8px; color: #1d2129; }
@@ -904,11 +894,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
   .category-item { padding: 0 10px; }
   .filter-card label { width: min(190px, 22vw); }
   .data-card :deep(.compact-hidden) { display: none; }
-  .standards-card { height: 58px; min-height: 58px; overflow-y: auto; }
-}
-
-@media (max-height: 760px) {
-  .standards-card { height: 58px; min-height: 58px; overflow-y: auto; }
 }
 
 @media (max-width: 900px) {
@@ -917,16 +902,13 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
   .category-card { min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .category-card h2 { grid-column: 1 / -1; }
   .category-item { margin: 0; }
-  .metric-grid { grid-template-columns: 1fr; }
   .filter-card { align-items: stretch; flex-direction: column; }
   .filter-card label { width: 100%; }
-  .standards-grid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 640px) {
   .category-card { grid-template-columns: 1fr 1fr; }
   .page-heading__actions { width: 100%; }
   .master-form { grid-template-columns: 1fr; }
-  .standards-grid { grid-template-columns: 1fr; }
 }
 </style>

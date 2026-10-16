@@ -1,0 +1,31 @@
+{
+  "asset": "hitree-rail-mark.png",
+  "generated_on": "2026-10-15",
+  "tool": "built-in image_gen",
+  "reference": "User-provided sidebar image: codex-clipboard-0839c7c8-63c7-4bff-ab4b-5273eb3f0f6e.png, top-left red-box h/leaf/HiTree mark only",
+  "source": "E:\\CodexData\\.codex\\generated_images\\01a13ecb-5309-7de0-a4f3-7609c9d650f6\\exec-0c685fca-3903-4d27-9430-5938b52d586c.png",
+  "prompt": "Use case: logo-brand. Create a clean simple transparent PNG brand asset matching ONLY the logo in the red box at top left of reference image. It is lowercase serif h with a tiny leaf upper-right, centered above exact serif word HiTree. Discard the red box and every other element. All logo shapes flat solid opaque very dark charcoal #111111, consuming website tints white. Background actual transparent alpha. Crisp flat digital logo with smooth solid silhouettes: no texture/shadow/glow/outlines/ghosts/speckles/gradients. Tight square composition: h+leaf upper half, HiTree lower quarter, 5% outside transparent margin. Leaf tiny like reference. Exact H i T r e e, no extra text, no Chinese. Legible at 64px wide. Transparent everywhere outside logo including holes.",
+  "usage": "Render at 64x72 CSS px with object-fit: contain and filter: brightness(0) invert(1). Dark source avoids white logo alpha-extraction noise; alpha is preserved. Optional opacity 0.98 for warm dark sidebar.",
+  "validation": {
+    "width": 1254,
+    "height": 1254,
+    "format": "PNG RGBA",
+    "text": "HiTree",
+    "corners_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "visible_alpha_at_least_32_bounds": [
+      148,
+      255,
+      1111,
+      1071
+    ],
+    "retained_subtitle": false,
+    "retained_red_box": false,
+    "retained_green_background": false
+  },
+  "discarded_attempts": "Two ivory-on-transparent generations had visible extraction noise and were not copied into project."
+}

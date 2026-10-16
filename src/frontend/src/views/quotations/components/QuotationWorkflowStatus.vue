@@ -32,5 +32,15 @@ const alertType = computed(() => ({
 </template>
 
 <style scoped lang="scss">
-.workflow-status { border:1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.workflow-status {
+  min-height: 56px;
+  height: auto;
+  align-self: start;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+.workflow-status :deep(.el-alert__icon) { margin-right: 8px; font-size: 16px; }
+.workflow-status :deep(.el-alert__title) { font-size: 12px; font-weight: 500; line-height: 18px; }
+.workflow-status :deep(.el-alert__description) { margin-top: 1px; font-size: 11px; line-height: 16px; }
 </style>

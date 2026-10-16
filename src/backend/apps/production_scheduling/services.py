@@ -38,8 +38,8 @@ def task_source_snapshot(task):
         "order_number": task.order_number,
         "sales_order_id": str(task.sales_order_id) if task.sales_order_id else None,
         "sales_order_number": task.sales_order.order_number if task.sales_order_id else None,
-        "customer_account_id": str(task.customer_account_id),
-        "customer_name": task.customer_account.account_name,
+        "customer_account_id": str(task.customer_account_id) if task.customer_account_id else None,
+        "customer_name": task.customer_account.account_name if task.customer_account_id else "",
         "salesperson": {
             "id": str(task.salesperson_id),
             "code": task.salesperson.employee_code,

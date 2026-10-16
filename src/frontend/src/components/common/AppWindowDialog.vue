@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   closeOnClickModal?: boolean
   closeOnPressEscape?: boolean
   showClose?: boolean
+  minimizable?: boolean
   destroyOnClose?: boolean
   lockScroll?: boolean
   modalClass?: string
@@ -39,6 +40,7 @@ const props = withDefaults(defineProps<{
   closeOnClickModal: true,
   closeOnPressEscape: true,
   showClose: true,
+  minimizable: true,
   destroyOnClose: false,
   lockScroll: true,
   modalClass: '',
@@ -282,6 +284,7 @@ function requestClose() {
 }
 
 function minimize() {
+  if (!props.minimizable) return
   if (state.value === 'minimized') {
     state.value = stateBeforeMinimize.value
     if (state.value === 'normal' && restoreRect.value) rect.value = clampRect(restoreRect.value)
@@ -471,7 +474,7 @@ onBeforeUnmount(() => {
         <header class="el-dialog__header app-window-dialog__header" @pointerdown="beginInteraction($event, 'drag')">
           <span class="el-dialog__title"><slot name="title">{{ title }}</slot></span>
           <div class="app-window-dialog__actions">
-            <button type="button" :aria-label="state === 'minimized' ? '还原' : '最小化'" :title="state === 'minimized' ? '还原' : '最小化'" @click="minimize"><ElIcon><Rank v-if="state === 'minimized'" /><Minus v-else /></ElIcon></button>
+            <button v-if="minimizable" type="button" :aria-label="state === 'minimized' ? '还原' : '最小化'" :title="state === 'minimized' ? '还原' : '最小化'" @click="minimize"><ElIcon><Rank v-if="state === 'minimized'" /><Minus v-else /></ElIcon></button>
             <button type="button" :aria-label="state === 'maximized' ? '还原' : '最大化'" :title="state === 'maximized' ? '还原' : '最大化'" @click="toggleMaximize">
               <ElIcon><Rank v-if="state === 'maximized'" /><FullScreen v-else /></ElIcon>
             </button>

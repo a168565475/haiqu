@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Delete, Picture, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -11,18 +11,28 @@ import {
   fetchQuotationOrderContext,
   fetchSalesOrder,
   fetchSalesOrderOptions,
+  fetchSalesOrderExchangeRate,
+  removeSalesOrderLineProductImage,
+  salesOrderLineProductImageUrl,
+  uploadSalesOrderLineProductImage,
   updateSalesOrder,
 } from '@/api/salesOrders'
 import { fetchAllProductionDataRecords } from '@/api/productionData'
+import { quotationLineProductImageUrl } from '@/api/quotations'
 import { useAuthStore } from '@/stores/auth'
 import BuyerMasterDataDialog from '@/components/business/BuyerMasterDataDialog.vue'
 import SellerProfileDialog from '@/components/business/SellerProfileDialog.vue'
 import SellerSubjectCard from '@/components/business/SellerSubjectCard.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
+import ProductImage from '@/components/products/ProductImage.vue'
+import { multiplyAmount4, sumAmounts4 } from '@/utils/salesCny'
 import type { CustomerAddress } from '@/types/customer'
+import type { InquiryItem } from '@/types/inquiry'
 import type { QuotationTemplate } from '@/types/quotation'
-import type { ProductColor } from '@/types/productionData'
-import type { QuotationOrderContext, SalesOrder, SalesOrderBatchInput, SalesOrderInput, SalesOrderLineInput, SalesOrderOptions, SalesOrderProduct, SalesOrderSource } from '@/types/salesOrder'
+import type { ProductCategory, ProductColor, ProductionUnit } from '@/types/productionData'
+import type { ProductCategoryOption, ProductionUnitOption } from '@/types/product'
+import type { QuotationOrderContext, QuotationOrderLineOption, SalesOrder, SalesOrderBatchInput, SalesOrderInput, SalesOrderLineInput, SalesOrderOptions, SalesOrderProduct, SalesOrderSource, SalesOrderExchangeRateSnapshot } from '@/types/salesOrder'
 
 interface EditorBatch extends SalesOrderBatchInput { key: string }
 
@@ -36,15 +46,29 @@ const saving = ref(false)
 const options = ref<SalesOrderOptions | null>(null)
 const pinnedProductChoices = ref<SalesOrderProduct[]>([])
 const productSearchChoices = ref<SalesOrderProduct[]>([])
+const productCategoryOptions = ref<ProductCategoryOption[]>([])
+const productUnitOptions = ref<ProductionUnitOption[]>([])
 const productColors = ref<ProductColor[]>([])
+const productCatalogError = ref('')
 const etag = ref('')
 const existingOrder = ref<SalesOrder | null>(null)
+const exchangeRateSnapshot = ref<SalesOrderExchangeRateSnapshot | null>(null)
+const exchangeRateLoading = ref(false)
+const exchangeRateError = ref('')
+let exchangeRateRequest = 0
 const batches = ref<EditorBatch[]>([])
 const quoteContext = ref<QuotationOrderContext | null>(null)
 const activeDetailTab = ref('base')
 const selectedRequirementLineKey = ref('')
 const buyerDialogVisible = ref(false)
 const buyerDialogTab = ref<'entity' | 'address' | 'contact'>('address')
+const productDialogVisible = ref(false)
+const productDialogLineKey = ref('')
+const productDialogItem = ref<InquiryItem | null>(null)
+const pendingProductImages = reactive<Record<string, File | null>>({})
+const pendingProductImageRemovals = reactive<Record<string, boolean>>({})
+const pendingProductImageUrls = reactive<Record<string, string>>({})
+const productDialogImageUrl = computed(() => savedProductImageUrl(lines.value.find(line => line.client_key === productDialogLineKey.value)))
 const sellerDialogVisible = ref(false)
 const deleteBatchDialogVisible = ref(false)
 const deleteBatchIndex = ref<number | null>(null)
@@ -118,7 +142,8 @@ const form = reactive<Omit<SalesOrderInput, 'lines' | 'delivery_batches'>>({
   order_date: today,
   direct_order_reason: '',
   currency_code: 'USD',
-  exchange_rate: '1',
+  exchange_rate: '',
+  exchange_rate_record_id: null,
   incoterm_code: '',
   payment_terms: '',
   deposit_required: false,
@@ -151,10 +176,16 @@ const productChoices = computed(() => [...new Map([
   ...productSearchChoices.value,
 ].map(item => [item.id, item])).values()])
 const productById = computed(() => new Map(productChoices.value.map((item) => [item.id, item])))
-const productCategories = computed(() => [...new Map(productChoices.value
-  .filter((item) => item.category_id && item.category_name)
-  .map((item) => [item.category_id!, { id: item.category_id!, name: item.category_name! }])).values()])
-const systemColorChoices = computed(() => productColors.value.map((item) => item.color_name).filter(Boolean))
+const productCategoryChoices = computed(() => productCategoryOptions.value.length
+  ? productCategoryOptions.value
+  : [...new Map(productChoices.value
+    .filter((item) => item.category_id && item.category_name)
+    .map((item) => [item.category_id!, { id: item.category_id!, category_name: item.category_name! }])).values()])
+const productUnitChoices = computed(() => productUnitOptions.value.length
+  ? productUnitOptions.value
+  : [...new Map(productChoices.value
+    .filter((item) => item.unit_id && item.unit_code)
+    .map((item) => [item.unit_id!, { id: item.unit_id!, unit_code: item.unit_code, unit_name: item.unit_name || item.unit_code }])).values()])
 const quoteLineById = computed(() => new Map((quoteContext.value?.lines || []).map((item) => [item.id, item])))
 const quoteHasNoRemaining = computed(() => Boolean(
   form.source_type === 'QUOTATION'
@@ -162,6 +193,7 @@ const quoteHasNoRemaining = computed(() => Boolean(
   && quoteContext.value.lines.every((item) => Number(item.remaining_quantity) <= 0),
 ))
 const orderTotal = computed(() => lines.value.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unit_price || 0), 0))
+const orderTotalCny = computed(() => sumAmounts4(lines.value.map(localLineAmount)))
 const orderQuantity = computed(() => lines.value.reduce((sum, line) => sum + Number(line.quantity || 0), 0))
 const selectedRequirementLine = computed(() => lines.value.find((line) => line.client_key === selectedRequirementLineKey.value) || lines.value[0] || null)
 const requirementLineSelection = computed({
@@ -223,19 +255,17 @@ const sourceSelection = computed({
     quoteContext.value = null
     lines.value = []
     batches.value = []
-    addLine()
     addBatch()
   },
 })
 
-function addLine() {
-  lines.value.push({
-    client_key: newKey('line'), source_quotation_line_id: null, product_id: null,
+function createLineDraft(): SalesOrderLineInput {
+  return {
+    client_key: newKey('line'), source_quotation_line_id: null, product_id: null, product_selection_id: null,
     product_category_id: '', product_name_input: '', customer_product_name_snapshot: '',
-    customer_specification_snapshot: '', customer_color_snapshot: '', quantity: '1', unit_price: '0',
+    customer_specification_snapshot: '', customer_color_snapshot: '', unit_code: '', quantity: '1', unit_price: '0',
     lower_price_reason: '', quality_requirements: '', packaging_requirements: '', shipping_mark_requirements: '',
-  })
-  syncBatchLines()
+  }
 }
 function addBatch() {
   batches.value.push({
@@ -255,7 +285,11 @@ function syncBatchLines() {
   }
 }
 function removeLine(index: number) {
+  const lineKey = lines.value[index]?.client_key
   lines.value.splice(index, 1)
+  if (lineKey) {
+    clearPendingProductImage(lineKey)
+  }
   syncBatchLines()
 }
 function productLabel(id: string | null | undefined) {
@@ -263,55 +297,129 @@ function productLabel(id: string | null | undefined) {
   const item = productById.value.get(id)
   return item ? `${item.product_number} · ${item.product_name}` : '未映射产品'
 }
-function productNameChoices(line: SalesOrderLineInput) {
-  const values = productChoices.value.filter((item) => !line.product_category_id || item.category_id === line.product_category_id)
-  return [...new Map(values.map((item) => [item.product_name, item])).values()]
-}
-function specificationChoices(line: SalesOrderLineInput) {
-  const name = String(line.product_name_input || '').trim()
-  if (!name) return []
-  return productChoices.value.filter((item) => (!line.product_category_id || item.category_id === line.product_category_id) && item.product_name === name)
-}
-function selectProductCategory(line: SalesOrderLineInput) {
-  line.product_id = null
-  line.product_name_input = ''
-  line.customer_product_name_snapshot = ''
-  line.customer_specification_snapshot = ''
-}
-function selectProductName(line: SalesOrderLineInput, name: string) {
-  line.product_id = null
-  line.product_name_input = name
-  line.customer_product_name_snapshot = name
-  line.customer_specification_snapshot = ''
-}
-function matchProductInformation(line: SalesOrderLineInput) {
-  const productName = String(line.product_name_input || line.customer_product_name_snapshot || '').trim()
-  const specification = String(line.customer_specification_snapshot || '').trim()
-  line.product_name_input = productName
-  line.customer_product_name_snapshot = productName
-  line.customer_specification_snapshot = specification
-  const matched = productChoices.value.find((item) => (
-    item.product_name === productName
-    && item.specification === specification
-    && (!line.product_category_id || item.category_id === line.product_category_id)
-  ))
-  line.product_id = matched?.id || null
-  if (matched) {
-    line.customer_product_name_snapshot = matched.product_name
-    line.customer_specification_snapshot = matched.specification
-  }
-}
-function selectProductSpecification(line: SalesOrderLineInput, specification: string) {
-  line.customer_specification_snapshot = specification
-  matchProductInformation(line)
-}
 function unitDisplay(line: SalesOrderLineInput) {
   const quoteUnit = quoteLineById.value.get(line.source_quotation_line_id || '')?.unit_code
   const product = productById.value.get(line.product_id || '')
-  return product?.unit_name || product?.unit_code || quoteUnit || '-'
+  const code = line.unit_code || quoteUnit || product?.unit_code
+  const unit = productUnitChoices.value.find((item) => item.id === line.product_unit_id && item.unit_code === code)
+  return unit?.unit_name || code || '-'
 }
 function productDisplayName(line: SalesOrderLineInput) {
   return line.customer_product_name_snapshot || line.product_name_input || productLabel(line.product_id || '')
+}
+function productCategoryDisplay(line: SalesOrderLineInput) {
+  const category = productCategoryChoices.value.find((item) => item.id === line.product_category_id)
+  return category?.category_name || productById.value.get(line.product_id || '')?.category_name || '—'
+}
+function productSpecificationDisplay(line: SalesOrderLineInput) {
+  return line.specification_display || line.customer_specification_snapshot || productById.value.get(line.product_id || '')?.specification || '—'
+}
+function lineExpectedDate(line: SalesOrderLineInput): string {
+  const dates = [...new Set(batches.value
+    .filter((batch) => batch.lines.some((item) => item.sales_order_line_client_key === line.client_key && Number(item.quantity) > 0))
+    .map((batch) => batch.planned_delivery_date)
+    .filter(Boolean))]
+  if (dates.length === 1) return dates[0]
+  if (dates.length > 1) return '多批次'
+  return batches.value.length === 1 ? batches.value[0].planned_delivery_date || '—' : '—'
+}
+function savedProductImageUrl(line: SalesOrderLineInput | undefined): string {
+  if (!line?.product_image_id) return ''
+  if (orderId.value && existingOrder.value?.lines.some(saved => saved.id === line.client_key)) {
+    return salesOrderLineProductImageUrl(orderId.value, line.client_key)
+  }
+  return line.source_quotation_line_id ? quotationLineProductImageUrl(line.source_quotation_line_id) : ''
+}
+function productImageUrl(line: SalesOrderLineInput): string {
+  if (pendingProductImageRemovals[line.client_key]) return ''
+  if (pendingProductImageUrls[line.client_key]) return pendingProductImageUrls[line.client_key]!
+  const url = savedProductImageUrl(line)
+  return url ? `${url}?v=${encodeURIComponent(line.product_image_id!)}` : ''
+}
+function clearPendingProductImage(lineKey: string) {
+  const url = pendingProductImageUrls[lineKey]
+  if (url) URL.revokeObjectURL(url)
+  delete pendingProductImageUrls[lineKey]
+  delete pendingProductImages[lineKey]
+  delete pendingProductImageRemovals[lineKey]
+}
+function setPendingProductImage(lineKey: string, file: File | null, removeImage: boolean) {
+  clearPendingProductImage(lineKey)
+  pendingProductImages[lineKey] = file
+  pendingProductImageRemovals[lineKey] = removeImage && !file
+  if (file) pendingProductImageUrls[lineKey] = URL.createObjectURL(file)
+}
+function productDialogItemFor(line: SalesOrderLineInput): InquiryItem {
+  const product = productById.value.get(line.product_id || '')
+  return {
+    id: line.client_key,
+    product_id: line.product_id,
+    product_category_id: line.product_category_id || product?.category_id || null,
+    product_unit_id: line.product_unit_id || product?.unit_id || null,
+    product_color_id: line.product_color_id || null,
+    product_image_id: line.product_image_id || null,
+    product_description: line.customer_product_name_snapshot || line.product_name_input || product?.product_name || '',
+    specification: line.customer_specification_snapshot || product?.specification || '',
+    color: line.customer_color_snapshot || '',
+    material: line.material || '',
+    quantity: line.quantity,
+    unit_code: line.unit_code || product?.unit_code || '',
+    target_unit_price: line.unit_price,
+    target_currency_code: form.currency_code,
+    expected_date: null,
+    product_match_status: line.product_id ? 'MATCHED' : 'PENDING',
+    notes: '',
+    product_number_snapshot: line.product_number_snapshot || product?.product_number || '',
+    product_code_snapshot: line.product_code_snapshot || product?.product_code || '',
+    item_number_snapshot: line.item_number_snapshot || product?.item_number || '',
+  }
+}
+function openProductDialog(line?: SalesOrderLineInput) {
+  const draft = line ? productDialogItemFor(line) : productDialogItemFor(createLineDraft())
+  if (!line) draft.id = undefined
+  productDialogLineKey.value = line?.client_key || ''
+  productDialogItem.value = draft
+  productDialogVisible.value = true
+}
+function applyProductDialogItem(line: SalesOrderLineInput, item: InquiryItem) {
+  line.product_id = item.product_id || null
+  line.product_selection_id = item.product_id || null
+  line.product_category_id = item.product_category_id || null
+  line.product_unit_id = item.product_unit_id || null
+  line.product_color_id = item.product_color_id || null
+  line.product_image_id = item.product_image_id || null
+  line.unit_code = item.unit_code.trim()
+  line.product_number_snapshot = item.product_number_snapshot || ''
+  line.product_code_snapshot = item.product_code_snapshot || ''
+  line.item_number_snapshot = item.item_number_snapshot || ''
+  line.product_name_input = item.product_description.trim()
+  line.customer_product_name_snapshot = item.product_description.trim()
+  line.customer_specification_snapshot = item.specification.trim()
+  line.specification_display = item.specification.trim()
+  line.customer_color_snapshot = item.color.trim()
+  line.material = item.material.trim()
+  line.quantity = String(item.quantity)
+  line.unit_price = String(item.target_unit_price ?? '')
+}
+function handleProductDialogConfirm(payload: { item: InquiryItem; imageChanged: boolean; imageFile: File | null; removeImage: boolean }) {
+  const existing = lines.value.find((line) => line.client_key === productDialogLineKey.value)
+  if (existing) {
+    applyProductDialogItem(existing, payload.item)
+    if (payload.imageChanged) {
+      setPendingProductImage(existing.client_key, payload.imageFile, payload.removeImage)
+    }
+  } else {
+    const line = createLineDraft()
+    applyProductDialogItem(line, payload.item)
+    lines.value.push(line)
+    if (payload.imageChanged) {
+      setPendingProductImage(line.client_key, payload.imageFile, payload.removeImage)
+    }
+    syncBatchLines()
+    selectedRequirementLineKey.value = line.client_key
+  }
+  productDialogVisible.value = false
+  productDialogItem.value = null
 }
 function allocation(batch: EditorBatch, lineKey: string) {
   return batch.lines.find((item) => item.sales_order_line_client_key === lineKey)!
@@ -423,13 +531,55 @@ function pinProductChoices(items: SalesOrderProduct[]) {
   ].map(item => [item.id, item])).values()]
 }
 
+function quotationProduct(item: QuotationOrderLineOption): SalesOrderProduct | null {
+  if (!item.product_id) return item.suggested_product
+  return {
+    id: item.product_id,
+    product_number: item.product_number,
+    product_code: item.product_code,
+    product_name: item.product_description,
+    specification: item.specification,
+    unit_code: item.suggested_product?.unit_code || '',
+    unit_name: item.suggested_product?.unit_name,
+    category_id: item.product_category_id || item.suggested_product?.category_id,
+    category_name: item.suggested_product?.category_name,
+  }
+}
+
+function lineFromQuotation(item: QuotationOrderLineOption): SalesOrderLineInput {
+  const product = quotationProduct(item)
+  return {
+    client_key: newKey('quote'),
+    source_quotation_line_id: item.id,
+    product_id: item.product_id || null,
+    product_selection_id: item.product_id || null,
+    product_category_id: item.product_category_id || product?.category_id || '',
+    product_unit_id: item.product_unit_id || null,
+    product_color_id: item.product_color_id || null,
+    product_image_id: item.product_image_id || null,
+    unit_code: item.unit_code || product?.unit_code || '',
+    material: item.material || '',
+    product_number_snapshot: item.product_number || '',
+    product_code_snapshot: item.product_code || '',
+    item_number_snapshot: item.item_number || '',
+    product_name_input: item.product_description || '',
+    customer_product_name_snapshot: item.product_description || '',
+    customer_specification_snapshot: item.specification || '',
+    specification_display: item.specification_display,
+    customer_color_snapshot: item.color || '',
+    quantity: item.remaining_quantity,
+    unit_price: item.quoted_unit_price || '0',
+    lower_price_reason: '', quality_requirements: '', packaging_requirements: '', shipping_mark_requirements: '',
+  }
+}
+
 async function loadQuote(versionId: string) {
   if (!versionId) return
   loading.value = true
   try {
     const context = await fetchQuotationOrderContext(versionId)
     quoteContext.value = context
-    pinProductChoices(context.lines.flatMap(item => item.suggested_product ? [item.suggested_product] : []))
+    pinProductChoices(context.lines.map(quotationProduct).filter((item): item is SalesOrderProduct => Boolean(item)))
     form.customer_account_id = context.customer_account_id
     form.transaction_entity_id = context.transaction_entity_id
     form.buyer_address_id = context.buyer_address_id
@@ -444,19 +594,7 @@ async function loadQuote(versionId: string) {
     form.incoterm_code = String(quotationTerms.incoterm_label || quotationTerms.incoterm_code || '')
     form.payment_terms = String(quotationTerms.payment_terms || '')
     form.deposit_required = Number(quotationTerms.deposit_percent || 0) > 0
-    lines.value = context.lines.filter((item) => Number(item.remaining_quantity) > 0).map((item) => ({
-      client_key: newKey('quote'),
-      source_quotation_line_id: item.id,
-      product_id: item.suggested_product_id || null,
-      product_category_id: item.suggested_product?.category_id || '',
-      product_name_input: item.suggested_product?.product_name || item.product_description || '',
-      customer_product_name_snapshot: item.suggested_product?.product_name || item.product_description || '',
-      customer_specification_snapshot: item.suggested_product?.specification || item.specification || '',
-      customer_color_snapshot: item.color || '',
-      quantity: item.remaining_quantity,
-      unit_price: item.quoted_unit_price || '0',
-      lower_price_reason: '', quality_requirements: '', packaging_requirements: '', shipping_mark_requirements: '',
-    }))
+    lines.value = context.lines.filter((item) => Number(item.remaining_quantity) > 0).map(lineFromQuotation)
     batches.value = []
     addBatch()
     lines.value.forEach((line) => { allocation(batches.value[0]!, line.client_key).quantity = line.quantity })
@@ -476,22 +614,7 @@ function addAvailableQuoteLines() {
     return
   }
   for (const item of additions) {
-    lines.value.push({
-      client_key: newKey('quote'),
-      source_quotation_line_id: item.id,
-      product_id: item.suggested_product_id || null,
-      product_category_id: item.suggested_product?.category_id || '',
-      product_name_input: item.suggested_product?.product_name || item.product_description || '',
-      customer_product_name_snapshot: item.suggested_product?.product_name || item.product_description || '',
-      customer_specification_snapshot: item.suggested_product?.specification || item.specification || '',
-      customer_color_snapshot: item.color || '',
-      quantity: item.remaining_quantity,
-      unit_price: item.quoted_unit_price || '0',
-      lower_price_reason: '',
-      quality_requirements: '',
-      packaging_requirements: '',
-      shipping_mark_requirements: '',
-    })
+    lines.value.push(lineFromQuotation(item))
   }
   syncBatchLines()
   const targetBatch = batches.value[0]
@@ -513,27 +636,48 @@ function quoteRemainingText(line: SalesOrderLineInput): string {
   return `报价剩余 ${available.toLocaleString('zh-CN', { maximumFractionDigits: 4 })} ${source.unit_code}`
 }
 
-function quoteProductMappingHint(line: SalesOrderLineInput): string {
-  if (!line.source_quotation_line_id) return ''
-  const source = quoteLineById.value.get(line.source_quotation_line_id)
-  if (!source) return ''
-  if (line.product_id) {
-    return source.suggested_product_id === line.product_id ? '已按报价产品唯一匹配' : '已人工选择对应产品'
-  }
-  if (source.product_mapping_status === 'AMBIGUOUS') {
-    return source.product_mapping_candidate_count === 1
-      ? '找到同名产品，但报价规格不一致，请人工核对'
-      : `找到 ${source.product_mapping_candidate_count} 个同名产品，请按规格选择`
-  }
-  return '产品主数据中没有唯一匹配项，请选择已有产品或先到产品管理建档'
-}
-
 function lineTotal(line: SalesOrderLineInput): number {
   return Number(line.quantity || 0) * Number(line.unit_price || 0)
 }
 
-function localLineTotal(line: SalesOrderLineInput): number {
-  return lineTotal(line) * Number(form.exchange_rate || 0)
+function localLineAmount(line: SalesOrderLineInput): string | null {
+  return multiplyAmount4(multiplyAmount4(line.unit_price || '0', form.exchange_rate), line.quantity || '0')
+}
+function amountText(value: string | number | null | undefined): string {
+  return value == null || value === '' ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
+async function loadExchangeRate() {
+  const requestId = ++exchangeRateRequest
+  const currency = form.currency_code
+  exchangeRateError.value = ''
+  if (existingOrder.value?.currency_code === currency) {
+    form.exchange_rate = existingOrder.value.exchange_rate
+    form.exchange_rate_record_id = existingOrder.value.exchange_rate_record_id ?? null
+    exchangeRateSnapshot.value = existingOrder.value.exchange_rate_snapshot ?? null
+    exchangeRateLoading.value = false
+    if (existingOrder.value.total_amount_cny == null || !exchangeRateSnapshot.value?.rate) {
+      exchangeRateSnapshot.value = null
+      form.exchange_rate = ''
+      exchangeRateError.value = '该订单尚未保存人民币金额，请先完成历史订单补算。'
+    }
+    return
+  }
+  exchangeRateSnapshot.value = null
+  form.exchange_rate = ''
+  form.exchange_rate_record_id = null
+  if (!currency) return
+  exchangeRateLoading.value = true
+  try {
+    const result = await fetchSalesOrderExchangeRate(currency)
+    if (requestId !== exchangeRateRequest || form.currency_code !== currency) return
+    form.exchange_rate = result.exchange_rate
+    form.exchange_rate_record_id = result.exchange_rate_record_id
+    exchangeRateSnapshot.value = result.exchange_rate_snapshot
+  } catch (error) {
+    if (requestId === exchangeRateRequest) exchangeRateError.value = apiError(error)
+  } finally {
+    if (requestId === exchangeRateRequest) exchangeRateLoading.value = false
+  }
 }
 async function loadExisting() {
   const result = await fetchSalesOrder(orderId.value)
@@ -562,6 +706,7 @@ async function loadExisting() {
     direct_order_reason: order.direct_order_reason,
     currency_code: order.currency_code,
     exchange_rate: order.exchange_rate,
+    exchange_rate_record_id: order.exchange_rate_record_id ?? null,
     incoterm_code: order.incoterm_code,
     payment_terms: order.payment_terms,
     deposit_required: order.deposit_required,
@@ -585,11 +730,20 @@ async function loadExisting() {
     const key = line.id
     keyById.set(line.id, key)
     return {
-      client_key: key, source_quotation_line_id: line.source_quotation_line_id, product_id: line.product_id,
-      product_category_id: productById.value.get(line.product_id || '')?.category_id || '',
+      client_key: key, source_quotation_line_id: line.source_quotation_line_id, product_id: line.product_id, product_selection_id: line.product_id,
+      product_category_id: line.product_category_id || productById.value.get(line.product_id || '')?.category_id || '',
+      product_unit_id: line.product_unit_id || undefined,
+      product_color_id: line.product_color_id || null,
+      product_image_id: line.product_image_id || null,
+      unit_code: line.unit_code_snapshot,
+      material: line.material_snapshot || '',
+      product_number_snapshot: line.product_number_snapshot,
+      product_code_snapshot: line.product_code_snapshot,
+      item_number_snapshot: line.item_number_snapshot,
       product_name_input: line.customer_product_name_snapshot || line.product_name_snapshot,
       customer_product_name_snapshot: line.customer_product_name_snapshot || line.product_name_snapshot,
       customer_specification_snapshot: line.customer_specification_snapshot || line.specification_snapshot,
+      specification_display: line.specification_display,
       customer_color_snapshot: line.customer_color_snapshot || '',
       quantity: line.quantity, unit_price: line.unit_price, lower_price_reason: line.lower_price_reason,
       quality_requirements: line.quality_requirements, packaging_requirements: line.packaging_requirements,
@@ -612,6 +766,7 @@ async function reloadAfterConflict() {
   trackingChanges.value = false
   try {
     await loadExisting()
+    await loadExchangeRate()
     isDirty.value = false
   } catch (error) {
     existingOrder.value = null
@@ -630,6 +785,8 @@ async function reloadAfterConflict() {
 }
 
 function validate(requireConfirmation: boolean): string {
+  if (exchangeRateLoading.value) return '正在读取系统汇率，请稍候。'
+  if (exchangeRateError.value || !exchangeRateSnapshot.value) return exchangeRateError.value || '请先读取有效的系统汇率。'
   if (form.source_type === 'QUOTATION' && !form.source_quotation_version_id) return '请选择客户已接受的报价版本。'
   if (!form.customer_account_id || !form.transaction_entity_id || !form.salesperson_id || !form.order_date || !form.currency_code) return '请完整填写客户、买方主体、业务员、订单日期和币种。'
   if (!sellerLegalName.value.trim()) return '请填写卖方法人。'
@@ -651,6 +808,27 @@ function validate(requireConfirmation: boolean): string {
   if (isConfirmedEdit.value && existingOrder.value?.has_production_orders && !changeForm.pmc_impact_confirmed) return '订单已有生产订单，请先由 PMC 确认本次变更影响。'
   return ''
 }
+async function savePendingProductImages(orderResult: Awaited<ReturnType<typeof createSalesOrder>>, submittedLines: SalesOrderLineInput[]) {
+  let current = orderResult
+  const failed: string[] = []
+  const savedLines = [...current.data.lines].sort((left, right) => left.line_number - right.line_number)
+  for (const [index, submittedLine] of submittedLines.entries()) {
+    const file = pendingProductImages[submittedLine.client_key]
+    const remove = pendingProductImageRemovals[submittedLine.client_key]
+    if (!file && !remove) continue
+    const savedLine = savedLines[index]
+    if (!savedLine) continue
+    try {
+      current = file
+        ? await uploadSalesOrderLineProductImage(current.data.id, savedLine.id, file, current.etag)
+        : await removeSalesOrderLineProductImage(current.data.id, savedLine.id, current.etag)
+      clearPendingProductImage(submittedLine.client_key)
+    } catch (error) {
+      failed.push(`${productDisplayName(submittedLine)}：${apiError(error)}`)
+    }
+  }
+  return { result: current, failed }
+}
 async function save(confirmAfterSave = false) {
   if (!canSaveOrder.value || (confirmAfterSave && !canConfirmOrder.value)) return
   if (saving.value) return
@@ -663,19 +841,20 @@ async function save(confirmAfterSave = false) {
   }
   saving.value = true
   try {
+    const submittedLines = lines.value.map(({ product_selection_id: _productSelectionId, ...line }) => ({
+      ...line,
+      product_id: line.product_id || null,
+      customer_product_name_snapshot: String(line.customer_product_name_snapshot || line.product_name_input || '').trim(),
+      customer_specification_snapshot: String(line.customer_specification_snapshot || '').trim(),
+      customer_color_snapshot: String(line.customer_color_snapshot || '').trim(),
+      quantity: String(line.quantity),
+      unit_price: String(line.unit_price),
+    }))
     const payload: SalesOrderInput = {
       ...form,
       exchange_rate: String(form.exchange_rate),
       order_tolerance_percent: String(form.order_tolerance_percent),
-      lines: lines.value.map((line) => ({
-        ...line,
-        product_id: line.product_id || null,
-        customer_product_name_snapshot: String(line.customer_product_name_snapshot || line.product_name_input || '').trim(),
-        customer_specification_snapshot: String(line.customer_specification_snapshot || '').trim(),
-        customer_color_snapshot: String(line.customer_color_snapshot || '').trim(),
-        quantity: String(line.quantity),
-        unit_price: String(line.unit_price),
-      })),
+      lines: submittedLines,
       delivery_batches: batches.value.map(({ key, ...item }) => ({
         ...item,
         client_key: key,
@@ -684,7 +863,7 @@ async function save(confirmAfterSave = false) {
           .map((line) => ({ ...line, quantity: String(line.quantity) })),
       })),
     }
-    const result = isConfirmedEdit.value
+    let result = isConfirmedEdit.value
       ? await changeConfirmedSalesOrder(orderId.value, {
           order: payload,
           ...changeForm,
@@ -693,6 +872,16 @@ async function save(confirmAfterSave = false) {
       : isEdit.value
         ? await updateSalesOrder(orderId.value, payload, etag.value)
         : await createSalesOrder(payload)
+    if (!isConfirmedEdit.value) {
+      const imageResult = await savePendingProductImages(result, submittedLines)
+      result = imageResult.result
+      if (imageResult.failed.length) {
+        etag.value = result.etag
+        ElMessage.warning(`销售订单已保存，但有产品图片未完成：${imageResult.failed.join('；')}。打开草稿后可重试。`)
+        await router.replace({ name: 'sales-order-edit', params: { orderId: result.data.id } })
+        return
+      }
+    }
     etag.value = result.etag
     isDirty.value = false
     if (isConfirmedEdit.value) {
@@ -716,8 +905,14 @@ async function save(confirmAfterSave = false) {
     }
     await router.replace({ name: 'sales-order-detail', params: { orderId: result.data.id } })
   } catch (error) {
+    if (apiErrorCode(error) === 'SALES_EXCHANGE_RATE_CHANGED') {
+      await loadExchangeRate()
+      if (exchangeRateError.value) ElMessage.error(exchangeRateError.value)
+      else ElMessage.warning('系统汇率已更新，人民币金额已重新计算，请核对后再次保存。')
+      return
+    }
     if (apiErrorCode(error) === 'BUYER_ADDRESS_REQUIRED') openBuyerDialog('address')
-    if ([409, 412].includes(apiStatus(error)) || apiErrorCode(error) === 'CONCURRENT_UPDATE') conflictVisible.value = true
+    if (isEdit.value && ([409, 412].includes(apiStatus(error)) || apiErrorCode(error) === 'CONCURRENT_UPDATE')) conflictVisible.value = true
     else ElMessage.error(apiError(error))
   } finally {
     saving.value = false
@@ -735,6 +930,15 @@ watch(() => form.transaction_entity_id, () => {
 watch([form, lines, batches, changeForm], () => {
   if (trackingChanges.value && !saving.value) isDirty.value = true
 }, { deep: true })
+watch(() => lines.value.map(line => line.client_key), keys => {
+  for (const key of Object.keys(pendingProductImages)) {
+    if (!keys.includes(key)) clearPendingProductImage(key)
+  }
+})
+onBeforeUnmount(() => {
+  ++exchangeRateRequest
+  for (const key of Object.keys(pendingProductImages)) clearPendingProductImage(key)
+})
 onBeforeRouteLeave((to) => {
   if (!isDirty.value || saving.value) return true
   pendingRoute.value = to.fullPath
@@ -750,12 +954,19 @@ function leaveWithoutSaving() {
 onMounted(async () => {
   loading.value = true
   try {
-    const [salesOptions, colors] = await Promise.all([
+    const [salesOptions, catalog] = await Promise.all([
       fetchSalesOrderOptions(),
-      fetchAllProductionDataRecords<ProductColor>('product-colors').catch(() => []),
+      Promise.allSettled([
+        fetchAllProductionDataRecords<ProductCategory>('product-categories'),
+        fetchAllProductionDataRecords<ProductionUnit>('production-units'),
+        fetchAllProductionDataRecords<ProductColor>('product-colors'),
+      ]),
     ])
     options.value = salesOptions
-    productColors.value = colors
+    productCategoryOptions.value = catalog[0].status === 'fulfilled' ? catalog[0].value.filter((item) => item.item_type === 'FINISHED') : []
+    productUnitOptions.value = catalog[1].status === 'fulfilled' ? catalog[1].value : []
+    productColors.value = catalog[2].status === 'fulfilled' ? catalog[2].value : []
+    productCatalogError.value = catalog.some((result) => result.status === 'rejected') ? '产品维护选项加载失败或缺少权限，请重新加载页面。已填写内容可保留。' : ''
     productSearchChoices.value = options.value.products
     if (!Object.keys(form.seller_snapshot).length && options.value.seller_template) handleSellerSaved(options.value.seller_template as QuotationTemplate)
     if (!form.salesperson_id) form.salesperson_id = authStore.user?.employee?.id || options.value.employees[0]?.id || ''
@@ -768,13 +979,14 @@ onMounted(async () => {
         form.source_quotation_version_id = quotationVersionId
         await loadQuote(quotationVersionId)
       } else {
-        addLine()
         addBatch()
       }
     }
     if (route.query.section === 'buyer-address') openBuyerDialog('address')
+    await loadExchangeRate()
   } catch (error) { ElMessage.error(apiError(error)) } finally { loading.value = false; trackingChanges.value = true; isDirty.value = false }
 })
+watch(() => form.currency_code, () => { if (trackingChanges.value) void loadExchangeRate() }, { flush: 'sync' })
 </script>
 
 <template>
@@ -866,7 +1078,7 @@ onMounted(async () => {
         <el-tab-pane label="订单产品" name="products">
           <div class="detail-toolbar">
             <strong>订单产品</strong>
-            <el-button v-if="!hasLockedStructure" :icon="Plus" :disabled="quoteHasNoRemaining" @click="form.source_type === 'QUOTATION' ? addAvailableQuoteLines() : addLine()">{{ quoteHasNoRemaining ? '无剩余可转' : form.source_type === 'QUOTATION' ? '从本报价添加' : '添加产品' }}</el-button>
+            <el-button v-if="!hasLockedStructure" :icon="Plus" :disabled="quoteHasNoRemaining" @click="form.source_type === 'QUOTATION' ? addAvailableQuoteLines() : openProductDialog()">{{ quoteHasNoRemaining ? '无剩余可转' : form.source_type === 'QUOTATION' ? '从本报价添加' : '添加产品' }}</el-button>
           </div>
           <el-alert v-if="quoteHasNoRemaining" class="remaining-alert" type="info" show-icon :closable="false" title="该报价已全部转为销售订单，没有剩余可转数量。" />
           <div class="product-summary">
@@ -874,50 +1086,31 @@ onMounted(async () => {
             <div><strong>{{ lines.length ? `${lines.length} 个订单产品` : '尚未选择产品' }}</strong><p>订单金额 {{ form.currency_code }} {{ orderTotal.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }} · 支持多产品按不同交期分批</p></div>
           </div>
           <el-table :data="lines" class="product-table" empty-text="请从报价添加产品或手工添加产品">
-            <el-table-column label="产品信息（类别 / 产品 / 规格 / 颜色）" min-width="500">
-              <template #default="{ row }">
-                <div class="product-information-box">
-                  <div v-if="quoteLineById.get(row.source_quotation_line_id || '')" class="quote-product-source">
-                    <b :title="quoteLineById.get(row.source_quotation_line_id)?.product_description">{{ quoteLineById.get(row.source_quotation_line_id)?.product_description }}</b>
-                    <span :title="quoteLineById.get(row.source_quotation_line_id)?.specification || '无规格'">{{ quoteLineById.get(row.source_quotation_line_id)?.specification || '无规格' }}</span>
-                  </div>
-                  <div class="product-cascade-grid">
-                    <el-select v-model="row.product_category_id" filterable clearable :disabled="hasLockedStructure" placeholder="先选类别" @change="selectProductCategory(row)">
-                      <el-option v-for="item in productCategories" :key="item.id" :value="item.id" :label="item.name" />
-                    </el-select>
-                    <el-select v-model="row.product_name_input" filterable allow-create clearable :disabled="hasLockedStructure" placeholder="选择或填写产品" @change="selectProductName(row, String($event || ''))" @blur="matchProductInformation(row)">
-                      <el-option v-for="item in productNameChoices(row)" :key="item.product_name" :value="item.product_name" :label="item.product_name" />
-                    </el-select>
-                    <el-select v-model="row.customer_specification_snapshot" filterable allow-create clearable :disabled="hasLockedStructure || !row.product_name_input" placeholder="选择或填写规格" @change="selectProductSpecification(row, String($event || ''))" @blur="matchProductInformation(row)">
-                      <el-option v-for="item in specificationChoices(row)" :key="item.id" :value="item.specification" :label="`${item.specification}${item.product_code ? ` · ${item.product_code}` : ''}`" />
-                    </el-select>
-                    <el-select v-model="row.customer_color_snapshot" filterable allow-create clearable :disabled="hasLockedStructure" placeholder="选择或填写颜色">
-                      <el-option v-for="color in systemColorChoices" :key="color" :value="color" :label="color" />
-                    </el-select>
-                  </div>
-                  <small v-if="row.product_name_input && row.customer_specification_snapshot" class="product-mapping-hint" :class="{ 'is-warning': !row.product_id }">{{ row.product_id ? '已关联产品主档' : '未匹配产品主档，按客户输入保存' }}</small>
-                  <small v-if="quoteProductMappingHint(row)" class="product-mapping-hint" :class="{ 'is-warning': !row.product_id }">{{ quoteProductMappingHint(row) }}</small>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="单位" width="72"><template #default="{ row }">{{ unitDisplay(row) }}</template></el-table-column>
-            <el-table-column label="报价单价" width="90"><template #default="{ row }">{{ quoteLineById.get(row.source_quotation_line_id || '')?.quoted_unit_price || '—' }}</template></el-table-column>
-            <el-table-column label="订单数量" width="118"><template #default="{ row }"><el-input-number v-model="row.quantity" :min="0.0001" :precision="4" :controls="false" /></template></el-table-column>
+            <el-table-column label="类别" width="104"><template #default="{ row }"><span class="flat-product-cell" :title="productCategoryDisplay(row)">{{ productCategoryDisplay(row) }}</span></template></el-table-column>
+            <el-table-column label="品名" min-width="148"><template #default="{ row }"><span class="flat-product-cell" :title="productDisplayName(row)">{{ productDisplayName(row) }}</span></template></el-table-column>
+            <el-table-column label="规格" min-width="142"><template #default="{ row }"><span class="flat-product-cell" :title="productSpecificationDisplay(row)">{{ productSpecificationDisplay(row) }}</span></template></el-table-column>
+            <el-table-column label="颜色" width="92"><template #default="{ row }"><span class="flat-product-cell" :title="row.customer_color_snapshot || '—'">{{ row.customer_color_snapshot || '—' }}</span></template></el-table-column>
+            <el-table-column label="材质" width="96"><template #default="{ row }"><span class="flat-product-cell" :title="row.material || '—'">{{ row.material || '—' }}</span></template></el-table-column>
+            <el-table-column label="数量 / 单位" width="126"><template #default="{ row }"><div class="product-quantity-cell"><el-input-number v-model="row.quantity" :min="0.0001" :precision="4" :controls="false" /><span>{{ unitDisplay(row) }}</span></div></template></el-table-column>
+            <el-table-column label="期望日期" width="102"><template #default="{ row }">{{ lineExpectedDate(row) }}</template></el-table-column>
+            <el-table-column label="图片" width="68"><template #default="{ row }"><ProductImage v-if="productImageUrl(row)" :src="productImageUrl(row)" :name="productDisplayName(row)"/><span v-else class="image-empty">无图</span></template></el-table-column>
+            <el-table-column v-if="form.source_type === 'QUOTATION'" label="报价单价" width="90"><template #default="{ row }">{{ quoteLineById.get(row.source_quotation_line_id || '')?.quoted_unit_price || '—' }}</template></el-table-column>
             <el-table-column label="订单单价" width="105"><template #default="{ row }"><el-input-number v-model="row.unit_price" :min="0" :precision="4" :controls="false" /></template></el-table-column>
             <el-table-column label="行金额" width="92"><template #default="{ row }">{{ lineTotal(row).toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }}</template></el-table-column>
-            <el-table-column label="本币金额" width="102"><template #default="{ row }">{{ localLineTotal(row).toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }}</template></el-table-column>
-            <el-table-column label="价差" width="76"><template #default="{ row }">{{ row.source_quotation_line_id ? (Number(row.unit_price || 0) - Number(quoteLineById.get(row.source_quotation_line_id)?.quoted_unit_price || 0)).toFixed(2) : '—' }}</template></el-table-column>
-            <el-table-column label="可转数量" width="92"><template #default="{ row }">{{ quoteRemainingText(row) }}</template></el-table-column>
+            <el-table-column label="人民币金额" width="102"><template #default="{ row }">{{ amountText(localLineAmount(row)) }}</template></el-table-column>
+            <el-table-column v-if="form.source_type === 'QUOTATION'" label="价差" width="76"><template #default="{ row }">{{ row.source_quotation_line_id ? (Number(row.unit_price || 0) - Number(quoteLineById.get(row.source_quotation_line_id)?.quoted_unit_price || 0)).toFixed(2) : '—' }}</template></el-table-column>
+            <el-table-column v-if="form.source_type === 'QUOTATION'" label="可转数量" width="92"><template #default="{ row }">{{ quoteRemainingText(row) }}</template></el-table-column>
             <el-table-column label="价格备注" min-width="135"><template #default="{ row }"><el-input v-model="row.lower_price_reason" placeholder="选填" /></template></el-table-column>
-            <el-table-column v-if="!hasLockedStructure" label="操作" width="90"><template #default="{ $index }"><el-button link type="danger" :icon="Delete" @click="removeLine($index)">删除</el-button></template></el-table-column>
+            <el-table-column v-if="!hasLockedStructure" label="操作" width="180" class-name="product-actions-column"><template #default="{ row, $index }"><div class="product-row-actions"><el-button link type="primary" @click="openProductDialog(row)">编辑产品</el-button><el-button link type="danger" :icon="Delete" @click="removeLine($index)">删除</el-button></div></template></el-table-column>
           </el-table>
           <section class="totals-panel">
             <h3>合计与汇率</h3>
+            <el-alert v-if="exchangeRateError" class="exchange-rate-error" type="error" :closable="false" :title="exchangeRateError"><el-button link type="primary" :loading="exchangeRateLoading" @click="loadExchangeRate">重新读取</el-button></el-alert>
             <div class="totals-grid">
-              <label><span>汇率（{{ form.currency_code }}→CNY）</span><el-input-number v-model="form.exchange_rate" :min="0.000001" :precision="6" :controls="false" /></label>
+              <label class="system-exchange-rate"><span>系统汇率（{{ form.currency_code }}→CNY）</span><b>{{ exchangeRateLoading ? '读取中…' : form.exchange_rate || '—' }}</b><small v-if="exchangeRateSnapshot">{{ exchangeRateSnapshot.source_name }} · {{ exchangeRateSnapshot.effective_date || '人民币' }}</small></label>
               <label><span>订单总数量</span><b>{{ orderQuantity.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }}</b></label>
               <label><span>总金额（{{ form.currency_code }}）</span><b>{{ orderTotal.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }}</b></label>
-              <label><span>本币金额（CNY）</span><b>{{ (orderTotal * Number(form.exchange_rate || 0)).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }}</b></label>
+              <label><span>人民币总金额（CNY）</span><b>{{ amountText(orderTotalCny) }}</b></label>
             </div>
           </section>
           <section v-if="selectedRequirementLine" class="requirements-panel">
@@ -990,6 +1183,23 @@ onMounted(async () => {
         <p class="summary-hint">产品明细与批次分配请切换上方选项卡。</p>
       </aside>
     </div>
+    <InquiryProductDialog
+      v-if="productDialogItem"
+      v-model="productDialogVisible"
+      scene="sales-order"
+      :item="productDialogItem"
+      :categories="productCategoryChoices"
+      :units="productUnitChoices"
+      :colors="productColors"
+      :currencies="options?.currencies || []"
+      :quotation-currency="form.currency_code"
+      :image-url="productDialogImageUrl || undefined"
+      :pending-image="productDialogLineKey ? pendingProductImages[productDialogLineKey] : null"
+      :pending-removal="productDialogLineKey ? pendingProductImageRemovals[productDialogLineKey] : false"
+      :can-upload="canSaveOrder && !hasLockedStructure"
+      :catalog-error="productCatalogError"
+      @confirm="handleProductDialogConfirm"
+    />
     <SellerProfileDialog v-model="sellerDialogVisible" :template-id="sellerTemplateId" context-name="销售订单" @saved="handleSellerSaved" />
     <BuyerMasterDataDialog
       v-model="buyerDialogVisible"
@@ -1026,12 +1236,24 @@ onMounted(async () => {
 .buyer-subject-card{margin:4px 0 12px;padding:14px 16px;border:1px solid #bfdbfe;border-radius:8px;background:#f8fbff}.buyer-subject-card.missing{border-color:#fecaca;background:#fffafa}.buyer-subject-card header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.buyer-subject-card header>div{display:flex;align-items:center;gap:8px}.buyer-subject-grid{display:grid;grid-template-columns:1fr 1fr 1.25fr 1.75fr;gap:12px}.buyer-subject-grid>div{display:grid;min-width:0;gap:5px}.buyer-subject-grid small{color:#71717a;font-size:11px}.buyer-subject-grid b{overflow:hidden;color:#27272a;font-size:12px;font-weight:500;line-height:20px;text-overflow:ellipsis;white-space:nowrap}.buyer-subject-card p{margin:10px 0 0;color:#b45309;font-size:12px}.sales-seller-card{margin:4px 0 12px;min-height:164px}
 .batch-grid{display:grid;grid-template-columns:repeat(2,minmax(0,550px));gap:20px;align-items:start}.batch-card{display:grid;width:100%;padding:16px;border:1px solid #d4d4d8;border-radius:8px;background:#fff;gap:12px}.batch-card.state-under{border-color:#f59e0b;background:#fffdf5}.batch-card.state-over{border-color:#ef4444;background:#fff8f8}.batch-card.state-complete{border-color:#22c55e;background:#f8fff9}.batch-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.batch-card-head>div{display:grid;gap:3px}.batch-card-head strong{font-size:14px}.batch-card-head small{max-width:360px;overflow:hidden;color:#8a8a93;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.batch-card :deep(.el-form-item){margin-bottom:0}.batch-product-head,.batch-product-row{display:grid;grid-template-columns:minmax(0,1.65fr) .7fr 1fr .8fr .75fr;align-items:center;gap:7px}.batch-product-head{padding:7px 8px;border-radius:5px;background:#f4f4f5;color:#71717a;font-size:10px}.batch-product-row{min-height:42px;padding:5px 8px;border-bottom:1px solid #ececf0;color:#3f3f46;font-size:11px}.batch-product-row b{overflow:hidden;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.batch-product-row.state-under span:last-child{color:#b45309;font-weight:600}.batch-product-row.state-over span:last-child{color:#dc2626;font-weight:600}.batch-product-row.state-complete span:last-child{color:#15803d;font-weight:600}.batch-product-row :deep(.el-input__wrapper){min-height:30px;padding:0 7px}.batch-card footer{display:flex;align-items:center;justify-content:space-between;padding-top:4px;border-top:1px solid #e4e4e7}.batch-card footer>div{display:flex;align-items:baseline;gap:8px}.batch-card footer small{color:#71717a;font-size:11px}.batch-card footer strong{font-size:15px}.delete-dialog-copy{margin:16px 0 10px;color:#52525b;font-size:13px}.allocation-check{margin-top:12px}.allocation-check .invalid{color:#dc2626}
 /* 销售订单 2026-09-11 已选原型：仅覆盖本页面旧视觉。 */
-.editor-page{height:calc(100vh - 92px);min-width:1260px;overflow:auto;padding:28px;background:var(--erp-page-background);color:#1f1d18}.editor-heading{height:64px;background:transparent}.editor-heading h1{font-family:'Noto Serif SC','Songti SC',serif;font-size:34px;font-weight:600;line-height:44px}.editor-heading p{display:none}.title-line{gap:28px}.draft-tag{display:inline-flex;min-width:56px;height:24px;align-items:center;justify-content:center;border:0;border-radius:999px!important;color:#faf9f5!important;background:#65635e!important}.heading-actions{gap:12px}.heading-actions .el-button{height:36px;min-width:90px;border-radius:5px}.heading-actions .el-button--primary{width:140px;border-color:#c84e28;background:#c84e28}.editor-tabs{display:flex;height:66px;align-items:center;gap:18px}.editor-tabs button{height:44px;padding:0 10px;border:0;border-bottom:1px solid transparent;color:#6f6a61;background:transparent;font-size:16px;cursor:pointer}.editor-tabs button.active{border-bottom-color:#c84e28;color:#c84e28}.editor-layout{display:grid;grid-template-columns:minmax(0,1fr) 410px;align-items:start;gap:18px}.editor-layout.change-layout{grid-template-columns:1fr}.editor-content{min-width:0}.section-card{margin-bottom:12px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.section-card :deep(.el-card__body){padding:14px}.section-bar{height:42px;margin-bottom:12px;border:0;background:#f0eadf}.section-bar span{position:static;display:flex;width:auto;height:42px;align-items:center;padding:0 10px;color:#1f1d18;background:transparent;font-size:17px;font-weight:600}.compact-form :deep(.el-form-item__label){height:auto;padding:0 0 6px;color:#6f6a61;font-size:13px}.compact-form :deep(.el-input__wrapper),.compact-form :deep(.el-select__wrapper),.compact-form :deep(.el-date-editor){min-height:38px;border-radius:5px;box-shadow:0 0 0 1px #e0dbd2 inset}.buyer-subject-card,.sales-seller-card{border-color:#ddd6c9;border-radius:5px;background:#fcfbf7}.detail-card :deep(.el-card__body){padding:14px}.order-tabs:not(.show-both-tabs) :deep(.el-tabs__header){display:none}.order-tabs.show-both-tabs :deep(.el-tabs__active-bar){background:#c84e28}.order-tabs.show-both-tabs :deep(.el-tabs__item.is-active){color:#c84e28}.detail-toolbar{height:40px;margin-bottom:8px}.detail-toolbar .el-button{height:32px;border-radius:4px;color:#fff;border-color:#c84e28;background:#c84e28}.product-summary{display:none}.product-table :deep(.el-table__header th){height:44px;background:#f0eadf;color:#6f6a61;font-weight:500}.product-table :deep(.el-table__cell){padding:8px 0}.product-table :deep(.el-input__wrapper),.product-table :deep(.el-select__wrapper){min-height:34px;border-radius:4px}.batch-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.batch-card{border-color:#ddd6c9;border-radius:5px}.batch-card.state-under{border-color:#d89a35;background:#fffaf0}.batch-card.state-over{border-color:#b8442c;background:#fff5f2}.batch-card.state-complete{border-color:#4e8750;background:#f7fcf7}.editor-summary{position:sticky;top:0;padding:14px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.editor-summary h2{height:42px;margin:0 0 14px;padding:0 10px;background:#f0eadf;font-size:18px;line-height:42px}.editor-summary dl{display:grid;grid-template-columns:130px minmax(0,1fr);margin:0;gap:10px 8px;font-size:14px}.editor-summary dt{color:#6f6a61}.editor-summary dd{min-width:0;margin:0;overflow-wrap:anywhere}.editor-summary .summary-amount{grid-column:1/-1;padding:4px 0 2px 138px;color:#c84e28;font-size:24px}.summary-divider{height:1px;margin:14px 0;background:#ddd6c9}.summary-hint{margin:16px 0 0;padding:12px;border-radius:5px;color:#6f6a61;background:#f0eadf;font-size:13px}.dialog-warning{margin:0;padding:14px;border-radius:5px;color:#9f351f;background:#f8e7e1;line-height:22px}.editor-page :deep(.el-dialog){border-radius:6px;background:#fcfbf7}.editor-page :deep(.el-dialog__header){margin:0;padding:22px 26px 16px;border-bottom:1px solid #ddd6c9}.editor-page :deep(.el-dialog__title){font-family:'Noto Serif SC','Songti SC',serif;font-size:22px}.editor-page :deep(.el-dialog__body){padding:20px 26px}.editor-page :deep(.el-dialog__footer){padding:14px 26px 22px}.editor-page :deep(.el-dialog .el-button--primary){border-color:#c84e28;background:#c84e28}
+.editor-page{height:calc(100vh - 92px);min-width:1260px;overflow:auto;padding:28px;background:var(--erp-page-background);color:#1f1d18}.editor-heading{height:64px;background:transparent}.editor-heading h1{font-family:'Noto Serif SC','Songti SC',serif;font-size:34px;font-weight:600;line-height:44px}.editor-heading p{display:none}.title-line{gap:28px}.draft-tag{display:inline-flex;min-width:56px;height:24px;align-items:center;justify-content:center;border:0;border-radius:999px!important;color:#faf9f5!important;background:#65635e!important}.heading-actions{gap:12px}.heading-actions .el-button{height:36px;min-width:90px;border-radius:5px}.heading-actions .el-button--primary{width:140px;border-color:#c84e28;background:#c84e28}.editor-tabs{display:flex;height:66px;align-items:center;gap:18px}.editor-tabs button{height:44px;padding:0 10px;border:0;border-bottom:1px solid transparent;color:#6f6a61;background:transparent;font-size:16px;cursor:pointer}.editor-tabs button.active{border-bottom-color:#c84e28;color:#c84e28}.editor-layout{display:grid;grid-template-columns:minmax(0,1fr) 410px;align-items:start;gap:18px}.editor-layout.change-layout{grid-template-columns:1fr}.editor-content{min-width:0}.section-card{margin-bottom:12px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.section-card :deep(.el-card__body){padding:14px}.section-bar{height:42px;margin-bottom:12px;border:0;background:#f0eadf}.section-bar span{position:static;display:flex;width:auto;height:42px;align-items:center;padding:0 10px;color:#1f1d18;background:transparent;font-size:17px;font-weight:600}.compact-form :deep(.el-form-item__label){height:auto;padding:0 0 6px;color:#6f6a61;font-size:13px}.compact-form :deep(.el-input__wrapper),.compact-form :deep(.el-select__wrapper){min-height:38px;border-radius:5px;box-shadow:0 0 0 1px #e0dbd2 inset}.buyer-subject-card,.sales-seller-card{border-color:#ddd6c9;border-radius:5px;background:#fcfbf7}.detail-card :deep(.el-card__body){padding:14px}.order-tabs:not(.show-both-tabs) :deep(.el-tabs__header){display:none}.order-tabs.show-both-tabs :deep(.el-tabs__active-bar){background:#c84e28}.order-tabs.show-both-tabs :deep(.el-tabs__item.is-active){color:#c84e28}.detail-toolbar{height:40px;margin-bottom:8px}.detail-toolbar .el-button{height:32px;border-radius:4px;color:#fff;border-color:#c84e28;background:#c84e28}.product-summary{display:none}.product-table :deep(.el-table__header th){height:44px;background:#f0eadf;color:#6f6a61;font-weight:500}.product-table :deep(.el-table__cell){padding:8px 0}.product-table :deep(.el-input__wrapper),.product-table :deep(.el-select__wrapper){min-height:34px;border-radius:4px}.batch-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.batch-card{border-color:#ddd6c9;border-radius:5px}.batch-card.state-under{border-color:#d89a35;background:#fffaf0}.batch-card.state-over{border-color:#b8442c;background:#fff5f2}.batch-card.state-complete{border-color:#4e8750;background:#f7fcf7}.editor-summary{position:sticky;top:0;padding:14px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.editor-summary h2{height:42px;margin:0 0 14px;padding:0 10px;background:#f0eadf;font-size:18px;line-height:42px}.editor-summary dl{display:grid;grid-template-columns:130px minmax(0,1fr);margin:0;gap:10px 8px;font-size:14px}.editor-summary dt{color:#6f6a61}.editor-summary dd{min-width:0;margin:0;overflow-wrap:anywhere}.editor-summary .summary-amount{grid-column:1/-1;padding:4px 0 2px 138px;color:#c84e28;font-size:24px}.summary-divider{height:1px;margin:14px 0;background:#ddd6c9}.summary-hint{margin:16px 0 0;padding:12px;border-radius:5px;color:#6f6a61;background:#f0eadf;font-size:13px}.dialog-warning{margin:0;padding:14px;border-radius:5px;color:#9f351f;background:#f8e7e1;line-height:22px}.editor-page :deep(.el-dialog){border-radius:6px;background:#fcfbf7}.editor-page :deep(.el-dialog__header){margin:0;padding:22px 26px 16px;border-bottom:1px solid #ddd6c9}.editor-page :deep(.el-dialog__title){font-family:'Noto Serif SC','Songti SC',serif;font-size:22px}.editor-page :deep(.el-dialog__body){padding:20px 26px}.editor-page :deep(.el-dialog__footer){padding:14px 26px 22px}.editor-page :deep(.el-dialog .el-button--primary){border-color:#c84e28;background:#c84e28}
 .transaction-card :deep(.el-card__body){padding:14px}.transaction-card h2,.totals-panel h3,.requirements-panel h3,.allocation-validation h3{margin:0 0 12px;color:#2c2923;font-family:'Noto Serif SC','Songti SC',serif;font-size:19px;font-weight:600}.transaction-grid{display:grid;grid-template-columns:1fr 1.05fr;gap:20px}.transaction-side,.buyer-subject-card{min-width:0}.sales-seller-card{height:100%;min-height:220px;margin:0}.buyer-subject-card{height:100%;margin:0;padding:14px}.buyer-edit-grid{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:center;gap:8px 12px}.buyer-edit-grid>span{color:#6f6a61;font-size:13px}.buyer-edit-grid>b{font-size:13px;font-weight:500}.buyer-edit-grid :deep(.el-select__wrapper){min-height:34px;border-radius:4px}.product-table{border-top:0}.product-table :deep(.el-table__inner-wrapper::before){background:#ddd6c9}.product-table :deep(.el-table__row td){height:88px;border-bottom-color:#ddd6c9}.product-table :deep(.el-select__wrapper){box-shadow:none}.totals-panel,.requirements-panel,.allocation-validation{margin-top:12px;padding:16px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.totals-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}.totals-grid label,.requirements-panel label{display:grid;gap:7px}.totals-grid label>span,.requirements-panel label>span{color:#6f6a61;font-size:13px}.totals-grid b{display:flex;min-height:38px;align-items:center;padding:0 12px;border-radius:4px;background:#e9e5db;font-size:14px;font-weight:500}.requirement-selector{margin-bottom:12px}.requirements-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:12px}.requirements-panel :deep(.el-textarea__inner){border-radius:4px;box-shadow:0 0 0 1px #ddd6c9 inset;resize:none}.batch-matrix{overflow:hidden;border:1px solid #ddd6c9;border-radius:5px}.matrix-row{display:grid;align-items:center;border-bottom:1px solid #ddd6c9}.matrix-row>*{min-width:0;padding:12px 14px}.matrix-header{background:#f0eadf}.matrix-header>label{display:grid;gap:6px;color:#6f6a61;font-size:12px}.matrix-header>span,.matrix-row>span{color:#6f6a61;font-size:13px}.matrix-row :deep(.el-input__wrapper){min-height:34px;border-radius:4px}.product-allocation-row>div{display:grid;gap:4px}.product-allocation-row b{font-size:14px}.product-allocation-row small{color:#6f6a61;font-size:12px}.product-allocation-row.state-over{background:#fff5f2}.product-allocation-row.state-under{background:#fffaf0}.matrix-total b{font-size:14px}.matrix-total div>span{color:#6f6a61;font-size:12px}.matrix-actions .el-button{width:calc(100% - 28px);margin:0 14px}.batch-matrix footer{padding:10px 14px}.batch-matrix footer .el-button{margin:0}.allocation-validation{padding:14px}.validation-row{display:grid;grid-template-columns:repeat(4,1fr);min-height:46px;align-items:center;border-bottom:1px solid #ddd6c9}.validation-row span{padding:0 8px;font-size:13px}.validation-head{min-height:42px;color:#6f6a61;background:#f0eadf}.validation-row.state-over span:last-child{color:#b8442c;font-weight:600}.validation-row.state-under span:last-child{color:#ad6b05;font-weight:600}.validation-row.state-complete span:last-child{color:#417b43;font-weight:600}
 .compact-form .grid-4 :deep(.el-form-item),.compact-form .grid-4 :deep(.el-form-item__content),.compact-form .grid-4 :deep(.el-input),.compact-form .grid-4 :deep(.el-select),.compact-form .grid-4 :deep(.el-date-editor){width:100%;min-width:0}
-.product-table :deep(.el-table__row td){height:136px}.product-information-box{display:grid;gap:5px;padding:7px;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.quote-product-source{display:flex;min-width:0;align-items:center;gap:8px}.quote-product-source b{max-width:130px;overflow:hidden;color:#2c2923;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.quote-product-source span{min-width:0;overflow:hidden;color:#6f6a61;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.product-cascade-grid{display:grid;grid-template-columns:1fr 1.2fr 1.2fr 1fr;gap:5px}.product-information-box :deep(.el-input__wrapper),.product-information-box :deep(.el-select__wrapper){min-height:30px;box-shadow:0 0 0 1px #d8d0c4 inset}.product-mapping-hint{color:#417b43;font-size:11px;line-height:16px}.product-mapping-hint.is-warning{color:#ad6b05}
+ .product-table :deep(.el-table__row td){height:116px}.product-summary-cell{display:grid;min-width:0;gap:6px;padding:2px 0}.product-summary-grid{display:grid;grid-template-columns:.8fr 1.3fr 1.2fr .8fr .9fr;gap:5px}.product-summary-grid span{display:grid;min-width:0;gap:3px;padding:4px 6px;border-radius:4px;background:#f7f4ed}.product-summary-grid small{color:#8a8176;font-size:10px}.product-summary-grid b{overflow:hidden;color:#2c2923;font-size:12px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}.quote-product-source{display:flex;min-width:0;align-items:center;gap:8px}.quote-product-source b{max-width:180px;overflow:hidden;color:#2c2923;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.quote-product-source span{min-width:0;overflow:hidden;color:#6f6a61;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.product-mapping-hint{display:block;overflow:hidden;color:#417b43;font-size:11px;line-height:16px;text-overflow:ellipsis;white-space:nowrap}.product-mapping-hint.is-warning{color:#ad6b05}
 </style>
 
 <style lang="scss" scoped>
 .editor-page { padding: 14px; }
+.product-table :deep(.el-table__row td){height:auto;min-height:58px}
+.flat-product-cell{display:block;overflow:hidden;padding:0 8px;color:#2c2923;font-size:12px;font-weight:500;line-height:22px;text-overflow:ellipsis;white-space:nowrap}
+.product-quantity-cell{display:flex;align-items:center;gap:6px;padding:0 6px}.product-quantity-cell>span{flex:0 0 auto;color:#6f6a61;white-space:nowrap}.product-quantity-cell :deep(.el-input-number){width:76px}.product-quantity-cell :deep(.el-input__wrapper){padding:0 6px}
+.image-empty{display:inline-flex;min-height:32px;align-items:center;color:#8a8176;font-size:12px}
+</style>
+
+<style scoped>
+.product-row-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.product-row-actions :deep(.el-button) { flex: none; margin: 0; padding-inline: 0; }
+.sales-order-editor-page .product-table :deep(.product-actions-column > .cell) { text-overflow: clip; }
+.system-exchange-rate small { color: #6f6a61; line-height: 20px; overflow-wrap: anywhere; }
+.exchange-rate-error { margin-bottom: 12px; }
 </style>

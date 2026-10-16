@@ -15,6 +15,8 @@ import type {
   ProductionTaskStats,
   ProductionOrderFromSalesInput,
   VersionedProductionTask,
+  ProductionSalesOrderSource,
+  ProductionSalesOrderSourceSummary,
 } from '@/types/productionTask'
 
 const basePath = '/api/v1/production-tasks/'
@@ -36,6 +38,20 @@ export async function fetchProductionTask(id: string): Promise<VersionedProducti
 export async function fetchProductionTaskOptions(): Promise<ProductionTaskOptions> {
   const { data } = await apiClient.get<DataResponse<ProductionTaskOptions>>(`${basePath}options/`)
   return data.data
+}
+
+export async function fetchProductionSalesOrderSources(q?: string): Promise<DataResponse<ProductionSalesOrderSourceSummary[]>> {
+  const { data } = await apiClient.get<DataResponse<ProductionSalesOrderSourceSummary[]>>(`${basePath}sales-order-sources/`, { params: { q } })
+  return data
+}
+
+export async function fetchProductionSalesOrderSource(salesOrderId: string): Promise<DataResponse<ProductionSalesOrderSource>> {
+  const { data } = await apiClient.get<DataResponse<ProductionSalesOrderSource>>(`${basePath}sales-order-sources/`, { params: { sales_order_id: salesOrderId } })
+  return data
+}
+
+export function productionSalesOrderSourceImageUrl(salesOrderId: string, lineId: string): string {
+  return apiClient.getUri({ url: `${basePath}sales-order-source-image/`, params: { sales_order_id: salesOrderId, line_id: lineId } })
 }
 
 export async function fetchProductionTaskFilterOptions(): Promise<ProductionTaskFilterOptions> {
@@ -173,4 +189,8 @@ export async function finishProductionTask(
 export function productionTaskBusinessFileUrl(taskId: string, fileId: string): string {
   const relativePath = `${basePath}${encodeURIComponent(taskId)}/business-files/${encodeURIComponent(fileId)}/`
   return new URL(relativePath, `${apiClient.defaults.baseURL || window.location.origin}/`).toString()
+}
+
+export async function deleteProductionTask(id: string, etag: string): Promise<void> {
+  await apiClient.delete(`${basePath}${encodeURIComponent(id)}/`, { headers: { 'If-Match': etag } })
 }

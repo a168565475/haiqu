@@ -12,15 +12,6 @@ import globalSearchIcon from '@/assets/crm-v2/global-search.svg'
 import GlobalPageTabs from '@/components/navigation/GlobalPageTabs.vue'
 import { useAuthStore } from '@/stores/auth'
 
-withDefaults(
-  defineProps<{
-    compact?: boolean
-  }>(),
-  {
-    compact: false,
-  },
-)
-
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
@@ -66,7 +57,7 @@ async function handleUserCommand(command: string | number | object) {
 </script>
 
 <template>
-  <div class="app-header app-header--page-tabs app-header--crm-v2" :class="{ 'app-header--compact': compact }">
+  <div class="app-header app-header--page-tabs app-header--crm-v2">
     <div class="app-header__context">
       <GlobalPageTabs />
     </div>
@@ -271,18 +262,6 @@ async function handleUserCommand(command: string | number | object) {
   white-space: nowrap;
 }
 
-.app-header--compact {
-  padding-right: 128px;
-}
-
-.app-header--compact .app-header__search {
-  width: 220px;
-}
-
-.app-header--compact .app-header__user-name {
-  display: none;
-}
-
 .app-header--crm-v2 {
   position: relative;
   gap: 0;
@@ -342,11 +321,6 @@ async function handleUserCommand(command: string | number | object) {
 
 .app-header__search-shell:focus-within {
   box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.28);
-}
-
-.app-header--compact .app-header__search-shell,
-.app-header--compact > .app-header__search {
-  display: none;
 }
 
 .app-header--crm-v2 .app-header__search::placeholder {

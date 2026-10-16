@@ -33,6 +33,8 @@ export interface SalesOrderProduct {
   id: string
   product_number: string
   product_code: string
+  item_number?: string
+  unit_id?: string
   product_name: string
   specification: string
   unit_code: string
@@ -68,7 +70,17 @@ export interface QuotationOrderLineOption {
   line_number: number
   product_description: string
   specification: string
+  specification_display?: string
   color: string
+  product_id: string | null
+  product_category_id: string | null
+  product_unit_id: string | null
+  product_color_id: string | null
+  product_image_id: string | null
+  product_number: string
+  product_code: string
+  item_number: string
+  material: string
   quantity: string
   converted_quantity: string
   reserved_quantity: string
@@ -117,6 +129,10 @@ export interface SalesOrderLine {
   line_number: number
   source_quotation_line_id: string | null
   product_id: string | null
+  product_category_id?: string | null
+  product_unit_id?: string | null
+  product_color_id?: string | null
+  product_image_id?: string | null
   customer_product_name_snapshot: string
   customer_specification_snapshot: string
   customer_color_snapshot: string
@@ -124,12 +140,17 @@ export interface SalesOrderLine {
   product_code_snapshot: string
   product_name_snapshot: string
   specification_snapshot: string
+  item_number_snapshot: string
+  material_snapshot: string
   unit_code_snapshot: string
   quantity: string
   quoted_quantity_snapshot: string | null
   quoted_unit_price: string | null
   unit_price: string
   line_total: string
+  unit_price_cny?: string | null
+  line_total_cny?: string | null
+  specification_display?: string
   price_difference: string
   price_difference_rate: string | null
   lower_price_reason: string
@@ -215,8 +236,10 @@ export interface SalesOrderListItem {
   order_date: string
   currency_code: string
   total_amount: string
+  total_amount_cny?: string | null
   salesperson: EmployeeOption
   merchandiser: EmployeeOption | null
+  has_remaining_production_capacity?: boolean
   line_count: number
   delivery_batch_count: number
   next_delivery_date: string | null
@@ -232,6 +255,8 @@ export interface SalesOrder extends SalesOrderListItem {
   buyer_address_snapshot: Record<string, unknown>
   direct_order_reason: string
   exchange_rate: string
+  exchange_rate_record_id?: string | null
+  exchange_rate_snapshot?: SalesOrderExchangeRateSnapshot | null
   incoterm_code: string
   payment_terms: string
   deposit_required: boolean
@@ -270,10 +295,21 @@ export interface SalesOrderLineInput {
   client_key: string
   source_quotation_line_id: string | null
   product_id: string | null
+  /** 规格下拉的内部选择值，不提交给后端。 */
+  product_selection_id?: string | null
   customer_product_name_snapshot: string
   customer_specification_snapshot: string
+  specification_display?: string
   customer_color_snapshot: string
-  product_category_id?: string
+  product_category_id?: string | null
+  product_unit_id?: string | null
+  product_color_id?: string | null
+  product_image_id?: string | null
+  unit_code?: string
+  material?: string
+  product_number_snapshot?: string
+  product_code_snapshot?: string
+  item_number_snapshot?: string
   product_name_input?: string
   quantity: string
   unit_price: string
@@ -310,6 +346,7 @@ export interface SalesOrderInput {
   direct_order_reason: string
   currency_code: string
   exchange_rate: string
+  exchange_rate_record_id?: string | null
   incoterm_code: string
   payment_terms: string
   deposit_required: boolean
@@ -329,4 +366,21 @@ export interface SalesOrderInput {
   evidence_file_ids: string[]
   lines: SalesOrderLineInput[]
   delivery_batches: SalesOrderBatchInput[]
+}
+
+export interface SalesOrderExchangeRateSnapshot {
+  record_id: string | null
+  base_currency_code: string
+  quote_currency_code: string
+  rate: string
+  effective_date: string
+  source_name: string
+  source_version: string
+  captured_at?: string
+  capture_reason?: string
+}
+export interface SalesOrderExchangeRatePreview {
+  exchange_rate_record_id: string | null
+  exchange_rate: string
+  exchange_rate_snapshot: SalesOrderExchangeRateSnapshot
 }

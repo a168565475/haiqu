@@ -1,4 +1,4 @@
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from .selectors import accessible_inquiries
 
 
@@ -10,5 +10,5 @@ def inquiry_reference_images(inquiry_id, request):
         return BusinessFile.objects.none()
     return BusinessFile.objects.filter(
         inquiry_links__inquiry_id=inquiry_id, archived_at__isnull=True,
-        scan_status=FileScanStatus.CLEAN, content_type__in=['image/jpeg', 'image/png'],
+        scan_status__in=USABLE_FILE_SCAN_STATUSES, content_type__in=['image/jpeg', 'image/png'],
     ).exclude(inquiry_links__file_role='COMMUNICATION_IMAGE').order_by('created_at', 'id').distinct()

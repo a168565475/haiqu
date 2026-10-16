@@ -1,13 +1,14 @@
 import json
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.db import connection, transaction
+from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
@@ -24,7 +25,6 @@ from apps.products.models import ProductInformation
 from apps.reference_data.models import Currency, ProductColor, ProductionUnit
 
 from ..models import ProductionTask, ProductionTaskProductImage, ProductionTaskStatus
-from ..numbering import next_production_task_number
 
 
 class ProductionTaskApiTests(APITestCase):
@@ -57,8 +57,7 @@ class ProductionTaskApiTests(APITestCase):
         self.product = ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).select_related(
             "unit"
         ).first()
-        self.currency = Currency.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(code="CNY").first()
-        self.currency = self.currency or Currency.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
+        self.currency = Currency.objects.get(status="ACTIVE", archived_at__isnull=True, code="CNY")
         self.unit = self.product.unit
         self.color = ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
         self.client = APIClient()
@@ -73,17 +72,19 @@ class ProductionTaskApiTests(APITestCase):
         )
         self.assertEqual(reserved.status_code, 200, reserved.data)
         data = {
+            "task_number": f"HT{uuid4().int}",
             "contract_number_token": reserved.data["data"]["token"],
             "contract_number": reserved.data["data"]["contract_number"],
             "order_source": "NEW",
             "order_number": "ORDER-001",
-            "customer_account_id": str(self.customer.pk),
+            "customer_account_id": None,
             "order_date": today.isoformat(),
             "delivery_date": today.isoformat(),
             "salesperson_id": str(self.employee.pk),
             "follower_ids": [str(self.follower.pk)],
             "currency_id": str(self.currency.pk),
             "includes_tax": True,
+            "tax_rate": 3,
             "order_tolerance_percent": "3.00",
             "is_repeat_order": False,
             "preproduction_sample_required": True,
@@ -127,20 +128,10 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         return response
 
-    def test_create_generates_numbers_and_persists_multi_follower_shape(self):
-        response = self.create_task()
+    def test_create_preserves_manual_number_and_persists_multi_follower_shape(self):
+        response = self.create_task(task_number="HT26199-1")
         data = response.data["data"]
-        self.assertRegex(data["task_number"], r"^HT[0-9]{5}$")
-        order_year = timezone.localdate().year
-        with transaction.atomic():
-            self.assertEqual(
-                next_production_task_number(date(order_year, 12, 31)),
-                f"HT{order_year % 100:02d}002",
-            )
-            self.assertEqual(
-                next_production_task_number(date(order_year + 1, 1, 1)),
-                f"HT{(order_year + 1) % 100:02d}001",
-            )
+        self.assertEqual(data["task_number"], "HT26199-1")
         self.assertTrue(data["contract_number"].startswith("HTC-"))
         self.assertEqual(data["followers"][0]["display_name"], "测试跟单员")
         self.assertEqual(data["total_quantity"], Decimal("10.0000"))
@@ -156,7 +147,7 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(data["products"][0]["packaging_method"], "外箱包装")
         self.assertTrue(response.has_header("ETag"))
 
-    def test_create_allows_customer_product_snapshot_before_bom_binding(self):
+    def test_manual_creation_accepts_unlinked_product_snapshots_without_fake_identifiers(self):
         product_line = self.payload()["products"][0]
         product_line.pop("product_id")
         product_line.pop("product_color_id")
@@ -165,19 +156,23 @@ class ProductionTaskApiTests(APITestCase):
         product_line["customer_specification"] = "客户规格 120×60"
         product_line["customer_color"] = "客户蓝"
 
-        response = self.create_task(products=[product_line])
-        saved = response.data["data"]["products"][0]
-        self.assertIsNone(saved["product_id"])
-        self.assertEqual(saved["product_name"], "客户自填折叠椅")
-        self.assertEqual(saved["specification"], "客户规格 120×60")
-        self.assertEqual(saved["color_name"], "客户蓝")
-        self.assertEqual(saved["customer_product_name"], "客户自填折叠椅")
-        self.assertEqual(saved["customer_specification"], "客户规格 120×60")
-        self.assertEqual(saved["customer_color"], "客户蓝")
-
+        response = self.client.post("/api/v1/production-tasks/", self.payload(products=[product_line]), format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        product = response.data["data"]["products"][0]
+        self.assertIsNone(product["product_id"])
+        self.assertEqual(product["product_number"], "")
+        self.assertEqual(product["product_code"], "")
+        self.assertEqual(product["item_number"], "")
+        self.assertEqual(product["product_name"], "客户自填折叠椅")
+        self.assertEqual(product["specification"], "客户规格 120×60")
+        self.assertEqual(product["customer_color"], "客户蓝")
         line = ProductionTask.objects.get(pk=response.data["data"]["id"]).products.get()
         self.assertIsNone(line.product_id)
+        self.assertEqual(line.product_number_snapshot, "")
+        self.assertEqual(line.item_number_snapshot, "")
         self.assertEqual(line.customer_product_name_snapshot, "客户自填折叠椅")
+        self.assertEqual(line.customer_specification_snapshot, "客户规格 120×60")
+        self.assertEqual(line.customer_color_snapshot, "客户蓝")
 
     def test_reserve_contract_number_returns_immediate_unique_number(self):
         today = timezone.localdate().isoformat()
@@ -219,6 +214,8 @@ class ProductionTaskApiTests(APITestCase):
 
     def test_list_filters_stats_and_options_use_system_data(self):
         created = self.create_task()
+        # 历史任务保留客户关联，继续覆盖既有筛选契约。
+        ProductionTask.objects.filter(pk=created.data["data"]["id"]).update(customer_account=self.customer)
         listed = self.client.get(
             "/api/v1/production-tasks/",
             {
@@ -258,8 +255,7 @@ class ProductionTaskApiTests(APITestCase):
         self.assertTrue(any(item["id"] == str(self.unit.pk) for item in options.data["data"]["units"]))
 
         task = ProductionTask.objects.get(pk=created.data["data"]["id"])
-        task.order_number = "=1+1"
-        task.save(update_fields=["order_number", "updated_at"])
+        task.products.update(product_name_snapshot="=1+1")
         exported = self.client.post(
             "/api/v1/production-tasks/export/",
             {"ids": [str(task.pk)]},
@@ -272,6 +268,7 @@ class ProductionTaskApiTests(APITestCase):
         exported_text = exported.content.decode("utf-8-sig")
         self.assertIn("'=1+1", exported_text)
         self.assertIn(task.task_number, exported_text)
+        self.assertNotIn("客户", exported_text)
 
         invalid_export = self.client.post(
             "/api/v1/production-tasks/export/", {"ids": ["not-a-uuid"]}, format="json"
@@ -315,7 +312,7 @@ class ProductionTaskApiTests(APITestCase):
             production_task=task,
             production_task_number_snapshot=task.task_number,
             sales_order_number_snapshot=task.order_number,
-            customer_name_snapshot=task.customer_account.account_name,
+            customer_name_snapshot=task.customer_account.account_name if task.customer_account_id else "",
             source_revision="production-list-status-test",
             status=PurchaseOrderStatus.PURCHASING,
             created_by_employee=self.employee,
@@ -527,7 +524,7 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(finished.data["data"]["status"], ProductionTaskStatus.COMPLETED)
         self.assertEqual(finished.data["data"]["status_reason"], "订单已全部交付")
 
-    def test_rejects_invalid_dates_and_salesperson_duplicate_in_followers(self):
+    def test_rejects_invalid_dates_and_allows_salesperson_as_selected_follower(self):
         yesterday = timezone.localdate() - timedelta(days=1)
         bad_date = self.client.post(
             "/api/v1/production-tasks/",
@@ -540,7 +537,7 @@ class ProductionTaskApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(bad_date.status_code, 400, bad_date.data)
-        self.assertEqual(duplicate_follower.status_code, 400, duplicate_follower.data)
+        self.assertEqual(duplicate_follower.status_code, 201, duplicate_follower.data)
 
     def test_allows_multiple_products_with_details_on_each_color_line(self):
         another_product = ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(
@@ -681,7 +678,7 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(blank_response.status_code, 201, blank_response.data)
         self.assertTrue(blank_response.data["data"]["products"][0]["details"][0]["is_selected"])
 
-    def test_quantity_must_be_integer_and_exchange_rate_has_at_most_three_decimals(self):
+    def test_quantity_must_be_integer_and_exchange_rate_has_at_most_eight_decimals(self):
         fractional_quantity = dict(self.payload()["products"][0])
         fractional_quantity["quantity"] = "1.5"
         quantity_response = self.client.post(
@@ -692,7 +689,7 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(quantity_response.status_code, 400, quantity_response.data)
 
         precise_rate = dict(self.payload()["products"][0])
-        precise_rate["exchange_rate"] = "7.1234"
+        precise_rate["exchange_rate"] = "1.000000001"
         rate_response = self.client.post(
             "/api/v1/production-tasks/",
             self.payload(products=[precise_rate]),
@@ -1184,11 +1181,13 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(bom.order_quantity, 12)
         self.assertEqual(bom.status, BomStatus.PENDING_CONFIRMATION)
         self.assertEqual(line.total_consumption, "24")
-        self.assertEqual(line.branch_count, "6.06")
-        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "11.388")
-        self.assertEqual(unresolved_line.total_consumption, "人工值")
-        self.assertEqual(unresolved_line.branch_count, "人工支数")
-        self.assertEqual(unresolved_line.raw_values["long_material_total_weight_kg"], "人工重量")
+        # 当前管材规则按整根向上取整：24 × 1.01 / 4 得到 7 根。
+        self.assertEqual(line.branch_count, "7")
+        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "13.1544")
+        # 当前缺参草稿规则清空无法重新计算的值，待补齐依据后再确认。
+        self.assertEqual(unresolved_line.total_consumption, "")
+        self.assertEqual(unresolved_line.branch_count, "")
+        self.assertEqual(unresolved_line.raw_values["long_material_total_weight_kg"], "")
         self.assertTrue(
             AuditLog.objects.filter(
                 object_type="BOM",

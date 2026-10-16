@@ -48,6 +48,7 @@ def sales_orders_with_context(queryset=None):
         "created_by_employee",
     ).prefetch_related(
         "lines__product",
+        "lines__product_color",
         "lines__source_quotation_line",
         "lines__price_exceptions__requested_by_employee",
         "lines__price_exceptions__decided_by_employee",

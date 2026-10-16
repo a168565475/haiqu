@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.customers.models import ContactStatus, CustomerTransactionEntity
-from apps.files.models import FileScanStatus
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductScale, ProductStatus
 from apps.production_tasks.api.serializers import ProductionTaskCreateFromSalesOrderSerializer
@@ -528,7 +528,7 @@ class Command(BaseCommand):
             media_path = Path(settings.MEDIA_ROOT) / image.storage_key if image else None
             image_ok = bool(
                 image
-                and image.scan_status == FileScanStatus.CLEAN
+                and image.scan_status in USABLE_FILE_SCAN_STATUSES
                 and media_path.is_file()
             )
             image_links_valid = image_links_valid and image_ok

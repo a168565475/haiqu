@@ -190,7 +190,6 @@ const form = reactive<EmailAccountInput>({
 const testForm = reactive({ recipient: '' })
 
 const editorTitle = computed(() => editingId.value ? '编辑邮件账户' : '新增邮件账户')
-const enabledCount = computed(() => accounts.value.filter((item) => item.is_enabled).length)
 const selectedProviderGuide = computed(() => (
   emailProviderGuides.find((item) => item.key === selectedProviderKey.value) || emailProviderGuides[emailProviderGuides.length - 1]
 ))
@@ -416,11 +415,9 @@ onMounted(loadAccounts)
 
 <template>
   <section class="email-account-settings system-settings-theme" data-testid="email-account-settings-page">
-    <nav class="crumb"><span>系统配置</span><span>/</span><b>邮件账户</b></nav>
     <header class="page-heading">
       <div>
         <h1>邮件账户</h1>
-        <p>仅管理当前登录账户自己的 SMTP 邮箱；报价发送时会使用启用的默认邮箱。</p>
       </div>
       <div class="page-actions">
         <el-button :icon="Refresh" :loading="loading" @click="loadAccounts">刷新</el-button>
@@ -435,12 +432,6 @@ onMounted(loadAccounts)
       :closable="false"
       show-icon
     />
-
-    <div class="metrics">
-      <article><span>已配置账户</span><strong>{{ accounts.length }}</strong></article>
-      <article><span>已启用账户</span><strong>{{ enabledCount }}</strong></article>
-      <article><span>默认发件账户</span><strong>{{ accounts.find((item) => item.is_default)?.display_name || '未设置' }}</strong></article>
-    </div>
 
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon>
       <template #default><el-button size="small" @click="loadAccounts">重试</el-button></template>
@@ -599,6 +590,4 @@ onMounted(loadAccounts)
   </section>
 </template>
 
-<style scoped lang="scss">
-.email-account-settings{min-width:0;color:#1d2129}.crumb{display:flex;gap:8px;align-items:center;margin-bottom:14px;color:#86909c;font-size:13px}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.page-heading h1{margin:0;font-size:28px}.page-heading p{margin:8px 0 0;color:#86909c}.page-actions{display:flex;gap:10px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.metrics article{min-width:0;padding:16px 18px;border:1px solid #e5e6eb;border-radius:8px;background:#fff}.metrics span,.table-card small{display:block;color:#86909c;font-size:12px}.metrics strong{display:block;overflow:hidden;margin-top:8px;font-size:22px;text-overflow:ellipsis;white-space:nowrap}.table-card b{display:block}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid #dbe6f5;border-radius:8px;background:#f7faff}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:#4e5969;font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:#4e5969;font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:#d46b08;font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:#fff}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #f2f3f5}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:#86909c;font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:#86909c;font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:#4e5969;line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.page-heading{flex-direction:column}.page-actions{width:100%}.metrics{grid-template-columns:1fr}.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}}
-</style>
+<style scoped lang="scss"> .email-account-settings{min-width:0;color:#1d2129}.crumb{display:flex;gap:8px;align-items:center;margin-bottom:14px;color:#86909c;font-size:13px}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.page-heading h1{margin:0;font-size:28px}.page-heading p{margin:8px 0 0;color:#86909c}.page-actions{display:flex;gap:10px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.metrics article{min-width:0;padding:16px 18px;border:1px solid #e5e6eb;border-radius:8px;background:#fff}.metrics span,.table-card small{display:block;color:#86909c;font-size:12px}.metrics strong{display:block;overflow:hidden;margin-top:8px;font-size:22px;text-overflow:ellipsis;white-space:nowrap}.table-card b{display:block}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid #dbe6f5;border-radius:8px;background:#f7faff}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:#4e5969;font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:#4e5969;font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:#d46b08;font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:#fff}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #f2f3f5}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:#86909c;font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:#86909c;font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:#4e5969;line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.page-heading{flex-direction:column}.page-actions{width:100%}.metrics{grid-template-columns:1fr}.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}} </style>

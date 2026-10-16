@@ -91,6 +91,41 @@ ITEM_FIELDS = [
 ]
 
 
+def sample_product_values_from_source(source):
+    """复制询盘或报价的产品快照，样品仍保持自己的可编辑记录。"""
+    product = getattr(source, "product", None)
+    if product is None and hasattr(source, "product_number") and hasattr(source, "product_item"):
+        product = source
+    source_name = (
+        getattr(source, "product_description", "")
+        or getattr(source, "product_description_snapshot", "")
+        or getattr(product, "product_name", "")
+    )
+    source_specification = (
+        getattr(source, "specification", "")
+        or getattr(source, "specification_snapshot", "")
+        or getattr(product, "specification", "")
+    )
+    if product is not None:
+        product_number = product.product_number
+        product_code = product.product_code
+        item_number = product.product_item.item_number
+    else:
+        product_number = getattr(source, "product_number_snapshot", "")
+        product_code = getattr(source, "product_code_snapshot", "")
+        item_number = getattr(source, "item_number_snapshot", "")
+    return {
+        "product": product,
+        "product_number_snapshot": product_number,
+        "product_code_snapshot": product_code,
+        "item_number_snapshot": item_number,
+        "product_name": source_name,
+        "specification": source_specification,
+        "material_snapshot": getattr(source, "material", "") or getattr(source, "material_snapshot", ""),
+        "product_image": getattr(source, "product_image", None),
+    }
+
+
 def _touch(instance):
     instance.updated_at = timezone.now()
     instance.save(update_fields=["updated_at"])
@@ -235,13 +270,13 @@ def _create_intake_products(*, sample_request, selections, source_type):
             specification = source.specification_snapshot
             inquiry_item = source.source_inquiry_item
             quotation_line = source
+        product_values = sample_product_values_from_source(source)
         product = SampleProduct.objects.create(
             sample_request=sample_request,
             source_inquiry_item=inquiry_item,
             source_quotation_line=quotation_line,
             line_number=line_number,
-            product_name=product_name,
-            specification=specification,
+            **product_values,
         )
         SampleItem.objects.create(
             sample_request=sample_request,

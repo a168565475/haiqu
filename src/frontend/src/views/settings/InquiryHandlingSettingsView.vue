@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { AxiosError } from 'axios'
 import { fetchInquiryHandlingSettings, saveInquiryHandlingSettings, type InquiryHandlingSettings } from '@/api/inquiryHandlingSettings'
 import { useAuthStore } from '@/stores/auth'
 import { handlingStageLabel, handlingTargetLabel } from '@/views/inquiries/inquiryWorktime'
 
-const router=useRouter(), auth=useAuthStore()
+const auth=useAuthStore()
 const loading=ref(false), saving=ref(false), error=ref(''), etag=ref('')
 const settings=ref<InquiryHandlingSettings | null>(null)
 const canEdit=computed(()=>auth.hasPermission('workflow.manage_sla_policy'))
@@ -54,7 +53,7 @@ onMounted(load)
 
 <template>
   <section class="inquiry-settings system-settings-theme" v-loading="loading">
-    <header><div><el-button link @click="router.push({name:'reference-data-settings'})">返回系统设置</el-button><h1>询盘处理时限</h1><p>设置各环节工作时长及大小周日历</p></div><div><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></div></header>
+    <header><div><h1>询盘处理时限</h1></div><div><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></div></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-alert title="新规则仅用于之后新开始的环节" description="正在计时和历史记录保留原规则、原截止时间；保存操作会记录修改前后内容。" type="info" :closable="false" show-icon />
     <div v-if="settings" class="settings-columns">

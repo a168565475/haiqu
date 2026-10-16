@@ -11,7 +11,6 @@ import {
 import {
   Delete,
   Download,
-  Edit,
   Lock,
   Plus,
   Refresh,
@@ -144,7 +143,6 @@ const visibleDictionaryTypes = computed(() => {
   })
 })
 const latestRelease = computed(() => configReleases.value[0] ?? null)
-const highlightedParameters = computed(() => systemParameters.value.slice(0, 4))
 
 function categoryCount(category: CategoryDefinition): number {
   return dictionaryTypes.value.filter((item) => category.groups.includes(item.group_code)).length
@@ -594,7 +592,6 @@ onMounted(loadPage)
       <header class="page-heading">
         <div>
           <h1>字典与业务参数</h1>
-          <p>集中维护业务枚举、提醒时限和默认值；所有变更保留版本与影响记录</p>
         </div>
         <div class="page-heading__actions">
           <el-button v-if="canViewProductionData" class="page-heading__link" tag="a" href="/settings/production-data">生产维护</el-button>
@@ -603,7 +600,9 @@ onMounted(loadPage)
           <el-button v-if="canViewMasterData" class="page-heading__link" tag="a" href="/settings/master-data">基础资料中心</el-button>
           <el-button v-if="authStore.user?.is_superuser || authStore.hasPermission('reference_data.view_numberrule')" class="page-heading__link" tag="a" href="/settings/number-rules">编号规则</el-button>
           <el-button class="page-heading__link" tag="a" href="/settings/theme">界面主题</el-button>
+          <el-button v-if="can(permissions.viewParameter)" class="page-heading__link" data-testid="open-parameters" @click="parameterDrawerVisible = true">业务参数</el-button>
           <el-button :icon="Download" @click="exportConfiguration">导出配置</el-button>
+          <el-button v-if="summary.pending_changes > 0 && can(permissions.publishRelease)" type="primary" @click="openPublishDialog">发布配置</el-button>
           <el-button v-if="can(permissions.addItem)" type="primary" :icon="Plus" @click="openCreateItem()">新增字典项</el-button>
         </div>
       </header>
@@ -634,29 +633,6 @@ onMounted(loadPage)
         </aside>
 
         <main class="settings-main">
-          <div class="metric-grid">
-            <article class="metric-card card-shell">
-              <span>启用字典项</span>
-              <strong>{{ summary.active_dictionary_items }}</strong>
-              <small>最近发布版本 v{{ summary.config_version ?? 0 }}</small>
-            </article>
-            <article class="metric-card card-shell">
-              <span>业务参数</span>
-              <strong>{{ summary.active_system_parameters }}</strong>
-              <small>全局生效参数</small>
-            </article>
-            <button
-              type="button"
-              class="metric-card metric-card--pending card-shell"
-              :disabled="!can(permissions.publishRelease)"
-              @click="openPublishDialog"
-            >
-              <span>待发布变更</span>
-              <strong>{{ summary.pending_changes }}</strong>
-              <small>{{ can(permissions.publishRelease) ? '点击检查并发布' : '需要发布权限' }}</small>
-            </button>
-          </div>
-
           <section class="filter-card card-shell">
             <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索字典编码、中英文名称" />
             <el-select v-model="statusFilter" class="status-filter" placeholder="全部状态">
@@ -712,23 +688,6 @@ onMounted(loadPage)
                 </template>
               </el-table-column>
             </el-table>
-          </section>
-
-          <section v-if="can(permissions.viewParameter)" class="parameter-card card-shell">
-            <div class="section-heading">
-              <div>
-                <h2>业务参数</h2>
-                <span>发布后全局生效</span>
-              </div>
-              <el-button link type="primary" @click="parameterDrawerVisible = true">查看全部</el-button>
-            </div>
-            <div class="parameter-grid">
-              <article v-for="parameter in highlightedParameters" :key="parameter.id" class="parameter-item">
-                <span>{{ parameter.chinese_name }}</span>
-                <strong>{{ formatParameterValue(parameter) }}</strong>
-                <el-button v-if="can(permissions.changeParameter)" link :icon="Edit" @click="openParameterEditor(parameter)">编辑</el-button>
-              </article>
-            </div>
           </section>
         </main>
       </div>
@@ -844,7 +803,7 @@ onMounted(loadPage)
 </template>
 
 <style scoped lang="scss">
-.reference-settings { min-width: 0; color: #202124; }
+.reference-settings { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #202124; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .page-heading h1 { margin: 0; font-size: 24px; line-height: 34px; font-weight: 650; }
 .page-heading p { margin: 6px 0 0; color: #7a7f87; font-size: 14px; }
@@ -853,43 +812,29 @@ onMounted(loadPage)
 .page-heading__link:hover,
 .page-heading__link:focus,
 .page-heading__link:visited { text-decoration: none; }
-.settings-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: start; }
+.settings-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: stretch; }
 .card-shell { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 1px 2px rgb(16 24 40 / 3%); }
-.category-panel { padding: 16px 12px; position: sticky; top: 16px; }
+.category-panel { min-height: 0; padding: 16px 12px; overflow-y: auto; }
 .category-panel__title { padding: 0 12px 12px; color: #8a8f98; font-size: 13px; }
 .category-button { width: 100%; height: 44px; display: flex; align-items: center; justify-content: space-between; margin: 2px 0; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: #4b4f57; cursor: pointer; font: inherit; }
 .category-button:hover { background: #f5f6f7; }
 .category-button.is-active { background: #18181b; color: #fff; }
 .category-button__count { min-width: 24px; height: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0 7px; border-radius: 11px; background: #f0f1f2; color: #666b73; font-size: 12px; }
 .category-button.is-active .category-button__count { background: rgb(255 255 255 / 18%); color: #fff; }
-.settings-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
-.metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.metric-card { min-height: 118px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 20px 24px; text-align: left; }
-button.metric-card { width: 100%; font: inherit; cursor: pointer; }
-button.metric-card:disabled { cursor: default; }
-.metric-card span { color: #727780; font-size: 13px; }
-.metric-card strong { margin-top: 7px; font-size: 28px; line-height: 34px; font-weight: 650; }
-.metric-card small { margin-top: 5px; color: #9a9ea6; font-size: 12px; }
-.metric-card--pending { border-color: #f1c987; background: #fffaf1; }
-.metric-card--pending strong { color: #b87515; }
+.settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
 .filter-card { min-height: 84px; display: flex; align-items: center; gap: 12px; padding: 18px 20px; }
 .filter-card :deep(.el-input) { max-width: 420px; }
 .status-filter { width: 140px; }
 .filter-card__version { margin-left: auto; color: #8a8f98; font-size: 13px; }
-.dictionary-card { min-height: 430px; padding: 0 20px 18px; overflow: hidden; }
+.dictionary-card { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 0 20px 18px; overflow: hidden; }
 .section-heading { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .section-heading > div { display: flex; align-items: baseline; gap: 10px; }
 .section-heading h2 { margin: 0; font-size: 17px; font-weight: 650; }
 .section-heading span { color: #969aa2; font-size: 12px; }
-.dictionary-table { width: 100%; }
+.dictionary-table { flex: 1; min-height: 0; width: 100%; }
+.dictionary-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
 .dictionary-table :deep(th.el-table__cell) { height: 46px; background: #f7f8fa; color: #73777f; font-weight: 500; }
 .dictionary-table :deep(td.el-table__cell) { height: 54px; }
-.parameter-card { padding: 0 20px 18px; }
-.parameter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #eceef1; border-radius: 8px; overflow: hidden; }
-.parameter-item { min-width: 0; min-height: 86px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; gap: 5px 8px; padding: 14px 16px; border-right: 1px solid #eceef1; }
-.parameter-item:last-child { border-right: 0; }
-.parameter-item > span { grid-column: 1 / -1; color: #7b8088; font-size: 12px; }
-.parameter-item strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .loading-card, .state-page { padding: 48px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }
 .state-page { min-height: 520px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .state-page--compact { min-height: 360px; }
@@ -908,11 +853,15 @@ button.metric-card:disabled { cursor: default; }
 .publish-summary p { margin: 5px 0 0; color: #7b8088; font-size: 13px; }
 .sort-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid #eceef1; }
 
+@media (max-width: 1200px) {
+  .page-heading { flex-wrap: wrap; }
+  .page-heading > div:first-child { flex: 1 0 100%; }
+  .page-heading h1 { white-space: nowrap; }
+  .page-heading__actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+}
+
 @media (max-width: 1599px) {
   .settings-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
-  .parameter-item strong { display: none; }
-  .parameter-item { grid-template-columns: 1fr auto; }
-  .metric-card { padding: 18px 20px; }
 }
 
 @media (max-width: 1100px) {
@@ -920,21 +869,15 @@ button.metric-card:disabled { cursor: default; }
   .category-panel { position: static; display: flex; gap: 6px; overflow-x: auto; padding: 10px; }
   .category-panel__title { display: none; }
   .category-button { flex: 0 0 auto; width: auto; gap: 10px; }
-  .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .parameter-item:nth-child(2) { border-right: 0; }
-  .parameter-item:nth-child(-n + 2) { border-bottom: 1px solid #eceef1; }
 }
 
 @media (max-width: 768px) {
   .page-heading { flex-direction: column; }
   .page-heading__actions { width: 100%; }
   .page-heading__actions .el-button { flex: 1; }
-  .metric-grid { grid-template-columns: 1fr; }
   .filter-card { flex-wrap: wrap; }
   .filter-card :deep(.el-input), .status-filter { width: 100%; max-width: none; }
   .filter-card__version { margin-left: 0; }
-  .parameter-grid, .form-grid { grid-template-columns: 1fr; }
-  .parameter-item { border-right: 0; border-bottom: 1px solid #eceef1; }
-  .parameter-item:last-child { border-bottom: 0; }
+  .form-grid { grid-template-columns: 1fr; }
 }
 </style>

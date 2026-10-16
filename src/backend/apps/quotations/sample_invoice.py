@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.conf import settings
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 
 
 TEMPLATE_PATH = Path(settings.BASE_DIR) / "apps" / "quotations" / "resources" / "camping_bed_quotation_template.xlsx"
@@ -342,7 +343,7 @@ def _shift_anchor(anchor, row_delta, y_delta):
 
 def _product_image_png(line):
     business_file = getattr(line, "product_image", None)
-    if business_file is None or business_file.scan_status != "CLEAN":
+    if business_file is None or business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
         return None
     try:
         media_root = Path(settings.MEDIA_ROOT).resolve()

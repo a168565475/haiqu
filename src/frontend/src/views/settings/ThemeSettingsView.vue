@@ -23,7 +23,6 @@ function selectTheme(theme: EnabledThemeId): void {
     <header class="page-heading">
       <div>
         <h1>界面主题</h1>
-        <p>选择 ERP 的界面配色，选择会保存在当前浏览器中。</p>
       </div>
     </header>
 

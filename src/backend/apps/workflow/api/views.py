@@ -19,6 +19,7 @@ from apps.core.api.concurrency import require_matching_etag
 from apps.customers.hard_delete import permanently_delete_task
 from apps.core.api.permissions import HasActiveEmployee
 from apps.crm.models import CustomerCommunication
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.customers.api.views import CustomerApiViewSetBase
 from apps.customers.models import CustomerAccount
 from apps.customers.selectors import accessible_customers
@@ -406,7 +407,7 @@ class TaskViewSet(
             raise NotFound('来源附件不存在或无权访问。')
         link = source_object.file_links.filter(
             business_file_id=file_id,
-            business_file__scan_status="CLEAN",
+            business_file__scan_status__in=USABLE_FILE_SCAN_STATUSES,
             business_file__archived_at__isnull=True,
         ).select_related("business_file").first()
         if not link:

@@ -8,6 +8,7 @@ from django.db.models import Count, F, Min, Q, Sum
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -15,10 +16,11 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
+from apps.core.api.exceptions import Conflict
 from apps.customers.models import CustomerEntityAddress, CustomerTransactionEntity
 from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, FileScanStatus
-from apps.files.uploads import save_scanned_document
+from apps.files.uploads import save_scanned_document, save_scanned_image
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
 from apps.quotations.models import QuotationOutcomeStatus, QuotationTemplate, QuotationVersion
@@ -34,6 +36,8 @@ from ..models import (
     SalesOrderStatus,
 )
 from ..selectors import accessible_sales_orders, sales_orders_with_context
+from ..pricing import current_cny_rate
+from ..presentation import specification_display
 from ..services import (
     _quote_unit_price,
     add_collaboration_event,
@@ -42,6 +46,8 @@ from ..services import (
     complete_sales_order,
     confirm_sales_order,
     create_sales_order,
+    remove_sales_order_line_product_image,
+    set_sales_order_line_product_image,
     update_sales_order,
 )
 from .serializers import (
@@ -53,6 +59,7 @@ from .serializers import (
     SalesOrderListSerializer,
     SalesOrderCompleteSerializer,
     SalesOrderWriteSerializer,
+    SalesOrderExchangeRatePreviewResponseSerializer,
 )
 
 
@@ -60,7 +67,12 @@ FIXED_SELLER_TEMPLATE_CODE = "HAIQU_FIXED_BILINGUAL"
 
 
 def _quotation_product_mapping(line):
-    """只在报价快照能唯一指向一个有效产品时自动映射。"""
+    """优先使用报价行已确认的产品关联，旧数据才按快照候选匹配。"""
+    linked_product = getattr(line, "product", None)
+    if linked_product is not None:
+        if linked_product.status == ProductStatus.ACTIVE and linked_product.archived_at is None:
+            return linked_product, "MATCHED", 1
+        return None, "UNMATCHED", 0
     description = (line.product_description_snapshot or "").strip()
     specification = (line.specification_snapshot or "").strip().casefold()
     if not description:
@@ -69,7 +81,7 @@ def _quotation_product_mapping(line):
     active_products = ProductInformation.objects.filter(
         status=ProductStatus.ACTIVE,
         archived_at__isnull=True,
-    ).select_related("unit")
+    ).select_related("unit", "category", "product_item")
     name_matches = list(active_products.filter(product_name__iexact=description))
     if name_matches:
         specification_matches = [
@@ -93,18 +105,20 @@ class SalesOrderViewSet(
     action_permission_map = {
         "list": "sales_orders.view_salesorder", "retrieve": "sales_orders.view_salesorder",
         "options": "sales_orders.view_salesorder", "quotation_options": "sales_orders.add_salesorder",
+        "exchange_rate_preview": ("sales_orders.add_salesorder", "sales_orders.change_salesorder", "access_control.confirmedchange_salesorder"),
         "create": "sales_orders.add_salesorder", "partial_update": "sales_orders.change_salesorder",
         "confirm": "access_control.confirm_salesorder", "complete": "access_control.complete_salesorder",
         "confirmed_change": "access_control.confirmedchange_salesorder", "collaboration_events": "access_control.collaborate_salesorder",
         "cancel_batch": "access_control.cancelbatch_salesorder", "upload_evidence": "sales_orders.change_salesorder",
-        "business_file": "sales_orders.view_salesorder",
+        "business_file": "sales_orders.view_salesorder", "product_image": "sales_orders.change_salesorder",
+        "product_image.GET": "sales_orders.view_salesorder", "product_image.HEAD": "sales_orders.view_salesorder",
     }
 
     def get_permissions(self):
         from apps.access_control.sales_policy import enabled
         from apps.core.api.permissions import BusinessActionPermission
         permissions = super().get_permissions()
-        return [*permissions, BusinessActionPermission()] if enabled() else permissions
+        return [*permissions, BusinessActionPermission()] if enabled() or self.action == "exchange_rate_preview" else permissions
 
     def scope_permission(self):
         from apps.access_control.sales_policy import action_permission
@@ -176,6 +190,19 @@ class SalesOrderViewSet(
     def retrieve(self, request, *args, **kwargs):
         return self._detail_response(self.get_object())
 
+    @extend_schema(
+        parameters=[OpenApiParameter("currency_code", str, required=True)],
+        responses={200: SalesOrderExchangeRatePreviewResponseSerializer},
+        description="读取销售订单原币兑人民币的唯一有效配置汇率，保存时复核记录编号。",
+    )
+    @action(detail=False, methods=["get"], url_path="exchange-rate-preview")
+    def exchange_rate_preview(self, request):
+        record, snapshot = current_cny_rate(request.query_params.get("currency_code"))
+        return Response({"data": {
+            "exchange_rate_record_id": str(record.pk) if record else None,
+            "exchange_rate": snapshot["rate"], "exchange_rate_snapshot": snapshot,
+        }})
+
     def create(self, request, *args, **kwargs):
         serializer = SalesOrderWriteSerializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
@@ -218,7 +245,7 @@ class SalesOrderViewSet(
             archived_at__isnull=True,
         ).first()
         employees = Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True).order_by("employee_code")[:500]
-        products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related("unit", "category").order_by("product_number")[:1000]
+        products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related("unit", "category", "product_item").order_by("product_number")[:1000]
         currencies = Currency.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True).order_by("sort_order", "code")
         accepted_versions = QuotationVersion.objects.filter(
             quotation__customer_account__in=accessible_customers(request, "view_quotationversion"),
@@ -248,7 +275,7 @@ class SalesOrderViewSet(
                 "is_verified": item.is_verified,
             } for item in addresses],
             "employees": [{"id": str(item.pk), "employee_code": item.employee_code, "display_name": item.display_name} for item in employees],
-            "products": [{"id": str(item.pk), "product_number": item.product_number, "product_code": item.product_code, "product_name": item.product_name, "specification": item.specification, "unit_code": item.unit.unit_code, "unit_name": item.unit.unit_name, "category_id": str(item.category_id), "category_name": item.category.category_name} for item in products],
+            "products": [{"id": str(item.pk), "product_number": item.product_number, "product_code": item.product_code, "item_number": item.product_item.item_number, "product_name": item.product_name, "specification": item.specification, "unit_id": str(item.unit_id), "unit_code": item.unit.unit_code, "unit_name": item.unit.unit_name, "category_id": str(item.category_id), "category_name": item.category.category_name} for item in products],
             "currencies": [{"id": str(item.pk), "code": item.code, "name": item.chinese_name, "symbol": item.symbol} for item in currencies],
             "accepted_quotation_versions": [{
                 "id": str(item.pk),
@@ -281,7 +308,16 @@ class SalesOrderViewSet(
                 "quotation__customer_account",
                 "quotation__transaction_entity",
                 "quotation__owner_employee",
-            ).prefetch_related("lines__basis_prices", "quotation__acceptance"),
+            ).prefetch_related(
+                "lines__basis_prices",
+                "lines__product__unit",
+                "lines__product__category",
+                "lines__product__product_item",
+                "lines__product_category",
+                "lines__product_unit",
+                "lines__product_color",
+                "quotation__acceptance",
+            ),
             pk=version_id,
         )
         quotation = version.quotation
@@ -318,7 +354,17 @@ class SalesOrderViewSet(
                 "line_number": line.line_number,
                 "product_description": line.product_description_snapshot,
                 "specification": line.specification_snapshot,
+                "specification_display": specification_display(line),
                 "color": line.color_snapshot or "",
+                "product_id": str(line.product_id) if line.product_id else None,
+                "product_category_id": str(line.product_category_id) if line.product_category_id else None,
+                "product_unit_id": str(line.product_unit_id) if line.product_unit_id else None,
+                "product_color_id": str(line.product_color_id) if line.product_color_id else None,
+                "product_image_id": str(line.product_image_id) if line.product_image_id else None,
+                "product_number": line.product_number_snapshot,
+                "product_code": line.product_code_snapshot,
+                "item_number": line.item_number_snapshot,
+                "material": line.material_snapshot,
                 "quantity": str(line.quantity),
                 "converted_quantity": str(converted),
                 "reserved_quantity": str(reserved),
@@ -334,6 +380,8 @@ class SalesOrderViewSet(
                     "specification": suggested.specification,
                     "unit_code": suggested.unit.unit_code,
                     "unit_name": suggested.unit.unit_name,
+                    "category_id": str(suggested.category_id),
+                    "category_name": suggested.category.category_name,
                 } if suggested else None),
                 "product_mapping_status": mapping_status,
                 "product_mapping_candidate_count": mapping_candidate_count,
@@ -448,6 +496,49 @@ class SalesOrderViewSet(
         order.updated_at = timezone.now()
         order.save(update_fields=["updated_at"])
         return self._detail_response(order, status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get", "post", "delete"], url_path=r"lines/(?P<line_id>[^/.]+)/product-image")
+    def product_image(self, request, pk=None, line_id=None):
+        order = self.get_object()
+        line = get_object_or_404(order.lines.select_related("product_image"), pk=line_id)
+        image = line.product_image
+        if request.method in {"GET", "HEAD"}:
+            if image is None:
+                raise Http404("产品图片不存在。")
+            if image.scan_status not in {FileScanStatus.CLEAN, FileScanStatus.SKIPPED}:
+                return Response({"detail": "图片未通过安全扫描。"}, status=status.HTTP_409_CONFLICT)
+            media_root = Path(settings.MEDIA_ROOT).resolve()
+            storage_path = (media_root / image.storage_key).resolve()
+            try:
+                storage_path.relative_to(media_root)
+            except ValueError as exc:
+                raise Http404("图片路径无效。") from exc
+            if not storage_path.is_file():
+                raise Http404("图片文件不存在。")
+            return FileResponse(storage_path.open("rb"), content_type=image.content_type)
+
+        require_matching_etag(request, order)
+        if order.status != SalesOrderStatus.DRAFT:
+            raise Conflict("销售订单确认后不能直接修改产品图片，请发起订单变更。")
+        if request.method == "DELETE":
+            updated = remove_sales_order_line_product_image(
+                order=order, line=line, actor_employee=request.employee, request=request,
+            )
+            return self._detail_response(updated)
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file is None:
+            raise ValidationError({"file": "请选择产品图片。"})
+        business_file = save_scanned_image(
+            uploaded_file,
+            request.employee,
+            storage_folder=f"sales-orders/{order.pk}/product-images",
+            field_label="产品图片",
+        )
+        updated = set_sales_order_line_product_image(
+            order=order, line=line, business_file=business_file,
+            actor_employee=request.employee, request=request,
+        )
+        return self._detail_response(updated, status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"], url_path=r"business-files/(?P<file_id>[^/.]+)")
     def business_file(self, request, pk=None, file_id=None):

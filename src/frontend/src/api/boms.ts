@@ -13,6 +13,8 @@ import type {
   BomOptions,
   BomFilterOptions,
   BomPlasticMaterialQuery,
+  BomPipeMaterialMatchQuery,
+  BomPipeMaterialMatches,
   BomQuery,
   BomSectionInput,
   BomStats,
@@ -28,6 +30,11 @@ import type { ProductionTaskProductInput } from '@/types/productionTask'
 
 const basePath = '/api/v1/boms/'
 const workbookRequestTimeout = 180_000
+
+export async function fetchBomPipeMaterialMatches(query: BomPipeMaterialMatchQuery): Promise<BomPipeMaterialMatches> {
+  const { data } = await apiClient.get<DataResponse<BomPipeMaterialMatches>>(`${basePath}pipe-material-matches/`, { params: query })
+  return data.data
+}
 
 export async function fetchBomFilterOptions(): Promise<BomFilterOptions> {
   const { data } = await apiClient.get<DataResponse<BomFilterOptions>>(`${basePath}options/`, { params: { scope: 'filters' } })
@@ -171,7 +178,7 @@ export async function verifyBom(id: string, quantityConfirmationReason: string, 
 
 export async function confirmBomProduct(
   id: string,
-  payload: { product_id: string; product_color_id: string; color_code?: string },
+  payload: ({ product_id: string; new_product?: never } | { new_product: import('@/types/product').ProductInformationInput; product_id?: never }) & { product_color_id: string; color_code?: string; material?: string },
   etag: string,
 ): Promise<VersionedBom> {
   return versionedBom(await apiClient.post<DataResponse<BomDetail>>(

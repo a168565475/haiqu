@@ -1,8 +1,82 @@
-from django.db.models import Prefetch, Q
+from decimal import Decimal
+
+from django.db.models import Case, CharField, Exists, OuterRef, Prefetch, Q, Sum, Value, When
 
 from apps.customers.selectors import accessible_customers
 
-from .models import ProductionTask
+from .models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
+
+
+def external_business_relations(model):
+    """仅检查反向业务外键；本模块子记录由删除服务显式处理。"""
+    return [relation for relation in model._meta.related_objects
+            if relation.related_model._meta.app_label != "production_tasks"
+            and not relation.many_to_many]
+
+
+def external_business_blocker(instance):
+    for relation in external_business_relations(type(instance)):
+        if relation.related_model._base_manager.filter(**{relation.field.name: instance.pk}).exists():
+            return business_relation_message(relation)
+    return ""
+
+
+def business_relation_message(relation):
+    module = {"boms": "BOM", "production_scheduling": "排产", "procurement": "采购",
+              "inventory": "库存", "material_issues": "领料", "outsourcing": "外协",
+              "workshop_reporting": "工价或报工"}.get(
+                  relation.related_model._meta.app_label, str(relation.related_model._meta.verbose_name))
+    return f"已关联{module}记录，不能删除。"
+
+
+def production_quantity_source(line):
+    if line.sales_order_delivery_batch_line_id:
+        return line.sales_order_delivery_batch_line
+    task = line.production_task
+    if task.sales_order_id and task.sales_order_delivery_batch_id and task.sales_order_line_id:
+        from apps.sales_orders.models import SalesOrderDeliveryBatchLine
+        return SalesOrderDeliveryBatchLine.objects.filter(
+            delivery_batch_id=task.sales_order_delivery_batch_id,
+            sales_order_line_id=task.sales_order_line_id,
+        ).first()
+    return None
+
+
+def max_production_quantity(line):
+    source = production_quantity_source(line)
+    if source is None:
+        return None
+    # 兼容旧任务只在任务头记录销售行的占用，仍按名义数量计算，不加误差。
+    allocated = ProductionTaskProduct.objects.filter(
+        Q(sales_order_delivery_batch_line_id=source.pk)
+        | Q(sales_order_delivery_batch_line__isnull=True,
+            production_task__sales_order_delivery_batch_id=source.delivery_batch_id,
+            production_task__sales_order_line_id=source.sales_order_line_id),
+    ).exclude(production_task_id=line.production_task_id).exclude(
+        production_task__status=ProductionTaskStatus.CANCELLED,
+    ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    return max(0, int(Decimal(source.quantity) - allocated))
+
+
+def production_sales_order_sources(request):
+    """生产建单、来源读取和来源图片共用同一数据权限边界。"""
+    from apps.access_control import module_policy
+    from apps.sales_orders.models import SalesOrder, SalesOrderStatus
+    from apps.sales_orders.selectors import accessible_sales_orders
+
+    can_select_sources = (
+        module_policy.has_module_grant(request, "production_tasks")
+        if module_policy.enabled()
+        else request.user.has_perm("production_tasks.add_productiontask")
+    )
+    if can_select_sources:
+        queryset = SalesOrder.objects.all()
+    else:
+        queryset = accessible_sales_orders(request)
+    return queryset.filter(
+        archived_at__isnull=True, customer_account__archived_at__isnull=True,
+        status__in=[SalesOrderStatus.CONFIRMED, SalesOrderStatus.FULFILLING],
+    )
 
 
 def accessible_production_tasks(request):
@@ -41,13 +115,21 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
             "created_by_employee", "sales_order_line", "sales_order__source_quotation_version",
             "planner", "accepted_by_employee", "start_waiver_by_employee",
         ])
+    blockers = [When(
+        Exists(relation.related_model._base_manager.filter(**{relation.field.name: OuterRef("pk")})),
+        then=Value(business_relation_message(relation)),
+    ) for relation in external_business_relations(ProductionTaskProduct)]
+    product_queryset = ProductionTaskProduct.objects.annotate(
+        _deletion_blocked_reason=Case(*blockers, default=Value(""), output_field=CharField()),
+    )
     prefetched = [
+        Prefetch("products", queryset=product_queryset),
         "followers",
         "products__product",
         "products__unit",
         "products__currency",
         "products__product_color",
-        "products__sales_order_delivery_batch_line__sales_order_line",
+        "products__sales_order_delivery_batch_line__sales_order_line__source_quotation_line__source_inquiry_item",
         "products__image_file",
         "products__images__image_file",
         "products__details__image_file",

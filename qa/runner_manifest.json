@@ -1,0 +1,450 @@
+{
+  "version": 1,
+  "modules": {
+    "production": [
+      {
+        "id": "bom-pipe-material-match-readonly",
+        "path": "qa/bom_pipe_material_match_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOM_PIPE_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 480,
+        "enabled": true,
+        "order": 15,
+        "artifacts": [
+          "output/playwright/bom-pipe-material-match-20261015/readonly-report.json",
+          "output/playwright/bom-pipe-material-match-20261015/*.png",
+          "output/playwright/bom-pipe-material-match-20261015/bom-pipe-material-match/readonly-report.json",
+          "output/playwright/bom-pipe-material-match-20261015/bom-pipe-material-match/*.png"
+        ],
+        "preconditions": [
+          "只使用 BOM_PIPE_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，禁止自动登录及输出凭据、Cookie、完整响应正文",
+          "BOM_PIPE_QA_BASE_URL 默认 http://localhost:8080，目标 dbe06399-b6f0-40b1-bdba-9e0d9b2861da 真实可读可编辑且产品已核对",
+          "逐行检查当前管材参数保留及真实匹配状态；不硬编码旧的5行或无匹配结论，数据变化如实报告",
+          "从 pipe-materials 取少量真实原料 ID，再只读 raw-materials/{id}/ 获得截面、厚度；不猜规格字符串，不扩大既有接口",
+          "按真实字典在浏览器草稿验证唯一可靠候选自动关联、多候选或待复核候选手选；缺少真实覆盖记录 PARTIAL，不造数据、不 Mock",
+          "提交材质、截面、厚度、形状与弹窗实际计算长度；计算长度仅参与是否允许自动关联，不冒充库存长度或筛掉手选候选，不默认长度1或替换厚度",
+          "拦截全部非 GET/HEAD 请求并将写请求尝试判失败；不点击保存、确认、应用修改或上传，不创建正式业务记录",
+          "沿用项目 playwright-core 和本机 Chrome/Edge；BOM_PIPE_QA_BROWSER_PATH 可指定既有浏览器，不新增依赖",
+          "独占 profile 已登记为 .tmp/bom_pipe_material_match_20261015/profile；仅不存在时创建，finally关闭浏览器后校验精确路径、清理并复查；Session文件由主任务清理",
+          "后端业务/API测试和脚本审阅通过后，由主任务通过 qa.run.run_entry 按本ID单独执行；1920x1080、1102x884截图及DOM几何证据保留"
+        ]
+      },
+      {
+        "id": "bom-unsaved-fabric-readonly",
+        "path": "qa/bom_unsaved_fabric_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOM_FABRIC_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 360,
+        "enabled": true,
+        "order": 14,
+        "artifacts": [
+          "output/playwright/bom-unsaved-fabric-20261015/readonly-report.json",
+          "output/playwright/bom-unsaved-fabric-20261015/*.png"
+        ],
+        "preconditions": [
+          "只使用 BOM_FABRIC_QA_STORAGE_STATE 指定的已有 Session，缺失或失效阻断，禁止自动登录；不输出 Cookie、凭据或响应正文",
+          "BOM_FABRIC_QA_BASE_URL 默认 http://localhost:8080；真实目标 dbe06399-b6f0-40b1-bdba-9e0d9b2861da 必须可读可编辑且产品已核对",
+          "从真实 editor-reference-options、fabric-materials 和 semi-finished-materials API 选择资料；仅在浏览器添加面料并选择来源，缺少真实资料记录 PARTIAL，不生成假数据",
+          "优先真实材质为空或 / 的非管材裁剪资料，验证读取未保存来源面料材质；无该真实候选时验证自身有效材质优先并记录回退场景未覆盖，不通过清空字段造测试数据",
+          "拦截全部非 GET/HEAD 请求并将写请求尝试判失败；不点击 BOM 保存、确认或行应用按钮；裁剪选择器确认添加仅复制真实资料到未保存页面草稿",
+          "沿用项目 playwright-core 和本机 Chrome/Edge；可通过 BOM_FABRIC_QA_BROWSER_PATH 指定既有浏览器，不新增依赖",
+          "独占 profile 为 .tmp/bom_unsaved_fabric_20261015/profile，不存在才创建，finally 关闭并核实精确路径后清理复查；session.json 由主任务清理",
+          "先完成后端业务/API测试和脚本审阅，再通过 qa.run.run_entry 按本 ID 显式运行；1920x1080 和 1102x884 截图及几何证据保留"
+        ]
+      },
+      {
+        "id": "bom-editor-tabs-readonly",
+        "path": "qa/bom_editor_tabs_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOM_TABS_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 360,
+        "enabled": true,
+        "order": 13,
+        "artifacts": [
+          "output/playwright/bom-editor-tabs-20261015/readonly-report.json",
+          "output/playwright/bom-editor-tabs-20261015/*.png"
+        ],
+        "preconditions": [
+          "仅使用 BOM_TABS_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，禁止自动登录，不输出凭据、Cookie 或完整响应",
+          "BOM_TABS_QA_BASE_URL 默认 http://localhost:8080；目标 BOM 默认 dbe06399-b6f0-40b1-bdba-9e0d9b2861da，须为真实可读可编辑且产品已核对的记录",
+          "拦截并拒绝全部非 GET/HEAD /api/ 请求，任何写请求尝试都导致失败；禁止确认、保存、上传或创建业务数据，材质仅在浏览器修改并还原",
+          "使用项目 playwright-core 和本机 Chrome/Edge；BOM_TABS_QA_BROWSER_PATH 可指定已安装浏览器，不安装依赖",
+          "浏览器 profile 登记在 .tmp/bom_editor_tabs_20261015/browser/profile；仅在不存在时创建，finally 关闭浏览器、核实精确路径、删除并复查；会话文件由主任务清理",
+          "完成后端业务/API检查后，通过 qa.run.run_entry 按本 ID 单独执行；1920x1080 与 1101x884 截图、计算样式、键盘页签与锁定弹窗证据保留，缺失真实数据覆盖标为 PARTIAL"
+        ]
+      },
+      {
+        "id": "production-task-edit-b-readonly",
+        "path": "qa/production_task_edit_b_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 360,
+        "enabled": true,
+        "order": 12,
+        "artifacts": [
+          "output/production-task-edit-b-20261015/readonly-report.json",
+          "output/production-task-edit-b-20261015/edit-*.png"
+        ],
+        "preconditions": [
+          "正常 Session/CSRF 登录 POST /api/auth/login/ 是唯一允许的非 GET/HEAD 请求，其余业务写请求被拦截并导致失败；不提交保存、删除或上传",
+          "认证二选一：TASK_EDIT_QA_USERNAME 与 TASK_EDIT_QA_PASSWORD，或 TASK_EDIT_QA_STORAGE_STATE；不在报告输出凭据、Cookie 或完整响应",
+          "TASK_EDIT_QA_TASK_ID 默认 c0622b08-31a7-4dfa-9338-960e106e1151，须为真实可读可编辑任务；只读任务列表和详情，缺失覆盖明确报告，不创建演示记录",
+          "TASK_EDIT_QA_BASE_URL 默认 http://localhost:8080；TASK_EDIT_QA_BROWSER_PATH 可指定已安装浏览器，沿用项目 playwright-core",
+          "按后端业务测试、API 测试、已登记 QA、headless 视觉的顺序；通过 qa.run.run_entry 按本 ID 显式运行，不顺带执行旧列表或创建页脚本",
+          "browser_temp 已由本次编辑 B 文档登记，仅在精确目录不存在时创建；finally 关闭浏览器、清理并复查，保留报告与四视口截图"
+        ]
+      },
+      {
+        "id": "production-task-detail-b-readonly",
+        "path": "qa/production_task_detail_b_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 360,
+        "enabled": true,
+        "order": 11,
+        "artifacts": [
+          "output/production-task-detail-b-20261015/readonly-report.json",
+          "output/production-task-detail-b-20261015/detail-*.png"
+        ],
+        "preconditions": [
+          "已审查的查看页专属只读脚本：认证 POST /api/auth/login/ 是唯一允许的非 GET/HEAD 请求，业务写请求被拦截并导致失败",
+          "认证二选一：TASK_DETAIL_QA_USERNAME 与 TASK_DETAIL_QA_PASSWORD，或 TASK_DETAIL_QA_STORAGE_STATE；脚本自行校验，不在报告输出凭据或完整响应",
+          "可选 TASK_DETAIL_QA_TASK_ID 指定真实任务；未指定时只读选择已有可读任务，不创建演示数据；缺失状态/空档案等覆盖项必须报告",
+          "TASK_DETAIL_QA_BASE_URL 缺省 http://localhost:8080；可用 TASK_DETAIL_QA_BROWSER_PATH 指定已安装浏览器；使用现有 playwright-core",
+          "先完成本次相关后端业务/API检查；通过 qa.run.run_entry 按本 ID 显式运行，避免顺带执行旧列表/创建页脚本",
+          "browser_temp 已在 docs/production-task-detail-design-b-2026-10-15.md 登记；仅创建不存在的确切目录，finally关闭浏览器后清理并复查；保留最终报告与截图"
+        ]
+      },
+      {
+        "id": "production-management-isolated-api",
+        "path": "qa/production_management_e2e.cjs",
+        "runtime": "node",
+        "args": ["api"],
+        "category": "business",
+        "risk": "isolated-write",
+        "database_target": "haiqu-task-mgmt-20261015-postgres/haiqu_task_mgmt",
+        "browser_mode": "none",
+        "account_required": true,
+        "account_env": ["TASK_MGMT_SECRET"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": false,
+        "order": 97,
+        "artifacts": ["output/playwright/production-management-20261015/api-report.json"],
+        "preconditions": ["仅18215/18216任务隔离环境，完成seed；先执行后端测试", "通过qa.run.run_entry按本ID显式执行，禁止正式库"]
+      },
+      {
+        "id": "production-management-isolated-pages",
+        "path": "qa/production_management_e2e.cjs",
+        "runtime": "node",
+        "args": ["pages"],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "haiqu-task-mgmt-20261015-postgres/haiqu_task_mgmt",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["TASK_MGMT_SECRET"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": false,
+        "order": 98,
+        "artifacts": ["output/playwright/production-management-20261015/pages-report.json", "output/playwright/production-management-20261015/*.png"],
+        "preconditions": ["仅18215/18216任务隔离环境，API阶段已通过", "真实页面交互、Session/CSRF，无Mock；结束关闭浏览器"]
+      },
+      {
+        "id": "sales-cny-isolated-stale-rate",
+        "path": "qa/sales_cny_isolated_e2e.cjs",
+        "runtime": "node",
+        "args": [
+          "stale"
+        ],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "haiqu-sales-cny-20261015-postgres/haiqu_sales_cny",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [
+          "SALES_CNY_QA_PASSWORD"
+        ],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": false,
+        "order": 96,
+        "artifacts": [
+          "output/playwright/sales-cny-followups-20261015/stale-report.json"
+        ],
+        "preconditions": [
+          "仅18205/18206隔离环境，先完成api/pages",
+          "真实更正EUR汇率并保存隔离草稿，检查409表单保留和再次确认"
+        ]
+      },
+      {
+        "id": "sales-cny-isolated-api",
+        "runtime": "node",
+        "browser_mode": "none",
+        "required_env": [],
+        "order": 94,
+        "timeout_seconds": 300,
+        "artifacts": [
+          "output/playwright/sales-cny-followups-20261015/api-report.json"
+        ],
+        "account_env": [
+          "SALES_CNY_QA_PASSWORD"
+        ],
+        "path": "qa/sales_cny_isolated_e2e.cjs",
+        "preconditions": [
+          "仅任务独占 18205/18206，seed 声明 haiqu_sales_cny，禁止正式服务",
+          "后端测试先通过，再 API，旧单隔离补算后执行 pages；真实 Session/CSRF/API，无 Mock"
+        ],
+        "enabled": false,
+        "risk": "isolated-write",
+        "database_target": "haiqu-sales-cny-20261015-postgres/haiqu_sales_cny",
+        "account_required": true,
+        "args": [
+          "api"
+        ],
+        "category": "business"
+      },
+      {
+        "id": "sales-cny-isolated-pages",
+        "runtime": "node",
+        "browser_mode": "headless",
+        "required_env": [],
+        "order": 95,
+        "timeout_seconds": 300,
+        "artifacts": [
+          "output/playwright/sales-cny-followups-20261015/pages-report.json"
+        ],
+        "account_env": [
+          "SALES_CNY_QA_PASSWORD"
+        ],
+        "path": "qa/sales_cny_isolated_e2e.cjs",
+        "preconditions": [
+          "仅任务独占 18205/18206，seed 声明 haiqu_sales_cny，禁止正式服务",
+          "后端测试先通过，再 API，旧单隔离补算后执行 pages；真实 Session/CSRF/API，无 Mock"
+        ],
+        "enabled": false,
+        "risk": "isolated-write",
+        "database_target": "haiqu-sales-cny-20261015-postgres/haiqu_sales_cny",
+        "account_required": true,
+        "args": [
+          "pages"
+        ],
+        "category": "page"
+      },
+      {
+        "id": "production-layout-b-isolated-api",
+        "path": "qa/production_layout_b_isolated_e2e.cjs",
+        "runtime": "node",
+        "args": ["api"],
+        "category": "business",
+        "risk": "isolated-write",
+        "database_target": "haiqu-layout-b-20261015-postgres/haiqu_layout_b",
+        "browser_mode": "none",
+        "account_required": true,
+        "account_env": ["LAYOUT_B_QA_PASSWORD"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": false,
+        "order": 92,
+        "artifacts": ["output/playwright/production-layout-b-20261015/api-report.json"],
+        "preconditions": ["仅限任务独占127.0.0.1:18195，seed必须声明haiqu_layout_b", "先完成后端业务测试与隔离迁移，再显式运行api；结束清理登记容器及数据库"]
+      },
+      {
+        "id": "production-layout-b-isolated-pages",
+        "path": "qa/production_layout_b_isolated_e2e.cjs",
+        "runtime": "node",
+        "args": ["pages"],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "haiqu-layout-b-20261015-postgres/haiqu_layout_b",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["LAYOUT_B_QA_PASSWORD"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": false,
+        "order": 93,
+        "artifacts": ["output/playwright/production-layout-b-20261015/pages-report.json", "output/playwright/production-layout-b-20261015/*.png", "output/playwright/production-layout-b-20261015/dom-*.json"],
+        "preconditions": ["仅限任务独占18195/18196，api阶段先通过", "真实Session/CSRF/API，不拦截伪接口；headless两视口，finally关闭浏览器并清理临时目录"]
+      },
+      {
+        "id": "order-correction-isolated-api",
+        "path": "qa/order_correction_isolated_e2e.cjs",
+        "runtime": "node",
+        "args": ["api"],
+        "category": "business",
+        "risk": "isolated-write",
+        "database_target": "haiqu-order-correction-20261015-postgres/order_correction_20261015",
+        "browser_mode": "none",
+        "account_required": true,
+        "account_env": ["ORDER_CORRECTION_QA_PASSWORD"],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": false,
+        "order": 90,
+        "artifacts": ["output/playwright/order-correction-20261015/api-report.json"],
+        "preconditions": [
+          "只允许本任务独占隔离服务 127.0.0.1:18015；拒绝缺少隔离 seed.json",
+          "先完成后端业务测试与隔离迁移、基础档案准备",
+          "显式直接运行 node qa/order_correction_isolated_e2e.cjs api；不会由 all 自动运行",
+          "API 会创建隔离单据，结束须销毁登记的本任务容器和数据库"
+        ]
+      },
+      {
+        "id": "order-correction-isolated-pages",
+        "path": "qa/order_correction_isolated_e2e.cjs",
+        "runtime": "node",
+        "args": ["pages"],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "haiqu-order-correction-20261015-postgres/order_correction_20261015",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["ORDER_CORRECTION_QA_PASSWORD"],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": false,
+        "order": 91,
+        "artifacts": ["output/playwright/order-correction-20261015/pages-report.json", "output/playwright/order-correction-20261015/*.png"],
+        "preconditions": [
+          "仅使用 127.0.0.1:18015/18016 隔离后端前端；API 阶段已通过",
+          "显式直接运行 node qa/order_correction_isolated_e2e.cjs pages；不会由 all 自动运行",
+          "真实 Session、真实产品 API，无 route Mock；浏览器 finally 关闭"
+        ]
+      },
+      {
+        "id": "production-tasks-readonly",
+        "path": "qa/production_tasks_1920_e2e.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": true,
+        "order": 10,
+        "artifacts": [
+          "qa/production_tasks_list_1920.png",
+          "qa/production_tasks_list_more_filters_1920.png"
+        ],
+        "preconditions": [
+          "开发前端 8080 可访问",
+          "脚本所需 Session/开发账号已由目标环境提供"
+        ]
+      },
+      {
+        "id": "production-bom-list-fixture-visual",
+        "path": "qa/production_bom_v3_lists_1920_visual.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "browser-fixture",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 120,
+        "enabled": false,
+        "order": 20,
+        "artifacts": [
+          "outputs/production_bom_v3_acceptance/20260911_layout_only/*.png"
+        ],
+        "preconditions": [
+          "仅用于 fixture 视觉回归，不能替代真实 API 验收"
+        ]
+      }
+    ],
+    "quotation": [
+      {
+        "id": "quotation-create-dialog-readonly",
+        "path": "qa/quotation_create_dialog_e2e.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": true,
+        "order": 10,
+        "artifacts": [
+          "qa/quotation-create-window-*.png"
+        ],
+        "preconditions": [
+          "开发前端 8080 和 API 8000 可访问",
+          "development-auto-login 可用；脚本断言业务写请求为 0"
+        ]
+      }
+    ],
+    "inquiry": [
+      {
+        "id": "inquiry-customer-density-readonly",
+        "path": "qa/inquiry_customer_table_density_1920_e2e.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["E2E_USERNAME", "E2E_PASSWORD"],
+        "required_env": [],
+        "timeout_seconds": 180,
+        "enabled": true,
+        "order": 10,
+        "artifacts": [],
+        "preconditions": [
+          "开发前端 8080 和 API 8000 可访问",
+          "E2E_USERNAME / E2E_PASSWORD 提供可读取询盘和客户的真实账号，使用正常登录与 Session/CSRF",
+          "询盘和客户列表均已有可读记录；页面业务写请求被拦截并断言为 0",
+          "新截图写入 QA_REPORT_DIR，缺省 output/playwright/inquiry-readonly；实际路径记录在 stdout"
+        ]
+      }
+    ]
+  }
+}
+

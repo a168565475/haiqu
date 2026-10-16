@@ -776,7 +776,7 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         production_task=task,
         production_task_number_snapshot=task.task_number,
         sales_order_number_snapshot=task.order_number,
-        customer_name_snapshot=task.customer_account.account_name,
+        customer_name_snapshot=task.customer_account.account_name if task.customer_account_id else "",
         source_revision=source["source_revision"],
         currency=currency,
         currency_code_snapshot=currency.code if currency else "",

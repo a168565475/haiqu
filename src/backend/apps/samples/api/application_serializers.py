@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
+from apps.products.models import ProductInformation, ProductStatus
 from ..models import SampleDeliveryBatch, SampleShippingMethod, SampleType
 
 
@@ -14,6 +15,12 @@ class SampleApplicationSerializer(serializers.Serializer):
     source_type = serializers.ChoiceField(choices=["inquiry", "quotation"], allow_null=True)
     source_id = serializers.UUIDField(allow_null=True)
     source_product_id = serializers.UUIDField(allow_null=True)
+    product_id = serializers.PrimaryKeyRelatedField(
+        source="product",
+        queryset=ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
     sample_type = serializers.ChoiceField(choices=SampleType.choices)
     shipping_method = serializers.ChoiceField(choices=SampleShippingMethod.choices)
     delivery_batch = serializers.ChoiceField(choices=SampleDeliveryBatch.choices)

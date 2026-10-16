@@ -1,0 +1,1450 @@
+{
+  "retrieved_date": "2026-10-15",
+  "rates": [
+    {
+      "base_currency_code": "AED",
+      "quote_currency_code": "CNY",
+      "rate": "1.82700000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/aed/cny"
+    },
+    {
+      "base_currency_code": "AFN",
+      "quote_currency_code": "CNY",
+      "rate": "0.10296752",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 9.7118 AFN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ALL",
+      "quote_currency_code": "CNY",
+      "rate": "0.08194975",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 12.2026 ALL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "AMD",
+      "quote_currency_code": "CNY",
+      "rate": "0.01850139",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 54.05 AMD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "AOA",
+      "quote_currency_code": "CNY",
+      "rate": "0.00728810",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 137.21 AOA；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ARS",
+      "quote_currency_code": "CNY",
+      "rate": "0.00441735",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 226.38 ARS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "AUD",
+      "quote_currency_code": "CNY",
+      "rate": "4.67940000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/aud/cny"
+    },
+    {
+      "base_currency_code": "AWG",
+      "quote_currency_code": "CNY",
+      "rate": "3.73692078",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.2676 AWG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "AZN",
+      "quote_currency_code": "CNY",
+      "rate": "3.93499390",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.25413 AZN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BAM",
+      "quote_currency_code": "CNY",
+      "rate": "3.82907030",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.26116 BAM；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BBD",
+      "quote_currency_code": "CNY",
+      "rate": "3.31213567",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.30192 BBD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BDT",
+      "quote_currency_code": "CNY",
+      "rate": "0.05421582",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 18.4448 BDT；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BHD",
+      "quote_currency_code": "CNY",
+      "rate": "17.78726432",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.05622 BHD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BIF",
+      "quote_currency_code": "CNY",
+      "rate": "0.00222588",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 449.26 BIF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BMD",
+      "quote_currency_code": "CNY",
+      "rate": "6.68762121",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.14953 BMD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BND",
+      "quote_currency_code": "CNY",
+      "rate": "5.22056904",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.19155 BND；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BOB",
+      "quote_currency_code": "CNY",
+      "rate": "0.57172260",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.7491 BOB；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BRL",
+      "quote_currency_code": "CNY",
+      "rate": "1.33253381",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.75045 BRL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BSD",
+      "quote_currency_code": "CNY",
+      "rate": "6.63173951",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.15079 BSD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BTN",
+      "quote_currency_code": "CNY",
+      "rate": "0.07029284",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 14.2262 BTN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BWP",
+      "quote_currency_code": "CNY",
+      "rate": "0.49615480",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.0155 BWP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BYN",
+      "quote_currency_code": "CNY",
+      "rate": "2.21911546",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.45063 BYN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "BZD",
+      "quote_currency_code": "CNY",
+      "rate": "3.29967663",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.30306 BZD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CAD",
+      "quote_currency_code": "CNY",
+      "rate": "4.71800000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/cad/cny"
+    },
+    {
+      "base_currency_code": "CDF",
+      "quote_currency_code": "CNY",
+      "rate": "0.00291630",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 342.9 CDF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CHF",
+      "quote_currency_code": "CNY",
+      "rate": "8.05880000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/chf/cny"
+    },
+    {
+      "base_currency_code": "CLP",
+      "quote_currency_code": "CNY",
+      "rate": "0.00680874",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 146.87 CLP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "COP",
+      "quote_currency_code": "CNY",
+      "rate": "0.00209877",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 476.47 COP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CRC",
+      "quote_currency_code": "CNY",
+      "rate": "0.01473275",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 67.876 CRC；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CUP",
+      "quote_currency_code": "CNY",
+      "rate": "0.27864467",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3.5888 CUP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CVE",
+      "quote_currency_code": "CNY",
+      "rate": "0.06791725",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 14.7238 CVE；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "CZK",
+      "quote_currency_code": "CNY",
+      "rate": "0.30727630",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3.2544 CZK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "DJF",
+      "quote_currency_code": "CNY",
+      "rate": "0.03765769",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 26.555 DJF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "DKK",
+      "quote_currency_code": "CNY",
+      "rate": "1.00410000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/dkk/cny"
+    },
+    {
+      "base_currency_code": "DOP",
+      "quote_currency_code": "CNY",
+      "rate": "0.10827550",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 9.2357 DOP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "DZD",
+      "quote_currency_code": "CNY",
+      "rate": "0.04965736",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 20.138 DZD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "EGP",
+      "quote_currency_code": "CNY",
+      "rate": "0.12633122",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 7.9157 EGP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ERN",
+      "quote_currency_code": "CNY",
+      "rate": "0.44054804",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.2699 ERN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ETB",
+      "quote_currency_code": "CNY",
+      "rate": "0.04142330",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 24.141 ETB；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "EUR",
+      "quote_currency_code": "CNY",
+      "rate": "7.50680000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/eur/cny"
+    },
+    {
+      "base_currency_code": "FJD",
+      "quote_currency_code": "CNY",
+      "rate": "2.97335871",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.33632 FJD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "FKP",
+      "quote_currency_code": "CNY",
+      "rate": "8.86367665",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.11282 FKP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GBP",
+      "quote_currency_code": "CNY",
+      "rate": "8.87090000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/gbp/cny"
+    },
+    {
+      "base_currency_code": "GEL",
+      "quote_currency_code": "CNY",
+      "rate": "2.57758532",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.38796 GEL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GHS",
+      "quote_currency_code": "CNY",
+      "rate": "0.57106961",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.7511 GHS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GIP",
+      "quote_currency_code": "CNY",
+      "rate": "8.77039116",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.11402 GIP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GMD",
+      "quote_currency_code": "CNY",
+      "rate": "0.09059530",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 11.0381 GMD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GNF",
+      "quote_currency_code": "CNY",
+      "rate": "0.00075988",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1315.99 GNF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GTQ",
+      "quote_currency_code": "CNY",
+      "rate": "0.87504375",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.1428 GTQ；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "GYD",
+      "quote_currency_code": "CNY",
+      "rate": "0.03172287",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 31.523 GYD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "HKD",
+      "quote_currency_code": "CNY",
+      "rate": "0.85702000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/hkd/cny"
+    },
+    {
+      "base_currency_code": "HNL",
+      "quote_currency_code": "CNY",
+      "rate": "0.24893580",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 4.0171 HNL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "HTG",
+      "quote_currency_code": "CNY",
+      "rate": "0.05110672",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 19.5669 HTG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "HUF",
+      "quote_currency_code": "CNY",
+      "rate": "0.02064000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/huf/cny"
+    },
+    {
+      "base_currency_code": "IDR",
+      "quote_currency_code": "CNY",
+      "rate": "0.00037374",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2675.63 IDR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ILS",
+      "quote_currency_code": "CNY",
+      "rate": "2.17509516",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.45975 ILS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "INR",
+      "quote_currency_code": "CNY",
+      "rate": "0.07029284",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 14.2262 INR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "IQD",
+      "quote_currency_code": "CNY",
+      "rate": "0.00442752",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 225.86 IQD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "IRR",
+      "quote_currency_code": "CNY",
+      "rate": "0.00000377",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 265174 IRR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ISK",
+      "quote_currency_code": "CNY",
+      "rate": "0.05491579",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 18.2097 ISK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "JMD",
+      "quote_currency_code": "CNY",
+      "rate": "0.04221190",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 23.69 JMD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "JOD",
+      "quote_currency_code": "CNY",
+      "rate": "9.43218261",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.10602 JOD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "JPY",
+      "quote_currency_code": "CNY",
+      "rate": "0.04247200",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/jpy/cny"
+    },
+    {
+      "base_currency_code": "KES",
+      "quote_currency_code": "CNY",
+      "rate": "0.05161637",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 19.3737 KES；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KGS",
+      "quote_currency_code": "CNY",
+      "rate": "0.07644968",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 13.0805 KGS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KHR",
+      "quote_currency_code": "CNY",
+      "rate": "0.00164393",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 608.3 KHR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KMF",
+      "quote_currency_code": "CNY",
+      "rate": "0.01517336",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 65.905 KMF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KPW",
+      "quote_currency_code": "CNY",
+      "rate": "0.05143424",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 19.4423 KPW；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KRW",
+      "quote_currency_code": "CNY",
+      "rate": "0.00499000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/krw/cny"
+    },
+    {
+      "base_currency_code": "KWD",
+      "quote_currency_code": "CNY",
+      "rate": "21.59827214",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.0463 KWD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KYD",
+      "quote_currency_code": "CNY",
+      "rate": "7.98785846",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.12519 KYD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "KZT",
+      "quote_currency_code": "CNY",
+      "rate": "0.01487122",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 67.244 KZT；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LAK",
+      "quote_currency_code": "CNY",
+      "rate": "0.00029900",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3344.48 LAK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LBP",
+      "quote_currency_code": "CNY",
+      "rate": "0.00007457",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 13411 LBP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LKR",
+      "quote_currency_code": "CNY",
+      "rate": "0.02019386",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 49.52 LKR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LRD",
+      "quote_currency_code": "CNY",
+      "rate": "0.03918649",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 25.519 LRD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LSL",
+      "quote_currency_code": "CNY",
+      "rate": "0.40597597",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.4632 LSL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "LYD",
+      "quote_currency_code": "CNY",
+      "rate": "1.03870204",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.96274 LYD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MAD",
+      "quote_currency_code": "CNY",
+      "rate": "0.68180269",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.4667 MAD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MDL",
+      "quote_currency_code": "CNY",
+      "rate": "0.37266155",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.6834 MDL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MGA",
+      "quote_currency_code": "CNY",
+      "rate": "0.00148111",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 675.17 MGA；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MKD",
+      "quote_currency_code": "CNY",
+      "rate": "0.12145356",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 8.2336 MKD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MMK",
+      "quote_currency_code": "CNY",
+      "rate": "0.00318776",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 313.7 MMK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MNT",
+      "quote_currency_code": "CNY",
+      "rate": "0.00185995",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 537.65 MNT；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MOP",
+      "quote_currency_code": "CNY",
+      "rate": "0.83167000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/mop/cny"
+    },
+    {
+      "base_currency_code": "MRU",
+      "quote_currency_code": "CNY",
+      "rate": "0.16638658",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 6.0101 MRU；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MUR",
+      "quote_currency_code": "CNY",
+      "rate": "0.14027410",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 7.1289 MUR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MVR",
+      "quote_currency_code": "CNY",
+      "rate": "0.43308792",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.309 MVR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MWK",
+      "quote_currency_code": "CNY",
+      "rate": "0.00385788",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 259.21 MWK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "MXN",
+      "quote_currency_code": "CNY",
+      "rate": "0.36356000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/mxn/cny"
+    },
+    {
+      "base_currency_code": "MYR",
+      "quote_currency_code": "CNY",
+      "rate": "1.64550000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/myr/cny"
+    },
+    {
+      "base_currency_code": "MZN",
+      "quote_currency_code": "CNY",
+      "rate": "0.10500231",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 9.5236 MZN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "NAD",
+      "quote_currency_code": "CNY",
+      "rate": "0.40561369",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.4654 NAD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "NGN",
+      "quote_currency_code": "CNY",
+      "rate": "0.00502260",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 199.1 NGN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "NIO",
+      "quote_currency_code": "CNY",
+      "rate": "0.18259837",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 5.4765 NIO；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "NOK",
+      "quote_currency_code": "CNY",
+      "rate": "0.70582000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/nok/cny"
+    },
+    {
+      "base_currency_code": "NPR",
+      "quote_currency_code": "CNY",
+      "rate": "0.04390008",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 22.779 NPR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "NZD",
+      "quote_currency_code": "CNY",
+      "rate": "3.75930000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/nzd/cny"
+    },
+    {
+      "base_currency_code": "OMR",
+      "quote_currency_code": "CNY",
+      "rate": "17.39130435",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.0575 OMR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PAB",
+      "quote_currency_code": "CNY",
+      "rate": "6.68762121",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.14953 PAB；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PEN",
+      "quote_currency_code": "CNY",
+      "rate": "1.94639625",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.51377 PEN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PGK",
+      "quote_currency_code": "CNY",
+      "rate": "1.48027533",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.67555 PGK；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PHP",
+      "quote_currency_code": "CNY",
+      "rate": "0.10648493",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 9.391 PHP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PKR",
+      "quote_currency_code": "CNY",
+      "rate": "0.02410800",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 41.48 PKR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "PLN",
+      "quote_currency_code": "CNY",
+      "rate": "1.71850000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/pln/cny"
+    },
+    {
+      "base_currency_code": "PYG",
+      "quote_currency_code": "CNY",
+      "rate": "0.00117232",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 853.01 PYG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "QAR",
+      "quote_currency_code": "CNY",
+      "rate": "1.83722212",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.5443 QAR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "RON",
+      "quote_currency_code": "CNY",
+      "rate": "1.40175780",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.71339 RON；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "RSD",
+      "quote_currency_code": "CNY",
+      "rate": "0.06374908",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 15.6865 RSD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "RUB",
+      "quote_currency_code": "CNY",
+      "rate": "0.08008000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/rub/cny"
+    },
+    {
+      "base_currency_code": "RWF",
+      "quote_currency_code": "CNY",
+      "rate": "0.00453289",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 220.61 RWF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SAR",
+      "quote_currency_code": "CNY",
+      "rate": "1.78730000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/sar/cny"
+    },
+    {
+      "base_currency_code": "SBD",
+      "quote_currency_code": "CNY",
+      "rate": "0.83423709",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.1987 SBD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SCR",
+      "quote_currency_code": "CNY",
+      "rate": "0.45359702",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.2046 SCR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SDG",
+      "quote_currency_code": "CNY",
+      "rate": "0.01114206",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 89.75 SDG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SEK",
+      "quote_currency_code": "CNY",
+      "rate": "0.67101000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/sek/cny"
+    },
+    {
+      "base_currency_code": "SGD",
+      "quote_currency_code": "CNY",
+      "rate": "5.22620000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/sgd/cny"
+    },
+    {
+      "base_currency_code": "SHP",
+      "quote_currency_code": "CNY",
+      "rate": "8.86367665",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.11282 SHP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SLE",
+      "quote_currency_code": "CNY",
+      "rate": "0.28096991",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3.5591 SLE；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SOS",
+      "quote_currency_code": "CNY",
+      "rate": "0.01170001",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 85.47 SOS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SRD",
+      "quote_currency_code": "CNY",
+      "rate": "0.17751269",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 5.6334 SRD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SSP",
+      "quote_currency_code": "CNY",
+      "rate": "0.00115717",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 864.18 SSP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "STN",
+      "quote_currency_code": "CNY",
+      "rate": "0.30688026",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3.2586 STN；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SVC",
+      "quote_currency_code": "CNY",
+      "rate": "0.76394194",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.309 SVC；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SYP",
+      "quote_currency_code": "CNY",
+      "rate": "0.05480173",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 18.2476 SYP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "SZL",
+      "quote_currency_code": "CNY",
+      "rate": "0.40544924",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.4664 SZL；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "THB",
+      "quote_currency_code": "CNY",
+      "rate": "0.19939000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/thb/cny"
+    },
+    {
+      "base_currency_code": "TJS",
+      "quote_currency_code": "CNY",
+      "rate": "0.72479525",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.3797 TJS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TMT",
+      "quote_currency_code": "CNY",
+      "rate": "1.91073066",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.52336 TMT；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TND",
+      "quote_currency_code": "CNY",
+      "rate": "2.22543674",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.44935 TND；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TOP",
+      "quote_currency_code": "CNY",
+      "rate": "2.79642058",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.3576 TOP；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TRY",
+      "quote_currency_code": "CNY",
+      "rate": "0.13589000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/try/cny"
+    },
+    {
+      "base_currency_code": "TTD",
+      "quote_currency_code": "CNY",
+      "rate": "0.98765432",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1.0125 TTD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TWD",
+      "quote_currency_code": "CNY",
+      "rate": "0.20806891",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 4.8061 TWD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "TZS",
+      "quote_currency_code": "CNY",
+      "rate": "0.00254654",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 392.69 TZS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "UAH",
+      "quote_currency_code": "CNY",
+      "rate": "0.14846708",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 6.7355 UAH；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "UGX",
+      "quote_currency_code": "CNY",
+      "rate": "0.00161904",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 617.65 UGX；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "USD",
+      "quote_currency_code": "CNY",
+      "rate": "6.72530000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/usd/cny"
+    },
+    {
+      "base_currency_code": "UYU",
+      "quote_currency_code": "CNY",
+      "rate": "0.16636721",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 6.0108 UYU；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "UZS",
+      "quote_currency_code": "CNY",
+      "rate": "0.00056161",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 1780.58 UZS；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "VES",
+      "quote_currency_code": "CNY",
+      "rate": "0.00764468",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 130.81 VES；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "VND",
+      "quote_currency_code": "CNY",
+      "rate": "0.00025860",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3866.97 VND；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "VUV",
+      "quote_currency_code": "CNY",
+      "rate": "0.05656589",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 17.6785 VUV；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "WST",
+      "quote_currency_code": "CNY",
+      "rate": "2.42083858",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.41308 WST；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XAF",
+      "quote_currency_code": "CNY",
+      "rate": "0.01141683",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 87.59 XAF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XAG",
+      "quote_currency_code": "CNY",
+      "rate": "401.60642570",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.00249 XAG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XAU",
+      "quote_currency_code": "CNY",
+      "rate": "27777.77777778",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.000036 XAU；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XCD",
+      "quote_currency_code": "CNY",
+      "rate": "2.45380708",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.40753 XCD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XCG",
+      "quote_currency_code": "CNY",
+      "rate": "3.71484825",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.26919 XCG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XDR",
+      "quote_currency_code": "CNY",
+      "rate": "9.05961225",
+      "effective_date": "2026-10-15",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.11038 XDR；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XOF",
+      "quote_currency_code": "CNY",
+      "rate": "0.01141683",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 87.59 XOF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XPD",
+      "quote_currency_code": "CNY",
+      "rate": "7692.30769231",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.00013 XPD；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XPF",
+      "quote_currency_code": "CNY",
+      "rate": "0.06276400",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 15.9327 XPF；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "XPT",
+      "quote_currency_code": "CNY",
+      "rate": "11235.95505618",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 0.000089 XPT；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "YER",
+      "quote_currency_code": "CNY",
+      "rate": "0.02831899",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 35.312 YER；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ZAR",
+      "quote_currency_code": "CNY",
+      "rate": "0.40468000",
+      "effective_date": "2026-10-15",
+      "source_name": "CFETS via Frankfurter",
+      "source_version": "2026-10-15 / snapshot 2026-10-15",
+      "description": "https://api.frankfurter.dev/v2/providers/cfets/rate/zar/cny"
+    },
+    {
+      "base_currency_code": "ZMW",
+      "quote_currency_code": "CNY",
+      "rate": "0.33544665",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 2.9811 ZMW；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    },
+    {
+      "base_currency_code": "ZWG",
+      "quote_currency_code": "CNY",
+      "rate": "0.25133838",
+      "effective_date": "2026-10-14",
+      "source_name": "Frankfurter 公开参考汇率",
+      "source_version": "2026-10-14 / snapshot 2026-10-15",
+      "description": "人民币报价倒数换算；1 CNY = 3.9787 ZWG；https://api.frankfurter.dev/v2/rates?base=cny&expand=providers"
+    }
+  ],
+  "not_available": [
+    "BOV",
+    "CHE",
+    "CHW",
+    "CLF",
+    "COU",
+    "MXV",
+    "USN",
+    "UYI",
+    "UYW",
+    "VED",
+    "XAD",
+    "XBA",
+    "XBB",
+    "XBC",
+    "XBD",
+    "XSU",
+    "XTS",
+    "XUA",
+    "XXX"
+  ],
+  "identity_currency": "CNY",
+  "notes": "初始单次参考快照；无自动同步；缺失不伪造；保留原始来源文件。"
+}

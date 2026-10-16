@@ -10,7 +10,7 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.imports.security import InfectedFile, ScannerUnavailable, _clamav_scan
+from apps.imports.security import InfectedFile, ScannerUnavailable, _clamav_scan, scan_upload
 
 from .models import BusinessFile, FileScanStatus
 
@@ -67,7 +67,7 @@ def save_scanned_image(
         if suffix == ".webp" and signature[8:12] != b"WEBP":
             raise ValidationError("WebP 图片签名不正确。")
         try:
-            scan_message = _clamav_scan(temporary_path)
+            scan_status, scan_message = scan_upload(temporary_path, scanner=_clamav_scan)
         except (InfectedFile, ScannerUnavailable) as exc:
             scan_status = FileScanStatus.INFECTED if isinstance(exc, InfectedFile) else FileScanStatus.FAILED
             BusinessFile.objects.create(
@@ -95,8 +95,8 @@ def save_scanned_image(
                 content_type=expected_content_type,
                 size_bytes=size,
                 content_hash=digest.hexdigest(),
-                scan_status=FileScanStatus.CLEAN,
-                scanned_at=timezone.now(),
+                scan_status=scan_status,
+                scanned_at=timezone.now() if scan_status == FileScanStatus.CLEAN else None,
                 scan_message=scan_message[:500],
             )
         except Exception:
@@ -145,7 +145,7 @@ def save_scanned_document(
         if not temporary_path.read_bytes()[:12].startswith(expected_signature):
             raise ValidationError(f"{field_label}文件签名与扩展名不一致。")
         try:
-            scan_message = _clamav_scan(temporary_path)
+            scan_status, scan_message = scan_upload(temporary_path, scanner=_clamav_scan)
         except (InfectedFile, ScannerUnavailable) as exc:
             scan_status = FileScanStatus.INFECTED if isinstance(exc, InfectedFile) else FileScanStatus.FAILED
             BusinessFile.objects.create(
@@ -173,8 +173,8 @@ def save_scanned_document(
                 content_type=expected_content_type,
                 size_bytes=size,
                 content_hash=digest.hexdigest(),
-                scan_status=FileScanStatus.CLEAN,
-                scanned_at=timezone.now(),
+                scan_status=scan_status,
+                scanned_at=timezone.now() if scan_status == FileScanStatus.CLEAN else None,
                 scan_message=scan_message[:500],
             )
         except Exception:

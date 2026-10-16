@@ -32,6 +32,44 @@ class ProductOptionsResponseSerializer(serializers.Serializer):
     data = ProductOptionsDataSerializer()
 
 
+class ProductSelectionProductSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    product_number = serializers.CharField()
+    product_code = serializers.CharField()
+    item_number = serializers.CharField()
+    product_name = serializers.CharField()
+    specification = serializers.CharField()
+    unit_id = serializers.UUIDField()
+    unit_code = serializers.CharField()
+    unit_name = serializers.CharField()
+    category_id = serializers.UUIDField()
+    category_name = serializers.CharField()
+
+
+class ProductSelectionSpecificationSerializer(serializers.Serializer):
+    specification = serializers.CharField()
+    products = ProductSelectionProductSerializer(many=True)
+
+
+class ProductSelectionGroupSerializer(serializers.Serializer):
+    product_name = serializers.CharField()
+    specifications = ProductSelectionSpecificationSerializer(many=True)
+
+
+class ProductSelectionCategorySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    category_name = serializers.CharField()
+
+
+class ProductSelectionDataSerializer(serializers.Serializer):
+    category = ProductSelectionCategorySerializer()
+    groups = ProductSelectionGroupSerializer(many=True)
+
+
+class ProductSelectionResponseSerializer(serializers.Serializer):
+    data = ProductSelectionDataSerializer()
+
+
 class RawMaterialValueOptionSerializer(serializers.Serializer):
     value = serializers.CharField()
     label = serializers.CharField()

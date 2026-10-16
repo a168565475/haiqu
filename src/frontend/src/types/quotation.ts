@@ -70,9 +70,19 @@ export interface QuotationLine {
   line_number: number
   product_description_snapshot: string
   specification_snapshot: string
+  product_specification?: string | null
+  color_snapshot?: string | null
+  material_snapshot?: string
+  product_number_snapshot?: string
+  product_code_snapshot?: string
+  item_number_snapshot?: string
   quantity: string
   unit_code: string
   source_inquiry_item?: string | null
+  product_id?: string | null
+  product_category_id?: string | null
+  product_unit_id?: string | null
+  product_color_id?: string | null
   unit_price: string | null
   discount_rate: string
   line_total: string | null
@@ -161,6 +171,12 @@ export interface QuotationContainerTier {
 export interface QuotationLinePayload {
   product_description_snapshot: string
   specification_snapshot?: string
+  color_snapshot?: string
+  material_snapshot?: string
+  product_id?: string | null
+  product_category_id?: string | null
+  product_unit_id?: string | null
+  product_color_id?: string | null
   quantity: string
   unit_code: string
   unit_price: string

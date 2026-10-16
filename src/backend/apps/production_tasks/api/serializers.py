@@ -9,9 +9,13 @@ from apps.audit.models import AuditLog
 from apps.inquiries.rich_text import sanitize_rich_text
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
-from apps.reference_data.models import Currency, ProductColor, ProductionUnit, ReferenceStatus
+from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 
-from apps.sales_orders.models import SalesOrderDeliveryBatch, SalesOrderDeliveryBatchLine
+from apps.sales_orders.models import SalesOrder, SalesOrderDeliveryBatch, SalesOrderDeliveryBatchLine
+from apps.sales_orders.presentation import specification_display
+from apps.sales_orders.api.serializers import (
+    DeliveryBatchReadSerializer, SalesOrderLineReadSerializer, SalesOrderListSerializer,
+)
 
 from ..models import (
     DeliveryMethod,
@@ -46,6 +50,12 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    product_category_id = serializers.PrimaryKeyRelatedField(
+        source="product_category",
+        queryset=ProductCategory.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
     color_code = serializers.CharField(max_length=100, required=False, allow_blank=True, trim_whitespace=True)
     customer_product_name = serializers.CharField(
         max_length=200,
@@ -65,6 +75,7 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
         allow_blank=True,
         trim_whitespace=True,
     )
+    material = serializers.CharField(max_length=2000, required=False, allow_blank=True, trim_whitespace=True)
     quantity = serializers.IntegerField(min_value=1, max_value=9223372036854775807)
     unit_id = serializers.PrimaryKeyRelatedField(
         source="unit",
@@ -75,7 +86,7 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
         queryset=Currency.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
     )
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
-    exchange_rate = serializers.DecimalField(max_digits=20, decimal_places=3, min_value=Decimal("0.001"))
+    exchange_rate = serializers.DecimalField(max_digits=25, decimal_places=8, min_value=Decimal("0.00000001"))
     special_requirements = serializers.CharField(
         max_length=3000,
         required=False,
@@ -89,7 +100,17 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
+    replace_primary_image = serializers.BooleanField(required=False)
     details = ProductionTaskDetailInputSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        # 外层 PATCH 的 partial 会跳过嵌套必填校验，产品行仍采用完整替换契约。
+        missing = {name: "此字段必填。" for name in
+                   ("client_key", "quantity", "unit", "currency", "unit_price", "exchange_rate")
+                   if name not in attrs}
+        if missing:
+            raise serializers.ValidationError(missing)
+        return attrs
 
     def validate_details(self, value):
         keys = [item.get("client_key") for item in value if item.get("client_key")]
@@ -105,6 +126,10 @@ class ProductionDeliveryBatchInputSerializer(serializers.Serializer):
 
 
 class ProductionTaskWriteSerializer(serializers.Serializer):
+    task_number = serializers.RegexField(
+        r"\AHT[0-9]+(?:-[0-9]+)*\Z", max_length=50, trim_whitespace=False,
+        error_messages={"invalid": "生产任务单号必须为 HT 加数字，可用连字符连接数字。"},
+    )
     bom_sync_mode = serializers.ChoiceField(
         choices=["SYNC", "KEEP"],
         required=False,
@@ -118,10 +143,12 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         error_messages={"invalid": "合同编号只能包含大写字母、数字、点、下划线和连字符。"},
     )
     order_source = serializers.ChoiceField(choices=OrderSource.choices)
-    order_number = serializers.CharField(max_length=100, trim_whitespace=True)
+    order_number = serializers.CharField(max_length=100, trim_whitespace=True, required=False)
     customer_account_id = serializers.PrimaryKeyRelatedField(
         source="customer_account",
         queryset=CustomerAccount.objects.filter(archived_at__isnull=True),
+        required=False,
+        allow_null=True,
     )
     order_date = serializers.DateField()
     delivery_date = serializers.DateField()
@@ -133,13 +160,14 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         source="followers",
         queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
         many=True,
-        allow_empty=True,
+        allow_empty=False,
     )
     currency_id = serializers.PrimaryKeyRelatedField(
         source="currency",
         queryset=Currency.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
     )
     includes_tax = serializers.BooleanField()
+    tax_rate = serializers.ChoiceField(choices=[3, 5, 7], allow_null=True, required=False)
     order_tolerance_percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100)
     is_repeat_order = serializers.BooleanField()
     preproduction_sample_required = serializers.BooleanField()
@@ -159,8 +187,34 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         required=False,
         default=Decimal("0"),
     )
+    planned_start_date = serializers.DateField(required=False, allow_null=True)
+    planned_end_date = serializers.DateField(required=False, allow_null=True)
+    production_priority = serializers.ChoiceField(choices=ProductionPriority.choices, default=ProductionPriority.NORMAL)
+    production_batch_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    planner_id = serializers.PrimaryKeyRelatedField(
+        source="planner", queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        required=False, allow_null=True,
+    )
     products = ProductionTaskProductInputSerializer(many=True, allow_empty=False)
     delivery_batches = ProductionDeliveryBatchInputSerializer(many=True, required=False)
+
+    def to_internal_value(self, data):
+        forbidden = set(data) & {
+            "company_id", "company", "customer_company_id", "sales_order_id",
+            "sales_order_delivery_batch_id", "sales_order_line_id", "factory_merchandiser_id",
+        }
+        if forbidden:
+            raise serializers.ValidationError({field: "手动生产任务单不允许关联客户、公司或销售订单。" for field in sorted(forbidden)})
+        return super().to_internal_value(data)
+
+    def validate_task_number(self, value):
+        queryset = ProductionTask.objects.filter(task_number=value)
+        current_task_id = self.context.get("current_task_id")
+        if current_task_id:
+            queryset = queryset.exclude(pk=current_task_id)
+        if queryset.exists():
+            raise serializers.ValidationError("生产任务单号已存在，请更换后重试。")
+        return value
 
     def validate_special_requirements_html(self, value):
         return sanitize_rich_text(value)
@@ -181,7 +235,26 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         current_task = self.context.get("current_task")
         if current_task is not None and not attrs:
             raise serializers.ValidationError("请至少提交一个需要修改的字段。")
+        if current_task is None:
+            if attrs.get("customer_account") is not None:
+                raise serializers.ValidationError({"customer_account_id": "手动生产任务单不关联客户。"})
+            if not attrs.get("followers"):
+                raise serializers.ValidationError({"follower_ids": "手动建单必须选择跟单员。"})
+            if "task_number" in attrs:
+                attrs.setdefault("order_number", attrs["task_number"])
+            includes_tax = attrs.get("includes_tax")
+            tax_rate = attrs.get("tax_rate")
+            if includes_tax and tax_rate is None:
+                raise serializers.ValidationError({"tax_rate": "含税时必须选择税率。"})
+            if includes_tax is False and tax_rate is not None:
+                raise serializers.ValidationError({"tax_rate": "不含税时税率必须为空。"})
 
+        start = attrs.get("planned_start_date", getattr(current_task, "planned_start_date", None))
+        end = attrs.get("planned_end_date", getattr(current_task, "planned_end_date", None))
+        if (start is None) != (end is None):
+            raise serializers.ValidationError({"planned_end_date": "计划开始和计划完工日期需同时填写或同时留空。"})
+        if start and end and end < start:
+            raise serializers.ValidationError({"planned_end_date": "计划完工日期不能早于计划开始日期。"})
         order_date = attrs.get("order_date", getattr(current_task, "order_date", None))
         delivery_date = attrs.get("delivery_date", getattr(current_task, "delivery_date", None))
         if order_date and delivery_date and delivery_date < order_date:
@@ -197,6 +270,8 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             and customer.pk not in accessible_ids
         ):
             raise serializers.ValidationError({"customer_account_id": "客户不存在或当前账号无权使用。"})
+        if current_task is None and attrs.get("currency") is not None and attrs["currency"].code != "CNY":
+            raise serializers.ValidationError({"currency_id": "手动生产任务单必须使用人民币 CNY。"})
         products = attrs.get("products")
         product_keys = [item["client_key"] for item in products or []]
         if len(product_keys) != len(set(product_keys)):
@@ -204,6 +279,8 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         detail_keys = []
         currency = attrs.get("currency", getattr(current_task, "currency", None))
         for index, item in enumerate(products or [], start=1):
+            if current_task is None and "replace_primary_image" in item:
+                raise serializers.ValidationError({"products": "主图替换标记仅用于编辑已有产品行。"})
             product = item.get("product")
             color = item.get("product_color")
             customer_product_name = str(item.get("customer_product_name") or "").strip()
@@ -217,12 +294,12 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
                     raise serializers.ValidationError(
                         {"products": f"第 {index} 条未关联产品时必须填写客户规格。"}
                     )
-            if not item.get("details"):
+            if not item.get("details") and not (current_task is not None and current_task.sales_order_id):
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条颜色明细必须填写生产任务单明细。"}
                 )
             detail_keys.extend(
-                detail["client_key"] for detail in item["details"] if detail.get("client_key")
+                detail["client_key"] for detail in item.get("details", []) if detail.get("client_key")
             )
             if product is not None and item["unit"].pk != product.unit_id:
                 raise serializers.ValidationError(
@@ -247,13 +324,6 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
                 )
         if len(detail_keys) != len(set(detail_keys)):
             raise serializers.ValidationError({"products": "不同颜色明细的生产任务单明细临时编号不能重复。"})
-        salesperson = attrs.get("salesperson", getattr(current_task, "salesperson", None))
-        followers = attrs.get("followers")
-        if followers is None and current_task is not None:
-            followers = current_task.followers.all()
-        for follower in followers or []:
-            if salesperson is not None and follower.pk == salesperson.pk:
-                raise serializers.ValidationError({"follower_ids": "业务员不需要重复加入跟单员。"})
         batches = attrs.get("delivery_batches")
         if batches is None and current_task is not None and "order_date" in attrs:
             batches = current_task.delivery_batches.all()
@@ -286,11 +356,7 @@ class ProductionDeliveryBatchDateInputSerializer(serializers.Serializer):
 
 
 class ProductionTaskPatchSerializer(ProductionTaskWriteSerializer):
-    """生产任务精确更新契约。
-
-    任务来源、客户、业务员、币种和费用等头字段不属于 V3 编辑页范围；
-    不在这里声明可避免调用方绕过前端只读状态改写销售快照。
-    """
+    """编辑创建页业务字段，任务身份与销售来源保持不变。"""
 
     delivery_batch_dates = ProductionDeliveryBatchDateInputSerializer(many=True, required=False, allow_empty=False)
 
@@ -303,6 +369,9 @@ class ProductionTaskPatchSerializer(ProductionTaskWriteSerializer):
         "products",
         "delivery_batches",
         "delivery_batch_dates",
+        "salesperson_id", "order_date", "includes_tax", "tax_rate", "order_tolerance_percent",
+        "is_repeat_order", "preproduction_sample_required", "delivery_method", "planner_id",
+        "production_priority", "planned_start_date", "planned_end_date", "production_batch_number",
     }
 
     def get_fields(self):
@@ -326,6 +395,16 @@ class ProductionTaskPatchSerializer(ProductionTaskWriteSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        task = self.context.get("current_task")
+        if task is not None:
+            if task.sales_order_id and set(attrs) & {"salesperson", "order_date", "preproduction_sample_required"}:
+                raise serializers.ValidationError("销售来源任务的业务员、下单日期和产前样要求不可修改。")
+            includes_tax = attrs.get("includes_tax", task.includes_tax)
+            tax_rate = attrs.get("tax_rate", task.tax_rate)
+            if includes_tax and tax_rate not in {3, 5, 7}:
+                raise serializers.ValidationError({"tax_rate": "含税时必须选择 3%、5% 或 7% 税率。"})
+            if not includes_tax and tax_rate is not None:
+                raise serializers.ValidationError({"tax_rate": "不含税时税率必须为空。"})
         if "delivery_batch_dates" in attrs:
             if set(attrs) - {"delivery_date", "delivery_batch_dates"}:
                 raise serializers.ValidationError({"delivery_batch_dates": "批次日期只能与任务交期一起修改，请单独保存其他资料。"})
@@ -348,6 +427,95 @@ class EmployeeBriefSerializer(serializers.ModelSerializer):
         fields = ["id", "employee_code", "display_name"]
 
 
+class ProductionSalesSourceLineSerializer(SalesOrderLineReadSerializer):
+    unit_id = serializers.SerializerMethodField()
+    unit_code = serializers.CharField(source="unit_code_snapshot")
+    unit_name = serializers.SerializerMethodField()
+
+    def _unit(self, instance):
+        if not hasattr(instance, "_production_unit"):
+            instance._production_unit = ProductionUnit.objects.filter(
+                unit_code=instance.unit_code_snapshot, status=ReferenceStatus.ACTIVE, archived_at__isnull=True,
+            ).first()
+        return instance._production_unit
+
+    def get_unit_id(self, instance):
+        unit = self._unit(instance)
+        return str(unit.pk) if unit else None
+
+    def get_unit_name(self, instance):
+        unit = self._unit(instance)
+        return unit.unit_name if unit else ""
+
+    class Meta(SalesOrderLineReadSerializer.Meta):
+        fields = [
+            "id", "line_number", "product_id", "product_category_id", "product_unit_id", "product_color_id",
+            "product_image_id", "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
+            "product_name_snapshot", "specification_snapshot", "customer_product_name_snapshot",
+            "specification_display", "unit_price_cny", "line_total_cny",
+            "customer_specification_snapshot", "customer_color_snapshot", "material_snapshot", "unit_code_snapshot",
+            "quantity", "quality_requirements", "packaging_requirements", "unit_id", "unit_code", "unit_name", "unit_price", "line_total",
+        ]
+
+
+class ProductionSalesSourceBatchSerializer(DeliveryBatchReadSerializer):
+    class Meta(DeliveryBatchReadSerializer.Meta):
+        fields = ["id", "batch_number", "planned_delivery_date", "status", "notes", "lines"]
+
+
+class ProductionSalesSourceSummarySerializer(serializers.ModelSerializer):
+    product_names = serializers.SerializerMethodField()
+    line_count = serializers.SerializerMethodField()
+    delivery_batch_count = serializers.SerializerMethodField()
+    next_delivery_date = serializers.SerializerMethodField()
+    has_remaining_production_capacity = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SalesOrder
+        fields = ["id", "order_number", "status", "currency_code", "total_amount", "total_amount_cny", "product_names", "line_count", "delivery_batch_count", "next_delivery_date", "has_remaining_production_capacity"]
+
+    def get_product_names(self, instance) -> list[str]:
+        names = (line.customer_product_name_snapshot or line.product_name_snapshot for line in instance.lines.all())
+        return list(dict.fromkeys(name for name in names if name))
+
+    def get_line_count(self, instance):
+        return instance.lines.count()
+
+    def get_delivery_batch_count(self, instance):
+        return sum(batch.status == "ACTIVE" for batch in instance.delivery_batches.all())
+
+    def get_next_delivery_date(self, instance):
+        return min((batch.planned_delivery_date for batch in instance.delivery_batches.all() if batch.status == "ACTIVE"), default=None)
+
+    get_has_remaining_production_capacity = SalesOrderListSerializer.get_has_remaining_production_capacity
+
+
+class ProductionSalesSourceSerializer(ProductionSalesSourceSummarySerializer):
+    production_exchange_rate = serializers.SerializerMethodField()
+    production_exchange_rate_error = serializers.SerializerMethodField()
+
+    def _production_rate(self, instance):
+        if instance.total_amount_cny is None or not instance.exchange_rate_snapshot:
+            return None, "该销售订单尚未保存人民币金额，请先完成历史订单一次性补算。"
+        return instance.exchange_rate_snapshot, ""
+
+    def get_production_exchange_rate(self, instance):
+        return self._production_rate(instance)[0]
+
+    def get_production_exchange_rate_error(self, instance):
+        return self._production_rate(instance)[1]
+
+    salesperson = EmployeeBriefSerializer(read_only=True)
+    lines = ProductionSalesSourceLineSerializer(many=True, read_only=True)
+    delivery_batches = ProductionSalesSourceBatchSerializer(many=True, read_only=True)
+
+    class Meta(ProductionSalesSourceSummarySerializer.Meta):
+        fields = ProductionSalesSourceSummarySerializer.Meta.fields + [
+            "salesperson", "order_date", "order_tolerance_percent", "includes_tax", "exchange_rate",
+            "lines", "delivery_batches", "production_exchange_rate", "production_exchange_rate_error",
+        ]
+
+
 class ProductionTaskDetailReadSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     line_number = serializers.IntegerField()
@@ -367,15 +535,39 @@ class ProductionTaskProductImageReadSerializer(serializers.Serializer):
 
 
 class ProductionTaskProductReadSerializer(serializers.Serializer):
+    specification_display = serializers.SerializerMethodField()
+    max_production_quantity = serializers.SerializerMethodField()
+    deletion_blocked_reason = serializers.SerializerMethodField()
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_max_production_quantity(self, instance):
+        from ..selectors import max_production_quantity
+        return max_production_quantity(instance)
+
+    @extend_schema_field(serializers.CharField())
+    def get_deletion_blocked_reason(self, instance):
+        if instance.sales_order_delivery_batch_line_id or instance.production_task.sales_order_id:
+            return "销售订单来源产品不可删除。"
+        if hasattr(instance, "_deletion_blocked_reason"):
+            return instance._deletion_blocked_reason
+        from ..selectors import external_business_blocker
+        return external_business_blocker(instance)
+
+    def get_specification_display(self, instance) -> str:
+        return specification_display(instance)
+
     id = serializers.UUIDField()
     line_number = serializers.IntegerField()
     product_id = serializers.UUIDField(allow_null=True)
+    product_category_id = serializers.UUIDField(allow_null=True)
     source_delivery_batch_line_id = serializers.UUIDField(
         source="sales_order_delivery_batch_line_id", allow_null=True
     )
     source_sales_order_line_id = serializers.UUIDField(
         source="sales_order_delivery_batch_line.sales_order_line_id", allow_null=True
     )
+    source_quotation_line_id = serializers.SerializerMethodField()
+    source_inquiry_item_id = serializers.SerializerMethodField()
     product_number = serializers.CharField(source="product_number_snapshot")
     product_code = serializers.CharField(source="product_code_snapshot")
     item_number = serializers.CharField(source="item_number_snapshot")
@@ -384,6 +576,7 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     customer_product_name = serializers.CharField(source="customer_product_name_snapshot")
     customer_specification = serializers.CharField(source="customer_specification_snapshot")
     customer_color = serializers.CharField(source="customer_color_snapshot")
+    material = serializers.CharField(source="material_snapshot")
     image_name = serializers.CharField(source="image_file.original_name", allow_null=True)
     product_color_id = serializers.UUIDField(allow_null=True)
     color_card = serializers.CharField(source="color_card_snapshot")
@@ -397,7 +590,11 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     currency_code = serializers.CharField(source="currency.code")
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4)
     total_amount = serializers.DecimalField(max_digits=22, decimal_places=4)
-    exchange_rate = serializers.DecimalField(max_digits=20, decimal_places=3)
+    exchange_rate = serializers.DecimalField(max_digits=25, decimal_places=8)
+    exchange_rate_record_id = serializers.UUIDField(allow_null=True)
+    exchange_rate_snapshot = serializers.JSONField()
+    unit_price_base = serializers.SerializerMethodField(method_name="get_local_unit_price")
+    line_amount_base = serializers.SerializerMethodField(method_name="get_local_total_amount")
     local_unit_price = serializers.SerializerMethodField()
     local_total_amount = serializers.SerializerMethodField()
     special_requirements = serializers.CharField()
@@ -406,12 +603,29 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     details = ProductionTaskDetailReadSerializer(many=True)
 
     @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_local_unit_price(self, instance) -> Decimal:
-        return (instance.unit_price * instance.exchange_rate).quantize(Decimal("0.0001"))
+    def get_local_unit_price(self, instance) -> str:
+        return format((instance.unit_price * instance.exchange_rate).quantize(Decimal("0.0001")), ".4f")
+
+    @staticmethod
+    def _source_quotation_line(instance):
+        batch_line = getattr(instance, "sales_order_delivery_batch_line", None)
+        sales_line = getattr(batch_line, "sales_order_line", None) if batch_line else None
+        return getattr(sales_line, "source_quotation_line", None) if sales_line else None
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_source_quotation_line_id(self, instance):
+        source_line = self._source_quotation_line(instance)
+        return source_line.pk if source_line else None
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_source_inquiry_item_id(self, instance):
+        source_line = self._source_quotation_line(instance)
+        source_item = getattr(source_line, "source_inquiry_item", None) if source_line else None
+        return source_item.pk if source_item else None
 
     @extend_schema_field(serializers.DecimalField(max_digits=22, decimal_places=4))
-    def get_local_total_amount(self, instance) -> Decimal:
-        return (instance.total_amount * instance.exchange_rate).quantize(Decimal("0.0001"))
+    def get_local_total_amount(self, instance) -> str:
+        return format((instance.total_amount * instance.exchange_rate).quantize(Decimal("0.0001")), ".4f")
 
 
 class ProductionDeliveryBatchReadSerializer(serializers.Serializer):
@@ -442,13 +656,14 @@ class ProductionRunBatchReadSerializer(serializers.ModelSerializer):
 
 
 class ProductionTaskReadSerializer(serializers.ModelSerializer):
+    tax_rate = serializers.IntegerField(allow_null=True, read_only=True, default=None)
     special_requirements_html = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display")
     order_source_display = serializers.CharField(source="get_order_source_display")
     delivery_method_display = serializers.CharField(source="get_delivery_method_display")
-    customer_id = serializers.UUIDField(source="customer_account_id")
-    customer_code = serializers.CharField(source="customer_account.account_code")
-    customer_name = serializers.CharField(source="customer_account.account_name")
+    customer_id = serializers.UUIDField(source="customer_account_id", allow_null=True)
+    customer_code = serializers.CharField(source="customer_account.account_code", allow_null=True)
+    customer_name = serializers.CharField(source="customer_account.account_name", allow_null=True)
     salesperson = EmployeeBriefSerializer()
     followers = EmployeeBriefSerializer(many=True)
     currency_id = serializers.UUIDField()
@@ -484,7 +699,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
         fields = [
             "id", "task_number", "contract_number", "order_source", "order_source_display", "order_number",
             "customer_id", "customer_code", "customer_name", "order_date", "delivery_date", "salesperson",
-            "followers", "currency_id", "currency_code", "includes_tax", "order_tolerance_percent",
+            "followers", "currency_id", "currency_code", "includes_tax", "tax_rate", "order_tolerance_percent",
             "is_repeat_order", "preproduction_sample_required", "delivery_method", "delivery_method_display",
             "special_requirements_html", "freight_amount", "other_fee_amount",
             "product_total_amount", "total_amount",
@@ -762,6 +977,21 @@ class ProductionTaskSalesSourceLineSerializer(serializers.Serializer):
 
 
 class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
+    task_number = serializers.RegexField(
+        r"\AHT[0-9]+(?:-[0-9]+)*\Z", max_length=50, trim_whitespace=False,
+        error_messages={"invalid": "生产任务单号必须为 HT 加数字，可用连字符连接数字。"},
+    )
+    follower_ids = serializers.PrimaryKeyRelatedField(
+        source="followers", queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        many=True, allow_empty=False,
+    )
+    delivery_date = serializers.DateField()
+    includes_tax = serializers.BooleanField()
+    tax_rate = serializers.ChoiceField(choices=[3, 5, 7], allow_null=True, required=False)
+    order_tolerance_percent = serializers.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100)
+    is_repeat_order = serializers.BooleanField()
+    delivery_method = serializers.ChoiceField(choices=DeliveryMethod.choices)
+    exchange_rate_record_id = serializers.UUIDField(required=False, allow_null=True)
     request_key = serializers.UUIDField(required=False)
     delivery_batch_line_id = serializers.PrimaryKeyRelatedField(
         source="delivery_batch_line",
@@ -838,7 +1068,7 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
                 source_line = item["delivery_batch_line"]
                 if source_line.delivery_batch_id != delivery_batch.pk:
                     raise serializers.ValidationError({"lines": f"第 {index} 条来源不属于所选交付批次。"})
-                pair = (source_line.pk, getattr(item.get("product_color"), "pk", None))
+                pair = source_line.pk
                 if pair in seen_pairs:
                     raise serializers.ValidationError({"lines": f"第 {index} 条产品颜色明细重复。"})
                 seen_pairs.add(pair)
@@ -846,6 +1076,14 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
         accessible_order_ids = self.context.get("accessible_sales_order_ids")
         if accessible_order_ids is not None and source_order_id not in accessible_order_ids:
             raise serializers.ValidationError({"delivery_batch_id": "销售订单不存在或当前账号无权使用。"})
+        includes_tax = attrs["includes_tax"]
+        if includes_tax and attrs.get("tax_rate") is None:
+            raise serializers.ValidationError({"tax_rate": "含税时必须选择税率。"})
+        if not includes_tax and attrs.get("tax_rate") is not None:
+            raise serializers.ValidationError({"tax_rate": "不含税时税率必须为空。"})
+        source_order = attrs["delivery_batch_line"].delivery_batch.sales_order if uses_legacy else attrs["delivery_batch"].sales_order
+        if attrs["delivery_date"] < source_order.order_date:
+            raise serializers.ValidationError({"delivery_date": "交期日期不能早于下单日期。"})
         start = attrs.get("planned_start_date")
         end = attrs.get("planned_end_date")
         if (start is None) != (end is None):
@@ -857,6 +1095,21 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
 
 class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["CONFIRM", "RETURN"])
+    follower_ids = serializers.PrimaryKeyRelatedField(
+        source="followers",
+        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        many=True,
+        allow_empty=False,
+        required=False,
+    )
+    delivery_date = serializers.DateField(required=False)
+    includes_tax = serializers.BooleanField(required=False)
+    tax_rate = serializers.ChoiceField(choices=[3, 5, 7], allow_null=True, required=False)
+    order_tolerance_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False,
+    )
+    is_repeat_order = serializers.BooleanField(required=False)
+    delivery_method = serializers.ChoiceField(choices=DeliveryMethod.choices, required=False)
     planned_start_date = serializers.DateField(required=False, allow_null=True)
     planned_end_date = serializers.DateField(required=False, allow_null=True)
     production_priority = serializers.ChoiceField(choices=ProductionPriority.choices, required=False)
@@ -872,6 +1125,8 @@ class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs["decision"] == "RETURN" and not attrs.get("reason", "").strip():
             raise serializers.ValidationError({"reason": "退回业务跟单时必须填写原因。"})
+        if attrs["decision"] == "CONFIRM" and not attrs.get("followers"):
+            raise serializers.ValidationError({"follower_ids": "PMC 确认时必须选择生产跟单员。"})
         start = attrs.get("planned_start_date")
         end = attrs.get("planned_end_date")
         if start and end and end < start:

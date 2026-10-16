@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   showUploadNotice?: boolean
   compact?: boolean
+  toolbarKeys?: string[]
 }>(), {
   maxlength: 5000,
   placeholder: '记录与客户的沟通过程、原始需求和重要结论，不替代正式报价。',
@@ -49,7 +50,7 @@ function uploadErrorMessage(response: unknown, fallback: string) {
 }
 
 const toolbarConfig = computed(() => ({
-  ...(props.compact ? { toolbarKeys: props.uploadUrl ? ['uploadImage'] : [] } : {}),
+  ...(props.toolbarKeys ? { toolbarKeys: props.toolbarKeys } : props.compact ? { toolbarKeys: props.uploadUrl ? ['uploadImage'] : [] } : {}),
   // 新建询盘还没有可关联的业务记录，先隐藏上传入口，保存草稿后自动出现。
   excludeKeys: props.uploadUrl ? [] : ['uploadImage'],
 }))

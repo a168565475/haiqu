@@ -23,7 +23,8 @@ function text(value: unknown): string {
 export function materialAttributeFields(source: MaterialAttributeSource): MaterialAttributeField[] {
   const snapshotFields = source.material_attributes_snapshot?.fields
   if (Array.isArray(snapshotFields) && snapshotFields.length) {
-    return snapshotFields.filter((field) => text(field?.label) && text(field?.value)).map((field) => ({
+    return snapshotFields.filter((field) => text(field?.label) && text(field?.value)
+      && field.key !== 'tube_coating_color' && text(field.label) !== '喷塑颜色').map((field) => ({
       key: text(field.key), label: text(field.label), value: text(field.value),
     }))
   }

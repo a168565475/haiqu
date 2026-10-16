@@ -564,6 +564,20 @@ export const router = createRouter({
       },
     },
     {
+      path: '/production-tasks/new/manual',
+      name: 'production-task-manual-create',
+      component: ProductionTaskCreateView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'production-tasks',
+        headerTitle: '生产管理 / 生产任务单',
+        breadcrumbs: [{ label: '生产管理' }, { label: '生产任务单', to: '/production-tasks' }, { label: '手动创建生产任务单' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
       path: '/production-tasks/:taskId/edit',
       name: 'production-task-edit',
       component: ProductionTaskEditView,

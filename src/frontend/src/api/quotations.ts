@@ -121,6 +121,18 @@ export async function createQuotationLine(versionId: string, payload: QuotationL
 export async function updateQuotationLine(lineId: string, payload: Partial<QuotationLinePayload>, etag: string): Promise<{ data: QuotationLine; etag: string }> {
   return withEtag<QuotationLine>(await apiClient.patch(`/api/v1/quotation-lines/${lineId}/`, payload, { headers: { 'If-Match': etag } }))
 }
+export async function syncQuotationLineToInquiry(lineId: string, inquiryEtag: string, quotationEtag: string): Promise<{ inquiryItemId: string; inquiryEtag: string; quotationEtag: string }> {
+  const response = await apiClient.post<{ data: { inquiry_item_id: string; inquiry_etag: string } }>(
+    `/api/v1/quotation-lines/${lineId}/sync-inquiry/`,
+    { inquiry_etag: inquiryEtag },
+    { headers: { 'If-Match': quotationEtag } },
+  )
+  return {
+    inquiryItemId: response.data.data.inquiry_item_id,
+    inquiryEtag: response.data.data.inquiry_etag,
+    quotationEtag: String(response.headers.etag || ''),
+  }
+}
 
 export async function deleteQuotationLine(lineId: string, etag: string): Promise<string> {
   const response = await apiClient.delete(`/api/v1/quotation-lines/${lineId}/`, { headers: { 'If-Match': etag } })

@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.files.uploads import save_scanned_image
 from apps.files.models import BusinessFile, FileScanStatus
-from apps.imports.security import InfectedFile, ScannerUnavailable, _clamav_scan
+from apps.imports.security import InfectedFile, ScannerUnavailable, _clamav_scan, scan_upload
 
 
 MAX_PAYMENT_EVIDENCE_BYTES = 10 * 1024 * 1024
@@ -63,7 +63,7 @@ def _save_scanned_sample_document(
         if not temporary_path.read_bytes()[:12].startswith(expected_signature):
             raise ValidationError(f"{field_label}文件签名与扩展名不一致。")
         try:
-            scan_message = _clamav_scan(temporary_path)
+            scan_status, scan_message = scan_upload(temporary_path, scanner=_clamav_scan)
         except (InfectedFile, ScannerUnavailable) as exc:
             scan_status = FileScanStatus.INFECTED if isinstance(exc, InfectedFile) else FileScanStatus.FAILED
             BusinessFile.objects.create(
@@ -82,17 +82,21 @@ def _save_scanned_sample_document(
         final_path = Path(settings.MEDIA_ROOT) / relative_key
         final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temporary_path), str(final_path))
-        return BusinessFile.objects.create(
-            uploaded_by_employee=actor_employee,
-            original_name=name,
-            storage_key=relative_key.as_posix(),
-            content_type=expected_content_type,
-            size_bytes=size,
-            content_hash=digest.hexdigest(),
-            scan_status=FileScanStatus.CLEAN,
-            scanned_at=timezone.now(),
-            scan_message=scan_message[:500],
-        )
+        try:
+            return BusinessFile.objects.create(
+                uploaded_by_employee=actor_employee,
+                original_name=name,
+                storage_key=relative_key.as_posix(),
+                content_type=expected_content_type,
+                size_bytes=size,
+                content_hash=digest.hexdigest(),
+                scan_status=scan_status,
+                scanned_at=timezone.now() if scan_status == FileScanStatus.CLEAN else None,
+                scan_message=scan_message[:500],
+            )
+        except Exception:
+            final_path.unlink(missing_ok=True)
+            raise
     finally:
         if temporary_path.exists():
             temporary_path.unlink()

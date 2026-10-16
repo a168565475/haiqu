@@ -15,6 +15,7 @@ from apps.inquiries.models import Inquiry, InquiryFileLink
 from . import test_inquiry_api
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class InquiryCreateAttachmentTests(APITestCase):
     create_customer = test_inquiry_api.InquiryApiTests.create_customer
     inquiry_payload = test_inquiry_api.InquiryApiTests.inquiry_payload
@@ -76,6 +77,34 @@ class InquiryCreateAttachmentTests(APITestCase):
                 self.assertFalse(InquiryFileLink.objects.filter(inquiry_id=self.inquiry_id).exists())
                 self.assertEqual(BusinessFile.objects.count(), self.initial_file_count)
                 self.assertEqual([path for path in Path(self.media.name).rglob('*') if path.is_file()], [])
+
+    @override_settings(FILE_VIRUS_SCAN_ENABLED=False)
+    @patch('apps.inquiries.uploads._clamav_scan', side_effect=ScannerUnavailable())
+    def test_disabled_scan_saves_as_skipped_without_calling_scanner(self, scanner):
+        result = self.upload()
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data['data']['scan_status'], 'SKIPPED')
+        scanner.assert_not_called()
+
+    @override_settings(FILE_VIRUS_SCAN_ENABLED=False)
+    @patch('apps.files.uploads._clamav_scan', side_effect=ScannerUnavailable())
+    def test_product_image_saves_and_can_be_read_when_scanner_is_unavailable(self, scanner):
+        item = Inquiry.objects.get(pk=self.inquiry_id).items.get()
+        url = f'/api/v1/inquiry-items/{item.pk}/product-image/'
+        content = b'\x89PNG\r\n\x1a\nproduct image'
+        result = self.client.post(url, {'file': SimpleUploadedFile('product.png', content, content_type='image/png')}, format='multipart', HTTP_IF_MATCH=self.etag)
+        self.assertEqual(result.status_code, 200, result.data)
+        item.refresh_from_db()
+        self.assertEqual(item.product_image.scan_status, 'SKIPPED')
+        self.assertIsNone(item.product_image.scanned_at)
+        scanner.assert_not_called()
+        download = self.client.get(url)
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(b''.join(download.streaming_content), content)
+        for state in ['PENDING', 'FAILED', 'INFECTED']:
+            with self.subTest(state=state):
+                BusinessFile.objects.filter(pk=item.product_image_id).update(scan_status=state)
+                self.assertEqual(self.client.get(url).status_code, 400)
 
     @patch('apps.inquiries.uploads._clamav_scan')
     def test_permission_scope_version_and_submitted_guards_precede_scan(self, scanner):

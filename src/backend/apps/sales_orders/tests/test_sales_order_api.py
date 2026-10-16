@@ -2,10 +2,12 @@ import json
 import warnings
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.paginator import UnorderedObjectListWarning
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
@@ -157,6 +159,13 @@ class SalesOrderApiTests(APITestCase):
         )
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         return confirmed
+
+    def production_fields(self):
+        return {
+            "follower_ids": [str(self.employee.pk)], "delivery_date": timezone.localdate().isoformat(),
+            "includes_tax": True, "tax_rate": 3, "order_tolerance_percent": "3.00",
+            "is_repeat_order": False, "delivery_method": "SINGLE",
+        }
 
     def add_completed_shipment_and_balance(self, order_id):
         SalesOrderCollaborationEvent.objects.create(
@@ -509,9 +518,14 @@ class SalesOrderApiTests(APITestCase):
         )
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         self.assertEqual(confirmed.data["data"]["status"], "CONFIRMED")
+        self.assertNotIn("factory_merchandiser", confirmed.data["data"])
+        self.assertNotIn("tax_rate", confirmed.data["data"])
+        self.assertNotIn("delivery_method", confirmed.data["data"])
 
         batch_line_id = confirmed.data["data"]["delivery_batches"][0]["lines"][0]["id"]
         production_payload = {
+            **self.production_fields(),
+            "task_number": "HT26199",
             "request_key": str(uuid4()),
             "delivery_batch_line_id": batch_line_id,
             "quantity": 10,
@@ -563,7 +577,7 @@ class SalesOrderApiTests(APITestCase):
         batch_line_id = confirmed.data["data"]["delivery_batches"][0]["lines"][0]["id"]
         production = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
-            {"delivery_batch_line_id": batch_line_id, "quantity": 10},
+            {**self.production_fields(), "task_number": "HT26199-2", "delivery_batch_line_id": batch_line_id, "quantity": 10},
             format="json",
         )
         self.assertEqual(production.status_code, 201, production.data)
@@ -615,7 +629,7 @@ class SalesOrderApiTests(APITestCase):
         batch_line_id = confirmed.data["data"]["delivery_batches"][0]["lines"][0]["id"]
         production = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
-            {"delivery_batch_line_id": batch_line_id, "quantity": 6},
+            {**self.production_fields(), "task_number": "HT26199-3", "delivery_batch_line_id": batch_line_id, "quantity": 6},
             format="json",
         )
         self.assertEqual(production.status_code, 201, production.data)
@@ -645,20 +659,29 @@ class SalesOrderApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["special_requirements_html"], manual_json)
 
-    def test_confirmed_sales_batch_can_create_one_task_with_independent_color_lines(self):
-        confirmed = self.confirm_direct()
-        batch = confirmed.data["data"]["delivery_batches"][0]
-        batch_line_id = batch["lines"][0]["id"]
+    def test_confirmed_sales_batch_preserves_source_colors_and_separate_boms(self):
         first_color = ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
         second_color = ProductColor.objects.create(
             color_card="TEST-CARD-B",
             color_code="TEST-COLOR-B",
             color_name="测试颜色B",
         )
+        payload = self.direct_payload(quantity="6")
+        payload["lines"][0]["product_color_id"] = str(first_color.pk)
+        payload["lines"].append({**payload["lines"][0], "client_key": "line-2", "quantity": "4", "product_color_id": str(second_color.pk)})
+        payload["delivery_batches"][0]["lines"].append({"sales_order_line_client_key": "line-2", "quantity": "4"})
+        source = self.client.post("/api/v1/sales-orders/", payload, format="json")
+        self.assertEqual(source.status_code, 201, source.data)
+        confirmed = self.client.post(f"/api/v1/sales-orders/{source.data['data']['id']}/confirm/", {}, format="json", HTTP_IF_MATCH=source["ETag"])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        batch = confirmed.data["data"]["delivery_batches"][0]
+        batch_line_id, second_batch_line_id = [line["id"] for line in batch["lines"]]
 
         created = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-4",
                 "delivery_batch_id": batch["id"],
                 "lines": [
                     {
@@ -667,7 +690,7 @@ class SalesOrderApiTests(APITestCase):
                         "quantity": 6,
                     },
                     {
-                        "delivery_batch_line_id": batch_line_id,
+                        "delivery_batch_line_id": second_batch_line_id,
                         "product_color_id": str(second_color.pk),
                         "quantity": 4,
                     },
@@ -688,7 +711,7 @@ class SalesOrderApiTests(APITestCase):
         )
         self.assertEqual(
             {row["source_delivery_batch_line_id"] for row in data["products"]},
-            {batch_line_id},
+            {batch_line_id, second_batch_line_id},
         )
         self.assertEqual(data["total_quantity"], 10)
         self.assertEqual(data["batch_total_quantity"], Decimal("10.0000"))
@@ -696,9 +719,14 @@ class SalesOrderApiTests(APITestCase):
         refreshed_order = self.client.get(f"/api/v1/sales-orders/{confirmed.data['data']['id']}/")
         self.assertEqual(refreshed_order.status_code, 200, refreshed_order.data)
         refreshed_line = refreshed_order.data["data"]["delivery_batches"][0]["lines"][0]
-        self.assertEqual(Decimal(refreshed_line["allocated_quantity"]), Decimal("10"))
-        self.assertEqual(Decimal(refreshed_line["maximum_quantity"]), Decimal("10.3"))
-        self.assertEqual(Decimal(refreshed_line["remaining_quantity"]), Decimal("0.3"))
+        self.assertEqual(Decimal(refreshed_line["allocated_quantity"]), Decimal("6"))
+        self.assertEqual(Decimal(refreshed_line["maximum_quantity"]), Decimal("6.18"))
+        self.assertEqual(Decimal(refreshed_line["remaining_quantity"]), Decimal("0"))
+        refreshed_second = refreshed_order.data["data"]["delivery_batches"][0]["lines"][1]
+        self.assertEqual(Decimal(refreshed_second["allocated_quantity"]), Decimal("4"))
+        self.assertEqual(Decimal(refreshed_second["maximum_quantity"]), Decimal("4.12"))
+        self.assertEqual(Decimal(refreshed_second["remaining_quantity"]), Decimal("0"))
+        self.assertFalse(refreshed_order.data["data"]["has_remaining_production_capacity"])
 
         submitted = self.client.post(
             f"/api/v1/production-tasks/{data['id']}/submit/",
@@ -710,7 +738,7 @@ class SalesOrderApiTests(APITestCase):
         today = timezone.localdate().isoformat()
         approved = self.client.post(
             f"/api/v1/production-tasks/{data['id']}/pmc-decision/",
-            {"decision": "CONFIRM", "planned_start_date": today, "planned_end_date": today},
+            {"follower_ids": [str(self.employee.pk)], "tax_rate": 3, "decision": "CONFIRM", "planned_start_date": today, "planned_end_date": today},
             format="json",
             HTTP_IF_MATCH=submitted["ETag"],
         )
@@ -771,7 +799,7 @@ class SalesOrderApiTests(APITestCase):
             ProductionTaskStatus.READY,
         )
 
-    def test_production_creation_rejects_inaccessible_sales_order(self):
+    def test_production_creation_does_not_require_sales_customer_access(self):
         confirmed = self.confirm_direct()
         batch_line_id = confirmed.data["data"]["delivery_batches"][0]["lines"][0]["id"]
         user_model = get_user_model()
@@ -786,12 +814,14 @@ class SalesOrderApiTests(APITestCase):
 
         response = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
-            {"delivery_batch_line_id": batch_line_id, "quantity": 1},
+            {**self.production_fields(), "task_number": "HT26199-5", "delivery_batch_line_id": batch_line_id, "quantity": 1},
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(ProductionTask.objects.filter(sales_order_id=confirmed.data["data"]["id"]).count(), 0)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(ProductionTask.objects.filter(sales_order_id=confirmed.data["data"]["id"]).count(), 1)
+        sales_detail = self.client.get(f"/api/v1/sales-orders/{confirmed.data['data']['id']}/")
+        self.assertIn(sales_detail.status_code, [403, 404], sales_detail.data)
 
     def test_multi_color_creation_rejects_duplicates_mixed_payload_and_over_allocation(self):
         confirmed = self.confirm_direct()
@@ -807,7 +837,7 @@ class SalesOrderApiTests(APITestCase):
 
         duplicate = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
-            {"delivery_batch_id": batch["id"], "lines": [base_line, base_line]},
+            {**self.production_fields(), "task_number": "HT26199-6", "delivery_batch_id": batch["id"], "lines": [base_line, base_line]},
             format="json",
         )
         self.assertEqual(duplicate.status_code, 400, duplicate.data)
@@ -816,6 +846,8 @@ class SalesOrderApiTests(APITestCase):
         mixed = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-7",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 1,
                 "delivery_batch_id": batch["id"],
@@ -834,6 +866,8 @@ class SalesOrderApiTests(APITestCase):
         over_allocated = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-8",
                 "delivery_batch_id": batch["id"],
                 "lines": [
                     {**base_line, "quantity": 6},
@@ -855,6 +889,8 @@ class SalesOrderApiTests(APITestCase):
         created = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-9",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 10,
                 "production_priority": "NORMAL",
@@ -884,7 +920,7 @@ class SalesOrderApiTests(APITestCase):
 
         missing_dates = self.client.post(
             f"/api/v1/production-tasks/{created.data['data']['id']}/pmc-decision/",
-            {"decision": "CONFIRM"},
+            {"follower_ids": [str(self.employee.pk)], "tax_rate": 3, "decision": "CONFIRM"},
             format="json",
             HTTP_IF_MATCH=submitted["ETag"],
         )
@@ -896,6 +932,8 @@ class SalesOrderApiTests(APITestCase):
             f"/api/v1/production-tasks/{created.data['data']['id']}/pmc-decision/",
             {
                 "decision": "CONFIRM",
+                "follower_ids": [str(self.employee.pk)],
+                "tax_rate": 3,
                 "planned_start_date": today,
                 "planned_end_date": today,
             },
@@ -911,6 +949,8 @@ class SalesOrderApiTests(APITestCase):
         created = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-10",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 10,
                 "planned_start_date": timezone.localdate().isoformat(),
@@ -956,8 +996,9 @@ class SalesOrderApiTests(APITestCase):
                 {
                     "client_key": old_product_line["id"],
                     "product_id": str(self.product.pk),
-                    "product_color_id": str(color.pk),
-                    "color_code": color.color_code,
+                    "product_color_id": old_product_line["product_color_id"],
+                    "color_code": old_product_line["color_code"],
+                    "customer_color": old_product_line["customer_color"],
                     "quantity": 10,
                     "unit_id": str(self.product.unit_id),
                     "currency_id": task_data["currency_id"],
@@ -1126,6 +1167,8 @@ class SalesOrderApiTests(APITestCase):
         production = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                **self.production_fields(),
+                "task_number": "HT26199-11",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 10,
                 "planned_start_date": timezone.localdate().isoformat(),
@@ -1236,3 +1279,31 @@ class SalesOrderApiTests(APITestCase):
         )
         self.assertEqual(changed.status_code, 200, changed.data)
         self.assertEqual(Decimal(changed.data["data"]["lines"][0]["unit_price"]), Decimal("9"))
+
+    @patch("apps.sales_orders.api.views.save_scanned_image")
+    def test_draft_line_product_image_can_be_uploaded_and_removed(self, save_image):
+        created = self.client.post("/api/v1/sales-orders/", self.direct_payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        order_id = created.data["data"]["id"]
+        line_id = created.data["data"]["lines"][0]["id"]
+        image = BusinessFile.objects.create(
+            uploaded_by_employee=self.employee,
+            original_name="order-product.png",
+            storage_key="tests/order-product.png",
+            content_type="image/png",
+            size_bytes=8,
+            scan_status=FileScanStatus.SKIPPED,
+        )
+        save_image.return_value = image
+        url = f"/api/v1/sales-orders/{order_id}/lines/{line_id}/product-image/"
+        uploaded = self.client.post(
+            url,
+            {"file": SimpleUploadedFile("order-product.png", b"png")},
+            format="multipart",
+            HTTP_IF_MATCH=created["ETag"],
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.data)
+        self.assertEqual(uploaded.data["data"]["lines"][0]["product_image_id"], str(image.pk))
+        removed = self.client.delete(url, HTTP_IF_MATCH=uploaded["ETag"])
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertIsNone(removed.data["data"]["lines"][0]["product_image_id"])

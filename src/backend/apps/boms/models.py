@@ -53,11 +53,52 @@ class Bom(ArchivableModel):
         related_name="copied_versions",
     )
 
+    product = models.ForeignKey(
+        "products.ProductInformation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bom_records",
+    )
+    product_category = models.ForeignKey(
+        "reference_data.ProductCategory",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bom_records",
+    )
+    product_unit = models.ForeignKey(
+        "reference_data.ProductionUnit",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bom_records",
+    )
+    product_color = models.ForeignKey(
+        "reference_data.ProductColor",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bom_records",
+    )
+
     product_number_snapshot = models.CharField(max_length=100)
     product_code_snapshot = models.CharField(max_length=100, blank=True)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
     product_name_snapshot = models.CharField(max_length=200)
     specification_snapshot = models.CharField(max_length=300)
     product_category_snapshot = models.CharField(max_length=150, blank=True)
+    material_snapshot = models.TextField(blank=True)
+    product_unit_code_snapshot = models.CharField(max_length=50, blank=True)
+    product_unit_name_snapshot = models.CharField(max_length=100, blank=True)
+    product_color_name_snapshot = models.CharField(max_length=200, blank=True)
+    product_color_code_snapshot = models.CharField(max_length=100, blank=True)
+    product_color_card_snapshot = models.CharField(max_length=100, blank=True)
+    product_information_confirmed_at = models.DateTimeField(null=True, blank=True)
+    product_information_confirmed_by_employee = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="product_reviewed_boms",
+    )
     order_quantity = models.DecimalField(
         max_digits=18,
         decimal_places=4,
@@ -140,6 +181,7 @@ class Bom(ArchivableModel):
             models.Index(fields=["status", "-updated_at"], name="bom_status_updated_idx"),
             models.Index(fields=["production_task", "-updated_at"], name="bom_task_updated_idx"),
             models.Index(fields=["product_line", "-version_number"], name="bom_product_version_idx"),
+            models.Index(fields=["product", "status", "-updated_at"], name="bom_master_status_idx"),
         ]
 
     def __str__(self):

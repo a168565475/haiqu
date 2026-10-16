@@ -1,9 +1,8 @@
-import { mount, RouterLinkStub, shallowMount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { describe, expect, it, vi } from 'vitest'
 
 import AppHeader from './AppHeader.vue'
-import AppSidebar from './AppSidebar.vue'
 import ErpLayout from '@/layouts/ErpLayout.vue'
 
 const routeMock = vi.hoisted(() => ({
@@ -26,32 +25,12 @@ vi.mock('@/stores/auth', () => ({
   }),
 }))
 
-const popoverStub = {
-  template: '<div class="popover-stub"><slot name="reference" /><slot /></div>',
-}
-
-describe('折叠侧栏交互', () => {
-  it('折叠时为一级菜单提供右侧子菜单内容', () => {
-    const wrapper = shallowMount(AppSidebar, {
-      props: { compact: true },
-      global: {
-        stubs: { RouterLink: RouterLinkStub, ElPopover: popoverStub },
-      },
-    })
-
-    const flyout = wrapper.get('[data-flyout-menu-key="customer-management"]')
-    expect(flyout.text()).toContain('客户管理')
-    expect(flyout.text()).toContain('任务中心')
-    expect(wrapper.findAll('.app-sidebar__flyout').length).toBeGreaterThan(0)
-  })
-
-  it('折叠状态不再显示顶部展开侧栏按钮', async () => {
+describe('常驻主栏的页面外壳', () => {
+  it('顶部保留全局页签与账号入口，不显示展开侧栏按钮', () => {
     const wrapper = mount(AppHeader, {
-      props: { compact: true },
       global: {
         plugins: [ElementPlus],
         stubs: {
-          RouterLink: RouterLinkStub,
           GlobalPageTabs: { template: '<nav data-global-page-tabs role="tablist" />' },
         },
       },
@@ -60,15 +39,26 @@ describe('折叠侧栏交互', () => {
     expect(wrapper.find('[data-sidebar-expand]').exists()).toBe(false)
     expect(wrapper.get('.app-header__context').attributes('role')).toBeUndefined()
     expect(wrapper.find('[data-global-page-tabs]').exists()).toBe(true)
+    expect(wrapper.get('[data-current-user]').text()).toContain('超级管理员')
     expect(wrapper.find('.app-header__page-title').exists()).toBe(false)
     expect(wrapper.find('[data-breadcrumb]').exists()).toBe(false)
   })
 
-  it('强制展开状态覆盖窄屏默认折叠样式', () => {
+  it('始终提供品牌和主导航，顶部与正文位于独立工作区', () => {
     const wrapper = mount(ErpLayout, {
-      props: { compactSidebar: false, sidebarExpanded: true },
+      slots: {
+        sidebar: '<nav aria-label="业务导航">客户</nav>',
+        header: '<span>全局页签</span>',
+        default: '<section>客户列表</section>',
+      },
     })
 
-    expect(wrapper.classes()).toContain('erp-layout--sidebar-expanded')
+    const sidebar = wrapper.get('.erp-layout__sidebar')
+    const brand = sidebar.get('img[alt="HiTree"]')
+    expect(brand.attributes('width')).toBe('64')
+    expect(brand.attributes('height')).toBe('72')
+    expect(sidebar.get('nav').text()).toBe('客户')
+    expect(wrapper.get('.erp-layout__workspace header').text()).toBe('全局页签')
+    expect(wrapper.get('.erp-layout__workspace main').text()).toBe('客户列表')
   })
 })

@@ -107,17 +107,31 @@ class SalesOrder(ArchivableModel):
         on_delete=models.PROTECT,
         related_name="merchandised_sales_orders",
     )
+    # 已执行迁移的历史列仅保留数据；销售表单、确认和转生产不再使用。
+    factory_merchandiser = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="factory_merchandised_sales_orders",
+    )
+    tax_rate = models.PositiveSmallIntegerField(choices=[(3, "3%"), (5, "5%"), (7, "7%")], null=True, blank=True)
+    delivery_method = models.CharField(
+        max_length=20, choices=[("SINGLE", "一次交货"), ("SPLIT", "分批交货")], null=True, blank=True,
+    )
     customer_po_number = models.CharField(max_length=100, blank=True)
     contract_number = models.CharField(max_length=100, blank=True)
     order_date = models.DateField()
     direct_order_reason = models.TextField(blank=True)
     currency_code = models.CharField(max_length=3, validators=[currency_code_validator])
     exchange_rate = models.DecimalField(
-        max_digits=20,
-        decimal_places=6,
+        max_digits=22,
+        decimal_places=8,
         default=Decimal("1"),
-        validators=[MinValueValidator(Decimal("0.000001"))],
+        validators=[MinValueValidator(Decimal("0.00000001"))],
     )
+    exchange_rate_record = models.ForeignKey(
+        "reference_data.ExchangeRate", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="sales_orders",
+    )
+    exchange_rate_snapshot = models.JSONField(default=dict, blank=True)
     incoterm_code = models.CharField(max_length=20, blank=True)
     payment_terms = models.TextField(blank=True)
     deposit_required = models.BooleanField(default=False)
@@ -145,6 +159,7 @@ class SalesOrder(ArchivableModel):
     confirmation_summary = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=SalesOrderStatus.choices, default=SalesOrderStatus.DRAFT)
     total_amount = models.DecimalField(max_digits=22, decimal_places=4, default=Decimal("0"))
+    total_amount_cny = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
     confirmed_by_employee = models.ForeignKey(
         "organizations.Employee",
@@ -169,6 +184,7 @@ class SalesOrder(ArchivableModel):
             models.CheckConstraint(condition=Q(status__in=SalesOrderStatus.values), name="sales_order_status_valid"),
             models.CheckConstraint(condition=Q(exchange_rate__gt=0), name="sales_order_rate_positive"),
             models.CheckConstraint(condition=Q(total_amount__gte=0), name="sales_order_total_nonnegative"),
+            models.CheckConstraint(condition=Q(total_amount_cny__gte=0), name="sales_order_cny_total_nonneg"),
             models.CheckConstraint(
                 condition=Q(order_tolerance_percent__gte=0, order_tolerance_percent__lte=100),
                 name="sales_order_tolerance_range",
@@ -220,6 +236,27 @@ class SalesOrderLine(TimeStampedModel):
         on_delete=models.PROTECT,
         related_name="sales_order_lines",
     )
+    product_category = models.ForeignKey(
+        "reference_data.ProductCategory",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sales_order_line_categories",
+    )
+    product_unit = models.ForeignKey(
+        "reference_data.ProductionUnit",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sales_order_line_units",
+    )
+    product_color = models.ForeignKey(
+        "reference_data.ProductColor",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sales_order_line_colors",
+    )
     # 客户在 BOM 确认前可能只提供文字产品信息；这些快照保留客户当时的输入，
     # 不要求已经建立产品主档关联。BOM 确认后再把当前业务字段关联到正式产品。
     customer_product_name_snapshot = models.CharField(max_length=200, blank=True)
@@ -229,12 +266,23 @@ class SalesOrderLine(TimeStampedModel):
     product_code_snapshot = models.CharField(max_length=100, blank=True)
     product_name_snapshot = models.CharField(max_length=200)
     specification_snapshot = models.CharField(max_length=500, blank=True)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
+    material_snapshot = models.TextField(blank=True)
     unit_code_snapshot = models.CharField(max_length=30, validators=[uppercase_code_validator])
+    product_image = models.ForeignKey(
+        "files.BusinessFile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sales_order_line_product_images",
+    )
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     quoted_quantity_snapshot = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     quoted_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
     line_total = models.DecimalField(max_digits=22, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
+    unit_price_cny = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    line_total_cny = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     price_difference = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
     price_difference_rate = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
     lower_price_reason = models.TextField(blank=True)
@@ -250,6 +298,8 @@ class SalesOrderLine(TimeStampedModel):
             models.CheckConstraint(condition=Q(quantity__gt=0), name="sales_order_line_qty_positive"),
             models.CheckConstraint(condition=Q(unit_price__gte=0), name="sales_order_line_price_nonneg"),
             models.CheckConstraint(condition=Q(line_total__gte=0), name="sales_order_line_total_nonneg"),
+            models.CheckConstraint(condition=Q(unit_price_cny__gte=0), name="sales_order_line_cny_price_nonneg"),
+            models.CheckConstraint(condition=Q(line_total_cny__gte=0), name="sales_order_line_cny_total_nonneg"),
             models.CheckConstraint(
                 condition=Q(quoted_unit_price__isnull=True) | Q(quoted_unit_price__gte=0),
                 name="sales_order_line_quote_price_nonneg",

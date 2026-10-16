@@ -567,9 +567,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <header class="page-heading">
         <div>
-          <div class="breadcrumb"><a href="/settings/reference-data">系统配置</a><span>/</span><span>生产维护</span></div>
           <h1>生产维护</h1>
-          <p>统一维护生产、面料和管材基础资料；变更保留状态与审计记录。</p>
         </div>
         <div class="page-heading__actions">
           <el-button :icon="Refresh" @click="reloadAll">刷新</el-button>
@@ -642,7 +640,7 @@ onBeforeUnmount(() => {
             <div><h2>{{ selectedCategory.label }}</h2><span>共 {{ total }} 条</span></div>
           </div>
 
-          <el-table v-loading="loading" :data="records" row-key="id" class="production-table">
+          <el-table v-loading="loading" :data="records" height="100%" row-key="id" class="production-table">
             <template v-if="selectedKey === 'category'">
               <el-table-column prop="item_type_label" label="品号类型" width="130" />
               <el-table-column prop="category_name" label="品号类别" min-width="220" />
@@ -814,7 +812,7 @@ onBeforeUnmount(() => {
                     <input :key="fileInputKey" type="file" accept="image/jpeg,image/png,image/gif,image/webp" @change="chooseImage" />
                   </label>
                   <el-button v-if="imagePreviewUrl" :icon="Delete" @click="markImageForClear">清除图片</el-button>
-                  <small>支持 JPG、PNG、GIF、WebP，最大 5MB；上传后会进行安全扫描。</small>
+                  <small>支持 JPG、PNG、GIF、WebP，最大 5MB；上传后按当前文件策略校验。</small>
                 </div>
               </div>
             </el-form-item>
@@ -942,7 +940,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.production-page { min-width: 0; color: #1d2129; }
+.production-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
 .page-heading h1 { margin: 5px 0 0; font-size: 26px; line-height: 36px; }
 .page-heading p { margin: 5px 0 0; color: #7a7f87; font-size: 14px; }
@@ -955,16 +953,16 @@ onBeforeUnmount(() => {
 .metric-card small { color: #8a8f98; font-size: 13px; }
 .metric-card.active { border-color: #1f2937; box-shadow: 0 0 0 1px #1f2937; }
 .metric-card.active small { color: #4e5969; }
-.content-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
+.content-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; }
 .category-panel, .data-card { border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
-.category-panel { padding: 14px 10px; }
+.category-panel { min-height: 0; padding: 14px 10px; overflow-y: auto; }
 .category-panel h2 { margin: 2px 12px 10px; color: #8a8f98; font-size: 13px; font-weight: 500; }
 .category-panel button { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 11px 12px; border: 0; border-radius: 8px; background: transparent; color: #4e5969; font-size: 14px; cursor: pointer; }
 .category-panel button.active { background: #171719; color: #fff; font-weight: 600; }
 .category-panel em { min-width: 26px; padding: 2px 7px; border-radius: 999px; background: #eef0f3; color: #6b7280; font-size: 12px; font-style: normal; text-align: center; }
 .category-panel button.active em { background: #3a3a3d; color: #fff; }
 .category-panel__empty { margin: 8px 12px; color: #9ca3af; font-size: 13px; line-height: 1.6; }
-.data-card { min-width: 0; padding: 18px 20px 16px; }
+.data-card { display: flex; min-width: 0; min-height: 0; flex-direction: column; padding: 18px 20px 16px; overflow: hidden; }
 .pending-card { display: grid; min-height: 420px; place-items: center; }
 .pending-card p { margin: 0; color: #8a8f98; font-size: 13px; }
 .filter-row { display: flex; flex-wrap: wrap; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid #edf0f3; }
@@ -975,11 +973,12 @@ onBeforeUnmount(() => {
 .table-heading > div { display: flex; align-items: baseline; gap: 8px; }
 .table-heading h2 { margin: 0; font-size: 17px; }
 .table-heading span { color: #8a8f98; font-size: 13px; }
-.production-table { width: 100%; }
+.production-table { flex: 1; min-height: 0; width: 100%; }
+.production-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
 .color-thumb { width: 52px; height: 42px; border: 1px solid #e5e7eb; border-radius: 5px; cursor: zoom-in; }
 .empty-image { color: #a3a8b0; font-size: 12px; }
 .mapping-missing { color: #b45309; }
-.el-pagination { justify-content: flex-end; margin-top: 16px; }
+.el-pagination { flex: none; justify-content: flex-end; margin-top: 16px; }
 .state-page { display: grid; min-height: 420px; place-content: center; text-align: center; }
 .state-page h1 { margin: 0 0 8px; }
 .state-page p { color: #7a7f87; }

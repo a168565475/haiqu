@@ -3,10 +3,10 @@ from decimal import Decimal
 from django.test import TestCase
 
 from apps.products.models import RawMaterialInformation
-from apps.reference_data.models import ProductCategory, ProductionUnit
+from apps.reference_data.models import ProductCategory, ProductColor, ProductionUnit
 from apps.material_issues.models import OrderMaterialRequirement
 from ..models import Bom, BomLine, BomSection
-from ..services import _create_sections, _sync_profile_lines_to_order_quantity, create_bom
+from ..services import _create_sections, _sync_profile_lines_to_order_quantity, confirm_bom_product, create_bom
 from . import test_bom_api as fixtures
 
 
@@ -54,6 +54,12 @@ class MaterialFlowBomTests(TestCase):
         return response
 
     def verify(self):
+        # 本组测试材料流转，先通过真实服务完成产品核对，避免产品门禁掩盖目标校验。
+        color, _ = ProductColor.objects.get_or_create(
+            color_card="BOM_FLOW", color_code="BOM_FLOW", color_name="材料流转测试色",
+        )
+        self.bom = confirm_bom_product(bom=self.bom, product=self.product, product_color=color,
+                                      color_code=color.color_code, actor_employee=self.employee)
         response = self.get()
         return self.client.post(f"/api/v1/boms/{self.bom.pk}/verify/", {"quantity_confirmation_reason": "测试批次数量差异"},
             format="json", HTTP_IF_MATCH=response["ETag"])

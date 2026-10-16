@@ -20,7 +20,7 @@ export const QUOTATION_WORKFLOW_STATES = [
   { id: 'F02-S01', flow: 'F02', phase: 'PROCESSING', title: '正在生成正式 PDF', description: '正式文件生成中，请勿重复提交。' },
   { id: 'F02-S02', flow: 'F02', phase: 'SUCCESS', title: '正式 PDF 已生成', description: '正式文件已登记，可以下载或准备发送。' },
   { id: 'F02-S03', flow: 'F02', phase: 'INITIAL', title: '选择已有文件上传', description: '请选择不超过 10MB 的真实 PDF 或 XLSX 文件。' },
-  { id: 'F02-S04', flow: 'F02', phase: 'PROCESSING', title: '正在校验上传文件', description: '正在检查格式、大小、真实文件签名和病毒扫描结果。' },
+  { id: 'F02-S04', flow: 'F02', phase: 'PROCESSING', title: '正在校验上传文件', description: '正在检查格式、大小和真实文件签名，并按当前文件策略处理。' },
   { id: 'F02-S05', flow: 'F02', phase: 'SUCCESS', title: '上传成功并登记', description: '当前正式附件已更新，历史文件仍保留。' },
   { id: 'F02-S06', flow: 'F02', phase: 'FAILED', title: '上传文件不合格', description: '请上传不超过 10MB 的真实 PDF 或 XLSX 文件。' },
   { id: 'F02-S07', flow: 'F02', phase: 'PROCESSING', title: '正在重新生成正式 PDF', description: '旧正式文件在新文件登记成功前仍可查看。' },

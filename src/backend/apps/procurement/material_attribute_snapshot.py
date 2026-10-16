@@ -97,3 +97,20 @@ def legacy_material_attribute_snapshot(line):
         "section_title": getattr(line, "section_title_snapshot", ""),
         "fields": [item for item in (_field(*definition) for definition in definitions) if item],
     }
+
+
+def purchase_line_attribute_text(snapshot, section_title=""):
+    """生成供应商采购表使用的分区和属性文本；喷塑颜色不进入采购输出。"""
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    title = _text(section_title) or _text(snapshot.get("section_title"))
+    lines = [f"BOM分区：{title}"] if title else []
+    for field in snapshot.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        key = _text(field.get("key"))
+        label = _text(field.get("label"))
+        value = _text(field.get("value"))
+        if not label or not value or key == "tube_coating_color" or label == "喷塑颜色":
+            continue
+        lines.append(f"{label}：{value}")
+    return "\n".join(lines)

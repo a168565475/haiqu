@@ -1,4 +1,5 @@
 import type { PageMeta } from './referenceData'
+import type { SalesOrder, SalesOrderBatchLine, SalesOrderDeliveryBatch, SalesOrderLine, SalesOrderListItem } from './salesOrder'
 
 export type ProductionTaskStatus = 'DRAFT' | 'PENDING_VALIDATION' | 'READY' | 'IN_PRODUCTION' | 'PAUSED' | 'COMPLETED' | 'CANCELLED'
 export type ProductionOrderSource = 'NEW' | 'REPEAT'
@@ -25,6 +26,9 @@ export interface CurrencyOption { id: string; code: string; name: string; symbol
 export interface UnitOption { id: string; unit_code: string; unit_name: string }
 export interface ColorOption { id: string; color_card: string; color_code: string; color_name: string }
 export interface ProductOption {
+  category_id?: string
+  unit_code?: string
+  unit_name?: string
   id: string
   product_number: string
   product_code: string
@@ -36,6 +40,8 @@ export interface ProductOption {
 export interface ProductionTaskDetailTemplate { key: string; type: string; category: string }
 
 export interface ProductionTaskOptions {
+  categories?: Array<{ id: string; category_name: string }>
+  recent_task_numbers?: string[]
   order_sources: ValueOption<ProductionOrderSource>[]
   delivery_methods: ValueOption<ProductionDeliveryMethod>[]
   statuses: ValueOption<ProductionTaskStatus>[]
@@ -68,6 +74,8 @@ export interface ProductionTaskDetail extends ProductionTaskDetailInput {
 }
 
 export interface ProductionTaskProductInput {
+  replace_primary_image?: boolean
+  product_category_id?: string | null
   client_key: string
   product_id: string | null
   product_color_id: string | null
@@ -75,10 +83,12 @@ export interface ProductionTaskProductInput {
   customer_product_name?: string
   customer_specification?: string
   customer_color?: string
+  material?: string
   quantity: string
   unit_id: string
   currency_id: string
   unit_price: string
+  exchange_rate_record_id?: string | null
   exchange_rate: string
   special_requirements: string
   packaging_method: string
@@ -95,19 +105,26 @@ export interface ProductionTaskProductUpdateDraft {
 export interface ProductionDeliveryBatchInput { quantity: string; delivery_date: string; note: string }
 
 export interface ProductionTaskInput {
+  planned_start_date?: string | null
+  planned_end_date?: string | null
+  production_priority?: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
+  production_batch_number?: string
+  planner_id?: string | null
+  task_number: string
   bom_sync_mode?: ProductionTaskBomSyncMode
   bom_sync_token?: string
   contract_number_token?: string
   contract_number: string
   order_source: ProductionOrderSource
   order_number: string
-  customer_account_id: string
+  customer_account_id?: string | null
   order_date: string
   delivery_date: string
   salesperson_id: string
   follower_ids: string[]
   currency_id: string
   includes_tax: boolean
+  tax_rate: 3 | 5 | 7 | null
   order_tolerance_percent: string
   is_repeat_order: boolean
   preproduction_sample_required: boolean
@@ -120,6 +137,19 @@ export interface ProductionTaskInput {
 }
 
 export interface ProductionTaskPatchInput {
+  salesperson_id?: string
+  order_date?: string
+  includes_tax?: boolean
+  tax_rate?: 3 | 5 | 7 | null
+  order_tolerance_percent?: string
+  is_repeat_order?: boolean
+  preproduction_sample_required?: boolean
+  delivery_method?: ProductionDeliveryMethod
+  planner_id?: string | null
+  planned_start_date?: string | null
+  planned_end_date?: string | null
+  production_priority?: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
+  production_batch_number?: string
   bom_sync_mode?: ProductionTaskBomSyncMode
   bom_sync_token?: string
   delivery_date?: string
@@ -132,11 +162,16 @@ export interface ProductionTaskPatchInput {
 }
 
 export interface ProductionTaskProduct {
+  max_production_quantity?: number | null
+  deletion_blocked_reason?: string
+  product_category_id?: string | null
   id: string
   line_number: number
   product_id: string | null
   source_delivery_batch_line_id: string | null
   source_sales_order_line_id: string | null
+  source_quotation_line_id?: string | null
+  source_inquiry_item_id?: string | null
   product_number: string
   product_code: string
   item_number: string
@@ -145,6 +180,7 @@ export interface ProductionTaskProduct {
   customer_product_name?: string
   customer_specification?: string
   customer_color?: string
+  material?: string
   image_name: string | null
   images: ProductionTaskProductImage[]
   product_color_id: string | null
@@ -159,9 +195,12 @@ export interface ProductionTaskProduct {
   currency_code: string
   unit_price: string
   total_amount: string
+  exchange_rate_record_id?: string | null
+  exchange_rate_snapshot?: ProductionExchangeRate | null
   exchange_rate: string
   local_unit_price: string
   local_total_amount: string
+  specification_display?: string
   special_requirements: string
   packaging_method: string
   details: ProductionTaskDetail[]
@@ -181,7 +220,7 @@ export interface ProductionTask {
   order_source: ProductionOrderSource
   order_source_display: string
   order_number: string
-  customer_id: string
+  customer_id: string | null
   customer_code: string
   customer_name: string
   order_date: string
@@ -191,6 +230,7 @@ export interface ProductionTask {
   currency_id?: string
   currency_code?: string
   includes_tax?: boolean
+  tax_rate?: 3 | 5 | 7 | null
   order_tolerance_percent?: string
   is_repeat_order?: boolean
   preproduction_sample_required?: boolean
@@ -273,7 +313,26 @@ export interface ProductionTask {
   }>
 }
 
+export interface ProductionExchangeRate {
+  record_id: string | null
+  base_currency_code: string
+  quote_currency_code: string
+  rate: string
+  effective_date: string
+  source_name: string
+  source_version: string
+}
+
 export interface ProductionOrderFromSalesCommonInput {
+  follower_ids?: string[]
+  delivery_date?: string
+  includes_tax?: boolean
+  tax_rate?: 3 | 5 | 7 | null
+  order_tolerance_percent?: string
+  is_repeat_order?: boolean
+  delivery_method?: ProductionDeliveryMethod
+  exchange_rate_record_id?: string | null
+  task_number: string
   request_key?: string
   planned_start_date?: string | null
   planned_end_date?: string | null
@@ -294,7 +353,7 @@ export type ProductionOrderFromSalesInput = ProductionOrderFromSalesCommonInput 
       delivery_batch_id: string
       lines: Array<{
         delivery_batch_line_id: string
-        product_color_id: string
+        product_color_id?: string | null
         quantity: number
         special_requirements?: string
         packaging_method?: string
@@ -307,6 +366,13 @@ export type ProductionOrderFromSalesInput = ProductionOrderFromSalesCommonInput 
 
 export interface ProductionTaskPmcDecisionInput {
   decision: 'CONFIRM' | 'RETURN'
+  follower_ids?: string[]
+  delivery_date?: string
+  includes_tax?: boolean
+  tax_rate?: 3 | 5 | 7 | null
+  order_tolerance_percent?: string
+  is_repeat_order?: boolean
+  delivery_method?: ProductionDeliveryMethod
   planned_start_date?: string | null
   planned_end_date?: string | null
   production_priority?: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
@@ -348,3 +414,21 @@ export interface ProductionTaskStats {
 export interface PaginatedProductionTasks { data: ProductionTask[]; meta: PageMeta }
 export interface VersionedProductionTask { data: ProductionTask; etag: string }
 export interface ReservedContractNumber { contract_number: string; token: string }
+
+// 生产建单专用来源，不能包含销售客户、公司或销售跟单员资料。
+export type ProductionSalesOrderSourceSummary = Pick<SalesOrderListItem,
+  'id' | 'order_number' | 'currency_code' | 'total_amount' | 'total_amount_cny' | 'status' | 'line_count' | 'delivery_batch_count' | 'next_delivery_date' | 'has_remaining_production_capacity'> & { product_names?: string[] }
+export type ProductionSalesOrderSourceLine = Pick<SalesOrderLine,
+  'id' | 'product_id' | 'product_image_id' | 'customer_product_name_snapshot' | 'customer_specification_snapshot'
+  | 'customer_color_snapshot' | 'product_color_id' | 'product_number_snapshot' | 'product_code_snapshot' | 'product_name_snapshot'
+  | 'specification_snapshot' | 'specification_display' | 'item_number_snapshot' | 'material_snapshot' | 'quality_requirements' | 'packaging_requirements'
+  | 'unit_price_cny' | 'line_total_cny'> & { unit_id?: string; unit_name?: string; unit_price?: string; line_total?: string }
+export type ProductionSalesOrderSourceBatch = Pick<SalesOrderDeliveryBatch,
+  'id' | 'status' | 'batch_number' | 'planned_delivery_date' | 'notes'> & { lines: SalesOrderBatchLine[] }
+export type ProductionSalesOrderSource = ProductionSalesOrderSourceSummary & Pick<SalesOrder,
+  'salesperson' | 'order_date' | 'order_tolerance_percent'> & {
+    production_exchange_rate?: ProductionExchangeRate | null
+    production_exchange_rate_error?: string
+    lines: ProductionSalesOrderSourceLine[]
+    delivery_batches: ProductionSalesOrderSourceBatch[]
+  }

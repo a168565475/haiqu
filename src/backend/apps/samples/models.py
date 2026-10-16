@@ -440,8 +440,26 @@ class SampleProduct(TimeStampedModel):
         related_name="sample_products",
     )
     category_name_snapshot = models.CharField(max_length=150, blank=True)
+    product = models.ForeignKey(
+        "products.ProductInformation",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sample_products",
+    )
     product_name = models.CharField(max_length=500)
     specification = models.TextField(blank=True)
+    product_number_snapshot = models.CharField(max_length=100, blank=True)
+    product_code_snapshot = models.CharField(max_length=100, blank=True)
+    item_number_snapshot = models.CharField(max_length=100, blank=True)
+    material_snapshot = models.TextField(blank=True)
+    product_image = models.ForeignKey(
+        "files.BusinessFile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="sample_product_images",
+    )
     task_sheet_file = models.ForeignKey(
         "files.BusinessFile",
         null=True,
@@ -465,6 +483,11 @@ class SampleProduct(TimeStampedModel):
             models.CheckConstraint(condition=Q(seat_width_cm__isnull=True) | Q(seat_width_cm__gt=0), name="sample_product_seat_width_pos"),
             models.CheckConstraint(condition=Q(back_height_cm__isnull=True) | Q(back_height_cm__gt=0), name="sample_product_back_height_pos"),
             models.CheckConstraint(condition=Q(seat_height_cm__isnull=True) | Q(seat_height_cm__gt=0), name="sample_product_seat_height_pos"),
+        ]
+        indexes = [
+            models.Index(fields=["source_inquiry_item", "line_number"], name="sample_product_inquiry_idx"),
+            models.Index(fields=["source_quotation_line", "line_number"], name="sample_product_quote_idx"),
+            models.Index(fields=["product", "id"], name="sample_product_master_idx"),
         ]
 
     def __str__(self):

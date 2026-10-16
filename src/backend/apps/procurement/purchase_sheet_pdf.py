@@ -11,6 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 from django.conf import settings
+from apps.files.models import is_file_scan_usable
 from PIL import Image as PillowImage
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
@@ -20,6 +21,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as ReportLabImage
 from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Table, TableStyle
+
+from .material_attribute_snapshot import purchase_line_attribute_text
 
 
 FONT_NAME = "PurchaseSans"
@@ -97,7 +100,7 @@ def _line_image_paths(sheet):
     result = {}
     for item in sheet.line_images.select_related("image_file").all():
         path = (media_root / item.image_file.storage_key).resolve()
-        if media_root in path.parents and path.is_file() and item.image_file.content_type.startswith("image/"):
+        if media_root in path.parents and path.is_file() and item.image_file.content_type.startswith("image/") and is_file_scan_usable(item.image_file.scan_status):
             result[str(item.source_purchase_order_line_id)] = path
     return result
 
@@ -108,7 +111,7 @@ def _seal_image_path(sheet):
         return None
     media_root = Path(settings.MEDIA_ROOT).resolve()
     path = (media_root / item.image_file.storage_key).resolve()
-    if media_root in path.parents and path.is_file() and item.image_file.content_type.startswith("image/"):
+    if media_root in path.parents and path.is_file() and item.image_file.content_type.startswith("image/") and is_file_scan_usable(item.image_file.scan_status):
         return path
     return None
 
@@ -199,6 +202,12 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
     for index, line in enumerate(lines, 1):
         from .pipe_purchase import pipe_print_description
         specification = str(line.get('specification') or '')
+        source_attributes = purchase_line_attribute_text(
+            line.get("material_attributes_snapshot"),
+            line.get("section_title"),
+        )
+        if source_attributes:
+            specification = f"{source_attributes}\n{specification}" if specification else source_attributes
         if line.get('measurement_kind') == 'PIPE':
             specification += '\n' + pipe_print_description(line)
         requirement = "；".join(str(line.get(key) or "").strip() for key in ("material", "remark") if str(line.get(key) or "").strip())

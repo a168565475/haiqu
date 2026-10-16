@@ -1,0 +1,152 @@
+{
+  "AED": {
+    "date": "2026-10-15",
+    "base": "AED",
+    "quote": "CNY",
+    "rate": "1.827"
+  },
+  "AUD": {
+    "date": "2026-10-15",
+    "base": "AUD",
+    "quote": "CNY",
+    "rate": "4.6794"
+  },
+  "CAD": {
+    "date": "2026-10-15",
+    "base": "CAD",
+    "quote": "CNY",
+    "rate": "4.718"
+  },
+  "CHF": {
+    "date": "2026-10-15",
+    "base": "CHF",
+    "quote": "CNY",
+    "rate": "8.0588"
+  },
+  "DKK": {
+    "date": "2026-10-15",
+    "base": "DKK",
+    "quote": "CNY",
+    "rate": "1.0041"
+  },
+  "EUR": {
+    "date": "2026-10-15",
+    "base": "EUR",
+    "quote": "CNY",
+    "rate": "7.5068"
+  },
+  "GBP": {
+    "date": "2026-10-15",
+    "base": "GBP",
+    "quote": "CNY",
+    "rate": "8.8709"
+  },
+  "HKD": {
+    "date": "2026-10-15",
+    "base": "HKD",
+    "quote": "CNY",
+    "rate": "0.85702"
+  },
+  "HUF": {
+    "date": "2026-10-15",
+    "base": "HUF",
+    "quote": "CNY",
+    "rate": "0.02064"
+  },
+  "JPY": {
+    "date": "2026-10-15",
+    "base": "JPY",
+    "quote": "CNY",
+    "rate": "0.042472"
+  },
+  "KRW": {
+    "date": "2026-10-15",
+    "base": "KRW",
+    "quote": "CNY",
+    "rate": "0.00499"
+  },
+  "MOP": {
+    "date": "2026-10-15",
+    "base": "MOP",
+    "quote": "CNY",
+    "rate": "0.83167"
+  },
+  "MXN": {
+    "date": "2026-10-15",
+    "base": "MXN",
+    "quote": "CNY",
+    "rate": "0.36356"
+  },
+  "MYR": {
+    "date": "2026-10-15",
+    "base": "MYR",
+    "quote": "CNY",
+    "rate": "1.6455"
+  },
+  "NOK": {
+    "date": "2026-10-15",
+    "base": "NOK",
+    "quote": "CNY",
+    "rate": "0.70582"
+  },
+  "NZD": {
+    "date": "2026-10-15",
+    "base": "NZD",
+    "quote": "CNY",
+    "rate": "3.7593"
+  },
+  "PLN": {
+    "date": "2026-10-15",
+    "base": "PLN",
+    "quote": "CNY",
+    "rate": "1.7185"
+  },
+  "RUB": {
+    "date": "2026-10-15",
+    "base": "RUB",
+    "quote": "CNY",
+    "rate": "0.08008"
+  },
+  "SAR": {
+    "date": "2026-10-15",
+    "base": "SAR",
+    "quote": "CNY",
+    "rate": "1.7873"
+  },
+  "SEK": {
+    "date": "2026-10-15",
+    "base": "SEK",
+    "quote": "CNY",
+    "rate": "0.67101"
+  },
+  "SGD": {
+    "date": "2026-10-15",
+    "base": "SGD",
+    "quote": "CNY",
+    "rate": "5.2262"
+  },
+  "THB": {
+    "date": "2026-10-15",
+    "base": "THB",
+    "quote": "CNY",
+    "rate": "0.19939"
+  },
+  "TRY": {
+    "date": "2026-10-15",
+    "base": "TRY",
+    "quote": "CNY",
+    "rate": "0.13589"
+  },
+  "USD": {
+    "date": "2026-10-15",
+    "base": "USD",
+    "quote": "CNY",
+    "rate": "6.7253"
+  },
+  "ZAR": {
+    "date": "2026-10-15",
+    "base": "ZAR",
+    "quote": "CNY",
+    "rate": "0.40468"
+  }
+}

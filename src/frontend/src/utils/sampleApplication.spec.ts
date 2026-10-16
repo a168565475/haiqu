@@ -3,7 +3,7 @@ import type { SampleApplicationDraft } from '@/types/sampleApplication'
 import { validateSampleApplication, validateSampleReferenceImage } from './sampleApplication'
 
 const validDraft = (): SampleApplicationDraft => ({
-  sourceType: null, sourceId: '', sourceProductId: '', customerId: 'customer', contactId: '', ownerId: 'owner',
+  sourceType: null, sourceId: '', sourceProductId: '', productId: '', customerId: 'customer', contactId: '', ownerId: 'owner',
   sampleType: 'PRE_SALES', shippingMethod: 'EXPRESS', deliveryBatch: 'ONCE', repeatOrder: false, orderDate: '', dueDate: '',
   productName: '椅子', specification: '', lengthCm: '', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
   requirements: '', quantity: 2, referenceImage: null,

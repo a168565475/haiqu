@@ -36,6 +36,7 @@ export async function submitSampleApplication(draft: SampleApplicationDraft, sub
   body.append('payload', JSON.stringify({
     customer_account_id: draft.customerId, customer_contact_id: draft.contactId || null, owner_employee_id: draft.ownerId,
     source_type: draft.sourceType, source_id: draft.sourceId || null, source_product_id: draft.sourceProductId || null,
+    product_id: draft.productId || null,
     sample_type: draft.sampleType, shipping_method: draft.shippingMethod, delivery_batch: draft.deliveryBatch, is_repeat_order: draft.repeatOrder,
     order_date: draft.orderDate || null, sample_due_date: draft.dueDate || null,
     product_name: draft.productName.trim(), specification: draft.specification, purpose: draft.requirements, quantity: draft.quantity,

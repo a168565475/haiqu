@@ -10,6 +10,7 @@ import {
   fetchBomForEdit,
   fetchBomHardwareMaterialGroups,
   fetchBomHardwareMaterials,
+  fetchBomPipeMaterialMatches,
   fetchBomOptions,
   fetchBomStats,
   fetchBoms,
@@ -42,6 +43,32 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('管材匹配通过只读接口发送精确参数并保留后端自动匹配决定', async () => {
+    const result = { candidates: [{ id: 'raw-1', length: '6' }], automatic_source_id: null, reason: 'needs_review' }
+    mockedGet.mockResolvedValueOnce({ data: { data: result } })
+    const query = { material: '铁-硬管', diameter: '25×15', thickness: '1.5', tube_shape: '矩形', raw_bar_length_m: '5.73' }
+    expect(await fetchBomPipeMaterialMatches(query)).toEqual(result)
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/pipe-material-matches/', { params: query })
+    expect(mockedPost).not.toHaveBeenCalled()
+  })
+
+  it('同一保存请求保留面料临时标识与裁剪引用，不传图片草稿 key', async () => {
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'bom-1', sections: [] } }, headers: { etag: 'v2' } })
+    const key = '11111111-1111-4111-8111-111111111111'
+    const sections = [
+      { title: '面料类', section_type: 'FABRIC', lines: [{ part_name: '牛津布', client_key: key, draft_key: 'image-key' }] },
+      { title: '裁剪明细', section_type: 'FABRIC', lines: [{ part_name: '床面', fabric_source_line_id: null, fabric_source_client_key: key }] },
+    ]
+    await saveBomDraft('bom-1', sections as never, 'v1')
+    expect(mockedPatch).toHaveBeenCalledTimes(1)
+    expect(mockedPatch).toHaveBeenCalledWith('/api/v1/boms/bom-1/', {
+      sections: [
+        { title: '面料类', section_type: 'FABRIC', lines: [{ part_name: '牛津布', client_key: key }] },
+        sections[1],
+      ],
+    }, { headers: { 'If-Match': 'v1' } })
   })
 
   it('列表筛选参数原样交给后端', async () => {

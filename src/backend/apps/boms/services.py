@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from uuid import uuid4
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
 from django.db.models import Max, Sum
 from django.utils import timezone
@@ -15,8 +15,10 @@ from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 
 from apps.production_tasks.models import ProductionTask
-from apps.sales_orders.models import SalesOrderLine
+from apps.sales_orders.models import SalesOrder, SalesOrderLine
+from apps.quotations.product_writeback import save_bom_product_information
 from apps.products.material_identity import lock_bom_line_material_identities
+from apps.products.lineage import resolve_production_task_product_lineage
 from .material_flow_bom import apply_line_quantities, is_meter_fabric_section, validate_fabric_links, validate_used_components
 from .material_flow_calculations import CUTTING_USAGE_FIELDS, pipe_plan, MaterialFlowValueError
 
@@ -59,6 +61,11 @@ EDITABLE_LINE_FIELDS = [
     "total_purchase_quantity",
     "notes",
 ]
+
+
+def get_bom_product_lineage(bom):
+    """BOM 只沿生产任务产品的真实外键读取来源链，不按产品名称猜测。"""
+    return resolve_production_task_product_lineage(bom.product_line)
 
 TUBE_DETAIL_FIELDS = [
     "tube_shape",
@@ -238,11 +245,17 @@ def _tube_calculations(line_data, product_quantity):
     }
 
 
-def _editable_model_values(line_data, section_type, product_quantity):
+def _editable_model_values(line_data, section_type, product_quantity, *, existing_line=None):
     values = {field: line_data[field] for field in EDITABLE_LINE_FIELDS if field in line_data}
-    if section_type == "PROFILE" and any(
-        field in line_data for field in ("tube_shape", "tube_diameter", "tube_thickness")
-    ) and not line_data.get("source_inventory_material_id"):
+    tube_fields = ("tube_shape", "tube_diameter", "tube_thickness")
+    source_id = line_data.get("source_inventory_material_id")
+    same_source = bool(source_id and existing_line and str(source_id) == str(
+        (existing_line.raw_values or {}).get("source_inventory_material_id")
+    ))
+    # 新关联沿用当前截面参数生成 BOM 规格；同源旧快照及仅传来源 ID 的调用保持原契约。
+    if section_type == "PROFILE" and any(field in line_data for field in tube_fields) and (
+        not source_id or (not same_source and all(line_data.get(field) for field in tube_fields))
+    ):
         values["specification"] = _tube_specification(line_data)
     calculated_raw_values = {}
     if section_type == "PROFILE":
@@ -516,6 +529,7 @@ def create_bom(
     source_bom=None,
     quantity_difference_reason="",
     request=None,
+    link_source=False,
 ):
     prepared = None
     persisted_path = None
@@ -570,11 +584,25 @@ def create_bom(
                 version_number=version_number,
                 creation_method=creation_method,
                 status=BomStatus.PENDING_CONFIRMATION,
-                copied_from=source_bom,
+                copied_from=source_bom if link_source else None,
+                product=locked_product_line.product,
+                product_category=(
+                    locked_product_line.product_category
+                    or (locked_product_line.product.category if locked_product_line.product_id else None)
+                ),
+                product_unit=locked_product_line.unit,
+                product_color=locked_product_line.product_color,
+                product_unit_code_snapshot=locked_product_line.unit.unit_code,
+                product_unit_name_snapshot=locked_product_line.unit.unit_name,
+                product_color_name_snapshot=locked_product_line.color_name_snapshot,
+                product_color_code_snapshot=locked_product_line.color_code_snapshot,
+                product_color_card_snapshot=locked_product_line.color_card_snapshot,
                 product_number_snapshot=locked_product_line.product_number_snapshot,
                 product_code_snapshot=locked_product_line.product_code_snapshot,
+                item_number_snapshot=locked_product_line.item_number_snapshot,
                 product_name_snapshot=locked_product_line.product_name_snapshot,
                 specification_snapshot=locked_product_line.specification_snapshot,
+                material_snapshot=locked_product_line.material_snapshot,
                 product_category_snapshot=(
                     locked_product_line.product.category.category_name
                     if locked_product_line.product_id and locked_product_line.product and locked_product_line.product.category_id
@@ -598,6 +626,7 @@ def create_bom(
                 created_by_employee=actor_employee,
                 updated_by_employee=actor_employee,
             )
+            _reuse_confirmed_product_review(bom, actor_employee=actor_employee, request=request)
             if plan:
                 _create_sections(bom, plan)
             elif source_bom:
@@ -641,22 +670,134 @@ def create_bom(
             prepared.cleanup()
 
 
+def _product_writeback_snapshot(instance, fields):
+    result = {"id": str(instance.pk)}
+    for name in fields:
+        value = getattr(instance, name)
+        result[name] = str(value) if name.endswith("_id") and value is not None else value
+    return result
+
+
+def _reuse_confirmed_product_review(bom, *, actor_employee, request):
+    """同一销售明细的后续批次只复用完全一致的首次确认信息，不按产品 ID 跨单匹配。"""
+    line = bom.product_line
+    if not line.sales_order_delivery_batch_line_id or not bom.product_id or not bom.product_color_id:
+        return
+    sales_line_id = line.sales_order_delivery_batch_line.sales_order_line_id
+    previous = AuditLog.objects.filter(
+        object_type="BOM", action="CONFIRM_PRODUCT",
+        after_data__sales_order_line_id=str(sales_line_id),
+        after_data__writeback_scope="FIRST_CONFIRMATION",
+    ).order_by("occurred_at", "id").first()
+    if previous is None:
+        return
+    confirmed = previous.after_data.get("targets", {}).get("sales_order_line", {})
+    fields = {
+        "product_id": "product_id", "product_category_id": "product_category_id",
+        "product_unit_id": "product_unit_id", "product_color_id": "product_color_id",
+        "product_number_snapshot": "product_number_snapshot", "product_code_snapshot": "product_code_snapshot",
+        "item_number_snapshot": "item_number_snapshot", "product_name_snapshot": "product_name_snapshot",
+        "specification_snapshot": "specification_snapshot", "material_snapshot": "material_snapshot",
+        "product_unit_code_snapshot": "unit_code_snapshot", "product_color_name_snapshot": "customer_color_snapshot",
+    }
+    current = _product_writeback_snapshot(bom, fields)
+    if any(source not in confirmed or current[target] != confirmed[source] for target, source in fields.items()):
+        return
+    bom.product_information_confirmed_at = previous.occurred_at
+    bom.product_information_confirmed_by_employee_id = previous.actor_employee_id
+    bom.save(update_fields=["product_information_confirmed_at", "product_information_confirmed_by_employee"])
+    write_audit_log(
+        object_type="BOM", object_id=bom.pk, action="REUSE_PRODUCT_REVIEW",
+        context_type="PRODUCTION_TASK", context_id=bom.production_task_id,
+        actor_employee=actor_employee,
+        after_data={"sales_order_line_id": str(sales_line_id), "confirmation_log_id": str(previous.pk)},
+        request=request,
+    )
+
+
 @transaction.atomic
-def confirm_bom_product(*, bom, product, product_color, color_code, actor_employee, request=None):
-    """确认 BOM 的正式产品和颜色，并同步当前生产任务、销售订单显示字段。
-
-    客户在 BOM 前可以只填写文字；确认时一次性把当前业务字段换成正式主数据。
-    审计日志保留确认前后的值，历史单据和旧版本 BOM 不被改写。
-    """
-    from apps.production_tasks.models import ProductionTaskProduct
-
+def confirm_bom_product(*, bom, product, product_color, color_code, actor_employee, material=None, new_product=None, request=None):
+    """保存当前 BOM 的产品核对；上游回写只由确认 BOM 触发。"""
+    ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked_bom = (
-        Bom.objects.select_for_update()
-        .select_related("production_task")
+        Bom.objects.select_for_update(of=("self",))
         .get(pk=bom.pk)
     )
+    if request is not None:
+        require_matching_etag(request, locked_bom)
+    if new_product is not None:
+        if product is not None:
+            raise ValidationError({"product": "选择已有产品与新建产品不能同时提交。"})
+        if request is None or not request.user.has_perm("products.add_productinformation"):
+            raise PermissionDenied("当前账号没有新增产品信息的权限。")
+        from apps.products.models import ProductInformation
+
+        try:
+            with transaction.atomic():
+                product = ProductInformation.objects.create(**new_product)
+        except IntegrityError as exc:
+            if getattr(exc.__cause__, "sqlstate", None) != "23505":
+                raise
+            raise ValidationError({"new_product": "品号或产品编码已存在，请核对后重新提交。"}) from exc
+        write_audit_log(
+            object_type="PRODUCT_INFORMATION", object_id=product.pk, action="CREATED",
+            actor_employee=actor_employee,
+            after_data={"bom_id": str(locked_bom.pk), "product_number": product.product_number,
+                        "product_name": product.product_name, "specification": product.specification},
+            request=request,
+        )
+    if not product or not product_color:
+        raise ValidationError({"product": "必须选择正式产品和颜色。"})
+    if product.status != "ACTIVE" or product.archived_at or product_color.status != "ACTIVE" or product_color.archived_at:
+        raise ValidationError({"product": "产品和颜色必须为有效的维护记录。"})
+    normalized_color_code = str(color_code or product_color.color_code or "").strip()
+    if normalized_color_code != str(product_color.color_code or "").strip():
+        raise ValidationError({"color_code": "颜色色号与所选颜色主数据不一致。"})
+    values = {
+        "product": product, "product_category": product.category,
+        "product_unit": product.unit, "product_color": product_color,
+        "product_number_snapshot": product.product_number,
+        "product_code_snapshot": product.product_code,
+        "item_number_snapshot": product.product_item.item_number,
+        "product_name_snapshot": product.product_name,
+        "specification_snapshot": product.specification,
+        "product_category_snapshot": product.category.category_name,
+        "material_snapshot": locked_bom.material_snapshot if material is None else material,
+        "product_unit_code_snapshot": product.unit.unit_code,
+        "product_unit_name_snapshot": product.unit.unit_name,
+        "product_color_name_snapshot": product_color.color_name,
+        "product_color_code_snapshot": normalized_color_code,
+        "product_color_card_snapshot": product_color.color_card,
+    }
+    snapshot_fields = [f"{key}_id" if key in {"product", "product_category", "product_unit", "product_color"} else key for key in values]
+    before = _product_writeback_snapshot(locked_bom, snapshot_fields)
+    for key, value in values.items():
+        setattr(locked_bom, key, value)
+    locked_bom.product_information_confirmed_at = timezone.now()
+    locked_bom.product_information_confirmed_by_employee = actor_employee
+    locked_bom.updated_by_employee = actor_employee
+    locked_bom.save(update_fields=[*values, "product_information_confirmed_at", "product_information_confirmed_by_employee", "updated_by_employee", "updated_at"])
+    write_audit_log(
+        object_type="BOM", object_id=locked_bom.pk,
+        context_type="PRODUCTION_TASK", context_id=locked_bom.production_task_id,
+        action="REVIEW_PRODUCT", actor_employee=actor_employee, before_data=before,
+        after_data=_product_writeback_snapshot(locked_bom, snapshot_fields), request=request,
+    )
+    return locked_bom
+
+
+def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
+    """仅在 verify_bom 的事务内使用已核对快照回写具体来源明细。"""
+    from apps.production_tasks.models import ProductionTaskProduct
+
+    if AuditLog.objects.filter(object_type="BOM", object_id=locked_bom.pk, action="CONFIRM_PRODUCT").exists():
+        return locked_bom
+    task = locked_bom.production_task
+    product = locked_bom.product
+    product_color = locked_bom.product_color
+    normalized_color_code = locked_bom.product_color_code_snapshot
     locked_line = (
-        ProductionTaskProduct.objects.select_for_update()
+        ProductionTaskProduct.objects.select_for_update(of=("self",))
         .select_related(
             "production_task",
             "unit",
@@ -664,13 +805,18 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
         )
         .get(pk=locked_bom.product_line_id)
     )
-    if locked_bom.status == BomStatus.VERIFIED:
-        raise Conflict("已确认 BOM 不能再修改产品信息，请建立新版本。")
-    if not product or not product_color:
-        raise ValidationError({"product": "必须选择正式产品和颜色。"})
-    normalized_color_code = str(color_code or product_color.color_code or "").strip()
-    if normalized_color_code != str(product_color.color_code or "").strip():
-        raise ValidationError({"color_code": "颜色色号与所选颜色主数据不一致。"})
+
+    # 同一生产任务产品只允许第一份已确认 BOM 回写上游；后续 BOM 仍保存自身确认结果，
+    # 但不能覆盖已经确认过的销售、报价和询盘信息。
+    has_prior_confirmed_bom = Bom.objects.filter(
+        product_line_id=locked_line.pk,
+        status=BomStatus.VERIFIED,
+    ).exclude(pk=locked_bom.pk).exists()
+    has_prior_confirmed_bom = has_prior_confirmed_bom or AuditLog.objects.filter(
+        object_type="BOM",
+        action="CONFIRM_PRODUCT",
+        after_data__product_line_id=str(locked_line.pk),
+    ).exists()
 
     before = {
         "product_id": str(locked_line.product_id) if locked_line.product_id else None,
@@ -679,60 +825,180 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
         "color": locked_line.color_name_snapshot,
         "color_code": locked_line.color_code_snapshot,
     }
-    line_values = {
-        "product": product,
-        "product_number_snapshot": product.product_number,
-        "product_code_snapshot": product.product_code,
-        "item_number_snapshot": product.product_item.item_number,
-        "product_name_snapshot": product.product_name,
-        "specification_snapshot": product.specification,
-        "customer_product_name_snapshot": product.product_name,
-        "customer_specification_snapshot": product.specification,
-        "customer_color_snapshot": product_color.color_name,
-        "product_color": product_color,
-        "color_card_snapshot": product_color.color_card,
-        "color_name_snapshot": product_color.color_name,
-        "color_code_snapshot": normalized_color_code,
-    }
-    for field_name, value in line_values.items():
-        setattr(locked_line, field_name, value)
-    locked_line.full_clean()
-    locked_line.save(update_fields=[*line_values.keys(), "updated_at"])
-
     source_line = getattr(locked_line.sales_order_delivery_batch_line, "sales_order_line", None)
-    if source_line is not None:
+    sales_line = None
+    quotation_line = None
+    inquiry_item = None
+    quotation_version = None
+    write_quotation = False
+    write_inquiry = False
+    before_targets = {}
+    after_targets = {}
+    identity_fields = [
+        "product_id", "product_category_id", "product_color_id", "product_number_snapshot",
+        "product_code_snapshot", "item_number_snapshot", "product_name_snapshot",
+        "specification_snapshot", "material_snapshot",
+    ]
+    task_fields = identity_fields + [
+        "unit_id", "customer_product_name_snapshot", "customer_specification_snapshot",
+        "customer_color_snapshot", "color_card_snapshot", "color_name_snapshot", "color_code_snapshot",
+    ]
+    sales_fields = identity_fields + [
+        "product_unit_id", "unit_code_snapshot", "customer_product_name_snapshot",
+        "customer_specification_snapshot", "customer_color_snapshot",
+    ]
+    quotation_fields = [
+        "product_id", "product_category_id", "product_unit_id", "product_color_id",
+        "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
+        "product_description_snapshot", "specification_snapshot", "color_snapshot", "material_snapshot", "unit_code",
+    ]
+    inquiry_fields = [
+        "product_id", "product_category_id", "product_unit_id", "product_color_id",
+        "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
+        "product_description", "specification", "color", "material", "unit_code",
+    ]
+    bom_fields = identity_fields + ["product_unit_id", "product_category_snapshot", "product_unit_code_snapshot", "product_unit_name_snapshot", "product_color_name_snapshot", "product_color_code_snapshot", "product_color_card_snapshot"]
+    before_targets["bom"] = _product_writeback_snapshot(locked_bom, bom_fields)
+    if source_line is not None and not has_prior_confirmed_bom:
+        # 先锁定并更新销售来源行，再校验生产任务产品行；否则产品替换时
+        # ProductionTaskProduct.clean 会看到旧的销售产品 ID 而误判为非法替换。
+        SalesOrder.objects.select_for_update().get(pk=source_line.sales_order_id)
         sales_line = (
-            SalesOrderLine.objects.select_for_update()
-            .select_related("sales_order")
+            SalesOrderLine.objects.select_for_update(of=("self",))
+            .select_related("sales_order", "source_quotation_line__quotation_version", "source_quotation_line__source_inquiry_item__inquiry")
             .get(pk=source_line.pk)
         )
+        # 不同任务可能来自同一销售明细；在共享来源行锁内决定首次回写权。
+        has_prior_confirmed_bom = AuditLog.objects.filter(
+            object_type="BOM", action="CONFIRM_PRODUCT",
+            after_data__sales_order_line_id=str(sales_line.pk),
+            after_data__writeback_scope="FIRST_CONFIRMATION",
+        ).exists()
+        if has_prior_confirmed_bom:
+            sales_line = None
+
+    if sales_line is not None:
+        before_targets["sales_order_line"] = _product_writeback_snapshot(sales_line, sales_fields)
+        quotation_line = sales_line.source_quotation_line
+        if quotation_line is not None:
+            from apps.quotations.models import QuotationLine, QuotationVersion
+
+            quotation_version = QuotationVersion.objects.select_for_update().get(pk=quotation_line.quotation_version_id)
+            quotation_line = QuotationLine.objects.select_for_update().get(pk=quotation_line.pk)
+            write_quotation = not AuditLog.objects.filter(
+                object_type="BOM", action="CONFIRM_PRODUCT",
+                after_data__quotation_line_id=str(quotation_line.pk),
+                after_data__writeback_scope="FIRST_CONFIRMATION",
+            ).exists()
+            if write_quotation:
+                before_targets["quotation_line"] = _product_writeback_snapshot(quotation_line, quotation_fields)
+                if quotation_line.source_inquiry_item_id:
+                    from apps.inquiries.models import Inquiry, InquiryItem
+
+                    source_item = quotation_line.source_inquiry_item
+                    Inquiry.objects.select_for_update().get(pk=source_item.inquiry_id)
+                    inquiry_item = InquiryItem.objects.select_for_update().get(pk=source_item.pk)
+                    write_inquiry = not AuditLog.objects.filter(
+                        object_type="BOM", action="CONFIRM_PRODUCT",
+                        after_data__inquiry_item_id=str(inquiry_item.pk),
+                        after_data__writeback_scope="FIRST_CONFIRMATION",
+                    ).exists()
+                    if write_inquiry:
+                        before_targets["inquiry_item"] = _product_writeback_snapshot(inquiry_item, inquiry_fields)
         sales_line.product = product
-        sales_line.product_number_snapshot = product.product_number
-        sales_line.product_code_snapshot = product.product_code
-        sales_line.product_name_snapshot = product.product_name
-        sales_line.specification_snapshot = product.specification
-        sales_line.customer_product_name_snapshot = product.product_name
-        sales_line.customer_specification_snapshot = product.specification
-        sales_line.customer_color_snapshot = product_color.color_name
+        sales_line.product_category = locked_bom.product_category
+        sales_line.product_unit = locked_bom.product_unit
+        sales_line.product_color = product_color
+        sales_line.product_number_snapshot = locked_bom.product_number_snapshot
+        sales_line.product_code_snapshot = locked_bom.product_code_snapshot
+        sales_line.item_number_snapshot = locked_bom.item_number_snapshot
+        sales_line.product_name_snapshot = locked_bom.product_name_snapshot
+        sales_line.specification_snapshot = locked_bom.specification_snapshot
+        sales_line.material_snapshot = locked_bom.material_snapshot
+        sales_line.unit_code_snapshot = locked_bom.product_unit_code_snapshot
+        sales_line.customer_product_name_snapshot = locked_bom.product_name_snapshot
+        sales_line.customer_specification_snapshot = locked_bom.specification_snapshot
+        sales_line.customer_color_snapshot = locked_bom.product_color_name_snapshot
         sales_line.full_clean()
         sales_line.save(update_fields=[
-            "product", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot",
-            "specification_snapshot", "customer_product_name_snapshot", "customer_specification_snapshot",
-            "customer_color_snapshot", "updated_at",
+            "product", "product_category", "product_unit", "product_color", "product_number_snapshot",
+            "product_code_snapshot", "item_number_snapshot", "product_name_snapshot", "specification_snapshot",
+            "material_snapshot", "unit_code_snapshot",
+            "customer_product_name_snapshot", "customer_specification_snapshot", "customer_color_snapshot", "updated_at",
         ])
         sales_line.sales_order.updated_at = timezone.now()
         sales_line.sales_order.save(update_fields=["updated_at"])
+        after_targets["sales_order_line"] = _product_writeback_snapshot(sales_line, sales_fields)
+        locked_line.sales_order_delivery_batch_line.sales_order_line = sales_line
 
-    locked_bom.product_number_snapshot = locked_line.product_number_snapshot
-    locked_bom.product_code_snapshot = locked_line.product_code_snapshot
-    locked_bom.product_name_snapshot = locked_line.product_name_snapshot
-    locked_bom.specification_snapshot = locked_line.specification_snapshot
-    locked_bom.product_category_snapshot = product.category.category_name if product.category_id else ""
-    locked_bom.updated_by_employee = actor_employee
-    locked_bom.save(update_fields=[
-        "product_number_snapshot", "product_code_snapshot", "product_name_snapshot",
-        "specification_snapshot", "product_category_snapshot", "updated_by_employee", "updated_at",
-    ])
+    line_values = {
+        "product": product,
+        "product_category": locked_bom.product_category,
+        "unit": locked_bom.product_unit,
+        "product_number_snapshot": locked_bom.product_number_snapshot,
+        "product_code_snapshot": locked_bom.product_code_snapshot,
+        "item_number_snapshot": locked_bom.item_number_snapshot,
+        "material_snapshot": locked_bom.material_snapshot,
+        "product_name_snapshot": locked_bom.product_name_snapshot,
+        "specification_snapshot": locked_bom.specification_snapshot,
+        "customer_product_name_snapshot": locked_bom.product_name_snapshot,
+        "customer_specification_snapshot": locked_bom.specification_snapshot,
+        "customer_color_snapshot": locked_bom.product_color_name_snapshot,
+        "product_color": product_color,
+        "color_card_snapshot": locked_bom.product_color_card_snapshot,
+        "color_name_snapshot": locked_bom.product_color_name_snapshot,
+        "color_code_snapshot": normalized_color_code,
+    }
+    if not has_prior_confirmed_bom:
+        before_targets["production_task_product"] = _product_writeback_snapshot(locked_line, task_fields)
+        for field_name, value in line_values.items():
+            setattr(locked_line, field_name, value)
+        locked_line.full_clean()
+        locked_line.save(update_fields=[*line_values.keys(), "updated_at"])
+        task.save(update_fields=["updated_at"])
+        after_targets["production_task_product"] = _product_writeback_snapshot(locked_line, task_fields)
+
+    after_targets["bom"] = _product_writeback_snapshot(locked_bom, bom_fields)
+
+    if write_quotation:
+        quotation_line.product = product
+        quotation_line.product_category = locked_bom.product_category
+        quotation_line.product_unit = locked_bom.product_unit
+        quotation_line.product_color = product_color
+        quotation_line.product_number_snapshot = locked_bom.product_number_snapshot
+        quotation_line.product_code_snapshot = locked_bom.product_code_snapshot
+        quotation_line.item_number_snapshot = locked_bom.item_number_snapshot
+        quotation_line.product_description_snapshot = locked_bom.product_name_snapshot
+        quotation_line.specification_snapshot = locked_bom.specification_snapshot
+        quotation_line.color_snapshot = locked_bom.product_color_name_snapshot
+        quotation_line.material_snapshot = locked_bom.material_snapshot
+        quotation_line.unit_code = locked_bom.product_unit_code_snapshot
+        save_bom_product_information(quotation_line)
+        quotation_version.save(update_fields=["updated_at"])
+        after_targets["quotation_line"] = _product_writeback_snapshot(quotation_line, quotation_fields)
+
+        if write_inquiry:
+            inquiry_item.product = product
+            inquiry_item.product_category = locked_bom.product_category
+            inquiry_item.product_unit = locked_bom.product_unit
+            inquiry_item.product_color = product_color
+            inquiry_item.product_number_snapshot = locked_bom.product_number_snapshot
+            inquiry_item.product_code_snapshot = locked_bom.product_code_snapshot
+            inquiry_item.item_number_snapshot = locked_bom.item_number_snapshot
+            inquiry_item.product_description = locked_bom.product_name_snapshot
+            inquiry_item.specification = locked_bom.specification_snapshot
+            inquiry_item.color = locked_bom.product_color_name_snapshot
+            inquiry_item.material = locked_bom.material_snapshot
+            inquiry_item.unit_code = locked_bom.product_unit_code_snapshot
+            inquiry_item.save(update_fields=[
+                "product", "product_category", "product_unit", "product_color", "product_number_snapshot",
+                "product_code_snapshot", "item_number_snapshot", "product_description", "specification",
+                "color", "material", "unit_code", "updated_at",
+            ])
+            inquiry_item.inquiry.updated_at = timezone.now()
+            inquiry_item.inquiry.save(update_fields=["updated_at"])
+            after_targets["inquiry_item"] = _product_writeback_snapshot(inquiry_item, inquiry_fields)
+
     write_audit_log(
         object_type="BOM",
         object_id=locked_bom.pk,
@@ -740,13 +1006,21 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
         context_id=locked_bom.production_task_id,
         action="CONFIRM_PRODUCT",
         actor_employee=actor_employee,
-        before_data=before,
+        before_data={**before, "targets": before_targets},
         after_data={
             "product_id": str(product.pk),
-            "product_name": product.product_name,
-            "specification": product.specification,
-            "color": product_color.color_name,
+            "bom_id": str(locked_bom.pk),
+            "bom_version": locked_bom.version_number,
+            "product_line_id": str(locked_line.pk),
+            "sales_order_line_id": str(sales_line.pk) if sales_line else None,
+            "quotation_line_id": str(quotation_line.pk) if write_quotation else None,
+            "inquiry_item_id": str(inquiry_item.pk) if write_inquiry else None,
+            "writeback_scope": "FIRST_CONFIRMATION" if not has_prior_confirmed_bom else "BOM_ONLY",
+            "product_name": locked_bom.product_name_snapshot,
+            "specification": locked_bom.specification_snapshot,
+            "color": locked_bom.product_color_name_snapshot,
             "color_code": normalized_color_code,
+            "targets": after_targets,
         },
         request=request,
     )
@@ -794,6 +1068,7 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
                 source_bom=latest,
                 actor_employee=actor_employee,
                 request=request,
+                link_source=True,
             )
         else:
             target = latest
@@ -808,15 +1083,30 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
             target.source_quantity,
         )
         previous_order_quantity = Decimal(target.order_quantity)
-        target.product_number_snapshot = product_line.product_number_snapshot
-        target.product_code_snapshot = product_line.product_code_snapshot
-        target.product_name_snapshot = product_line.product_name_snapshot
-        target.specification_snapshot = product_line.specification_snapshot
-        target.product_category_snapshot = (
-            product_line.product.category.category_name
-            if product_line.product_id and product_line.product and product_line.product.category_id
-            else ""
-        )
+        product_values = {
+            "product_id": product_line.product_id,
+            "product_category_id": product_line.product_category_id,
+            "product_unit_id": product_line.unit_id,
+            "product_color_id": product_line.product_color_id,
+            "product_number_snapshot": product_line.product_number_snapshot,
+            "product_code_snapshot": product_line.product_code_snapshot,
+            "item_number_snapshot": product_line.item_number_snapshot,
+            "product_name_snapshot": product_line.product_name_snapshot,
+            "specification_snapshot": product_line.specification_snapshot,
+            "material_snapshot": product_line.material_snapshot,
+            "product_category_snapshot": product_line.product_category.category_name if product_line.product_category_id else "",
+            "product_unit_code_snapshot": product_line.unit.unit_code,
+            "product_unit_name_snapshot": product_line.unit.unit_name,
+            "product_color_name_snapshot": product_line.color_name_snapshot,
+            "product_color_code_snapshot": product_line.color_code_snapshot,
+            "product_color_card_snapshot": product_line.color_card_snapshot,
+        }
+        if any(getattr(target, field) != value for field, value in product_values.items()):
+            # 从任务重新同步身份时，必须重新核对，不能保留旧身份的确认标记。
+            target.product_information_confirmed_at = None
+            target.product_information_confirmed_by_employee = None
+        for field, value in product_values.items():
+            setattr(target, field, value)
         target.order_quantity = order_quantity
         target.batch_quantity = batch_quantity
         target.quantity_difference = quantity_difference
@@ -824,11 +1114,9 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
         target.updated_by_employee = actor_employee
         target.save(
             update_fields=[
-                "product_number_snapshot",
-                "product_code_snapshot",
-                "product_name_snapshot",
-                "specification_snapshot",
-                "product_category_snapshot",
+                *product_values,
+                "product_information_confirmed_at",
+                "product_information_confirmed_by_employee",
                 "order_quantity",
                 "batch_quantity",
                 "quantity_difference",
@@ -908,6 +1196,15 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
     if unknown_line_ids:
         raise ValidationError({"sections": "存在不属于当前 BOM 的用料明细，请刷新后重试。"})
 
+    client_keys = [
+        line["client_key"]
+        for section_data in sections
+        for line in section_data["lines"]
+        if line.get("client_key")
+    ]
+    if len(client_keys) != len(set(client_keys)):
+        raise ValidationError({"sections": "用料明细的临时标识不能重复。"})
+
     draft_image_ids = []
     draft_line_payloads = []
     for section_data in sections:
@@ -982,6 +1279,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
             line.save(update_fields=["line_number", "updated_at"])
 
     saved_lines = []
+    saved_lines_by_client_key = {}
+    fabric_links = []
     kept_section_ids = set()
     kept_line_ids = set()
     for section_number, section_data in enumerate(sections, start=1):
@@ -1011,6 +1310,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
                     line_data,
                     section.section_type,
                     Decimal(locked.order_quantity),
+                    existing_line=line,
                 )
                 for field, value in model_values.items():
                     setattr(line, field, value)
@@ -1047,11 +1347,10 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
                     ),
                 )
 
-            if "fabric_source_line_id" in line_data:
-                source_id = line_data["fabric_source_line_id"]
-                if source_id and source_id not in set(submitted_line_ids):
-                    raise ValidationError({"sections": "来源面料必须是本次保留的已保存 BOM 行，请先保存面料。"})
-                line.fabric_source_line_id = source_id
+            if line_data.get("client_key"):
+                saved_lines_by_client_key[line_data["client_key"]] = line
+            if "fabric_source_line_id" in line_data or line_data.get("fabric_source_client_key"):
+                fabric_links.append((line, line_data))
             if "fabric_meters_per_set" in line_data:
                 line.fabric_meters_per_set = line_data["fabric_meters_per_set"]
             was_piece_usage = any(getattr(line, field) is not None for field in CUTTING_USAGE_FIELDS)
@@ -1079,7 +1378,33 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
                 )
                 BomLineImageDraft.objects.filter(pk__in=[draft.pk for draft in line_drafts]).delete()
 
+    # 所有行取得真实 ID 后再建立来源关联，支持同次保存新增面料和裁片，且不依赖提交顺序。
+    for line, line_data in fabric_links:
+        source_key = line_data.get("fabric_source_client_key")
+        source_id = line_data.get("fabric_source_line_id")
+        if source_key:
+            if source_id:
+                raise ValidationError({"sections": "来源面料不能同时指定已保存行和未保存行。"})
+            source = saved_lines_by_client_key.get(source_key)
+            if source is None:
+                raise ValidationError({"sections": "来源面料已移除或不存在，请重新选择。"})
+            source_id = source.pk
+        elif source_id and source_id not in existing_lines:
+            raise ValidationError({"sections": "来源面料必须是本 BOM 保留的面料行，请重新选择。"})
+        line.fabric_source_line_id = source_id
+        line.save(update_fields=["fabric_source_line"])
+
     validate_fabric_links(saved_lines)
+    for line in saved_lines:
+        if line.section.title.strip() != "裁剪明细":
+            continue
+        original_material = line.material
+        if original_material.strip() in {"", "/"} and line.fabric_source_line_id:
+            line.raw_values["cutting_material_original"] = original_material
+            line.material = line.fabric_source_line.material
+        else:
+            line.raw_values.pop("cutting_material_original", None)
+        line.save(update_fields=["material", "raw_values"])
     stale_line_ids = set(existing_lines) - kept_line_ids
     stale_image_file_ids = []
     if stale_line_ids:
@@ -1140,6 +1465,8 @@ def verify_bom(*, bom, quantity_confirmation_reason, actor_employee, request):
     require_matching_etag(request, locked)
     if locked.status == BomStatus.VERIFIED:
         raise Conflict("该 BOM 版本已经确认。")
+    if not locked.product_information_confirmed_at or not locked.product_id or not locked.product_color_id:
+        raise ValidationError({"product": "请先核对并保存本 BOM 的产品信息，再确认 BOM。"})
     if locked.line_count <= 0:
         raise ValidationError({"sections": "至少需要一条用料明细才能提交校验。"})
 
@@ -1180,6 +1507,7 @@ def verify_bom(*, bom, quantity_confirmation_reason, actor_employee, request):
     validate_fabric_links(lines, require_complete=True)
     validate_used_components(locked, lines)
 
+    _writeback_confirmed_bom_product(locked_bom=locked, actor_employee=actor_employee, request=request)
     before_status = locked.status
     locked.status = BomStatus.VERIFIED
     locked.updated_by_employee = actor_employee

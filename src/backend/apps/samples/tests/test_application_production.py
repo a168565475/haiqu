@@ -13,6 +13,7 @@ from ..models import SampleParameterImage, SampleRequest, SampleWorkflowStage, S
 from ..inventory_selectors import eligible_sample_items_for_inventory
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class ApplicationProductionTests(APITestCase):
     setUp = material_tests.SampleMaterialApiTests.setUp
     create_customer = material_tests.SampleMaterialApiTests.create_customer
@@ -35,7 +36,7 @@ class ApplicationProductionTests(APITestCase):
         return response
 
     def upload(self, kind, etag):
-        with TemporaryDirectory() as folder, override_settings(MEDIA_ROOT=folder), patch('apps.samples.uploads._clamav_scan', return_value='CLEAN'):
+        with TemporaryDirectory() as folder, override_settings(MEDIA_ROOT=folder), patch('apps.files.uploads._clamav_scan', return_value='CLEAN'):
             return self.client.post(self.root + kind + '-parameters/',
                                     {'file': SimpleUploadedFile('parameters.png', b'\x89PNG\r\n\x1a\n', content_type='image/png')},
                                     format='multipart', HTTP_IF_MATCH=etag)

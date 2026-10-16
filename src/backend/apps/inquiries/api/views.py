@@ -14,6 +14,7 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
 from rest_framework import filters, mixins, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
@@ -24,7 +25,7 @@ from apps.core.api.concurrency import require_matching_etag
 from apps.crm.models import CustomerTimelineEvent
 from apps.customers.hard_delete import permanently_delete_inquiry
 from apps.customers.api.views import CustomerApiViewSetBase
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.files.uploads import save_scanned_image
 from apps.workflow.api.serializers import TaskListSerializer
 from apps.workflow.selectors import tasks_with_context
@@ -36,6 +37,8 @@ from ..deletion_preview import inquiry_deletion_preview
 from ..worktime import due_soon_query
 from ..services import set_inquiry_priority
 from ..services import upload_inquiry_attachment
+from ..services import remove_inquiry_item_product_image, set_inquiry_item_product_image
+from ..uploads import save_inquiry_product_image
 from .serializers import InquiryAttachmentUploadSerializer
 from .serializers import InquiryPrioritySerializer
 from ..models import Inquiry, InquiryItem
@@ -69,6 +72,7 @@ from .serializers import (
     InquiryFileLinkSerializer,
     InquiryItemSerializer,
     InquiryItemUpdateSerializer,
+    InquiryProductImageUploadSerializer,
     InquiryInvalidSerializer,
     InquiryListSerializer,
     InquiryReasonSerializer,
@@ -662,8 +666,15 @@ class InquiryViewSet(
     def items(self, request, pk=None):
         inquiry = self.get_object()
         if request.method == "GET":
+            items = inquiry.items.select_related(
+                "product",
+                "product_category",
+                "product_unit",
+                "product_color",
+                "product_image",
+            ).all()
             response = self.response_with_etag(
-                {"data": InquiryItemSerializer(inquiry.items.all(), many=True).data},
+                {"data": InquiryItemSerializer(items, many=True).data},
                 inquiry,
             )
             return response
@@ -726,7 +737,7 @@ class InquiryViewSet(
 
     @staticmethod
     def _download_path(business_file):
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise ValidationError({"detail": "附件尚未通过安全扫描，暂时无法下载。"})
         root = Path(settings.MEDIA_ROOT).resolve()
         path = (root / business_file.storage_key).resolve()
@@ -868,7 +879,7 @@ class InquiryViewSet(
         link = inquiry.file_links.select_related("business_file").filter(
             business_file_id=file_id,
             business_file__archived_at__isnull=True,
-            business_file__scan_status=FileScanStatus.CLEAN,
+            business_file__scan_status__in=USABLE_FILE_SCAN_STATUSES,
             business_file__content_type__startswith="image/",
         ).first()
         if link is None:
@@ -921,11 +932,14 @@ class InquiryItemViewSet(
     mixins.DestroyModelMixin,
     CustomerApiViewSetBase,
 ):
-    http_method_names = ["patch", "delete", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "options"]
     serializer_class = InquiryItemUpdateSerializer
     action_permission_map = {
         "partial_update": "inquiries.change_inquiryitem",
         "destroy": "inquiries.delete_inquiryitem",
+        "product_image.GET": "inquiries.view_inquiryitem",
+        "product_image.POST": "inquiries.change_inquiryitem",
+        "product_image.DELETE": "inquiries.change_inquiryitem",
     }
 
     def get_queryset(self):
@@ -937,6 +951,11 @@ class InquiryItemViewSet(
         return InquiryItem.objects.filter(inquiry__in=inquiries).select_related(
             "inquiry",
             "inquiry__customer_account",
+            "product",
+            "product_category",
+            "product_unit",
+            "product_color",
+            "product_image",
         )
 
     def partial_update(self, request, *args, **kwargs):
@@ -968,3 +987,57 @@ class InquiryItemViewSet(
 
         response["ETag"] = etag_for_instance(inquiry)
         return response
+
+    @extend_schema(methods=["POST"], request=InquiryProductImageUploadSerializer, responses=InquiryItemSerializer)
+    @extend_schema(methods=["GET"], responses=OpenApiTypes.BINARY)
+    @extend_schema(methods=["DELETE"], request=None, responses=InquiryItemSerializer)
+    @action(detail=True, methods=["get", "post", "delete"], url_path="product-image")
+    def product_image(self, request, pk=None):
+        item = self.get_object()
+        image = item.product_image
+        if request.method == "GET":
+            if image is None or image.archived_at is not None:
+                raise Http404("当前产品明细没有产品图片。")
+            if image.scan_status not in USABLE_FILE_SCAN_STATUSES:
+                raise ValidationError({"detail": "图片尚未通过安全扫描，暂时无法查看。"})
+            path = (Path(settings.MEDIA_ROOT) / image.storage_key).resolve()
+            root = Path(settings.MEDIA_ROOT).resolve()
+            if root not in path.parents or not path.is_file():
+                raise Http404("产品图片文件不存在。")
+            response = FileResponse(path.open("rb"), content_type=image.content_type)
+            response["Cache-Control"] = "private, no-store"
+            response["X-Content-Type-Options"] = "nosniff"
+            return response
+
+        if request.method == "DELETE":
+            inquiry = remove_inquiry_item_product_image(
+                item=item,
+                actor_employee=self.actor_employee(),
+                request=request,
+            )
+            updated = InquiryItem.objects.select_related("product_image").get(pk=item.pk)
+            return self.response_with_etag({"data": InquiryItemSerializer(updated).data}, inquiry)
+
+        image_file = request.FILES.get("file")
+        if image_file is None:
+            return Response({"file": ["请选择产品图片。"]}, status=status.HTTP_400_BAD_REQUEST)
+        business_file = None
+        try:
+            business_file = save_inquiry_product_image(
+                image_file,
+                self.actor_employee(),
+                item.inquiry_id,
+            )
+            updated, inquiry = set_inquiry_item_product_image(
+                item=item,
+                business_file=business_file,
+                actor_employee=self.actor_employee(),
+                request=request,
+            )
+        except Exception:
+            if business_file is not None:
+                path = Path(settings.MEDIA_ROOT) / business_file.storage_key
+                path.unlink(missing_ok=True)
+                business_file.delete()
+            raise
+        return self.response_with_etag({"data": InquiryItemSerializer(updated).data}, inquiry)

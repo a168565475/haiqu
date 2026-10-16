@@ -3,6 +3,7 @@ import json
 from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
@@ -10,6 +11,7 @@ from uuid import uuid4
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from openpyxl import Workbook
 from rest_framework.test import APIClient, APITestCase
@@ -17,6 +19,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.audit.models import AuditLog
 from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.files.models import FileScanStatus
+from apps.imports.security import InfectedFile, ScannerUnavailable
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.core.api.concurrency import etag_for_instance
@@ -48,6 +51,7 @@ from ..services import PREVIEW_LINE_LIMIT, _safe_preview_sections
 from ..workbook_import import BomWorkbookError, parse_bom_workbook
 
 
+@override_settings(FILE_VIRUS_SCAN_ENABLED=False)
 class BomApiTests(APITestCase):
     def setUp(self):
         self.media_dir = TemporaryDirectory()
@@ -351,7 +355,7 @@ class BomApiTests(APITestCase):
         self.assertEqual(plan["section_count"], 3)
         self.assertEqual(plan["line_count"], 3)
 
-    @patch("apps.imports.security._clamav_scan")
+    @patch("apps.boms.uploads._clamav_scan", side_effect=ScannerUnavailable())
     def test_preview_accepts_order_number_reference_and_product_name_variant(self, _scan):
         response = self.client.post(
             "/api/v1/boms/preview-import/",
@@ -368,6 +372,39 @@ class BomApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["identity_errors"], [])
         _scan.assert_not_called()
+
+    @override_settings(FILE_VIRUS_SCAN_ENABLED=True)
+    @patch("apps.boms.uploads._clamav_scan", return_value="stream: OK")
+    def test_preview_scans_when_enabled_and_cleans_temporary_file(self, scanner):
+        response = self.client.post(
+            "/api/v1/boms/preview-import/",
+            {"production_task_product_id": str(self.product_line.pk), "workbook": self.workbook_bytes()},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        scanner.assert_called_once()
+        temporary_path = scanner.call_args.args[0]
+        self.assertFalse(temporary_path.exists())
+        self.assertFalse(temporary_path.parent.exists())
+
+    @override_settings(FILE_VIRUS_SCAN_ENABLED=True)
+    def test_preview_scan_failure_blocks_parsing_and_cleans_temporary_file(self):
+        for error in (ScannerUnavailable(), InfectedFile()):
+            with self.subTest(error=type(error).__name__):
+                with patch("apps.boms.uploads._clamav_scan", side_effect=error) as scanner, patch("apps.boms.services.parse_bom_workbook") as parser:
+                    response = self.client.post(
+                        "/api/v1/boms/preview-import/",
+                        {"production_task_product_id": str(self.product_line.pk), "workbook": self.workbook_bytes()},
+                        format="multipart",
+                    )
+
+                self.assertEqual(response.status_code, error.status_code, response.data)
+                scanner.assert_called_once()
+                parser.assert_not_called()
+                self.assertEqual([path for path in Path(self.media_dir.name).rglob("*") if path.is_file()], [])
+                temporary_path = scanner.call_args.args[0]
+                self.assertFalse(temporary_path.parent.exists())
 
     def replacement_product(self):
         return ProductInformation.objects.create(

@@ -6,6 +6,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerContact
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee
 
 from ..models import (
@@ -229,7 +230,7 @@ class TaskDetailSerializer(TaskListSerializer):
                 "download_url": f"/api/v1/tasks/{obj.pk}/attachments/{link.business_file_id}/download/",
             }
             for link in source_object.file_links.filter(
-                business_file__scan_status="CLEAN",
+                business_file__scan_status__in=USABLE_FILE_SCAN_STATUSES,
                 business_file__archived_at__isnull=True,
             ).select_related("business_file")
         ]

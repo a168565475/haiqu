@@ -20,6 +20,7 @@ from apps.core.api.exceptions import Conflict
 from apps.core.api.permissions import HasActiveEmployee
 from apps.core.audit import write_audit_log
 from apps.files.uploads import save_scanned_image
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.reference_data.published_reads import published_config_state, published_catalog
 from apps.reference_data.configuration_cache import ConfigurationListCacheMixin
 from apps.reference_data.models import (
@@ -541,6 +542,8 @@ class ProductColorViewSet(ManagedReferenceViewSet):
         if request.method == "GET":
             if not current.image_file_id:
                 raise Http404("该颜色尚未上传图片。")
+            if current.image_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+                raise Http404("图片尚未通过安全扫描。")
             media_root = Path(settings.MEDIA_ROOT).resolve()
             file_path = (media_root / current.image_file.storage_key).resolve()
             try:

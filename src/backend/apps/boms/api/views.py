@@ -44,7 +44,7 @@ from apps.samples.sampling_detail_config import load_sampling_detail_template
 from ..maintenance import CONFIGURED_FIELD_LABELS
 from ..models import Bom, BomCreationMethod, BomStatus
 from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan, positive_integer
-from ..selectors import accessible_boms, boms_with_context, search_boms
+from ..selectors import accessible_boms, boms_with_context, pipe_material_matches, search_boms
 from ..services import (
     confirm_bom_product,
     create_bom,
@@ -66,6 +66,9 @@ from .serializers import (
     BomFabricSpecificationOptionSerializer,
     BomFabricWidthOptionSerializer,
     BomHardwareMaterialSerializer,
+    BomPipeMaterialMatchQuerySerializer,
+    BomPipeMaterialMatchResponseSerializer,
+    BomPipeMaterialMatchResultSerializer,
     BomListSerializer,
     BomPreviewInputSerializer,
     BomProductConfirmationSerializer,
@@ -105,6 +108,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "options": "boms.view_bom",
         "hardware_materials": "boms.change_bom",
         "pipe_materials": "boms.change_bom",
+        "pipe_material_matches": "boms.change_bom",
         "material_flow_preview": "boms.change_bom",
         "fabric_materials": "boms.change_bom",
         "hardware_material_groups": "boms.change_bom",
@@ -140,7 +144,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 UUID(category_id)
             except (TypeError, ValueError) as exc:
                 raise ValidationError({"product_category_id": "产品类别参数不正确。"}) from exc
-            queryset = queryset.filter(product_line__product__category_id=category_id)
+            queryset = queryset.filter(
+                Q(product_category_id=category_id)
+                | Q(product_category__isnull=True, product_line__product__category_id=category_id)
+            )
 
         updated_after = self._date_param("updated_after")
         updated_before = self._date_param("updated_before")
@@ -330,9 +337,11 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         serializer.is_valid(raise_exception=True)
         confirmed = confirm_bom_product(
             bom=bom,
-            product=serializer.validated_data["product"],
+            product=serializer.validated_data.get("product"),
+            new_product=serializer.validated_data.get("new_product"),
             product_color=serializer.validated_data["product_color"],
             color_code=serializer.validated_data.get("color_code", ""),
+            material=serializer.validated_data.get("material"),
             actor_employee=getattr(request, "employee", None),
             request=request,
         )
@@ -376,8 +385,11 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
 
     @extend_schema(request=None, responses=BomDetailSerializer)
     @action(detail=True, methods=["post"], url_path="sync-order-quantity")
+    @transaction.atomic
     def sync_order_quantity(self, request, pk=None):
         bom = self.get_object()
+        ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
+        bom = boms_with_context().select_for_update(of=("self",)).get(pk=bom.pk)
         require_matching_etag(request, bom)
         if bom.latest_active_bom_id != bom.pk:
             raise ValidationError({"bom": "只能同步该产品最新版本的 BOM。"})
@@ -537,6 +549,14 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
     def pipe_materials(self, request):
         return self._raw_material_list_response(request, item_type=ProductItemType.MATERIAL,
                                                category_name="管材", unit_name="根", label="管材")
+
+    @extend_schema(parameters=[BomPipeMaterialMatchQuerySerializer], responses=BomPipeMaterialMatchResponseSerializer)
+    @action(detail=False, methods=["get"], url_path="pipe-material-matches")
+    def pipe_material_matches(self, request):
+        serializer = BomPipeMaterialMatchQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        result = pipe_material_matches(**serializer.validated_data)
+        return Response({"data": BomPipeMaterialMatchResultSerializer(result).data})
 
     @extend_schema(parameters=RAW_MATERIAL_LIST_PARAMETERS, responses=BomHardwareMaterialSerializer(many=True))
     @action(detail=False, methods=["get"], url_path="fabric-materials")
@@ -769,7 +789,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                         "task_etag": etag_for_instance(task),
                         "task_number": task.task_number,
                         "order_number": task.order_number,
-                        "customer_name": task.customer_account.account_name,
+                        "customer_name": task.customer_account.account_name if task.customer_account_id else "",
                         "task_currency_id": task.currency_id,
                         "task_currency_code": task.currency.code,
                         "task_status": task.status,

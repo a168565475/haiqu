@@ -121,6 +121,7 @@ class PurchaseRequestFlowApiTests(APITestCase):
         created = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",
             {
+                "task_number": "HT26199-1",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 10,
                 "planned_start_date": today,
@@ -143,6 +144,8 @@ class PurchaseRequestFlowApiTests(APITestCase):
             f"/api/v1/production-tasks/{created.data['data']['id']}/pmc-decision/",
             {
                 "decision": "CONFIRM",
+                "follower_ids": [str(self.employee.pk)],
+                "tax_rate": None,
                 "planned_start_date": today,
                 "planned_end_date": today,
                 "production_priority": "NORMAL",

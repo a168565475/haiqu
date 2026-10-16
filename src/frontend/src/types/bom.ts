@@ -32,6 +32,7 @@ export interface BomSectionSummary {
 }
 
 export interface BomLine {
+  cutting_material_original?: string | null
   cutting_pieces_per_set?: number | null
   fabric_meters_per_piece?: string | null
   cutting_sets_per_product?: number | null
@@ -143,9 +144,19 @@ export interface Bom {
   is_historical_unlinked: boolean
   product_number_snapshot: string
   product_code_snapshot: string
+  item_number_snapshot?: string
   product_name_snapshot: string
   specification_snapshot: string
+  material_snapshot?: string
+  product_master_id?: string | null
+  product_category_id?: string | null
+  product_unit_id?: string | null
+  product_color_id?: string | null
   product_color_snapshot: string
+  product_color_code_snapshot?: string
+  product_color_card_snapshot?: string
+  product_unit_code_snapshot?: string
+  product_unit_name_snapshot?: string
   product_category_snapshot: string
   order_quantity: string
   current_order_quantity: string
@@ -184,15 +195,21 @@ export interface BomDetail extends Bom {
   copied_from_number: string | null
   configured_field_labels: string[]
   sections: BomSection[]
+  production_task_id: string
   production_task_product_id: string
   production_task_product_master_id: string | null
   production_task_customer_product_name: string
   production_task_customer_specification: string
   production_task_customer_color: string
   product_information_confirmed: boolean
+  product_information_confirmed_at?: string | null
+  product_information_confirmed_by_name?: string | null
+  product_information?: import('./product').ProductInformation | null
 }
 
 export interface BomLineInput {
+  client_key?: string
+  fabric_source_client_key?: string | null
   cutting_pieces_per_set?: string | number | null
   fabric_meters_per_piece?: string | null
   cutting_sets_per_product?: string | number | null
@@ -319,6 +336,26 @@ export interface BomHardwareMaterialQuery {
   page_size?: number
   q?: string
   material_name?: string
+}
+
+export interface BomPipeMaterialMatchQuery {
+  material: string
+  diameter: string
+  thickness: string
+  tube_shape?: string
+  raw_bar_length_m?: string
+}
+
+export interface BomPipeMaterial extends BomHardwareMaterial {
+  diameter: string
+  thickness: string
+  length: string
+}
+
+export interface BomPipeMaterialMatches {
+  candidates: BomPipeMaterial[]
+  automatic_source_id: string | null
+  reason: 'unique' | 'multiple' | 'no_match' | 'incomplete' | 'needs_review'
 }
 
 export interface BomHardwareMaterialGroup {

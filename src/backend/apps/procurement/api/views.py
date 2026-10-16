@@ -22,6 +22,7 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.boms.models import Bom, BomStatus
 from apps.production_tasks.models import ProductionTask
 from apps.production_tasks.models import ProductionTaskProduct
@@ -427,7 +428,7 @@ class PurchaseOrderViewSet(
             "id": str(task.pk),
             "task_number": task.task_number,
             "order_number": task.order_number,
-            "customer_name": task.customer_account.account_name,
+            "customer_name": task.customer_account.account_name if task.customer_account_id else "",
             "status": task.status,
             "status_display": task.get_status_display(),
             "delivery_date": task.delivery_date,
@@ -1270,6 +1271,8 @@ class SupplierPurchaseSheetViewSet(
             ).first()
             if image is None:
                 raise NotFound("该采购明细没有图片。")
+            if image.image_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+                raise NotFound("采购表图片尚未通过安全扫描。")
             media_root = Path(settings.MEDIA_ROOT).resolve()
             file_path = (media_root / image.image_file.storage_key).resolve()
             if media_root not in file_path.parents or not file_path.is_file():
@@ -1313,6 +1316,8 @@ class SupplierPurchaseSheetViewSet(
             seal = getattr(sheet, "seal_image", None)
             if seal is None:
                 raise NotFound("当前采购表没有盖章图片。")
+            if seal.image_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+                raise NotFound("采购表盖章图片尚未通过安全扫描。")
             media_root = Path(settings.MEDIA_ROOT).resolve()
             file_path = (media_root / seal.image_file.storage_key).resolve()
             if media_root not in file_path.parents or not file_path.is_file():

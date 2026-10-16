@@ -18,7 +18,7 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.boms.api.serializers import BomLineSerializer
 from apps.boms.material_attributes import bom_attribute_fields, spray_color_value
 from apps.boms.models import Bom, BomLine, BomLineImage
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inventory.models import RecordStatus as InventoryRecordStatus, WarehouseType, WarehouseZone
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.production_scheduling.models import (
@@ -305,7 +305,7 @@ class OutsourcingOrderViewSet(viewsets.GenericViewSet):
                 archived_at__isnull=True,
             ).distinct()
         )
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise ValidationError({"file": "文件尚未通过安全扫描，暂不能查看。"})
         media_root = Path(settings.MEDIA_ROOT).resolve()
         storage_path = (media_root / business_file.storage_key).resolve()

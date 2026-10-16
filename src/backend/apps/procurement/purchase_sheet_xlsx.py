@@ -6,6 +6,7 @@ from pathlib import Path
 import unicodedata
 
 from django.conf import settings
+from apps.files.models import is_file_scan_usable
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Border, Font, Side
@@ -13,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
 from .purchase_sheet_services import _structured_sections
+from .material_attribute_snapshot import purchase_line_attribute_text
 
 
 THIN = Side(style="thin", color="000000")
@@ -34,7 +36,7 @@ def _number(value):
 
 
 def _media_image_path(business_file):
-    if business_file is None or not str(business_file.content_type or "").startswith("image/"):
+    if business_file is None or not str(business_file.content_type or "").startswith("image/") or not is_file_scan_usable(business_file.scan_status):
         return None
     media_root = Path(settings.MEDIA_ROOT).resolve()
     file_path = (media_root / business_file.storage_key).resolve()
@@ -129,6 +131,12 @@ def _line_values(layout, line, index, order_number, actual_weight, sample_source
     from .pipe_purchase import pipe_print_description
     name = line.get("part_name") or line.get("product_name") or ""
     specification = line.get("specification") or line.get("product_specification") or ""
+    source_attributes = purchase_line_attribute_text(
+        line.get("material_attributes_snapshot"),
+        line.get("section_title"),
+    )
+    if source_attributes:
+        specification = f"{source_attributes}\n{specification}" if specification else source_attributes
     if line.get('measurement_kind') == 'PIPE':
         specification += '\n' + pipe_print_description(line)
     color_or_requirement = line.get("remark") or line.get("material") or ""

@@ -220,7 +220,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                             "id": str(item.pk),
                             "task_number": item.task_number,
                             "order_number": item.order_number,
-                            "customer_name": item.customer_account.account_name,
+                            "customer_name": item.customer_account.account_name if item.customer_account_id else "",
                             "status": item.status,
                         }
                         for item in tasks

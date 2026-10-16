@@ -15,7 +15,7 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
-from apps.files.models import FileScanStatus
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.reference_data.models import DictionaryStatus, ReferenceDictionary
 from apps.reference_data.services import legacy_dictionary_groups
@@ -339,7 +339,7 @@ class ComplaintViewSet(
         if attachment is None:
             raise NotFound("客诉图片不存在。")
         business_file = attachment.business_file
-        if business_file.scan_status != FileScanStatus.CLEAN:
+        if business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
             raise NotFound("客诉图片尚未通过安全扫描。")
         media_root = Path(settings.MEDIA_ROOT).resolve()
         file_path = (media_root / business_file.storage_key).resolve()

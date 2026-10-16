@@ -5,6 +5,7 @@ from uuid import UUID
 from rest_framework import serializers
 
 from apps.products.models import ProductInformation, RawMaterialInformation
+from apps.products.api.serializers import ProductInformationSerializer
 from apps.reference_data.models import (
     AccessoryColor,
     AccessoryMaterial,
@@ -22,6 +23,7 @@ from apps.production_tasks.api.serializers import ProductionTaskProductInputSeri
 
 from ..maintenance import CONFIGURED_FIELD_LABELS
 from ..models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType
+from ..selectors import pipe_dimension_numbers, pipe_material_dimensions
 from .image_serializers import BomLineImageSerializer
 
 
@@ -82,6 +84,7 @@ class BomLineSerializer(serializers.ModelSerializer):
     cutting_item_type_display = serializers.SerializerMethodField()
     cutting_category = serializers.SerializerMethodField()
     cutting_color = serializers.SerializerMethodField()
+    cutting_material_original = serializers.SerializerMethodField()
     images = BomLineImageSerializer(many=True, read_only=True)
 
     @staticmethod
@@ -362,6 +365,11 @@ class BomLineSerializer(serializers.ModelSerializer):
             return value
         return source.color.color_name if source.color_id else source.color_snapshot
 
+    def get_cutting_material_original(self, obj) -> str | None:
+        if not self._is_cutting_line(obj):
+            return None
+        return (obj.raw_values or {}).get("cutting_material_original", obj.material)
+
     class Meta:
         model = BomLine
         fields = [
@@ -437,6 +445,7 @@ class BomLineSerializer(serializers.ModelSerializer):
             "cutting_item_type_display",
             "cutting_category",
             "cutting_color",
+            "cutting_material_original",
             "images",
             "raw_values",
             "source_formulas",
@@ -490,8 +499,43 @@ class BomHardwareMaterialSerializer(serializers.ModelSerializer):
         ]
 
     @staticmethod
-    def get_color_name(instance):
+    def get_color_name(instance) -> str:
         return instance.color.color_name if instance.color_id else instance.color_snapshot
+
+
+class BomPipeMaterialMatchQuerySerializer(serializers.Serializer):
+    material = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    diameter = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    thickness = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    tube_shape = serializers.CharField(max_length=150, required=False, allow_blank=True, default="")
+    raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False)
+
+    def validate_diameter(self, value):
+        numbers = pipe_dimension_numbers(value)
+        if value and (not numbers or len(numbers) > 2):
+            raise serializers.ValidationError("管材截面须为一个或两个有效毫米尺寸。")
+        return value
+
+    def validate_thickness(self, value):
+        numbers = pipe_dimension_numbers(value)
+        if value and (not numbers or len(numbers) != 1):
+            raise serializers.ValidationError("管材厚度须为有效的正数毫米。")
+        return value
+
+
+class BomPipeMaterialMatchCandidateSerializer(BomHardwareMaterialSerializer):
+    class Meta(BomHardwareMaterialSerializer.Meta):
+        fields = [*BomHardwareMaterialSerializer.Meta.fields, "diameter", "thickness", "length"]
+
+
+class BomPipeMaterialMatchResultSerializer(serializers.Serializer):
+    candidates = BomPipeMaterialMatchCandidateSerializer(many=True)
+    automatic_source_id = serializers.UUIDField(allow_null=True)
+    reason = serializers.ChoiceField(choices=["unique", "multiple", "no_match", "incomplete", "needs_review"])
+
+
+class BomPipeMaterialMatchResponseSerializer(serializers.Serializer):
+    data = BomPipeMaterialMatchResultSerializer()
 
 
 class BomRawMaterialGroupSerializer(serializers.Serializer):
@@ -592,7 +636,7 @@ class BomEditorReferenceOptionsResponseSerializer(serializers.Serializer):
 class BomListSerializer(serializers.ModelSerializer):
     production_task_number = serializers.CharField(source="production_task.task_number", read_only=True)
     order_number = serializers.CharField(source="production_task.order_number", read_only=True)
-    product_color_snapshot = serializers.CharField(source="product_line.color_name_snapshot", read_only=True)
+    product_color_snapshot = serializers.SerializerMethodField()
     source_sales_order_number = serializers.CharField(
         source="production_task.sales_order.order_number",
         read_only=True,
@@ -610,14 +654,18 @@ class BomListSerializer(serializers.ModelSerializer):
         decimal_places=4,
         read_only=True,
     )
-    product_unit_name = serializers.CharField(source="product_line.unit.unit_name", read_only=True)
+    product_unit_name = serializers.SerializerMethodField()
     is_order_quantity_outdated = serializers.SerializerMethodField()
     is_order_product_outdated = serializers.SerializerMethodField()
     quantity_requires_confirmation = serializers.SerializerMethodField()
     confirmed_by_name = serializers.CharField(source="confirmed_by_employee.display_name", read_only=True, allow_null=True)
-    customer_name = serializers.CharField(source="production_task.customer_account.account_name", read_only=True)
+    customer_name = serializers.CharField(source="production_task.customer_account.account_name", read_only=True, default="")
     planned_start_date = serializers.DateField(source="production_task.planned_start_date", read_only=True, allow_null=True)
     planned_end_date = serializers.DateField(source="production_task.planned_end_date", read_only=True, allow_null=True)
+    product_master_id = serializers.UUIDField(source="product_id", read_only=True, allow_null=True)
+    product_category_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_unit_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_color_id = serializers.UUIDField(read_only=True, allow_null=True)
 
     class Meta:
         model = Bom
@@ -634,9 +682,20 @@ class BomListSerializer(serializers.ModelSerializer):
             "is_historical_unlinked",
             "product_number_snapshot",
             "product_code_snapshot",
+            "item_number_snapshot",
             "product_name_snapshot",
             "specification_snapshot",
+            "material_snapshot",
+            "product_master_id",
+            "product_category_id",
+            "product_unit_id",
+            "product_color_id",
             "product_color_snapshot",
+            "product_color_name_snapshot",
+            "product_color_code_snapshot",
+            "product_color_card_snapshot",
+            "product_unit_code_snapshot",
+            "product_unit_name_snapshot",
             "product_category_snapshot",
             "order_quantity",
             "current_order_quantity",
@@ -672,6 +731,12 @@ class BomListSerializer(serializers.ModelSerializer):
         employee = obj.updated_by_employee or obj.created_by_employee
         return employee.display_name if employee else "系统"
 
+    def get_product_color_snapshot(self, obj) -> str:
+        return obj.product_color_name_snapshot if obj.product_information_confirmed_at else (obj.product_color_name_snapshot or obj.product_line.color_name_snapshot)
+
+    def get_product_unit_name(self, obj) -> str:
+        return obj.product_unit_name_snapshot or obj.product_line.unit.unit_name
+
     def get_is_historical_unlinked(self, obj) -> bool:
         return obj.production_task.sales_order_id is None
 
@@ -705,6 +770,9 @@ class BomListSerializer(serializers.ModelSerializer):
         return latest_active_bom_id == obj.pk and obj.product_line.quantity != obj.order_quantity
 
     def get_is_order_product_outdated(self, obj) -> bool:
+        # 核对后 BOM 可以有意采用与任务单不同的产品；确认前尚未回写，不代表订单已变更。
+        if obj.product_information_confirmed_at:
+            return False
         latest_active_bom_id = getattr(obj, "latest_active_bom_id", None)
         if latest_active_bom_id is None:
             latest_active_bom_id = (
@@ -738,49 +806,64 @@ class BomListSerializer(serializers.ModelSerializer):
 
 
 class BomDetailSerializer(BomListSerializer):
+    product_information = ProductInformationSerializer(source="product", read_only=True, allow_null=True)
     sections = BomSectionSerializer(many=True, read_only=True)
-    copied_from_number = serializers.CharField(source="copied_from.bom_number", read_only=True)
+    copied_from_number = serializers.CharField(source="copied_from.bom_number", read_only=True, allow_null=True)
     configured_field_labels = serializers.SerializerMethodField()
+    production_task_id = serializers.UUIDField(read_only=True)
     production_task_product_id = serializers.UUIDField(source="product_line.id", read_only=True)
     production_task_product_master_id = serializers.UUIDField(source="product_line.product_id", read_only=True, allow_null=True)
     production_task_customer_product_name = serializers.CharField(source="product_line.customer_product_name_snapshot", read_only=True)
     production_task_customer_specification = serializers.CharField(source="product_line.customer_specification_snapshot", read_only=True)
     production_task_customer_color = serializers.CharField(source="product_line.customer_color_snapshot", read_only=True)
     product_information_confirmed = serializers.SerializerMethodField()
+    product_information_confirmed_by_name = serializers.CharField(source="product_information_confirmed_by_employee.display_name", read_only=True, allow_null=True)
 
     class Meta(BomListSerializer.Meta):
         fields = BomListSerializer.Meta.fields + [
+            "product_information",
             "source_metadata",
             "calculation_summary",
             "maintenance_unmatched_values",
             "copied_from_number",
             "configured_field_labels",
             "sections",
+            "production_task_id",
             "production_task_product_id",
             "production_task_product_master_id",
             "production_task_customer_product_name",
             "production_task_customer_specification",
             "production_task_customer_color",
             "product_information_confirmed",
+            "product_information_confirmed_at",
+            "product_information_confirmed_by_name",
         ]
 
     def get_configured_field_labels(self, _obj) -> list[str]:
         return CONFIGURED_FIELD_LABELS
 
     def get_product_information_confirmed(self, obj) -> bool:
-        return bool(obj.product_line.product_id and obj.product_line.product_color_id)
+        return bool(obj.product_information_confirmed_at and obj.product_id and obj.product_color_id)
 
 
 class BomProductConfirmationSerializer(serializers.Serializer):
     product_id = serializers.PrimaryKeyRelatedField(
         source="product",
         queryset=ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        required=False,
     )
+    new_product = ProductInformationSerializer(required=False)
     product_color_id = serializers.PrimaryKeyRelatedField(
         source="product_color",
         queryset=ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True),
     )
     color_code = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    material = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if ("product" in attrs) == ("new_product" in attrs):
+            raise serializers.ValidationError({"product_id": "请选择已有产品，或填写完整的新产品资料。"})
+        return attrs
 
 
 class ProductionTaskProductUpdateField(serializers.Field):
@@ -843,6 +926,7 @@ class BomPreviewInputSerializer(serializers.Serializer):
 
 class BomLineWriteSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
+    client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     category = serializers.CharField(required=False, allow_blank=True, max_length=150, trim_whitespace=True)
     material = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
     part_name = serializers.CharField(max_length=300, trim_whitespace=True)
@@ -870,6 +954,7 @@ class BomLineWriteSerializer(serializers.Serializer):
     coating_unit_area_sqm = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     purchase_unit_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     fabric_source_line_id = serializers.UUIDField(required=False, allow_null=True)
+    fabric_source_client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     fabric_meters_per_set = serializers.DecimalField(required=False, allow_null=True, max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     cutting_pieces_per_set = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
     fabric_meters_per_piece = serializers.DecimalField(required=False, allow_null=True, max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
@@ -915,6 +1000,11 @@ class BomLineWriteSerializer(serializers.Serializer):
         max_length=20,
         write_only=True,
     )
+
+    def validate(self, attrs):
+        if attrs.get("fabric_source_line_id") and attrs.get("fabric_source_client_key"):
+            raise serializers.ValidationError("来源面料不能同时指定已保存行和未保存行。")
+        return attrs
 
     @staticmethod
     def _nonnegative_decimal(value, label):
@@ -1346,6 +1436,12 @@ class BomUpdateInputSerializer(serializers.Serializer):
     def validate_sections(self, sections):
         bom = self.context.get("bom")
         sections = self._validate_fixed_sections(sections, bom)
+        submitted_lines = {
+            serializers.UUIDField().to_internal_value(line["id"]): line
+            for section in self.initial_data.get("sections", [])
+            for line in section["lines"]
+            if line.get("id") is not None
+        }
         section_ids = [item["id"] for item in sections if item.get("id")]
         if len(section_ids) != len(set(section_ids)):
             raise serializers.ValidationError("用料分区不能重复提交。")
@@ -1438,6 +1534,19 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"“{section['title']}”第 {line_number} 行的稳定库存原料类型或类别不匹配。"
                 )
+            pipe_values = {}
+            if section["section_type"] == BomSectionType.PROFILE and not same_source:
+                source_diameter, source_thickness, _, source_shape = pipe_material_dimensions(source)
+                dimensions_match = all(
+                    not line.get(field) or bool(expected and pipe_dimension_numbers(line[field]) == expected)
+                    for field, expected in (("tube_diameter", source_diameter), ("tube_thickness", source_thickness))
+                )
+                shape_mismatch = bool(source_shape and line.get("tube_shape") and line["tube_shape"].strip() != source_shape)
+                if (line.get("material") and line["material"].strip() != source.material.strip()) or not dimensions_match or shape_mismatch:
+                    raise serializers.ValidationError(
+                        f"“{section['title']}”第 {line_number} 行的材质、形状、规格或厚度与对应原料不一致，请重新匹配；已填写参数不会自动替换。"
+                    )
+                pipe_values = {field: line[field] for field in ("material", "specification") if line.get(field)}
             part_name = line.get("part_name", "")
             # 裁剪明细沿用已有编辑契约；稳定来源 ID 只固定来源，不覆盖裁片自填属性。
             cutting_values = {
@@ -1447,6 +1556,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
             }
             self._set_inventory_source_snapshot(line, source, existing_line)
             line.update(cutting_values)
+            line.update(pipe_values)
             if section["title"].strip() in {"管材类", "面料类"} and part_name:
                 line["part_name"] = part_name
             direct_line_object_ids.add(id(line))
@@ -1887,6 +1997,26 @@ class BomUpdateInputSerializer(serializers.Serializer):
                     )
                 if source or self._raw_source_id(existing_line, field):
                     self._apply_fabric_source_snapshot(line, existing_line, field, source)
+
+        for section in sections:
+            if section["title"].strip() != "裁剪明细":
+                continue
+            for line in section["lines"]:
+                existing_line = existing_lines.get(line.get("id"))
+                existing_values = existing_line.raw_values or {} if existing_line else {}
+                if "cutting_material_original" not in existing_values:
+                    continue
+                source_id = line.get("source_inventory_material_id") or line.get("source_cutting_material_id")
+                existing_source_id = existing_values.get("source_inventory_material_id") or existing_values.get("source_cutting_material_id")
+                submitted_line = submitted_lines.get(existing_line.pk, {})
+                material_omitted = "material" not in submitted_line
+                unchanged_response = (
+                    "cutting_material_original" in submitted_line
+                    and line.get("material", existing_line.material) == existing_line.material
+                )
+                if str(source_id or "") == str(existing_source_id or "") and (material_omitted or unchanged_response):
+                    # 完整响应回传或省略材质时，旧的面料补充值不应变成裁片自己的材质。
+                    line["material"] = existing_values["cutting_material_original"]
         return sections
 
 

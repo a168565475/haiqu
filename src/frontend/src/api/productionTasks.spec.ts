@@ -1,13 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, fetchProductionTaskStats, updateProductionTask } from '@/api/productionTasks'
+import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, fetchProductionTaskStats, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl } from '@/api/productionTasks'
 import { apiClient } from '@/api/request'
 
 vi.mock('@/api/request', () => ({
   apiClient: {
     get: vi.fn(),
+    delete: vi.fn(),
     patch: vi.fn(),
     post: vi.fn(),
+    getUri: vi.fn(),
   },
 }))
 
@@ -20,6 +22,7 @@ describe('生产任务单 API', () => {
     mockedGet.mockReset()
     mockedPatch.mockReset()
     mockedPost.mockReset()
+    vi.mocked(apiClient.getUri).mockReset()
   })
 
   it('统计接口接收当前非状态筛选', async () => {
@@ -32,6 +35,18 @@ describe('生产任务单 API', () => {
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/production-tasks/stats/', {
       params: { search: 'HT-2609', salesperson_id: 'employee-1' },
     })
+  })
+
+  it('工厂只通过生产权限入口查询可生产来源和产品图', async () => {
+    mockedGet.mockResolvedValueOnce({ data: { data: [] } })
+    await fetchProductionSalesOrderSources('SO-1')
+    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/sales-order-sources/', { params: { q: 'SO-1' } })
+    mockedGet.mockResolvedValueOnce({ data: { data: { id: 'sales-1', lines: [] } } })
+    await fetchProductionSalesOrderSource('sales-1')
+    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/sales-order-sources/', { params: { sales_order_id: 'sales-1' } })
+    vi.mocked(apiClient.getUri).mockReturnValue('/source-image')
+    expect(productionSalesOrderSourceImageUrl('sales-1', 'line-1')).toBe('/source-image')
+    expect(apiClient.getUri).toHaveBeenCalledWith({ url: '/api/v1/production-tasks/sales-order-source-image/', params: { sales_order_id: 'sales-1', line_id: 'line-1' } })
   })
 
   it('PMC 确认使用专用入口并携带当前 ETag', async () => {
@@ -64,6 +79,7 @@ describe('生产任务单 API', () => {
       headers: { etag: '"task-v1"' },
     })
     const payload = {
+      task_number: 'HT26199',
       delivery_batch_id: 'batch-1',
       lines: [
         { delivery_batch_line_id: 'line-1', product_color_id: 'color-a', quantity: 6 },
@@ -127,5 +143,13 @@ describe('生产任务单 API', () => {
     expect(Array.from((body as FormData).keys())).toEqual(['payload'])
     expect(config).toEqual({ headers: { 'If-Match': '"task-v1"' } })
     expect(result.etag).toBe('"task-v2"')
+  })
+})
+
+describe('生产任务删除 API', () => {
+  it('使用 DELETE 和 If-Match，204 无需解析业务数据', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValueOnce({ status: 204 })
+    await expect(deleteProductionTask('task/1', '"v2"')).resolves.toBeUndefined()
+    expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/production-tasks/task%2F1/', { headers: { 'If-Match': '"v2"' } })
   })
 })

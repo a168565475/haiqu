@@ -12,7 +12,7 @@ from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from apps.core.api.concurrency import require_matching_etag
+from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
@@ -24,8 +24,9 @@ from apps.email_accounts.services import (
     send_via_email_account,
 )
 from apps.workflow.models import ApprovalRequest, ApprovalStatus
-from apps.inquiries.models import Inquiry, InquiryStatus, InquiryTaskLink, format_inquiry_item_specification
-from apps.files.models import BusinessFile, FileScanStatus
+from apps.inquiries.models import Inquiry, InquiryItem, InquiryStatus, InquiryTaskLink, format_inquiry_item_specification
+from apps.inquiries.services import ITEM_FIELDS, prepare_inquiry_item_data
+from apps.files.models import BusinessFile, FileScanStatus, USABLE_FILE_SCAN_STATUSES
 
 from .models import (
     Quotation,
@@ -104,6 +105,14 @@ LINE_FIELDS = [
     "line_total",
     "notes",
     "product_image",
+    "product",
+    "product_category",
+    "product_unit",
+    "product_color",
+    "product_number_snapshot",
+    "product_code_snapshot",
+    "item_number_snapshot",
+    "material_snapshot",
 ]
 PACKAGING_QUANT = Decimal("0.001")
 
@@ -116,6 +125,122 @@ def _line_total(quantity, unit_price, discount_rate):
     if unit_price is None:
         return None
     return _money(Decimal(quantity) * Decimal(unit_price) * (Decimal("1") - Decimal(discount_rate)))
+
+
+def quotation_line_values_from_inquiry_item(item):
+    """将询盘明细转换为报价明细字段，保留来源与当前快照的边界。"""
+    # 当前已确认规则：询盘转报价时目标价先带入报价单价，报价人员可以继续修改。
+    unit_price = item.target_unit_price
+    return {
+        "source_inquiry_item": item,
+        "product": item.product,
+        "product_category": item.product_category,
+        "product_unit": item.product_unit,
+        "product_color": item.product_color,
+        "product_number_snapshot": item.product_number_snapshot,
+        "product_code_snapshot": item.product_code_snapshot,
+        "item_number_snapshot": item.item_number_snapshot,
+        "product_description_snapshot": item.product_description,
+        "specification_snapshot": format_inquiry_item_specification(
+            item.specification,
+            item.color,
+            item.material,
+        ),
+        "color_snapshot": item.color or None,
+        "material_snapshot": item.material,
+        "quantity": item.quantity,
+        "unit_code": item.unit_code,
+        "unit_price": unit_price,
+        "line_total": _line_total(item.quantity, unit_price, Decimal("0")),
+        "notes": item.notes,
+        "product_image": item.product_image,
+    }
+
+
+@transaction.atomic
+def sync_quotation_line_to_inquiry(*, line, inquiry_etag, actor_employee, request):
+    """将报价明细身份明确同步回来源询盘明细，商业字段和图片保持不变。"""
+    # 与报价编辑、BOM 回写保持相同锁顺序，避免版本和明细交叉等待。
+    version = QuotationVersion.objects.select_for_update().get(pk=line.quotation_version_id)
+    require_matching_etag(request, version)
+    _ensure_draft(version)
+    line = QuotationLine.objects.select_for_update(of=("self",)).select_related(
+        "quotation_version__quotation",
+        "source_inquiry_item__inquiry",
+        "product",
+        "product_category",
+        "product_unit",
+        "product_color",
+    ).get(pk=line.pk)
+    source_item = line.source_inquiry_item
+    if source_item is None:
+        raise Conflict("当前报价明细没有来源询盘明细，不能执行同步。")
+    inquiry = Inquiry.objects.select_for_update().get(pk=source_item.inquiry_id)
+    if inquiry_etag != etag_for_instance(inquiry):
+        from apps.core.api.concurrency import PreconditionFailed
+
+        raise PreconditionFailed("来源询盘已被其他人修改，请重新加载后再同步。")
+    if inquiry.status not in {InquiryStatus.DRAFT, InquiryStatus.READY_FOR_QUOTE, InquiryStatus.QUOTING}:
+        raise Conflict("当前询盘状态不允许同步产品身份信息。")
+    sales_policy.require_customer(request, "inquiries.change_inquiryitem", inquiry.customer_account)
+    before_data = model_snapshot(source_item, ITEM_FIELDS)
+    product = line.product
+    identity_data = {
+        "product": product,
+        "product_category": line.product_category,
+        "product_unit": line.product_unit,
+        "product_color": line.product_color,
+        "product_description": product.product_name if product is not None else line.product_description_snapshot,
+        "specification": product.specification if product is not None else line.specification_snapshot,
+        "color": line.color_snapshot or "",
+        "material": line.material_snapshot,
+        "unit_code": line.unit_code,
+    }
+    values = prepare_inquiry_item_data(identity_data, existing=source_item)
+    for field_name, value in values.items():
+        if field_name in ITEM_FIELDS:
+            setattr(source_item, field_name, value)
+    source_item.save(update_fields=[field for field in values if field in ITEM_FIELDS] + ["updated_at"])
+    inquiry.updated_at = timezone.now()
+    inquiry.save(update_fields=["updated_at"])
+    write_audit_log(
+        object_type="INQUIRY_ITEM",
+        object_id=source_item.pk,
+        context_type="CUSTOMER_ACCOUNT",
+        context_id=inquiry.customer_account_id,
+        action="SYNCED_FROM_QUOTATION",
+        actor_employee=actor_employee,
+        before_data=before_data,
+        after_data={
+            **model_snapshot(source_item, ITEM_FIELDS),
+            "sync_source": {
+                "quotation_id": str(version.quotation_id),
+                "quotation_number": line.quotation_version.quotation.quotation_number,
+                "quotation_version_id": str(version.pk),
+                "quotation_version_number": version.version_number,
+                "quotation_line_id": str(line.pk),
+            },
+        },
+        request=request,
+    )
+    write_customer_timeline(
+        customer=inquiry.customer_account,
+        event_type="INQUIRY_ITEM_SYNCED_FROM_QUOTATION",
+        title=f"{inquiry.inquiry_number} 产品信息已从报价同步",
+        summary=f"报价明细 {line.product_description_snapshot} 已同步，数量、目标价、日期和图片未改变。",
+        source_type="INQUIRY",
+        source_id=inquiry.pk,
+        actor_employee=actor_employee,
+        event_data={
+            "quotation_id": str(version.quotation_id),
+            "quotation_number": line.quotation_version.quotation.quotation_number,
+            "quotation_version_id": str(version.pk),
+            "quotation_version_number": version.version_number,
+            "quotation_line_id": str(line.pk),
+            "inquiry_item_id": str(source_item.pk),
+        },
+    )
+    return source_item, inquiry
 
 
 def _recalculate_version_amounts(version):
@@ -391,17 +516,9 @@ def create_quotation_from_inquiry(*, inquiry_id, entity_id, entity_data, subject
     for item in inquiry.items.all().order_by("line_number", "id"):
         QuotationLine.objects.create(
             quotation_version=version,
-            source_inquiry_item=item,
             line_number=item.line_number,
-            product_description_snapshot=item.product_description,
-            specification_snapshot=format_inquiry_item_specification(item.specification, item.color, item.material),
-            color_snapshot=item.color or None,
-            quantity=item.quantity,
-            unit_code=item.unit_code,
-            unit_price=None,
             discount_rate=Decimal("0"),
-            line_total=None,
-            notes=item.notes,
+            **quotation_line_values_from_inquiry_item(item),
         )
     _touch(version)
     _write_version_records(version=version, action="INQUIRY_ITEMS_IMPORTED", actor_employee=actor_employee,
@@ -489,6 +606,14 @@ def _copy_version_content(source, target):
             "line_total": source_line.line_total,
             "notes": source_line.notes,
             "product_image": source_line.product_image,
+            "product": source_line.product,
+            "product_category": source_line.product_category,
+            "product_unit": source_line.product_unit,
+            "product_color": source_line.product_color,
+            "product_number_snapshot": source_line.product_number_snapshot,
+            "product_code_snapshot": source_line.product_code_snapshot,
+            "item_number_snapshot": source_line.item_number_snapshot,
+            "material_snapshot": source_line.material_snapshot,
         }
         if source_line.lineage_id:
             copied_data["lineage_id"] = source_line.lineage_id
@@ -787,12 +912,38 @@ def _ensure_draft(version):
         raise Conflict("报价版本锁定后，明细和阶梯价不可修改。")
 
 
+def _apply_line_product_snapshots(data, *, current=None):
+    """只在建立新关联时取产品主档快照，编辑同一关联不重新套用主档默认值。"""
+    values = dict(data)
+    product = values.get("product", getattr(current, "product", None))
+    product_changed = current is None or (
+        "product" in values and getattr(current, "product_id", None) != getattr(product, "pk", None)
+    )
+    if product is None:
+        if "product" in values:
+            values.update({
+                "product_number_snapshot": "",
+                "product_code_snapshot": "",
+                "item_number_snapshot": "",
+            })
+        return values
+    if product_changed:
+        values.update({
+            "product_category": product.category,
+            "product_unit": product.unit,
+            "product_number_snapshot": product.product_number,
+            "product_code_snapshot": product.product_code,
+            "item_number_snapshot": product.product_item.item_number,
+        })
+    return values
+
+
 @transaction.atomic
 def create_line(*, version, validated_data, actor_employee, request):
     version = QuotationVersion.objects.select_for_update().get(pk=version.pk)
     require_matching_etag(request, version)
     _ensure_draft(version)
-    data = dict(validated_data)
+    data = _apply_line_product_snapshots(validated_data)
     if "line_number" not in data:
         current_max = version.lines.aggregate(value=Max("line_number"))["value"] or 0
         data["line_number"] = current_max + 1
@@ -819,6 +970,7 @@ def update_line(*, line, validated_data, actor_employee, request):
     _ensure_draft(version)
     line = QuotationLine.objects.select_for_update().get(pk=line.pk)
     before_data = model_snapshot(line, LINE_FIELDS)
+    validated_data = _apply_line_product_snapshots(validated_data, current=line)
     for field_name, value in validated_data.items():
         setattr(line, field_name, value)
     line.line_total = _line_total(line.quantity, line.unit_price, line.discount_rate)
@@ -1572,6 +1724,8 @@ def email_dispatch_version(*, version, price_basis, recipient, cc, subject, body
         document = locked_version.documents.select_related("business_file").filter(is_formal=True).first()
         if document is None:
             raise Conflict("正式报价文件不存在，无法发送邮件。")
+        if document.business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+            raise Conflict("正式报价文件尚未通过安全扫描，无法发送邮件。")
         payload_hash = _email_attempt_payload_hash(
             version=locked_version,
             price_basis=price_basis,

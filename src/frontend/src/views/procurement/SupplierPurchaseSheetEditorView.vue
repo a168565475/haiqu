@@ -26,6 +26,7 @@ import PurchaseSheetPublishConfirm from '@/components/procurement/PurchaseSheetP
 import publishedLock from '@/assets/procurement/published-lock.svg'
 import { purchaseSheetPageStatus } from '@/composables/purchaseSheetPageStatus'
 import type { SupplierPurchaseSheet, SupplierPurchaseSheetContent, SupplierPurchaseSheetLine } from '@/types/purchaseOrder'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -323,7 +324,7 @@ async function uploadLineImage(line: SupplierPurchaseSheetLine, file: UploadFile
     )
     sheet.value = result.data
     etag.value = result.etag
-    ElMessage.success('采购表图片已上传并通过安全扫描。')
+    ElMessage.success('采购表图片已上传并登记。')
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '采购表图片上传失败。'))
   }
@@ -372,7 +373,7 @@ async function uploadSealImage(file: UploadFile): Promise<void> {
     sheet.value = result.data
     etag.value = result.etag
     if (content.value) content.value.seal_status = 'UPLOADED'
-    ElMessage.success('甲方盖章图片已上传并通过安全扫描。')
+    ElMessage.success('甲方盖章图片已上传并登记。')
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '盖章图片上传失败。'))
   }
@@ -497,7 +498,13 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
                 <tr v-for="(line, index) in content.lines" :key="line.source_purchase_order_line_id">
                   <td class="center-cell">{{ index + 1 }}</td>
                   <td><span v-if="isPublished" class="readonly-value">{{ line.part_name || '—' }}</span><ElInput v-else v-model="line.part_name" :disabled="!editable || busy" aria-label="产品名称" /></td>
-                  <td><span v-if="isPublished" class="readonly-value">{{ line.specification || '—' }}</span><ElInput v-else v-model="line.specification" type="textarea" autosize :disabled="!editable || busy" aria-label="产品规格" /></td>
+                  <td>
+                    <div v-if="line.section_title || line.material_attributes_snapshot?.fields?.length" class="bom-source-block">
+                      <strong>{{ line.section_title || '—' }}</strong>
+                      <span v-for="field in materialAttributeFields(line)" :key="field.key">{{ field.label }}：{{ field.value }}</span>
+                    </div>
+                    <span v-if="isPublished" class="readonly-value">{{ line.specification || '—' }}</span><ElInput v-else v-model="line.specification" type="textarea" autosize :disabled="!editable || busy" aria-label="产品规格" />
+                  </td>
                   <td><span v-if="isPublished" class="readonly-value">{{ line.material || '—' }}{{ content.order.source_type === 'SAMPLE' && line.remark ? '；' + line.remark : '' }}</span><template v-else><ElInput v-model="line.material" type="textarea" autosize :disabled="!editable || busy" :aria-label="content.order.source_type === 'SAMPLE' ? '样品材质要求' : '颜色和要求'" /><ElInput v-if="content.order.source_type === 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="样品颜色" placeholder="颜色" /></template></td>
                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.quantity }} {{ line.unit }}<small v-if="line.measurement_kind === 'PIPE'" style="display:block">{{ line.actual_bar_count }} 根 × {{ line.raw_bar_length_m }} 米/根</small></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.unit_price ? money(line.unit_price).replace('¥', '') : '—' }}{{ line.measurement_kind === 'PIPE' ? ' 元/米' : '' }}</span><ElInput v-else v-model="line.unit_price" :disabled="!editable || busy" aria-label="含税单价" @input="syncCalculatedAmounts" /></td>
@@ -671,6 +678,8 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .is-published .reference-contract-table th { height: 57.41px; font-size: 15px; line-height: 23.5px; }
 .is-published .reference-contract-table td { height: 41.335px; }
 .readonly-value { display: block; padding: 6px 12px; white-space: pre-wrap; }
+.bom-source-block { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 4px; color: crm.$crm-text-secondary; font-size: 12px; line-height: 18px; white-space: pre-wrap; }
+.bom-source-block strong { color: crm.$crm-text-primary; font-size: 13px; }
 .is-published .media-total-row { min-height: 126.3px; }
 .is-published .media-total-row.without-image { grid-template-columns: 72.35% 13.44% 14.21%; }
 .is-published .contract-remark-cell { padding: 9.19px 20px 12px 17.09px; gap: 6.89px; }

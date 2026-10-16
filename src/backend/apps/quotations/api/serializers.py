@@ -12,10 +12,11 @@ from apps.core.models import currency_code_validator, uppercase_code_validator
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerAccount, CustomerContact, CustomerEntityAddress, CustomerTransactionEntity
 from apps.customers.selectors import accessible_customers
-from apps.files.models import BusinessFile
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inquiries.models import Inquiry
 from apps.organizations.models import Employee
-from apps.reference_data.models import Currency, Incoterm, ReferenceStatus
+from apps.products.models import ProductInformation, ProductStatus
+from apps.reference_data.models import Currency, Incoterm, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
 from ..models import (
     Quotation,
     QuotationAcceptance,
@@ -282,6 +283,35 @@ class QuotationLineSerializer(serializers.ModelSerializer):
     packaging = QuotationLinePackagingSerializer(read_only=True)
     container_tiers = QuotationContainerTierSerializer(many=True, read_only=True)
     product_image = serializers.SerializerMethodField()
+    product_id = serializers.PrimaryKeyRelatedField(
+        source="product",
+        queryset=ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_category_id = serializers.PrimaryKeyRelatedField(
+        source="product_category",
+        queryset=ProductCategory.objects.filter(
+            item_type=ProductItemType.FINISHED,
+            status=ReferenceStatus.ACTIVE,
+            archived_at__isnull=True,
+        ),
+        required=False,
+        allow_null=True,
+    )
+    product_unit_id = serializers.PrimaryKeyRelatedField(
+        source="product_unit",
+        queryset=ProductionUnit.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_color_id = serializers.PrimaryKeyRelatedField(
+        source="product_color",
+        queryset=ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
+    )
+    product_specification = serializers.CharField(source="product.specification", read_only=True, allow_null=True)
     basis_prices = QuotationLinePriceSerializer(many=True, read_only=True)
 
     def get_product_image(self, line):
@@ -300,10 +330,19 @@ class QuotationLineSerializer(serializers.ModelSerializer):
             "id",
             "lineage_id",
             "source_inquiry_item",
+            "product_id",
+            "product_specification",
+            "product_category_id",
+            "product_unit_id",
+            "product_color_id",
             "line_number",
             "product_description_snapshot",
             "specification_snapshot",
             "color_snapshot",
+            "product_number_snapshot",
+            "product_code_snapshot",
+            "item_number_snapshot",
+            "material_snapshot",
             "quantity",
             "unit_code",
             "unit_price",
@@ -321,13 +360,92 @@ class QuotationLineSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "lineage_id", "source_inquiry_item", "line_total", "created_at", "updated_at"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._available_relation_querysets = {
+            name: self.fields[name].queryset
+            for name in ("product_id", "product_category_id", "product_unit_id", "product_color_id")
+        }
+        self._saved_line = None
+
+    def to_internal_value(self, data):
+        current = self.instance if isinstance(self.instance, QuotationLine) else None
+        self._saved_line = current
+        for name in self._available_relation_querysets:
+            queryset = self._available_relation_querysets[name].all()
+            relation_name = self.fields[name].source
+            saved = getattr(current, relation_name, None) if current is not None else None
+            if saved is not None:
+                queryset = queryset | queryset.model.objects.filter(pk=saved.pk)
+            self.fields[name].queryset = queryset
+        return super().to_internal_value(data)
+
     def get_price_status(self, line):
         return "PENDING" if line.unit_price is None else "READY"
 
     def validate(self, attrs):
         if self.instance is None and attrs.get("unit_price") is None:
             raise serializers.ValidationError({"unit_price": "新建手工报价明细时必须填写单价。"})
+        current = self._saved_line
+        product = attrs.get("product", getattr(current, "product", None))
+        product_changed = current is None or "product" in attrs and getattr(current, "product_id", None) != getattr(product, "pk", None)
+        category = attrs.get("product_category", getattr(current, "product_category", None))
+        unit = attrs.get("product_unit", getattr(current, "product_unit", None))
+        color = attrs.get("product_color", getattr(current, "product_color", None))
+        unit_code = str(attrs.get("unit_code", getattr(current, "unit_code", "")) or "").strip().upper()
+        description = str(attrs.get("product_description_snapshot", getattr(current, "product_description_snapshot", "")) or "").strip()
+        specification = str(attrs.get("specification_snapshot", getattr(current, "specification_snapshot", "")) or "").strip()
+        color_text = str(attrs.get("color_snapshot", getattr(current, "color_snapshot", "")) or "").strip()
+        errors = {}
+        if product is not None:
+            if product_changed and (
+                product.status != ProductStatus.ACTIVE
+                or product.archived_at is not None
+                or product.category.status != ReferenceStatus.ACTIVE
+                or product.category.archived_at is not None
+                or product.unit.status != ReferenceStatus.ACTIVE
+                or product.unit.archived_at is not None
+            ):
+                errors["product_id"] = "产品的类别或单位已停用或归档，不能建立新的产品关联。"
+            if category is not None and category.pk != product.category_id:
+                errors["product_category_id"] = "产品类别与产品主档不匹配。"
+            if unit is not None and unit.pk != product.unit_id:
+                errors["product_unit_id"] = "产品单位与产品主档不匹配。"
+            if description != product.product_name:
+                errors["product_description_snapshot"] = "已关联产品不能直接改名；请解除关联后作为定制产品保存。"
+            specification_parts = [part.strip() for part in specification.split("；") if part.strip()]
+            product_specification = str(product.specification or "").strip()
+            has_only_order_suffixes = (
+                bool(specification_parts)
+                and specification_parts[0] == product_specification
+                and all(part.startswith(("颜色：", "材质：")) for part in specification_parts[1:])
+            )
+            if specification != product_specification and not has_only_order_suffixes:
+                errors["specification_snapshot"] = "已关联产品的规格必须与产品主档一致；不同规格请选择另一条产品记录。"
+            if unit_code != product.unit.unit_code:
+                errors["unit_code"] = "已关联产品的单位必须与产品主档一致。"
+        else:
+            if unit is not None and unit.unit_code != unit_code:
+                errors["product_unit_id"] = "单位关联与填写内容不一致；手填单位请清除维护项关联。"
+            if color is not None and color.color_name != color_text:
+                errors["product_color_id"] = "颜色关联与填写内容不一致；手填颜色请清除维护项关联。"
+        for field_name, relation in (("product_category_id", category), ("product_unit_id", unit), ("product_color_id", color)):
+            if relation is not None and (relation.status != ReferenceStatus.ACTIVE or relation.archived_at is not None) and not (
+                current is not None and getattr(current, self.fields[field_name].source + "_id", None) == relation.pk
+            ):
+                errors[field_name] = "维护项已停用或归档，不能建立新的关联。"
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
+
+
+class QuotationLineSyncInquirySerializer(serializers.Serializer):
+    inquiry_etag = serializers.CharField(max_length=200)
+
+
+class QuotationLineSyncInquiryResponseSerializer(serializers.Serializer):
+    inquiry_item_id = serializers.UUIDField()
+    inquiry_etag = serializers.CharField()
 
 
 class QuotationLineUpdateSerializer(QuotationLineSerializer):
@@ -929,7 +1047,7 @@ class QuotationApprovalSubmitSerializer(serializers.Serializer):
 class QuotationDocumentCreateSerializer(serializers.Serializer):
     file_id = serializers.PrimaryKeyRelatedField(
         source="business_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status="CLEAN"),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
     )
 
     def validate_file_id(self, business_file):
@@ -985,7 +1103,7 @@ class QuotationManualDispatchSerializer(serializers.Serializer):
     recipient_snapshot = serializers.JSONField()
     evidence_file_id = serializers.PrimaryKeyRelatedField(
         source="evidence_file",
-        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status="CLEAN"),
+        queryset=BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES),
         required=False,
         allow_null=True,
         default=None,

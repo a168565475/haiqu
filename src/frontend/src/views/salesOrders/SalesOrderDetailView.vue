@@ -13,9 +13,11 @@ import {
   salesOrderEvidenceUrl,
   uploadSalesOrderEvidence,
 } from '@/api/salesOrders'
-import { createProductionOrderFromSalesOrder, submitProductionTask } from '@/api/productionTasks'
+import { fetchAllProductionDataRecords } from '@/api/productionData'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import SalesOrderProductsTable from './SalesOrderProductsTable.vue'
 import { useAuthStore } from '@/stores/auth'
+import type { ProductCategory, ProductionUnit } from '@/types/productionData'
 import type { SalesOrder, SalesOrderBatchLine, SalesOrderDeliveryBatch } from '@/types/salesOrder'
 
 const route = useRoute()
@@ -24,6 +26,9 @@ const authStore = useAuthStore()
 const canOrder = (code: string) => !authStore.user?.sales_access_enabled || authStore.canFor(code, order.value)
 const orderId = computed(() => String(route.params.orderId || ''))
 const order = ref<SalesOrder | null>(null)
+const productCategories = ref<ProductCategory[]>([])
+const productUnits = ref<ProductionUnit[]>([])
+const productCatalogError = ref('')
 const etag = ref('')
 const pageState = ref<'loading' | 'ready' | 'error' | 'forbidden'>('loading')
 const errorMessage = ref('')
@@ -32,18 +37,11 @@ const activeTab = ref('information')
 const confirmVisible = ref(false)
 const blockedVisible = ref(false)
 const conflictVisible = ref(false)
-const productionVisible = ref(false)
 const collaborationVisible = ref(false)
 const cancelBatchVisible = ref(false)
 const completeVisible = ref(false)
 const exceptionCloseVisible = ref(false)
 const selectedBatch = ref<SalesOrderDeliveryBatch | null>(null)
-const productionForm = reactive({
-  delivery_batch_line_id: '', quantity: 1, request_key: '', planned_start_date: '', planned_end_date: '',
-  production_priority: 'NORMAL' as 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW', production_batch_number: '', planner_id: null as string | null,
-})
-const productionRequestSignature = ref('')
-const productionAttempted = ref(false)
 const collaborationForm = reactive({ delivery_batch_id: null as string | null, event_type: 'NOTE', status: 'PENDING', title: '', note: '', quantity: null as string | null, occurred_at: '' })
 const cancelForm = reactive({ reason: '', evidence_file_id: '' })
 const completeForm = reactive({ note: '', reason: '' })
@@ -58,13 +56,7 @@ const canCreateProductionTask = computed(() => Boolean(
 ))
 const canCancelBatch = computed(() => canOrder('access_control.cancelbatch_salesorder') && ['CONFIRMED', 'FULFILLING'].includes(order.value?.status || ''))
 const activeBatches = computed(() => order.value?.delivery_batches.filter((batch) => batch.status === 'ACTIVE') || [])
-const productionLine = computed(() => selectedBatch.value?.lines.find((line) => line.id === productionForm.delivery_batch_line_id) || null)
 const batchHasProductionCapacity = (batch: SalesOrderDeliveryBatch) => batch.lines.some((line) => Math.floor(Number(line.remaining_quantity)) >= 1)
-const productionPlanners = computed(() => {
-  const people = [order.value?.merchandiser, order.value?.salesperson]
-    .filter((item): item is NonNullable<typeof item> => Boolean(item))
-  return people.filter((item, index, values) => values.findIndex((value) => value.id === item.id) === index)
-})
 const confirmAllocations = computed(() => (order.value?.lines || []).map((line) => ({
   id: line.id,
   product: line.product_name_snapshot,
@@ -133,15 +125,11 @@ function clearDialogState() {
   confirmVisible.value = false
   blockedVisible.value = false
   conflictVisible.value = false
-  productionVisible.value = false
   collaborationVisible.value = false
   cancelBatchVisible.value = false
   completeVisible.value = false
   exceptionCloseVisible.value = false
   selectedBatch.value = null
-  productionRequestSignature.value = ''
-  productionAttempted.value = false
-  Object.assign(productionForm, { delivery_batch_line_id: '', quantity: 1, request_key: '', planned_start_date: '', planned_end_date: '', production_priority: 'NORMAL', production_batch_number: '', planner_id: null })
   Object.assign(collaborationForm, { delivery_batch_id: null, event_type: 'NOTE', status: 'PENDING', title: '', note: '', quantity: null, occurred_at: '' })
   Object.assign(cancelForm, { reason: '', evidence_file_id: '' })
   Object.assign(completeForm, { note: '', reason: '' })
@@ -191,65 +179,13 @@ async function uploadEvidence(event: Event) {
   } catch (error) { handleMutationError(error) } finally { actionLoading.value = false; target.value = '' }
 }
 function openProduction(batch: SalesOrderDeliveryBatch, line?: SalesOrderBatchLine) {
-  const targetLine = line && Math.floor(Number(line.remaining_quantity)) >= 1
-    ? line
-    : batch.lines.find((item) => Math.floor(Number(item.remaining_quantity)) >= 1) || null
-  if (!targetLine) {
+  if (!order.value || !(line ? Number(line.remaining_quantity) >= 1 : batchHasProductionCapacity(batch))) {
     ElMessage.warning('该批次产品已全部建立生产任务，无剩余可建数量。')
     return
   }
-  selectedBatch.value = batch
-  productionForm.delivery_batch_line_id = targetLine.id
-  productionForm.quantity = Math.floor(Number(targetLine.remaining_quantity))
-  productionForm.request_key = crypto.randomUUID()
-  productionForm.planned_start_date = new Date().toISOString().slice(0, 10)
-  productionForm.planned_end_date = batch.planned_delivery_date
-  productionForm.production_priority = 'NORMAL'
-  productionForm.production_batch_number = `PB-${batch.planned_delivery_date.replaceAll('-', '')}-${batch.batch_number}`
-  productionForm.planner_id = order.value?.merchandiser?.id || order.value?.salesperson.id || null
-  productionRequestSignature.value = ''
-  productionAttempted.value = false
-  productionVisible.value = true
-}
-function syncProductionQuantity() {
-  const remaining = Math.floor(Number(productionLine.value?.remaining_quantity || 0))
-  productionForm.quantity = remaining >= 1 ? Math.min(Math.max(Math.floor(Number(productionForm.quantity || 1)), 1), remaining) : 0
-}
-async function submitProduction() {
-  if (actionLoading.value) return
-  const remaining = Math.floor(Number(productionLine.value?.remaining_quantity || 0))
-  if (!productionLine.value || !Number.isInteger(productionForm.quantity) || productionForm.quantity < 1 || productionForm.quantity > remaining) return ElMessage.warning('生产数量必须是整数，且不能超过可建数量。')
-  const signature = `${productionForm.delivery_batch_line_id}|${productionForm.quantity}`
-  if (productionRequestSignature.value !== signature) {
-    productionForm.request_key = crypto.randomUUID()
-    productionRequestSignature.value = signature
-  }
-  productionAttempted.value = true
-  actionLoading.value = true
-  try {
-    const created = await createProductionOrderFromSalesOrder({
-      request_key: productionForm.request_key,
-      delivery_batch_line_id: productionLine.value.id,
-      quantity: productionForm.quantity,
-      planned_start_date: productionForm.planned_start_date || null,
-      planned_end_date: productionForm.planned_end_date || null,
-      production_priority: productionForm.production_priority,
-      production_batch_number: productionForm.production_batch_number.trim(),
-      planner_id: productionForm.planner_id,
-    })
-    try {
-      await submitProductionTask(created.data.id, created.etag)
-      ElMessage.success(`生产任务单 ${created.data.task_number} 已建立并提交 PMC。`)
-    } catch (error) {
-      ElMessage.warning(`生产任务单 ${created.data.task_number} 已保存为草稿，但提交 PMC 失败：${apiError(error)}`)
-    }
-    productionVisible.value = false
-    await load()
-  } catch (error) {
-    ElMessage.error(`${apiError(error)} 已刷新订单，避免重复建立生产任务。`)
-    productionVisible.value = false
-    await load()
-  } finally { actionLoading.value = false }
+  void router.push({ name: 'production-task-create', query: {
+    sales_order_id: order.value.id, delivery_batch_id: batch.id,
+  } })
 }
 function openCollaboration(batchId: string | null = null, eventType = 'NOTE') {
   Object.assign(collaborationForm, { delivery_batch_id: batchId, event_type: eventType, status: 'PENDING', title: '', note: '', quantity: null, occurred_at: new Date().toISOString() })
@@ -300,7 +236,20 @@ async function completeOrder(exceptionClose: boolean) {
   } catch (error) { handleMutationError(error) } finally { actionLoading.value = false }
 }
 
-onMounted(load)
+async function loadProductLabels() {
+  const [categories, units] = await Promise.allSettled([
+    fetchAllProductionDataRecords<ProductCategory>('product-categories'),
+    fetchAllProductionDataRecords<ProductionUnit>('production-units'),
+  ])
+  productCategories.value = categories.status === 'fulfilled' ? categories.value : []
+  productUnits.value = units.status === 'fulfilled' ? units.value : []
+  productCatalogError.value = categories.status === 'rejected' || units.status === 'rejected'
+    ? '类别或单位名称加载失败，其他产品信息仍按订单保存内容显示。请刷新重试。' : ''
+}
+onMounted(() => {
+  void loadProductLabels()
+  void load()
+})
 </script>
 
 <template>
@@ -320,16 +269,16 @@ onMounted(load)
         <main class="detail-content">
           <template v-if="activeTab === 'information'">
             <section class="content-card"><h2>基本信息</h2><dl class="info-grid"><dt>订单编号</dt><dd>{{ order.order_number }}</dd><dt>客户名称</dt><dd>{{ order.customer_name }}</dd><dt>买方地址快照</dt><dd>{{ addressText() }}</dd><dt>订单日期</dt><dd>{{ order.order_date }}</dd><dt>联系人</dt><dd>{{ order.customer_confirmer || '—' }}</dd><dt>业务员</dt><dd>{{ order.salesperson.display_name }}</dd><dt>订单状态</dt><dd><span class="status-tag" :class="statusClass(order.status)">{{ order.status_display }}</span></dd><dt>确认方式</dt><dd>{{ order.confirmation_method_display || '—' }}</dd><dt>交易币种</dt><dd>{{ order.currency_code }}</dd><dt>来源报价</dt><dd>{{ order.source_quotation_number || '—' }}</dd><dt>确认时间</dt><dd>{{ formatDateTime(order.customer_confirmed_at) }}</dd><dt>备注</dt><dd>{{ order.confirmation_summary || '—' }}</dd></dl></section>
-            <section class="content-card"><h2>产品与价格 · 共{{ order.lines.length }}个产品</h2><el-table :data="order.lines"><el-table-column label="产品/编码" min-width="260"><template #default="{ row }"><b>{{ row.product_name_snapshot }}</b><div class="muted">{{ row.product_number_snapshot }}</div></template></el-table-column><el-table-column label="数量" width="150"><template #default="{ row }">{{ numberText(row.quantity) }}</template></el-table-column><el-table-column prop="unit_code_snapshot" label="单位" width="100"/><el-table-column label="单价" width="160"><template #default="{ row }">{{ numberText(row.unit_price) }}</template></el-table-column><el-table-column label="金额" width="180"><template #default="{ row }">{{ numberText(row.line_total) }}</template></el-table-column><el-table-column label="金额(CNY)" width="190"><template #default="{ row }">{{ numberText(Number(row.line_total) * Number(order.exchange_rate)) }}</template></el-table-column></el-table></section>
-            <section class="content-card"><h2>交付批次 · 共{{ activeBatches.length }}个批次</h2><el-table :data="activeBatches"><el-table-column prop="batch_number" label="批次" width="100"/><el-table-column prop="planned_delivery_date" label="计划交期" width="180"/><el-table-column label="产品" min-width="300"><template #default="{ row }">{{ row.lines.map((line: SalesOrderBatchLine) => line.product_name).join(' / ') }}</template></el-table-column><el-table-column label="数量" width="160"><template #default="{ row }">{{ row.lines.map((line: SalesOrderBatchLine) => numberText(line.quantity)).join(' / ') }}</template></el-table-column><el-table-column label="生产状态" width="160"><template #default="{ row }"><span class="status-tag is-warning">{{ row.production_summary.status_display || '尚未建立' }}</span></template></el-table-column><el-table-column label="操作" width="220"><template #default="{ row }"><el-button v-if="canCreateProductionTask && batchHasProductionCapacity(row)" size="small" @click="openProduction(row)">建立并提交PMC</el-button><span v-else-if="!canCreateProductionTask" class="muted">当前状态或权限不可建立</span><span v-else class="muted">无剩余可建数量</span></template></el-table-column></el-table></section>
+            <section class="content-card"><h2>产品与价格 · 共{{ order.lines.length }}个产品</h2><SalesOrderProductsTable :order="order" :categories="productCategories" :units="productUnits" :catalog-error="productCatalogError"/></section>
+            <section class="content-card"><h2>交付批次 · 共{{ activeBatches.length }}个批次</h2><el-table :data="activeBatches"><el-table-column prop="batch_number" label="批次" width="100"/><el-table-column prop="planned_delivery_date" label="计划交期" width="180"/><el-table-column label="产品" min-width="300"><template #default="{ row }">{{ row.lines.map((line: SalesOrderBatchLine) => line.product_name).join(' / ') }}</template></el-table-column><el-table-column label="数量" width="160"><template #default="{ row }">{{ row.lines.map((line: SalesOrderBatchLine) => numberText(line.quantity)).join(' / ') }}</template></el-table-column><el-table-column label="生产状态" width="160"><template #default="{ row }"><span class="status-tag is-warning">{{ row.production_summary.status_display || '尚未建立' }}</span></template></el-table-column><el-table-column label="操作" width="220"><template #default="{ row }"><el-button v-if="canCreateProductionTask && batchHasProductionCapacity(row)" size="small" @click="openProduction(row)">创建生产任务单</el-button><span v-else-if="!canCreateProductionTask" class="muted">当前状态或权限不可建立</span><span v-else class="muted">无剩余可建数量</span></template></el-table-column></el-table></section>
           </template>
-          <section v-else-if="activeTab === 'products'" class="content-card products-panel"><h2>产品与价格</h2><el-table :data="order.lines"><el-table-column label="产品/编码" min-width="220"><template #default="{ row }"><b>{{ row.product_name_snapshot }}</b><div class="muted">{{ row.product_number_snapshot }}</div></template></el-table-column><el-table-column label="数量" width="110"><template #default="{ row }">{{ numberText(row.quantity) }}</template></el-table-column><el-table-column label="报价单价" width="120"><template #default="{ row }">{{ row.quoted_unit_price === null ? '—' : numberText(row.quoted_unit_price) }}</template></el-table-column><el-table-column label="订单单价" width="120"><template #default="{ row }">{{ numberText(row.unit_price) }}</template></el-table-column><el-table-column label="价差" width="110"><template #default="{ row }">{{ row.quoted_unit_price === null ? '—' : numberText(row.price_difference) }}</template></el-table-column><el-table-column label="行金额" width="140"><template #default="{ row }">{{ numberText(row.line_total) }}</template></el-table-column></el-table><h2 class="subheading">产品要求</h2><article v-for="line in order.lines" :key="line.id" class="requirement-row"><strong>{{ line.product_name_snapshot }} / {{ line.product_number_snapshot }}</strong><p><b>品质要求：</b>{{ line.quality_requirements || '—' }}</p><p><b>包装要求：</b>{{ line.packaging_requirements || '—' }}</p><p><b>唛头要求：</b>{{ line.shipping_mark_requirements || '—' }}</p><p><b>价格备注：</b>{{ line.lower_price_reason || '—' }}</p></article></section>
-          <section v-else-if="activeTab === 'batches'" class="content-card"><div class="section-heading"><h2>交付批次协同</h2><span>按批次中的单个产品建立生产订单</span></div><article v-for="batch in order.delivery_batches" :key="batch.id" class="detail-batch" :class="{ cancelled: batch.status === 'CANCELLED' }"><header><div><strong>{{ batch.batch_number }}</strong><span>{{ batch.planned_delivery_date }}</span></div><span class="status-tag" :class="batch.status === 'ACTIVE' ? 'is-success' : 'is-danger'">{{ batch.status_display }}</span></header><el-table :data="batch.lines"><el-table-column label="产品" min-width="240"><template #default="{ row }">{{ row.product_name }}<div class="muted">{{ row.product_number }}</div></template></el-table-column><el-table-column label="本批数量" width="130"><template #default="{ row }">{{ numberText(row.quantity) }}</template></el-table-column><el-table-column label="已建生产" width="130"><template #default="{ row }">{{ numberText(row.allocated_quantity) }}</template></el-table-column><el-table-column label="可建数量" width="130"><template #default="{ row }">{{ numberText(row.remaining_quantity) }}</template></el-table-column><el-table-column label="操作" width="210"><template #default="{ row }"><el-button v-if="batch.status === 'ACTIVE' && canCreateProductionTask && Number(row.remaining_quantity) > 0" size="small" @click="openProduction(batch, row)">建立生产订单</el-button></template></el-table-column></el-table><footer><span>{{ batch.notes || '无批次备注' }}</span><div><el-button v-if="batch.status === 'ACTIVE'" size="small" @click="openCollaboration(batch.id)">登记协同</el-button><el-button v-if="batch.status === 'ACTIVE' && canCancelBatch" size="small" type="danger" plain @click="openCancelBatch(batch)">取消批次</el-button></div></footer></article></section>
+          <section v-else-if="activeTab === 'products'" class="content-card products-panel"><h2>产品与价格</h2><SalesOrderProductsTable :order="order" :categories="productCategories" :units="productUnits" :catalog-error="productCatalogError"/><h2 class="subheading">产品要求</h2><article v-for="line in order.lines" :key="line.id" class="requirement-row"><strong>{{ line.customer_product_name_snapshot || line.product_name_snapshot }}<template v-if="line.product_number_snapshot"> / {{ line.product_number_snapshot }}</template></strong><p><b>品质要求：</b>{{ line.quality_requirements || '—' }}</p><p><b>包装要求：</b>{{ line.packaging_requirements || '—' }}</p><p><b>唛头要求：</b>{{ line.shipping_mark_requirements || '—' }}</p><p><b>价格备注：</b>{{ line.lower_price_reason || '—' }}</p></article></section>
+          <section v-else-if="activeTab === 'batches'" class="content-card"><div class="section-heading"><h2>交付批次协同</h2><span>选择批次后进入生产任务单创建页</span></div><article v-for="batch in order.delivery_batches" :key="batch.id" class="detail-batch" :class="{ cancelled: batch.status === 'CANCELLED' }"><header><div><strong>{{ batch.batch_number }}</strong><span>{{ batch.planned_delivery_date }}</span></div><span class="status-tag" :class="batch.status === 'ACTIVE' ? 'is-success' : 'is-danger'">{{ batch.status_display }}</span></header><el-table :data="batch.lines"><el-table-column label="产品" min-width="240"><template #default="{ row }">{{ row.product_name }}<div class="muted">{{ row.product_number }}</div></template></el-table-column><el-table-column label="本批数量" width="130"><template #default="{ row }">{{ numberText(row.quantity) }}</template></el-table-column><el-table-column label="已建生产" width="130"><template #default="{ row }">{{ numberText(row.allocated_quantity) }}</template></el-table-column><el-table-column label="可建数量" width="130"><template #default="{ row }">{{ numberText(row.remaining_quantity) }}</template></el-table-column><el-table-column label="操作" width="210"><template #default="{ row }"><el-button v-if="batch.status === 'ACTIVE' && canCreateProductionTask && Number(row.remaining_quantity) > 0" size="small" @click="openProduction(batch, row)">创建生产任务单</el-button></template></el-table-column></el-table><footer><span>{{ batch.notes || '无批次备注' }}</span><div><el-button v-if="batch.status === 'ACTIVE'" size="small" @click="openCollaboration(batch.id)">登记协同</el-button><el-button v-if="batch.status === 'ACTIVE' && canCancelBatch" size="small" type="danger" plain @click="openCancelBatch(batch)">取消批次</el-button></div></footer></article></section>
           <section v-else-if="activeTab === 'evidence'" class="content-card"><div class="section-heading"><h2>客户确认凭证</h2><label class="upload-button"><input type="file" :disabled="actionLoading" @change="uploadEvidence"><el-icon><UploadFilled/></el-icon>上传凭证</label></div><div v-if="!order.evidence.length" class="empty-state"><h3>尚未上传客户确认凭证</h3><p>无报价或返单必须先保存草稿，在此上传客户书面凭证后才能确认。</p></div><el-table v-else :data="order.evidence"><el-table-column prop="file_name" label="文件名" min-width="300"/><el-table-column prop="evidence_type" label="凭证类型" width="180"/><el-table-column prop="caption" label="说明" min-width="260"/><el-table-column label="操作" width="120"><template #default="{ row }"><a class="text-link" :href="salesOrderEvidenceUrl(order.id, row.file_id)" target="_blank" rel="noopener">查看文件</a></template></el-table-column></el-table></section>
           <section v-else-if="activeTab === 'versions'" class="content-card"><h2>订单版本记录</h2><el-table :data="order.versions"><el-table-column label="版本" width="100"><template #default="{ row }"><span class="status-tag is-neutral">V{{ row.version_number }}</span></template></el-table-column><el-table-column prop="change_reason" label="变更原因" min-width="360"/><el-table-column label="确认人" width="180"><template #default="{ row }">{{ row.confirmed_by?.display_name || '—' }}</template></el-table-column><el-table-column label="确认时间" width="220"><template #default="{ row }">{{ formatDateTime(row.confirmed_at) }}</template></el-table-column></el-table></section>
           <section v-else class="content-card"><h2>协同时间线</h2><div v-if="!order.collaboration_events.length" class="empty-state"><h3>暂无协同记录</h3><p>订金、合同、产前样、验货、订舱、发货、余款和单证将在这里留痕。</p></div><ol v-else class="timeline"><li v-for="item in order.collaboration_events" :key="item.id"><span class="timeline-dot"/><div><header><strong>{{ item.event_type_display }} · {{ item.title }}</strong><span class="status-tag" :class="statusClass(item.status)">{{ item.status_display }}</span></header><p>{{ item.note || '无补充说明' }}</p><small>{{ formatDateTime(item.occurred_at) }} · {{ item.recorded_by?.display_name || '系统' }}<template v-if="item.quantity"> · 数量 {{ numberText(item.quantity) }}</template></small></div></li></ol></section>
         </main>
-        <aside class="detail-aside"><section class="summary-card"><h2>订单概览</h2><dl><dt>订单总额 ({{ order.currency_code }})</dt><dd class="amount">{{ Number(order.total_amount).toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</dd><dt>客户名称</dt><dd>{{ order.customer_name }}</dd><dt>联系人</dt><dd>{{ order.customer_confirmer || '—' }}</dd><dt>买方主体</dt><dd>{{ order.transaction_entity_name || '—' }}</dd><dt>买方地址</dt><dd>{{ addressText() }}</dd><dt>卖方主体</dt><dd>{{ sellerText('seller_company_name') || sellerText('legal_name') || '—' }}</dd><dt>业务员</dt><dd>{{ order.salesperson.display_name }}</dd><dt>订单日期</dt><dd>{{ order.order_date }}</dd><dt>订单状态</dt><dd><span class="status-tag" :class="statusClass(order.status)">{{ order.status_display }}</span></dd><dt>版本</dt><dd><span class="status-tag is-neutral">V{{ order.version_number }}</span></dd><dt>来源报价</dt><dd>{{ order.source_quotation_number || '—' }}</dd><dt>确认方式</dt><dd>{{ order.confirmation_method_display || '—' }}</dd><dt>客户确认时间</dt><dd>{{ formatDateTime(order.customer_confirmed_at) }}</dd></dl></section><section class="summary-card"><h2>协同时间线</h2><p v-for="item in order.collaboration_events.slice(0, 3)" :key="item.id" class="aside-event"><span>{{ item.title }}</span><small>{{ formatDateTime(item.occurred_at) }}</small></p><p v-if="!order.collaboration_events.length" class="muted">暂无协同记录</p></section><section class="summary-card"><h2>相关凭证</h2><p v-for="file in order.evidence.slice(0, 3)" :key="file.id" class="aside-event"><span>{{ file.file_name }}</span></p><p v-if="!order.evidence.length" class="muted">暂无客户凭证</p></section></aside>
+        <aside class="detail-aside"><section class="summary-card"><h2>订单概览</h2><dl><dt>订单总额 ({{ order.currency_code }})</dt><dd class="amount">{{ Number(order.total_amount).toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</dd><dt>人民币总额 (CNY)</dt><dd>{{ order.total_amount_cny == null ? '—' : numberText(order.total_amount_cny) }}</dd><dt>系统汇率</dt><dd>{{ order.exchange_rate_snapshot?.rate || '—' }}<small v-if="order.exchange_rate_snapshot"> · {{ order.exchange_rate_snapshot.source_name }} · {{ order.exchange_rate_snapshot.effective_date }}</small></dd><dt>客户名称</dt><dd>{{ order.customer_name }}</dd><dt>联系人</dt><dd>{{ order.customer_confirmer || '—' }}</dd><dt>买方主体</dt><dd>{{ order.transaction_entity_name || '—' }}</dd><dt>买方地址</dt><dd>{{ addressText() }}</dd><dt>卖方主体</dt><dd>{{ sellerText('seller_company_name') || sellerText('legal_name') || '—' }}</dd><dt>业务员</dt><dd>{{ order.salesperson.display_name }}</dd><dt>订单日期</dt><dd>{{ order.order_date }}</dd><dt>订单状态</dt><dd><span class="status-tag" :class="statusClass(order.status)">{{ order.status_display }}</span></dd><dt>版本</dt><dd><span class="status-tag is-neutral">V{{ order.version_number }}</span></dd><dt>来源报价</dt><dd>{{ order.source_quotation_number || '—' }}</dd><dt>确认方式</dt><dd>{{ order.confirmation_method_display || '—' }}</dd><dt>客户确认时间</dt><dd>{{ formatDateTime(order.customer_confirmed_at) }}</dd></dl></section><section class="summary-card"><h2>协同时间线</h2><p v-for="item in order.collaboration_events.slice(0, 3)" :key="item.id" class="aside-event"><span>{{ item.title }}</span><small>{{ formatDateTime(item.occurred_at) }}</small></p><p v-if="!order.collaboration_events.length" class="muted">暂无协同记录</p></section><section class="summary-card"><h2>相关凭证</h2><p v-for="file in order.evidence.slice(0, 3)" :key="file.id" class="aside-event"><span>{{ file.file_name }}</span></p><p v-if="!order.evidence.length" class="muted">暂无客户凭证</p></section></aside>
       </div>
     </template>
 
@@ -343,14 +292,6 @@ onMounted(load)
       <template #footer><el-button @click="confirmVisible = false">取消</el-button><el-button type="primary" :disabled="!canConfirm" :loading="actionLoading" @click="confirmOrder">确认订单</el-button></template>
     </AppWindowDialog>
     <AppWindowDialog v-model="blockedVisible" title="确认前缺失信息" :width="700" :height="340" class="sales-order-dialog"><div class="blocked-copy"><span>!</span><div><h3>买方地址尚未满足确认条件</h3><p>草稿仍已保留。请到编辑页选择当前客户名下的有效法定交易地址，再重新确认。</p></div></div><template #footer><el-button @click="blockedVisible = false">暂不处理</el-button><el-button type="primary" @click="router.push({ name: 'sales-order-edit', params: { orderId }, query: { section: 'buyer-address' } })">去补充买方地址</el-button></template></AppWindowDialog>
-    <AppWindowDialog v-model="productionVisible" title="建立并提交生产订单" :width="900" :height="700" class="sales-order-dialog" :close-on-click-modal="false">
-      <div class="dialog-columns production-layout">
-        <section><h3>来源信息</h3><dl class="dialog-dl"><dt>销售订单</dt><dd>{{ order?.order_number }}</dd><dt>交付批次</dt><dd>{{ selectedBatch?.batch_number }}</dd><dt>计划交期</dt><dd>{{ selectedBatch?.planned_delivery_date }}</dd><dt>产品编码</dt><dd>{{ productionLine?.product_number }}</dd><dt>产品名称</dt><dd>{{ productionLine?.product_name }}</dd><dt>批次产品数量</dt><dd>{{ numberText(productionLine?.quantity || 0) }} {{ productionLine?.unit_code }}</dd></dl></section>
-        <section><h3>生产计划</h3><label>产品</label><el-select v-model="productionForm.delivery_batch_line_id" :disabled="productionAttempted" @change="syncProductionQuantity"><el-option v-for="line in selectedBatch?.lines || []" :key="line.id" :value="line.id" :label="`${line.product_name} · 可建 ${numberText(line.remaining_quantity)}`" :disabled="Math.floor(Number(line.remaining_quantity)) < 1"/></el-select><label>计划数量</label><el-input-number v-model="productionForm.quantity" :disabled="productionAttempted" :min="1" :max="Math.floor(Number(productionLine?.remaining_quantity || 1))" :precision="0" :controls="false"/><label>优先级</label><el-select v-model="productionForm.production_priority" :disabled="productionAttempted"><el-option value="URGENT" label="紧急"/><el-option value="HIGH" label="高"/><el-option value="NORMAL" label="普通"/><el-option value="LOW" label="低"/></el-select><div class="field-pair"><label><span>计划开始</span><el-date-picker v-model="productionForm.planned_start_date" value-format="YYYY-MM-DD" :disabled="productionAttempted"/></label><label><span>计划完成</span><el-date-picker v-model="productionForm.planned_end_date" value-format="YYYY-MM-DD" :disabled="productionAttempted"/></label></div><label>生产批号</label><el-input v-model="productionForm.production_batch_number" :disabled="productionAttempted"/><label>计划员</label><el-select v-model="productionForm.planner_id" :disabled="productionAttempted"><el-option v-for="person in productionPlanners" :key="person.id" :value="person.id" :label="person.display_name"/></el-select></section>
-      </div>
-      <p class="dialog-lead">本次为当前批次中的单个产品建立生产订单，建立后立即提交 PMC；当前生产模块只接受整数数量。</p>
-      <template #footer><el-button @click="productionVisible = false">取消</el-button><el-button type="primary" :loading="actionLoading" @click="submitProduction">建立并提交PMC</el-button></template>
-    </AppWindowDialog>
     <AppWindowDialog v-model="collaborationVisible" :title="collaborationForm.event_type === 'SHIPMENT' ? '登记协同 · 发货' : '登记订单协同事项'" :width="840" :height="720" class="sales-order-dialog" :close-on-click-modal="false"><div class="dialog-columns"><section><h3>事项分类</h3><label>协同类型</label><el-select v-model="collaborationForm.event_type"><el-option v-for="item in eventTypes" :key="item[0]" :value="item[0]" :label="item[1]"/></el-select><label>关联批次</label><el-select v-model="collaborationForm.delivery_batch_id" clearable><el-option v-for="batch in activeBatches" :key="batch.id" :value="batch.id" :label="`${batch.batch_number} · ${batch.planned_delivery_date}`"/></el-select><label>事项状态</label><el-select v-model="collaborationForm.status"><el-option value="PENDING" label="待处理"/><el-option value="COMPLETED" label="完成"/><el-option value="RISK" label="风险"/><el-option value="CANCELLED" label="取消"/></el-select></section><section><h3>记录内容</h3><label>事项标题</label><el-input v-model="collaborationForm.title" maxlength="200"/><label>发生时间</label><el-date-picker v-model="collaborationForm.occurred_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ"/><template v-if="collaborationForm.event_type === 'SHIPMENT'"><label>本次发货数量</label><el-input-number v-model="collaborationForm.quantity" :min="0.0001" :precision="4" :controls="false"/></template><label>补充说明</label><el-input v-model="collaborationForm.note" type="textarea" :rows="3" maxlength="1000"/></section></div><section class="dialog-preview"><h3>记录内容预览</h3><dl class="dialog-dl"><dt>关联订单</dt><dd>{{ order?.order_number }}</dd><dt>协同事项</dt><dd>{{ eventTypes.find((item) => item[0] === collaborationForm.event_type)?.[1] }} · {{ collaborationForm.status === 'COMPLETED' ? '完成' : collaborationForm.status === 'RISK' ? '风险' : collaborationForm.status === 'CANCELLED' ? '取消' : '待处理' }}</dd><dt>事项标题</dt><dd>{{ collaborationForm.title || '尚未填写' }}</dd></dl></section><template #footer><el-button @click="collaborationVisible = false">取消</el-button><el-button type="primary" :loading="actionLoading" @click="addEvent">保存协同记录</el-button></template></AppWindowDialog>
     <AppWindowDialog v-model="cancelBatchVisible" title="取消正式交付批次" :width="900" :height="720" class="sales-order-dialog" :close-on-click-modal="false"><p class="dialog-lead danger">取消后保留已建立的生产与协同历史，批次差额和取消原因继续留痕。</p><div class="dialog-columns"><section><h3>批次影响</h3><dl class="dialog-dl"><dt>交付批次</dt><dd>{{ selectedBatch?.batch_number }}</dd><dt>计划交期</dt><dd>{{ selectedBatch?.planned_delivery_date }}</dd><dt>需求数量</dt><dd>{{ numberText(selectedBatch?.lines.reduce((sum, line) => sum + Number(line.quantity), 0) || 0) }}</dd></dl><table class="mini-table"><thead><tr><th>产品</th><th>数量</th></tr></thead><tbody><tr v-for="line in selectedBatch?.lines || []" :key="line.id"><td>{{ line.product_name }}</td><td>{{ numberText(line.quantity) }}</td></tr></tbody></table></section><section><h3>客户确认</h3><label>本订单客户凭证</label><el-select v-model="cancelForm.evidence_file_id"><el-option v-for="file in order?.evidence || []" :key="file.file_id" :value="file.file_id" :label="file.file_name"/></el-select><label>取消原因</label><el-input v-model="cancelForm.reason" type="textarea" :rows="6" maxlength="1000"/><p class="muted">客户确认凭证和取消原因将写入新版本历史。</p></section></div><template #footer><el-button @click="cancelBatchVisible = false">取消</el-button><el-button type="danger" :loading="actionLoading" @click="cancelBatch">确认取消批次</el-button></template></AppWindowDialog>
     <AppWindowDialog v-model="completeVisible" title="正常完结销售订单" :width="820" :height="620" class="sales-order-dialog" :close-on-click-modal="false"><span class="completion-state" :class="normalCompletionReady ? 'ready' : 'blocked'">{{ normalCompletionReady ? '条件满足' : '尚有缺口' }}</span><div class="dialog-columns completion-grid"><section><h3>交付检查</h3><dl class="dialog-dl"><dt>有效需求</dt><dd>{{ numberText(activeDemand) }}</dd><dt>累计发货</dt><dd>{{ numberText(completedShipment) }}</dd><dt>尚未交付</dt><dd>{{ numberText(remainingShipment) }}</dd></dl></section><section><h3>余款检查</h3><span class="status-tag" :class="balanceCompleted ? 'is-success' : 'is-warning'">{{ balanceCompleted ? '已完成' : '未完成' }}</span><p class="muted">余款协同事项需标记为完成；单证事项仅作提醒。</p></section></div><label>完结说明（选填）</label><el-input v-model="completeForm.note" type="textarea" :rows="3" maxlength="1000"/><p class="dialog-lead">说明可以填写，但不会因此变成异常关闭；最终仍由服务端复核交付和余款条件。</p><template #footer><el-button @click="completeVisible = false">取消</el-button><el-button type="primary" :loading="actionLoading" @click="completeOrder(false)">检查并正常完结</el-button></template></AppWindowDialog>

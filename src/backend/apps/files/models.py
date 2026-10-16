@@ -12,6 +12,13 @@ class FileScanStatus(models.TextChoices):
     SKIPPED = "SKIPPED", "已跳过"
 
 
+USABLE_FILE_SCAN_STATUSES = frozenset({FileScanStatus.CLEAN, FileScanStatus.SKIPPED})
+
+
+def is_file_scan_usable(status):
+    return status in USABLE_FILE_SCAN_STATUSES
+
+
 class BusinessFile(ArchivableModel):
     uploaded_by_employee = models.ForeignKey(
         "organizations.Employee",

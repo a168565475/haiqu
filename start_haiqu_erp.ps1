@@ -948,7 +948,7 @@ try {
 
     Test-RequiredPorts
 
-    Write-StartupLog '先启动 PostgreSQL、Redis 和 ClamAV 基础服务。'
+    Write-StartupLog '先启动 PostgreSQL、Redis 和可选的 ClamAV 基础服务。'
     Invoke-Docker -Arguments @(
         'compose', '-f', $ComposeFile,
         'up', '-d', 'postgres', 'redis', 'clamav'

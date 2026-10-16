@@ -7,10 +7,10 @@ from . import sales_policy as policy
 
 
 def readable_files(request):
-    from apps.files.models import BusinessFile
+    from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
     from apps.customers.selectors import accessible_customers
     from apps.sales_orders.selectors import accessible_sales_orders
-    files = BusinessFile.objects.filter(archived_at__isnull=True)
+    files = BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES)
     if not policy.enabled():
         return files
     if not policy.access_for(request)["active"]:
@@ -41,6 +41,9 @@ def readable_files(request):
 
 
 def require_file(request, business_file):
+    from apps.files.models import USABLE_FILE_SCAN_STATUSES
+    if business_file and business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
+        raise PermissionDenied("文件尚未通过安全扫描，不能复用该文件。")
     if policy.enabled() and business_file and not readable_files(request).filter(pk=business_file.pk).exists():
         raise PermissionDenied("无权读取此文件的业务来源，不能复用该文件。")
 

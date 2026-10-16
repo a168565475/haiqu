@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
-from apps.files.models import FileScanStatus
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.files.uploads import DEFAULT_MAX_IMAGE_BYTES, save_scanned_image
 
 from ..image_files import (
@@ -201,7 +201,7 @@ class BomLineImageViewSet(viewsets.ViewSet):
                 pk=image_id,
                 bom_line=line,
                 business_file__archived_at__isnull=True,
-                business_file__scan_status=FileScanStatus.CLEAN,
+                business_file__scan_status__in=USABLE_FILE_SCAN_STATUSES,
                 business_file__content_type__startswith="image/",
             )
         except BomLineImage.DoesNotExist as exc:
@@ -371,7 +371,7 @@ class BomLineImageDraftViewSet(viewsets.ViewSet):
                 owner_user=request.user,
                 expires_at__gt=timezone.now(),
                 business_file__archived_at__isnull=True,
-                business_file__scan_status=FileScanStatus.CLEAN,
+                business_file__scan_status__in=USABLE_FILE_SCAN_STATUSES,
                 business_file__content_type__startswith="image/",
             )
         except BomLineImageDraft.DoesNotExist as exc:

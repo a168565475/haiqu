@@ -1,17 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 
 import { fetchNumberRules } from '@/api/referenceData'
 import type { NumberRule } from '@/types/referenceData'
 
-const router = useRouter()
 const loading = ref(false)
 const errorMessage = ref('')
 const rules = ref<NumberRule[]>([])
-
-const configuredCount = computed(() => rules.value.filter((item) => item.is_configured).length)
 
 function formatExample(rule: NumberRule): string {
   if (!rule.is_configured) return '未配置'
@@ -43,12 +39,10 @@ onMounted(loadRules)
 
 <template>
   <section class="number-rules-page system-settings-theme">
-    <nav class="crumb"><button type="button" @click="router.push({ name: 'reference-data-settings' })">系统配置</button><span>/</span><b>编号规则</b></nav>
     <header>
-      <div><h1>编号规则</h1><p>登记现有业务编号格式和 PostgreSQL 序列；历史编号与当前流水不会重算或重置</p></div>
+      <div><h1>编号规则</h1></div>
       <el-button :icon="Refresh" :loading="loading" @click="loadRules">刷新</el-button>
     </header>
-    <div class="metrics"><article><span>已登记类型</span><strong>{{ rules.length }}</strong></article><article><span>已配置生成</span><strong>{{ configuredCount }}</strong></article><article><span>流水重置策略</span><strong>从不重置</strong></article></div>
     <el-alert title="规则当前为只读登记" description="修改前缀、日期段或位数会影响新编号，必须另行完成并发与历史兼容评审；本页不会直接改写数据库序列。" type="warning" :closable="false" show-icon />
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"><template #default><el-button size="small" @click="loadRules">重试</el-button></template></el-alert>
     <el-card v-else shadow="never" class="table-card">
@@ -65,5 +59,14 @@ onMounted(loadRules)
 </template>
 
 <style scoped lang="scss">
-.number-rules-page{min-width:0;color:#1d2129}.crumb{display:flex;gap:8px;align-items:center;margin-bottom:14px;color:#86909c;font-size:13px}.crumb button{padding:0;border:0;color:#4e5969;background:none;cursor:pointer}.number-rules-page header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px}.number-rules-page h1{margin:0;font-size:28px}.number-rules-page header p{margin:8px 0 0;color:#86909c}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:16px}.metrics article{padding:18px;border:1px solid #e5e6eb;border-radius:8px;background:#fff}.metrics span,.table-card small{display:block;color:#86909c;font-size:12px}.metrics strong{display:block;margin-top:8px;font-size:24px}.table-card{margin-top:16px}.table-card b{display:block}.table-card code{color:#1d2129;font-family:Consolas,monospace}@media(max-width:760px){.metrics{grid-template-columns:1fr}.number-rules-page header{gap:12px;flex-direction:column}}
+.number-rules-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
+.number-rules-page header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
+.number-rules-page h1 { margin: 0; font-size: 28px; }
+.table-card { display: flex; flex: 1; min-height: 0; flex-direction: column; margin-top: 16px; }
+.table-card :deep(.el-card__body) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.table-card :deep(.el-table) { flex: 1; min-height: 0; }
+.table-card :deep(.el-scrollbar__wrap) { overflow-y: auto; }
+.table-card b { display: block; }
+.table-card code { color: #1d2129; font-family: Consolas, monospace; }
+@media (max-width: 760px) { .number-rules-page header { gap: 12px; flex-direction: column; } }
 </style>

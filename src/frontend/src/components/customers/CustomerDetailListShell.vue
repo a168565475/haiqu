@@ -255,11 +255,12 @@ const emit = defineEmits<{
 
 .customer-detail-list-shell__table {
   min-width: 0;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .customer-detail-list-shell__table :deep(.el-table) {
-  min-width: 1460px;
+  width: 100%;
+  min-width: 0;
   --el-table-border-color: #{token.$crm-border-subtle};
   --el-table-header-bg-color: #{token.$crm-color-subtle};
   --el-table-row-hover-bg-color: #{token.$crm-color-row-hover};

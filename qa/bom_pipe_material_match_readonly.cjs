@@ -1,18 +1,19 @@
-/** 管材属性匹配：已有 Session + 真实 GET API + headless；只改浏览器草稿，禁止网络写入。 */
+/** 管材自动建档页面：已有 Session + 真实只读 API + headless；仅应用本地草稿，禁止保存或建档。 */
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { chromium } = require('../src/frontend/node_modules/playwright-core');
 const root = path.resolve(__dirname, '..');
-const taskRoot = path.join(root, '.tmp', 'bom_pipe_material_match_20261015');
+const taskRoot = path.join(root, '.tmp', 'pipe_auto_sync_20261016');
 const profile = path.join(taskRoot, 'profile');
-const output = process.env.QA_REPORT_DIR ? path.resolve(process.env.QA_REPORT_DIR, 'bom-pipe-material-match')
-  : path.join(root, 'output', 'playwright', 'bom-pipe-material-match-20261015');
+const output = process.env.QA_REPORT_DIR ? path.resolve(process.env.QA_REPORT_DIR, 'pipe-auto-sync')
+  : path.join(root, 'output', 'playwright', 'pipe-auto-sync-20261016');
 const base = new URL(process.env.BOM_PIPE_QA_BASE_URL || 'http://localhost:8080');
 const bomId = 'dbe06399-b6f0-40b1-bdba-9e0d9b2861da';
 const report = { schemaVersion: 1, startedAt: new Date().toISOString(), status: 'RUNNING', mode: 'real-api-read-only',
-  checks: [], apiReads: [], blockedWrites: [], pageErrors: [], httpErrors: [], screenshots: [], measurements: [], domDiagnostics: [], notCovered: [],
-  resources: { profile, created: false, browserClosed: false, removed: false, verifiedAbsent: false, taskRootCreated: false, taskRootRemoved: false } };
+  scope: { excluded: '保存 BOM 时自动复用或新增原料属于写入路径，由后端业务/API 测试覆盖；本脚本不声称真实建档通过。' },
+  checks: [], apiReads: [], readonlyPreviewRequests: [], matchRequests: [], blockedWrites: [], pageErrors: [], httpErrors: [], screenshots: [], measurements: [], notCovered: [],
+  resources: { profile, output, created: false, browserClosed: false, removed: false, verifiedAbsent: false, taskRootCreated: false, taskRootRemoved: false } };
 let context, outputReady = false, currentStep = 'startup';
 function requireCondition(condition, code, message) { if (!condition) { const error = new Error(message); error.code = code; error.qaSafe = true; throw error; } }
 function check(condition, code, detail = {}) { report.checks.push({ code, passed: Boolean(condition), ...detail }); }
@@ -24,70 +25,33 @@ function digest(value) { return crypto.createHash('sha256').update(JSON.stringif
 function text(value) { return String(value ?? '').trim(); }
 function dimensions(value) { return text(value).replace(/\s+/g, '').replace(/[×xX]/g, '*').replace(/[ΦφФ]/g, 'φ'); }
 function decimal(value) { const raw = text(value); return /^\d+(?:\.\d+)?$/.test(raw) ? String(Number(raw)) : raw; }
-function paramsFor(line) { return { material: text(line.material), diameter: text(line.tube_diameter), thickness: text(line.tube_thickness), tube_shape: text(line.tube_shape), raw_bar_length_m: text(line.tube_cut_length_m || line.raw_bar_length_m) }; }
-async function getJson(route, kind, optional = false) {
+async function getJson(route, kind) {
   const url = new URL(route, base);
   requireCondition(url.origin === base.origin && url.pathname.startsWith('/api/'), 'API_SCOPE', '只允许读取指定本机服务 API。');
   const response = await context.request.get(url.href, { maxRedirects: 0 });
   report.apiReads.push({ kind, route: safeRoute(url.href), status: response.status() });
   if (response.status() !== 200) {
-    if (!optional) report.httpErrors.push({ kind, route: safeRoute(url.href), status: response.status() });
+    report.httpErrors.push({ kind, route: safeRoute(url.href), status: response.status() });
     return { status: response.status(), body: null };
   }
   return { status: 200, body: await response.json() };
 }
-async function matches(params) {
-  const query = { ...params };
-  if (!/^\d+(?:\.\d+)?$/.test(text(query.raw_bar_length_m)) || Number(query.raw_bar_length_m) <= 0) delete query.raw_bar_length_m;
-  const result = await getJson('/api/v1/boms/pipe-material-matches/?' + new URLSearchParams(query), 'pipe-material-match');
-  requireCondition(result.status === 200 && Array.isArray(result.body?.data?.candidates), 'MATCH_API_UNAVAILABLE', '真实管材匹配接口不可用。');
-  const data = result.body.data;
-  requireCondition(['unique', 'multiple', 'no_match', 'incomplete', 'needs_review'].includes(data.reason), 'MATCH_CONTRACT_INVALID', '匹配接口状态不符合已确认契约。');
-  check(data.reason !== 'unique' || (data.candidates.length === 1 && data.automatic_source_id === data.candidates[0].id), 'UNIQUE_API_RESULT_HAS_ONE_STABLE_SOURCE');
-  check(data.reason === 'unique' || data.automatic_source_id === null, 'AMBIGUOUS_API_RESULT_NEVER_AUTO_SELECTS');
-  return data;
-}
-async function getReferences(resource) {
-  const all = [];
-  for (let page = 1; page <= 20; page++) {
-    const result = await getJson(`/api/v1/reference-data/${resource}/?status=ACTIVE&page_size=100&page=${page}`, 'pipe-reference-' + resource);
-    requireCondition(result.status === 200 && Array.isArray(result.body?.data), 'REFERENCE_API_UNAVAILABLE', '真实管材字典不可读。');
-    all.push(...result.body.data);
-    if (page >= Number(result.body.meta?.total_pages || 1)) return all;
-  }
-  gap(resource, '字典超过 20 页；只使用已读取的真实记录，未声称全量覆盖。');
-  return all;
-}
 async function screenshot(page, name) { const file = path.join(output, name + '.png'); await page.screenshot({ path: file, fullPage: true }); report.screenshots.push(file); }
-async function matchSelectorDiagnostics(page, scope) {
-  const region = page.getByTestId('pipe-material-match');
-  if (await region.count() !== 1) return;
-  const diagnostic = await region.evaluate(node => ({
-    role: node.getAttribute('role'), ariaLive: node.getAttribute('aria-live'), reason: node.getAttribute('data-match-reason'),
-    controls: [...node.querySelectorAll('.el-select, .el-select__wrapper, input[role="combobox"]')].map(control => ({
-      tag: control.tagName, role: control.getAttribute('role'), ariaLabel: control.getAttribute('aria-label'),
-      ariaLabelledby: control.getAttribute('aria-labelledby'), ariaControls: control.getAttribute('aria-controls'),
-      ariaExpanded: control.getAttribute('aria-expanded'), ariaHidden: control.getAttribute('aria-hidden'),
-      ariaDisabled: control.getAttribute('aria-disabled'), hasLayoutBox: control.getClientRects().length > 0,
-    })),
-  }));
-  report.domDiagnostics.push({ scope, step: currentStep, ...diagnostic });
-}
 async function geometry(page, scope) {
   const measured = await page.evaluate(() => {
     const measure = selector => { const node = document.querySelector(selector); if (!node?.getClientRects().length) return null; const r = node.getBoundingClientRect(), s = getComputedStyle(node); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, overflowX: s.overflowX, overflowY: s.overflowY }; };
-    return { width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth, dialog: measure('.bom-line-editor-dialog'), match: measure('[data-testid="pipe-material-match"]'),
+    return { width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth, dialog: measure('.bom-line-editor-dialog'),
       dropdowns: [...document.querySelectorAll('.el-select-dropdown')].filter(node => node.getClientRects().length).map(node => { const r = node.getBoundingClientRect(); return { x: r.x, right: r.right, y: r.y, bottom: r.bottom }; }) };
   });
   report.measurements.push({ scope, measured });
   check(measured.documentWidth <= measured.width + 1, 'NO_PAGE_HORIZONTAL_OVERFLOW', { scope });
   if (measured.dialog) check(measured.dialog.x >= -1 && measured.dialog.y >= -1 && measured.dialog.right <= measured.width + 1 && measured.dialog.bottom <= measured.height + 1, 'DIALOG_WITHIN_VIEWPORT', { scope });
-  check(measured.dropdowns.every(item => item.x >= -1 && item.y >= -1 && item.right <= measured.width + 1 && item.bottom <= measured.height + 1), 'CANDIDATES_WITHIN_VIEWPORT', { scope });
+  check(measured.dropdowns.every(item => item.x >= -1 && item.y >= -1 && item.right <= measured.width + 1 && item.bottom <= measured.height + 1), 'REFERENCE_OPTIONS_WITHIN_VIEWPORT', { scope });
 }
 async function fieldValue(dialog, name) {
   const labelText = new RegExp('^' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$');
   const field = dialog.locator('label.drawer-field').filter({ has: dialog.page().locator('span').filter({ hasText: labelText }) });
-  const select = field.locator('.el-select__selected-item:not(.el-select__input-wrapper)');
+  const select = field.locator('.el-select__selected-item:not(.el-select__input-wrapper):not(.is-transparent)');
   if (await select.count()) return text(await select.first().innerText());
   const input = field.locator('input');
   return await input.count() ? text(await input.first().inputValue()) : text(await field.locator('.drawer-readonly-value').innerText());
@@ -103,17 +67,11 @@ async function selectReference(page, dialog, name, label) {
   await option.click();
   await list.waitFor({ state: 'hidden' });
 }
-async function waitMatch(page, expected) {
-  const region = page.getByTestId('pipe-material-match');
-  await region.waitFor({ state: 'visible' });
-  const expectedText = expected.reason === 'unique' ? '已关联' : expected.reason === 'no_match' ? '该规格尚未建立原料档案' : expected.candidates.length ? '对应原料' : '';
-  await page.waitForFunction(({ reason, expectedText }) => {
-    const region = document.querySelector('[data-testid="pipe-material-match"]');
-    if (!region || region.textContent.includes('匹配中')) return false;
-    if (region.dataset.matchReason) return region.dataset.matchReason === (reason === 'unique' ? 'linked' : reason) && region.dataset.loading !== 'true';
-    return Boolean(expectedText) && region.textContent.includes(expectedText);
-  }, { reason: expected.reason, expectedText });
-  return region;
+async function noSourcePrompt(dialog, scope) {
+  check(await dialog.getByTestId('pipe-material-match').count() === 0, 'NO_SOURCE_MATCH_STATUS', { scope });
+  check(await dialog.getByRole('combobox', { name: '对应原料', exact: true }).count() === 0, 'NO_SOURCE_SELECTOR', { scope });
+  check(await dialog.getByRole('button', { name: '重新匹配', exact: true }).count() === 0, 'NO_SOURCE_RETRY', { scope });
+  check(!/该规格尚未建立原料档案|请核对原料档案后确认选择|原料匹配中|对应原料/.test(await dialog.innerText()), 'NO_SOURCE_MATCH_PROMPT', { scope });
 }
 async function closeEditor(page) { const dialog = page.locator('.bom-line-editor-dialog'); await dialog.getByRole('button', { name: '取消', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); }
 async function openRow(page, index) {
@@ -122,33 +80,38 @@ async function openRow(page, index) {
   await row.getByRole('button', { name: '编辑当前行', exact: true }).click();
   const dialog = page.locator('.bom-line-editor-dialog'); await dialog.waitFor({ state: 'visible' }); return dialog;
 }
-async function discoverScenarios(refs, currentLines) {
-  const result = await getJson('/api/v1/boms/pipe-materials/?page_size=100', 'real-pipe-catalog', true);
-  if (result.status !== 200) { gap('真实候选', '管材列表不可读，未创建测试资料。'); return []; }
-  const scenarios = [], tried = new Set();
-  const shapeLabels = [...new Set([...currentLines.map(line => line.tube_shape), ...refs.shapes.map(item => item.shape_name)].filter(Boolean))]
-    .filter(label => refs.shapes.some(item => item.shape_name === label)).slice(0, 4);
-  for (const brief of (result.body?.data || []).slice(0, 30)) {
-    const details = await getJson('/api/v1/raw-materials/' + brief.id + '/', 'real-pipe-attributes', true);
-    if (details.status !== 200) { gap('真实原料字段', '原料详情不可读，无法依据真实截面、厚度进行草稿验证。'); break; }
-    const item = details.body?.data;
-    if (!item) continue;
-    const material = refs.materials.find(ref => text(ref.material_name) === text(item.material));
-    const diameter = refs.diameters.find(ref => dimensions(ref.diameter_value) === dimensions(item.diameter));
-    const thickness = refs.thicknesses.find(ref => decimal(ref.thickness_value) === decimal(item.thickness));
-    if (!material || !diameter || !thickness || !text(item.diameter) || !text(item.thickness)) continue;
-    for (const shape of shapeLabels) {
-      const params = { material: material.material_name, diameter: diameter.diameter_value, thickness: thickness.thickness_value, tube_shape: shape };
-      const key = JSON.stringify(params); if (tried.has(key)) continue; tried.add(key);
-      const match = await matches(params);
-      if (!match.candidates.some(candidate => candidate.id === brief.id)) continue;
-      if (!scenarios.some(scenario => scenario.match.reason === match.reason)) scenarios.push({ params, match });
-      if (scenarios.some(scenario => scenario.match.reason === 'multiple') && scenarios.some(scenario => scenario.match.reason === 'needs_review')) return scenarios;
-    }
+async function checkCancelledThicknessChange(page, line, index, scope) {
+  currentStep = scope + '-cancel-changed-thickness';
+  const dialog = await openRow(page, index);
+  const thickness = dialog.getByRole('combobox', { name: '厚度', exact: true });
+  await thickness.click();
+  const listId = await thickness.getAttribute('aria-controls');
+  requireCondition(Boolean(listId), 'THICKNESS_LISTBOX_MISSING', '厚度缺少真实候选列表关联。');
+  const list = page.locator('[id="' + listId + '"]');
+  await list.waitFor({ state: 'visible' });
+  const options = await list.getByRole('option').evaluateAll(nodes => nodes.filter(node => node.getAttribute('aria-disabled') !== 'true' && !node.classList.contains('is-disabled')).map(node => node.textContent.trim()));
+  const alternative = options.find(value => /^\d+(?:\.\d+)?$/.test(value) && Number(value) > 0 && decimal(value) !== decimal(line.tube_thickness));
+  if (!alternative) {
+    gap(scope + '-修改后取消', '真实厚度下拉没有其他有效数值，未伪造厚度，也未声称取消恢复已验收。');
+    await thickness.press('Escape');
+    await closeEditor(page);
+    return;
   }
-  return scenarios;
+  await list.getByRole('option', { name: alternative, exact: true }).click();
+  await list.waitFor({ state: 'hidden' });
+  check(decimal(await fieldValue(dialog, '厚度')) === decimal(alternative), 'REAL_ALTERNATIVE_THICKNESS_SELECTED', { scope, row: index + 1 });
+  await screenshot(page, 'changed-thickness-before-cancel-' + scope);
+  await closeEditor(page);
+  const reopened = await openRow(page, index);
+  check(decimal(await fieldValue(reopened, '厚度')) === decimal(line.tube_thickness), 'CANCEL_RESTORES_ORIGINAL_THICKNESS', { scope, row: index + 1 });
+  await noSourcePrompt(reopened, currentStep + '-reopened');
+  const persisted = await getJson('/api/v1/boms/' + bomId + '/', 'target-bom-after-cancel');
+  const persistedLine = persisted.body?.data?.sections?.flatMap(section => section.lines).find(item => item.id === line.id);
+  check(persisted.status === 200 && persistedLine?.source_inventory_material_id === line.source_inventory_material_id, 'CANCEL_PRESERVES_SERVER_SOURCE', { scope, row: index + 1 });
+  await screenshot(page, 'original-thickness-after-cancel-' + scope);
+  await closeEditor(page);
 }
-async function viewportChecks(bom, scenarios, viewport) {
+async function viewportChecks(bom, viewport) {
   const scope = viewport.width + 'x' + viewport.height;
   const page = await context.newPage();
   page.on('pageerror', error => report.pageErrors.push({ scope, type: error.name }));
@@ -160,74 +123,48 @@ async function viewportChecks(bom, scenarios, viewport) {
     await page.locator('.tube-table').waitFor({ state: 'visible' });
     const lines = bom.sections.find(section => section.section_type === 'PROFILE')?.lines || [];
     check(await page.locator('.tube-table .el-table__body tr').count() === lines.length, 'CURRENT_ROWS_MATCH_REAL_BOM', { scope, count: lines.length });
-    let noMatchSeen = 0;
     for (let index = 0; index < lines.length; index++) {
       currentStep = scope + '-current-pipe-' + (index + 1);
-      const line = lines[index];
+      const line = lines[index], detail = { scope, row: index + 1, hasSource: Boolean(line.source_inventory_material_id) };
       const dialog = await openRow(page, index);
-      if (line.source_inventory_material_id) {
-        const region = page.getByTestId('pipe-material-match');
-        await region.getByText(/已关联/).waitFor({ state: 'visible' });
-        check(await region.getAttribute('data-source-id') === line.source_inventory_material_id, 'EXISTING_STABLE_SOURCE_PRESERVED', { scope, row: index + 1 });
-      } else {
-        const params = paramsFor(line);
-        params.raw_bar_length_m = await fieldValue(dialog, '原材料长度（m）');
-        const expected = await matches(params);
-        const region = await waitMatch(page, expected);
-        check(await region.getAttribute('data-source-id') === (expected.automatic_source_id || ''), 'CURRENT_MATCH_EQUALS_REAL_API', { scope, row: index + 1, reason: expected.reason });
-        check(text(await fieldValue(dialog, '材质')) === text(line.material), 'CURRENT_MATERIAL_UNCHANGED', { scope, row: index + 1 });
-        check(dimensions(await fieldValue(dialog, '规格')) === dimensions(line.tube_diameter), 'CURRENT_DIAMETER_UNCHANGED', { scope, row: index + 1 });
-        check(decimal(await fieldValue(dialog, '厚度')) === decimal(line.tube_thickness), 'CURRENT_THICKNESS_UNCHANGED', { scope, row: index + 1, thickness: line.tube_thickness });
-        if (expected.reason === 'no_match') { noMatchSeen++; check((await region.innerText()).includes('该规格尚未建立原料档案'), 'CURRENT_NO_MATCH_EXPLICIT', { scope, row: index + 1 }); }
+      await noSourcePrompt(dialog, currentStep);
+      for (const [label, value, normalize] of [
+        ['形状', line.tube_shape, text], ['品名', line.part_name, text], ['材质', line.material, text], ['规格', line.tube_diameter, dimensions], ['厚度', line.tube_thickness, decimal],
+        ['切割长度（mm）', line.length_value, decimal], ['单个用量', line.unit_consumption, decimal], ['切割支数', line.tube_cut_piece_count, decimal],
+      ]) check(normalize(await fieldValue(dialog, label)) === normalize(value), 'CURRENT_PARAMETER_UNCHANGED', { ...detail, field: label });
+      for (const label of ['形状', '品名', '材质', '规格', '厚度']) {
+        const control = dialog.getByRole('combobox', { name: label, exact: true });
+        check(await control.count() === 1 && await control.isEnabled() && await control.isEditable(), 'LINKED_PIPE_ATTRIBUTE_EDITABLE', { ...detail, field: label });
       }
       if (index === 0) { await geometry(page, scope + '-current'); await screenshot(page, 'current-pipe-' + scope); }
       await closeEditor(page);
     }
-    if (noMatchSeen) check(true, 'CURRENT_UNMATCHED_ROWS_CHECKED', { scope, count: noMatchSeen });
-    else gap(scope + '-当前未建档管材', '读取时现有行已无 no_match 状态，可能资料已被并行修改；未按旧记录硬编码结果。');
-    for (const scenario of scenarios) {
-      currentStep = scope + '-draft-' + scenario.match.reason;
-      await page.getByRole('button', { name: '添加材料', exact: true }).click();
-      const dialog = page.locator('.bom-line-editor-dialog'); await dialog.waitFor({ state: 'visible' });
-      for (const [label, value] of [['形状', scenario.params.tube_shape], ['材质', scenario.params.material], ['规格', scenario.params.diameter], ['厚度', scenario.params.thickness]]) await selectReference(page, dialog, label, value);
-      const params = { ...scenario.params, raw_bar_length_m: await fieldValue(dialog, '原材料长度（m）') };
-      const expected = await matches(params);
-      const region = await waitMatch(page, expected);
-      if (expected.reason === 'unique') check(await region.getAttribute('data-source-id') === expected.automatic_source_id, 'UNIQUE_REAL_PIPE_AUTO_ASSOCIATED', { scope });
-      else {
-        requireCondition(expected.candidates.length > 0, 'DRAFT_CANDIDATES_CHANGED', '浏览器草稿实际匹配不再包含真实原料候选，请核对并行变更。');
-        check(!(await region.getAttribute('data-source-id')), 'REVIEW_REQUIRED_NO_IMPLICIT_ASSOCIATION', { scope, reason: expected.reason });
-        currentStep = scope + '-draft-' + expected.reason + '-locate-candidate-trigger';
-        await matchSelectorDiagnostics(page, scope);
-        const select = region.locator('.el-select');
-        requireCondition(await select.count() === 1, 'PIPE_SELECT_AMBIGUOUS', '匹配状态区须有且只有一个对应原料选择器。');
-        // 非 filterable 的 Element Plus Select 将 combobox input 隐藏；点击可见 wrapper，仅读隐藏 input 的 ARIA 关联。
-        const trigger = select.locator('.el-select__wrapper');
-        await trigger.waitFor({ state: 'visible' });
-        currentStep = scope + '-draft-' + expected.reason + '-open-candidate-options';
-        await trigger.click();
-        await matchSelectorDiagnostics(page, scope);
-        const listId = await select.locator('input[role="combobox"]').getAttribute('aria-controls');
-        requireCondition(Boolean(listId), 'PIPE_LISTBOX_MISSING', '对应原料选择器缺少候选列表关联。');
-        currentStep = scope + '-draft-' + expected.reason + '-read-candidate-options';
-        const list = page.locator('[id="' + listId + '"]'); await list.waitFor({ state: 'visible' });
-        check(await list.getByRole('option').count() === expected.candidates.length, 'CANDIDATES_EQUAL_REAL_MATCH_API', { scope, reason: expected.reason });
-        const candidate = expected.candidates[0];
-        const option = list.getByRole('option').filter({ hasText: candidate.material_number });
-        requireCondition(await option.count() === 1, 'CANDIDATE_LABEL_AMBIGUOUS', '真实原料编码在候选中缺失或重复。');
-        await geometry(page, scope + '-' + scenario.match.reason + '-options');
-        await screenshot(page, 'draft-' + scenario.match.reason + '-options-' + scope);
-        currentStep = scope + '-draft-' + expected.reason + '-choose-real-candidate';
-        await option.click();
-        await page.waitForFunction(id => document.querySelector('[data-testid="pipe-material-match"]')?.dataset.sourceId === id, candidate.id);
-        check(await region.getAttribute('data-source-id') === candidate.id, 'REAL_PIPE_MANUALLY_ASSOCIATED', { scope, reason: expected.reason });
-      }
-      check(decimal(await fieldValue(dialog, '厚度')) === decimal(scenario.params.thickness), 'MATCH_NEVER_SUBSTITUTES_THICKNESS', { scope, reason: scenario.match.reason });
-      await geometry(page, scope + '-' + scenario.match.reason);
-      await screenshot(page, 'draft-' + scenario.match.reason + '-selected-' + scope);
-      await closeEditor(page);
-    }
-  } catch (error) { failure(error, 'VIEWPORT_CHECK_ABORTED'); await matchSelectorDiagnostics(page, scope).catch(() => gap(scope, '失败现场选择器属性无法读取。')); await screenshot(page, 'failure-' + scope).catch(() => gap(scope, '失败现场无法截图。')); }
+    const linkedIndex = lines.findIndex(line => line.source_inventory_material_id && text(line.tube_thickness));
+    if (linkedIndex >= 0) await checkCancelledThicknessChange(page, lines[linkedIndex], linkedIndex, scope);
+    else gap(scope + '-修改后取消', '当前没有可核验的已关联管材行，未声称取消恢复已验收。');
+    currentStep = scope + '-incomplete-archive-draft';
+    const sourceLine = lines.find(line => line.part_name && Number(line.length_value) > 0 && Number(line.unit_consumption) > 0 && Number(line.tube_cut_piece_count) > 0);
+    requireCondition(Boolean(sourceLine), 'REAL_DRAFT_VALUES_MISSING', '缺少可复用的真实管材品名与切割参数，禁止伪造测试资料。');
+    await page.getByRole('button', { name: '添加材料', exact: true }).click();
+    const dialog = page.locator('.bom-line-editor-dialog'); await dialog.waitFor({ state: 'visible' });
+    await selectReference(page, dialog, '品名', sourceLine.part_name);
+    for (const [label, value] of [['切割长度（mm）', sourceLine.length_value], ['单个用量', sourceLine.unit_consumption], ['切割支数', sourceLine.tube_cut_piece_count]]) await dialog.getByRole('textbox', { name: label, exact: true }).fill(text(value));
+    for (const label of ['形状', '材质', '规格', '厚度']) check(!text(await fieldValue(dialog, label)), 'DRAFT_ARCHIVE_ATTRIBUTE_LEFT_EMPTY', { scope, field: label });
+    await noSourcePrompt(dialog, currentStep);
+    await geometry(page, currentStep);
+    await screenshot(page, 'incomplete-draft-' + scope);
+    // 品名和切割参数沿用真实行，仅缺少建档属性；纯计算预览后只应用到浏览器草稿，不保存 BOM。
+    await dialog.getByRole('button', { name: '应用修改', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    check(await page.locator('.tube-table .el-table__body tr').count() === lines.length + 1, 'INCOMPLETE_ARCHIVE_DRAFT_APPLIED_LOCALLY', { scope });
+    const applied = await openRow(page, lines.length);
+    check(text(await fieldValue(applied, '品名')) === text(sourceLine.part_name), 'LOCAL_DRAFT_NAME_PRESERVED', { scope });
+    for (const [label, value] of [['切割长度（mm）', sourceLine.length_value], ['单个用量', sourceLine.unit_consumption], ['切割支数', sourceLine.tube_cut_piece_count]]) check(decimal(await fieldValue(applied, label)) === decimal(value), 'LOCAL_DRAFT_CUTTING_PARAMETER_PRESERVED', { scope, field: label });
+    for (const label of ['形状', '材质', '规格', '厚度']) check(!text(await fieldValue(applied, label)), 'LOCAL_DRAFT_MISSING_ATTRIBUTE_NOT_SUBSTITUTED', { scope, field: label });
+    await noSourcePrompt(applied, scope + '-applied');
+    await screenshot(page, 'applied-local-draft-' + scope);
+    await closeEditor(page);
+  } catch (error) { failure(error, 'VIEWPORT_CHECK_ABORTED'); await screenshot(page, 'failure-' + scope).catch(() => gap(scope, '失败现场无法截图。')); }
   finally { await page.close(); }
 }
 async function main() {
@@ -252,28 +189,41 @@ async function main() {
   context.setDefaultTimeout(15000);
   await context.addCookies(state.cookies);
   await context.addInitScript(({ origins }) => { const match = (origins || []).find(item => item.origin === location.origin); for (const entry of match?.localStorage || []) localStorage.setItem(entry.name, entry.value); }, { origins: state.origins || [] });
-  await context.route('**/*', async route => { const request = route.request(); if (!['GET', 'HEAD'].includes(request.method())) { report.blockedWrites.push({ method: request.method(), route: safeRoute(request.url()) }); await route.abort('blockedbyclient'); } else await route.continue(); });
+  await context.route('**/*', async route => {
+    const request = route.request(), url = new URL(request.url());
+    if (url.pathname === '/api/v1/boms/pipe-material-matches/') report.matchRequests.push({ method: request.method(), route: url.pathname });
+    // 唯一非 GET/HEAD 例外：views.material_flow_preview 只执行纯计算，已有无写入后端测试覆盖。
+    const readonlyPreview = request.method() === 'POST' && url.origin === base.origin && url.pathname === '/api/v1/boms/material-flow-preview/';
+    if (readonlyPreview) report.readonlyPreviewRequests.push({ method: 'POST', route: url.pathname });
+    if (!['GET', 'HEAD'].includes(request.method()) && !readonlyPreview) { report.blockedWrites.push({ method: request.method(), route: safeRoute(request.url()) }); await route.abort('blockedbyclient'); }
+    else await route.continue();
+  });
   context.on('response', response => { if (!new URL(response.url()).pathname.startsWith('/api/')) return; const item = { method: response.request().method(), route: safeRoute(response.url()), status: response.status() }; report.apiReads.push(item); if (item.status >= 400) report.httpErrors.push(item); });
   const me = await getJson('/api/auth/me/', 'existing-session'); requireCondition(me.status === 200 && me.body?.authenticated === true, 'SESSION_EXPIRED', '已有会话不可用，禁止自动登录。');
   const target = await getJson('/api/v1/boms/' + bomId + '/', 'target-bom');
   requireCondition(target.status === 200 && target.body?.data?.product_information_confirmed === true, 'TARGET_BOM_UNAVAILABLE', '目标 BOM 必须可读且产品已核对。');
   const lines = target.body.data.sections.find(section => section.section_type === 'PROFILE')?.lines || [];
   requireCondition(lines.length > 0, 'TARGET_PIPE_LINES_MISSING', '当前 BOM 没有管材行，主体场景阻断。');
-  const refs = { shapes: await getReferences('tube-shapes'), materials: await getReferences('tube-materials'), diameters: await getReferences('tube-diameters'), thicknesses: await getReferences('tube-thicknesses') };
-  const scenarios = await discoverScenarios(refs, lines);
-  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1102, height: 884 }]) await viewportChecks(target.body.data, scenarios, viewport);
+  const archives = new Map();
+  for (const [index, line] of lines.entries()) {
+    if (!line.source_inventory_material_id) { gap('当前管材第 ' + (index + 1) + ' 行', '当前真实记录未关联来源；不能声称其已有来源已读回。'); continue; }
+    const source = await getJson('/api/v1/raw-materials/' + line.source_inventory_material_id + '/', 'existing-pipe-source');
+    requireCondition(source.status === 200 && source.body?.data?.id === line.source_inventory_material_id, 'EXISTING_SOURCE_UNAVAILABLE', '已有管材来源不可读。');
+    check(source.body.data.item_type === 'MATERIAL' && source.body.data.category_name === '管材' && source.body.data.unit_name === '根' && !source.body.data.archived_at, 'EXISTING_SOURCE_IS_ACTIVE_PIPE', { row: index + 1 });
+    check(text(source.body.data.material) === text(line.material), 'EXISTING_SOURCE_MATERIAL_MATCHES_BOM', { row: index + 1 });
+    archives.set(line.source_inventory_material_id, digest(source.body.data));
+  }
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1102, height: 884 }]) await viewportChecks(target.body.data, viewport);
   const after = await getJson('/api/v1/boms/' + bomId + '/', 'target-bom-after-readonly');
   if (after.status === 200 && digest(after.body?.data) === digest(target.body.data)) check(true, 'SERVER_BOM_UNCHANGED');
   else gap('服务器前后核对', '前后读取不同或失败，可能存在并行操作；不能声称服务器数据未变。');
+  for (const [id, before] of archives) { const afterSource = await getJson('/api/v1/raw-materials/' + id + '/', 'existing-pipe-source-after'); check(afterSource.status === 200 && digest(afterSource.body?.data) === before, 'SERVER_SOURCE_UNCHANGED'); }
+  check(report.matchRequests.length === 0, 'NO_PIPE_MATCH_API_DEPENDENCY', { count: report.matchRequests.length });
   check(report.blockedWrites.length === 0, 'NO_NETWORK_WRITE_ATTEMPTS', { count: report.blockedWrites.length });
   check(report.pageErrors.length === 0, 'NO_BROWSER_RUNTIME_ERRORS', { count: report.pageErrors.length });
   check(report.httpErrors.length === 0, 'NO_API_HTTP_ERRORS', { count: report.httpErrors.length });
-  if (!report.checks.some(item => item.code === 'UNIQUE_REAL_PIPE_AUTO_ASSOCIATED' && item.passed)) gap('真实自动关联页面', '本次真实数据缺少可自动匹配证据，未出现可靠唯一自动关联路径；本脚本不声称该路径通过。');
-  for (const reason of ['multiple', 'needs_review']) if (!report.checks.some(item => item.code === 'REAL_PIPE_MANUALLY_ASSOCIATED' && item.reason === reason && item.passed)) gap(reason, scenarios.some(scenario => scenario.match.reason === reason)
-    ? '已发现真实候选，但页面验证中断或未通过；详见失败检查，不记为通过。'
-    : '已读取的真实库存和字典未覆盖该类手选场景；未造数据或伪造接口。');
 }
-main().catch(error => { failure(error, 'QA_ABORTED'); report.status = ['STORAGE_STATE_REQUIRED', 'SESSION_EXPIRED', 'BROWSER_MISSING', 'PROFILE_ALREADY_EXISTS', 'TARGET_BOM_UNAVAILABLE', 'TARGET_PIPE_LINES_MISSING', 'REFERENCE_API_UNAVAILABLE', 'MATCH_API_UNAVAILABLE'].includes(error.code) ? 'BLOCKED' : 'FAIL'; }).finally(async () => {
+main().catch(error => { failure(error, 'QA_ABORTED'); report.status = ['STORAGE_STATE_REQUIRED', 'SESSION_EXPIRED', 'BROWSER_MISSING', 'PROFILE_ALREADY_EXISTS', 'TARGET_BOM_UNAVAILABLE', 'TARGET_PIPE_LINES_MISSING', 'EXISTING_SOURCE_UNAVAILABLE'].includes(error.code) ? 'BLOCKED' : 'FAIL'; }).finally(async () => {
   if (context) { try { await context.close(); report.resources.browserClosed = true; } catch { check(false, 'BROWSER_CLOSE_FAILED'); } }
   if (report.resources.created) {
     try {

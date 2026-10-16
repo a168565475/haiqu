@@ -21,33 +21,7 @@
 .crm-page-header :deep(.crm-page-header__count) { padding: 0; font-size: 12px; line-height: 22px; }
 .create-button { width: auto; min-width: 96px; padding-right: 16px; padding-left: 16px; }
 
-.quick-views {
-  display: flex;
-  height: 46px;
-  flex: none;
-  overflow-x: auto;
-  border-radius: 4px;
-  background: token.$crm-color-subtle;
-}
-.quick-views button {
-  @include mixin.reset-button;
-  position: relative;
-  flex: 0 0 186px;
-  padding: 10px;
-  color: token.$crm-text-secondary;
-  font-size: 13px;
-  line-height: 20px;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.quick-views button:first-child { flex-basis: 164px; }
-.quick-views button:hover { color: token.$crm-text-primary; }
-.quick-views button[aria-disabled='true'] { cursor: not-allowed; }
-.quick-views button.is-active { color: token.$crm-text-primary; font-weight: 500; }
-.quick-views button.is-active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: token.$crm-primary; content: ''; }
-
-.filters { display: flex; flex: none; align-items: flex-start; gap: 16px; margin: 16px 0 14px; }
+.filters { display: flex; flex: none; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin: 16px 0 14px; }
 // 该节点使用 Warm ERP 40px/4px 输入组件，而非旧列表 38px/5px 基线。
 .sample-list-page :deep(.el-input__wrapper), .sample-list-page :deep(.el-select__wrapper), .sample-list-page :deep(.el-date-editor) { border-radius: 4px; }
 .sample-list-page :deep(.el-input__inner::placeholder), .sample-list-page :deep(.el-select__placeholder.is-transparent) { color: var(--haiqu-warm-color-text-muted, #87867f); }
@@ -55,7 +29,10 @@
 .requested-dates { width: 100%; min-height: 40px; }
 .filters :deep(.el-date-editor .el-range-input) { color: token.$crm-text-primary; font-family: token.$crm-font-body; }
 .filters :deep(.el-date-editor.is-active) { box-shadow: 0 0 0 1px token.$crm-focus inset; }
-.search-input { width: 430px; flex: 0 1 430px; }
+.search-input { width: 250px; min-width: 250px; flex: none; }
+.sample-search-button { @include mixin.reset-button; display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center; color: token.$crm-text-secondary; cursor: pointer; }
+.sample-search-button:focus-visible { @include mixin.focus-ring; }
+.sample-actions { display: flex; flex: none; align-items: center; margin-left: auto; }
 .status-filter { width: 190px; flex: none; }
 .type-filter, .owner-filter { width: 170px; flex: none; }
 .more-filters { width: 128px; }
@@ -104,8 +81,9 @@
 .data-state p { margin: 0; }
 .data-state strong { color: token.$crm-text-primary; }
 
-.table-footer { display: flex; height: 80px; flex: none; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 16px 16px; color: token.$crm-text-secondary; font-size: 12px; }
-.table-footer :deep(.el-pagination) { gap: 12px; --el-pagination-button-width: 36px; --el-pagination-button-height: 36px; }
+.sample-list-page .table-footer { display: flex; height: auto !important; min-height: 48px; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px 8px 16px !important; color: token.$crm-text-secondary; font-size: 12px; }
+.table-footer > span { white-space: nowrap; }
+.table-footer :deep(.el-pagination) { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-left: auto; --el-pagination-button-width: 36px; --el-pagination-button-height: 36px; }
 .table-footer :deep(.el-pagination__sizes) { margin: 0; }
 .table-footer :deep(.el-select) { width: 136px; }
 .table-footer :deep(.el-pagination.is-background .btn-prev), .table-footer :deep(.el-pagination.is-background .btn-next), .table-footer :deep(.el-pagination.is-background .el-pager li) { min-width: 36px; height: 36px; margin: 0; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; color: token.$crm-text-primary; background: token.$crm-color-surface; font-weight: 500; }
@@ -114,8 +92,4 @@
 .table-footer :deep(.el-pagination button:disabled) { opacity: .5; }
 @media (max-width: 1440px) {
   .sample-list-page { padding-right: 24px; padding-left: 24px; }
-  .search-input { flex: 1; min-width: 200px; }
-}
-@media (max-width: 1200px) {
-  .filters { flex-wrap: wrap; }
 }

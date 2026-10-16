@@ -20,6 +20,7 @@ from .models import (
     ProductionScheduleProductCraft,
     ScheduleStatus,
 )
+from .selectors import schedule_product_image
 
 
 def _json_hash(value):
@@ -132,8 +133,9 @@ def _validated_source(production_task_id, items, expected_revision="", allowed_s
         raise ValidationError({"items": "同一任务产品不能重复加入排产。"})
     all_lines = list(
         ProductionTaskProduct.objects.select_for_update(of=("self",)).select_related(
-            "unit", "image_file", "product_color"
-        ).filter(production_task=task)
+            "unit", "image_file", "product_color", "production_task",
+            "sales_order_delivery_batch_line__sales_order_line__product_image",
+        ).filter(production_task=task).prefetch_related("images__image_file")
     )
     all_line_map = {line.pk: line for line in all_lines}
     if any(line_id not in all_line_map for line_id in line_ids):
@@ -205,7 +207,7 @@ def _set_product_fields(row, item, line, line_number, revision):
     row.source_quantity_snapshot = line.quantity
     row.unit = line.unit
     row.unit_name_snapshot = line.unit.unit_name
-    row.image_file = line.image_file
+    row.image_file = schedule_product_image(line)
     row.material_inbound_date = item["material_inbound_date"]
     row.metal_return_date = item["metal_return_date"]
     row.sewing_return_date = item["sewing_return_date"]

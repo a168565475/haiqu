@@ -63,9 +63,13 @@ export interface EligibleMaterialPurchaseOrder {
   source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string
   sales_order_number: string; supplier_names: string[]; remaining_line_count: number
 }
+export interface ProcurementInboundProductSummary {
+  product_line_id: string; product_name: string; item_number: string; specification: string; color_name: string; material: string
+}
 export interface ProcurementInboundOrder {
   id: string; order_number: string; source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string; sales_order_number: string
   supplier_names: string[]; line_count: number; remaining_line_count: number
+  product_summary: ProcurementInboundProductSummary[]
   pending_quality_count: number; confirmed_batch_count: number
   received_quantity: string; return_quantity: string
   workflow_status: 'PENDING_RECEIPT' | 'PARTIAL_RECEIVED' | 'PENDING_QUALITY' | 'PENDING_PROCUREMENT_CONFIRMATION' | 'PENDING_RETURN' | 'COMPLETED'

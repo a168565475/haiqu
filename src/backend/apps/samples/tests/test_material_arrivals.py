@@ -28,6 +28,8 @@ class MaterialArrivalTests(APITestCase):
             item = ProductItem.objects.create(item_number='SAM-ARRIVAL', category=category)
             ProductInformation.objects.create(product_number='SAM-ARRIVAL-001', category=category,
                 product_name='到货验收产品', specification='60×80', unit=unit, product_item=item, scale='REGULAR')
+        ProductCategory.objects.get_or_create(category_name='管材', item_type='MATERIAL')
+        ProductionUnit.objects.get_or_create(unit_name='PCS', defaults={'unit_code': 'SAM-PCS'})
         inventory_tests.MaterialInventoryApiTests.setUp(self)
         # 这些通用回写用例校验原单位小数链路，管材改用独立根米专项。
         self.raw_material.category, _ = ProductCategory.objects.get_or_create(category_name='五金', defaults={'item_type': 'MATERIAL'})

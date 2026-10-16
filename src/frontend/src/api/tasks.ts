@@ -3,12 +3,8 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { ApiDataResponse, PaginatedResponse } from '@/types/customer'
 import type {
-  TaskBatchItem,
-  TaskBatchPreview,
-  TaskBatchResult,
   TaskDetail,
   TaskFilters,
-  TaskMetrics,
   TaskOptions,
   TaskSummary,
 } from '@/types/task'
@@ -20,11 +16,6 @@ function query(filters: Partial<TaskFilters>) {
 export async function fetchTasks(filters: Partial<TaskFilters>): Promise<PaginatedResponse<TaskSummary>> {
   const response = await apiClient.get<PaginatedResponse<TaskSummary>>('/api/v1/tasks/', { params: query(filters) })
   return response.data
-}
-
-export async function fetchTaskMetrics(scope: string): Promise<TaskMetrics> {
-  const response = await apiClient.get<ApiDataResponse<TaskMetrics>>('/api/v1/tasks/summary/', { params: { scope } })
-  return response.data.data
 }
 
 export async function fetchTaskOptions(scope: string): Promise<TaskOptions> {
@@ -77,33 +68,4 @@ export async function toggleTaskChecklist(taskId: string, itemId: string, isComp
     { headers: { 'If-Match': etag } },
   )
   return response.headers.etag || null
-}
-
-export async function previewBulkComplete(items: TaskBatchItem[], eventId: string): Promise<TaskBatchPreview> {
-  const response = await apiClient.post<ApiDataResponse<TaskBatchPreview>>('/api/v1/tasks/bulk-complete/preview/', { items, event_id: eventId })
-  return response.data.data
-}
-
-export async function previewBulkReassign(items: TaskBatchItem[], assigneeEmployeeId: string, eventId: string): Promise<TaskBatchPreview> {
-  const response = await apiClient.post<ApiDataResponse<TaskBatchPreview>>('/api/v1/tasks/bulk-reassign/preview/', {
-    items,
-    assignee_employee_id: assigneeEmployeeId,
-    event_id: eventId,
-  })
-  return response.data.data
-}
-
-export async function bulkComplete(items: TaskBatchItem[], reason: string, eventId: string): Promise<TaskBatchResult> {
-  const response = await apiClient.post<ApiDataResponse<TaskBatchResult>>('/api/v1/tasks/bulk-complete/', { items, reason, event_id: eventId })
-  return response.data.data
-}
-
-export async function bulkReassign(items: TaskBatchItem[], assigneeEmployeeId: string, reason: string, eventId: string): Promise<TaskBatchResult> {
-  const response = await apiClient.post<ApiDataResponse<TaskBatchResult>>('/api/v1/tasks/bulk-reassign/', {
-    items,
-    assignee_employee_id: assigneeEmployeeId,
-    reason,
-    event_id: eventId,
-  })
-  return response.data.data
 }

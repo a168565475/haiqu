@@ -2,7 +2,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ElementPlus, { ElMessage } from 'element-plus'
-import { fetchCustomerOptions, fetchCustomers, fetchCustomerStats } from '@/api/customers'
+import { fetchCustomerOptions, fetchCustomers } from '@/api/customers'
 import { fetchPublishedOptions } from '@/api/referenceData'
 import CustomerListView from './CustomerListView.vue'
 import type { CustomerOptions } from '@/types/customer'
@@ -10,7 +10,7 @@ import type { CustomerOptions } from '@/types/customer'
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/api/customers', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/customers')>(),
-  fetchCustomerOptions: vi.fn(), fetchCustomers: vi.fn(), fetchCustomerStats: vi.fn(),
+  fetchCustomerOptions: vi.fn(), fetchCustomers: vi.fn(),
 }))
 vi.mock('@/api/referenceData', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/referenceData')>(), fetchPublishedOptions: vi.fn(),
@@ -24,7 +24,15 @@ const legacy: CustomerOptions = {
 function renderPage() {
   return shallowMount(CustomerListView, { global: {
     plugins: [ElementPlus],
-    stubs: { ElSelect: { template: '<div><slot /></div>' }, ElOption: { props: ['label', 'value'], template: '<option :value="value">{{ label }}</option>' } },
+    stubs: {
+      ElInput: false,
+      ElSelect: {
+        props: ['modelValue'],
+        emits: ['update:modelValue', 'change'],
+        template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value); $emit(\'change\', $event.target.value)"><slot /></select>',
+      },
+      ElOption: { props: ['label', 'value'], template: '<option :value="value">{{ label }}</option>' },
+    },
   } })
 }
 
@@ -33,17 +41,69 @@ describe('客户列表初始化加载', () => {
     setActivePinia(createPinia())
     vi.mocked(fetchCustomerOptions).mockReset().mockResolvedValue(legacy)
     vi.mocked(fetchCustomers).mockReset().mockResolvedValue({ data: [], meta: { page: 1, page_size: 50, total: 0, total_pages: 0 } })
-    vi.mocked(fetchCustomerStats).mockReset().mockResolvedValue({ total: 0, mine: 0, today_follow_up: 0, high_value: 0, high_risk: 0, dormant: 0, high_value_definition: 'CURRENT_GRADE_A' })
     vi.mocked(fetchPublishedOptions).mockReset().mockResolvedValue({ data: [], meta: { config_version: null } })
     vi.spyOn(ElMessage, 'warning').mockImplementation(() => ({ close: vi.fn() }))
     vi.spyOn(ElMessage, 'error').mockImplementation(() => ({ close: vi.fn() }))
+  })
+
+  async function renderCountryFilteredSecondPage(keyword = '') {
+    const wrapper = renderPage()
+    await flushPromises()
+    await wrapper.get('.filter-control--search input').setValue(keyword)
+    await wrapper.get('select[aria-label="国家或地区"]').setValue('DE')
+    await wrapper.get('[data-apply-customer-filters]').trigger('click')
+    await flushPromises()
+    const pagination = wrapper.getComponent({ name: 'ElPagination' })
+    pagination.vm.$emit('update:current-page', 2)
+    pagination.vm.$emit('current-change', 2)
+    await flushPromises()
+    expect(fetchCustomers).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, country_code: 'DE' }))
+    vi.mocked(fetchCustomers).mockClear()
+    return wrapper
+  }
+
+  it('回车搜索去除关键词首尾空白、返回第一页，并忽略中文组合输入期间的回车', async () => {
+    const wrapper = await renderCountryFilteredSecondPage()
+    const input = wrapper.get('.filter-control--search input')
+    await input.setValue('  阿尔法  ')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await flushPromises()
+    expect(fetchCustomers).not.toHaveBeenCalled()
+
+    await input.trigger('keydown', { key: 'Enter', isComposing: false })
+    await flushPromises()
+    expect(fetchCustomers).toHaveBeenCalledTimes(1)
+    expect(fetchCustomers).toHaveBeenLastCalledWith(expect.objectContaining({ q: '阿尔法', page: 1, country_code: 'DE' }))
+    wrapper.unmount()
+  })
+
+  it('点击放大镜按钮按关键词搜索，返回第一页并保留国家筛选', async () => {
+    const wrapper = await renderCountryFilteredSecondPage()
+    await wrapper.get('.filter-control--search input').setValue('  Alpha  ')
+    await wrapper.get('button[aria-label="搜索客户"]').trigger('click')
+    await flushPromises()
+    expect(fetchCustomers).toHaveBeenCalledTimes(1)
+    expect(fetchCustomers).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Alpha', page: 1, country_code: 'DE' }))
+    wrapper.unmount()
+  })
+
+  it('清空关键词立即刷新第一页，并保留国家筛选', async () => {
+    const wrapper = await renderCountryFilteredSecondPage('Alpha')
+    await wrapper.get('.filter-control--search').trigger('mouseenter')
+    await wrapper.get('.el-input__clear').trigger('click')
+    await flushPromises()
+    expect(fetchCustomers).toHaveBeenCalledTimes(1)
+    const query = vi.mocked(fetchCustomers).mock.calls[0]?.[0]
+    expect(query).toEqual(expect.objectContaining({ page: 1, country_code: 'DE' }))
+    expect(query).not.toHaveProperty('q')
+    wrapper.unmount()
   })
 
   it('兼容选项尚未返回时，字典与列表请求已经并行开始', async () => {
     let resolveOptions!: (value: CustomerOptions) => void
     vi.mocked(fetchCustomerOptions).mockReturnValue(new Promise(resolve => { resolveOptions = resolve }))
     const wrapper = renderPage()
-    expect(fetchPublishedOptions).toHaveBeenCalledTimes(3)
+    expect(fetchPublishedOptions).toHaveBeenCalledWith('CUSTOMER_GRADE', undefined)
     expect(fetchCustomers).toHaveBeenCalledTimes(1)
     resolveOptions(legacy)
     await flushPromises()

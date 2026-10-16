@@ -25,6 +25,39 @@ describe('采购入库读取', () => {
     vi.mocked(api.fetchEligibleMaterialLines).mockResolvedValue([line] as never)
     vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([])
   })
+  it('采购入库搜索支持回车、放大镜和清空，并保留入库状态', async () => {
+    vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([
+      { ...order, id: 'pending', workflow_status: 'PENDING_QUALITY', pending_quality_count: 1 },
+      { ...order, id: 'completed', workflow_status: 'COMPLETED', pending_quality_count: 0 },
+    ] as never)
+    const wrapper = shallowMount(PurchaseInboundListView, { global: { plugins: [ElementPlus], stubs: { ElInput: false } } })
+    await flushPromises()
+    wrapper.getComponent({ name: 'ElSelect' }).vm.$emit('update:modelValue', 'PENDING_QUALITY')
+    await flushPromises()
+    vi.mocked(api.fetchProcurementInboundOrders).mockClear()
+    const input = wrapper.get('input')
+    await input.setValue('  CGDD001  ')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(api.fetchProcurementInboundOrders).not.toHaveBeenCalled()
+    const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    input.element.dispatchEvent(enter); await flushPromises()
+    expect(enter.defaultPrevented).toBe(true)
+    expect(api.fetchProcurementInboundOrders).toHaveBeenCalledExactlyOnceWith({ q: 'CGDD001' })
+    vi.mocked(api.fetchProcurementInboundOrders).mockClear()
+    await input.setValue('  CGDD002  ')
+    const button = wrapper.get('button[aria-label="搜索采购入库列表"]')
+    expect(button.attributes('type')).toBe('button')
+    await button.trigger('click'); await flushPromises()
+    expect(api.fetchProcurementInboundOrders).toHaveBeenCalledExactlyOnceWith({ q: 'CGDD002' })
+    vi.mocked(api.fetchProcurementInboundOrders).mockClear()
+    await wrapper.get('.el-input').trigger('mouseenter')
+    await wrapper.get('.el-input__clear').trigger('click'); await flushPromises()
+    expect(api.fetchProcurementInboundOrders).toHaveBeenCalledExactlyOnceWith({ q: undefined })
+    const vm = wrapper.vm as unknown as { workflowStatus: string; filteredRows: Array<{ id: string }> }
+    expect(vm.workflowStatus).toBe('PENDING_QUALITY')
+    expect(vm.filteredRows.map(row => row.id)).toEqual(['pending'])
+    wrapper.unmount()
+  })
   it('慢选项期间明细请求已发出，必要数据未齐时不可提交', async () => {
     vi.mocked(api.fetchMaterialInventoryOptions).mockReturnValue(new Promise(() => {}))
     vi.mocked(api.fetchMaterialReceivingOptions).mockReturnValue(new Promise(() => {}))
@@ -70,20 +103,32 @@ describe('采购入库读取', () => {
     await vm.loadRows(); expect(vm.listReady).toBe(true); expect(vm.loadError).toBe('')
     wrapper.unmount()
   })
-  it('已完成采购单不可再办理，打样采购的订单编号显示打样单号', async () => {
+  it('已完成采购单不可再办理，已收货订单显示再次入库', async () => {
     const wrapper = mount(PurchaseInboundListView); await flushPromises()
     const vm = wrapper.vm as unknown as {
       canOpenReceiving: (row: Record<string, unknown>) => boolean
-      displayOrderNumber: (row: Record<string, unknown>) => string
       receivingActionLabel: (row: Record<string, unknown>) => string
     }
     const completed = { ...order, source_type: 'PRODUCTION', source_number: 'HT001', sales_order_number: 'DD001', workflow_status: 'COMPLETED', remaining_line_count: 2 }
-    const sample = { ...order, source_type: 'SAMPLE', source_number: 'DY202609160001', sales_order_number: '' }
     expect(vm.canOpenReceiving(completed)).toBe(false)
-    expect(vm.displayOrderNumber(sample)).toBe('DY202609160001')
-    expect(vm.displayOrderNumber(completed)).toBe('DD001')
     expect(vm.receivingActionLabel({ ...order, received_quantity: '0.0000' })).toBe('办理入库')
     expect(vm.receivingActionLabel({ ...order, received_quantity: '1.0000' })).toBe('再次入库')
+    wrapper.unmount()
+  })
+  it('多产品资料保持对应顺序，缺值不挤掉后续产品的位置', async () => {
+    const wrapper = mount(PurchaseInboundListView); await flushPromises()
+    const vm = wrapper.vm as unknown as { displayProductField: (row: Record<string, unknown>, field: string) => string }
+    const multiple = { ...order, product_summary: [
+      { product_name: '折叠椅', item_number: '', specification: '47*55*79', color_name: '酒红色', material: 'PE' },
+      { product_name: '三折床', item_number: 'XY-212', specification: '186*55*24cm', color_name: '深宝蓝', material: '' },
+    ] }
+    expect(vm.displayProductField(multiple, 'product_name')).toBe('折叠椅、三折床')
+    expect(vm.displayProductField(multiple, 'item_number')).toBe('—、XY-212')
+    expect(vm.displayProductField(multiple, 'specification')).toBe('47*55*79、186*55*24cm')
+    expect(vm.displayProductField(multiple, 'color_name')).toBe('酒红色、深宝蓝')
+    expect(vm.displayProductField(multiple, 'material')).toBe('PE、—')
+    expect(vm.displayProductField({ ...order, product_summary: [] }, 'product_name')).toBe('—')
+    expect(vm.displayProductField(order, 'product_name')).toBe('—')
     wrapper.unmount()
   })
   it('无退货且品质确认完成后不再提供二次入库操作', async () => {

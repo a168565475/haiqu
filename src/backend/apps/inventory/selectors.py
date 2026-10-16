@@ -1,7 +1,8 @@
 from decimal import Decimal, ROUND_FLOOR
+from types import SimpleNamespace
 
 from django.contrib.postgres.aggregates import ArrayAgg
-from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q, Sum, Value, Subquery
+from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Sum, Value, Subquery
 from django.db.models.functions import Coalesce
 
 from apps.procurement.models import (
@@ -12,6 +13,9 @@ from apps.procurement.models import (
     PurchaseReturnStatus,
 )
 from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
+from apps.boms.models import Bom
+from apps.sales_orders.presentation import specification_display
+from apps.samples.models import SampleItem
 
 from .models import (
     FinishedGoodsReceipt,
@@ -282,6 +286,87 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False):
         for line in lines
         if Decimal(line.actual_purchase_quantity) - Decimal(totals.get(line.pk, 0)) > 0
     ]
+
+
+def procurement_inbound_product_summaries(orders):
+    """按采购行保留产品顺序；打样材料无逐产品绑定，展示来源打样明细。"""
+    lines_by_order = {
+        order.pk: sorted(
+            (line for line in order.lines.all() if line.actual_purchase_quantity is not None),
+            key=lambda line: (line.line_number, str(line.pk)),
+        )
+        for order in orders
+    }
+    production_lines = [
+        line for order in orders if order.source_type == "PRODUCTION"
+        for line in lines_by_order[order.pk]
+    ]
+    products = {
+        (product.pk, product.production_task_id): product
+        for product in ProductionTaskProduct.objects.filter(
+            pk__in={line.product_line_id_snapshot for line in production_lines if line.product_line_id_snapshot},
+        ).only("id", "production_task_id", "item_number_snapshot", "material_snapshot", "color_name_snapshot")
+    }
+    boms = {
+        bom.pk: bom
+        for bom in Bom.objects.filter(pk__in={line.bom_id for line in production_lines if line.bom_id}).only(
+            "id", "production_task_id", "product_line_id", "item_number_snapshot",
+            "material_snapshot", "product_color_name_snapshot",
+        )
+    }
+    sample_products = {}
+    sample_ids = {order.sample_procurement_request_id for order in orders if order.source_type == "SAMPLE"}
+    items = SampleItem.objects.filter(
+        sample_request__material_request__procurement_request__id__in=sample_ids,
+    ).select_related("sample_product").annotate(
+        procurement_request_id=F("sample_request__material_request__procurement_request__id"),
+    ).order_by("sample_request_id", "line_number", "id")
+    for item in items:
+        product = item.sample_product
+        if product and product.sample_request_id != item.sample_request_id:
+            product = None
+        sample_products.setdefault(item.procurement_request_id, []).append(_inbound_product_summary(
+            item.pk, item.product_description_snapshot, item.specification_snapshot,
+            product.item_number_snapshot if product else "", item.color_name_snapshot,
+            product.material_snapshot if product else "",
+        ))
+    result = {}
+    for order in orders:
+        if order.source_type == "SAMPLE":
+            result[order.pk] = sample_products.get(order.sample_procurement_request_id, [])
+            continue
+        summary, seen = [], set()
+        for line in lines_by_order[order.pk]:
+            product = products.get((line.product_line_id_snapshot, order.production_task_id))
+            if not product or product.pk in seen:
+                continue
+            seen.add(product.pk)
+            bom = boms.get(line.bom_id)
+            if bom and (bom.product_line_id != product.pk or bom.production_task_id != order.production_task_id):
+                bom = None
+            source = bom or product
+            # 采购行 material_snapshot 是原料材质，不能作为成品材质。
+            summary.append(_inbound_product_summary(
+                product.pk, line.product_name_snapshot, line.product_specification_snapshot,
+                source.item_number_snapshot,
+                bom.product_color_name_snapshot if bom else product.color_name_snapshot,
+                source.material_snapshot,
+            ))
+        result[order.pk] = summary
+    return result
+
+
+def _inbound_product_summary(product_id, name, specification, item_number, color, material):
+    return {
+        "product_line_id": str(product_id),
+        "product_name": name or "",
+        "item_number": item_number or "",
+        "specification": specification_display(SimpleNamespace(
+            specification_snapshot=specification, color_snapshot=color, material_snapshot=material,
+        )),
+        "color_name": color or "",
+        "material": material or "",
+    }
 
 
 def material_inbound_order_totals(order_ids):

@@ -23,11 +23,12 @@ from apps.organizations.models import Employee
 from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus
 from apps.products.models import ProductInformation
 from apps.production_tasks.models import (
-    DeliveryMethod, OrderSource, ProductionTask, ProductionTaskProduct, ProductionTaskStatus,
+    DeliveryMethod, OrderSource, ProductionTask, ProductionTaskProduct, ProductionTaskProductImage, ProductionTaskStatus,
 )
 from apps.reference_data.models import (
     Currency, NumberRule, ProductCategory, ProductColor, ProductItem, ProductionUnit,
 )
+from apps.sales_orders.models import SalesOrder, SalesOrderDeliveryBatch, SalesOrderDeliveryBatchLine, SalesOrderLine
 from apps.workshop_config.models import Craft, CraftType, PlanCategory, RecordStatus, Workshop
 
 from ..models import ProductionSchedule, ProductionScheduleProduct, ScheduleStatus
@@ -217,6 +218,39 @@ class ProductionSchedulingApiTests(APITestCase):
                 "craft_ids": [str(self.internal_craft.pk)],
             }],
         }
+
+    def test_candidate_product_display_fields_keep_raw_source_and_revision(self):
+        raw_specification = "47*55*79；加厚；颜色：酒红色；材质：PE"
+        self.line.specification_snapshot = raw_specification
+        self.line.color_name_snapshot = "酒红色"
+        self.line.material_snapshot = "PE"
+        self.line.save(update_fields=["specification_snapshot", "color_name_snapshot", "material_snapshot", "updated_at"])
+        revision = source_revision(self.task, [self.line])
+
+        candidates = self.client.get("/api/v1/production-schedules/task-candidates/")
+        self.assertEqual(candidates.status_code, 200, candidates.data)
+        candidate = next(row for row in candidates.data["data"] if row["id"] == str(self.task.pk))
+        detail = self.detail()
+        for product in [candidate["product_summaries"][0], detail["product_summaries"][0], detail["products"][0]]:
+            self.assertEqual(product["specification"], raw_specification)
+            self.assertEqual(product["specification_display"], "47*55*79；加厚")
+            self.assertEqual(product["material"], "PE")
+            self.assertEqual(product["color_name"], "酒红色")
+        self.assertEqual(candidate["source_revision_hash"], revision)
+        self.assertEqual(detail["source_revision_hash"], revision)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.specification_snapshot, raw_specification)
+        self.assertEqual(self.line.material_snapshot, "PE")
+
+    def test_candidate_product_display_keeps_unverified_suffix_and_missing_material(self):
+        self.line.specification_snapshot = "47*55*79；颜色：未确认颜色；材质：未知"
+        self.line.material_snapshot = ""
+        self.line.save(update_fields=["specification_snapshot", "material_snapshot", "updated_at"])
+
+        product = self.detail()["products"][0]
+
+        self.assertEqual(product["specification_display"], self.line.specification_snapshot)
+        self.assertEqual(product["material"], "")
 
     def test_candidate_create_detail_and_category_list_use_real_source(self):
         candidates = self.client.get("/api/v1/production-schedules/task-candidates/")
@@ -570,6 +604,103 @@ class ProductionSchedulingApiTests(APITestCase):
         self.user.user_permissions.clear()
         response = self.client.get("/api/v1/production-schedules/")
         self.assertEqual(response.status_code, 403, response.data)
+
+    def _product_image(self, folder, name):
+        content = name.encode()
+        Path(folder, name).write_bytes(content)
+        return BusinessFile.objects.create(
+            uploaded_by_employee=self.employee, original_name=name, storage_key=name,
+            content_type="image/png", size_bytes=len(content), scan_status=FileScanStatus.CLEAN,
+        )
+
+    def _source_order_image(self, image, task=None, line=None):
+        task = task or self.task
+        line = line or self.line
+        order = SalesOrder.objects.create(
+            order_number=f"IMAGE-{task.task_number}", source_type="DIRECT", customer_account=self.customer,
+            salesperson=self.employee, order_date=task.order_date, currency_code="CNY",
+        )
+        source_line = SalesOrderLine.objects.create(
+            sales_order=order, line_number=1, product=self.product, product_image=image,
+            product_number_snapshot=self.product.product_number, product_name_snapshot=self.product.product_name,
+            unit_code_snapshot=self.product.unit.unit_code, quantity=100, unit_price=10, line_total=1000,
+        )
+        batch = SalesOrderDeliveryBatch.objects.create(
+            sales_order=order, line_number=1, batch_number="B1", planned_delivery_date=task.delivery_date,
+        )
+        batch_line = SalesOrderDeliveryBatchLine.objects.create(
+            delivery_batch=batch, sales_order_line=source_line, quantity=100,
+        )
+        task.sales_order = order
+        task.sales_order_delivery_batch = batch
+        task.sales_order_line = source_line
+        task.save(update_fields=["sales_order", "sales_order_delivery_batch", "sales_order_line", "updated_at"])
+        line.sales_order_delivery_batch_line = batch_line
+        line.save(update_fields=["sales_order_delivery_batch_line", "updated_at"])
+        return source_line
+
+    def test_candidate_image_prefers_task_primary_then_ordered_task_images(self):
+        with TemporaryDirectory() as folder, self.settings(MEDIA_ROOT=folder):
+            source_image = self._product_image(folder, "source.png")
+            self._source_order_image(source_image)
+            primary = self._product_image(folder, "primary.png")
+            first = self._product_image(folder, "first.png")
+            second = self._product_image(folder, "second.png")
+            ProductionTaskProductImage.objects.create(product_line=self.line, line_number=2, image_file=second)
+            ProductionTaskProductImage.objects.create(product_line=self.line, line_number=1, image_file=first)
+            self.line.image_file = primary
+            self.line.save(update_fields=["image_file", "updated_at"])
+            self.assertEqual(self.detail()["products"][0]["image_file_id"], str(primary.pk))
+
+            self.line.image_file = None
+            self.line.save(update_fields=["image_file", "updated_at"])
+            self.assertEqual(self.detail()["products"][0]["image_file_id"], str(first.pk))
+
+    def test_candidate_source_order_image_is_readable_and_saved_in_new_schedule(self):
+        with TemporaryDirectory() as folder, self.settings(MEDIA_ROOT=folder):
+            source_image = self._product_image(folder, "source.png")
+            self._source_order_image(source_image)
+            revision = source_revision(self.task, [self.line])
+            detail = self.detail()
+            candidates = self.client.get("/api/v1/production-schedules/task-candidates/").data["data"]
+            for product in [detail["products"][0], detail["product_summaries"][0], candidates[0]["product_summaries"][0]]:
+                self.assertEqual(product["image_file_id"], str(source_image.pk))
+            self.assertEqual(detail["source_revision_hash"], revision)
+            response = self.client.get(f"/api/v1/production-schedules/task-files/{self.task.pk}/{source_image.pk}/")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b"".join(response.streaming_content), b"source.png")
+
+            created = self.create_schedule()
+            self.assertEqual(created.status_code, 201, created.data)
+            saved = ProductionScheduleProduct.objects.get(schedule_id=created.data["data"]["id"])
+            self.assertEqual(saved.image_file_id, source_image.pk)
+            self.line.refresh_from_db()
+            self.assertIsNone(self.line.image_file_id)
+            self.assertFalse(self.line.images.exists())
+
+    def test_candidate_without_explicit_source_does_not_borrow_product_or_color_image(self):
+        with TemporaryDirectory() as folder, self.settings(MEDIA_ROOT=folder):
+            source_image = self._product_image(folder, "other-source.png")
+            other_task, other_line = self.create_task_with_product()
+            self._source_order_image(source_image, other_task, other_line)
+            self.color.image_file = source_image
+            self.color.save(update_fields=["image_file", "updated_at"])
+            self.assertIsNone(self.detail()["products"][0]["image_file_id"])
+            response = self.client.get(f"/api/v1/production-schedules/task-files/{self.task.pk}/{source_image.pk}/")
+            self.assertEqual(response.status_code, 404)
+
+    def test_source_order_image_keeps_scan_and_archive_checks(self):
+        with TemporaryDirectory() as folder, self.settings(MEDIA_ROOT=folder):
+            source_image = self._product_image(folder, "source.png")
+            self._source_order_image(source_image)
+            url = f"/api/v1/production-schedules/task-files/{self.task.pk}/{source_image.pk}/"
+            source_image.scan_status = FileScanStatus.INFECTED
+            source_image.save(update_fields=["scan_status", "updated_at"])
+            self.assertIsNone(self.detail()["products"][0]["image_file_id"])
+            self.assertEqual(self.client.get(url).status_code, 400)
+            source_image.archived_at = timezone.now()
+            source_image.save(update_fields=["archived_at", "updated_at"])
+            self.assertEqual(self.client.get(url).status_code, 404)
 
     def test_schedule_permission_can_read_linked_product_image(self):
         self.assertFalse(self.user.has_perm("production_tasks.view_productiontask"))

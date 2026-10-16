@@ -1,4 +1,5 @@
 import type { PageMeta } from './referenceData'
+import type { RawMaterialInput } from './rawMaterial'
 
 export type BomStatus = 'PENDING_CONFIRMATION' | 'VERIFIED'
 export type BomCreationMethod = 'IMPORT' | 'COPY' | 'BLANK'
@@ -208,6 +209,7 @@ export interface BomDetail extends Bom {
 }
 
 export interface BomLineInput {
+  pending_raw_material?: RawMaterialInput
   client_key?: string
   fabric_source_client_key?: string | null
   cutting_pieces_per_set?: string | number | null
@@ -295,11 +297,28 @@ export interface VersionedBom {
   etag: string
 }
 
-export interface BomStats {
-  total: number
-  pending_confirmation: number
-  verified: number
-  maintenance_reference_count: number
+export interface BomMaterialSaveOptions {
+  intent: 'draft' | 'verify'
+  quantity_confirmation_reason?: string
+  confirmation_token?: string
+}
+
+export interface BomMaterialSavePreview {
+  confirmation_token: string | null
+  new_materials: Array<{
+    key: string
+    item_type: string
+    category_name: string
+    material_name: string
+    specification: string
+    width: string
+    color_name: string
+    color_label: string
+    material: string
+    unit_name: string
+    warehouse_name: string
+    locations: Array<{ section_title: string; line_number: number }>
+  }>
 }
 
 export interface BomQuery {

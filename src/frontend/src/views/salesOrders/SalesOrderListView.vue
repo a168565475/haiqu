@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { MoreFilled, Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { MoreFilled, Plus, Search } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
@@ -65,10 +65,18 @@ async function load() {
     if (!disposed && request === requestId) loading.value = false
   }
 }
-function reset() {
-  Object.assign(filters, { q: '', status: '', source_type: '' })
+function searchOrders() {
   page.value = 1
   void load()
+}
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  searchOrders()
+}
+function reset() {
+  Object.assign(filters, { q: '', status: '', source_type: '' })
+  searchOrders()
 }
 onBeforeUnmount(() => { disposed = true; requestId++ })
 onMounted(async () => {
@@ -87,21 +95,34 @@ onMounted(async () => {
   <section class="order-page">
     <header class="page-heading">
       <div class="heading-copy"><h1>销售订单</h1><span>共{{ total }}条</span></div>
-      <el-button v-if="!authStore.user?.sales_access_enabled || authStore.hasPermission('sales_orders.add_salesorder')" class="primary-action" type="primary" :icon="Plus" @click="router.push({ name: 'sales-order-create' })">新建销售订单</el-button>
     </header>
 
     <section class="filter-panel" aria-label="销售订单筛选">
-      <form class="filter-grid" @submit.prevent="page = 1; load()">
-      <el-input v-model="filters.q" class="filter-control filter-control--search" clearable placeholder="搜索订单号、客户、产品" :prefix-icon="Search" />
-      <el-select v-model="filters.status" class="filter-control filter-control--status" clearable placeholder="订单状态：全部" @change="page = 1; load()">
+      <form class="filter-grid" @submit.prevent="searchOrders">
+      <el-input
+        v-model="filters.q"
+        class="filter-control filter-control--search"
+        aria-label="搜索销售订单"
+        title="支持订单号、客户PO、合同号、客户名称/编号、产品名称/编号"
+        clearable
+        placeholder="搜索订单号、客户、产品"
+        @keydown.enter="handleSearchEnter"
+        @clear="searchOrders"
+      >
+        <template #suffix>
+          <button type="button" class="order-search-button" aria-label="搜索销售订单列表" @click="searchOrders"><el-icon><Search /></el-icon></button>
+        </template>
+      </el-input>
+      <el-select v-model="filters.status" class="filter-control filter-control--status" clearable placeholder="订单状态：全部" @change="searchOrders">
           <el-option v-for="item in options?.statuses || []" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
-      <el-select v-model="filters.source_type" class="filter-control filter-control--source" clearable placeholder="订单来源：全部" @change="page = 1; load()">
+      <el-select v-model="filters.source_type" class="filter-control filter-control--source" clearable placeholder="订单来源：全部" @change="searchOrders">
           <el-option v-for="item in options?.source_types || []" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
-      <el-button class="query-action" type="primary" native-type="submit">查询</el-button>
       <el-button class="reset-action" @click="reset">重置</el-button>
-      <el-button class="refresh-action" native-type="button" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      <div class="order-actions">
+        <el-button v-if="!authStore.user?.sales_access_enabled || authStore.hasPermission('sales_orders.add_salesorder')" class="primary-action" type="primary" :icon="Plus" @click="router.push({ name: 'sales-order-create' })">新建销售订单</el-button>
+      </div>
       </form>
     </section>
 
@@ -132,7 +153,7 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
-      <footer class="pagination"><span class="pagination-total">共 {{ total }} 条</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" :total="total" @change="load" /></footer>
+      <footer class="pagination"><span class="pagination-total">共 {{ total }} 条</span><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" :total="total" @change="load" /></footer>
     </section>
   </section>
 </template>
@@ -140,7 +161,7 @@ onMounted(async () => {
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 
-.order-page{display:flex;height:100%;min-width:0;flex-direction:column;padding:14px;background:token.$crm-color-page;color:token.$crm-text-primary;font-family:token.$crm-font-body}.page-heading{display:flex;min-height:68px;align-items:flex-start;justify-content:space-between}.heading-copy{display:flex;align-items:baseline;gap:46px}.page-heading h1{margin:0;font-family:token.$crm-font-display;font-size:34px;font-weight:600;line-height:44px}.heading-copy span{color:token.$crm-text-secondary;font-size:16px}.primary-action{width:140px;height:36px;border-color:token.$crm-primary;border-radius:token.$crm-radius-2;background:token.$crm-primary}.filter-panel{height:38px;margin:17px 0 0;padding:0;border:0;background:transparent}.filter-grid{display:flex;height:38px;align-items:stretch;gap:14px}.filter-control{height:38px;flex:none}.filter-control--search{width:410px}.filter-control--status{width:160px}.filter-control--source{width:176px}.filter-control :deep(.el-input__wrapper),.filter-control :deep(.el-select__wrapper){min-height:38px;box-sizing:border-box;padding:0 12px;border-radius:token.$crm-radius-2;background:token.$crm-color-surface;box-shadow:0 0 0 1px token.$crm-border-default inset}.filter-control :deep(.el-input__wrapper:hover),.filter-control :deep(.el-select__wrapper:hover){box-shadow:0 0 0 1px token.$crm-border-strong inset}.filter-control :deep(.el-input__wrapper.is-focus),.filter-control :deep(.el-select__wrapper.is-focused){box-shadow:0 0 0 1px token.$crm-focus inset,0 0 0 2px rgba(56,152,236,.18)}.filter-control :deep(.el-input__inner),.filter-control :deep(.el-select__placeholder),.filter-control :deep(.el-select__selected-item){color:token.$crm-text-secondary;font-size:12px;line-height:18px}.query-action,.reset-action{height:38px;margin:0!important;border-radius:token.$crm-radius-2}.query-action{width:90px;border-color:token.$crm-primary;background:token.$crm-primary}.reset-action{width:72px}.table-tools{display:flex;height:36px;min-height:36px;align-items:center;justify-content:flex-end;margin:16px 0 8px}.table-tools .el-button{width:80px;height:36px;margin:0;border-radius:token.$crm-radius-2}.load-error{margin-bottom:12px}.table-panel{display:flex;min-height:0;flex:1;flex-direction:column;overflow:hidden;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.table-panel :deep(.el-table){flex:1;min-height:0;--el-table-border-color:#ddd6c9;--el-table-header-bg-color:#f0eadf;--el-table-row-hover-bg-color:#f7f3eb;color:#1f1d18}.table-panel :deep(.el-table__header th.el-table__cell){height:44px;background:#f0eadf;color:#6f6a61;font-weight:500}.table-panel :deep(.el-table__body td.el-table__cell){height:53px}.table-panel :deep(.el-table__inner-wrapper::before){display:none}.order-link{padding:0;border:0;color:#1f1d18;background:transparent;cursor:pointer;font:inherit}.order-link:hover{color:#c84e28}.muted{margin-top:3px;color:#6f6a61;font-size:12px}.status-tag{display:inline-flex;min-width:56px;height:24px;align-items:center;justify-content:center;padding:0 8px;border-radius:999px;color:#faf9f5;font-size:12px;font-weight:500;line-height:18px}.status-tag.is-neutral{background:#65635e}.status-tag.is-success{background:#4e8750}.status-tag.is-info{background:#2f97df}.status-tag.is-warning{background:#b87818}.status-tag.is-danger{background:#b8442c}.more-action{width:48px;height:28px;color:#4d4942}.pagination{display:flex;min-height:60px;flex:none;align-items:center;justify-content:flex-end;padding:0 30px;border-top:1px solid #ddd6c9}.pagination :deep(.el-pagination){--el-pagination-hover-color:#c84e28}.pagination :deep(.el-select__wrapper),.pagination :deep(.btn-prev),.pagination :deep(.btn-next),.pagination :deep(.el-pager li){min-width:80px;height:32px;border:1px solid #e2ddd4;border-radius:4px;background:#fff}.pagination :deep(.el-pager li){min-width:48px}.pagination :deep(.el-pager li.is-active){color:#c84e28}
+.order-page{display:flex;height:100%;min-width:0;flex-direction:column;padding:14px;background:token.$crm-color-page;color:token.$crm-text-primary;font-family:token.$crm-font-body}.page-heading{display:flex;min-height:68px;align-items:flex-start;justify-content:space-between}.heading-copy{display:flex;align-items:baseline;gap:46px}.page-heading h1{margin:0;font-family:token.$crm-font-display;font-size:34px;font-weight:600;line-height:44px}.heading-copy span{color:token.$crm-text-secondary;font-size:16px}.primary-action{width:140px;height:36px;border-color:token.$crm-primary;border-radius:token.$crm-radius-2;background:token.$crm-primary}.filter-panel{height:38px;margin:17px 0 0;padding:0;border:0;background:transparent}.filter-grid{display:flex;height:38px;align-items:stretch;gap:14px}.filter-control{height:38px;flex:none}.filter-control--status{width:160px}.filter-control--source{width:176px}.filter-control :deep(.el-input__wrapper),.filter-control :deep(.el-select__wrapper){min-height:38px;box-sizing:border-box;padding:0 12px;border-radius:token.$crm-radius-2;background:token.$crm-color-surface;box-shadow:0 0 0 1px token.$crm-border-default inset}.filter-control :deep(.el-input__wrapper:hover),.filter-control :deep(.el-select__wrapper:hover){box-shadow:0 0 0 1px token.$crm-border-strong inset}.filter-control :deep(.el-input__wrapper.is-focus),.filter-control :deep(.el-select__wrapper.is-focused){box-shadow:0 0 0 1px token.$crm-focus inset,0 0 0 2px rgba(56,152,236,.18)}.filter-control :deep(.el-input__inner),.filter-control :deep(.el-select__placeholder),.filter-control :deep(.el-select__selected-item){color:token.$crm-text-secondary;font-size:12px;line-height:18px}.reset-action{height:38px;margin:0!important;border-radius:token.$crm-radius-2}.reset-action{width:72px}.load-error{margin-bottom:12px}.table-panel{display:flex;min-height:0;flex:1;flex-direction:column;overflow:hidden;border:1px solid #ddd6c9;border-radius:5px;background:#fcfbf7}.table-panel :deep(.el-table){flex:1;min-height:0;--el-table-border-color:#ddd6c9;--el-table-header-bg-color:#f0eadf;--el-table-row-hover-bg-color:#f7f3eb;color:#1f1d18}.table-panel :deep(.el-table__header th.el-table__cell){height:44px;background:#f0eadf;color:#6f6a61;font-weight:500}.table-panel :deep(.el-table__body td.el-table__cell){height:53px}.table-panel :deep(.el-table__inner-wrapper::before){display:none}.order-link{padding:0;border:0;color:#1f1d18;background:transparent;cursor:pointer;font:inherit}.order-link:hover{color:#c84e28}.muted{margin-top:3px;color:#6f6a61;font-size:12px}.status-tag{display:inline-flex;min-width:56px;height:24px;align-items:center;justify-content:center;padding:0 8px;border-radius:999px;color:#faf9f5;font-size:12px;font-weight:500;line-height:18px}.status-tag.is-neutral{background:#65635e}.status-tag.is-success{background:#4e8750}.status-tag.is-info{background:#2f97df}.status-tag.is-warning{background:#b87818}.status-tag.is-danger{background:#b8442c}.more-action{width:48px;height:28px;color:#4d4942}.pagination{display:flex;min-height:60px;flex:none;align-items:center;justify-content:flex-end;padding:0 30px;border-top:1px solid #ddd6c9}.pagination :deep(.el-pagination){--el-pagination-hover-color:#c84e28}.pagination :deep(.el-select__wrapper),.pagination :deep(.btn-prev),.pagination :deep(.btn-next),.pagination :deep(.el-pager li){min-width:80px;height:32px;border:1px solid #e2ddd4;border-radius:4px;background:#fff}.pagination :deep(.el-pager li){min-width:48px}.pagination :deep(.el-pager li.is-active){color:#c84e28}
 
 .order-page .page-heading { height: 46px; min-height: 46px; flex: none; }
 .order-page .heading-copy { gap: 16px; }
@@ -149,15 +170,17 @@ onMounted(async () => {
 .order-page .filter-grid, .order-page .filter-control { height: 32px; }
 .order-page .filter-control :deep(.el-input__wrapper),
 .order-page .filter-control :deep(.el-select__wrapper) { height: 32px; min-height: 32px; }
-.order-page .query-action,
-.order-page .reset-action,
-.order-page .refresh-action { height: 32px; margin: 0 !important; }
-.order-page .refresh-action { width: 80px; }
+.order-page .reset-action { height: 32px; margin: 0 !important; }
 .order-page .table-panel { margin-top: 14px; }
-.order-page .pagination { height: 48px; min-height: 48px; justify-content: space-between; padding: 0 14px; }
+.order-page .pagination { min-height: 48px; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 14px; }
 .order-page .pagination-total { color: token.$crm-text-secondary; font-size: 12px; white-space: nowrap; }
 .order-page .pagination :deep(.el-pagination) {
-  height: 32px;
+  height: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
   gap: 8px;
   --el-pagination-button-width: 38px;
   --el-pagination-button-height: 32px;
@@ -174,5 +197,8 @@ onMounted(async () => {
 .order-page .filter-panel,
 .order-page .filter-grid { height: auto; }
 .order-page .filter-grid { flex-wrap: wrap; row-gap: 10px; }
-.order-page .filter-control--search { width: auto; min-width: 220px; max-width: 410px; flex: 1 1 220px; }
+.order-page .filter-control--search { width: 250px; min-width: 250px; flex: none; }
+.order-actions { display: flex; flex: none; align-items: center; margin-left: auto; }
+.order-search-button { display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: token.$crm-text-secondary; cursor: pointer; }
+.order-search-button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
 </style>

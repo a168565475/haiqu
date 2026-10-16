@@ -2,8 +2,8 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from apps.products.models import RawMaterialInformation
-from apps.reference_data.models import ProductCategory, ProductColor, ProductionUnit
+from apps.products.models import ProductInformation, RawMaterialInformation
+from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductItem, ProductionUnit
 from apps.material_issues.models import OrderMaterialRequirement
 from ..models import Bom, BomLine, BomSection
 from ..services import _create_sections, _sync_profile_lines_to_order_quantity, confirm_bom_product, create_bom
@@ -11,8 +11,23 @@ from . import test_bom_api as fixtures
 
 
 class MaterialFlowBomTests(TestCase):
-    setUpFixture = fixtures.BomApiTests.setUp
     tearDown = fixtures.BomApiTests.tearDown
+
+    def setUpFixture(self):
+        # 事务测试 flush 后迁移种子不会重建，各用例自行准备所需的最小引用数据。
+        if not Currency.objects.filter(status="ACTIVE", archived_at__isnull=True).exists():
+            Currency.objects.create(code="CNY", numeric_code="156", chinese_name="人民币")
+        if not ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(product_code="").exists():
+            category = ProductCategory.objects.create(item_type="FINISHED", category_name="材料流转测试成品类")
+            unit = ProductionUnit.objects.create(unit_code="S4FINISHED", unit_name="材料流转测试成品单位")
+            item = ProductItem.objects.create(item_number="S4FLOW", category=category)
+            ProductInformation.objects.create(
+                product_number="S4FLOW-PRODUCT", product_code="S4FLOW-CODE", category=category,
+                product_name="材料流转测试产品", specification="60×80", unit=unit, product_item=item, scale="REGULAR",
+            )
+        for category_name in ("管材", "面料"):
+            ProductCategory.objects.get_or_create(category_name=category_name, item_type="MATERIAL")
+        fixtures.BomApiTests.setUp(self)
 
     def setUp(self):
         self.setUpFixture()
@@ -45,7 +60,14 @@ class MaterialFlowBomTests(TestCase):
         ids = {row["title"]: row["id"] for row in current.data["data"]["sections"]}
         for row in sections:
             if row["title"] in ids: row["id"] = ids[row["title"]]
-        return self.client.patch(f"/api/v1/boms/{self.bom.pk}/", {"sections": sections},
+        body = {"sections": sections}
+        preview = self.client.post(f"/api/v1/boms/{self.bom.pk}/material-save-preview/", body,
+            format="json", HTTP_IF_MATCH=current["ETag"])
+        if preview.status_code != 200:
+            return preview
+        if preview.data["data"]["confirmation_token"]:
+            body["confirmation_token"] = preview.data["data"]["confirmation_token"]
+        return self.client.patch(f"/api/v1/boms/{self.bom.pk}/", body,
             format="json", HTTP_IF_MATCH=current["ETag"])
 
     def initial(self):
@@ -290,4 +312,4 @@ class MaterialFlowBomTests(TestCase):
         self.assertEqual(Decimal(line.total_purchase_quantity), 1000)
         response = self.verify()
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn('关联有效原材料', str(response.data))
+        self.assertIn('补齐材质、规格、门幅和颜色并保存', str(response.data))

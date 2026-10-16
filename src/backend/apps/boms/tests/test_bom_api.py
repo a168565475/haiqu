@@ -68,6 +68,9 @@ class BomApiTests(APITestCase):
         self.user.user_permissions.set(
             Permission.objects.filter(content_type__app_label__in=["boms", "production_tasks"])
         )
+        self.user.user_permissions.add(Permission.objects.get(
+            content_type__app_label="products", codename="add_rawmaterialinformation",
+        ))
         self.customer = CustomerAccount.objects.create(
             account_code="BOM_CUSTOMER",
             account_name="BOM 测试客户",
@@ -162,6 +165,34 @@ class BomApiTests(APITestCase):
                 line.unit_consumption = line.unit_consumption or line.purchase_consumption
                 line.save()
         return source
+
+    def review_product_information(self, bom_id, etag):
+        color = ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
+        self.assertIsNotNone(color)
+        response = self.client.post(
+            f"/api/v1/boms/{bom_id}/confirm-product/",
+            {"product_id": str(self.product.pk), "product_color_id": str(color.pk), "color_code": color.color_code},
+            format="json",
+            HTTP_IF_MATCH=etag,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["data"]["product_information_confirmed"])
+        return response
+
+    def save_confirmed_material_sections(self, bom_id, sections, etag):
+        body = {"sections": sections}
+        preview = self.client.post(
+            f"/api/v1/boms/{bom_id}/material-save-preview/", body,
+            format="json", HTTP_IF_MATCH=etag,
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        token = preview.data["data"]["confirmation_token"]
+        if token:
+            body["confirmation_token"] = token
+        return self.client.patch(
+            f"/api/v1/boms/{bom_id}/", body,
+            format="json", HTTP_IF_MATCH=etag,
+        )
 
     @staticmethod
     def fixed_sections(source_sections):
@@ -498,7 +529,7 @@ class BomApiTests(APITestCase):
         self.assertEqual(bom.order_quantity, Decimal("25"))
         self.assertEqual(AuditLog.objects.count(), before_audits + 2)
 
-    def test_confirm_product_updates_unbound_task_line_and_bom(self):
+    def test_review_then_verify_updates_unbound_task_line_and_bom(self):
         created = self.client.post(
             "/api/v1/boms/",
             {
@@ -511,6 +542,20 @@ class BomApiTests(APITestCase):
         bom = Bom.objects.get(pk=created.data["data"]["id"])
         color = ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
         self.assertIsNotNone(color)
+
+        from apps.reference_data.models import ProductCategory, ProductionUnit
+        accessory = RawMaterialInformation.objects.create(
+            material_number="BOM-REVIEW-ACCESSORY", material_name="核对测试配件", item_type="MATERIAL",
+            category=ProductCategory.objects.get(category_name="五金", item_type="MATERIAL"),
+            unit=ProductionUnit.objects.get(unit_name="PCS"),
+        )
+        section = BomSection.objects.create(bom=bom, line_number=2, section_type="ACCESSORY", title="五金件")
+        BomLine.objects.create(
+            section=section, line_number=1, part_name=accessory.material_name,
+            unit=accessory.unit.unit_name, unit_consumption="1", total_consumption="10",
+            raw_values={"source_inventory_material_id": str(accessory.pk)},
+        )
+        Bom.objects.filter(pk=bom.pk).update(line_count=1, section_count=2)
 
         # 模拟销售/BOM之前只保存客户手工输入的产品；正式确认时再绑定主档。
         self.product_line.product = None
@@ -545,12 +590,25 @@ class BomApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.product_line.refresh_from_db()
         bom.refresh_from_db()
+        self.assertIsNone(self.product_line.product_id)
+        self.assertEqual(self.product_line.customer_product_name_snapshot, "客户手工产品")
+        self.assertEqual(self.product_line.customer_color_snapshot, "客户手工颜色")
+        self.assertEqual(bom.product_name_snapshot, self.product.product_name)
+        self.assertTrue(response.data["data"]["product_information_confirmed"])
+
+        verified = self.client.post(
+            f"/api/v1/boms/{bom.pk}/verify/",
+            {"quantity_confirmation_reason": "按当前任务产品数量核对，批次数量差异不改变本次产品回写范围。"},
+            format="json",
+            HTTP_IF_MATCH=response.headers["ETag"],
+        )
+        self.assertEqual(verified.status_code, 200, verified.data)
+        self.assertEqual(verified.data["data"]["status"], "VERIFIED")
+        self.product_line.refresh_from_db()
         self.assertEqual(self.product_line.product_id, self.product.pk)
         self.assertEqual(self.product_line.product_color_id, color.pk)
         self.assertEqual(self.product_line.customer_product_name_snapshot, self.product.product_name)
         self.assertEqual(self.product_line.customer_color_snapshot, color.color_name)
-        self.assertEqual(bom.product_name_snapshot, self.product.product_name)
-        self.assertTrue(response.data["data"]["product_information_confirmed"])
 
     def test_create_saves_quantity_difference_reason_for_later_verification(self):
         reason = "Excel原表多100件，按当前任务数量生产。"
@@ -583,12 +641,13 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(created.status_code, 201, created.data)
         self.complete_pipe_sources(created.data["data"]["id"])
+        reviewed = self.review_product_information(created.data["data"]["id"], created.headers["ETag"])
 
         verified = self.client.post(
             f"/api/v1/boms/{created.data['data']['id']}/verify/",
             {},
             format="json",
-            HTTP_IF_MATCH=created.headers["ETag"],
+            HTTP_IF_MATCH=reviewed.headers["ETag"],
         )
 
         self.assertEqual(verified.status_code, 200, verified.data)
@@ -1128,11 +1187,15 @@ class BomApiTests(APITestCase):
         self.assertGreater(plastic_response.data["meta"]["total"], 0)
         for item in plastic_response.data["data"]:
             self.assertEqual(item["category_name"], "塑料件")
+            self.assertEqual(item["item_type"], "MATERIAL")
+            self.assertEqual(item["item_type_display"], "材料")
             self.assertEqual(
                 set(item),
                 {
                     "id",
                     "material_number",
+                    "item_type",
+                    "item_type_display",
                     "category_name",
                     "material_name",
                     "material",
@@ -1376,11 +1439,8 @@ class BomApiTests(APITestCase):
         self.section_by_title(sections, "辅料类")["lines"][0]["source_accessory_specification_id"] = str(
             specification.pk
         )
-        updated = self.client.patch(
-            f"/api/v1/boms/{created.data['data']['id']}/",
-            {"sections": sections},
-            format="json",
-            HTTP_IF_MATCH=created.headers["ETag"],
+        updated = self.save_confirmed_material_sections(
+            created.data["data"]["id"], sections, created.headers["ETag"],
         )
         self.assertEqual(updated.status_code, 200, updated.data)
         line = updated.data["data"]["sections"][3]["lines"][0]
@@ -1512,9 +1572,14 @@ class BomApiTests(APITestCase):
                         "notes": "面料测试行",
                     }
                 ]
+        preview = self.client.post(
+            f"/api/v1/boms/{created.data['data']['id']}/material-save-preview/",
+            {"sections": sections}, format="json", HTTP_IF_MATCH=created.headers["ETag"],
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
         updated = self.client.patch(
             f"/api/v1/boms/{created.data['data']['id']}/",
-            {"sections": sections},
+            {"sections": sections, "confirmation_token": preview.data["data"]["confirmation_token"]},
             format="json",
             HTTP_IF_MATCH=created.headers["ETag"],
         )
@@ -1748,6 +1813,7 @@ class BomApiTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         bom_id = created.data["data"]["id"]
         pipe_source = self.complete_pipe_sources(bom_id)
+        self.review_product_information(bom_id, created.headers["ETag"])
         detail = self.client.get(f"/api/v1/boms/{bom_id}/")
         self.assertEqual(detail.status_code, 200, detail.data)
         etag = detail.headers["ETag"]
@@ -1834,12 +1900,7 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(missing_etag.status_code, 428, missing_etag.data)
 
-        updated = self.client.patch(
-            f"/api/v1/boms/{bom_id}/",
-            {"sections": sections},
-            format="json",
-            HTTP_IF_MATCH=etag,
-        )
+        updated = self.save_confirmed_material_sections(bom_id, sections, etag)
         self.assertEqual(updated.status_code, 200, updated.data)
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][0]["part_name"], "修改后的交叉管")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["part_name"], "新增连接管")
@@ -1991,6 +2052,7 @@ class BomApiTests(APITestCase):
                 )
                 self.assertEqual(created.status_code, 201, created.data)
                 self.complete_pipe_sources(created.data["data"]["id"])
+                reviewed = self.review_product_information(created.data["data"]["id"], created.headers["ETag"])
 
                 self.task.status = task_status
                 self.task.submitted_at = None
@@ -1999,7 +2061,7 @@ class BomApiTests(APITestCase):
                     f"/api/v1/boms/{created.data['data']['id']}/verify/",
                     {"quantity_confirmation_reason": "测试生产任务任意状态均可确认 BOM。"},
                     format="json",
-                    HTTP_IF_MATCH=created.headers["ETag"],
+                    HTTP_IF_MATCH=reviewed.headers["ETag"],
                 )
                 self.assertEqual(verified.status_code, 200, verified.data)
                 self.assertEqual(verified.data["data"]["status"], "VERIFIED")

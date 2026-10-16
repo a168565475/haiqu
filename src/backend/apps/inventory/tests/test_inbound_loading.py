@@ -66,10 +66,14 @@ class InboundLoadingTests(APITestCase):
         with CaptureQueriesContext(connection) as queries:
             scoped = self.get('options', {'scope': 'receiving'}).json()['data']
         expected = {
-            'warehouses': [{k:r[k] for k in ['id', 'warehouse_number', 'warehouse_name']} for r in full['warehouses']],
+            'stock_mode': 'LEGACY',
+            'warehouses': [{k:r[k] for k in ['id', 'warehouse_number', 'warehouse_name', 'warehouse_type']} for r in full['warehouses']],
             'zones': [{k:r[k] for k in ['id', 'warehouse', 'zone_name']} for r in full['zones']],
         }
         self.assertEqual(scoped, expected)
+        self.assertEqual(scoped['warehouses'][0]['id'], str(self.warehouse.pk))
+        self.assertEqual(scoped['warehouses'][0]['warehouse_type'], 'MATERIAL')
+        self.assertEqual(scoped['zones'][0]['id'], str(self.zone.pk))
         sql='\n'.join(q['sql'] for q in queries)
         for table in ['procurement_purchase_order', 'inventory_material_inbound_line', 'inventory_warehouse_location', 'inventory_finished_goods_receipt']:
             self.assertNotIn(f'FROM "{table}"', sql)
@@ -158,3 +162,147 @@ class InboundLoadingTests(APITestCase):
         self.assertEqual(sample_row['source_number'], sample.request_number)
         searched = self.get('procurement-inbound-orders', {'q': sample.request_number}).data['data']
         self.assertEqual([str(row['id']) for row in searched], [str(sample_order.pk)])
+
+    def product(self, line_number, **values):
+        from apps.production_tasks.models import ProductionTaskProduct
+        defaults = {
+            'product_name_snapshot': f'产品{line_number}', 'specification_snapshot': '47*55*79',
+            'item_number_snapshot': f'ITEM-{line_number}', 'material_snapshot': 'PE',
+            'color_name_snapshot': '酒红色', 'color_card_snapshot': 'A卡', 'color_code_snapshot': 'RED-01',
+            'quantity': 10, 'unit': self.raw_material.unit, 'currency': self.currency,
+            'unit_price': 1, 'total_amount': 10, 'exchange_rate': 1,
+        }
+        defaults.update(values)
+        return ProductionTaskProduct.objects.create(
+            production_task=self.order.production_task, line_number=line_number, **defaults,
+        )
+
+    def test_inbound_products_follow_purchased_lines_without_duplicates_or_material_mixup(self):
+        first = self.product(1)
+        second = self.product(2, material_snapshot='铝', color_name_snapshot='黑色')
+        self.product(3, product_name_snapshot='没有采购的产品')
+        self.line.product_line_id_snapshot = second.pk
+        self.line.product_name_snapshot = '采购时产品二'
+        self.line.product_specification_snapshot = '60*70'
+        self.line.material_snapshot = '原料钢材'
+        self.line.save()
+        for number, product in [(2, first), (3, second)]:
+            PurchaseOrderLine.objects.create(
+                purchase_order=self.order, line_number=number, product_line_id_snapshot=product.pk,
+                product_name_snapshot='采购时产品一',
+                product_specification_snapshot='47*55*79；颜色：酒红色；材质：PE',
+                actual_purchase_quantity=1, quantity_parse_status='READY',
+            )
+        PurchaseOrderLine.objects.create(
+            purchase_order=self.order, line_number=4, product_name_snapshot='未实际采购',
+            product_line_id_snapshot=self.order.production_task.products.get(line_number=3).pk,
+            quantity_parse_status='MISSING',
+        )
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row.get('product_summary'), [
+            {'product_line_id': str(second.pk), 'product_name': '采购时产品二', 'item_number': 'ITEM-2',
+             'specification': '60*70', 'color_name': '黑色', 'material': '铝'},
+            {'product_line_id': str(first.pk), 'product_name': '采购时产品一', 'item_number': 'ITEM-1',
+             'specification': '47*55*79', 'color_name': '酒红色', 'material': 'PE'},
+        ])
+
+    def test_inbound_product_uses_linked_bom_snapshots_and_does_not_query_per_product(self):
+        from apps.boms.models import Bom
+        product = self.product(1, item_number_snapshot='后来货号', material_snapshot='后来材质', color_name_snapshot='后来颜色')
+        bom = Bom.objects.create(
+            bom_number='BOM-INBOUND-PRODUCT', production_task=self.order.production_task,
+            product_line=product, creation_method='BLANK', order_quantity=10, product_name_snapshot='BOM品名',
+            specification_snapshot='47*55*79', item_number_snapshot='采购货号',
+            material_snapshot='PE', product_color_name_snapshot='酒红色',
+        )
+        self.line.bom = bom
+        self.line.product_line_id_snapshot = product.pk
+        self.line.product_specification_snapshot = '47*55*79；颜色：酒红色；材质：PE'
+        self.line.save()
+        # 首次请求会填充用户权限缓存；比较稳定请求，避免把缓存差异当作查询增长。
+        self.get('procurement-inbound-orders')
+        with CaptureQueriesContext(connection) as queries:
+            row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row.get('product_summary'), [
+            {'product_line_id': str(product.pk), 'product_name': '采购产品', 'item_number': '采购货号',
+             'specification': '47*55*79', 'color_name': '酒红色', 'material': 'PE'},
+        ])
+        original_count = len(queries)
+        for number in range(2, 6):
+            extra = self.product(number)
+            PurchaseOrderLine.objects.create(
+                purchase_order=self.order, line_number=number, product_line_id_snapshot=extra.pk,
+                product_name_snapshot=f'采购产品{number}', actual_purchase_quantity=1, quantity_parse_status='READY',
+            )
+        with CaptureQueriesContext(connection) as queries:
+            row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(len(row['product_summary']), 5)
+        self.assertEqual(len(queries), original_count)
+
+    def test_inbound_sample_products_keep_each_color_and_missing_fields_empty(self):
+        from apps.samples.models import SampleItem, SampleMaterialProcurementRequest, SampleMaterialRequest, SampleProduct, SampleRequest
+        sample = SampleRequest.objects.create(
+            customer_account=self.customer, owner_employee=self.employee, requested_by_employee=self.employee,
+            request_number='DY-INBOUND-PRODUCT', status='PROCUREMENT_PENDING',
+            application_payload_hash='inbound-product-test', requested_at=timezone.now(),
+        )
+        product = SampleProduct.objects.create(
+            sample_request=sample, line_number=1, product_name='样品', specification='40*50',
+            item_number_snapshot='SAMPLE-ITEM', material_snapshot='尼龙',
+        )
+        expected = []
+        for number, color in [(1, '蓝色'), (2, '红色')]:
+            item = SampleItem.objects.create(
+                sample_request=sample, sample_product=product, line_number=number,
+                product_description_snapshot='样品快照', specification_snapshot=f'40*50；颜色：{color}；材质：尼龙',
+                color_name_snapshot=color, color_card_snapshot='B卡', color_code_snapshot=f'C-{number}',
+                requested_quantity=1, unit_code='PCS',
+            )
+            expected.append({'product_line_id': str(item.pk), 'product_name': '样品快照',
+                             'item_number': 'SAMPLE-ITEM', 'specification': '40*50', 'color_name': color, 'material': '尼龙'})
+        unlinked = SampleItem.objects.create(
+            sample_request=sample, line_number=3, product_description_snapshot='历史样品',
+            specification_snapshot='30*40', requested_quantity=1, unit_code='PCS',
+        )
+        expected.append({'product_line_id': str(unlinked.pk), 'product_name': '历史样品',
+                         'item_number': '', 'specification': '30*40', 'color_name': '', 'material': ''})
+        material = SampleMaterialRequest.objects.create(sample_request=sample)
+        procurement = SampleMaterialProcurementRequest.objects.create(material_request=material, lines=[])
+        order = self.order.__class__.objects.create(
+            order_number='CGDD-INBOUND-SAMPLE', source_type='SAMPLE', sample_procurement_request=procurement,
+            sample_number_snapshot=sample.request_number, status='PURCHASING', created_by_employee=self.employee,
+        )
+        PurchaseOrderLine.objects.create(purchase_order=order, line_number=1, actual_purchase_quantity=1, quantity_parse_status='READY')
+        rows = self.get('procurement-inbound-orders').json()['data']
+        row = next(row for row in rows if row['id'] == str(order.pk))
+        self.assertEqual(row.get('product_summary'), expected)
+
+    def test_inbound_products_do_not_resolve_another_tasks_product(self):
+        product = self.product(1)
+        product.production_task = self.hidden.production_task
+        product.save()
+        self.line.product_line_id_snapshot = product.pk
+        self.line.save()
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row.get('product_summary'), [])
+
+    def test_inbound_product_missing_attributes_stay_empty(self):
+        product = self.product(1, item_number_snapshot='', material_snapshot='', color_name_snapshot='')
+        self.line.product_line_id_snapshot = product.pk
+        self.line.product_specification_snapshot = '40*50'
+        self.line.save()
+        row = self.get('procurement-inbound-orders').json()['data'][0]
+        self.assertEqual(row.get('product_summary'), [
+            {'product_line_id': str(product.pk), 'product_name': '采购产品', 'item_number': '',
+             'specification': '40*50', 'color_name': '', 'material': ''},
+        ])
+
+    def test_inbound_product_list_keeps_receiving_and_quality_permission_boundary(self):
+        self.user.user_permissions.clear()
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        response = self.client.get(self.root + 'procurement-inbound-orders/', HTTP_HOST='localhost')
+        self.assertEqual(response.status_code, 403)
+        for codename in ['receive_material', 'quality_confirm_material']:
+            self.user.user_permissions.set(Permission.objects.filter(content_type__app_label='inventory', codename=codename))
+            self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+            self.assertEqual(self.get('procurement-inbound-orders').status_code, 200)

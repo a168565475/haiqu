@@ -1,0 +1,34 @@
+@use './crm/tokens' as token;
+
+// Element Plus 已判断横向溢出；无溢出时恢复普通单元格，不额外监听尺寸。
+.scroll-actions-table.el-table.is-scrolling-none {
+  > .el-table__inner-wrapper > .el-table__header-wrapper > table > thead > tr,
+  > .el-table__inner-wrapper > .el-table__body-wrapper > .el-scrollbar > .el-scrollbar__wrap > .el-scrollbar__view > table > tbody > tr {
+    > .el-table-fixed-column--right {
+      position: relative !important;
+      right: auto !important;
+      z-index: auto !important;
+    }
+  }
+}
+
+.scroll-actions-container[data-horizontal-overflow='true'] > table {
+  > thead > tr > .scroll-actions-cell {
+    position: sticky;
+    right: 0;
+    z-index: 3;
+    background: token.$crm-color-subtle;
+  }
+  > tbody > tr > .scroll-actions-cell {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background: token.$crm-color-surface;
+  }
+  > tbody > tr:hover > .scroll-actions-cell {
+    background: var(--scroll-actions-hover-bg, #{token.$crm-color-row-hover});
+  }
+  > tbody > tr.selected > .scroll-actions-cell {
+    background: token.$crm-color-selected;
+  }
+}

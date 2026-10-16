@@ -1,0 +1,4 @@
+.board-page .board-table.board-feed-table {
+  td { height: auto; border-bottom: 0; padding: 0 10px; }
+  .board-feed-cell { height: var(--board-feed-height, 38px); line-height: 38px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

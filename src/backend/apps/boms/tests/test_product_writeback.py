@@ -734,7 +734,7 @@ class BomProductWritebackTests(APITestCase):
 
         self.assertEqual(created.product_id, self.new_product.pk)
         self.assertIsNone(created.product_information_confirmed_at)
-        self.assertIsNone(created.copied_from_id)
+        self.assertEqual(created.copied_from_id, self.bom.pk)
         self.assertFalse(AuditLog.objects.filter(object_type="BOM", object_id=created.pk, action="REUSE_PRODUCT_REVIEW").exists())
 
     def test_writeback_permission_is_removed_after_success_and_failure(self):

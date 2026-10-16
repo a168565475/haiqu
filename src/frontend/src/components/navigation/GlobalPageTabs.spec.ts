@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import GlobalPageTabs from './GlobalPageTabs.vue'
 import { usePageTabsStore } from '@/stores/pageTabs'
-import PageRefreshView from '@/views/PageRefreshView.vue'
 
 const wrappers: ReturnType<typeof mount>[] = []
 
@@ -40,7 +39,6 @@ async function render() {
       path: `/page/${index + 1}`, name: `test-page-${index + 1}`, component: FormPage,
       meta: { layout: 'erp' as const, breadcrumbs: [{ label: '测试页面' }] },
     })),
-    { path: '/_page-refresh', name: 'page-refresh', component: PageRefreshView, meta: { requiresAuth: true } },
   ] })
   const pinia = createPinia()
   const store = usePageTabsStore(pinia)
@@ -80,6 +78,7 @@ async function render() {
 describe('公共页面选项卡与真实导航保护', () => {
   it('关闭当前页被离开保护取消时，页签、地址和实例保留', async () => {
     const { wrapper, router, store, state, openPage, tabElement } = await render()
+    expect(wrapper.find('[data-page-refresh]').exists()).toBe(false)
     await openPage(1)
     await openPage(2)
     await wrapper.find('input').setValue('不要丢失')
@@ -94,7 +93,7 @@ describe('公共页面选项卡与真实导航保护', () => {
     expect(store.navigating).toBe(false)
   })
 
-  it('未保存保护取消第六页时不删除第一项，确认后才先开先移除', async () => {
+  it('未保存保护取消第六页时不删除页签，确认后才移除最早普通页', async () => {
     const { wrapper, router, store, state, openPage } = await render()
     for (let id = 1; id <= 4; id++) await openPage(id)
     await wrapper.find('input').setValue('第五页未保存')
@@ -107,7 +106,7 @@ describe('公共页面选项卡与真实导航保护', () => {
 
     state.allowLeave = true
     await openPage(5)
-    expect(store.tabs.map(tab => tab.fullPath)).toEqual(Array.from({ length: 5 }, (_, index) => `/page/${index + 1}`))
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page/2', '/page/3', '/page/4', '/page/5'])
     expect(router.currentRoute.value.fullPath).toBe('/page/5')
     expect(state.unmounts['/page/4']).toBe(1)
     expect(wrapper.findAll('[role="tab"]')).toHaveLength(5)
@@ -155,44 +154,18 @@ describe('公共页面选项卡与真实导航保护', () => {
     expect(router.currentRoute.value.fullPath).toBe('/page/1')
   })
 
-  it('刷新被未保存保护取消时不丢页签和输入', async () => {
-    const { wrapper, router, store, state, openPage } = await render()
-    await openPage(1)
-    await openPage(2)
-    await wrapper.find('input').setValue('刷新前的输入')
-    const paths = store.tabs.map(tab => tab.fullPath)
-    await wrapper.find('[data-page-refresh]').trigger('click')
-    await flushPromises()
-    expect(store.tabs.map(tab => tab.fullPath)).toEqual(paths)
-    expect(router.currentRoute.value.fullPath).toBe('/page/2')
-    expect(wrapper.find('input').element.value).toBe('刷新前的输入')
-    expect(state.unmounts['/page/2'] || 0).toBe(0)
-    expect(store.navigating).toBe(false)
-  })
-
-  it('刷新桥接返回失败时保留页签，并显示返回工作台入口', async () => {
-    const { wrapper, router, store, openPage } = await render()
-    await openPage(1)
-    await openPage(2)
-    const paths = store.tabs.map(tab => tab.fullPath)
-    router.beforeEach((to, from) => from.name === 'page-refresh' && to.path === '/page/2' ? false : true)
-    await wrapper.find('[data-page-refresh]').trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.name).toBe('page-refresh')
-    expect(store.tabs.map(tab => tab.fullPath)).toEqual(paths)
-    expect(wrapper.find('[role="alert"]').text()).toContain('刷新未成功')
-    expect(wrapper.find('button').text()).toBe('返回工作台')
-  })
-
-  it('工作台自动移除后可重新打开，并继续维持五项', async () => {
-    const { wrapper, router, store, openPage } = await render()
+  it('打开多页后工作台保持首位且不能关闭，返回时不改变页签顺序', async () => {
+    const { wrapper, router, store, openPage, tabElement } = await render()
     for (let id = 1; id <= 5; id++) await openPage(id)
-    expect(store.tabs.some(tab => tab.fullPath === '/')).toBe(false)
-    await router.push('/')
+    const paths = ['/', '/page/2', '/page/3', '/page/4', '/page/5']
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(paths)
+    expect(wrapper.findAll('[role="tab"]')[0]!.attributes('aria-label')).toBe('工作台')
+    expect(tabElement('/').find('[data-tab-close]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-tab-close]')).toHaveLength(4)
+    await tabElement('/').find('[data-tab-open]').trigger('click')
     await flushPromises()
-    expect(store.tabs.map(tab => tab.fullPath)).toEqual([
-      ...Array.from({ length: 4 }, (_, index) => `/page/${index + 2}`), '/',
-    ])
+    expect(router.currentRoute.value.fullPath).toBe('/')
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(paths)
     expect(wrapper.findAll('[role="tab"]')).toHaveLength(5)
     expect(wrapper.find('[aria-selected="true"]').attributes('aria-label')).toBe('工作台')
     expect(wrapper.find('[aria-selected="true"] [data-tab-close]').exists()).toBe(false)

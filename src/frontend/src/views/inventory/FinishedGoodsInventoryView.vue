@@ -498,6 +498,13 @@ onMounted(() => { void Promise.all([loadRows(), loadOptions()]) })
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/crm/tokens' as token;
+.finished-stock-page > .fg-stock-body > .fg-table-card > .fg-table-scroll > .fg-table {
+  > thead > tr > th:last-child { position: sticky; right: 0; z-index: 3; background: token.$crm-color-subtle; }
+  > tbody > tr > td:last-child { position: sticky; right: 0; z-index: 2; background: token.$crm-color-surface; }
+  > tbody > tr:hover > td:last-child { background: token.$crm-color-row-hover; }
+  > tbody > tr.selected > td:last-child { background: token.$crm-color-selected; }
+}
 .finished-stock-page .fg-filters > :deep(.el-select){width:160px;flex:0 0 160px}
 .finished-stock-page .fg-filters > :deep(.el-input){width:410px;flex:0 0 410px}
 @media(max-width:1500px){.finished-stock-page .fg-filters > :deep(.el-input){width:280px;flex-basis:280px}}

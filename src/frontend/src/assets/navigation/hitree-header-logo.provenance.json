@@ -1,0 +1,11 @@
+{
+  "asset": "hitree-header-logo.png",
+  "createdAt": "2026-10-16",
+  "purpose": "ERP 顶部导航 HiTree 品牌标识",
+  "generator": "OpenAI image_gen",
+  "source": "本会话用户已确认的 HiTree 橙色树形图标与深色字标设计",
+  "referenceImage": "exec-b748706a-4008-4033-97a1-feaed81496fb.png",
+  "generatedImage": "exec-5dc4c98f-71fb-4ae4-95b2-2696edbfa565.png",
+  "treatment": "从确认设计生成独立透明背景标识，原尺寸复制为正式资源；显示时等比容纳",
+  "externalBrandAsset": false
+}

@@ -17,7 +17,6 @@ import {
   fetchPurchaseOrderSupplierOptions,
   fetchPurchaseOrders,
   fetchPurchaseOrderSource,
-  fetchPurchaseOrderStats,
   generatePurchaseSheets,
   saveSupplierPurchaseSheet,
   updatePurchaseContractTemplate,
@@ -74,16 +73,13 @@ describe('采购订单 API', () => {
     })
   })
 
-  it('统计和下拉选项使用采购订单专用接口', async () => {
+  it('下拉选项使用采购订单专用接口', async () => {
     mockedGet
-      .mockResolvedValueOnce({ data: { data: { total: 0 } } })
       .mockResolvedValueOnce({ data: { data: { production_tasks: [], suppliers: [], currencies: [] } } })
 
-    await fetchPurchaseOrderStats()
     await fetchPurchaseOrderOptions()
 
-    expect(mockedGet).toHaveBeenNthCalledWith(1, '/api/v1/purchase-orders/stats/')
-    expect(mockedGet).toHaveBeenNthCalledWith(2, '/api/v1/purchase-orders/options/')
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/purchase-orders/options/')
   })
 
   it('创建采购分阶段请求轻量选项', async () => {

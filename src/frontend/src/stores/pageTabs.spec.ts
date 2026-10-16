@@ -20,16 +20,35 @@ const router = createRouter({
 describe('页面选项卡账户与刷新恢复', () => {
   beforeEach(() => { setActivePinia(createPinia()); sessionStorage.clear() })
 
-  it('同一账户刷新恢复五项与原顺序，被移除的工作台不重新占位', () => {
+  it('同一账户刷新恢复工作台首位和其余四项原顺序', () => {
     const store = usePageTabsStore()
     store.synchronizeAccount(1, 'view', router)
     for (let index = 0; index < 9; index++) store.recordRoute(router.resolve(`/page-${index}`))
     const paths = store.tabs.map(tab => tab.fullPath)
-    expect(paths).toEqual(Array.from({ length: 5 }, (_, index) => `/page-${index + 4}`))
+    expect(paths).toEqual(['/', '/page-5', '/page-6', '/page-7', '/page-8'])
     setActivePinia(createPinia())
     const restored = usePageTabsStore()
     restored.synchronizeAccount(1, 'view', router)
     expect(restored.tabs.map(tab => tab.fullPath)).toEqual(paths)
+  })
+
+  it('旧会话没有工作台时补回首位，并移除最早普通页以保持五项', () => {
+    sessionStorage.setItem('haiqu:page-tabs:v1:1', JSON.stringify({
+      permissionSignature: 'view', paths: ['/page-1', '/page-2', '/page-3', '/page-4', '/page-5'],
+    }))
+    const store = usePageTabsStore()
+    store.synchronizeAccount(1, 'view', router)
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-2', '/page-3', '/page-4', '/page-5'])
+    expect(store.tabs[0]?.pinned).toBe(true)
+  })
+
+  it('直接请求关闭工作台仍保留固定入口和已存会话', () => {
+    const store = usePageTabsStore()
+    store.synchronizeAccount(1, 'view', router)
+    store.recordRoute(router.resolve('/page-1'))
+    store.removeTab(store.tabs[0]!.id)
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-1'])
+    expect(JSON.parse(sessionStorage.getItem('haiqu:page-tabs:v1:1')!).paths).toEqual(['/', '/page-1'])
   })
 
   it('退出、失效和账户切换清空前一账户入口', () => {
@@ -61,7 +80,7 @@ describe('页面选项卡账户与刷新恢复', () => {
     sessionStorage.setItem('haiqu:page-tabs:v1:1', JSON.stringify({ permissionSignature: 'view', paths: ['//external.test', '/missing', '/login', '/_page-refresh', 123, '/page-1'] }))
     const store = usePageTabsStore()
     store.synchronizeAccount(1, 'view', router)
-    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/page-1'])
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-1'])
     sessionStorage.setItem('haiqu:page-tabs:v1:2', 'broken-json')
     store.synchronizeAccount(2, 'view', router)
     expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/'])
@@ -76,7 +95,7 @@ describe('页面选项卡账户与刷新恢复', () => {
       store.synchronizeAccount(1, 'view', router)
       for (let index = 0; index < 10; index++) store.recordRoute(router.resolve(`/page-${index}`))
       expect(store.tabs).toHaveLength(5)
-      store.removeTab(store.tabs[0]!.id)
+      store.removeTab(store.tabs[1]!.id)
       expect(store.tabs).toHaveLength(4)
       store.clear()
       expect(store.tabs).toEqual([])

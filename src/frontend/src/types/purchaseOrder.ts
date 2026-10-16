@@ -82,6 +82,8 @@ export interface PurchaseOrderProductSource {
   item_number: string
   product_name: string
   specification: string
+  specification_display?: string
+  material?: string
   color_card: string
   color_name: string
   color_code: string
@@ -295,24 +297,6 @@ export interface PurchaseOrderDetail extends PurchaseOrderListItem {
     supplier_name: string
     supplier_type: string
     supplier_categories: SupplierCategory[]
-  }>
-}
-
-export interface PurchaseOrderStats {
-  completed?: number
-  total: number
-  draft: number
-  submitted: number
-  purchasing?: number
-  mailed: number
-  unmailed: number
-  mailing_pending: number
-  amounts: Array<{
-    currency_id: string
-    currency_code: string
-    currency_symbol: string
-    order_count: number
-    total_amount: string
   }>
 }
 

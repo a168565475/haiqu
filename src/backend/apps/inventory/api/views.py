@@ -55,6 +55,7 @@ from ..selectors import (
     material_inbound_order_totals,
     material_inventory_rows,
     material_received_totals,
+    procurement_inbound_product_summaries,
     receipt_batches,
     warehouses_with_usage,
     zones_with_usage,
@@ -83,6 +84,7 @@ from .serializers import (
     ManualMaterialInboundInputSerializer,
     MaterialQualityConfirmationInputSerializer,
     MaterialInboundSerializer,
+    ProcurementInboundOrderListResponseSerializer,
     WarehouseLocationSerializer,
     WarehouseSerializer,
     WarehouseZoneSerializer,
@@ -856,6 +858,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             })
         return Response({"data": data})
 
+    @extend_schema(responses=ProcurementInboundOrderListResponseSerializer)
     @action(detail=False, methods=["get"], url_path="procurement-inbound-orders")
     def procurement_inbound_orders(self, request):
         queryset = (
@@ -878,6 +881,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             ).distinct()
         orders = list(queryset[:500])
         order_ids = [order.pk for order in orders]
+        product_summaries = procurement_inbound_product_summaries(orders)
         purchase_lines = [line for order in orders for line in order.lines.all()]
         received_totals = material_received_totals([line.pk for line in purchase_lines])
         batch_totals = material_inbound_order_totals(order_ids)
@@ -923,6 +927,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "source_type": order.source_type,
                 "source_number": order.sample_number_snapshot if order.source_type == "SAMPLE" else order.production_task_number_snapshot,
                 "sales_order_number": order.sales_order_number_snapshot,
+                "product_summary": product_summaries.get(order.pk, []),
                 "supplier_names": supplier_names,
                 "line_count": len(lines),
                 "remaining_line_count": len(remaining_lines),

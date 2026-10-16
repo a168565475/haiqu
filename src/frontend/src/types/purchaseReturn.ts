@@ -21,6 +21,5 @@ export interface ReturnQuery {
   q?: string; purchase_order_id?: string; supplier_id?: string; status?: ReturnOrderStatus
   page?: number; page_size?: number; ordering?: 'updated_at' | '-updated_at'
 }
-export type ReturnStats = Record<ReturnOrderStatus | 'total', number>
 export interface ReturnOptions { suppliers: { id: string; supplier_number: string; supplier_name: string }[] }
 export interface ReturnList { data: PurchaseReturn[]; meta: PageMeta }

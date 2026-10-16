@@ -6,8 +6,8 @@ import { AxiosError } from 'axios'
 import SampleListView from './SampleListView.vue'
 import { useAuthStore } from '@/stores/auth'
 
-const api = vi.hoisted(() => ({ rows: vi.fn(), options: vi.fn(), stats: vi.fn(), push: vi.fn() }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: api.push }) }))
+const api = vi.hoisted(() => ({ rows: vi.fn(), options: vi.fn(), stats: vi.fn(), push: vi.fn(), query: {} as Record<string, string> }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: api.query }), useRouter: () => ({ push: api.push }) }))
 vi.mock('@/api/samples', () => ({
   fetchSamples: api.rows, fetchSampleOptions: api.options, fetchSampleStats: api.stats,
   deleteSample: vi.fn(), fetchSample: vi.fn(),
@@ -27,7 +27,8 @@ function render(employeeId?: string, permissions: string[] = []) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
+  api.query = {}
   api.options.mockResolvedValue({ statuses: [], sample_types: [], owners: [] })
   api.stats.mockResolvedValue({ all: 1, pending_completion: 0, pending_payment: 0, pending_pmc: 1, pending_metalwork: 0, pending_cutting: 0, finished: 0 })
 })
@@ -42,7 +43,7 @@ describe('打样申请列表', () => {
     await flushPromises()
     const search = wrapper.find('.search-input input')
     await search.setValue('  NEW  ')
-    await search.trigger('keyup.enter')
+    await search.trigger('keydown.enter')
     await flushPromises()
     expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'NEW', page: 1 }))
     resolveFirst(result('STALE-REQUEST'))
@@ -66,49 +67,60 @@ describe('打样申请列表', () => {
     expect(wrapper.text()).toContain('暂无打样申请')
   })
 
-  it('保留六个分类，厂长仓库采购筛选使用各自真实字段', async () => {
+  it('移除快捷统计条及请求，保留业务状态筛选', async () => {
     api.rows.mockResolvedValue(result('REAL'))
-    api.stats.mockResolvedValue({ all: 12, pending_director: 3, pending_payment: 8, pending_pmc: 7, pending_completion: 6 })
     const wrapper = render()
     await flushPromises()
-    const tabs = wrapper.findAll('.quick-views button')
-    expect(tabs).toHaveLength(6)
-    expect(tabs.map(tab => tab.text())).toEqual(['全部申请 12', '我负责的 —', '待我处理 —', '待厂长确认 3', '待仓库核对 —', '等待采购 —'])
-    expect(tabs[1]!.attributes('aria-disabled')).toBe('true')
-    await tabs[4]!.trigger('click')
-    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'WAREHOUSE_PENDING', page: 1 }))
-    expect(tabs[4]!.attributes('aria-pressed')).toBe('true')
-    await tabs[5]!.trigger('click')
-    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'PROCUREMENT_PENDING', page: 1 }))
-    await tabs[3]!.trigger('click')
-    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'DIRECTOR_REVIEW', page: 1 }))
+    expect(wrapper.find('.quick-views').exists()).toBe(false)
+    expect(api.stats).not.toHaveBeenCalled()
+    const status = wrapper.findAllComponents(ElSelect).find(component => component.classes().includes('status-filter'))!
+    for (const value of ['DIRECTOR_REVIEW', 'WAREHOUSE_PENDING', 'PROCUREMENT_PENDING']) {
+      status.vm.$emit('update:modelValue', value)
+      status.vm.$emit('change', value)
+      await flushPromises()
+      expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ status: value, page: 1 }))
+    }
   })
 
-  it('我负责的使用当前员工的真实统计和 owner 筛选，全部申请清除 owner 条件', async () => {
+  it('中文输入法确认不触发搜索，普通回车只提交一次', async () => {
     api.rows.mockResolvedValue(result('REAL'))
-    api.stats.mockImplementation(query => Promise.resolve({ all: query?.owner_employee_id === 'employee-me' ? 2 : 12 }))
-    const wrapper = render('employee-me')
-    await flushPromises()
-    expect(api.stats).toHaveBeenCalledWith({ owner_employee_id: 'employee-me' })
-    const tabs = wrapper.findAll('.quick-views button')
-    expect(tabs[1]!.text()).toBe('我负责的 2')
-    await tabs[1]!.trigger('click')
-    await flushPromises()
-    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, owner_employee_id: 'employee-me' }))
-    expect(tabs[1]!.attributes('aria-pressed')).toBe('true')
-    await tabs[0]!.trigger('click')
-    await flushPromises()
-    expect(api.rows.mock.lastCall![0]).not.toHaveProperty('owner_employee_id')
-  })
-
-  it('统计失败仍保留快捷分类布局并显示未知，列表继续正常读取', async () => {
-    api.rows.mockResolvedValue(result('REAL'))
-    api.stats.mockRejectedValue(new Error('统计暂不可用'))
     const wrapper = render()
     await flushPromises()
-    expect(wrapper.findAll('.quick-views button')).toHaveLength(6)
-    expect(wrapper.find('.quick-views button').text()).toBe('全部申请 —')
-    expect(wrapper.find('.sample-table').text()).toContain('REAL')
+    api.rows.mockClear()
+    const input = wrapper.get('.search-input input')
+    await input.setValue('  桌子  ')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    await input.trigger('keydown', { key: 'Enter', keyCode: 229 })
+    await input.trigger('keyup', { key: 'Enter', isComposing: true })
+    await flushPromises()
+    expect(api.rows).not.toHaveBeenCalled()
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.rows).toHaveBeenCalledTimes(1)
+    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, search: '桌子' }))
+  })
+
+  it('放大镜及清空搜索回到第一页并保留客户和状态上下文', async () => {
+    api.query = { customer_id: 'customer-1', status: 'DIRECTOR_REVIEW' }
+    api.rows.mockResolvedValue({ ...result('REAL'), meta: { total: 100 } })
+    const wrapper = render()
+    await flushPromises()
+    const pager = wrapper.findComponent(ElPagination)
+    pager.vm.$emit('update:current-page', 2)
+    await wrapper.get('.search-input input').setValue('  桌子  ')
+    api.rows.mockClear()
+    await wrapper.get('button[aria-label="搜索打样申请列表"]').trigger('click')
+    await flushPromises()
+    expect(api.rows).toHaveBeenCalledTimes(1)
+    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, search: '桌子', customer_id: 'customer-1', status: 'DIRECTOR_REVIEW' }))
+    pager.vm.$emit('update:current-page', 2)
+    await wrapper.get('.search-input').trigger('mouseenter')
+    api.rows.mockClear()
+    await wrapper.get('.el-input__clear').trigger('click')
+    await flushPromises()
+    expect(api.rows).toHaveBeenCalledTimes(1)
+    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, customer_id: 'customer-1', status: 'DIRECTOR_REVIEW' }))
+    expect(api.rows.mock.lastCall![0]).not.toHaveProperty('search')
   })
 })
 
@@ -121,6 +133,7 @@ describe('打样列表筛选和操作边界', () => {
     expect(wrapper.find('.table-toolbar').exists()).toBe(false)
     expect(wrapper.findAll('.el-checkbox')).toHaveLength(0)
     expect(wrapper.find('.create-button').text()).toBe('申请打样')
+    expect(wrapper.find('.filters .sample-actions .create-button').exists()).toBe(true)
   })
 
   it('日期筛选发送完整自然日；重置删除日期条件', async () => {
@@ -157,7 +170,7 @@ describe('打样列表筛选和操作边界', () => {
     await flushPromises()
     expect(api.rows.mock.lastCall![0].page).toBe(2)
     await wrapper.find('.search-input input').setValue('客户')
-    await wrapper.find('.search-input input').trigger('keyup.enter')
+    await wrapper.find('.search-input input').trigger('keydown.enter')
     await flushPromises()
     expect(api.rows.mock.lastCall![0]).toMatchObject({ search: '客户', page: 1 })
   })

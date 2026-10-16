@@ -46,15 +46,6 @@ export interface TaskDetail extends TaskSummary {
   source_attachments: Array<{ id: string; name: string; content_type: string; size_bytes: number; preview_url: string; download_url: string }>
 }
 
-export interface TaskMetrics {
-  open_count: number
-  due_today_count: number
-  overdue_count: number
-  next_7_days_count: number
-  month_completed_count: number
-  on_time_rate: number | null
-}
-
 export interface TaskOptions {
   scopes: Array<{ value: TaskScope; label: string }>
   task_types: Array<{ value: string; label: string }>
@@ -76,24 +67,4 @@ export interface TaskFilters {
   ordering: string
   page: number
   page_size: number
-}
-
-export interface TaskBatchItem {
-  id: string
-  version: number
-}
-
-export interface TaskBatchPreview {
-  action: 'COMPLETE' | 'REASSIGN'
-  task_count: number
-  customer_count: number
-  overdue_count: number
-  scheduled_reminder_count: number
-}
-
-export interface TaskBatchResult {
-  event_id: string
-  action: 'COMPLETE' | 'REASSIGN'
-  task_ids: string[]
-  count: number
 }

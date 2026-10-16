@@ -1,35 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchSampleApplicationListSummary, submitSampleApplication, reviewSampleApplication } from './sampleApplication'
+import { submitSampleApplication, reviewSampleApplication } from './sampleApplication'
 import type { SampleApplicationDraft } from '@/types/sampleApplication'
-const stats = vi.hoisted(() => vi.fn())
 const post = vi.hoisted(() => vi.fn())
-vi.mock('./samples', () => ({ fetchSampleStats: stats }))
 vi.mock('./request', () => ({ apiClient: { post } }))
-beforeEach(() => stats.mockReset())
-
-describe('V3 快捷分类真实统计', () => {
-  it('个人统计失败不丢失全部统计，不把失败视为零', async () => {
-    stats.mockResolvedValueOnce({ all: 128 }).mockRejectedValueOnce(new Error('Forbidden'))
-    const value = await fetchSampleApplicationListSummary('employee')
-    expect(value.all).toBe(128)
-    expect(value.responsible).toBeNull()
-    expect(value.failures[0]?.scope).toBe('responsible')
-    expect(stats).toHaveBeenLastCalledWith({ owner_employee_id: 'employee' })
-  })
-
-  it('未关联员工只查询全部统计', async () => {
-    stats.mockResolvedValue({ all: 0 })
-    expect(await fetchSampleApplicationListSummary(null)).toEqual({ all: 0, responsible: null, failures: [] })
-    expect(stats).toHaveBeenCalledTimes(1)
-  })
-
-  it.each([null, {}, { all: -1 }, { all: 1.5 }, { all: '12' }])('拒绝无效计数 %j', async value => {
-    stats.mockResolvedValue(value)
-    const result = await fetchSampleApplicationListSummary(null)
-    expect(result.all).toBeNull()
-    expect(result.failures).toHaveLength(1)
-  })
-})
 
 describe('申请提交和厂长审核接口', () => {
   const draft: SampleApplicationDraft = {

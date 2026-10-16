@@ -403,7 +403,7 @@ onMounted(() => { resetColumns(); void refreshAll() })
     </template>
 
     <template #table>
-      <ElTable v-if="props.kind === 'inquiries'" :data="inquiryRows" row-key="id" border empty-text="当前客户暂无询盘" @selection-change="selectedRows = $event">
+      <ElTable class="scroll-actions-table" v-if="props.kind === 'inquiries'" :data="inquiryRows" row-key="id" border empty-text="当前客户暂无询盘" @selection-change="selectedRows = $event">
         <ElTableColumn type="selection" width="48" /><ElTableColumn prop="inquiry_number" label="询盘编号" width="150" />
         <ElTableColumn v-if="hasColumn('subject')" prop="subject" label="主题" min-width="230" show-overflow-tooltip />
         <ElTableColumn v-if="hasColumn('product')" label="产品需求" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.product_summary?.first_description || '—' }}</template></ElTableColumn>
@@ -411,10 +411,10 @@ onMounted(() => { resetColumns(); void refreshAll() })
         <ElTableColumn v-if="hasColumn('owner')" label="负责人" width="130"><template #default="{ row }">{{ row.owner?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('received')" label="接收时间" width="130"><template #default="{ row }">{{ formatDate(row.received_at) }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('due')" label="期望回复" width="130"><template #default="{ row }">{{ formatDate(row.requested_due_at) }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="92"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="92" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
 
-      <ElTable v-else-if="props.kind === 'quotations'" :data="quotationRows" row-key="id" border empty-text="当前客户暂无报价" @selection-change="selectedRows = $event">
+      <ElTable class="scroll-actions-table" v-else-if="props.kind === 'quotations'" :data="quotationRows" row-key="id" border empty-text="当前客户暂无报价" @selection-change="selectedRows = $event">
         <ElTableColumn type="selection" width="48" /><ElTableColumn prop="quotation_number" label="报价编号" width="150" />
         <ElTableColumn v-if="hasColumn('subject')" prop="subject" label="报价主题" min-width="250" show-overflow-tooltip />
         <ElTableColumn v-if="hasColumn('version')" label="版本" width="88"><template #default="{ row }">{{ row.current_version ? `V${row.current_version.version_number}` : '—' }}</template></ElTableColumn>
@@ -422,10 +422,10 @@ onMounted(() => { resetColumns(); void refreshAll() })
         <ElTableColumn v-if="hasColumn('status')" label="状态" width="120"><template #default="{ row }"><CustomerActivityTag :label="row.display_status_label" :tone="statusTone(row.display_status)" /></template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('owner')" label="负责人" width="130"><template #default="{ row }">{{ row.owner?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('updated')" label="更新时间" width="130"><template #default="{ row }">{{ formatDate(row.updated_at) }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="92"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="92" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
 
-      <ElTable v-else-if="props.kind === 'samples'" :data="sampleRows" row-key="id" border empty-text="当前客户暂无样品申请" @selection-change="selectedRows = $event">
+      <ElTable class="scroll-actions-table" v-else-if="props.kind === 'samples'" :data="sampleRows" row-key="id" border empty-text="当前客户暂无样品申请" @selection-change="selectedRows = $event">
         <ElTableColumn type="selection" width="48" /><ElTableColumn prop="request_number" label="样品编号" width="150" />
         <ElTableColumn v-if="hasColumn('type')" prop="sample_type_display" label="样品类型" width="126" />
         <ElTableColumn v-if="hasColumn('summary')" label="样品明细" min-width="260" show-overflow-tooltip><template #default="{ row }">{{ row.item_summary?.text || '—' }}</template></ElTableColumn>
@@ -433,10 +433,10 @@ onMounted(() => { resetColumns(); void refreshAll() })
         <ElTableColumn v-if="hasColumn('shipping')" label="物流状态" width="130"><template #default="{ row }">{{ row.latest_shipment?.status_display || '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('owner')" label="负责人" width="130"><template #default="{ row }">{{ row.owner?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('requested')" label="申请时间" width="130"><template #default="{ row }">{{ formatDate(row.requested_at) }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="92"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="92" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
 
-      <ElTable v-else :data="orderRows" row-key="id" border empty-text="当前客户暂无销售订单" @selection-change="selectedRows = $event">
+      <ElTable class="scroll-actions-table" v-else :data="orderRows" row-key="id" border empty-text="当前客户暂无销售订单" @selection-change="selectedRows = $event">
         <ElTableColumn type="selection" width="48" /><ElTableColumn prop="order_number" label="订单编号" width="160" />
         <ElTableColumn v-if="hasColumn('po')" prop="customer_po_number" label="客户 PO" min-width="190" show-overflow-tooltip />
         <ElTableColumn v-if="hasColumn('status')" label="状态" width="120"><template #default="{ row }"><CustomerActivityTag :label="row.status_display" :tone="statusTone(row.status)" /></template></ElTableColumn>
@@ -444,7 +444,7 @@ onMounted(() => { resetColumns(); void refreshAll() })
         <ElTableColumn v-if="hasColumn('owner')" label="业务员" width="130"><template #default="{ row }">{{ row.salesperson?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('delivery')" label="下次交付" width="130"><template #default="{ row }">{{ formatDate(row.next_delivery_date) }}</template></ElTableColumn>
         <ElTableColumn v-if="hasColumn('updated')" label="更新时间" width="130"><template #default="{ row }">{{ formatDate(row.updated_at) }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="92"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="92" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openRow(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
     </template>
   </CustomerDetailListShell>

@@ -33,15 +33,17 @@ export function workbenchErrorMessage(
   return `${action}失败${retryHint}`
 }
 
-export function resolveWorkbenchMode(user: AuthUser | null): WorkbenchMode | null {
+export function resolveWorkbenchMode(user: AuthUser | null, requestedMode?: WorkbenchMode): WorkbenchMode | null {
   if (!user) return null
-  if (user.is_superuser || user.permissions.includes('customers.view_all_customer')) {
-    return 'MANAGER'
-  }
-  if (user.permissions.includes('customers.view_customeraccount')) {
-    return 'SALES'
-  }
-  return null
+  const customerScopes = user.effective_access?.active
+    ? user.effective_access.actions['customers.view_customeraccount']?.scopes || []
+    : []
+  const canViewManager = user.is_superuser || user.permissions.includes('customers.view_all_customer')
+    || (user.sales_access_enabled === true && customerScopes.some(scope => scope === 'TEAM' || scope === 'ALL'))
+  const canViewSales = user.is_superuser || user.permissions.includes('customers.view_customeraccount')
+  if (requestedMode === 'MANAGER') return canViewManager ? 'MANAGER' : null
+  if (requestedMode === 'SALES') return canViewSales ? 'SALES' : null
+  return canViewManager ? 'MANAGER' : canViewSales ? 'SALES' : null
 }
 
 export function mergeWorkbenchTasks(
@@ -56,14 +58,15 @@ export function mergeWorkbenchTasks(
     }
   }
   return [...taskMap.values()].sort((left, right) => {
-    const leftTime = new Date(left.due_at).getTime()
-    const rightTime = new Date(right.due_at).getTime()
+    const leftTime = left.due_at ? new Date(left.due_at).getTime() : Number.POSITIVE_INFINITY
+    const rightTime = right.due_at ? new Date(right.due_at).getTime() : Number.POSITIVE_INFINITY
     if (leftTime !== rightTime) return leftTime - rightTime
     return left.id.localeCompare(right.id)
   })
 }
 
 export function isTaskDueToday(task: WorkbenchTask, reference = new Date()): boolean {
+  if (!task.due_at) return false
   const due = new Date(task.due_at)
   return (
     due.getFullYear() === reference.getFullYear() &&
@@ -73,7 +76,7 @@ export function isTaskDueToday(task: WorkbenchTask, reference = new Date()): boo
 }
 
 export function isTaskOverdue(task: WorkbenchTask, reference = new Date()): boolean {
-  return new Date(task.due_at).getTime() < reference.getTime()
+  return task.due_at !== null && new Date(task.due_at).getTime() < reference.getTime()
 }
 
 export function formatWorkbenchDate(value: Date): string {

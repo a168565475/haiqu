@@ -44,6 +44,7 @@ from apps.samples.sampling_detail_config import load_sampling_detail_template
 from ..maintenance import CONFIGURED_FIELD_LABELS
 from ..models import Bom, BomCreationMethod, BomStatus
 from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan, positive_integer
+from ..material_save_plan import material_save_preview
 from ..selectors import accessible_boms, boms_with_context, pipe_material_matches, search_boms
 from ..services import (
     confirm_bom_product,
@@ -57,6 +58,7 @@ from .serializers import (
     BomCreateInputSerializer,
     BomMaterialFlowPreviewInputSerializer,
     BomMaterialFlowPreviewResponseSerializer,
+    BomMaterialSavePreviewResponseSerializer,
     BomDetailSerializer,
     BomAccessoryMaterialOptionSerializer,
     BomAuxiliaryProductOptionSerializer,
@@ -123,6 +125,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "create": "boms.add_bom",
         "preview_import": "boms.add_bom",
         "partial_update": "boms.change_bom",
+        "material_save_preview": "boms.change_bom",
         "sync_order_quantity": "boms.change_bom",
         "verify": "boms.verify_bom",
         "confirm_product": "boms.change_bom",
@@ -380,8 +383,21 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             sections=serializer.validated_data["sections"],
             actor_employee=getattr(request, "employee", None),
             request=request,
+            intent=serializer.validated_data["intent"],
+            confirmation_token=serializer.validated_data.get("confirmation_token", ""),
+            quantity_confirmation_reason=serializer.validated_data.get("quantity_confirmation_reason", ""),
         )
         return self._detail_response(updated)
+
+    @extend_schema(request=BomUpdateInputSerializer, responses=BomMaterialSavePreviewResponseSerializer)
+    @action(detail=True, methods=["post"], url_path="material-save-preview")
+    def material_save_preview(self, request, pk=None):
+        bom = self.get_object()
+        require_matching_etag(request, bom)
+        serializer = BomUpdateInputSerializer(data=request.data, context={"bom": bom})
+        serializer.is_valid(raise_exception=True)
+        return Response({"data": material_save_preview(bom=bom, sections=serializer.validated_data["sections"],
+            request=request, intent=serializer.validated_data["intent"])})
 
     @extend_schema(request=None, responses=BomDetailSerializer)
     @action(detail=True, methods=["post"], url_path="sync-order-quantity")

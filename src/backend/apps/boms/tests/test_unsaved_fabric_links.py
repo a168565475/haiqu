@@ -34,7 +34,7 @@ class UnsavedFabricLinkInputTests(SimpleTestCase):
         fabric = BomLine(pk=uuid4(), section=fabric_section, line_number=1, unit="米",
                          raw_values={"source_fabric_material_id": "invalid-uuid"})
         cutting = BomLine(pk=uuid4(), section=cutting_section, line_number=1, fabric_source_line=fabric)
-        with self.assertRaisesMessage(ValidationError, "来源原材料"):
+        with self.assertRaisesMessage(ValidationError, "材质、规格、门幅和颜色"):
             validate_fabric_links([fabric, cutting])
 
     def test_unmapped_source_from_other_bom_is_rejected(self):
@@ -284,7 +284,7 @@ class UnsavedFabricLinkApiTests(TestCase):
                 reference.save(update_fields=["inventory_raw_material"])
                 self.assert_rejected_without_changes(payload)
 
-    def test_valid_reference_inventory_mapping_can_save_and_confirm_bom(self):
+    def test_partial_reference_inventory_mapping_can_save_but_cannot_confirm_bom(self):
         payload, reference, _ = self.unmapped_fabric_payload()
         reference.inventory_raw_material = self.fabric
         reference.save(update_fields=["inventory_raw_material"])
@@ -294,10 +294,10 @@ class UnsavedFabricLinkApiTests(TestCase):
         cutting = BomLine.objects.get(section__bom=self.bom, section__title="裁剪明细")
         self.assertEqual(cutting.fabric_source_line_id, fabric.pk)
         response = fixtures.MaterialFlowBomTests.verify(self)
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.status_code, 400, response.data)
         self.bom.refresh_from_db()
-        self.assertEqual(self.bom.status, BomStatus.VERIFIED)
-        self.assertIsNotNone(self.bom.confirmed_at)
+        self.assertEqual(self.bom.status, BomStatus.PENDING_CONFIRMATION)
+        self.assertIsNone(self.bom.confirmed_at)
 
     def test_source_key_cannot_target_another_cutting_row(self):
         payload = self.payload()

@@ -9,13 +9,15 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 from openpyxl import load_workbook
 
 from apps.audit.models import AuditLog
+from apps.boms.material_flow_calculations import pipe_plan
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomLineImage, BomSection, BomSectionType, BomStatus
 from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.files.models import BusinessFile, FileScanStatus
@@ -28,7 +30,7 @@ from apps.production_tasks.models import (
     ProductionTaskProduct,
     ProductionTaskStatus,
 )
-from apps.reference_data.models import Currency, ReferenceStatus
+from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 
 from ..models import PurchaseOrder, Supplier, SupplierPurchaseSheet
 from ..api.views import is_purchase_task_uniqueness_error
@@ -260,7 +262,7 @@ class PurchaseOrderApiTests(APITestCase):
     def create_generated_supplier_sheet(self, suffix):
         task = self.make_task(suffix)
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         payload = self.create_payload(
             task,
@@ -296,7 +298,20 @@ class PurchaseOrderApiTests(APITestCase):
     def test_source_and_options_return_contract_and_cny_default(self):
         task = self.make_task("SOURCE")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line, branch_count="1,234.5")
+        root, _ = ProductionUnit.objects.get_or_create(
+            unit_name="根", defaults={"unit_code": "PO_SOURCE_ROOT"},
+        )
+        self.inventory_material.unit = root
+        self.inventory_material.category = ProductCategory.objects.get(category_name="管材", item_type="MATERIAL")
+        self.inventory_material.item_type = "MATERIAL"
+        self.inventory_material.save(update_fields=["unit", "category", "item_type"])
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=10)
+        self.make_bom(product_line, unit="根", **{
+            field: plan[field] for field in (
+                "cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
+                "suggested_bar_count", "suggested_purchase_meters",
+            )
+        })
 
         source = self.get_source(task)
         options = self.client.get("/api/v1/purchase-orders/options/")
@@ -309,10 +324,14 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(source_data["selected_bom_id"], source_data["bom_options"][0]["bom_id"])
         self.assertRegex(source_data["source_revision"], r"^[0-9a-f]{64}$")
         self.assertEqual(source_data["preview_lines"], [])
-        self.assertEqual(source_data["lines"][0]["required_quantity"], "1234.5000")
+        self.assertEqual(source_data["lines"][0]["required_quantity"], "12.20")
         self.assertEqual(source_data["lines"][0]["bom_status"], BomStatus.VERIFIED)
-        self.assertEqual(source_data["lines"][0]["source_quantity_field"], "branch_count")
-        self.assertEqual(source_data["lines"][0]["source_unit_text"], "PCS")
+        self.assertEqual(source_data["lines"][0]["source_quantity_field"], "suggested_purchase_meters")
+        self.assertEqual(source_data["lines"][0]["source_quantity_text"], "12.20")
+        self.assertEqual(source_data["lines"][0]["source_unit_text"], "米")
+        self.assertEqual(source_data["lines"][0]["raw_bar_length_m"], "3.05")
+        self.assertEqual(source_data["lines"][0]["suggested_bar_count"], 4)
+        self.assertEqual(source_data["lines"][0]["suggested_purchase_meters"], "12.20")
         self.assertEqual(source_data["lines"][0]["quantity_parse_status"], "READY")
         self.assertEqual(source_data["lines"][0]["suggested_supplier_category"], "TUBE")
         self.assertEqual(source_data["lines"][0]["category_source"], "SECTION")
@@ -341,10 +360,157 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertNotIn("products", task_option)
         self.assertFalse(any(item["id"] == str(self.disabled_supplier.pk) for item in options_data["suppliers"]))
 
+    def test_generic_source_parses_grouped_decimal_quantity(self):
+        task = self.make_task("GROUPED-QTY")
+        product_line = self.make_product_line(task)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="1,234.5")
+
+        source = self.get_source(task)
+
+        self.assertEqual(source.status_code, 200, source.data)
+        self.assertTrue(source.data["data"]["can_create"], source.data)
+        line = source.data["data"]["lines"][0]
+        self.assertEqual(line["required_quantity"], "1234.5000")
+        self.assertEqual(line["source_quantity_field"], "budget_quantity")
+        self.assertEqual(line["source_unit_text"], "PCS")
+        self.assertEqual(line["quantity_parse_status"], "READY")
+
+    def test_source_options_hide_only_tasks_without_unarchived_boms(self):
+        empty_task = self.make_task("OPTIONS-NO-PRODUCT")
+        missing_task = self.make_task("OPTIONS-NO-BOM")
+        self.make_product_line(missing_task)
+        archived_task = self.make_task("OPTIONS-ARCHIVED-BOM")
+        archived_bom, _ = self.make_bom(self.make_product_line(archived_task), section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        archived_bom.archived_at = timezone.now()
+        archived_bom.save(update_fields=["archived_at"])
+        ready_task = self.make_task("OPTIONS-READY")
+        self.make_bom(self.make_product_line(ready_task), section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        pending_task = self.make_task("OPTIONS-PENDING")
+        pending_product = self.make_product_line(pending_task)
+        self.make_bom(pending_product, version=1, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        self.make_bom(pending_product, version=2, status=BomStatus.PENDING_CONFIRMATION, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        partial_task = self.make_task("OPTIONS-PARTIAL")
+        self.make_bom(self.make_product_line(partial_task), section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        self.make_product_line(partial_task, line_number=2)
+
+        response = self.client.get("/api/v1/purchase-orders/options/", {"scope": "sources"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["id"]: row for row in response.data["data"]["production_tasks"]}
+        self.assertEqual(set(rows), {str(ready_task.pk), str(pending_task.pk), str(partial_task.pk)})
+        self.assertTrue(rows[str(ready_task.pk)]["can_create"])
+        self.assertTrue(rows[str(partial_task.pk)]["can_create"])
+        self.assertEqual(rows[str(partial_task.pk)]["product_count"], 2)
+        self.assertFalse(rows[str(pending_task.pk)]["can_create"])
+        self.assertIn("BOM_NOT_VERIFIED", [item["code"] for item in rows[str(pending_task.pk)]["blockers"]])
+        self.assertNotIn(str(empty_task.pk), rows)
+        self.assertNotIn(str(missing_task.pk), rows)
+        self.assertNotIn(str(archived_task.pk), rows)
+
+    def test_full_options_and_source_keep_missing_bom_diagnostics(self):
+        task = self.make_task("OPTIONS-DIAGNOSTICS")
+        self.make_product_line(task)
+
+        full = self.client.get("/api/v1/purchase-orders/options/")
+        source = self.get_source(task)
+
+        self.assertEqual(full.status_code, 200, full.data)
+        row = next(row for row in full.data["data"]["production_tasks"] if row["id"] == str(task.pk))
+        self.assertFalse(row["can_create"])
+        self.assertEqual(source.status_code, 200, source.data)
+        self.assertIn("BOM_MISSING", [item["code"] for item in source.data["data"]["blockers"]])
+
+    def test_source_options_remain_lightweight_with_bom_filter(self):
+        task = self.make_task("OPTIONS-LIGHTWEIGHT")
+        self.make_bom(self.make_product_line(task), section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.client.get("/api/v1/purchase-orders/options/", {"scope": "sources"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["data"]["production_tasks"] if row["id"] == str(task.pk))
+        self.assertNotIn("products", row)
+        sql = "\n".join(query["sql"] for query in queries.captured_queries)
+        self.assertNotIn(f'"{BomLine._meta.db_table}"', sql)
+        self.assertNotIn(f'"{BomSection._meta.db_table}"', sql)
+
+    def test_source_options_keep_permission_and_customer_scope(self):
+        task = self.make_task("OPTIONS-ACCESS")
+        self.make_bom(self.make_product_line(task), section_type=BomSectionType.ACCESSORY, budget_quantity="12")
+        outsider = get_user_model().objects.create_user(username="purchase_source_outsider")
+        Employee.objects.create(user=outsider, employee_code="PUR_SOURCE_OUT", display_name="范围外员工")
+        self.client.force_authenticate(outsider)
+
+        denied = self.client.get("/api/v1/purchase-orders/options/", {"scope": "sources"})
+        self.assertEqual(denied.status_code, 403, denied.data)
+        outsider.user_permissions.set(Permission.objects.filter(
+            content_type__app_label="procurement", codename="add_purchaseorder",
+        ))
+        outsider = get_user_model().objects.get(pk=outsider.pk)
+        self.client.force_authenticate(outsider)
+        hidden = self.client.get("/api/v1/purchase-orders/options/", {"scope": "sources"})
+        self.assertEqual(hidden.status_code, 200, hidden.data)
+        self.assertEqual(hidden.data["data"]["production_tasks"], [])
+
+    def test_source_products_expose_separate_display_specification_and_material(self):
+        task = self.make_task("DISPLAY-SNAPSHOT")
+        cases = [
+            ("47*55*79；颜色：酒红色；材质：PE", "", "", "酒红色", "PE", "47*55*79"),
+            ("原始规格", "客户规格；颜色：客户蓝；材质：尼龙", "客户蓝", "蓝色", "尼龙", "客户规格"),
+            ("尺寸；颜色：未知色；材质：PE", "", "", "蓝色", "PE", "尺寸；颜色：未知色"),
+            ("尺寸；颜色：蓝色；材质：未知材质", "", "", "蓝色", "PE", "尺寸；颜色：蓝色；材质：未知材质"),
+            ("独立规格", "", "", "", "", "独立规格"),
+        ]
+        for index, (raw, customer_spec, customer_color, color, material, _) in enumerate(cases, start=1):
+            line = self.make_product_line(task, line_number=index)
+            line.specification_snapshot = raw
+            line.customer_specification_snapshot = customer_spec
+            line.customer_color_snapshot = customer_color
+            line.color_name_snapshot = color
+            line.material_snapshot = material
+            line.save()
+
+        response = self.get_source(task)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["data"]["production_task"]["products"]
+        self.assertEqual(len(rows), len(cases))
+        for row, (raw, _, _, color, material, display) in zip(rows, cases):
+            with self.subTest(line=row["line_number"]):
+                self.assertEqual(row.get("specification_display"), display)
+                self.assertEqual(row.get("material"), material)
+                self.assertEqual(row["specification"], raw)
+                self.assertEqual(row["color_name"], color)
+        self.assertEqual(
+            list(task.products.order_by("line_number").values_list("specification_snapshot", flat=True)),
+            [case[0] for case in cases],
+        )
+
+    def test_source_product_display_uses_snapshot_without_color_queries(self):
+        task = self.make_task("DISPLAY-NO-COLOR-QUERY")
+        color = ProductColor.objects.first()
+        self.assertIsNotNone(color)
+        for index in range(1, 4):
+            line = self.make_product_line(task, line_number=index)
+            line.product_color = color
+            line.color_name_snapshot = "历史蓝色"
+            line.material_snapshot = "PE"
+            line.specification_snapshot = "47*55*79；颜色：历史蓝色；材质：PE"
+            line.save()
+
+        with CaptureQueriesContext(connection) as queries:
+            response = self.get_source(task)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["data"]["production_task"]["products"]
+        self.assertEqual([row.get("specification_display") for row in rows], ["47*55*79"] * 3)
+        sql = "\n".join(query["sql"] for query in queries.captured_queries)
+        self.assertNotIn(f'"{ProductColor._meta.db_table}"', sql)
+
     def test_purchase_source_excludes_cutting_detail_section(self):
         task = self.make_task("NO-CUTTING")
         product_line = self.make_product_line(task)
-        bom, purchasable_line = self.make_bom(product_line)
+        bom, purchasable_line = self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         cutting_section = BomSection.objects.create(
             bom=bom,
             line_number=2,
@@ -402,7 +568,7 @@ class PurchaseOrderApiTests(APITestCase):
         product_line.save(
             update_fields=["color_card_snapshot", "color_name_snapshot", "color_code_snapshot"]
         )
-        self.make_bom(product_line, branch_count="5")
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="5")
         source_data = self.get_source(task).data["data"]
         payload = self.create_payload(
             task,
@@ -478,7 +644,7 @@ class PurchaseOrderApiTests(APITestCase):
         for suffix in ("NUMBER-1", "NUMBER-2"):
             task = self.make_task(suffix)
             product_line = self.make_product_line(task)
-            self.make_bom(product_line, branch_count="1")
+            self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="1")
             source_data = self.get_source(task).data["data"]
 
             response = self.client.post(
@@ -496,7 +662,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_currency_is_required_before_header_total_can_be_calculated(self):
         task = self.make_task("NO-CURRENCY")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         payload = self.create_payload(
             task,
@@ -514,7 +680,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_disabled_supplier_and_overflow_amount_are_rejected(self):
         task = self.make_task("DISABLED")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         disabled_payload = self.create_payload(
             task,
@@ -540,7 +706,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_product_without_bom_does_not_block_selected_valid_bom(self):
         task = self.make_task("MISSING")
         first_product = self.make_product_line(task, line_number=1)
-        first_bom, first_line = self.make_bom(first_product)
+        first_bom, first_line = self.make_bom(first_product, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         self.make_product_line(task, line_number=2)
 
         source = self.get_source(task)
@@ -569,10 +735,11 @@ class PurchaseOrderApiTests(APITestCase):
         pending_bom, _ = self.make_bom(
             pending_product,
             status=BomStatus.PENDING_CONFIRMATION,
+            section_type=BomSectionType.ACCESSORY,
             empty=True,
         )
         valid_product = self.make_product_line(task, line_number=2)
-        valid_bom, valid_line = self.make_bom(valid_product, branch_count="8")
+        valid_bom, valid_line = self.make_bom(valid_product, section_type=BomSectionType.ACCESSORY, budget_quantity="8")
 
         unselected = self.get_source(task)
 
@@ -615,12 +782,13 @@ class PurchaseOrderApiTests(APITestCase):
     def test_latest_unverified_bom_never_falls_back_to_old_verified_version(self):
         task = self.make_task("LATEST")
         product_line = self.make_product_line(task)
-        old_bom, old_line = self.make_bom(product_line, version=1, status=BomStatus.VERIFIED)
+        old_bom, old_line = self.make_bom(product_line, version=1, status=BomStatus.VERIFIED, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         latest_bom, latest_line = self.make_bom(
             product_line,
             version=2,
             status=BomStatus.PENDING_CONFIRMATION,
-            branch_count="99",
+            section_type=BomSectionType.ACCESSORY,
+            budget_quantity="99",
         )
 
         source = self.get_source(task)
@@ -657,7 +825,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_pending_validation_task_cannot_prepare_purchase_order(self):
         task = self.make_task("PENDING-DRAFT", status=ProductionTaskStatus.PENDING_VALIDATION)
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
 
         source = self.get_source(task)
 
@@ -674,7 +842,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_unresolved_material_identity_blocks_purchase_order_creation(self):
         task = self.make_task("NO-MATERIAL-ID")
         product_line = self.make_product_line(task)
-        _, bom_line = self.make_bom(product_line)
+        _, bom_line = self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         bom_line.raw_values = {}
         bom_line.save(update_fields=["raw_values", "updated_at"])
 
@@ -696,7 +864,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_invalid_quantity_is_visible_but_does_not_block_manual_purchase(self):
         task = self.make_task("INVALID-QTY")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line, branch_count="1,2,3")
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="1,2,3")
 
         source = self.get_source(task)
 
@@ -733,6 +901,151 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertIsNone(line["suggested_supplier_category"])
         self.assertEqual(line["category_source"], "UNKNOWN")
 
+    def test_auxiliary_source_uses_unit_consumption_without_changing_inventory(self):
+        cases = [
+            ("PCS", "2", 10, "20.0000", "辅料类"),
+            ("个", "0.125", 80, "10.0000", " 辅料类 "),
+            ("米", "0.00006", 10000, "0.6000", "辅料类"),
+        ]
+        for index, (unit_name, consumption, quantity, expected, title) in enumerate(cases):
+            with self.subTest(unit=unit_name, consumption=consumption):
+                inventory = RawMaterialInformation.objects.filter(
+                    archived_at__isnull=True,
+                    unit__unit_name=unit_name,
+                ).select_related("unit").first()
+                self.assertIsNotNone(inventory)
+                task = self.make_task(f"AUX-UNIT-{index}")
+                product_line = self.make_product_line(task, quantity=quantity)
+                bom, bom_line = self.make_bom(
+                    product_line,
+                    section_type=BomSectionType.FABRIC,
+                    category="辅料",
+                    unit=unit_name,
+                    unit_consumption=consumption,
+                    purchase_consumption="99",
+                    total_purchase_quantity="",
+                    total_consumption="",
+                )
+                bom_line.section.title = title
+                bom_line.section.save(update_fields=["title", "updated_at"])
+                bom_line.raw_values = {"source_inventory_material_id": str(inventory.pk)}
+                bom_line.save(update_fields=["raw_values", "updated_at"])
+                before_count = RawMaterialInformation.objects.count()
+                before_inventory = RawMaterialInformation.objects.values().get(pk=inventory.pk)
+                before_unit = type(inventory.unit).objects.values().get(pk=inventory.unit_id)
+                before_line = BomLine.objects.values().get(pk=bom_line.pk)
+
+                source = self.get_source(task)
+
+                self.assertEqual(source.status_code, 200, source.data)
+                self.assertTrue(source.data["data"]["can_create"], source.data)
+                row = source.data["data"]["lines"][0]
+                self.assertEqual(row["bom_id"], str(bom.pk))
+                self.assertEqual(row["required_quantity"], expected)
+                self.assertEqual(row["source_quantity_field"], "unit_consumption*order_quantity")
+                self.assertEqual(row["source_quantity_text"], f"{consumption} × {quantity}.0000")
+                self.assertEqual(row["quantity_parse_status"], "READY")
+                self.assertEqual(row["source_unit_text"], unit_name)
+                self.assertEqual(RawMaterialInformation.objects.count(), before_count)
+                self.assertEqual(RawMaterialInformation.objects.values().get(pk=inventory.pk), before_inventory)
+                self.assertEqual(type(inventory.unit).objects.values().get(pk=inventory.unit_id), before_unit)
+                self.assertEqual(BomLine.objects.values().get(pk=bom_line.pk), before_line)
+
+    def test_auxiliary_source_total_quantities_keep_priority_over_unit_consumption(self):
+        cases = [
+            ("17.5", "8", "total_purchase_quantity", "17.5000", "READY"),
+            ("", "8", "total_consumption", "8.0000", "READY"),
+            ("invalid", "8", "total_purchase_quantity", None, "INVALID"),
+            ("", "invalid", "total_consumption", None, "INVALID"),
+        ]
+        for index, (purchase_total, consumption_total, field, expected, status) in enumerate(cases):
+            with self.subTest(total_purchase_quantity=purchase_total, total_consumption=consumption_total):
+                task = self.make_task(f"AUX-TOTAL-{index}")
+                product_line = self.make_product_line(task)
+                _, bom_line = self.make_bom(
+                    product_line,
+                    section_type=BomSectionType.FABRIC,
+                    total_purchase_quantity=purchase_total,
+                    total_consumption=consumption_total,
+                    unit_consumption="3",
+                    purchase_consumption="7",
+                )
+                bom_line.section.title = "辅料类"
+                bom_line.section.save(update_fields=["title", "updated_at"])
+
+                source = self.get_source(task)
+
+                self.assertEqual(source.status_code, 200, source.data)
+                self.assertTrue(source.data["data"]["can_create"], source.data)
+                row = source.data["data"]["lines"][0]
+                self.assertEqual(row["required_quantity"], expected)
+                self.assertEqual(row["source_quantity_field"], field)
+                self.assertEqual(row["source_quantity_text"], purchase_total or consumption_total)
+                self.assertEqual(row["quantity_parse_status"], status)
+
+    def test_auxiliary_source_preserves_invalid_missing_and_legacy_quantity_states(self):
+        cases = [
+            ("1,2,3", "2", "unit_consumption*order_quantity", "1,2,3 × 10.0000", None, "INVALID"),
+            ("-1", "2", "unit_consumption*order_quantity", "-1 × 10.0000", None, "INVALID"),
+            ("NaN", "2", "unit_consumption*order_quantity", "NaN × 10.0000", None, "INVALID"),
+            ("", "2.5", "purchase_consumption*order_quantity", "2.5 × 10.0000", "25.0000", "READY"),
+            (" ", " ", "purchase_consumption*order_quantity", "", None, "MISSING"),
+        ]
+        for index, (consumption, legacy, field, text, expected, status) in enumerate(cases):
+            with self.subTest(unit_consumption=consumption, purchase_consumption=legacy):
+                task = self.make_task(f"AUX-STATE-{index}")
+                product_line = self.make_product_line(task)
+                _, bom_line = self.make_bom(
+                    product_line,
+                    section_type=BomSectionType.FABRIC,
+                    total_purchase_quantity="",
+                    total_consumption="",
+                    unit_consumption=consumption,
+                    purchase_consumption=legacy,
+                )
+                bom_line.section.title = "辅料类"
+                bom_line.section.save(update_fields=["title", "updated_at"])
+
+                source = self.get_source(task)
+
+                self.assertEqual(source.status_code, 200, source.data)
+                self.assertTrue(source.data["data"]["can_create"], source.data)
+                row = source.data["data"]["lines"][0]
+                self.assertEqual(row["required_quantity"], expected)
+                self.assertEqual(row["source_quantity_field"], field)
+                self.assertEqual(row["source_quantity_text"], text)
+                self.assertEqual(row["quantity_parse_status"], status)
+
+    def test_auxiliary_quantity_change_preserves_other_fabric_section_purchase_rules(self):
+        for index, title in enumerate(["面料类", "包材", "裁剪明细"]):
+            with self.subTest(section_title=title):
+                task = self.make_task(f"AUX-OTHER-{index}")
+                product_line = self.make_product_line(task)
+                _, bom_line = self.make_bom(
+                    product_line,
+                    section_type=BomSectionType.FABRIC,
+                    total_purchase_quantity="",
+                    total_consumption="",
+                    unit_consumption="3",
+                    purchase_consumption="0.25",
+                )
+                bom_line.section.title = title
+                bom_line.section.save(update_fields=["title", "updated_at"])
+
+                source = self.get_source(task)
+
+                self.assertEqual(source.status_code, 200, source.data)
+                if title == "裁剪明细":
+                    self.assertEqual(source.data["data"]["lines"], [])
+                    self.assertEqual(source.data["data"]["preview_lines"], [])
+                    self.assertIn("BOM_EMPTY", [item["code"] for item in source.data["data"]["blockers"]])
+                else:
+                    self.assertTrue(source.data["data"]["can_create"], source.data)
+                    row = source.data["data"]["lines"][0]
+                    self.assertEqual(row["required_quantity"], "2.5000")
+                    self.assertEqual(row["source_quantity_field"], "purchase_consumption*order_quantity")
+                    self.assertEqual(row["quantity_parse_status"], "READY")
+
     def test_long_invalid_derived_quantity_keeps_full_audit_text_and_can_be_saved(self):
         task = self.make_task("LONG-SOURCE")
         product_line = self.make_product_line(task)
@@ -765,7 +1078,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_source_revision_detects_line_snapshot_change(self):
         task = self.make_task("REVISION")
         product_line = self.make_product_line(task)
-        _, bom_line = self.make_bom(product_line)
+        _, bom_line = self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         old_source = self.get_source(task).data["data"]
 
         # QuerySet.update 不触发 auto_now；来源修订仍应基于真实行快照发现变化。
@@ -788,7 +1101,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_archived_purchase_order_still_blocks_a_second_order(self):
         task = self.make_task("ARCHIVED")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         created = self.client.post(
             "/api/v1/purchase-orders/",
@@ -819,7 +1132,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_purchase_endpoints_hide_out_of_scope_production_tasks(self):
         task = self.make_task("SCOPE")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
 
         outsider_user = get_user_model().objects.create_user(username="purchase_outsider")
@@ -854,7 +1167,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_submit_purchase_order_enables_material_receipt_gate(self):
         task = self.make_task("SUBMIT")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         payload = self.create_payload(
             task,
@@ -879,7 +1192,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_delete_purchase_order_without_downstream_records_and_recreate(self):
         task = self.make_task("DELETE")
         product_line = self.make_product_line(task)
-        self.make_bom(product_line)
+        self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         source_data = self.get_source(task).data["data"]
         payload = self.create_payload(
             task,
@@ -914,7 +1227,7 @@ class PurchaseOrderApiTests(APITestCase):
     def test_confirm_generate_edit_preview_publish_and_version_purchase_sheet(self):
         task = self.make_task("SHEET")
         product_line = self.make_product_line(task)
-        _, bom_line = self.make_bom(product_line)
+        _, bom_line = self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="12")
         bom_image_file = BusinessFile.objects.create(
             uploaded_by_employee=self.employee,
             original_name="bom-source.png",

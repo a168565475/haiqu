@@ -11,8 +11,8 @@ import {
   deleteBomDraftLineImage,
   deleteBomLineImage,
   fetchBomEditorReferenceOptions,
-  fetchBomFlowMaterials,
   previewBomMaterialFlow,
+  previewBomMaterialSave,
   fetchBomForEdit,
   fetchBomHardwareMaterialGroups,
   fetchBomHardwareMaterials,
@@ -20,7 +20,6 @@ import {
   fetchBomPackagingMaterials,
   fetchBomPlasticMaterialGroups,
   fetchBomPlasticMaterials,
-  fetchBomPipeMaterialMatches,
   fetchBomSemiFinishedMaterialGroups,
   fetchBomSemiFinishedMaterials,
   saveBomDraft,
@@ -52,10 +51,10 @@ import type {
   BomLine,
   BomLineImage,
   BomLineInput,
+  BomMaterialSaveOptions,
+  BomMaterialSavePreview,
   BomPackagingMaterial,
   BomPlasticMaterial,
-  BomPipeMaterial,
-  BomPipeMaterialMatches,
   BomProductColorOption,
   BomSemiFinishedMaterial,
   BomSection,
@@ -77,7 +76,7 @@ import type {
   TubeShape,
   TubeThickness,
 } from '@/types/productionData'
-import type { RawMaterialInformation } from '@/types/rawMaterial'
+import type { RawMaterialInformation, RawMaterialInput } from '@/types/rawMaterial'
 
 const route = useRoute()
 const router = useRouter()
@@ -110,6 +109,19 @@ const loading = ref(true)
 const saving = ref(false)
 const syncingQuantity = ref(false)
 const verifying = ref(false)
+interface PendingBomSave {
+  bomId: string
+  etag: string
+  sections: BomSectionInput[]
+  options: BomMaterialSaveOptions
+  snapshot: string
+  showMessage: boolean
+  deletedCount: number
+}
+const pendingMaterialSave = ref<PendingBomSave | null>(null)
+const materialSavePreview = ref<BomMaterialSavePreview | null>(null)
+const materialSaveError = ref('')
+const materialSaveRequiresRecheck = ref(false)
 const errorMessage = ref('')
 const tubeOptionsLoading = ref(false)
 const tubeShapes = ref<TubeShape[]>([])
@@ -138,10 +150,6 @@ const productInfoVisible = ref(false)
 const productColorDraft = ref({ color_card: '', color_code: '', color_name: '' })
 const lineDrawerVisible = ref(false)
 const editingSectionIndex = ref(-1)
-const flowMaterialOptions = ref<BomHardwareMaterial[]>([])
-const flowMaterialsLoading = ref(false)
-const flowMaterialsError = ref('')
-let flowMaterialRequest = 0
 const fabricSourceLines = computed(() => sections.value.filter((section) => section.title === '面料类')
   .flatMap((section) => section.lines).filter((line) => (line.id || line.client_key) && line.unit === '米'
     && (line.id || line.part_name.trim() || line.source_inventory_material_id || line.source_fabric_material_id || line.source_fabric_specification_id)))
@@ -165,35 +173,6 @@ function cuttingMaterial(line: BomLineInput) {
     : Boolean(line.fabric_source_client_key && !item.id && item.client_key === line.fabric_source_client_key))
   const sourceMaterial = source?.material.trim()
   return sourceMaterial && sourceMaterial !== '/' ? source!.material : line.material
-}
-
-async function loadFlowMaterials(keyword = '') {
-  const section = editingSection.value
-  if (section?.title !== '面料类') return
-  const request = ++flowMaterialRequest
-  flowMaterialsLoading.value = true
-  flowMaterialsError.value = ''
-  try {
-    const response = await fetchBomFlowMaterials('fabric', keyword)
-    if (request === flowMaterialRequest) flowMaterialOptions.value = response.data
-  } catch (error) {
-    if (request === flowMaterialRequest) flowMaterialsError.value = apiError(error, '原材料加载失败，请重试。')
-  } finally {
-    if (request === flowMaterialRequest) flowMaterialsLoading.value = false
-  }
-}
-
-function selectFlowMaterial(id: string) {
-  const item = flowMaterialOptions.value.find((option) => option.id === id)
-  const line = editingLineDraft.value
-  if (!item || !line) return
-  Object.assign(line, { source_inventory_material_id: item.id, material: item.material,
-    specification: item.specification, raw_material: item.material_number, unit: item.unit_name })
-  if (editingSection.value?.title === '面料类') {
-    line.source_fabric_specification_id = null
-    line.source_fabric_material_id = null
-  }
-  if (!line.part_name) line.part_name = item.material_name
 }
 
 const editingLineIndex = ref(-1)
@@ -279,6 +258,21 @@ const cuttingPickerPageSize = ref(50)
 const cuttingPickerTotal = ref(0)
 const cuttingCandidates = ref<BomSemiFinishedMaterial[]>([])
 const selectedCutting = ref<Record<string, BomSemiFinishedMaterial>>({})
+type RawMaterialTarget = 'hardware' | 'plastic' | 'packaging' | 'cutting'
+const pendingRawMaterials = ref<Record<string, { target: RawMaterialTarget; payload: RawMaterialInput; candidate: BomHardwareMaterial }>>({})
+
+function withPendingMaterials(target: RawMaterialTarget, candidates: BomHardwareMaterial[], keyword: string, materialName: string) {
+  const query = keyword.trim().toLocaleLowerCase('zh-CN')
+  const pending = Object.values(pendingRawMaterials.value).filter(item => item.target === target).map(item => item.candidate)
+    .filter(item => (!materialName || item.material_name === materialName)
+      && (!query || [item.material_number, item.material_name, item.specification, item.material, item.color_name].some(value => value.toLocaleLowerCase('zh-CN').includes(query))))
+  return [...pending, ...candidates]
+}
+
+function pendingLineValues(item: BomHardwareMaterial): Partial<BomLineInput> {
+  const pending = pendingRawMaterials.value[item.id]
+  return pending ? { client_key: item.id, pending_raw_material: { ...pending.payload } } : {}
+}
 let cuttingPickerRequestId = 0
 let cuttingGroupRequestId = 0
 const uploadingCuttingImagesLineId = ref('')
@@ -491,105 +485,21 @@ const cuttingPageSelectionIndeterminate = computed(() => (
   cuttingPageSelectedCount.value > 0 && !cuttingPageAllSelected.value
 ))
 const editingSection = computed(() => sections.value[editingSectionIndex.value] || null)
-const editingPipeSourceLocked = computed(() => Boolean(
-  editingSection.value?.lines[editingLineIndex.value]?.source_inventory_material_id,
-))
-const pipeMaterialCandidates = ref<BomPipeMaterial[]>([])
-const pipeMaterialMatchStatus = ref<BomPipeMaterialMatches['reason'] | 'loading' | 'linked' | 'error'>('incomplete')
-const pipeMaterialMatchError = ref('')
-let pipeMaterialMatchRequest = 0
-let pipeMaterialMatchKey = ''
-let manualPipeMaterialSelection: { line: BomLineInput; id: string; attributes: string } | null = null
-
 function pipeMaterialAttributeKey(line: BomLineInput) {
   return JSON.stringify([line.material.trim(), line.tube_diameter.trim(), line.tube_thickness.trim(), line.tube_shape.trim()])
 }
 
-function pipeMaterialQuery(line: BomLineInput) {
-  // 计算长度仅供后端判断是否可自动关联；不一致时仍返回候选，由用户核对档案长度。
-  const length = tubeCalculations(line).tube_cut_length_m
-  return { material: line.material.trim(), diameter: line.tube_diameter.trim(), thickness: line.tube_thickness.trim(), tube_shape: line.tube_shape.trim(), raw_bar_length_m: length === '—' ? undefined : length }
-}
-
-function pipeMaterialLabel(item: BomPipeMaterial) {
-  return [item.material_number, item.material_name, item.specification, item.length ? `档案长度：${item.length}` : '', item.unit_name].filter(Boolean).join(' · ')
-}
-
-const selectedPipeMaterialLabel = computed(() => {
-  const line = editingLineDraft.value
-  const item = pipeMaterialCandidates.value.find(candidate => candidate.id === line?.source_inventory_material_id)
-  return item ? pipeMaterialLabel(item) : line?.raw_material || '原料档案'
-})
-
-function selectPipeMaterial(id: string, automatic = false) {
-  const line = editingLineDraft.value
-  if (!line || !lineDrawerVisible.value || editingPipeSourceLocked.value || pipeMaterialMatchKey !== JSON.stringify(pipeMaterialQuery(line))) return
-  const item = pipeMaterialCandidates.value.find(candidate => candidate.id === id)
-  if (!item) return
-  Object.assign(line, { source_inventory_material_id: item.id, raw_material: item.material_number, unit: item.unit_name })
-  manualPipeMaterialSelection = automatic ? null : { line, id, attributes: pipeMaterialAttributeKey(line) }
-  pipeMaterialMatchStatus.value = 'linked'
-}
-
-async function matchPipeMaterial() {
-  const request = ++pipeMaterialMatchRequest
-  const line = editingLineDraft.value
-  // 手选确认过档案后，用量变化无需再次确认；四项管材属性变化才使该选择失效。
-  if (line && lineDrawerVisible.value && editingSection.value?.section_type === 'PROFILE'
-    && manualPipeMaterialSelection?.line === line && manualPipeMaterialSelection.id === line.source_inventory_material_id
-    && manualPipeMaterialSelection.attributes === pipeMaterialAttributeKey(line)) {
-    pipeMaterialMatchKey = JSON.stringify(pipeMaterialQuery(line))
-    pipeMaterialMatchStatus.value = 'linked'
-    return
-  }
-  manualPipeMaterialSelection = null
-  pipeMaterialCandidates.value = []
-  pipeMaterialMatchError.value = ''
-  pipeMaterialMatchKey = ''
-  pipeMaterialMatchStatus.value = 'incomplete'
-  if (!lineDrawerVisible.value || editingSection.value?.section_type !== 'PROFILE' || !line) return
-  if (editingPipeSourceLocked.value) {
-    pipeMaterialMatchStatus.value = 'linked'
-    return
-  }
-  const original = editingSection.value.lines[editingLineIndex.value]
-  if (original && pipeMaterialAttributeKey(original) !== pipeMaterialAttributeKey(line)) {
-    // 旧规格快照不能继续盖住用户刚改的管材参数；表格先展示当前参数，保存时由后端重建规格。
-    line.specification = ''
-  }
-  // 只解除本次弹窗内的新匹配；源行的稳定关联保持只读，取消弹窗也不会改变源行。
-  if (line.source_inventory_material_id) {
-    line.source_inventory_material_id = null
-    line.raw_material = ''
-  }
-  const query = pipeMaterialQuery(line)
-  if (!query.material || !query.diameter || !query.thickness) return
-  const key = JSON.stringify(query)
-  pipeMaterialMatchKey = key
-  pipeMaterialMatchStatus.value = 'loading'
-  try {
-    const result = await fetchBomPipeMaterialMatches(query)
-    if (request !== pipeMaterialMatchRequest || !lineDrawerVisible.value || editingLineDraft.value !== line || JSON.stringify(pipeMaterialQuery(line)) !== key) return
-    pipeMaterialCandidates.value = result.candidates
-    pipeMaterialMatchStatus.value = result.reason
-    if (result.automatic_source_id) {
-      if (!result.candidates.some(item => item.id === result.automatic_source_id)) {
-        pipeMaterialMatchStatus.value = 'error'
-        pipeMaterialMatchError.value = '原料匹配结果不完整，请重试。'
-        return
-      }
-      selectPipeMaterial(result.automatic_source_id, true)
-    }
-  } catch (error) {
-    if (request !== pipeMaterialMatchRequest || !lineDrawerVisible.value || editingLineDraft.value !== line) return
-    pipeMaterialMatchStatus.value = 'error'
-    pipeMaterialMatchError.value = apiError(error, '原料匹配失败，请重试。')
-  }
-}
-
 watch(() => [lineDrawerVisible.value, editingSection.value?.section_type, editingLineDraft.value,
   editingLineDraft.value?.tube_shape, editingLineDraft.value?.material, editingLineDraft.value?.tube_diameter,
-  editingLineDraft.value?.tube_thickness, editingLineDraft.value ? pipeMaterialQuery(editingLineDraft.value).raw_bar_length_m : undefined], () => { void matchPipeMaterial() })
+  editingLineDraft.value?.tube_thickness], () => {
+  const line = editingLineDraft.value
+  if (!lineDrawerVisible.value || editingSection.value?.section_type !== 'PROFILE' || !line) return
+  const original = editingSection.value.lines[editingLineIndex.value]
+  if (original && pipeMaterialAttributeKey(original) !== pipeMaterialAttributeKey(line)) {
+    // 参数改动后不再展示旧规格；保存 BOM 时由后端按当前参数同步原料关联。
+    line.specification = ''
+  }
+})
 
 const drawerHasNextLine = computed(() => (
   Boolean(editingSection.value)
@@ -1081,11 +991,11 @@ async function loadHardwareCandidates() {
       material_name: hardwarePickerMaterialName.value || undefined,
     })
     if (requestId !== hardwarePickerRequestId) return
-    hardwareCandidates.value = response.data
+    hardwareCandidates.value = withPendingMaterials('hardware', response.data, hardwarePickerKeyword.value, hardwarePickerMaterialName.value)
     hardwarePickerTotal.value = response.meta.total
   } catch (error) {
     if (requestId !== hardwarePickerRequestId) return
-    hardwareCandidates.value = []
+    hardwareCandidates.value = withPendingMaterials('hardware', [], hardwarePickerKeyword.value, hardwarePickerMaterialName.value)
     hardwarePickerTotal.value = 0
     hardwarePickerError.value = apiError(error, '五金数据加载失败，请稍后重试。')
   } finally {
@@ -1141,35 +1051,17 @@ function toggleHardwarePage(selected: boolean | string | number) {
 function hardwareLine(item: BomHardwareMaterial): BomLineInput {
   return {
     ...blankLine(item.unit_name || item.unit_code),
+    ...pendingLineValues(item),
     category: '五金',
     part_name: item.material_name,
     material: item.material,
     specification: item.specification,
     raw_material: item.material_number,
-    source_raw_material_id: item.id,
+    source_raw_material_id: pendingRawMaterials.value[item.id] ? null : item.id,
     hardware_material_number: item.material_number,
     hardware_color: item.color_name,
     hardware_flow_unit: item.flow_unit,
     unit_material_weight_kg: item.weight_kg,
-  }
-}
-
-function hardwareMaterialFromRawMaterial(item: RawMaterialInformation): BomHardwareMaterial {
-  return {
-    id: item.id,
-    material_number: item.material_number,
-    item_type: item.item_type,
-    item_type_display: item.item_type_label,
-    category_name: item.category_name,
-    material_name: item.material_name,
-    material: item.material,
-    color_name: item.color_name,
-    specification: item.specification,
-    unit_code: item.unit_code,
-    unit_name: item.unit_name,
-    weight_kg: item.weight_kg,
-    flow_unit: item.flow_unit,
-    number_value: item.number_value,
   }
 }
 
@@ -1181,14 +1073,32 @@ function openHardwareCreate() {
   hardwareCreateVisible.value = true
 }
 
-async function handleHardwareCreated(item: RawMaterialInformation) {
-  const candidate = hardwareMaterialFromRawMaterial(item)
-  selectedHardware.value = { ...selectedHardware.value, [candidate.id]: candidate }
-  hardwarePickerMaterialName.value = candidate.material_name
-  hardwarePickerKeyword.value = candidate.material_number
-  hardwarePickerPage.value = 1
-  await Promise.all([loadHardwareGroups(), loadHardwareCandidates()])
-  ElMessage.success('五金原料已新增并选中。')
+async function stageRawMaterial(target: RawMaterialTarget, payload: RawMaterialInput, display: Pick<RawMaterialInformation, 'category_name' | 'unit_name' | 'unit_code' | 'color_name'>) {
+  const candidate: BomHardwareMaterial = {
+    id: createDraftKey(), material_number: payload.material_number, item_type: payload.item_type,
+    item_type_display: payload.item_type === 'SEMI_FINISHED' ? '半成品' : '材料',
+    material_name: payload.material_name, material: payload.material, specification: payload.specification,
+    weight_kg: '', flow_unit: '', number_value: '', ...display,
+  }
+  pendingRawMaterials.value[candidate.id] = { target, payload: { ...payload }, candidate }
+  if (target === 'hardware') {
+    selectedHardware.value[candidate.id] = candidate
+    hardwarePickerMaterialName.value = ''; hardwarePickerKeyword.value = ''; hardwarePickerPage.value = 1
+    await loadHardwareCandidates()
+  } else if (target === 'plastic') {
+    selectedPlastic.value[candidate.id] = candidate
+    plasticPickerMaterialName.value = ''; plasticPickerKeyword.value = ''; plasticPickerPage.value = 1
+    await loadPlasticCandidates()
+  } else if (target === 'packaging') {
+    selectedPackaging.value[candidate.id] = candidate
+    packagingPickerMaterialName.value = ''; packagingPickerKeyword.value = ''; packagingPickerPage.value = 1
+    await loadPackagingCandidates()
+  } else {
+    selectedCutting.value[candidate.id] = candidate
+    cuttingPickerMaterialName.value = ''; cuttingPickerKeyword.value = ''; cuttingPickerPage.value = 1
+    await loadCuttingCandidates()
+  }
+  ElMessage.success('资料已暂存并选中，保存 BOM 时统一确认新增。')
 }
 
 function openRawMaterialCreate(target: 'plastic' | 'packaging' | 'cutting') {
@@ -1199,36 +1109,6 @@ function openRawMaterialCreate(target: 'plastic' | 'packaging' | 'cutting') {
   if (target === 'plastic') plasticCreateVisible.value = true
   if (target === 'packaging') packagingCreateVisible.value = true
   if (target === 'cutting') cuttingCreateVisible.value = true
-}
-
-async function handlePlasticCreated(item: RawMaterialInformation) {
-  const candidate = hardwareMaterialFromRawMaterial(item)
-  selectedPlastic.value = { ...selectedPlastic.value, [candidate.id]: candidate }
-  plasticPickerMaterialName.value = candidate.material_name
-  plasticPickerKeyword.value = candidate.material_number
-  plasticPickerPage.value = 1
-  await Promise.all([loadPlasticGroups(), loadPlasticCandidates()])
-  ElMessage.success('塑料件原料已新增并选中。')
-}
-
-async function handlePackagingCreated(item: RawMaterialInformation) {
-  const candidate = hardwareMaterialFromRawMaterial(item)
-  selectedPackaging.value = { ...selectedPackaging.value, [candidate.id]: candidate }
-  packagingPickerMaterialName.value = candidate.material_name
-  packagingPickerKeyword.value = candidate.material_number
-  packagingPickerPage.value = 1
-  await Promise.all([loadPackagingGroups(), loadPackagingCandidates()])
-  ElMessage.success('包材原料已新增并选中。')
-}
-
-async function handleCuttingCreated(item: RawMaterialInformation) {
-  const candidate = hardwareMaterialFromRawMaterial(item)
-  selectedCutting.value = { ...selectedCutting.value, [candidate.id]: candidate }
-  cuttingPickerMaterialName.value = candidate.material_name
-  cuttingPickerKeyword.value = candidate.material_number
-  cuttingPickerPage.value = 1
-  await Promise.all([loadCuttingGroups(), loadCuttingCandidates()])
-  ElMessage.success('半成品原料已新增并选中。')
 }
 
 function confirmHardwareSelection() {
@@ -1242,7 +1122,7 @@ function confirmHardwareSelection() {
     ElMessage.warning('请至少选择一条五金数据。')
     return
   }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.source_raw_material_id).filter(Boolean))
+  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_raw_material_id).filter(Boolean))
   const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(hardwareLine)
   if (!newLines.length) {
     ElMessage.info('所选五金数据已在当前分区中。')
@@ -1282,11 +1162,11 @@ async function loadPlasticCandidates() {
       material_name: plasticPickerMaterialName.value || undefined,
     })
     if (requestId !== plasticPickerRequestId) return
-    plasticCandidates.value = response.data
+    plasticCandidates.value = withPendingMaterials('plastic', response.data, plasticPickerKeyword.value, plasticPickerMaterialName.value)
     plasticPickerTotal.value = response.meta.total
   } catch (error) {
     if (requestId !== plasticPickerRequestId) return
-    plasticCandidates.value = []
+    plasticCandidates.value = withPendingMaterials('plastic', [], plasticPickerKeyword.value, plasticPickerMaterialName.value)
     plasticPickerTotal.value = 0
     plasticPickerError.value = apiError(error, '塑料件数据加载失败，请稍后重试。')
   } finally {
@@ -1357,12 +1237,13 @@ function togglePlasticPage(selected: boolean | string | number) {
 function plasticLine(item: BomPlasticMaterial): BomLineInput {
   return {
     ...blankLine(item.unit_name || item.unit_code),
+    ...pendingLineValues(item),
     category: '塑料件',
     part_name: item.material_name,
     material: item.material,
     specification: item.specification,
     raw_material: item.material_number,
-    source_raw_material_id: item.id,
+    source_raw_material_id: pendingRawMaterials.value[item.id] ? null : item.id,
     plastic_material_number: item.material_number,
     plastic_color: item.color_name,
   }
@@ -1379,7 +1260,7 @@ function confirmPlasticSelection() {
     ElMessage.warning('请至少选择一条塑料件数据。')
     return
   }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.source_raw_material_id).filter(Boolean))
+  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_raw_material_id).filter(Boolean))
   const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(plasticLine)
   if (!newLines.length) {
     ElMessage.info('所选塑料件数据已在当前分区中。')
@@ -1433,11 +1314,11 @@ async function loadPackagingCandidates() {
       material_name: packagingPickerMaterialName.value || undefined,
     })
     if (requestId !== packagingPickerRequestId) return
-    packagingCandidates.value = response.data
+    packagingCandidates.value = withPendingMaterials('packaging', response.data, packagingPickerKeyword.value, packagingPickerMaterialName.value)
     packagingPickerTotal.value = response.meta.total
   } catch (error) {
     if (requestId !== packagingPickerRequestId) return
-    packagingCandidates.value = []
+    packagingCandidates.value = withPendingMaterials('packaging', [], packagingPickerKeyword.value, packagingPickerMaterialName.value)
     packagingPickerTotal.value = 0
     packagingPickerError.value = apiError(error, '包材数据加载失败，请稍后重试。')
   } finally {
@@ -1493,12 +1374,13 @@ function togglePackagingPage(selected: boolean | string | number) {
 function packagingLine(item: BomPackagingMaterial): BomLineInput {
   return {
     ...blankLine(item.unit_name || item.unit_code),
+    ...pendingLineValues(item),
     category: '包材',
     part_name: item.material_name,
     material: item.material,
     specification: item.specification,
     raw_material: item.material_number,
-    source_packaging_material_id: item.id,
+    source_packaging_material_id: pendingRawMaterials.value[item.id] ? null : item.id,
     packaging_material_number: item.material_number,
     packaging_color: item.color_name,
     units_per_box: '',
@@ -1516,7 +1398,7 @@ function confirmPackagingSelection() {
     ElMessage.warning('请至少选择一条包材数据。')
     return
   }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.source_packaging_material_id).filter(Boolean))
+  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_packaging_material_id).filter(Boolean))
   const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(packagingLine)
   if (!newLines.length) {
     ElMessage.info('所选包材数据已在当前分区中。')
@@ -1571,11 +1453,11 @@ async function loadCuttingCandidates() {
       material_name: cuttingPickerMaterialName.value || undefined,
     })
     if (requestId !== cuttingPickerRequestId) return
-    cuttingCandidates.value = response.data
+    cuttingCandidates.value = withPendingMaterials('cutting', response.data, cuttingPickerKeyword.value, cuttingPickerMaterialName.value)
     cuttingPickerTotal.value = response.meta.total
   } catch (error) {
     if (requestId !== cuttingPickerRequestId) return
-    cuttingCandidates.value = []
+    cuttingCandidates.value = withPendingMaterials('cutting', [], cuttingPickerKeyword.value, cuttingPickerMaterialName.value)
     cuttingPickerTotal.value = 0
     cuttingPickerError.value = apiError(error, '裁剪数据加载失败，请稍后重试。')
   } finally {
@@ -1642,6 +1524,7 @@ function createDraftKey() {
 function cuttingLine(item: BomSemiFinishedMaterial): BomLineInput {
   return {
     ...blankLine('套'),
+    ...pendingLineValues(item),
     cutting_pieces_per_set: null,
     fabric_meters_per_piece: null,
     cutting_sets_per_product: 1,
@@ -1650,7 +1533,7 @@ function cuttingLine(item: BomSemiFinishedMaterial): BomLineInput {
     material: item.material,
     specification: item.specification,
     raw_material: item.material_number,
-    source_cutting_material_id: item.id,
+    source_cutting_material_id: pendingRawMaterials.value[item.id] ? null : item.id,
     cutting_material_number: item.material_number,
     cutting_item_type: item.item_type,
     cutting_item_type_display: item.item_type_display,
@@ -1672,7 +1555,7 @@ function confirmCuttingSelection() {
     ElMessage.warning('请至少选择一条裁剪数据。')
     return
   }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.source_cutting_material_id).filter(Boolean))
+  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_cutting_material_id).filter(Boolean))
   const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(cuttingLine)
   if (!newLines.length) {
     ElMessage.info('所选裁剪数据已在当前分区中。')
@@ -1964,7 +1847,7 @@ function fabricWidthOptions(line: BomLineInput) {
   return optionsWithDisabledSnapshot(
     (editorReferenceOptions.value?.fabric_widths || []).map((item) => ({ id: item.id, label: item.width_value })),
     line.source_fabric_width_id,
-    line.fabric_width || line.raw_material,
+    line.fabric_width,
     '已停用门幅',
   )
 }
@@ -2369,7 +2252,6 @@ function openLineDrawer(index: number) {
   }
   editingLineIsNew.value = false
   lineDrawerVisible.value = true
-  if (activeSection.value.title === '面料类') void loadFlowMaterials()
 }
 
 async function discardDrawerSessionDraftImages() {
@@ -2418,7 +2300,7 @@ function resetLineDrawer() {
 
 function configuredLineError(section: BomSectionInput, line: BomLineInput, lineIndex: number) {
   const prefix = `“${section.title}”第 ${lineIndex + 1} 行`
-  if (section.title === '塑料件类' && !line.id && !line.source_raw_material_id) {
+  if (section.title === '塑料件类' && !line.id && !line.source_raw_material_id && !line.pending_raw_material) {
     return `${prefix}请先通过“选择数据”添加塑料件资料。`
   }
   if (section.title === '辅料类') {
@@ -2428,10 +2310,10 @@ function configuredLineError(section: BomSectionInput, line: BomLineInput, lineI
     if (isConfiguredLine && !line.source_accessory_color_id) return `${prefix}请选择颜色。`
     if (isConfiguredLine && !line.source_accessory_material_id) return `${prefix}请选择材质。`
   }
-  if (section.title === '包材类' && !line.id && !line.source_packaging_material_id) {
+  if (section.title === '包材类' && !line.id && !line.source_packaging_material_id && !line.pending_raw_material) {
     return `${prefix}请先通过“选择包材”添加包材资料。`
   }
-  if (section.title === '裁剪明细' && !line.id && !line.source_cutting_material_id) {
+  if (section.title === '裁剪明细' && !line.id && !line.source_cutting_material_id && !line.pending_raw_material) {
     return `${prefix}请先通过“选择裁剪”添加半成品资料。`
   }
   return ''
@@ -2498,10 +2380,6 @@ async function commitLineDrawer() {
   const targetSection = sections.value[editingSectionIndex.value]
   if (!editingLineDraft.value || !targetSection) {
     ElMessage.error('当前用料明细已不存在，请关闭弹出层后刷新页面。')
-    return null
-  }
-  if (targetSection.section_type === 'PROFILE' && pipeMaterialMatchStatus.value === 'loading') {
-    ElMessage.warning('原料匹配中，请稍候再应用修改。')
     return null
   }
   if (!String(editingLineDraft.value.part_name ?? '').trim()) {
@@ -2717,7 +2595,56 @@ function validateLines() {
 }
 
 async function persistDraft(showMessage = true) {
-  if (!bom.value || !canEdit.value) return false
+  return startMaterialSave('draft', showMessage)
+}
+
+function materialSaveSnapshotMatches(pending: PendingBomSave) {
+  return bom.value?.id === pending.bomId && etag.value === pending.etag
+    && JSON.stringify(sections.value) === pending.snapshot
+    && (pending.options.intent !== 'verify' || quantityReason.value.trim() === pending.options.quantity_confirmation_reason)
+}
+
+function materialLocationGroups(item: BomMaterialSavePreview['new_materials'][number]) {
+  const groups = new Map<string, number[]>()
+  for (const location of item.locations) {
+    const rows = groups.get(location.section_title) || []
+    if (!rows.includes(location.line_number)) rows.push(location.line_number)
+    groups.set(location.section_title, rows)
+  }
+  return Array.from(groups, ([section, rows]) => ({ section, rows: rows.join('、') }))
+}
+
+function cancelMaterialSave() {
+  if (saving.value || verifying.value) return
+  pendingMaterialSave.value = null
+  materialSavePreview.value = null
+  materialSaveError.value = ''
+  materialSaveRequiresRecheck.value = false
+}
+
+async function writeMaterialSave(pending: PendingBomSave, confirmationToken?: string) {
+  try {
+    const options = { ...pending.options, ...(confirmationToken ? { confirmation_token: confirmationToken } : {}) }
+    const result = await saveBomDraft(pending.bomId, pending.sections, pending.etag, options)
+    applyVersioned(result)
+    pendingRawMaterials.value = {}
+    pendingMaterialSave.value = null
+    materialSavePreview.value = null
+    if (pending.showMessage) ElMessage.success(pending.options.intent === 'verify'
+      ? 'BOM 已提交。'
+      : pending.deletedCount ? `BOM 草稿已保存，已删除 ${pending.deletedCount} 条旧明细。` : 'BOM 草稿已保存。')
+    return true
+  } catch (error) {
+    materialSaveError.value = apiError(error)
+    if ((error as { response?: { status?: number } })?.response?.status === 409) materialSaveRequiresRecheck.value = true
+    ElMessage.error(materialSaveError.value)
+    return false
+  }
+}
+
+async function startMaterialSave(intent: 'draft' | 'verify', showMessage = true) {
+  if (!bom.value || saving.value || verifying.value || pendingMaterialSave.value) return false
+  if (intent === 'draft' ? !canEdit.value : !canVerify.value) return false
   for (const section of sections.value) {
     if (section.section_type === 'PROFILE') section.lines.forEach(normalizeTubeCutPieceCount)
   }
@@ -2726,21 +2653,55 @@ async function persistDraft(showMessage = true) {
     ElMessage.error('当前页面缺少版本信息，请刷新后重试。')
     return false
   }
-  saving.value = true
+  const snapshot = JSON.stringify(sections.value)
+  const pending: PendingBomSave = {
+    bomId: bom.value.id, etag: etag.value, sections: JSON.parse(snapshot), snapshot, showMessage,
+    deletedCount: pendingDeletedLineIds.value.size,
+    options: { intent, ...(intent === 'verify' ? { quantity_confirmation_reason: quantityReason.value.trim() } : {}) },
+  }
+  materialSaveError.value = ''
+  materialSaveRequiresRecheck.value = false
+  if (intent === 'draft') saving.value = true
+  else verifying.value = true
   try {
-    const pendingDeletedCount = pendingDeletedLineIds.value.size
-    applyVersioned(await saveBomDraft(bom.value.id, sections.value, etag.value))
-    if (showMessage) {
-      ElMessage.success(pendingDeletedCount
-        ? `BOM 草稿已保存，已删除 ${pendingDeletedCount} 条旧明细。`
-        : 'BOM 草稿已保存。')
+    const preview = await previewBomMaterialSave(pending.bomId, pending.sections, pending.etag, pending.options)
+    if (!materialSaveSnapshotMatches(pending)) {
+      ElMessage.warning('预检期间内容已变化，请重新保存以检查最新内容。')
+      return false
     }
-    return true
+    if (preview.new_materials.length) {
+      if (!preview.confirmation_token) throw new Error('原料新增清单缺少确认凭据，请重新检查。')
+      materialSavePreview.value = preview
+      pendingMaterialSave.value = pending
+      return false
+    }
+    return await writeMaterialSave(pending)
   } catch (error) {
     ElMessage.error(apiError(error))
     return false
   } finally {
     saving.value = false
+    verifying.value = false
+  }
+}
+
+async function confirmMaterialSave() {
+  const pending = pendingMaterialSave.value
+  const token = materialSavePreview.value?.confirmation_token
+  if (!pending || !token || saving.value || verifying.value || materialSaveRequiresRecheck.value) return false
+  if (!materialSaveSnapshotMatches(pending)) {
+    materialSaveError.value = '页面内容已变化，请返回修改后重新检查新增清单。'
+    materialSaveRequiresRecheck.value = true
+    return false
+  }
+  if (pending.options.intent === 'draft') saving.value = true
+  else verifying.value = true
+  materialSaveError.value = ''
+  try {
+    return await writeMaterialSave(pending, token)
+  } finally {
+    saving.value = false
+    verifying.value = false
   }
 }
 
@@ -2750,7 +2711,7 @@ async function submitVerification() {
     openProductConfirmDialog()
     return
   }
-  if (!bom.value || !canVerify.value) return
+  if (!bom.value || !canVerify.value || saving.value || verifying.value || pendingMaterialSave.value) return
   if (!sections.value.some((section) => section.lines.length)) {
     ElMessage.warning('至少添加一条用料明细后才能提交。')
     return
@@ -2759,7 +2720,14 @@ async function submitVerification() {
     ElMessage.warning({ message: quantityMismatchMessage.value, duration: 8000, showClose: true })
     return
   }
-  if (canEdit.value && !(await persistDraft(false))) return
+  if (canEdit.value) {
+    await startMaterialSave('verify')
+    return
+  }
+  if (!etag.value) {
+    ElMessage.error('当前页面缺少版本信息，请刷新后重试。')
+    return
+  }
   verifying.value = true
   try {
     applyVersioned(await verifyBom(bom.value.id, quantityReason.value.trim(), etag.value))
@@ -2873,14 +2841,13 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  pipeMaterialMatchRequest += 1
   if (advancingLineUnlockTimer !== undefined) window.clearTimeout(advancingLineUnlockTimer)
   window.removeEventListener('keydown', closeTableFullscreen)
 })
 </script>
 
 <template>
-  <section class="bom-editor-page" aria-label="BOM 编辑">
+  <section v-loading="saving || verifying" class="bom-editor-page" aria-label="BOM 编辑">
     <div v-if="loading" class="page-state" v-loading="true" />
     <ElResult v-else-if="errorMessage" class="bom-error-state" role="alert" title="BOM 加载失败" :sub-title="errorMessage">
       <template #icon>
@@ -2963,8 +2930,8 @@ onBeforeUnmount(() => {
         </div>
         <div class="heading-actions">
           <ElButton @click="printPage">预览打印</ElButton>
-          <ElButton v-if="canEdit" :loading="saving" @click="persistDraft()">保存草稿</ElButton>
-          <ElButton v-if="canVerify" type="primary" :loading="verifying" :disabled="saving" @click="submitVerification">确认BOM</ElButton>
+          <ElButton v-if="canEdit" :loading="saving" :disabled="verifying || Boolean(pendingMaterialSave)" @click="persistDraft()">保存草稿</ElButton>
+          <ElButton v-if="canVerify" type="primary" :loading="verifying" :disabled="saving || Boolean(pendingMaterialSave)" @click="submitVerification">确认BOM</ElButton>
         </div>
       </header>
 
@@ -3198,7 +3165,7 @@ onBeforeUnmount(() => {
               <ElTableColumn label="色卡" min-width="200"><template #default="scope"><ElSelect v-model="scope.row.source_product_color_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="fabricColorSnapshot(scope.row) || '选择色卡 / 颜色 / 色号'" @change="setFabricColor(scope.row, $event)"><ElOption v-for="item in fabricColorOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
               <ElTableColumn label="颜色" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_name || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="色号" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_code || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="门幅" min-width="120"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_width_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.fabric_width || scope.row.raw_material || '选择门幅'" @change="setFabricWidth(scope.row, $event)"><ElOption v-for="item in fabricWidthOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="门幅" min-width="120"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_width_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.fabric_width || '选择门幅'" @change="setFabricWidth(scope.row, $event)"><ElOption v-for="item in fabricWidthOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
               <ElTableColumn label="单个用量" width="120"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="裁片" min-width="150"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit" maxlength="300" placeholder="填写裁片" /></template></ElTableColumn>
               <ElTableColumn label="单位" width="70"><template #default><span class="hardware-readonly-cell">米</span></template></ElTableColumn>
@@ -3331,19 +3298,10 @@ onBeforeUnmount(() => {
           >
             <template #default><ElButton size="small" @click="ensureEditorReferenceOptions">重新加载生产维护数据</ElButton></template>
           </ElAlert>
-          <label v-if="editingSection?.title === '面料类'" class="drawer-field drawer-field--wide">
-            <span>来源原材料（材质、规格以所选原料为准）</span>
-            <ElSelect v-model="editingLineDraft.source_inventory_material_id" filterable remote :remote-method="loadFlowMaterials" :loading="flowMaterialsLoading" placeholder="搜索原料编码、品名或规格" aria-label="来源原材料" @visible-change="$event && loadFlowMaterials()" @change="selectFlowMaterial">
-              <ElOption v-if="editingLineDraft.source_inventory_material_id && !flowMaterialOptions.some((item) => item.id === editingLineDraft?.source_inventory_material_id)" :value="editingLineDraft.source_inventory_material_id" :label="`${editingLineDraft.raw_material || editingLineDraft.part_name} · ${editingLineDraft.specification}`" />
-              <ElOption v-for="item in flowMaterialOptions" :key="item.id" :label="`${item.material_number} · ${item.material_name} · ${item.specification}`" :value="item.id" />
-            </ElSelect>
-            <span v-if="flowMaterialsError" role="alert">{{ flowMaterialsError }} <ElButton link @click="loadFlowMaterials()">重新加载</ElButton></span>
-          </label>
           <template v-if="editingSection?.section_type === 'PROFILE'">
             <label class="drawer-field">
               <span>形状</span>
-              <strong v-if="editingPipeSourceLocked" class="drawer-readonly-value">{{ editingLineDraft.tube_shape || '—' }}</strong>
-              <PinyinFilterSelect v-else v-model="editingLineDraft.tube_shape" :options="tubeShapes" label-key="shape_name" :loading="tubeOptionsLoading" placeholder="选择形状" aria-label="形状" />
+              <PinyinFilterSelect v-model="editingLineDraft.tube_shape" :options="tubeShapes" label-key="shape_name" :loading="tubeOptionsLoading" placeholder="选择形状" aria-label="形状" />
             </label>
             <label class="drawer-field">
               <span>品名</span>
@@ -3351,40 +3309,23 @@ onBeforeUnmount(() => {
             </label>
             <label class="drawer-field">
               <span>材质</span>
-              <strong v-if="editingPipeSourceLocked" class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong>
-              <PinyinFilterSelect v-else v-model="editingLineDraft.material" :options="tubeMaterials" label-key="material_name" :loading="tubeOptionsLoading" placeholder="选择材质" aria-label="材质" />
+              <PinyinFilterSelect v-model="editingLineDraft.material" :options="tubeMaterials" label-key="material_name" :loading="tubeOptionsLoading" placeholder="选择材质" aria-label="材质" />
             </label>
             <label class="drawer-field">
               <span>规格</span>
-              <strong v-if="editingPipeSourceLocked" class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong>
-              <ElSelect v-else v-model="editingLineDraft.tube_diameter" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择规格" aria-label="规格">
+              <ElSelect v-model="editingLineDraft.tube_diameter" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择规格" aria-label="规格">
                 <ElOption v-for="item in tubeDiameters" :key="item.id" :label="item.diameter_value" :value="item.diameter_value" />
               </ElSelect>
             </label>
             <label class="drawer-field">
               <span>厚度</span>
-              <strong v-if="editingPipeSourceLocked" class="drawer-readonly-value">{{ editingLineDraft.tube_thickness || '—' }}</strong>
-              <ElSelect v-else v-model="editingLineDraft.tube_thickness" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择厚度" aria-label="厚度">
+              <ElSelect v-model="editingLineDraft.tube_thickness" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择厚度" aria-label="厚度">
                 <ElOption v-for="item in tubeThicknesses" :key="item.id" :label="item.thickness_value" :value="item.thickness_value" />
               </ElSelect>
             </label>
             <label class="drawer-field"><span>切割长度（mm）</span><ElInput v-model="editingLineDraft.length_value" inputmode="numeric" placeholder="正整数毫米" aria-label="切割长度（mm）" /></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
             <label class="drawer-field"><span>原材料单位</span><strong class="drawer-readonly-value">根</strong></label>
-            <div class="pipe-material-match drawer-field--wide" data-testid="pipe-material-match" :data-source-id="editingLineDraft.source_inventory_material_id || ''" :data-match-reason="pipeMaterialMatchStatus" :data-loading="pipeMaterialMatchStatus === 'loading'" role="status" aria-live="polite">
-              <span class="pipe-material-match__label">对应原料</span>
-              <span v-if="pipeMaterialMatchStatus === 'loading'">匹配中…</span>
-              <span v-else-if="pipeMaterialMatchStatus === 'linked'">已关联：{{ selectedPipeMaterialLabel }}</span>
-              <span v-else-if="pipeMaterialMatchStatus === 'multiple'">找到 {{ pipeMaterialCandidates.length }} 条对应原料，请选择。</span>
-              <span v-else-if="pipeMaterialMatchStatus === 'needs_review'">请核对原料档案后确认选择。</span>
-              <span v-else-if="pipeMaterialMatchStatus === 'no_match'" class="pipe-material-match__warning">该规格尚未建立原料档案，可先保存草稿。</span>
-              <span v-else-if="pipeMaterialMatchStatus === 'error'" class="pipe-material-match__warning">{{ pipeMaterialMatchError }}</span>
-              <span v-else>请先选择材质、规格和厚度。</span>
-              <ElSelect v-if="!editingPipeSourceLocked && pipeMaterialCandidates.length && (pipeMaterialMatchStatus === 'multiple' || pipeMaterialMatchStatus === 'needs_review' || pipeMaterialCandidates.length > 1)" :model-value="editingLineDraft.source_inventory_material_id || ''" aria-label="对应原料" placeholder="请选择对应原料" @change="selectPipeMaterial">
-                <ElOption v-for="item in pipeMaterialCandidates" :key="item.id" :value="item.id" :label="pipeMaterialLabel(item)" />
-              </ElSelect>
-              <ElButton v-if="pipeMaterialMatchStatus === 'error' || pipeMaterialMatchStatus === 'no_match'" size="small" text type="primary" @click="matchPipeMaterial">重新匹配</ElButton>
-            </div>
             <label class="drawer-field"><span>原材料长度（m）</span><strong class="drawer-readonly-value">{{ editingLineCalculations?.tube_cut_length_m }}</strong></label>
             <label class="drawer-field"><span>切割支数</span><ElInput v-model="editingLineDraft.tube_cut_piece_count" inputmode="decimal" placeholder="填写" aria-label="切割支数" @blur="normalizeTubeCutPieceCount(editingLineDraft)" /></label>
             <label class="drawer-field">
@@ -3471,12 +3412,12 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else-if="editingSection?.title === '面料类'">
-            <label class="drawer-field"><span>规格</span><strong v-if="editingLineDraft.source_inventory_material_id" class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong><ElSelect v-else v-model="editingLineDraft.source_fabric_specification_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.specification || '选择规格'" aria-label="面料规格" @change="setFabricSpecification(editingLineDraft, $event)"><ElOption v-for="item in fabricSpecificationOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
-            <label class="drawer-field"><span>材质</span><strong v-if="editingLineDraft.source_inventory_material_id" class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong><ElSelect v-else v-model="editingLineDraft.source_fabric_material_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.material || '选择材质'" aria-label="面料材质" @change="setFabricMaterial(editingLineDraft, $event)"><ElOption v-for="item in fabricMaterialOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
+            <label class="drawer-field"><span>规格</span><ElSelect v-model="editingLineDraft.source_fabric_specification_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.specification || '选择规格'" aria-label="面料规格" @change="setFabricSpecification(editingLineDraft, $event)"><ElOption v-for="item in fabricSpecificationOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
+            <label class="drawer-field"><span>材质</span><ElSelect v-model="editingLineDraft.source_fabric_material_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.material || '选择材质'" aria-label="面料材质" @change="setFabricMaterial(editingLineDraft, $event)"><ElOption v-for="item in fabricMaterialOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
             <label class="drawer-field drawer-field--wide"><span>色卡</span><ElSelect v-model="editingLineDraft.source_product_color_id" filterable clearable :value-on-clear="null" :placeholder="fabricColorSnapshot(editingLineDraft) || '选择色卡 / 颜色 / 色号'" aria-label="面料色卡颜色色号" @change="setFabricColor(editingLineDraft, $event)"><ElOption v-for="item in fabricColorOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
             <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ editingLineDraft.fabric_color_name || '—' }}</strong></label>
             <label class="drawer-field"><span>色号</span><strong class="drawer-readonly-value">{{ editingLineDraft.fabric_color_code || '—' }}</strong></label>
-            <label class="drawer-field"><span>门幅</span><ElSelect v-model="editingLineDraft.source_fabric_width_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.fabric_width || editingLineDraft.raw_material || '选择门幅'" aria-label="面料门幅" @change="setFabricWidth(editingLineDraft, $event)"><ElOption v-for="item in fabricWidthOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
+            <label class="drawer-field"><span>门幅</span><ElSelect v-model="editingLineDraft.source_fabric_width_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.fabric_width || '选择门幅'" aria-label="面料门幅" @change="setFabricWidth(editingLineDraft, $event)"><ElOption v-for="item in fabricWidthOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
             <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
             <label class="drawer-field"><span>裁片</span><ElInput v-model="editingLineDraft.part_name" maxlength="300" placeholder="填写裁片" aria-label="裁片" /></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">米</strong></label>
@@ -3673,7 +3614,7 @@ onBeforeUnmount(() => {
             </template>
           </ElTableColumn>
           <ElTableColumn prop="material_number" label="品号" width="130" show-overflow-tooltip />
-          <ElTableColumn prop="material_name" label="品名" min-width="165" show-overflow-tooltip />
+          <ElTableColumn prop="material_name" label="品名" min-width="165" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="100" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />
@@ -3701,7 +3642,7 @@ onBeforeUnmount(() => {
         category-name="五金"
         title="新增五金原料"
         subject-label="五金原料"
-        @created="handleHardwareCreated"
+        :stage-material="(payload, display) => stageRawMaterial('hardware', payload, display)"
       />
 
       <ElDialog
@@ -3738,7 +3679,7 @@ onBeforeUnmount(() => {
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPlastic[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePlasticCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
           <ElTableColumn prop="material_number" label="品号" width="145" show-overflow-tooltip />
-          <ElTableColumn prop="material_name" label="品名" min-width="190" show-overflow-tooltip />
+          <ElTableColumn prop="material_name" label="品名" min-width="190" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="120" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="145" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格" min-width="170" show-overflow-tooltip />
@@ -3832,7 +3773,7 @@ onBeforeUnmount(() => {
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPackaging[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePackagingCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
           <ElTableColumn prop="material_number" label="品号" width="140" show-overflow-tooltip />
-          <ElTableColumn prop="material_name" label="品名" min-width="180" show-overflow-tooltip />
+          <ElTableColumn prop="material_name" label="品名" min-width="180" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="115" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="135" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格" min-width="170" show-overflow-tooltip />
@@ -3872,7 +3813,7 @@ onBeforeUnmount(() => {
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedCutting[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="toggleCuttingCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
           <ElTableColumn prop="material_number" label="品号" width="135" show-overflow-tooltip />
-          <ElTableColumn prop="material_name" label="裁剪名称" min-width="175" show-overflow-tooltip />
+          <ElTableColumn prop="material_name" label="裁剪名称" min-width="175" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="category_name" label="类别" width="120" show-overflow-tooltip />
           <ElTableColumn prop="material" label="材质" width="105" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="125" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
@@ -3889,7 +3830,7 @@ onBeforeUnmount(() => {
         title="新增塑料件原料"
         subject-label="塑料件原料"
         test-id="plastic-raw-material-create-dialog"
-        @created="handlePlasticCreated"
+        :stage-material="(payload, display) => stageRawMaterial('plastic', payload, display)"
       />
       <HardwareRawMaterialCreateDialog
         v-model="packagingCreateVisible"
@@ -3897,7 +3838,7 @@ onBeforeUnmount(() => {
         title="新增包材原料"
         subject-label="包材原料"
         test-id="packaging-raw-material-create-dialog"
-        @created="handlePackagingCreated"
+        :stage-material="(payload, display) => stageRawMaterial('packaging', payload, display)"
       />
       <HardwareRawMaterialCreateDialog
         v-model="cuttingCreateVisible"
@@ -3905,18 +3846,50 @@ onBeforeUnmount(() => {
         title="新增半成品原料"
         subject-label="半成品原料"
         test-id="cutting-raw-material-create-dialog"
-        @created="handleCuttingCreated"
+        :stage-material="(payload, display) => stageRawMaterial('cutting', payload, display)"
       />
       <AuxiliaryReferenceCreateDialog
         v-model="auxiliaryCreateVisible"
         @created="handleAuxiliaryCreated"
       />
+      <ElDialog v-if="pendingMaterialSave && materialSavePreview" :model-value="true" title="确认新增原料"
+        width="min(980px, calc(100vw - 32px))" append-to-body :close-on-click-modal="false"
+        :close-on-press-escape="!saving && !verifying" :show-close="!saving && !verifying"
+        data-testid="bom-material-save-preview" class="bom-material-save-dialog"
+        @update:model-value="(visible: boolean) => { if (!visible) cancelMaterialSave() }">
+        <p class="material-save-summary">以下 {{ materialSavePreview.new_materials.length }} 项资料将在确认后新增，并与本次 BOM 一起保存。已有原料将直接复用。</p>
+        <p v-if="materialSaveError" role="alert" class="material-save-error">{{ materialSaveError }}</p>
+        <div class="material-save-table-scroll">
+          <table class="material-save-table">
+            <colgroup><col style="width: 11%"><col style="width: 7%"><col style="width: 16%"><col style="width: 21%"><col style="width: 12%"><col style="width: 13%"><col style="width: 7%"><col style="width: 13%"></colgroup>
+            <thead><tr><th>分区</th><th>行号</th><th>品名</th><th>规格</th><th>颜色</th><th>材质</th><th>单位</th><th>仓库</th></tr></thead>
+            <tbody><tr v-for="item in materialSavePreview.new_materials" :key="item.key" data-testid="bom-material-save-preview-row">
+              <td><div v-for="location in materialLocationGroups(item)" :key="location.section">{{ location.section }}</div></td>
+              <td><div v-for="location in materialLocationGroups(item)" :key="location.section">{{ location.rows }}</div></td>
+              <td>{{ item.material_name || '—' }}<small v-if="item.item_type === 'SEMI_FINISHED'" class="material-save-kind">半成品</small></td>
+              <td>{{ item.specification || '—' }}<small v-if="item.width" class="material-save-kind">门幅 {{ item.width }}</small></td><td>{{ item.color_label || item.color_name || '—' }}</td><td>{{ item.material || '—' }}</td><td>{{ item.unit_name || '—' }}</td><td>{{ item.warehouse_name || '—' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+        <template #footer>
+          <ElButton data-testid="bom-material-save-cancel" :disabled="saving || verifying" @click="cancelMaterialSave">返回修改</ElButton>
+          <ElButton data-testid="bom-material-save-confirm" type="primary" :loading="saving || verifying" :disabled="materialSaveRequiresRecheck" @click="confirmMaterialSave">{{ pendingMaterialSave.options.intent === 'verify' ? '确认新增并确认BOM' : '确认新增并保存草稿' }}</ElButton>
+        </template>
+      </ElDialog>
     </template>
   </section>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
+.material-save-summary { margin: 0 0 16px; color: token.$crm-text-regular; line-height: 22px; }
+.material-save-error { color: token.$crm-danger; margin: 0 0 12px; }
+.material-save-table-scroll { max-height: min(480px, calc(100vh - 300px)); overflow: auto; }
+.material-save-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: token.$crm-text-primary; font-size: 13px; }
+.material-save-table th, .material-save-table td { border: 1px solid token.$crm-border-default; padding: 10px 8px; line-height: 20px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.material-save-table th { background: token.$crm-color-subtle; color: token.$crm-text-secondary; font-weight: 500; }
+.material-save-kind { display: block; color: token.$crm-text-secondary; }
+.pending-material-label { margin-right: 6px; color: token.$crm-warning; font-size: 12px; }
 .bom-review-context { font-size: 13px; color: token.$crm-text-regular; h3 { margin: 20px 0 12px; font-size: 13px; line-height: 20px; color: token.$crm-text-primary; &:first-child { margin-top: 0; } } p { margin: 0; line-height: 20px; } dl { margin: 0; } dl > div { margin: 0 0 12px; } dt { color: token.$crm-text-secondary; margin-bottom: 4px; } dd { margin: 0; overflow-wrap: anywhere; } }
 .bom-review-context__fields { display: grid; gap: 12px; label > span { display: block; margin-bottom: 8px; color: token.$crm-text-secondary; } :deep(.el-input__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; background: token.$crm-color-subtle; } }
 .bom-review-context .bom-review-context__rule { margin-top: 20px; padding-top: 16px; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; }
@@ -4028,10 +4001,6 @@ onBeforeUnmount(() => {
 .drawer-field > span { display: block; margin-bottom: 7px; color: #52525b; font-size: 13px; }
 .drawer-readonly-value { display: flex; min-height: 32px; align-items: center; padding: 7px 10px; box-sizing: border-box; border: 1px solid #dbe3ee; border-radius: 6px; background: #f8fafc; color: #334155; font-size: 13px; font-weight: 500; }
 .drawer-field--wide, .drawer-calculations { grid-column: 1 / -1; }
-.pipe-material-match { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; padding: 8px 10px; border: 1px solid #ddd6c9; border-radius: 4px; background: #f6f3ec; color: #4d4c48; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
-.pipe-material-match__label { flex-shrink: 0; font-weight: 600; }
-.pipe-material-match__warning { color: #9d411f; }
-.pipe-material-match > .el-select { flex: 1 1 280px; min-width: 0; }
 .drawer-calculations { padding-top: 2px; }
 .cutting-name-tooltip-anchor.has-error { color: #b74a25; cursor: help; text-decoration: underline dotted #b74a25; text-underline-offset: 3px; }
 :global(.cutting-name-error-tooltip.el-popper.is-light) { max-width: 280px; padding: 7px 10px; border-color: #efb2b4; background: #fff2f2; color: #c93439; font-size: 12px; line-height: 18px; }

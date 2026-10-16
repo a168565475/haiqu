@@ -3,8 +3,40 @@ from decimal import Decimal
 from django.db.models import Case, CharField, Exists, OuterRef, Prefetch, Q, Sum, Value, When
 
 from apps.customers.selectors import accessible_customers
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 
 from .models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
+
+
+def production_task_source_image_ids(task, *, product_ids=None):
+    products = ProductionTaskProduct.objects.filter(
+        production_task=task,
+        sales_order_delivery_batch_line__delivery_batch_id=task.sales_order_delivery_batch_id,
+        sales_order_delivery_batch_line__sales_order_line__sales_order_id=task.sales_order_id,
+    )
+    if product_ids is not None:
+        products = products.filter(pk__in=product_ids)
+    return products.values("sales_order_delivery_batch_line__sales_order_line__product_image_id")
+
+
+def production_task_product_image(line):
+    def usable(image):
+        return image is not None and image.archived_at is None and image.scan_status in USABLE_FILE_SCAN_STATUSES
+
+    if usable(line.image_file):
+        return line.image_file
+    for item in line.images.all():
+        if usable(item.image_file):
+            return item.image_file
+    if not line.sales_order_delivery_batch_line_id:
+        return None
+    source = line.sales_order_delivery_batch_line
+    task = line.production_task
+    if (source.delivery_batch_id != task.sales_order_delivery_batch_id
+            or source.sales_order_line.sales_order_id != task.sales_order_id):
+        return None
+    image = source.sales_order_line.product_image
+    return image if usable(image) else None
 
 
 def external_business_relations(model):

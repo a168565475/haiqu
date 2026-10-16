@@ -275,7 +275,11 @@ def _source_quantity(line, bom):
     )
     if field_name:
         return value, field_name, text, line.unit, status
-    value, field_name, text, status = _derived_quantity(line, bom, "purchase_consumption")
+    consumption_field = "purchase_consumption"
+    # 面料与辅料共用 FABRIC 类型；辅料编辑页保存的是单个用量，空值保留旧数据的取数规则。
+    if section_type == BomSectionType.FABRIC and line.section.title.strip() == "辅料类" and line.unit_consumption.strip():
+        consumption_field = "unit_consumption"
+    value, field_name, text, status = _derived_quantity(line, bom, consumption_field)
     return value, field_name, text, line.unit, status
 
 

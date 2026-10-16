@@ -54,4 +54,14 @@ qa/*
 !qa/run.py
 !qa/runner_manifest.json
 !qa/test_run.py
+!qa/bom_material_save_preview_readonly.cjs
+!qa/boards_preview_readonly.cjs
+!qa/workbench_navigation_readonly.cjs
+!qa/product_catalog_source_preflight.py
+!qa/product_catalog_baseline.cjs
+!qa/product_catalog_legacy_snapshot.py
+!qa/product_catalog_import_verify.py
+!qa/product_catalog_readonly.cjs
+!qa/product_catalog_qa_resources.py
+!qa/product_catalog_write.cjs
 tmp_bom_serializer_excerpt.txt

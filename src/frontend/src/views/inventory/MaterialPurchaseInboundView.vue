@@ -34,6 +34,7 @@ const selectedPurchaseOrderId = ref('')
 const options = ref<MaterialReceivingOptions>({ warehouses: [], zones: [] })
 const rows = ref<ReceivingRow[]>([])
 const hoveredRowId = ref('')
+const hoveredSupplierRowId = ref('')
 const bulk = reactive({ warehouseId: '', zoneId: '' })
 function localToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -244,8 +245,10 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
             <tbody><tr v-for="(row, index) in rows" :key="row.line.id" :data-row-id="row.line.id" @mouseenter="hoveredRowId = row.line.id" @mouseleave="hoveredRowId = ''">
               <td><ElCheckbox v-model="row.included" :aria-label="'勾选第 ' + (index + 1) + ' 项'" :disabled="locked" /></td><td>{{ index + 1 }}</td>
               <td class="material-cell"><strong>{{ materialTitle(row.line) }}</strong></td>
-              <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
-              <td class="supplier-cell">{{ row.line.supplier_name || '—' }}</td>
+              <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id && hoveredSupplierRowId !== row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
+              <ElTooltip :content="row.line.supplier_name" placement="top" :show-after="150" :disabled="!row.line.supplier_name" :teleported="true">
+                <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name || '—' }}</td>
+              </ElTooltip>
               <td class="purchase-quantity-cell" :title="purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ formatQuantity(Number(row.line.purchased_quantity) - Number(row.line.remaining_quantity)) }}</td>
               <td><ElInput v-model="row.receivedQuantity" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template v-if="row.line.raw_bar_length_m" #append>根</template></ElInput></td>
               <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect></td>
@@ -309,7 +312,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .receiving-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }
 .receiving-table .specification-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .receiving-table .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.supplier-cell { font-size: 13px; color: token.$crm-text-secondary; } .muted { color: token.$crm-text-secondary; } .receiving-table .remark-cell { padding: 4px 16px; }
+.receiving-table .supplier-cell { font-size: 13px; color: token.$crm-text-secondary; white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .receiving-table .remark-cell { padding: 4px 16px; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }
 .table-card footer { box-sizing: border-box; flex: 0 0 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 21px; color: token.$crm-text-secondary; border-top: 1px solid token.$crm-border-subtle; }
 .table-card footer strong { font-weight: 400; color: token.$crm-warning; } .table-card footer .complete { color: token.$crm-success; }

@@ -34,12 +34,3 @@ export const sampleDimensionFields = [
   { key: 'backHeightCm', label: '背高（cm）' },
   { key: 'seatHeightCm', label: '坐高（cm）' },
 ] as const
-
-export interface SampleApplicationListSummary {
-  director?: number | null
-  warehouse?: number | null
-  procurement?: number | null
-  all: number | null
-  responsible: number | null
-  failures: Array<{ scope: 'all' | 'responsible'; error: unknown }>
-}

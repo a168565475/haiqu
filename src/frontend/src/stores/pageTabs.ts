@@ -58,9 +58,9 @@ export const usePageTabsStore = defineStore('page-tabs', {
           }
         }
       } catch { /* 损坏或不可用的存储不阻断登录。 */ }
-      if (!this.tabs.length) {
+      if (!this.tabs.some(tab => tab.pinned)) {
         const home = createPageTab(router.resolve({ name: 'home' }))
-        if (home) this.tabs = [home]
+        if (home) this.tabs = upsertPageTab(this.tabs, home)
       }
     },
     recordRoute(route: PageTabRoute) {

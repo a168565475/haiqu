@@ -1,26 +1,21 @@
 import { flushPromises, shallowMount, mount as mountWithTable } from '@vue/test-utils'
-import ElementPlus, { ElMessageBox, ElMessage } from 'element-plus'
+import ElementPlus, { ElInput, ElMessageBox, ElMessage } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/productionTasks'
-import { fetchProductionTaskSavedViews } from '@/api/savedViews'
 import ProductionTaskListView from './ProductionTaskListView.vue'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
-vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), deleteProductionTask: vi.fn(), fetchProductionTasks: vi.fn(), fetchProductionTaskStats: vi.fn(), fetchProductionTaskOptions: vi.fn(), fetchProductionTaskFilterOptions: vi.fn() }))
-vi.mock('@/api/savedViews', async original => ({ ...await original<typeof import('@/api/savedViews')>(), fetchProductionTaskSavedViews: vi.fn() }))
+vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), deleteProductionTask: vi.fn(), fetchProductionTasks: vi.fn(), fetchProductionTaskOptions: vi.fn(), fetchProductionTaskFilterOptions: vi.fn() }))
 const options = { employees: [], products: [], customers: [], order_sources: [], delivery_methods: [], statuses: [] }
-const stats = { all: 4, draft: 2, pending_validation: 1, ready: 1, in_production: 0, completed: 0, paused: 0, cancelled: 0, split_delivery: 0 }
 const mount = () => shallowMount(ProductionTaskListView, { global: { plugins: [ElementPlus] } })
 
 describe('生产任务列表分区加载', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.fetchProductionTasks).mockResolvedValue({ data: [], meta: { total: 4, total_pages: 1 } } as never)
-    vi.mocked(api.fetchProductionTaskStats).mockResolvedValue(stats)
     vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue(options as never)
     vi.mocked(api.fetchProductionTaskFilterOptions).mockResolvedValue(options)
-    vi.mocked(fetchProductionTaskSavedViews).mockResolvedValue([])
   })
   it('首次打开列表直接显示任务、BOM、采购状态，无需手动勾选列', async () => {
     const wrapper = mountWithTable(ProductionTaskListView, { global: { plugins: [ElementPlus] } })
@@ -28,34 +23,42 @@ describe('生产任务列表分区加载', () => {
     expect(wrapper.findAll('th').map(cell => cell.text())).toEqual(expect.arrayContaining(['状态', 'BOM状态', '采购状态', '人民币金额合计', '业务员', '跟单员']))
     wrapper.unmount()
   })
-  it('选项和个人视图未返回时统计已可用，搜索只刷新列表及统计', async () => {
+  it('慢筛选选项不拖住列表，搜索不重新读取选项', async () => {
     let finish!: (value: never) => void
     const slow = new Promise<never>(resolve => { finish = resolve })
     vi.mocked(api.fetchProductionTaskOptions).mockReturnValue(slow)
     vi.mocked(api.fetchProductionTaskFilterOptions).mockReturnValue(slow)
-    vi.mocked(fetchProductionTaskSavedViews).mockReturnValue(new Promise(() => {}))
     const wrapper = mount(); await flushPromises()
-    const vm = wrapper.vm as unknown as { stats: typeof stats; statsLoading: boolean; search: () => void }
-    expect(vm.stats.all).toBe(4)
-    expect(vm.statsLoading).toBe(false)
+    const vm = wrapper.vm as unknown as { total: number; loading: boolean; search: () => void }
+    expect(vm.total).toBe(4)
+    expect(vm.loading).toBe(false)
     vm.search(); await flushPromises()
-    expect(api.fetchProductionTaskStats).toHaveBeenCalledTimes(2)
+    expect(api.fetchProductionTasks).toHaveBeenCalledTimes(2)
     expect(api.fetchProductionTaskFilterOptions).toHaveBeenCalledTimes(1)
     expect(api.fetchProductionTaskOptions).not.toHaveBeenCalled()
-    expect(fetchProductionTaskSavedViews).toHaveBeenCalledTimes(1)
     finish(options as never); await flushPromises(); wrapper.unmount()
   })
-  it('快速重复筛选时只接收最后一次统计；失败不能显示旧条件的数量', async () => {
-    const wrapper = mount(); await flushPromises()
-    const vm = wrapper.vm as unknown as { loadStats: () => Promise<boolean>; stats: typeof stats; statsReady: boolean; statsError: string }
-    let finish!: (value: typeof stats) => void
-    vi.mocked(api.fetchProductionTaskStats).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
-      .mockResolvedValueOnce({ ...stats, all: 2 })
-    const first=vm.loadStats(); await vm.loadStats(); finish({ ...stats, all: 1 }); await first
-    expect(vm.stats.all).toBe(2)
-    vi.mocked(api.fetchProductionTaskStats).mockRejectedValueOnce(new Error('统计失败'))
-    await vm.loadStats()
-    expect(vm.statsReady).toBe(false); expect(vm.statsError).toBe('统计失败')
+  it('搜索的回车、放大镜和清空回第一页保留筛选，中文输入确认不提交', async () => {
+    const wrapper = shallowMount(ProductionTaskListView, { global: { plugins: [ElementPlus], stubs: { ElInput: false, ElButton: false } } }); await flushPromises()
+    const vm = wrapper.vm as unknown as { page: number; activeStatusTab: string; dueSoon: boolean; advancedFilters: { salesperson_id: string } }
+    vm.page = 4; vm.activeStatusTab = 'pending'; vm.dueSoon = true; vm.advancedFilters.salesperson_id = 'sales-1'
+    const input = wrapper.get('.search-filter input')
+    await input.setValue('  HT26001  ')
+    vi.mocked(api.fetchProductionTasks).mockClear()
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(api.fetchProductionTasks).not.toHaveBeenCalled(); expect(vm.page).toBe(4)
+    await input.trigger('keydown', { key: 'Enter' }); await flushPromises()
+    expect(api.fetchProductionTasks).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, search: 'HT26001', status: 'PENDING_VALIDATION', salesperson_id: 'sales-1', due_within_days: 30 }))
+    vm.page = 3
+    await wrapper.get('button[aria-label="搜索生产任务单"]').trigger('click'); await flushPromises()
+    expect(api.fetchProductionTasks).toHaveBeenCalledTimes(2); expect(vm.page).toBe(1)
+    vm.page = 2
+    wrapper.findComponent(ElInput).vm.$emit('update:modelValue', '')
+    wrapper.findComponent(ElInput).vm.$emit('clear'); await flushPromises()
+    expect(api.fetchProductionTasks).toHaveBeenCalledTimes(3)
+    expect(api.fetchProductionTasks).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, search: undefined, status: 'PENDING_VALIDATION', salesperson_id: 'sales-1', due_within_days: 30 }))
+    expect(wrapper.find('.status-tabs, .list-toolbar__views, el-table-column-stub[type="selection"]').exists()).toBe(false)
+    expect(wrapper.find('.list-filters .list-filter-actions').exists()).toBe(true)
     wrapper.unmount()
   })
 })
@@ -64,9 +67,7 @@ describe('生产任务删除保护', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(api.fetchProductionTasks).mockResolvedValue({ data: [], meta: { total: 0, total_pages: 0 } } as never)
-    vi.mocked(api.fetchProductionTaskStats).mockResolvedValue(stats)
     vi.mocked(api.fetchProductionTaskFilterOptions).mockResolvedValue(options)
-    vi.mocked(fetchProductionTaskSavedViews).mockResolvedValue([])
   })
   it('非取消状态拒绝删除；确认后携带最新版本并刷新', async () => {
     const wrapper = mount(); await flushPromises()

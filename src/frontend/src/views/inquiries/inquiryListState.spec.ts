@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { InquiryRow } from '@/types/inquiry'
-import { allRowsAllow, formatEstimatedAmount, formatReceived, readColumns, readListQuery, slaPresentation, priorityTone } from './inquiryListState'
+import { allRowsAllow, formatEstimatedAmount, formatReceived, readListQuery, slaPresentation, priorityTone } from './inquiryListState'
 
 describe('询盘列表状态边界', () => {
-  it('保存列顺序并去重，金额筛选必须同时包含币种和合法非负小数', () => {
-    expect(readColumns('["owner","country","owner","unknown"]')).toEqual(['owner', 'country'])
+  it('金额筛选必须同时包含币种和合法非负小数', () => {
     expect(readListQuery({ amount_min: '10000.25', amount_currency: 'USD', sla_state: 'RISK' }).filters).toMatchObject({ amount_min: '10000.25', amount_currency: 'USD', sla_state: 'RISK' })
     for (const amount of ['-1', 'NaN', '1e5', '0.123456789']) expect(readListQuery({ amount_min: amount, amount_currency: 'USD' }).filters.amount_min).toBe('')
     expect(readListQuery({ amount_min: '10' }).filters.amount_min).toBe('')
@@ -45,12 +44,6 @@ describe('询盘列表状态边界', () => {
   it('合法筛选、分页和看板地址可以恢复', () => {
     const state = readListQuery({ page: '3', page_size: '20', ordering: 'received_at', owner_employee_id: 'owner-1', assignment_status: 'UNASSIGNED', view: 'board' })
     expect(state).toMatchObject({ page: 3, pageSize: 20, ordering: 'received_at', view: 'board', filters: { owner_employee_id: 'owner-1', assignment_status: 'UNASSIGNED' } })
-  })
-  it('列偏好损坏时使用默认值，合法空列表和未知列分别处理', () => {
-    expect(readColumns('{bad')).toHaveLength(10)
-    expect(readColumns('{}')).toHaveLength(10)
-    expect(readColumns('["source","unknown"]')).toEqual(['source'])
-    expect(readColumns('[]')).toEqual([])
   })
   it('空选择、无版本或混选不可操作记录时禁止整批提交', () => {
     const allowed = { id: '1', etag: 'v1', allowed_actions: { assign: true, mark_invalid: true } } as InquiryRow

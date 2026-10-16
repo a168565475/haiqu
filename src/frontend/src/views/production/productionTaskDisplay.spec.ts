@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { ProductionTaskProduct } from '@/types/productionTask'
-import { productLabels, productSpecifications, quantityWithUnits, localAmountTotal } from './productionTaskDisplay'
+import { productLabels, productSpecifications, quantityWithUnits, localAmountTotal, isTaskReadyForScheduling } from './productionTaskDisplay'
 const product = (overrides: Partial<ProductionTaskProduct>) => ({ product_id: null, product_name: '产品', quantity: 1, unit_id: 'piece', unit_name: '件', local_total_amount: '0.10', ...overrides }) as ProductionTaskProduct
 
 describe('生产任务显示口径', () => {
+  it('只有已接单、全部 BOM 已确认且已完成采购时才允许进入排产', () => {
+    const ready = { status: 'READY', bom_status: 'VERIFIED', purchase_status: 'ORDER_COMPLETED' } as const
+    expect(isTaskReadyForScheduling(ready)).toBe(true)
+    for (const bom_status of ['NOT_CREATED', 'PARTIAL', 'PENDING_CONFIRMATION', undefined] as const) {
+      expect(isTaskReadyForScheduling({ ...ready, bom_status })).toBe(false)
+    }
+    for (const purchase_status of ['NOT_STARTED', 'REQUEST_FULLY_ALLOCATED', 'ORDER_DRAFT', 'ORDER_SUBMITTED', 'ORDER_PURCHASING', undefined] as const) {
+      expect(isTaskReadyForScheduling({ ...ready, purchase_status })).toBe(false)
+    }
+    expect(isTaskReadyForScheduling({ ...ready, status: 'IN_PRODUCTION' })).toBe(false)
+    expect(isTaskReadyForScheduling(null)).toBe(false)
+  })
   it('两个未建档产品分别显示，有货号才附带货号', () => {
     expect(productLabels([product({ product_name: '甲' }), product({ product_name: '乙', item_number: 'B-1' })])).toEqual(['甲', '乙 · B-1'])
   })

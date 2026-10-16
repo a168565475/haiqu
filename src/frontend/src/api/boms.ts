@@ -10,6 +10,8 @@ import type {
   BomHardwareMaterialQuery,
   BomLineImage,
   BomMaterialPickerQuery,
+  BomMaterialSaveOptions,
+  BomMaterialSavePreview,
   BomOptions,
   BomFilterOptions,
   BomPlasticMaterialQuery,
@@ -17,7 +19,6 @@ import type {
   BomPipeMaterialMatches,
   BomQuery,
   BomSectionInput,
-  BomStats,
   BomWorkbookPreview,
   PaginatedBoms,
   PaginatedBomHardwareMaterials,
@@ -142,8 +143,8 @@ export async function archiveBom(id: string, etag: string): Promise<void> {
   )
 }
 
-export async function saveBomDraft(id: string, sections: BomSectionInput[], etag: string): Promise<VersionedBom> {
-  const writableSections = sections.map((section) => ({
+function writableBomSections(sections: BomSectionInput[]) {
+  return sections.map((section) => ({
     ...section,
     lines: section.lines.map((line) => {
       const { images, draft_images: draftImages, draft_key: draftKey, ...writableLine } = line
@@ -153,9 +154,21 @@ export async function saveBomDraft(id: string, sections: BomSectionInput[], etag
       return draftImageIds.length ? { ...writableLine, draft_image_ids: draftImageIds } : writableLine
     }),
   }))
+}
+
+export async function previewBomMaterialSave(id: string, sections: BomSectionInput[], etag: string, options: BomMaterialSaveOptions): Promise<BomMaterialSavePreview> {
+  const { data } = await apiClient.post<DataResponse<BomMaterialSavePreview>>(
+    `${basePath}${encodeURIComponent(id)}/material-save-preview/`,
+    { sections: writableBomSections(sections), ...options },
+    { headers: { 'If-Match': etag } },
+  )
+  return data.data
+}
+
+export async function saveBomDraft(id: string, sections: BomSectionInput[], etag: string, options?: BomMaterialSaveOptions): Promise<VersionedBom> {
   return versionedBom(await apiClient.patch<DataResponse<BomDetail>>(
     `${basePath}${encodeURIComponent(id)}/`,
-    { sections: writableSections },
+    { sections: writableBomSections(sections), ...options },
     { headers: { 'If-Match': etag } },
   ))
 }
@@ -276,11 +289,6 @@ export async function deleteBomDraftLineImage(
 
 export function bomLineImageUrl(relativeUrl: string): string {
   return new URL(relativeUrl, `${apiClient.defaults.baseURL || window.location.origin}/`).toString()
-}
-
-export async function fetchBomStats(query: BomQuery = {}): Promise<BomStats> {
-  const { data } = await apiClient.get<DataResponse<BomStats>>(`${basePath}stats/`, { params: query })
-  return data.data
 }
 
 export async function fetchBomOptions(taskQuery = ''): Promise<BomOptions> {

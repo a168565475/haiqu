@@ -1,6 +1,10 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from rest_framework import serializers
+
+from apps.production_tasks.selectors import production_task_product_image
+from apps.sales_orders.presentation import specification_display
 
 from ..material_flow import line_stock, line_flow_data
 from ..models import MaterialIssue, MaterialIssueAction, MaterialIssueStatus
@@ -14,6 +18,26 @@ QUANTITY_SNAPSHOT_FIELDS = (
     "available_stock",
     "max_issue_quantity",
 )
+
+
+def material_issue_product_data(product):
+    image = production_task_product_image(product)
+    return {
+        "id": str(product.pk),
+        "product_number": product.product_number_snapshot,
+        "product_name": product.product_name_snapshot,
+        "specification": product.specification_snapshot,
+        "specification_display": specification_display(SimpleNamespace(
+            specification_snapshot=product.specification_snapshot,
+            color_snapshot=product.color_name_snapshot,
+            material_snapshot=product.material_snapshot,
+        )),
+        "material": product.material_snapshot,
+        "color": product.color_name_snapshot,
+        "quantity": str(product.quantity),
+        "unit": product.unit.unit_name,
+        "image_file_id": str(image.pk) if image else None,
+    }
 
 
 def _semi_material(line, source=None):
@@ -229,20 +253,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                 if task
                 else None
             ),
-            "product": (
-                {
-                    "id": str(product.pk),
-                    "product_number": product.product_number_snapshot,
-                    "product_name": product.product_name_snapshot,
-                    "specification": product.specification_snapshot,
-                    "color": product.color_name_snapshot,
-                    "quantity": str(product.quantity),
-                    "unit": product.unit.unit_name,
-                    "image_file_id": str(product.image_file_id) if product.image_file_id else None,
-                }
-                if product
-                else None
-            ),
+            "product": material_issue_product_data(product) if product else None,
             "workshop": (
                 {"id": str(issue.workshop_id), "name": issue.workshop.name} if issue.workshop_id else None
             ),

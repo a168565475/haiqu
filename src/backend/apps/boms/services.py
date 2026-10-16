@@ -24,6 +24,8 @@ from .material_flow_calculations import CUTTING_USAGE_FIELDS, pipe_plan, Materia
 
 from .image_files import delete_business_file_if_unreferenced
 from .maintenance import match_maintenance_configuration
+from .material_save_plan import (build_material_save_plan, lock_material_references,
+                                persist_material_plan, require_save_permissions)
 from .models import (
     Bom,
     BomCreationMethod,
@@ -249,12 +251,9 @@ def _editable_model_values(line_data, section_type, product_quantity, *, existin
     values = {field: line_data[field] for field in EDITABLE_LINE_FIELDS if field in line_data}
     tube_fields = ("tube_shape", "tube_diameter", "tube_thickness")
     source_id = line_data.get("source_inventory_material_id")
-    same_source = bool(source_id and existing_line and str(source_id) == str(
-        (existing_line.raw_values or {}).get("source_inventory_material_id")
-    ))
-    # 新关联沿用当前截面参数生成 BOM 规格；同源旧快照及仅传来源 ID 的调用保持原契约。
+    # 当前完整参数决定显示规格；仅传来源 ID 的历史调用仍保留原快照。
     if section_type == "PROFILE" and any(field in line_data for field in tube_fields) and (
-        not source_id or (not same_source and all(line_data.get(field) for field in tube_fields))
+        not source_id or all(line_data.get(field) for field in tube_fields)
     ):
         values["specification"] = _tube_specification(line_data)
     calculated_raw_values = {}
@@ -271,6 +270,8 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
         source_id = line_data["source_inventory_material_id"]
         values["source_inventory_material_id"] = str(source_id) if source_id else ""
     if section_type == "PROFILE":
+        if line_data.get("pipe_source_sync_pending"):
+            values["pipe_source_sync_pending"] = True
         for field in TUBE_DETAIL_FIELDS:
             if field in line_data:
                 values[field] = (
@@ -302,6 +303,8 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
                 value = line_data[field]
                 values[field] = str(value) if field in REFERENCE_ID_FIELDS and value else (value or "")
     elif section_type == BomSectionType.FABRIC and section_title.strip() == "面料类":
+        if line_data.get("fabric_source_sync_pending"):
+            values["fabric_source_sync_pending"] = True
         for field in FABRIC_DETAIL_FIELDS:
             if field in line_data:
                 value = line_data[field]
@@ -584,7 +587,7 @@ def create_bom(
                 version_number=version_number,
                 creation_method=creation_method,
                 status=BomStatus.PENDING_CONFIRMATION,
-                copied_from=source_bom if link_source else None,
+                copied_from=source_bom if creation_method == BomCreationMethod.COPY or link_source else None,
                 product=locked_product_line.product,
                 product_category=(
                     locked_product_line.product_category
@@ -1164,10 +1167,19 @@ def _edit_snapshot(bom):
 
 
 @transaction.atomic
-def update_bom_lines(*, bom, sections, actor_employee, request):
+def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", confirmation_token="",
+                     quantity_confirmation_reason=""):
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked = Bom.objects.select_for_update().get(pk=bom.pk)
     require_matching_etag(request, locked)
+    require_save_permissions(request, intent)
+    lock_material_references(sections, bom=locked)
+    # 字典/版本在等待锁期间可能改变；事务内重新验证，预检凭据会对比实际建档内容。
+    from .api.serializers import BomUpdateInputSerializer
+    if hasattr(request, "data"):
+        validated = BomUpdateInputSerializer(data=request.data, context={"bom": locked})
+        validated.is_valid(raise_exception=True)
+        sections = validated.validated_data["sections"]
     before_data = _edit_snapshot(locked)
     existing_sections = {
         section.id: section
@@ -1271,6 +1283,10 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
                 raise ValidationError({"sections": "每条用料明细最多保留 20 张图片。"})
             drafts_for_payload_line[id(line_data)] = ordered_drafts
 
+    material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True)
+    persist_material_plan(plan=material_plan, bom=locked, request=request, actor_employee=actor_employee,
+                          intent=intent, confirmation_token=confirmation_token)
+
     for section in existing_sections.values():
         section.line_number += 100000
         section.save(update_fields=["line_number", "updated_at"])
@@ -1359,6 +1375,10 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
                     setattr(line, field, line_data[field])
             if was_piece_usage and all(getattr(line, field) is None for field in CUTTING_USAGE_FIELDS):
                 raise ValidationError({"sections": "已采用每片用量的裁剪明细不能清空三个参数退回旧口径。"})
+            planned_line = material_plan["lines"][(section_number - 1, line_number)]
+            line.raw_values = planned_line.raw_values
+            line.raw_material, line.category, line.unit = planned_line.raw_material, planned_line.category, planned_line.unit
+            line.specification = planned_line.specification
             apply_line_quantities(line, locked.order_quantity)
             line.save()
             saved_lines.append(line)
@@ -1455,6 +1475,10 @@ def update_bom_lines(*, bom, sections, actor_employee, request):
         after_data=_edit_snapshot(refreshed),
         request=request,
     )
+    if intent == "verify":
+        _verify_locked_bom(locked=refreshed, quantity_confirmation_reason=quantity_confirmation_reason,
+                           actor_employee=actor_employee, request=request)
+        return boms_with_context(Bom.objects.all(), include_lines=True).get(pk=locked.pk)
     return refreshed
 
 
@@ -1463,6 +1487,12 @@ def verify_bom(*, bom, quantity_confirmation_reason, actor_employee, request):
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked = Bom.objects.select_for_update().get(pk=bom.pk)
     require_matching_etag(request, locked)
+    return _verify_locked_bom(locked=locked, quantity_confirmation_reason=quantity_confirmation_reason,
+                              actor_employee=actor_employee, request=request)
+
+
+def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, request):
+    """仅由已锁定并完成 ETag 校验的事务入口调用，避免保存后二次使用旧 ETag。"""
     if locked.status == BomStatus.VERIFIED:
         raise Conflict("该 BOM 版本已经确认。")
     if not locked.product_information_confirmed_at or not locked.product_id or not locked.product_color_id:

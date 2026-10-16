@@ -340,7 +340,7 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
         <ElTableColumn label="管材差额" width="90" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示新管材最终登记后的实发减实收。面料等不同单位不相减。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>
         <ElTableColumn label="预计回货日" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
         <ElTableColumn label="状态" width="90"><template #default="{ row }"><span class="status-tag" :class="`status-${statusTone(row.status)}`">{{ row.status_display }}</span></template></ElTableColumn>
-        <ElTableColumn label="操作" width="70">
+        <ElTableColumn label="操作" width="70" fixed="right">
           <template #default="{ row }">
             <span class="cell-actions" @click.stop>
               <ElButton v-if="row.record_type === 'TUBE'" link type="primary" :aria-label="`${row.order_number} 查看`" @click="openDetail(row)">查看</ElButton>

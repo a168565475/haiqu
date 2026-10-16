@@ -205,7 +205,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
         <div><dt>采购交期</dt><dd :title="deliveryLabel">{{ deliveryLabel }}</dd></div>
         <div><dt>供应商</dt><dd>
           <ElTooltip v-if="suppliers.length" placement="bottom-start" effect="light" :show-after="100" popper-class="purchase-detail-suppliers-tooltip">
-            <template #content><div class="supplier-tooltip-content"><strong>共 {{ suppliers.length }} 家供应商</strong><ul><li v-for="supplier in suppliers" :key="supplier.id">{{ supplier.supplier_name || supplier.supplier_number }}</li></ul></div></template>
+            <template #content><div class="supplier-tooltip-content"><strong>共 {{ suppliers.length }} 家供应商</strong><ul><li v-for="supplier in suppliers" :key="supplier.id">{{ supplier.supplier_name || '—' }}</li></ul></div></template>
             <span class="supplier-count" tabindex="0" aria-label="查看供应商完整名单" data-testid="supplier-count">共 {{ suppliers.length }} 家供应商</span>
           </ElTooltip><span v-else>未分配供应商</span>
         </dd></div>

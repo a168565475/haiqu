@@ -5,6 +5,7 @@ import type { WorkbenchTask } from '@/types/workbench'
 import {
   formatWorkbenchDate,
   isTaskDueToday,
+  isTaskOverdue,
   isUnauthorizedWorkbenchError,
   mergeWorkbenchTasks,
   resolveWorkbenchMode,
@@ -23,7 +24,7 @@ function user(permissions: string[], isSuperuser = false): AuthUser {
   }
 }
 
-function task(id: string, dueAt: string, updatedAt = '2026-08-20T08:00:00+08:00'): WorkbenchTask {
+function task(id: string, dueAt: string | null, updatedAt = '2026-08-20T08:00:00+08:00'): WorkbenchTask {
   return {
     id,
     title: id,
@@ -48,6 +49,27 @@ describe('工作台工具', () => {
     expect(resolveWorkbenchMode(user([]))).toBeNull()
   })
 
+  it('管理员可以明确打开业务员版，普通业务员不能打开主管版', () => {
+    expect(resolveWorkbenchMode(user([], true), 'SALES')).toBe('SALES')
+    expect(resolveWorkbenchMode(user(['customers.view_customeraccount']), 'MANAGER')).toBeNull()
+    expect(resolveWorkbenchMode(user(['customers.view_all_customer']), 'SALES')).toBeNull()
+    expect(resolveWorkbenchMode(null, 'SALES')).toBeNull()
+  })
+
+  it.each(['TEAM', 'ALL'] as const)('销售权限启用时，客户 %s 范围可以打开主管版', (scope) => {
+    const manager = {
+      ...user(['customers.view_customeraccount']),
+      sales_access_enabled: true,
+      effective_access: {
+        active: true, is_superuser: false, roles: [], legacy_sources: [], version: '1',
+        actions: { 'customers.view_customeraccount': { scopes: [scope], sources: [] } },
+      },
+    }
+    expect(resolveWorkbenchMode(manager, 'MANAGER')).toBe('MANAGER')
+    expect(resolveWorkbenchMode(manager, 'SALES')).toBe('SALES')
+    expect(resolveWorkbenchMode({ ...manager, sales_access_enabled: false }, 'MANAGER')).toBeNull()
+  })
+
   it('合并任务时去重并按截止时间排序', () => {
     const old = task('same', '2026-08-22T09:00:00+08:00')
     const latest = task('same', '2026-08-21T09:00:00+08:00', '2026-08-21T08:00:00+08:00')
@@ -60,6 +82,14 @@ describe('工作台工具', () => {
     const reference = new Date('2026-08-21T12:00:00+08:00')
     expect(isTaskDueToday(task('today', '2026-08-21T18:00:00+08:00'), reference)).toBe(true)
     expect(formatWorkbenchDate(reference)).toContain('2026年8月21日')
+  })
+
+  it('没有截止时间的任务不算逾期或今日到期，并排在有截止时间任务之后', () => {
+    const noDeadline = task('no-deadline', null)
+    expect(isTaskDueToday(noDeadline)).toBe(false)
+    expect(isTaskOverdue(noDeadline)).toBe(false)
+    expect(mergeWorkbenchTasks([noDeadline, task('dated', '2026-08-21T09:00:00+08:00')], [])
+      .map(item => item.id)).toEqual(['dated', 'no-deadline'])
   })
 
   it('区分登录、权限、并发、服务和网络异常', () => {

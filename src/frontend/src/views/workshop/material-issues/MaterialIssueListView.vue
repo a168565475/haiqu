@@ -95,6 +95,9 @@ onMounted(async () => {
         <ElTableColumn label="状态" width="116"><template #default="{ row }"><span class="mi-status-tag" :class="statusTone(row.status)">{{ row.status_display }}</span></template></ElTableColumn>
         <ElTableColumn label="生产订单" min-width="160"><template #default="{ row }">{{ row.production_task?.task_number || '—' }}</template></ElTableColumn>
         <ElTableColumn label="产品" min-width="180"><template #default="{ row }">{{ row.product?.product_name || '—' }}</template></ElTableColumn>
+        <ElTableColumn label="规格" min-width="160"><template #default="{ row }">{{ (row.product?.specification_display ?? row.product?.specification) || '—' }}</template></ElTableColumn>
+        <ElTableColumn label="颜色" min-width="110"><template #default="{ row }">{{ row.product?.color || '—' }}</template></ElTableColumn>
+        <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ row.product?.material || '—' }}</template></ElTableColumn>
         <ElTableColumn label="车间" width="120"><template #default="{ row }">{{ row.workshop?.name || '—' }}</template></ElTableColumn>
         <ElTableColumn label="领料人" width="110"><template #default="{ row }">{{ row.recipient?.name || '—' }}</template></ElTableColumn>
         <ElTableColumn prop="line_count" label="材料项" width="80" align="right" />

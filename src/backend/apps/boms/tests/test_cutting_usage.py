@@ -139,7 +139,7 @@ class CuttingUsageBomTests(TestCase):
         self.assertEqual(self.save_cutting(source_inventory_material_id=None).status_code, 400)
         self.assertEqual(BomLine.objects.filter(pk=self.cutting_line.pk).values().get(), before)
 
-    def test_stable_raw_material_attributes_remain_authoritative(self):
+    def test_fabric_snapshot_remains_authoritative_and_partial_pipe_edit_requires_completion(self):
         sections = self.get().data["data"]["sections"]
         expected = {}
         for section in sections:
@@ -154,7 +154,14 @@ class CuttingUsageBomTests(TestCase):
         for section in response.data["data"]["sections"]:
             for row in section["lines"]:
                 if row["id"] in expected:
-                    self.assertEqual({field: row[field] for field in expected[row["id"]]}, expected[row["id"]])
+                    if section["title"] == "管材类":
+                        self.assertEqual(row["material"], "伪造材质")
+                        self.assertEqual(row["source_inventory_material_id"], expected[row["id"]]["source_inventory_material_id"])
+                        self.assertEqual(row["unit"], "根")
+                        self.assertTrue(row["raw_values"]["pipe_source_sync_pending"])
+                    else:
+                        self.assertEqual({field: row[field] for field in expected[row["id"]]}, expected[row["id"]])
+        self.assertEqual(self.verify().status_code, 400)
 
     def test_save_recalculates_forged_derived_values_without_rewriting_fabric_usage(self):
         self.enable_piece_usage(fabric_meters_per_set="999", cut_piece_quantity="99", unit_consumption="99",

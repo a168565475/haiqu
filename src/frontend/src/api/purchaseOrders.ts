@@ -10,7 +10,6 @@ import type {
   PurchaseOrderFilterOptions,
   PurchaseOrderQuery,
   PurchaseOrderSource,
-  PurchaseOrderStats,
   PurchaseSheetOptions,
   SupplierPurchaseSheet,
   PaginatedSupplierPurchaseSheets,
@@ -34,11 +33,6 @@ function versioned(
 export async function fetchPurchaseOrders(query: PurchaseOrderQuery): Promise<PaginatedPurchaseOrders> {
   const { data } = await apiClient.get<PaginatedPurchaseOrders>(basePath, { params: query })
   return data
-}
-
-export async function fetchPurchaseOrderStats(): Promise<PurchaseOrderStats> {
-  const { data } = await apiClient.get<DataResponse<PurchaseOrderStats>>(`${basePath}stats/`)
-  return data.data
 }
 
 export type PurchaseOrderOptionsScope = 'full' | 'suppliers' | 'sources' | 'detail'

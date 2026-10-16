@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isTaskReadyForScheduling } from './productionTaskDisplay'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
@@ -71,7 +72,7 @@ const canConfirm = computed(() => (
 const canSchedule = computed(() => (
   authStore.hasPermission('production_scheduling.view_productionschedule')
   && authStore.hasPermission('production_scheduling.add_productionschedule')
-  && task.value?.status === 'READY'
+  && isTaskReadyForScheduling(task.value)
 ))
 const canFinish = computed(() => (
   authStore.moduleCan('access_control.finish_productiontask', 'production_tasks.change_productiontask') && task.value?.status === 'IN_PRODUCTION'

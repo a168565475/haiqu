@@ -193,12 +193,12 @@ onMounted(async () => {
       <header><div><h2>产品排产明细</h2><span>共 {{ selectedRows.length }} 项</span></div><ElButton :disabled="!selectedRows.length" @click="batchDialogVisible = true">批量填入（已选择 {{ selectedRows.length }} 项）</ElButton></header>
       <div class="schedule-entry-table">
         <table>
-          <colgroup><col class="sequence-col" /><col class="product-col" /><col class="source-quantity-col" /><col class="planned-quantity-col" /><col class="specification-col" /><col class="date-col" span="4" /><col class="internal-craft-col" /><col class="external-craft-col" /></colgroup>
-          <thead><tr><th>序号</th><th>产品信息</th><th>订单数量</th><th>排产数量</th><th>产品规格</th><th>材料入库时间</th><th>金工回货时间</th><th>车缝回货时间</th><th>成品入库时间</th><th>厂内工艺</th><th>厂外工艺</th></tr></thead><tbody>
+          <colgroup><col class="sequence-col" /><col class="product-col" /><col class="source-quantity-col" /><col class="planned-quantity-col" /><col class="specification-col" /><col class="material-col" /><col class="date-col" span="4" /><col class="internal-craft-col" /><col class="external-craft-col" /></colgroup>
+          <thead><tr><th>序号</th><th>产品信息</th><th>订单数量</th><th>排产数量</th><th>产品规格</th><th>材质</th><th>材料入库时间</th><th>金工回货时间</th><th>车缝回货时间</th><th>成品入库时间</th><th>厂内工艺</th><th>厂外工艺</th></tr></thead><tbody>
           <tr v-for="(item, index) in selectedRows" :key="item.product_line_id">
             <td><span class="entry-sequence">{{ index + 1 }}</span></td>
             <td>
-              <div class="entry-product" :title="`${item.product.item_number || '—'}｜${item.product.product_name || '—'}｜${item.product.specification || '—'}｜${item.product.color_name || '—'}`">
+              <div class="entry-product" :title="`${item.product.item_number || '—'}｜${item.product.product_name || '—'}｜${(item.product.specification_display ?? item.product.specification) || '—'}｜${item.product.color_name || '—'}`">
                 <img
                   :src="item.product.image_file_id ? scheduleProductImageUrl(item.production_task_id, item.product.image_file_id) : productImagePlaceholder"
                   :class="{ 'is-placeholder': !item.product.image_file_id }"
@@ -210,7 +210,8 @@ onMounted(async () => {
             </td>
             <td><strong class="entry-source-quantity">{{ item.source_quantity.toLocaleString('zh-CN') }} {{ item.product.unit_name }}</strong></td>
             <td><ElInputNumber v-model="item.planned_quantity" :min="1" :max="item.source_quantity" :step="1" :precision="0" :controls="false" /><small class="quantity-limit">最多 {{ item.source_quantity }} {{ item.product.unit_name }}</small></td>
-            <td><span class="entry-specification" :title="item.product.specification || '—'">{{ item.product.specification || '—' }}</span></td>
+            <td><span class="entry-specification" :title="(item.product.specification_display ?? item.product.specification) || '—'">{{ (item.product.specification_display ?? item.product.specification) || '—' }}</span></td>
+            <td><span class="entry-specification" :title="item.product.material || '—'">{{ item.product.material || '—' }}</span></td>
             <td><ElDatePicker v-model="item.material_inbound_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
             <td><ElDatePicker v-model="item.metal_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>
             <td><ElDatePicker v-model="item.sewing_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></td>

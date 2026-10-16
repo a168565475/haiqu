@@ -1,4 +1,7 @@
-import type { ProductionTaskProduct } from '@/types/productionTask'
+import type { ProductionTask, ProductionTaskProduct } from '@/types/productionTask'
+export function isTaskReadyForScheduling(task: Pick<ProductionTask, 'status' | 'bom_status' | 'purchase_status'> | null) {
+  return task?.status === 'READY' && task.bom_status === 'VERIFIED' && task.purchase_status === 'ORDER_COMPLETED'
+}
 export function productLabels(products: ProductionTaskProduct[]) {
   return products.map((item) => [item.customer_product_name || item.product_name || '未命名产品', item.item_number?.trim()].filter(Boolean).join(' · '))
 }

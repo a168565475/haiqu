@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, fetchProductionTaskStats, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl } from '@/api/productionTasks'
+import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl } from '@/api/productionTasks'
 import { apiClient } from '@/api/request'
 
 vi.mock('@/api/request', () => ({
@@ -23,18 +23,6 @@ describe('生产任务单 API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     vi.mocked(apiClient.getUri).mockReset()
-  })
-
-  it('统计接口接收当前非状态筛选', async () => {
-    mockedGet.mockResolvedValueOnce({
-      data: { data: { all: 1, draft: 1, pending_validation: 0, ready: 0, in_production: 0, completed: 0, paused: 0, cancelled: 0, split_delivery: 0 } },
-    })
-
-    await fetchProductionTaskStats({ search: 'HT-2609', salesperson_id: 'employee-1' })
-
-    expect(mockedGet).toHaveBeenCalledWith('/api/v1/production-tasks/stats/', {
-      params: { search: 'HT-2609', salesperson_id: 'employee-1' },
-    })
   })
 
   it('工厂只通过生产权限入口查询可生产来源和产品图', async () => {

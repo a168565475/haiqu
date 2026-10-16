@@ -40,7 +40,7 @@ describe('客户列表单元格', () => {
     expect(wrapper.attributes('title')).toBe('今日跟进')
   })
 
-  it('合并展示客户名称与编号，并保留键盘可操作按钮', async () => {
+  it('只展示客户全名并保留可打开详情的按钮', async () => {
     const customer = {
       id: 'customer-1',
       account_name: '示例贸易有限公司',
@@ -51,8 +51,8 @@ describe('客户列表单元格', () => {
     const wrapper = mount(CustomerIdentityCell, { props: { customer } })
 
     expect(wrapper.text()).toContain('示例贸易有限公司')
-    expect(wrapper.text()).toContain('CUS-00001')
-    expect(wrapper.find('button').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('CUS-00001')
+    expect(wrapper.get('button').attributes('title')).toBe('示例贸易有限公司')
 
     await wrapper.find('button').trigger('click')
     expect(wrapper.emitted('open')).toHaveLength(1)

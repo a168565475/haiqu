@@ -12,7 +12,6 @@ import type {
   ProductionTaskPmcDecisionInput,
   ProductionTaskQuery,
   ReservedContractNumber,
-  ProductionTaskStats,
   ProductionOrderFromSalesInput,
   VersionedProductionTask,
   ProductionSalesOrderSource,
@@ -56,11 +55,6 @@ export function productionSalesOrderSourceImageUrl(salesOrderId: string, lineId:
 
 export async function fetchProductionTaskFilterOptions(): Promise<ProductionTaskFilterOptions> {
   const { data } = await apiClient.get<DataResponse<ProductionTaskFilterOptions>>(`${basePath}options/`, { params: { scope: 'filters' } })
-  return data.data
-}
-
-export async function fetchProductionTaskStats(query: ProductionTaskQuery = {}): Promise<ProductionTaskStats> {
-  const { data } = await apiClient.get<DataResponse<ProductionTaskStats>>(`${basePath}stats/`, { params: query })
   return data.data
 }
 

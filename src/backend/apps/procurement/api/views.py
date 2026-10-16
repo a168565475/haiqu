@@ -3,6 +3,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import UUID
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -28,6 +29,7 @@ from apps.production_tasks.models import ProductionTask
 from apps.production_tasks.models import ProductionTaskProduct
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import Currency, ReferenceStatus
+from apps.sales_orders.presentation import specification_display
 
 from ..source_access import purchase_order_access
 from ..sample_purchase_services import sample_procurement_sources, sample_source
@@ -447,6 +449,15 @@ class PurchaseOrderViewSet(
                 "item_number": product.item_number_snapshot,
                 "product_name": product.product_name_snapshot,
                 "specification": product.specification_snapshot,
+                # 适配订单颜色快照，避免展示时查询可能已变更的颜色字典。
+                "specification_display": specification_display(SimpleNamespace(
+                    specification_snapshot=product.specification_snapshot,
+                    customer_specification_snapshot=product.customer_specification_snapshot,
+                    customer_color_snapshot=product.customer_color_snapshot,
+                    color_snapshot=product.color_name_snapshot,
+                    material_snapshot=product.material_snapshot,
+                )),
+                "material": product.material_snapshot,
                 "color_card": product.color_card_snapshot,
                 "color_name": product.color_name_snapshot,
                 "color_code": product.color_code_snapshot,
@@ -721,7 +732,9 @@ class PurchaseOrderViewSet(
             ).prefetch_related(
                 Prefetch("boms", queryset=bom_options, to_attr="purchase_source_boms"),
             ).order_by("line_number", "id")
-            tasks = self._accessible_tasks().select_related("customer_account").annotate(
+            tasks = self._accessible_tasks().filter(Exists(Bom.objects.filter(
+                production_task_id=OuterRef("pk"), archived_at__isnull=True,
+            ))).select_related("customer_account").annotate(
                 purchase_product_count=Count("products", distinct=True),
                 existing_purchase_order_id=Subquery(existing_orders.values("id")[:1]),
                 existing_purchase_order_number=Subquery(existing_orders.values("order_number")[:1]),

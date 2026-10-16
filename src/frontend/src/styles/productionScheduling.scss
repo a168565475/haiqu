@@ -112,14 +112,15 @@ $inverse: crm.$crm-text-inverse;
   &::-webkit-scrollbar-track { background: #f1ede4; }
   &::-webkit-scrollbar-thumb { border: 2px solid #f1ede4; border-radius: 999px; background: #b8afa1; }
 
-  table { min-width: 1714px; width: 100%; table-layout: fixed; border-collapse: collapse; }
+  table { min-width: 1794px; width: 100%; table-layout: fixed; border-collapse: collapse; }
   th { height: 44px; padding: 0 8px; border-right: 1px solid $subtle; border-bottom: 1px solid $subtle; color: $primary; background: #eee8dc; text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap; }
   td { box-sizing: border-box; height: 39px; padding: 3px 8px 4px; border-right: 1px solid $subtle; border-bottom: 1px solid $subtle; vertical-align: middle; }
   .sequence-col { width: 48px; }
   .product-col { width: 204px; }
   .source-quantity-col { width: 96px; }
   .planned-quantity-col { width: 112px; }
-  .specification-col { width: 176px; }
+  .specification-col { width: 160px; }
+  .material-col { width: 96px; }
   .date-col { width: 152px; }
   .internal-craft-col { width: 242px; }
   .external-craft-col { width: 228px; }

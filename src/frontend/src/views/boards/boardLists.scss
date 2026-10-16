@@ -1,0 +1,43 @@
+.board-page {
+  .board-list-scroll {
+    overflow-x: hidden;
+    overflow-anchor: none;
+    scroll-behavior: auto;
+
+    &:focus-visible { outline: 2px solid #c0e5ff; outline-offset: -2px; }
+  }
+
+  .board-employees.board-employee-list-content {
+    width: 100%;
+    height: auto;
+    grid-template-rows: none;
+    grid-auto-rows: 72px;
+    column-gap: 0;
+
+    article { min-width: 0; gap: 5px; padding: 10px; border-color: #193246; }
+    article:nth-child(odd) { border-right: 1px solid #193246; }
+    p { font-size: 14.912px; line-height: 17.14px; color: #6ea7d1; }
+    .board-avatar { width: 27px; height: 27px; border-radius: 50%; object-fit: cover; background: transparent; }
+    .board-employee-identity { width: 59.64px; flex: 0 0 59.64px; display: flex; flex-direction: column; align-items: center; }
+    .board-employee-identity p { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .board-employee-statistics { min-width: 0; }
+    .board-employee-statistics p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  }
+
+  .board-ranking-list-content {
+    width: 100%;
+    margin: 0;
+    padding: 9.32px 3.72px;
+    list-style: none;
+
+    li { display: grid; grid-template-columns: 89.47px minmax(0, 1fr); align-items: center; gap: 10px; height: 31.42px; color: #355f7f; }
+    li:nth-child(1) { color: #00feaf; }
+    li:nth-child(2) { color: #ffdc36; }
+    li:nth-child(3) { color: #35b1fa; }
+    .board-ranking-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6ea7d1; font-size: 14.912px; }
+    .board-ranking-track { min-width: 0; display: flex; align-items: center; gap: 6px; height: 21.42px; overflow: hidden; }
+    .board-ranking-fill { display: block; flex-shrink: 0; height: 7.45px; background: currentColor; }
+    .board-ranking-value { color: inherit; font-size: 18.64px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  }
+  .production-board .board-ranking-list-content li { grid-template-columns: 67.1px minmax(0, 1fr); }
+}

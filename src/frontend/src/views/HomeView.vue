@@ -10,7 +10,7 @@ import ResizableDrawerHandle from '@/components/ResizableDrawerHandle.vue'
 import WorkbenchQuickDrawer from '@/components/workbench/WorkbenchQuickDrawer.vue'
 import { managerDemoMetrics, salesDemoCounts, workbenchReferenceDate } from '@/data/workbenchDemoData'
 import { useAuthStore } from '@/stores/auth'
-import type { WorkbenchLoadState, WorkbenchMetric, WorkbenchRiskItem, WorkbenchTask } from '@/types/workbench'
+import type { WorkbenchLoadState, WorkbenchMetric, WorkbenchMode, WorkbenchRiskItem, WorkbenchTask } from '@/types/workbench'
 import {
   isTaskDueToday,
   isTaskOverdue,
@@ -22,12 +22,13 @@ import {
 import ManagerWorkbench from '@/views/workbench/ManagerWorkbench.vue'
 import SalesWorkbench from '@/views/workbench/SalesWorkbench.vue'
 
+const props = defineProps<{ workbenchMode?: WorkbenchMode }>()
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const { user } = storeToRefs(authStore)
 const referenceDate = workbenchReferenceDate()
-const mode = computed(() => resolveWorkbenchMode(user.value))
+const mode = computed(() => resolveWorkbenchMode(user.value, props.workbenchMode))
 const conciseDateText = computed(() => {
   const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' }).format(referenceDate)
   return `${referenceDate.getFullYear()} 年 ${referenceDate.getMonth() + 1} 月 ${referenceDate.getDate()} 日 · ${weekday}`
@@ -219,7 +220,7 @@ onMounted(() => {
     <section v-if="!mode" class="workbench-forbidden" role="status">
       <div class="workbench-forbidden__icon">!</div>
       <h1>暂无工作台访问权限</h1>
-      <p>当前账号缺少“查看客户”权限。系统不会回退到演示客户数据，请联系管理员配置权限。</p>
+      <p>{{ props.workbenchMode === 'MANAGER' ? '当前账号没有主管工作台访问权限。' : '当前账号缺少“查看客户”权限。' }}请联系管理员配置权限。</p>
     </section>
 
     <template v-else>
@@ -268,7 +269,7 @@ onMounted(() => {
           <dl>
             <div><dt>状态</dt><dd>{{ selectedTask.status_display }}</dd></div>
             <div><dt>优先级</dt><dd>{{ selectedTask.priority_display }}</dd></div>
-            <div><dt>截止时间</dt><dd>{{ new Date(selectedTask.due_at).toLocaleString('zh-CN') }}</dd></div>
+            <div><dt>截止时间</dt><dd>{{ selectedTask.due_at ? new Date(selectedTask.due_at).toLocaleString('zh-CN') : '未设置' }}</dd></div>
             <div><dt>说明</dt><dd>{{ selectedTask.description || '暂无说明' }}</dd></div>
           </dl>
         </template>

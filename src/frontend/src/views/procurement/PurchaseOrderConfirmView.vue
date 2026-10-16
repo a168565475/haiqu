@@ -332,7 +332,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
                   v-for="supplier in options?.suppliers || []"
                   :key="supplier.id"
                   :value="supplier.id"
-                  :label="`${supplier.supplier_number} · ${supplier.supplier_name}`"
+                  :label="supplier.supplier_name"
                 />
                 <template #label="{ value }">{{ options?.suppliers.find(supplier => supplier.id === value)?.supplier_name || row.supplier_name || '—' }}</template>
               </ElSelect>
@@ -435,6 +435,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .detail-table :deep(.el-input__wrapper), .detail-table :deep(.el-select__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; font-size: 12px; }
 .detail-table :deep(.el-input__wrapper) { padding: 1px 13px; }
 .detail-table :deep(.el-input__prefix) { margin-right: 4px; }
+.detail-table :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; }
 .material-cell, .quantity-cell { display: flex; min-width: 0; }
 .material-cell strong, .quantity-cell strong { font-size: 13px; font-weight: 500; }
 .material-cell strong, .material-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

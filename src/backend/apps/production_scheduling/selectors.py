@@ -1,6 +1,10 @@
 from django.db.models import Exists, OuterRef, Prefetch, Q
 
-from apps.production_tasks.selectors import accessible_production_tasks
+from apps.production_tasks.selectors import (
+    accessible_production_tasks,
+    production_task_product_image as schedule_product_image,
+    production_task_source_image_ids as schedule_source_image_ids,
+)
 
 from .models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft, ScheduleStatus
 

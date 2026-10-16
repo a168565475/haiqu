@@ -1,35 +1,6 @@
-import type { SampleApplicationDraft, SampleApplicationListSummary } from '@/types/sampleApplication'
-import { fetchSampleStats } from '@/api/samples'
+import type { SampleApplicationDraft } from '@/types/sampleApplication'
 import { apiClient } from './request'
 import type { SampleDetail } from '@/types/sample'
-
-/** 用服务端统计获取全部/本人负责的数量，不能用当前分页结果计数。 */
-export async function fetchSampleApplicationListSummary(employeeId: string | null): Promise<SampleApplicationListSummary> {
-  const scopes = employeeId ? ['all', 'responsible'] as const : ['all'] as const
-  const results = await Promise.allSettled(scopes.map(scope => fetchSampleStats(scope === 'responsible' ? { owner_employee_id: employeeId! } : undefined)))
-  const summary: SampleApplicationListSummary = { all: null, responsible: null, failures: [] }
-  results.forEach((result, index) => {
-    const scope = scopes[index]!
-    if (result.status === 'rejected') summary.failures.push({ scope, error: result.reason })
-    else if (Number.isSafeInteger(result.value?.all) && result.value.all >= 0) summary[scope] = result.value.all
-    else summary.failures.push({ scope, error: new Error('样品统计返回的数量无效。') })
-    if (scope === 'all' && result.status === 'fulfilled') {
-      if (Number.isSafeInteger(result.value?.pending_warehouse) && result.value.pending_warehouse! >= 0) summary.warehouse = result.value.pending_warehouse
-      if (Number.isSafeInteger(result.value?.pending_procurement) && result.value.pending_procurement! >= 0) summary.procurement = result.value.pending_procurement
-    }
-    if (scope === 'all' && result.status === 'fulfilled' && Number.isSafeInteger(result.value?.pending_director) && result.value.pending_director! >= 0) summary.director = result.value.pending_director
-  })
-  return summary
-}
-
-// TODO(SAM-V3): 个人待办尚未接通；厂长、仓库和采购待处理统计使用真实状态。
-// 不把财务、PMC 或参数阶段映射为这些新环节，也不将未知统计显示为 0。
-export const sampleApplicationPendingViews = [
-  { key: 'assigned', label: '待我处理', reason: '当前尚未开放个人待处理申请统计和筛选。' },
-  { key: 'director', label: '待厂长确认', reason: '' },
-  { key: 'warehouse', label: '待仓库核对', reason: '' },
-  { key: 'procurement', label: '等待采购', reason: '' },
-] as const
 
 export async function submitSampleApplication(draft: SampleApplicationDraft, submission: { key: string; sampleId?: string; etag?: string }): Promise<{ id: string; etag: string }> {
   const body = new FormData()

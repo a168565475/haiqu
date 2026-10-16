@@ -72,7 +72,19 @@ const compactBusinessRoutes = [
   'tasks', 'task-detail',
 ]
 const compactBusinessRoute = computed(() => compactBusinessRoutes.includes(String(route.name || '')))
-const viewportTableRoute = computed(() => ['assembly-finished-receipt', 'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records', 'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return', 'inventory-tube-return', 'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory', 'products', 'raw-materials', 'production-tasks', 'boms', 'work-report-days'].includes(String(route.name || '')))
+const viewportTableRoute = computed(() => [
+  'assembly-finished-receipt', 'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records',
+  'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return', 'inventory-tube-return',
+  'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
+  'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
+  // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
+  'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns',
+  'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
+  'material-inventory', 'workshop-scheduling',
+  'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
+  'sample-outbound', 'sample-loans',
+  'reference-data-settings', 'master-data-center', 'production-data', 'number-rules',
+].includes(String(route.name || '')))
 const contentScrollRoutes = [
   'customer-transfer',
   'bom-edit',
@@ -137,7 +149,6 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .content-scroll-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .quotation-layout :deep(#erp-main-content) { overflow: auto; background: var(--erp-page-background); }
 .quotation-layout :deep(.page-container) { padding: 14px; }
-.wage-scheme-layout :deep(.app-header__search-shell) { width: 280px; }
 .wage-scheme-detail-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .quotation-layout :deep(.page-container__content) { min-height: 100%; }
 .quotation-list-layout :deep(#erp-main-content) { overflow: hidden; }

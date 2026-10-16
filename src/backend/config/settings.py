@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "apps.core",
     "apps.reference_data",
     "apps.products",
+    "apps.material_catalog",
+    "apps.product_catalog",
     "apps.organizations",
     "apps.access_control",
     "apps.files",

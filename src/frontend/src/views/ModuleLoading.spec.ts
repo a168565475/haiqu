@@ -41,13 +41,11 @@ beforeEach(() => {
   vi.mocked(quotations.fetchQuotations).mockResolvedValue(list())
   vi.mocked(quotations.fetchQuotationSummary).mockResolvedValue({ all: 0 } as never)
   vi.mocked(quotations.fetchQuotationOptions).mockResolvedValue({} as never)
-  vi.mocked(saved.fetchQuotationSavedViews).mockResolvedValue([])
   vi.mocked(saved.fetchSavedViews).mockResolvedValue([])
   vi.mocked(sales.fetchSalesOrders).mockResolvedValue(list())
   vi.mocked(sales.fetchSalesOrderOptions).mockResolvedValue({} as never)
   vi.mocked(tasks.fetchTasks).mockResolvedValue(list())
   vi.mocked(tasks.fetchTaskOptions).mockResolvedValue({} as never)
-  vi.mocked(tasks.fetchTaskMetrics).mockResolvedValue({} as never)
   vi.mocked(complaints.fetchComplaints).mockResolvedValue(list())
   vi.mocked(complaints.fetchComplaintOptions).mockResolvedValue({} as never)
   vi.mocked(complaints.fetchComplaintStats).mockResolvedValue({ by_type: [], by_owner: [], sla: {} } as never)
@@ -68,15 +66,15 @@ it('报价和销售列表的旧响应、旧失败与卸载响应不会覆盖新�
   }
 })
 
-it('任务首屏不等待筛选项和保存视图，仍显示正确列表', async () => {
-  const options = deferred<never>(), views = deferred<never>()
+it('任务首屏不等待筛选项，仍显示正确列表', async () => {
+  const options = deferred<never>()
   vi.mocked(tasks.fetchTaskOptions).mockReturnValueOnce(options.promise)
-  vi.mocked(saved.fetchSavedViews).mockReturnValueOnce(views.promise)
   vi.mocked(tasks.fetchTasks).mockResolvedValueOnce(list(9))
   const wrapper = shallowMount(TaskCenter, { global }); await flushPromises()
   const vm = wrapper.vm as unknown as { total: number; loading: boolean }
   expect(tasks.fetchTasks).toHaveBeenCalledOnce(); expect(vm.total).toBe(9); expect(vm.loading).toBe(false)
-  options.resolve({} as never); views.resolve([] as never); await flushPromises(); wrapper.unmount()
+  expect(saved.fetchSavedViews).not.toHaveBeenCalled()
+  options.resolve({} as never); await flushPromises(); wrapper.unmount()
 })
 
 it('未授权个人视图时不请求或显示保存入口，任务主体正常加载', async () => {
@@ -84,12 +82,11 @@ it('未授权个人视图时不请求或显示保存入口，任务主体正常�
   deniedPermissions.add('preferences.add_savedview')
   vi.mocked(tasks.fetchTasks).mockResolvedValueOnce(list(2))
   const wrapper = shallowMount(TaskCenter, { global }); await flushPromises()
-  const vm = wrapper.vm as unknown as { total: number; errorMessage: string; saveCurrentView: () => Promise<void> }
+  const vm = wrapper.vm as unknown as { total: number; errorMessage: string }
   expect(vm.total).toBe(2)
   expect(vm.errorMessage).toBe('')
   expect(saved.fetchSavedViews).not.toHaveBeenCalled()
   expect(wrapper.text()).not.toContain('保存视图')
-  await vm.saveCurrentView()
   expect(saved.createSavedView).not.toHaveBeenCalled()
   wrapper.unmount()
 })

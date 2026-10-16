@@ -11,11 +11,8 @@ defineEmits<{
 </script>
 
 <template>
-  <button type="button" class="customer-identity" @click="$emit('open')">
+  <button type="button" class="customer-identity" :title="customer.account_name" @click="$emit('open')">
     <span class="customer-identity__name">{{ customer.account_name }}</span>
-    <span class="customer-identity__meta">
-      <span>{{ customer.account_code }}</span>
-    </span>
   </button>
 </template>
 
@@ -29,7 +26,6 @@ defineEmits<{
   display: flex;
   width: 100%;
   min-width: 0;
-  flex-direction: column;
   align-items: flex-start;
   cursor: pointer;
   text-align: left;
@@ -55,14 +51,4 @@ defineEmits<{
   color: token.$crm-primary-hover;
 }
 
-.customer-identity__meta {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: token.$crm-space-1;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  line-height: 16px;
-}
 </style>

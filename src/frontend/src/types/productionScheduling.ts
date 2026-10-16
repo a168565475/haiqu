@@ -28,6 +28,8 @@ export interface ScheduleTaskProduct {
   item_number: string
   product_name: string
   specification: string
+  specification_display?: string
+  material?: string
   color_name: string
   color_code: string
   quantity: number
@@ -46,6 +48,8 @@ export interface ScheduleTaskProductSummary {
   item_number: string
   product_name: string
   specification: string
+  specification_display?: string
+  material?: string
   color_name: string
   quantity: number
   unit_name: string

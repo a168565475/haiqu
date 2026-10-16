@@ -14,6 +14,7 @@ import './styles/crm/customer-management-tables.scss'
 import './styles/crm/operational-management-density.scss'
 import './styles/crm/procurement-inventory-density.scss'
 import './styles/settings-theme.scss'
+import './styles/scrollActions.scss'
 
 initializeTheme()
 

@@ -17,7 +17,7 @@ MODULE_NAMES = {
     "procurement": "采购与供应商", "inventory": "库存与仓库", "outsourcing": "外协",
     "workshop_config": "车间配置", "workshop_reporting": "工价与报工",
     "workflow": "任务与审批", "reference_data": "基础配置", "audit": "审计",
-    "preferences": "个人保存视图",
+    "preferences": "个人保存视图", "material_catalog": "原料管理", "product_catalog": "产品管理",
 }
 EXTRA_MODULES = {f"access_control.{code}": module for code, _label, module in EXTRA_OPERATIONS}
 # Existing import/export implementations use dedicated codes. Their grants follow

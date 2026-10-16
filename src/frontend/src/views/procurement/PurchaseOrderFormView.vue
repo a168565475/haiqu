@@ -731,7 +731,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           <section v-if="!isSampleSource" class="selected-product-section" data-testid="selected-production-product-list">
             <div v-if="selectedProducts.length" class="selected-product-list">
               <div class="selected-product-row selected-product-row--heading">
-                <span>选择</span><span>产品编号</span><span>产品编码</span><span>货号</span><span>产品名称</span><span>规格</span><span>颜色</span><span>订单数量</span><span>BOM状态</span>
+                <span>选择</span><span>产品编码</span><span>货号</span><span>产品名称</span><span>规格</span><span>颜色</span><span>材质</span><span>订单数量</span><span>BOM状态</span>
               </div>
               <div v-for="product in selectedProducts" :key="product.id"
                 class="selected-product-row selected-product-row--option"
@@ -742,12 +742,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
                 :aria-pressed="selectedBom?.product_line_id === product.id" :aria-disabled="!productBomOption(product.id)?.bom_id"
                 @click="handleProductSelection(product)" @keydown.enter.prevent="handleProductSelection(product)" @keydown.space.prevent="handleProductSelection(product)">
                 <span class="product-radio" aria-hidden="true" />
-                <span>{{ product.product_number || '—' }}</span><span>{{ product.product_code || '—' }}</span>
-                <span>{{ product.item_number || '—' }}</span><span>{{ product.product_name || '—' }}</span>
-                <span :title="product.specification">{{ product.specification || '—' }}</span>
-                <span :title="productColorText(product)">{{ productColorText(product) }}</span>
-                <span>{{ product.order_quantity }} {{ product.unit_name || product.unit_code }}</span>
-                <span><span class="bom-status" :class="{ 'is-ready': productBomOption(product.id)?.bom_status === 'VERIFIED' }">{{ productBomOption(product.id)?.bom_status_display || '未建立' }}</span></span>
+                <span :title="product.product_code">{{ product.product_code || '—' }}</span>
+                <span :title="product.item_number">{{ product.item_number || '—' }}</span><span :title="product.product_name">{{ product.product_name || '—' }}</span>
+                <span :title="product.specification_display ?? product.specification">{{ (product.specification_display ?? product.specification) || '—' }}</span>
+                <span :title="productColorText(product)">{{ product.color_name || '—' }}</span>
+                <span :title="product.material">{{ product.material || '—' }}</span>
+                <span :title="`${product.order_quantity} ${product.unit_name || product.unit_code}`">{{ product.order_quantity }} {{ product.unit_name || product.unit_code }}</span>
+                <span :title="productBomOption(product.id)?.bom_status_display || '未建立'"><span class="bom-status" :class="{ 'is-ready': productBomOption(product.id)?.bom_status === 'VERIFIED' }">{{ productBomOption(product.id)?.bom_status_display || '未建立' }}</span></span>
               </div>
             </div>
             <p v-else>该订单包含 {{ selectedTask.product_count }} 项产品，暂无可用产品明细。</p>
@@ -789,7 +790,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
                 @change="applyBulkSupplier"
               >
                 <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
-                <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="`${supplier.supplier_number} · ${supplier.supplier_name}`" :value="supplier.id" />
+              <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
               </ElSelect>
             </label>
             <label class="bulk-field bulk-field--date" data-testid="purchase-bulk-delivery-date">
@@ -835,7 +836,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
               <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier" @keydown.capture="handleGridNavigation($event, $index, 0)">
                 <ElSelect v-model="row.supplier_id" filterable clearable :disabled="!source?.can_create" :placeholder="source?.can_create ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
-                  <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="`${supplier.supplier_number} · ${supplier.supplier_name}`" :value="supplier.id" />
+                <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
                 </ElSelect>
               </div>
             </template>
@@ -940,15 +941,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .selected-order-overview dt, .selected-order-overview dd { margin: 0; white-space: nowrap; }
 .selected-order-overview dd { max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
 .selected-product-list { margin: 0 -4px; max-height: 128px; overflow-y: auto; border-radius: 5px; }
-.selected-product-row { display: grid; grid-template-columns: 88fr 200fr 154fr 188fr 210fr 208fr 220fr 130fr 208fr; align-items: center; min-height: 43px; }
-.selected-product-row > span { min-width: 0; padding: 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-product-row { display: grid; grid-template-columns: 48px minmax(90px, 1fr) minmax(80px, .85fr) minmax(140px, 1.5fr) minmax(110px, 1.15fr) minmax(80px, .85fr) minmax(64px, .7fr) 106px 82px; align-items: center; min-height: 43px; }
+.selected-product-row > span { min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selected-product-row--heading { min-height: 42px; background: crm.$crm-color-subtle; color: crm.$crm-text-secondary; font-size: 13px; }
+.selected-product-row--heading > span:first-child { text-align: center; }
 .selected-product-row--option { border-top: 1px solid crm.$crm-border-subtle; cursor: pointer; }
 .selected-product-row--option.is-selected { background: #f7e5dc; }
 .selected-product-row--option:hover { background: crm.$crm-color-row-hover; }
 .selected-product-row--option:focus-visible { outline: 2px solid crm.$crm-primary; outline-offset: -2px; }
 .selected-product-row--option.is-unavailable { cursor: not-allowed; color: crm.$crm-text-disabled; }
-.selected-product-row > .product-radio { position: relative; width: 18px; height: 18px; padding: 0; margin-left: 30px; border: 1px solid crm.$crm-text-muted; border-radius: 50%; background: crm.$crm-color-surface; }
+.selected-product-row > .product-radio { position: relative; justify-self: center; width: 18px; height: 18px; padding: 0; border: 1px solid crm.$crm-text-muted; border-radius: 50%; background: crm.$crm-color-surface; }
 .selected-product-row.is-selected > .product-radio { border-color: crm.$crm-primary; }
 .selected-product-row.is-selected > .product-radio::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: crm.$crm-primary; }
 .bom-status { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 24px; padding: 0 8px; border-radius: 999px; background: crm.$crm-info; color: #faf9f5; font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
@@ -992,6 +994,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .line-field :deep(.el-select__wrapper), .line-field :deep(.el-input__wrapper) { height: 32px; min-height: 32px; font-size: 12px; }
 .line-field :deep(.el-input__wrapper) { padding: 1px 13px; }
 .line-field :deep(.el-input__prefix) { margin-right: 4px; }
+.line-field--quantity :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; }
 :global(.purchase-detail-popper) { z-index: 4000 !important; }
 .material-cell, .quantity-cell { display: flex; min-width: 0; }
 .material-cell { flex-direction: column; }

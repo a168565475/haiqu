@@ -301,6 +301,39 @@ class MaterialInboundLineSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class ProcurementInboundProductSerializer(serializers.Serializer):
+    product_line_id = serializers.UUIDField()
+    product_name = serializers.CharField(allow_blank=True)
+    item_number = serializers.CharField(allow_blank=True)
+    specification = serializers.CharField(allow_blank=True)
+    color_name = serializers.CharField(allow_blank=True)
+    material = serializers.CharField(allow_blank=True)
+
+
+class ProcurementInboundOrderSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    order_number = serializers.CharField()
+    source_type = serializers.ChoiceField(choices=["PRODUCTION", "SAMPLE"])
+    source_number = serializers.CharField(allow_blank=True)
+    sales_order_number = serializers.CharField(allow_blank=True)
+    product_summary = ProcurementInboundProductSerializer(many=True)
+    supplier_names = serializers.ListField(child=serializers.CharField())
+    line_count = serializers.IntegerField()
+    remaining_line_count = serializers.IntegerField()
+    pending_quality_count = serializers.IntegerField()
+    confirmed_batch_count = serializers.IntegerField()
+    received_quantity = serializers.CharField()
+    return_quantity = serializers.CharField()
+    return_status = serializers.CharField()
+    workflow_status = serializers.CharField()
+    workflow_status_display = serializers.CharField()
+    updated_at = serializers.DateTimeField()
+
+
+class ProcurementInboundOrderListResponseSerializer(serializers.Serializer):
+    data = ProcurementInboundOrderSerializer(many=True)
+
+
 class MaterialInboundSerializer(serializers.ModelSerializer):
     received_by_name = serializers.CharField(source="received_by_employee.display_name", read_only=True)
     quality_confirmed_by_name = serializers.CharField(

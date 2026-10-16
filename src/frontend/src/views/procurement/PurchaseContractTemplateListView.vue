@@ -209,6 +209,9 @@ $font-display: 'Noto Serif SC Variable', token.$crm-font-display;
 .template-table th { height: 44px; position: sticky; top: 0; z-index: 1; color: token.$crm-text-secondary; background: token.$crm-color-subtle; font-size: 11px; font-weight: 500; line-height: 16px; }
 .template-row td { height: 40px; border-bottom: 1px solid token.$crm-border-subtle; color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
 .template-table th:last-child,.template-table td:last-child { border-right: 0; }
+.template-page .template-table > thead > tr > th:last-child { right: 0; z-index: 3; }
+.template-page .template-table > tbody > tr.template-row > td.action-cell { position: sticky; right: 0; z-index: 2; background: token.$crm-color-surface; }
+.template-page .template-table > tbody > tr.template-row:hover > td.action-cell { background: token.$crm-color-row-hover; }
 .template-row strong { color: token.$crm-text-primary; font-size: 13px; font-weight: 600; } .template-row:hover { background: token.$crm-color-row-hover; }
 .template-row .status-cell,.template-row .action-cell { padding: 0 5px; overflow: visible; text-align: center; text-overflow: clip; }
 .status-badge { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; color: token.$crm-text-inverse; background: token.$crm-success; font-size: 12px; font-weight: 500; line-height: 18px; }

@@ -4,7 +4,7 @@ export interface PageTab {
   id: string
   title: string
   fullPath: string
-  // 工作台没有手动关闭按钮，但仍参与超出上限后的先开先移除。
+  // 工作台固定首位，不参与手动关闭或超出上限后的先开先移除。
   pinned?: boolean
 }
 
@@ -95,9 +95,11 @@ export function upsertPageTab(tabs: readonly PageTab[], tab: PageTab): PageTab[]
   const nextTabs = [...tabs]
   if (existingIndex < 0) nextTabs.push(tab)
   else nextTabs[existingIndex] = tab
-  return nextTabs.slice(-MAX_PAGE_TABS)
+  const pinnedTabs = nextTabs.filter(item => item.pinned)
+  const ordinaryTabs = nextTabs.filter(item => !item.pinned)
+  return [...pinnedTabs, ...ordinaryTabs.slice(Math.max(0, nextTabs.length - MAX_PAGE_TABS))]
 }
 
 export function removePageTab(tabs: readonly PageTab[], id: string): PageTab[] {
-  return tabs.filter(tab => tab.id !== id)
+  return tabs.filter(tab => tab.pinned || tab.id !== id)
 }

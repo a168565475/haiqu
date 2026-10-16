@@ -7,9 +7,8 @@ import { useRoute } from 'vue-router'
 
 import {
   createMaterialIssue, fetchEligibleMaterialIssueProducts, fetchMaterialIssue, fetchMaterialIssueOptions,
-  fetchMaterialRequirements, submitMaterialIssue, updateMaterialIssue,
+  fetchMaterialRequirements, materialIssueProductImageUrl, submitMaterialIssue, updateMaterialIssue,
 } from '@/api/materialIssues'
-import { scheduleProductImageUrl } from '@/api/productionScheduling'
 import MaterialIssuePartitions from '@/components/workshop/MaterialIssuePartitions.vue'
 import { issueSelectedQuantityError } from '@/utils/materialIssueQuantities'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
@@ -73,7 +72,7 @@ const currentProduct = computed(() => products.value.find((item) => item.id === 
 const productImageUrl = computed(() => {
   const imageId = currentProduct.value?.image_file_id
   return imageId && form.production_task_id
-    ? scheduleProductImageUrl(form.production_task_id, imageId)
+    ? materialIssueProductImageUrl(form.production_task_id, imageId)
     : productImagePlaceholder
 })
 const blockerSummary = computed(() => {

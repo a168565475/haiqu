@@ -6,6 +6,12 @@ Business route enforcement is delivered in stages 4 and 5.
 """
 
 PERMISSION_CODES = (
+    "product_catalog.add_productcatalog",
+    "product_catalog.change_productcatalog",
+    "product_catalog.view_productcatalog",
+    "material_catalog.add_materialcatalog",
+    "material_catalog.change_materialcatalog",
+    "material_catalog.view_materialcatalog",
     "access_control.allocate_purchaserequest",
     "access_control.cancel_purchaserequestallocation",
     "access_control.complete_salesorder",

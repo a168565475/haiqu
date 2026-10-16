@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth.models import Permission
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -29,7 +30,7 @@ class PipeMaterialValidationTests(SimpleTestCase):
                 apply_line_quantities(line, 1000, require_complete=True)
         message = str(caught.exception.detail)
         self.assertIn("管材类第 5 行", message)
-        self.assertIn("对应原料", message)
+        self.assertIn("自动关联原料", message)
         self.assertNotIn("补齐单位", message)
 
 
@@ -134,11 +135,11 @@ class PipeMaterialSpecificationTests(SimpleTestCase):
         values, _ = _editable_model_values(self.payload(specification="Φ25*0.8*3050"), "PROFILE", 1000)
         self.assertEqual(values["specification"], "Φ25 × 0.8 mm")
 
-    def test_same_source_and_legacy_source_only_preserve_snapshot(self):
+    def test_current_parameters_replace_same_source_snapshot_but_source_only_preserves_it(self):
         source = SimpleNamespace(raw_values={"source_inventory_material_id": "new-pipe"})
         values, _ = _editable_model_values(self.payload(specification="旧版已确认规格"), "PROFILE", 1000,
                                            existing_line=source)
-        self.assertEqual(values["specification"], "旧版已确认规格")
+        self.assertEqual(values["specification"], "Φ25 × 0.8 mm")
         values, _ = _editable_model_values({"source_inventory_material_id": "new-pipe", "specification": "档案完整规格"},
                                            "PROFILE", 1000)
         self.assertEqual(values["specification"], "档案完整规格")
@@ -155,6 +156,9 @@ class PipeMaterialMatchApiTests(TestCase):
 
     def setUp(self):
         flow_fixtures.MaterialFlowBomTests.setUp(self)
+        self.user.user_permissions.add(Permission.objects.get(
+            content_type__app_label="products", codename="add_rawmaterialinformation",
+        ))
         self.pipe.material = "PIPE_MATCH_TEST铁-硬管"
         self.pipe.diameter = "25"
         self.pipe.thickness = "1.5"
@@ -232,13 +236,12 @@ class PipeMaterialMatchApiTests(TestCase):
         self.assertEqual(line.raw_values["tube_cut_piece_count"], "6")
         self.assertEqual(self.verify().status_code, 200)
 
-    def test_unmatched_draft_saves_and_confirmation_explains_missing_link(self):
+    def test_complete_draft_automatically_links_existing_source_and_can_confirm(self):
         response = self.save_pipe(self.pipe_payload(source_inventory_material_id=None))
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(BomLine.objects.get(section__bom=self.bom).raw_values["source_inventory_material_id"], str(self.pipe.pk))
         response = self.verify()
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("对应原料", str(response.data))
-        self.assertNotIn("补齐单位", str(response.data))
+        self.assertEqual(response.status_code, 200, response.data)
 
     def test_changed_thickness_before_link_rebuilds_the_old_saved_specification(self):
         initial = self.save_pipe(self.pipe_payload(source_inventory_material_id=None))
@@ -262,13 +265,14 @@ class PipeMaterialMatchApiTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(BomLine.objects.get(section__bom=self.bom).specification, "Φ25 × 1.5 mm")
 
-    def test_mismatch_rejected_atomically_instead_of_overwriting_entered_values(self):
+    def test_changed_parameters_select_new_source_instead_of_overwriting_entered_values(self):
         for field, value in (("material", "不锈钢"), ("tube_diameter", "30"), ("tube_thickness", "0.8"), ("tube_shape", "方管")):
             with self.subTest(field=field):
                 response = self.save_pipe(self.pipe_payload(**{field: value}))
-                self.assertEqual(response.status_code, 400, response.data)
-                self.assertIn("不会自动替换", str(response.data))
-                self.assertFalse(BomLine.objects.filter(section__bom=self.bom).exists())
+                self.assertEqual(response.status_code, 200, response.data)
+                line = BomLine.objects.get(section__bom=self.bom)
+                self.assertNotEqual(line.raw_values["source_inventory_material_id"], str(self.pipe.pk))
+                self.assertEqual(line.material if field == "material" else line.raw_values[field], value)
 
     def test_legacy_source_only_payload_remains_valid(self):
         response = self.save_pipe(flow_fixtures.MaterialFlowBomTests.pipe_payload(self))

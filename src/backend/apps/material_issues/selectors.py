@@ -25,6 +25,8 @@ def material_issues_with_context(queryset=None):
         "product_line",
         "product_line__image_file",
         "product_line__unit",
+        "product_line__production_task",
+        "product_line__sales_order_delivery_batch_line__sales_order_line__product_image",
         "workshop",
         "recipient_workshop_employee",
         "created_by_employee",
@@ -32,6 +34,7 @@ def material_issues_with_context(queryset=None):
         "submitted_by_employee",
         "issued_by_employee",
     ).prefetch_related(
+        "product_line__images__image_file",
         "lines__requirement",
         "lines__batch_allocations",
         # 已出库明细只读冻结扣量；避免默认外键排序联查当前库存及库区。

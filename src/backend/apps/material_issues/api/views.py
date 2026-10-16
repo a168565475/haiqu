@@ -1,8 +1,12 @@
 from uuid import UUID, NAMESPACE_URL, uuid5
+from pathlib import Path
 
 from django.conf import settings
 from django.db.models import Q
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -10,12 +14,13 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields, override_bom_attribute
 from apps.inventory.models import MaterialStockBalance, MaterialStockQuality, SemiFinishedStockBalance
 from apps.inventory.stock_services import available_stock
 from apps.organizations.models import EmployeeStatus
-from apps.production_tasks.models import ProductionTaskStatus
-from apps.production_tasks.selectors import accessible_production_tasks
+from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
+from apps.production_tasks.selectors import accessible_production_tasks, production_task_source_image_ids
 from apps.workshop_config.models import RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
 
 from ..material_flow import pipe_requirement_rows
@@ -43,6 +48,7 @@ from .serializers import (
     MaterialIssueReadSerializer,
     MaterialIssueReturnSerializer,
     MaterialIssueWriteSerializer,
+    material_issue_product_data,
 )
 
 
@@ -63,6 +69,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         "retrieve": "material_issues.view_materialissue",
         "options": "material_issues.view_materialissue",
         "eligible_products": "material_issues.view_materialissue",
+        "product_image": "material_issues.view_materialissue",
         "requirements": "material_issues.view_materialissue",
         "create": "material_issues.add_materialissue",
         "partial_update": "material_issues.change_materialissue",
@@ -240,25 +247,63 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         if not task_id:
             raise ValidationError({"production_task_id": "必须选择生产订单。"})
         task = get_object_or_404(accessible_production_tasks(request), pk=task_id)
-        products = task.products.select_related("image_file", "unit").order_by("line_number", "id")
+        products = task.products.select_related(
+            "image_file", "unit", "production_task",
+            "sales_order_delivery_batch_line__sales_order_line__product_image",
+        ).prefetch_related("images__image_file").order_by("line_number", "id")
         return Response(
             {
                 "data": [
                     {
-                        "id": str(item.pk),
+                        **material_issue_product_data(item),
                         "line_number": item.line_number,
-                        "product_number": item.product_number_snapshot,
-                        "product_name": item.product_name_snapshot,
-                        "specification": item.specification_snapshot,
-                        "color": item.color_name_snapshot,
                         "quantity": item.quantity,
-                        "unit": item.unit.unit_name,
-                        "image_file_id": str(item.image_file_id) if item.image_file_id else None,
                     }
                     for item in products
                 ]
             }
         )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("task_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+            OpenApiParameter("file_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        ],
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path=r"product-images/(?P<task_id>[^/.]+)/(?P<file_id>[^/.]+)",
+    )
+    def product_image(self, request, task_id=None, file_id=None):
+        task_id = _uuid(task_id, "production_task_id")
+        products = ProductionTaskProduct.objects.filter(production_task_id=task_id)
+        if not accessible_production_tasks(request).filter(pk=task_id).exists():
+            # 可查看领料单不一定可查看整张生产任务，只放行该领料单明确关联的产品图片。
+            products = products.filter(material_issues__in=accessible_material_issues(request).filter(
+                production_task_id=task_id,
+            ))
+        task = get_object_or_404(
+            ProductionTask.objects.filter(products__in=products).distinct(), pk=task_id,
+        )
+        image = get_object_or_404(BusinessFile.objects.filter(
+            Q(production_task_product_images__product_line__in=products)
+            | Q(production_task_products__in=products)
+            | Q(pk__in=production_task_source_image_ids(task, product_ids=products.values("id"))),
+            pk=_uuid(file_id, "file_id"), archived_at__isnull=True,
+        ).distinct())
+        if image.scan_status not in USABLE_FILE_SCAN_STATUSES:
+            raise ValidationError({"file": "图片尚未通过安全扫描，暂不能查看。"})
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        storage_path = (media_root / image.storage_key).resolve()
+        try:
+            storage_path.relative_to(media_root)
+        except ValueError as exc:
+            raise Http404("文件路径无效。") from exc
+        if not storage_path.is_file():
+            raise Http404("文件不存在。")
+        return FileResponse(storage_path.open("rb"), content_type=image.content_type, filename=image.original_name)
 
     @action(detail=False, methods=["get"])
     def requirements(self, request):

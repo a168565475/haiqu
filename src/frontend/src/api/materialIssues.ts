@@ -14,6 +14,11 @@ const versioned = (response: AxiosResponse<DataResponse<MaterialIssue>>) => ({
   etag: String(response.headers.etag || ''),
 })
 
+export function materialIssueProductImageUrl(taskId: string, fileId: string): string {
+  const path = `${root}product-images/${encodeURIComponent(taskId)}/${encodeURIComponent(fileId)}/`
+  return new URL(path, `${apiClient.defaults.baseURL || window.location.origin}/`).toString()
+}
+
 export async function fetchMaterialIssues(params: Record<string, unknown>) {
   const { data } = await apiClient.get<PaginatedMaterialIssues>(root, { params })
   return data

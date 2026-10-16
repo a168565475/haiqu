@@ -22,6 +22,10 @@ def is_meter_fabric_section(section):
 def apply_line_quantities(line, order_quantity, *, require_complete=False, tolerate_legacy=False):
     """旧展示字段只是新规则的投影；导入缺参留待补齐，不能猜每根切割支数。"""
     label = f"{line.section.title}第 {line.line_number} 行"
+    if require_complete and line.section.section_type == "PROFILE" and (line.raw_values or {}).get("pipe_source_sync_pending"):
+        raise ValidationError({"sections": f"{label}请补齐材质、形状、截面、厚度及切割参数，保存后再确认 BOM。"})
+    if require_complete and is_meter_fabric_section(line.section) and (line.raw_values or {}).get("fabric_source_sync_pending"):
+        raise ValidationError({"sections": f"{label}请补齐材质、规格、门幅和颜色并保存，自动关联原料后再确认 BOM。"})
     cutting_values = {field: getattr(line, field) for field in CUTTING_USAGE_FIELDS}
     if any(value is not None for value in cutting_values.values()) and line.section.title.strip() != "裁剪明细":
         raise ValidationError({"sections": f"{label}只有裁剪明细可以填写片数、每片耗米和每成品套数。"})
@@ -107,11 +111,13 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
         line.branch_count = line.original_material_length = line.total_purchase_quantity = ""
         line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": ""}
     if require_complete and line.section.title.strip() != "裁剪明细":
+        if line.section.title.strip() == "辅料类" and material is None:
+            raise ValidationError({"sections": f"{label}尚未关联库存原料，请保存并确认待新增原料后再确认 BOM。"})
         if (expected and (material is None or material.item_type != "MATERIAL")) or not line.unit.strip() or line.unit.strip() in {"-", "—", "/"}:
             if line.section.section_type == "PROFILE" and material is None:
-                raise ValidationError({"sections": f"{label}尚未关联有效管材原料，请在该行的“对应原料”中匹配并选择原料后再确认 BOM。"})
+                raise ValidationError({"sections": f"{label}尚未关联有效管材原料，请补齐管材参数并保存，系统会自动关联原料。"})
             if is_meter_fabric_section(line.section) and material is None:
-                raise ValidationError({"sections": f"{label}尚未关联有效原材料，请在该面料行的“来源原材料”中选择类别为面料、单位为米的库存原料后再确认 BOM。"})
+                raise ValidationError({"sections": f"{label}尚未关联有效面料原料，请补齐材质、规格、门幅和颜色并保存，系统会自动关联原料。"})
             raise ValidationError({"sections": f"{label}请关联有效原材料并补齐单位。"})
 
 
@@ -144,7 +150,7 @@ def validate_fabric_links(lines, *, require_complete=False):
                     except (DjangoValidationError, TypeError, ValueError):
                         unmapped_draft = False
                 if not unmapped_draft:
-                    raise ValidationError({"sections": f"裁剪第 {line.line_number} 行的来源面料第 {source.line_number} 行未关联有效米制面料原料，请检查该面料行的“来源原材料”。"})
+                    raise ValidationError({"sections": f"裁剪第 {line.line_number} 行的来源面料第 {source.line_number} 行未关联有效米制面料原料，请补齐该面料行的材质、规格、门幅和颜色后保存。"})
         if require_complete and (not line.fabric_source_line_id or not line.fabric_meters_per_set):
             raise ValidationError({"sections": f"裁剪第 {line.line_number} 行请关联来源面料并填写每套耗米。"})
         if line.fabric_meters_per_set is not None:

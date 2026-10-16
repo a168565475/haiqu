@@ -1,0 +1,45 @@
+.board-page {
+  .board-header-sweep {
+    animation: board-header-sweep 2s ease-in-out infinite;
+    animation-delay: calc(var(--board-sweep-step) * .18s);
+  }
+
+  .board-metric i.board-metric-decoration {
+    display: flex;
+    top: 14.4px;
+    right: 14.4px;
+    width: auto;
+    height: 6.4px;
+    background: none;
+    opacity: 1;
+  }
+
+  .board-metric-slash {
+    width: 4.8px;
+    height: 6.4px;
+    margin: 0 1.6px;
+    background: var(--board-blue);
+    transform: skewX(-45deg);
+    animation: board-metric-slash 1.2s ease-in-out infinite;
+
+    &:nth-child(1) { animation-delay: 2s; }
+    &:nth-child(2) { animation-delay: 1s; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .board-header-sweep,
+    .board-metric-slash { animation: none; }
+
+    .board-metric-slash { opacity: .65; }
+  }
+}
+
+@keyframes board-header-sweep {
+  0%, 40%, 100% { opacity: .1; }
+  20% { opacity: 1; }
+}
+
+@keyframes board-metric-slash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}

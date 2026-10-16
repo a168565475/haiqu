@@ -195,7 +195,7 @@ class ProductionTaskViewSet(
     def get_queryset(self):
         return production_tasks_with_context(
             self._filtered_queryset(),
-            include_progress=self.action == "list",
+            include_progress=self.action in {"list", "retrieve"},
             list_mode=self.action == "list",
         )
 

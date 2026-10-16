@@ -15,6 +15,7 @@ export interface MaterialIssueOptions {
 export interface MaterialIssueProduct {
   id: string; line_number?: number; product_number: string; product_name: string
   specification: string; color: string; quantity?: string; unit?: string; image_file_id: string | null
+  specification_display?: string; material?: string
 }
 export interface MaterialRequirement {
   bom_attributes?: BomAttributeField[]

@@ -332,16 +332,6 @@ export interface CustomerStats {
   high_value_definition: 'CURRENT_GRADE_A'
 }
 
-export interface CustomerBulkTagInput {
-  customer_ids: string[]
-  customer_tag_ids: string[]
-  reason: string
-}
-
-export interface CustomerBulkResult {
-  updated_count: number
-}
-
 export interface CustomerTransferInput {
   customer_id: string
   to_employee_id: string

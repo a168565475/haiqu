@@ -12,9 +12,9 @@ import {
   fetchBomHardwareMaterials,
   fetchBomPipeMaterialMatches,
   fetchBomOptions,
-  fetchBomStats,
   fetchBoms,
   previewBomWorkbook,
+  previewBomMaterialSave,
   saveBomDraft,
   syncBomOrderQuantity,
   uploadBomLineImages,
@@ -43,6 +43,23 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('新增原料预检与确认使用相同整单字段，预检只发 POST，确认只发一次 PATCH', async () => {
+    const preview = { confirmation_token: 'approved', new_materials: [] }
+    mockedPost.mockResolvedValueOnce({ data: { data: preview } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'bom-1', status: 'VERIFIED' } }, headers: { etag: 'v2' } })
+    const pending = { material_number: 'NEW-1', item_type: 'SEMI_FINISHED', material_name: '床面' }
+    const sections = [{ title: '裁剪明细', section_type: 'FABRIC', lines: [{ client_key: 'draft-id', source_cutting_material_id: null, pending_raw_material: pending, images: [], draft_key: 'images-draft', draft_images: [{ id: 'image-1' }] }] }]
+    const intent = { intent: 'verify' as const, quantity_confirmation_reason: '核对完成' }
+    expect(await previewBomMaterialSave('bom-1', sections as never, 'v1', intent)).toEqual(preview)
+    expect(mockedPatch).not.toHaveBeenCalled()
+    const body = { ...intent, sections: [{ title: '裁剪明细', section_type: 'FABRIC', lines: [{ client_key: 'draft-id', source_cutting_material_id: null, pending_raw_material: pending, draft_image_ids: ['image-1'] }] }] }
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/material-save-preview/', body, { headers: { 'If-Match': 'v1' } })
+    await saveBomDraft('bom-1', sections as never, 'v1', { ...intent, confirmation_token: 'approved' })
+    expect(mockedPatch).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { ...body, confirmation_token: 'approved' }, { headers: { 'If-Match': 'v1' } })
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+    expect(sections[0]!.lines[0]!.draft_images).toEqual([{ id: 'image-1' }])
   })
 
   it('管材匹配通过只读接口发送精确参数并保留后端自动匹配决定', async () => {
@@ -78,16 +95,6 @@ describe('BOM API', () => {
 
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/', {
       params: { q: 'HT-26134', status: 'PENDING_CONFIRMATION', page: 1, page_size: 20 },
-    })
-  })
-
-  it('统计接口接收非状态筛选和完整更新日期范围', async () => {
-    mockedGet.mockResolvedValueOnce({ data: { data: { total: 0, pending_confirmation: 0, verified: 0, maintenance_reference_count: 0 } } })
-
-    await fetchBomStats({ q: 'HT-26134', updated_after: '2026-09-01', updated_before: '2026-09-11' })
-
-    expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/stats/', {
-      params: { q: 'HT-26134', updated_after: '2026-09-01', updated_before: '2026-09-11' },
     })
   })
 

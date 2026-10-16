@@ -10,7 +10,6 @@ import PurchaseOrderListView from './PurchaseOrderListView.vue'
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   list: vi.fn(),
-  stats: vi.fn(),
   options: vi.fn(),
   remove: vi.fn(),
   detail: vi.fn(),
@@ -25,7 +24,6 @@ vi.mock('vue-router', async (importOriginal) => ({
 
 vi.mock('@/api/purchaseOrders', () => ({
   fetchPurchaseOrders: mocks.list,
-  fetchPurchaseOrderStats: mocks.stats,
   fetchPurchaseOrderFilterOptions: mocks.options,
   deletePurchaseOrder: mocks.remove,
   fetchVersionedPurchaseOrder: mocks.detail,
@@ -46,7 +44,7 @@ function mountNavigation(permissions: string[], superuser = false) {
   const page = shallowMount(PurchaseOrderListView, {
     global: {
       plugins: [pinia, ElementPlus],
-      stubs: { ElButton: { template: '<button><slot /></button>' } },
+      stubs: { RouterLink: RouterLinkStub, ElButton: { template: '<button><slot /></button>' } },
     },
   })
   mounted.push(sidebar, page)
@@ -57,7 +55,6 @@ describe('采购订单中的供应商入口与权限边界', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.list.mockResolvedValue({ data: [], meta: { total: 0, total_pages: 0 } })
-    mocks.stats.mockResolvedValue({ total: 0, draft: 0, submitted: 0, completed: 0, mailed: 0, unmailed: 0, mailing_pending: 0, amounts: [] })
     mocks.options.mockResolvedValue({ production_tasks: [], suppliers: [], currencies: [], default_currency_id: null })
     mocks.push.mockResolvedValue(undefined)
   })
@@ -93,7 +90,6 @@ describe('采购订单中的供应商入口与权限边界', () => {
     expect(page.find('[data-testid="purchase-suppliers-entry"]').exists()).toBe(supplier)
     expect(page.text().includes('无权查看采购订单')).toBe(!purchase)
     expect(mocks.list).toHaveBeenCalledTimes(purchase ? 1 : 0)
-    expect(mocks.stats).toHaveBeenCalledTimes(purchase ? 1 : 0)
     expect(mocks.options).toHaveBeenCalledTimes(purchase ? 1 : 0)
   })
 
@@ -103,44 +99,31 @@ describe('采购订单中的供应商入口与权限边界', () => {
 
     expect(mocks.push).toHaveBeenCalledWith({ name: 'suppliers' })
     expect(mocks.list).not.toHaveBeenCalled()
-    expect(mocks.stats).not.toHaveBeenCalled()
     expect(mocks.remove).not.toHaveBeenCalled()
   })
 
-  it('状态标签筛选真实采购状态，更新时间排序切换发送对应参数', async () => {
+  it('状态下拉筛选真实采购状态，清空时恢复默认查询', async () => {
     const { page } = mountNavigation(['procurement.view_purchaseorder'])
     await flushPromises()
     expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, page_size: 50, ordering: '-updated_at' }))
 
-    await page.get('[data-testid="purchase-status-SUBMITTED"]').trigger('click')
+    const select = page.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '采购状态筛选')!
+    select.vm.$emit('update:modelValue', 'SUBMITTED')
+    select.vm.$emit('change', 'SUBMITTED')
     await flushPromises()
     expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'SUBMITTED', page: 1 }))
-    expect(page.get('[data-testid="purchase-status-SUBMITTED"]').attributes('aria-pressed')).toBe('true')
-
-    await page.get('[data-testid="purchase-sort"]').trigger('click')
-    await flushPromises()
-    expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'SUBMITTED', ordering: 'updated_at' }))
-
-    await page.get('[data-testid="purchase-status-all"]').trigger('click')
+    select.vm.$emit('update:modelValue', '')
+    select.vm.$emit('change', '')
     await flushPromises()
     expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: '' }))
   })
 
-  it('统计读取失败显示未知值，不把失败伪装成零条订单', async () => {
-    mocks.stats.mockRejectedValueOnce(new Error('网络断开'))
+  it('已完成采购仍可通过状态下拉筛选', async () => {
     const { page } = mountNavigation(['procurement.view_purchaseorder'])
     await flushPromises()
-    expect(page.get('[data-testid="purchase-status-all"]').text()).toContain('—')
-    expect(page.get('[data-testid="purchase-status-all"]').text()).not.toContain('0')
-    expect(page.find('.load-error').exists()).toBe(true)
-  })
-
-  it('已完成采购标签使用真实统计并提交完成状态筛选', async () => {
-    mocks.stats.mockResolvedValueOnce({ total: 12, draft: 3, submitted: 5, completed: 4, amounts: [] })
-    const { page } = mountNavigation(['procurement.view_purchaseorder'])
-    await flushPromises()
-    expect(page.get('[data-testid="purchase-status-COMPLETED"]').text()).toContain('4')
-    await page.get('[data-testid="purchase-status-COMPLETED"]').trigger('click')
+    const select = page.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '采购状态筛选')!
+    select.vm.$emit('update:modelValue', 'COMPLETED')
+    select.vm.$emit('change', 'COMPLETED')
     await flushPromises()
     expect(mocks.list).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'COMPLETED' }))
     expect(page.text()).not.toContain('查看明细')

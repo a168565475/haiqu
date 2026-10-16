@@ -277,6 +277,9 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsVersion++; statsVer
 .supplier-table th { height: 44px; color: token.$crm-text-secondary; background: token.$crm-color-subtle; position: sticky; top: 0; z-index: 1; font-size: 11px; font-weight: 500; line-height: 16px; }
 .supplier-row td { height: 40px; border-bottom: 1px solid token.$crm-border-subtle; color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
 .supplier-table th:last-child,.supplier-table td:last-child { border-right: 0; }
+.supplier-page .supplier-table > thead > tr > th:last-child { right: 0; z-index: 3; }
+.supplier-page .supplier-table > tbody > tr.supplier-row > td.action-cell { position: sticky; right: 0; z-index: 2; background: token.$crm-color-surface; }
+.supplier-page .supplier-table > tbody > tr.supplier-row:hover > td.action-cell { background: token.$crm-color-row-hover; }
 .supplier-row strong { color: token.$crm-text-primary; font-size: 13px; font-weight: 600; } .supplier-row:hover { background: token.$crm-color-row-hover; }
 .number-link { padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; } .number-link:hover { color: token.$crm-primary; text-decoration: underline; }
 .supplier-row .status-cell,.supplier-row .action-cell { padding: 0 5px !important; overflow: visible !important; text-align: center; text-overflow: clip !important; }

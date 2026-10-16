@@ -62,8 +62,6 @@ export async function fetchInquiryBoard(params: Record<string, unknown> = {}) { 
 export async function seedFigmaDemoInquiries() { return dataOf<{ created_or_existing: number; inquiry_ids: string[] }>(await apiClient.post(`${path}demo-seed/?demo=figma`)) }
 export async function assignInquiry(id: string, etag: string, ownerEmployeeId: string, reason: string) { return dataOf<InquiryRow>(await apiClient.post(`${path}${id}/assign/`, { owner_employee_id: ownerEmployeeId, reason }, { headers: { 'If-Match': etag } })) }
 export async function markInquiryInvalid(id: string, etag: string, reasonCode: string, reasonDetail: string) { return dataOf<InquiryRow>(await apiClient.post(`${path}${id}/mark-invalid/`, { reason_code: reasonCode, reason_detail: reasonDetail }, { headers: { 'If-Match': etag } })) }
-export async function bulkAssignInquiries(items: Array<{ id: string; etag: string }>, ownerEmployeeId: string, reason: string) { return dataOf<{ updated: number }>(await apiClient.post(`${path}bulk-assign/`, { items, owner_employee_id: ownerEmployeeId, reason })) }
-export async function bulkMarkInquiryInvalid(items: Array<{ id: string; etag: string }>, reasonCode: string, reasonDetail: string) { return dataOf<{ updated: number }>(await apiClient.post(`${path}bulk-mark-invalid/`, { items, reason_code: reasonCode, reason_detail: reasonDetail })) }
 export async function fetchInquiry(id: string, params: Record<string, unknown> = {}): Promise<VersionedInquiry> {
   return versioned(await apiClient.get(`${path}${encodeURIComponent(id)}/`, { params }))
 }

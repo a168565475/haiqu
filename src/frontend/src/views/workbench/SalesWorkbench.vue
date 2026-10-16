@@ -2,6 +2,7 @@
 import WorkbenchMetricCard from '@/components/workbench/WorkbenchMetricCard.vue'
 import WorkbenchSection from '@/components/workbench/WorkbenchSection.vue'
 import { createMilestoneDemo, salesFunnelDemo, workbenchReferenceDate } from '@/data/workbenchDemoData'
+import { isTaskDueToday, isTaskOverdue } from '@/utils/workbench'
 import type {
   WorkbenchLoadState,
   WorkbenchMetric,
@@ -30,8 +31,6 @@ const emit = defineEmits<{
 
 const milestones = createMilestoneDemo()
 const componentReferenceDate = workbenchReferenceDate()
-const referenceDateKey = componentReferenceDate.toISOString().slice(0, 10)
-const referenceTime = componentReferenceDate.getTime()
 
 function stateForSection(state: WorkbenchLoadState): 'READY' | 'LOADING' | 'EMPTY' | 'ERROR' {
   if (state === 'LOADING') return 'LOADING'
@@ -40,7 +39,8 @@ function stateForSection(state: WorkbenchLoadState): 'READY' | 'LOADING' | 'EMPT
   return 'READY'
 }
 
-function formatDueAt(value: string): string {
+function formatDueAt(value: string | null): string {
+  if (!value) return '未设置'
   const date = new Date(value)
   return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
@@ -64,8 +64,8 @@ function formatDueAt(value: string): string {
         <template #actions>
           <div class="task-tabs" aria-label="任务分类">
             <span class="is-active">全部 {{ tasks.length }}</span>
-            <span>逾期 {{ tasks.filter((item) => new Date(item.due_at).getTime() < referenceTime).length }}</span>
-            <span>今天 {{ tasks.filter((item) => item.due_at.slice(0, 10) === referenceDateKey).length }}</span>
+            <span>逾期 {{ tasks.filter((item) => isTaskOverdue(item, componentReferenceDate)).length }}</span>
+            <span>今天 {{ tasks.filter((item) => isTaskDueToday(item, componentReferenceDate)).length }}</span>
           </div>
         </template>
         <div class="work-table-wrap">
@@ -77,7 +77,7 @@ function formatDueAt(value: string): string {
               <tr v-for="task in tasks.slice(0, 5)" :key="task.id">
                 <td><span class="work-table__title">{{ task.title }}</span></td>
                 <td>{{ task.source_label || '一般任务' }}</td>
-                <td :class="{ 'is-overdue': new Date(task.due_at).getTime() < referenceTime }">{{ formatDueAt(task.due_at) }}</td>
+                <td :class="{ 'is-overdue': isTaskOverdue(task, componentReferenceDate) }">{{ formatDueAt(task.due_at) }}</td>
                 <td><span class="priority-tag" :class="`priority-tag--${task.priority.toLowerCase()}`">{{ task.priority_display }}</span></td>
                 <td><button type="button" class="text-button" @click="emit('task', task)">{{ task.status === 'PENDING' ? '处理' : '查看' }}</button></td>
               </tr>

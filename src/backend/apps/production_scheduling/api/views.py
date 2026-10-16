@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 from django.conf import settings
@@ -19,10 +20,14 @@ from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.procurement.models import PurchaseOrderStatus
 from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_tasks_with_context
+from apps.sales_orders.presentation import specification_display
 from apps.workshop_config.models import Craft, PlanCategory, RecordStatus
 
 from ..models import ProductionSchedule, ScheduleStatus
-from ..selectors import accessible_production_schedules, schedule_items_for_category, schedules_with_context
+from ..selectors import (
+    accessible_production_schedules, schedule_items_for_category, schedule_product_image, schedule_source_image_ids,
+    schedules_with_context,
+)
 from ..services import create_schedule, create_schedule_batch, source_revision, update_schedule, void_schedule
 from .serializers import (
     ScheduleBatchCreateSerializer, ScheduleCreateSerializer, ScheduleItemReadSerializer, ScheduleReadSerializer,
@@ -49,6 +54,21 @@ def _date(value, field):
     if parsed is None:
         raise ValidationError({field: f"{field} 日期格式不正确。"})
     return parsed
+
+
+def _task_product_display_fields(line):
+    image = schedule_product_image(line)
+    return {
+        "specification_display": specification_display(SimpleNamespace(
+            specification_snapshot=line.specification_snapshot,
+            customer_specification_snapshot=line.customer_specification_snapshot,
+            customer_color_snapshot=line.customer_color_snapshot,
+            color_snapshot=line.color_name_snapshot,
+            material_snapshot=line.material_snapshot,
+        )),
+        "material": line.material_snapshot,
+        "image_file_id": str(image.pk) if image else None,
+    }
 
 
 class ProductionScheduleViewSet(viewsets.GenericViewSet):
@@ -187,7 +207,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         ).exclude(latest_bom_status=BomStatus.VERIFIED)
         queryset = production_tasks_with_context(
             accessible_production_tasks(request).filter(status=ProductionTaskStatus.READY, archived_at__isnull=True)
-        ).exclude(
+        ).prefetch_related("products__sales_order_delivery_batch_line__sales_order_line__product_image").exclude(
             production_schedules__record_status=ScheduleStatus.ACTIVE
         ).annotate(
             has_unready_product=Exists(unready_product_lines),
@@ -235,7 +255,9 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         task = get_object_or_404(
             production_tasks_with_context(
                 accessible_production_tasks(request), include_progress=True
-            ).prefetch_related("purchase_order__lines").filter(
+            ).prefetch_related(
+                "purchase_order__lines", "products__sales_order_delivery_batch_line__sales_order_line__product_image",
+            ).filter(
                 status=ProductionTaskStatus.READY, archived_at__isnull=True
             ), pk=task_id,
         )
@@ -253,7 +275,8 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             BusinessFile.objects.filter(
                 Q(production_task_product_images__product_line__production_task=task)
                 | Q(production_task_products__production_task=task)
-                | Q(production_task_details__product_line__production_task=task),
+                | Q(production_task_details__product_line__production_task=task)
+                | Q(pk__in=schedule_source_image_ids(task)),
                 pk=file_id,
                 archived_at__isnull=True,
             ).distinct()
@@ -383,7 +406,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                     "product_name": line.product_name_snapshot, "specification": line.specification_snapshot,
                     "color_name": line.color_name_snapshot,
                     "quantity": line.quantity, "unit_name": line.unit.unit_name,
-                    "image_file_id": str(line.image_file_id) if line.image_file_id else None,
+                    **_task_product_display_fields(line),
                 }
                 for line in products
             ],
@@ -399,8 +422,8 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                     "specification": line.specification_snapshot, "color_name": line.color_name_snapshot,
                     "color_code": line.color_code_snapshot, "quantity": line.quantity,
                     "unit_id": str(line.unit_id), "unit_name": line.unit.unit_name,
-                    "image_file_id": str(line.image_file_id) if line.image_file_id else None,
                     "dimensions": {"expanded": None, "folded": None, "source": None},
+                    **_task_product_display_fields(line),
                     **product_progress(line),
                 }
                 for line in products

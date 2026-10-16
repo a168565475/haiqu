@@ -1,7 +1,150 @@
 {
   "version": 1,
   "modules": {
+    "workbench": [
+      {
+        "id": "workbench-navigation-readonly",
+        "path": "qa/workbench_navigation_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["WORKBENCH_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/artifacts/workbench-navigation-20261016/*.png", "qa/artifacts/workbench-navigation-20261016/readonly-report-*.json"],
+        "preconditions": [
+          "WORKBENCH_QA_STORAGE_STATE 提供当前既有真实登录副本，缺失或失效阻断，不创建员工、账号、会话或授权",
+          "两个入口使用真实 dashboard API；页面业务写请求全部拦截，不把已有演示卡片计为真实业务数据",
+          "后台验证菜单、双路由、刷新、独立页签、未登录保护与计算样式；缺少真实低权限账号时明确记录 UNKNOWN",
+          "临时资源已在任务报告登记，脚本只创建并清理 qa/_tmp/workbench-navigation-20261016/browser；登录副本和空父目录由主任务清理复查"
+        ]
+      }
+    ],
     "production": [
+      {
+        "id": "boards-preview-readonly",
+        "path": "qa/boards_preview_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "none-memory-demo-authentication-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOARDS_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 19,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/boards_refinement_20261016/**/*.json", "output/playwright/boards_refinement_20261016/**/*.png"],
+        "preconditions": [
+          "仅使用已有真实 Session，缺失或失效阻断；不输出 Cookie，不自动创建账号，不写业务数据",
+          "本轮仅验收已标注演示数据的前端样式，不计为真实生产/库存数据接入验收",
+          "所有非 GET/HEAD/OPTIONS 页面请求均拦截并判失败；四独立路由、新标签、搜索、全屏、DOM及计算样式按已确认截图布局核对",
+          "浏览器独占目录 .tmp/boards_20261016/browser 创建前核查，finally 关闭后精确删除并复查；Session副本由主任务结束清理"
+        ]
+      },
+      {
+        "id": "bom-material-save-preview-readonly",
+        "path": "qa/bom_material_save_preview_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOM_MATERIAL_PREVIEW_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 480,
+        "enabled": true,
+        "order": 18,
+        "result_protocol": "json-summary-v1",
+        "artifacts": [
+          "output/playwright/bom-material-save-confirm-20261016/**/*.json",
+          "output/playwright/bom-material-save-confirm-20261016/**/*.png"
+        ],
+        "preconditions": [
+          "仅使用 BOM_MATERIAL_PREVIEW_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，不自动登录，不输出凭据或确认令牌",
+          "目标为本机 HT26001 的真实 BOM be2ec136-6e0f-4780-8a5c-53d2956ee0bf，产品已核对且订单未过期；缺少条件时不代确认或同步",
+          "只在待验证保存按钮触发期间放行该 BOM 的 POST material-save-preview 且校验 intent、If-Match 和 sections；后端零写入测试通过后才可运行",
+          "所有实际保存 PATCH、verify、原料创建、上传及其他写请求均拦截；只检查预检与取消，不声称真实业务保存通过",
+          "后台检查 1101x884、1440x900 的两种保存入口、真实新增清单、弹窗布局与取消；前后核对 BOM hash、updated_at、ETag 及逐页完整活动库存 count/hash",
+          "独占 profile 为 .tmp/bom_material_confirm_20261016/profile，仅不存在时创建，finally 关闭并精确清理复查；Session副本由主任务清理",
+          "由 qa.run.run_entry 按本ID显式执行，保留 PASS_WITH_GAPS、全部覆盖缺口和清理结果，不模拟业务数据"
+        ]
+      },
+      {
+        "id": "purchase-source-columns-readonly",
+        "path": "qa/purchase_source_columns_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["PURCHASE_SOURCE_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 17,
+        "result_protocol": "json-summary-v1",
+        "artifacts": [
+          "output/playwright/purchase-source-columns-20261016/**/*.json",
+          "output/playwright/purchase-source-columns-20261016/**/*.png"
+        ],
+        "preconditions": [
+          "仅使用 PURCHASE_SOURCE_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，不自动登录，不输出凭据",
+          "目标为本机 http://localhost:8080/purchase-orders/new，真实来源 HT26001 与 HT26003 可通过 API 核查；缺少前提时如实阻断",
+          "所有非 GET/HEAD 请求均拦截；不新建、保存或确认采购单，不写业务数据",
+          "后台检查 1101x884、1440x900：无 BOM 来源隐藏、产品编码保留、产品编号移除、规格颜色材质分列及实际 DOM 和计算样式",
+          "HT26001 辅料未关联造成的业务阻断保留；不存在的真实空态、多行或权限场景列为覆盖缺口，不用模拟数据冒充真实验收",
+          "独占 profile 为 .tmp/purchase_source_columns_20261016/profile，只在不存在时创建；finally 关闭浏览器后按精确路径清理并复查，Session 副本由主任务清理",
+          "后端/API回归通过、脚本审查后，通过 qa.run.run_entry 按本 ID 单项运行，保留 PASS_WITH_GAPS 及清理结果"
+        ]
+      },
+      {
+        "id": "bom-fabric-material-sync-readonly",
+        "path": "qa/bom_fabric_material_sync_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["BOM_FABRIC_SYNC_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 480,
+        "enabled": true,
+        "order": 16,
+        "result_protocol": "json-summary-v1",
+        "artifacts": [
+          "output/playwright/fabric-auto-sync-20261016/readonly-report.json",
+          "output/playwright/fabric-auto-sync-20261016/*.png",
+          "output/playwright/fabric-auto-sync-20261016/fabric-auto-sync/readonly-report.json",
+          "output/playwright/fabric-auto-sync-20261016/fabric-auto-sync/*.png"
+        ],
+        "preconditions": [
+          "只使用 BOM_FABRIC_SYNC_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，禁止自动登录及输出凭据或响应正文",
+          "BOM_FABRIC_SYNC_QA_BASE_URL 默认 http://localhost:8080；目标 dbe06399-b6f0-40b1-bdba-9e0d9b2861da 及真实生产维护字典须可读，产品已核对",
+          "检查面料无需手选库存来源、参数可编辑、修改后取消恢复；新增面料仅应用到本地草稿供裁剪选择，不保存、确认或上传",
+          "拦截所有非 GET/HEAD 请求，仅精确放行同源 POST /api/v1/boms/material-flow-preview/ 纯计算接口；结束前核对 BOM 和来源原料哈希",
+          "真实业务保存与建档不在只读验收范围；当前没有已关联面料时记录缺口，不伪造数据或假称真实写入通过",
+          "使用现有 playwright-core 和本机 Chrome/Edge，1102x884 与 1440x900 后台验收；BOM_FABRIC_SYNC_QA_BROWSER_PATH 可指定既有浏览器，不新增依赖",
+          "独占 profile 为 .tmp/fabric_auto_sync_20261016/profile，不存在才创建，finally 关闭浏览器后核实精确路径、清理并复查；Session 同目录 session.json 由主任务清理",
+          "后端业务/API测试和脚本审阅通过后，通过 qa.run.run_entry 按本 ID 显式运行；结构化协议保留 PASS_WITH_GAPS 与清理结果"
+        ]
+      },
       {
         "id": "bom-pipe-material-match-readonly",
         "path": "qa/bom_pipe_material_match_readonly.cjs",
@@ -18,21 +161,21 @@
         "enabled": true,
         "order": 15,
         "artifacts": [
-          "output/playwright/bom-pipe-material-match-20261015/readonly-report.json",
-          "output/playwright/bom-pipe-material-match-20261015/*.png",
-          "output/playwright/bom-pipe-material-match-20261015/bom-pipe-material-match/readonly-report.json",
-          "output/playwright/bom-pipe-material-match-20261015/bom-pipe-material-match/*.png"
+          "output/playwright/pipe-auto-sync-20261016/readonly-report.json",
+          "output/playwright/pipe-auto-sync-20261016/*.png",
+          "output/playwright/pipe-auto-sync-20261016/pipe-auto-sync/readonly-report.json",
+          "output/playwright/pipe-auto-sync-20261016/pipe-auto-sync/*.png"
         ],
         "preconditions": [
           "只使用 BOM_PIPE_QA_STORAGE_STATE 指定的已有 Session；缺失或失效阻断，禁止自动登录及输出凭据、Cookie、完整响应正文",
           "BOM_PIPE_QA_BASE_URL 默认 http://localhost:8080，目标 dbe06399-b6f0-40b1-bdba-9e0d9b2861da 真实可读可编辑且产品已核对",
-          "逐行检查当前管材参数保留及真实匹配状态；不硬编码旧的5行或无匹配结论，数据变化如实报告",
-          "从 pipe-materials 取少量真实原料 ID，再只读 raw-materials/{id}/ 获得截面、厚度；不猜规格字符串，不扩大既有接口",
-          "按真实字典在浏览器草稿验证唯一可靠候选自动关联、多候选或待复核候选手选；缺少真实覆盖记录 PARTIAL，不造数据、不 Mock",
-          "提交材质、截面、厚度、形状与弹窗实际计算长度；计算长度仅参与是否允许自动关联，不冒充库存长度或筛掉手选候选，不默认长度1或替换厚度",
-          "拦截全部非 GET/HEAD 请求并将写请求尝试判失败；不点击保存、确认、应用修改或上传，不创建正式业务记录",
+          "逐行读取当前真实管材来源档案，检查参数原样展示、已关联字段仍可编辑；首条已关联行选择真实下拉中的不同厚度，取消后重开确认原厚度，并复读API确认来源未变；缺少其他真实厚度记录notCovered，不伪造",
+          "管材弹窗无对应原料提示、选择与重试控件；浏览器不请求 pipe-material-matches 接口，不造数据、不 Mock",
+          "使用当前真实行的品名和切割参数，留空材质、截面、厚度、形状，只应用到浏览器本地草稿并重开检查；不填虚构业务资料，不点击保存、确认或上传",
+          "拦截全部非 GET/HEAD 请求，仅精确放行同源 POST /api/v1/boms/material-flow-preview/ 纯计算接口；views.material_flow_preview 与 test_readonly_quantity_preview_formula_errors_permissions_and_no_writes 已确认无业务写入",
+          "保存时自动关联和缺少则建档由后端业务/API测试覆盖；本只读页面脚本不声称真实自动建档通过，结束前复读BOM和来源确认未修改",
           "沿用项目 playwright-core 和本机 Chrome/Edge；BOM_PIPE_QA_BROWSER_PATH 可指定既有浏览器，不新增依赖",
-          "独占 profile 已登记为 .tmp/bom_pipe_material_match_20261015/profile；仅不存在时创建，finally关闭浏览器后校验精确路径、清理并复查；Session文件由主任务清理",
+          "独占 profile 已登记为 .tmp/pipe_auto_sync_20261016/profile，Session为同目录session.json并由主任务清理；profile仅不存在时创建，finally关闭浏览器后校验精确路径、清理并复查；报告和截图保留于output/playwright/pipe-auto-sync-20261016",
           "后端业务/API测试和脚本审阅通过后，由主任务通过 qa.run.run_entry 按本ID单独执行；1920x1080、1102x884截图及DOM几何证据保留"
         ]
       },
@@ -417,6 +560,92 @@
         "preconditions": [
           "开发前端 8080 和 API 8000 可访问",
           "development-auto-login 可用；脚本断言业务写请求为 0"
+        ]
+      }
+    ],
+    "product_catalog": [
+      {
+        "id": "product-catalog-readonly",
+        "path": "qa/product_catalog_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "development-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["PRODUCT_CATALOG_QA_STORAGE_STATE"],
+        "required_env": ["PRODUCT_CATALOG_QA_BASE_URL"],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/product-catalog-20261016-2ebd7b22/readonly-*.json", "output/product-catalog-20261016-2ebd7b22/*.png"],
+        "preconditions": [
+          "本任务专项迁移和源表导入已完成，真实API至少有34类别、119品名；未就绪时阻断，不伪造数据",
+          "使用正常登录的有效Session，至少具备独立产品管理查看权限；自动按真实权限决定是否检查未提交草稿，只读身份明确记录编辑检查未覆盖；脚本不创建账号、不保存会话、不提交业务保存或删除",
+          "修改前字体及外壳基线visual-baseline.json已采集；在1920x1080和1440x900展开可操作的类别及常规/定制选择器并检查DOM、样式和滚动",
+          "每次运行先登记独占浏览器目录，finally关闭后限定.tmp/product-catalog-20261016-2ebd7b22内清理复查；证据保留",
+          "该脚本独立报告PASS_WITH_GAPS，不把只读草稿检查冒充真实写库、权限、异常和完整视觉验收；all不自动包含本模块"
+        ]
+      }
+    ],
+    "product_catalog_write": [
+      {
+        "id": "product-catalog-authorized-write",
+        "path": "qa/product_catalog_write.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "real-write",
+        "database_target": "local-haiqu_erp-product_catalog-registered-temporary-records-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["PRODUCT_CATALOG_QA_STORAGE_STATE"],
+        "required_env": ["PRODUCT_CATALOG_QA_BASE_URL", "QA_ALLOW_REAL_DB_WRITE"],
+        "timeout_seconds": 600,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/product-catalog-20261016-2ebd7b22/write-*.json", "output/product-catalog-20261016-2ebd7b22/*write*.png"],
+        "preconditions": [
+          "必须取得本任务product-catalog-write-scope-20261016.md的专项授权；不得复用原料任务授权",
+          "真实207条来源导入已完成，qa/product_catalog_qa_resources.py已创建并登记本任务2个临时权限账号",
+          "仅本机localhost或127.0.0.1目标；页面写请求限制为登记的QA品名和产品，不修改导入产品或下游",
+          "finally关闭浏览器后按登记ID清理新建颜色/产品/品名/权限账号/员工/会话，保留审计；异常或清理失败标记FAIL并保留资源清单",
+          "单独显式执行product_catalog_write --allow-real-db-write，环境QA_ALLOW_REAL_DB_WRITE=I_UNDERSTAND；all和read-only不自动运行本项"
+        ]
+      }
+    ],
+    "material_catalog": [
+      {
+        "id": "material-catalog-readonly",
+        "result_protocol": "json-summary-v1",
+        "path": "qa/material_catalog_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "explicit-target-api-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": ["MATERIAL_CATALOG_QA_BASE_URL"],
+        "timeout_seconds": 360,
+        "enabled": true,
+        "order": 10,
+        "artifacts": [
+          "output/playwright/material-catalog-20261016/readonly-report-*.json",
+          "output/playwright/material-catalog-20261016/*.png"
+        ],
+        "preconditions": [
+          "先完成原料管理后端业务及 API 测试；目标环境已授权部署新模块。不得由本脚本执行 migrate、导入或创建演示记录",
+          "明确设置 MATERIAL_CATALOG_QA_BASE_URL；认证二选一：MATERIAL_CATALOG_QA_STORAGE_STATE，或 MATERIAL_CATALOG_QA_USERNAME 与 MATERIAL_CATALOG_QA_PASSWORD。脚本自行检查组合，不输出凭据或 Cookie",
+          "真实账号至少具有 material_catalog.view_materialcatalog；修改权限仅用于打开未保存输入、检查悬停删除，绝不点击保存、删除或喷塑开关",
+          "只允许脚本自身 POST /api/auth/login/ 取得普通 Session；拦截所有页面非 GET/HEAD 请求并判失败，无 Mock、开发自动登录或伪造数据",
+          "沿用现有 playwright-core 与 Chrome/Edge；可设置 MATERIAL_CATALOG_QA_BROWSER_PATH，不新增依赖。1673x941 对照用户截图，另验收 1920x1080、1440x900；可设置 MATERIAL_CATALOG_QA_VISUAL_BASELINE 指向本轮只读采集的字体/外导航基线，未提供时明确记录该项未覆盖",
+          "脚本在报告登记本次 .tmp/material-catalog/readonly-browser-时间戳-PID 完整路径后创建；finally 关闭、核对边界、删除并复查。Session 来源文件只读，不由脚本清理",
+          "通过 python qa/run.py material_catalog --read-only 显式运行；all 仍只包含 production、quotation、inquiry，不增加本模块。显式 json-summary-v1 协议将 BLOCKED、PASS_WITH_GAPS 及缺口传入统一报告，缺口不计 PASS"
         ]
       }
     ],

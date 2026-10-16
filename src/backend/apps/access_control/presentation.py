@@ -1,5 +1,7 @@
 """Human labels and matrix grouping, independent of persisted permission identities."""
 RESOURCE_NAMES = dict(item.split(":", 1) for item in (
+    "productcatalog:产品管理",
+    "materialcatalog:原料管理",
     "savedview:个人保存视图",
     "dictionarytype:字典分类", "referencedictionary:字典项", "configrelease:配置版本", "systemparameterdefinition:业务参数",
     "country:国家", "currency:币种", "unit:单位", "incoterm:贸易条款", "paymentmethod:付款方式", "transportmethod:运输方式", "port:港口", "courier:快递公司", "exchangerate:汇率",

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Refresh, Search } from '@element-plus/icons-vue'
+import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { advancePurchaseReturn, fetchPurchaseReturn, fetchPurchaseReturns, fetchReturnOptions, fetchReturnStats } from '@/api/purchaseReturns'
+import { advancePurchaseReturn, fetchPurchaseReturn, fetchPurchaseReturns, fetchReturnOptions } from '@/api/purchaseReturns'
 import { useAuthStore } from '@/stores/auth'
 import PurchaseReturnConfirmDialog from '@/components/procurement/PurchaseReturnConfirmDialog.vue'
-import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery, ReturnStats } from '@/types/purchaseReturn'
+import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery } from '@/types/purchaseReturn'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -19,33 +19,25 @@ const canAdvance = (row: PurchaseReturn) => auth.moduleCan(row.status === 'QUALI
 const purchaseOrderId = computed(() => typeof route.query.purchase_order_id === 'string' ? route.query.purchase_order_id : '')
 const returnFrom = computed(() => route.query.from === 'inbound' ? 'inbound' : route.query.from === 'orders' ? 'orders' : '')
 const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : '返回采购订单')
-const filters = reactive({ q: '', supplier: '', status: '' as ReturnOrderStatus | '', ordering: '-updated_at' as '-updated_at' | 'updated_at' })
+const filters = reactive({ q: '', supplier: '', status: '' as ReturnOrderStatus | '' })
 const rows = ref<PurchaseReturn[]>([])
 const options = ref<ReturnOptions>({ suppliers: [] })
-const blankStats = (): ReturnStats => ({ total: 0, QUALITY_GENERATED: 0, PROCUREMENT_CONFIRMED: 0, COMPLETED: 0 })
-const stats = ref(blankStats())
 const total = ref(0), page = ref(1), pageSize = ref(50)
 const loading = ref(false), optionsLoading = ref(false), busyId = ref('')
 const rowsError = ref(''), optionsError = ref('')
-const statsLoading = ref(false), statsReady = ref(false), rowsReady = ref(false), statsError = ref('')
+const rowsReady = ref(false)
 const confirmationVisible = ref(false), confirmationSubmitting = ref(false)
 const confirmationRecord = ref<PurchaseReturn | null>(null)
 const confirmationAction = ref<'confirm' | 'complete' | 'view'>('confirm')
 let resolveConfirmation: ((confirmed: boolean) => void) | null = null
-const tabs: { value: ReturnOrderStatus | ''; label: string; count: keyof ReturnStats }[] = [
-  { value: '', label: '全部退货', count: 'total' },
-  { value: 'QUALITY_GENERATED', label: '待确认退货', count: 'QUALITY_GENERATED' },
-  { value: 'PROCUREMENT_CONFIRMED', label: '待退货完成', count: 'PROCUREMENT_CONFIRMED' },
-  { value: 'COMPLETED', label: '退货完成', count: 'COMPLETED' },
+const statuses: { value: ReturnOrderStatus; label: string }[] = [
+  { value: 'QUALITY_GENERATED', label: '待确认退货' },
+  { value: 'PROCUREMENT_CONFIRMED', label: '待退货完成' },
+  { value: 'COMPLETED', label: '退货完成' },
 ]
 const statusText: Record<ReturnOrderStatus, string> = { QUALITY_GENERATED: '品质生成', PROCUREMENT_CONFIRMED: '已确认退货', COMPLETED: '退货完成' }
 function statusLabel(row: PurchaseReturn): string { return statusText[row.status] || '未知状态' }
-let requestVersion = 0, optionsVersion = 0, statsVersion = 0, disposed = false
-let statsQueryKey = ''
-let appliedStatsQuery: ReturnQuery | null = null
-function statisticsQuery() {
-  return { q: filters.q.trim() || undefined, purchase_order_id: purchaseOrderId.value || undefined, supplier_id: filters.supplier || undefined }
-}
+let requestVersion = 0, optionsVersion = 0, disposed = false
 function message(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string }; detail?: string } } })?.response?.data
   return data?.error?.message || data?.detail || fallback
@@ -57,10 +49,8 @@ function time(value: string | null): string {
 }
 async function loadRows() {
   if (!canView.value || disposed) return
-  // 输入关键词后直接翻页或切换页签，也必须保持统计和列表的查询范围一致。
-  if (statsQueryKey !== JSON.stringify(statisticsQuery())) void loadStats(statisticsQuery())
   const version = ++requestVersion
-  const query: ReturnQuery = { q: filters.q.trim() || undefined, purchase_order_id: purchaseOrderId.value || undefined, supplier_id: filters.supplier || undefined, status: filters.status || undefined, ordering: filters.ordering, page: page.value, page_size: pageSize.value }
+  const query: ReturnQuery = { q: filters.q.trim() || undefined, purchase_order_id: purchaseOrderId.value || undefined, supplier_id: filters.supplier || undefined, status: filters.status || undefined, page: page.value, page_size: pageSize.value }
   loading.value = true; rowsError.value = ''
   try {
     const list = await fetchPurchaseReturns(query)
@@ -70,20 +60,6 @@ async function loadRows() {
     if (!disposed && version === requestVersion) { rows.value = []; total.value = 0; rowsReady.value = false; rowsError.value = message(error, '退货明细加载失败，请重试。') }
   } finally { if (!disposed && version === requestVersion) loading.value = false }
 }
-async function loadStats(query: ReturnQuery = appliedStatsQuery || statisticsQuery()) {
-  if (!canView.value || disposed) return
-  const version = ++statsVersion
-  appliedStatsQuery = { ...query }
-  statsQueryKey = JSON.stringify(query)
-  statsLoading.value = true; statsReady.value = false; statsError.value = ''
-  try {
-    const counts = await fetchReturnStats(query)
-    if (!disposed && version === statsVersion) { stats.value = counts; statsReady.value = true }
-  } catch (error) {
-    if (!disposed && version === statsVersion) statsError.value = message(error, '退货统计加载失败，请重试。')
-  } finally { if (!disposed && version === statsVersion) statsLoading.value = false }
-}
-async function loadData() { await Promise.all([loadStats(statisticsQuery()), loadRows()]) }
 async function loadOptions() {
   if (!canView.value) return
   const version = ++optionsVersion
@@ -92,12 +68,12 @@ async function loadOptions() {
   catch (error) { if (!disposed && version === optionsVersion) optionsError.value = message(error, '供应商筛选选项加载失败，请刷新重试。') }
   finally { if (!disposed && version === optionsVersion) optionsLoading.value = false }
 }
-function search() { if (busyId.value) return; page.value = 1; void loadData() }
-// 页签统计忽略状态、页码和排序，这些操作只读取列表。
-function reloadPage() { if (busyId.value) return; page.value = 1; void loadRows() }
-function changeTab(value: ReturnOrderStatus | '') { filters.status = value; reloadPage() }
-function sort() { filters.ordering = filters.ordering === '-updated_at' ? 'updated_at' : '-updated_at'; reloadPage() }
-async function refresh() { if (!busyId.value) await Promise.all([loadData(), loadOptions()]) }
+function search() { if (busyId.value) return; page.value = 1; void loadRows() }
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  search()
+}
 function goBack() {
   void router.push({ name: returnFrom.value === 'inbound' ? 'purchase-inbounds' : 'purchase-orders' })
 }
@@ -132,7 +108,7 @@ async function advance(row: PurchaseReturn) {
     // 先读取并冻结版本；确认后使用同一版本提交，避免覆盖其他人的操作。
     const snapshot = await fetchPurchaseReturn(row.id)
     if (disposed) return
-    if (snapshot.data.status !== row.status) { ElMessage.info('退货状态已更新，请查看最新记录。'); await loadData(); return }
+    if (snapshot.data.status !== row.status) { ElMessage.info('退货状态已更新，请查看最新记录。'); await loadRows(); return }
     if (!snapshot.etag) { ElMessage.error('未取得退货单版本，请刷新后重试。'); return }
     confirmationAction.value = action
     confirmationRecord.value = snapshot.data
@@ -144,18 +120,18 @@ async function advance(row: PurchaseReturn) {
     if (disposed) return
     ElMessage.success(action === 'confirm' ? '已确认退货，待退货完成。' : '退货已完成。')
     page.value = 1
-    await loadData()
+    await loadRows()
   } catch (error) {
     if (disposed || error === 'cancel' || error === 'close') return
     ElMessage.error(message(error, `${label}失败，请刷新后重试。`))
-    await loadData()
+    await loadRows()
   } finally {
     resolveConfirmation = null
     if (!disposed) { busyId.value = ''; confirmationVisible.value = false; confirmationSubmitting.value = false }
   }
 }
-onMounted(() => { void refresh() })
-onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; statsVersion++; resolveConfirmation?.(false); resolveConfirmation = null })
+onMounted(() => { void loadRows(); void loadOptions() })
+onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; resolveConfirmation?.(false); resolveConfirmation = null })
 </script>
 
 <template>
@@ -163,16 +139,16 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; sta
     <PurchaseReturnConfirmDialog :visible="confirmationVisible" :record="confirmationRecord" :submitting="confirmationSubmitting" :action="confirmationAction" @cancel="closeDialog" @confirm="answerConfirmation(true)" />
     <div v-if="!canView" class="empty-state"><h1>无权查看退货明细</h1><p>请联系管理员开通采购、仓库入库或品质确认权限。</p></div>
     <template v-else>
-      <header class="page-head"><h1>{{ purchaseOrderId ? '品质与退货明细' : '退货明细' }}</h1><span>共 {{ rowsReady ? total : '—' }} 条</span><p>{{ purchaseOrderId && rows[0] ? rows[0].order_number : '品质确认退货数量后生成退货单' }}</p><ElButton v-if="returnFrom" class="back-button" @click="goBack">{{ backLabel }}</ElButton></header>
-      <nav class="status-tabs" aria-label="退货状态筛选" :aria-busy="statsLoading"><button v-for="tab in tabs" :key="tab.count" type="button" :class="{ active: filters.status === tab.value }" :aria-pressed="filters.status === tab.value" :disabled="!!busyId" @click="changeTab(tab.value)">{{ tab.label }} <span>{{ statsReady ? stats[tab.count] : '—' }}</span></button></nav>
+      <header class="page-head"><h1>{{ purchaseOrderId ? '品质与退货明细' : '退货明细' }}</h1><span>共 {{ rowsReady ? total : '—' }} 条</span><p>{{ purchaseOrderId && rows[0] ? rows[0].order_number : '品质确认退货数量后生成退货单' }}</p></header>
       <form class="filters-row" aria-label="退货查询" @submit.prevent="search">
-        <ElInput v-model="filters.q" aria-label="搜索退货记录" :suffix-icon="Search" clearable maxlength="200" :disabled="!!busyId" placeholder="搜索退货单号、采购单号" @keydown.enter.prevent="search" @clear="search" />
+        <ElInput v-model="filters.q" class="return-search" aria-label="搜索退货记录" title="支持退货单号、采购单号、供应商名称" clearable maxlength="200" :disabled="!!busyId" placeholder="搜索退货单号、采购单号、供应商" @keydown.enter="handleSearchEnter" @clear="search">
+          <template #suffix><button type="button" class="return-search-button" aria-label="搜索退货列表" :disabled="!!busyId" @click="search"><ElIcon><Search /></ElIcon></button></template>
+        </ElInput>
         <ElSelect v-model="filters.supplier" aria-label="供应商" clearable filterable :disabled="!!busyId" :loading="optionsLoading" placeholder="供应商：全部" @change="search"><ElOption v-for="supplier in options.suppliers" :key="supplier.id" :value="supplier.id" :label="supplier.supplier_name" /></ElSelect>
-        <ElSelect v-model="filters.status" aria-label="退货状态" clearable :disabled="!!busyId" placeholder="退货状态：全部" @change="reloadPage"><ElOption v-for="tab in tabs.slice(1)" :key="tab.value" :value="tab.value" :label="tab.label" /></ElSelect>
-        <span class="filters-spacer" /><ElButton :disabled="!!busyId" @click="sort">更新时间 {{ filters.ordering === '-updated_at' ? '↓' : '↑' }}</ElButton><ElButton :icon="Refresh" :disabled="!!busyId" :loading="loading || optionsLoading || statsLoading" @click="refresh">刷新</ElButton>
+        <ElSelect v-model="filters.status" aria-label="退货状态" clearable :disabled="!!busyId" placeholder="退货状态：全部" @change="search"><ElOption v-for="status in statuses" :key="status.value" :value="status.value" :label="status.label" /></ElSelect>
+        <div v-if="returnFrom" class="return-actions"><ElButton @click="goBack">{{ backLabel }}</ElButton></div>
       </form>
       <div v-if="rowsError" class="load-error" role="alert">{{ rowsError }} <ElButton link :disabled="!!busyId" @click="loadRows">重试列表</ElButton></div>
-      <div v-if="statsError" class="load-error" role="alert">{{ statsError }} <ElButton link :disabled="!!busyId" @click="loadStats()">重试统计</ElButton></div>
       <div v-if="optionsError" class="load-error" role="alert">{{ optionsError }} <ElButton link :disabled="!!busyId" @click="loadOptions">重试供应商</ElButton></div>
       <div class="table-card">
         <ElTable v-loading="loading" :data="rows" row-key="id" row-class-name="return-row" class="return-table" height="100%" aria-label="退货明细表格">
@@ -191,7 +167,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; sta
           </ElTableColumn>
           <template #empty><div class="table-empty">{{ rowsError ? '记录加载失败，请刷新重试' : loading ? '正在加载退货记录…' : '暂无符合条件的退货记录' }}</div></template>
         </ElTable>
-        <footer class="table-footer"><span>共 {{ rowsReady ? total : '—' }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20,50,100]" :total="total" :disabled="loading || !!busyId" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="reloadPage" /></footer>
+        <footer class="table-footer"><span>共 {{ rowsReady ? total : '—' }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20,50,100]" :pager-count="5" :total="total" :disabled="loading || !!busyId" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search" /></footer>
       </div>
     </template>
   </section>
@@ -200,20 +176,20 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; sta
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 .return-page {
-  box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0; overflow: auto; padding: 32px 28px 18px; display: flex; flex-direction: column;
+  box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0; overflow: hidden; padding: 32px 28px 18px; display: flex; flex-direction: column;
   background: token.$crm-color-page; color: token.$crm-text-primary; font: 16px/24px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-text-color-placeholder: #{token.$crm-text-muted}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 h1,h2,p { margin: 0; } button { font: inherit; cursor: pointer; } button:disabled { cursor: not-allowed; }
-.page-head { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 28px; margin-bottom: 9px; }
-.page-head .back-button { margin-left: auto; height: 32px; }
+.page-head { min-height: 44px; flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; margin-bottom: 14px; }
 h1 { font: 700 34px/44px token.$crm-font-display; } .page-head span,.page-head p { color: token.$crm-text-secondary; }
-.status-tabs { display: flex; height: 46px; flex-shrink: 0; border-radius: 5px; background: token.$crm-color-subtle; margin-bottom: 19px; }
-.status-tabs button { width: 160px; border: 0; border-bottom: 3px solid transparent; padding: 3px 0 0; background: transparent; color: token.$crm-text-secondary; }
-.status-tabs button:first-child { width: 130px; }
-.status-tabs button span { margin-left: 10px; } .status-tabs .active { color: token.$crm-primary; border-bottom-color: token.$crm-primary; font-weight: 700; }
-.filters-row { display: grid; grid-template-columns: minmax(260px,402px) minmax(180px,300px) minmax(180px,246px) minmax(0,1fr) 132px 98px; gap: 14px; height: 32px; flex-shrink: 0; margin-bottom: 0; }
-.filters-row > * { min-width: 0; } .filters-row .el-button { width: 100%; margin: 0; height: 32px; }
+.filters-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; flex-shrink: 0; margin-bottom: 14px; }
+.filters-row .return-search { width: 250px; min-width: 250px; flex: none; }
+.filters-row > .el-select { width: 180px; flex: none; }
+.return-actions { display: flex; justify-content: flex-end; margin-left: auto; }
+.return-actions .el-button { margin: 0; height: 32px; }
+.return-search-button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 24px; padding: 0; border: 0; background: transparent; color: token.$crm-text-secondary; }
+.return-search-button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
 .return-page :deep(.el-button) { font: 16px token.$crm-font-body; border-radius: 5px; }
 .filters-row :deep(.el-input__wrapper), .filters-row :deep(.el-select__wrapper) { min-height: 32px; box-sizing: border-box; border-radius: 5px; font-size: 14px; }
 .filters-row :deep(.el-input__inner) { font-family: inherit; height: 30px; }
@@ -233,8 +209,8 @@ h1 { font: 700 34px/44px token.$crm-font-display; } .page-head span,.page-head p
 .return-page .return-table :deep(.operation-column .cell) { padding-right: 4px !important; padding-left: 4px !important; overflow: visible; text-overflow: clip; }
 .return-page .return-table :deep(.return-row .el-button) { width: 64px; height: 32px; padding: 0 12px; }
 .return-page .return-table :deep(.return-row:has(.QUALITY_GENERATED) .el-button:not(:disabled)), .return-page .return-table :deep(.return-row:has(.PROCUREMENT_CONFIRMED) .el-button:not(:disabled)) { color: token.$crm-primary; border-color: token.$crm-primary; }
-.table-footer { height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; box-sizing: border-box; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; }
-.table-footer :deep(.el-pagination) { --el-pagination-button-bg-color: #{token.$crm-color-surface}; --el-pagination-button-disabled-bg-color: #{token.$crm-color-surface}; --el-pagination-button-height: 32px; --el-pagination-button-width: 38px; font-weight: 400; }
+.return-page .table-footer { height: auto !important; min-height: 48px; flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 18px !important; box-sizing: border-box; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; }
+.table-footer :deep(.el-pagination) { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; --el-pagination-button-bg-color: #{token.$crm-color-surface}; --el-pagination-button-disabled-bg-color: #{token.$crm-color-surface}; --el-pagination-button-height: 32px; --el-pagination-button-width: 38px; font-weight: 400; }
 .table-footer :deep(.el-pager li),.table-footer :deep(.btn-prev),.table-footer :deep(.btn-next) { border: 1px solid token.$crm-border-default; border-radius: 5px; margin-left: 10px; }
 .table-footer :deep(.el-pager li.is-active) { background: token.$crm-color-surface; color: token.$crm-primary; border-color: token.$crm-primary; }
 .table-footer :deep(.el-select__wrapper) { min-height: 32px; }

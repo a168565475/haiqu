@@ -48,7 +48,7 @@ export interface WorkbenchTask {
   status_display: string
   priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
   priority_display: string
-  due_at: string
+  due_at: string | null
   completed_at: string | null
   assignee: { id: string; employee_code: string; display_name: string } | null
   source: TaskSource | null

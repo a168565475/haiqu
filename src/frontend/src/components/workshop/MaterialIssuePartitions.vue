@@ -101,7 +101,7 @@ function remainder(row: MaterialRequirement) {
   <div class="issue-partitions">
     <section class="mi-surface partition" data-testid="raw-partition">
       <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根及米数扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
-      <ElTable :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
+      <ElTable class="scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
          <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
@@ -118,13 +118,13 @@ function remainder(row: MaterialRequirement) {
         <ElTableColumn v-if="showPipeDeduction" label="每根切割" width="110"><template #default="{ row }">{{ isPipe(row) ? `${row.conversion_snapshot?.pieces_per_bar} 支` : '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="showPipeDeduction" label="预计扣根数" width="115"><template #default="{ row }">{{ isPipe(row) ? `${plan(row).bars} 根` : '—' }}</template></ElTableColumn>
         <ElTableColumn v-if="showPipeDeduction" label="预计扣米数" width="130"><template #default="{ row }">{{ isPipe(row) ? `${plan(row).meters} 米` : '—' }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="72"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="72" fixed="right"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
       </ElTable>
       <div v-if="showPipeDeduction" class="partition-note"><b>换算规则</b>　申请支数 ÷ 每根切割支数 = 整根数；整根数 × 原材料长度 = 扣库米数。系统按相同物料和规格的合格库存自动分配。</div>
     </section>
     <section class="mi-surface partition" data-testid="semi-partition">
       <header><div><h2>外发回库半成品领料</h2><span>管材按支、裁片按套领取，按部位分别计算</span></div><ElButton @click="open('SEMI')">＋ 添加半成品</ElButton></header>
-      <ElTable :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
+      <ElTable class="scroll-actions-table" :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
          <ElTableColumn label="半成品 / 部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
@@ -141,7 +141,7 @@ function remainder(row: MaterialRequirement) {
         <ElTableColumn label="申请数量" width="150"><template #default="{ row }"><ElTooltip :visible="Boolean(quantityRuleError(row))" placement="bottom" effect="light" popper-class="material-issue-rule-tooltip" :show-after="0" :hide-after="0" :teleported="true"><template #content><span role="alert">{{ quantityRuleError(row) }}</span></template><ElInput v-model="selected[row.requirement_id]" class="quantity-input" :class="{ 'is-rule-error': Boolean(quantityRuleError(row)) }" :aria-invalid="Boolean(quantityRuleError(row))" :aria-label="`${row.material_name}半成品申请数量`" inputmode="numeric"><template #suffix>{{ row.unit }}</template></ElInput></ElTooltip></template></ElTableColumn>
         <ElTableColumn :label="hasPublicSemi ? '预计库存结余' : '预计结余'" width="130"><template #default="{ row }">{{ remainder(row) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="可用说明" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ row.stock_mode === 'PUBLIC_V2' ? `公共半成品可用 ${issueQuantityText(row.available_stock)} ${row.unit}` : '按当前订单半成品库存' }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="72"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="72" fixed="right"><template #default="{ row }"><ElButton link type="danger" @click="remove(row)">移除</ElButton></template></ElTableColumn>
       </ElTable>
       <div class="partition-note">管材半成品按正整数支领取，裁片按正整数套领取；<template v-if="hasPublicSemi">按本订单 BOM 部位选择，系统从匹配规格、颜色和工艺的公共合格半成品中分配；不受来源订单限制，不扣原材料根数、米数及原料额度。</template><template v-else>只扣所选订单、产品、部位、工艺及库区的合格半成品，不扣原材料根数、米数及原料额度。</template></div>
     </section>

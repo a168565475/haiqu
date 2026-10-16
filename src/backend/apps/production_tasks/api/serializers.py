@@ -693,6 +693,10 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     current_boms = serializers.SerializerMethodField()
     pmc_confirmation = serializers.SerializerMethodField()
     audit_timeline = serializers.SerializerMethodField()
+    bom_status = serializers.SerializerMethodField()
+    bom_status_display = serializers.SerializerMethodField()
+    purchase_status = serializers.SerializerMethodField()
+    purchase_status_display = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductionTask
@@ -712,6 +716,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             "start_waiver_reason", "start_waiver_by", "start_waiver_at", "actual_quantity",
             "actual_good_quantity", "excess_quantity", "run_batches", "current_boms",
             "pmc_confirmation", "audit_timeline",
+            "bom_status", "bom_status_display", "purchase_status", "purchase_status_display",
         ]
 
     @extend_schema_field(serializers.CharField())
@@ -851,25 +856,6 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             return Decimal("0")
         return self.get_total_quantity(instance) - self._sum(batches, "quantity")
 
-
-class ProductionTaskListSerializer(ProductionTaskReadSerializer):
-    bom_status = serializers.SerializerMethodField()
-    bom_status_display = serializers.SerializerMethodField()
-    purchase_status = serializers.SerializerMethodField()
-    purchase_status_display = serializers.SerializerMethodField()
-
-    class Meta(ProductionTaskReadSerializer.Meta):
-        fields = [
-            "id", "task_number", "contract_number", "order_source", "order_source_display", "order_number",
-            "customer_id", "customer_code", "customer_name", "order_date", "delivery_date", "salesperson",
-            "followers", "currency_code", "delivery_method", "delivery_method_display", "status", "status_display", "status_reason",
-            "total_quantity", "total_amount", "batch_total_quantity", "quantity_difference", "products", "created_at", "updated_at",
-            "sales_order_id", "source_sales_order_number", "source_delivery_batch_number", "is_historical_unlinked",
-            "planned_start_date", "planned_end_date", "production_priority", "production_priority_display",
-            "actual_good_quantity", "bom_status", "bom_status_display", "purchase_status",
-            "purchase_status_display",
-        ]
-
     def _bom_status_summary(self, instance):
         cached = getattr(instance, "_serialized_bom_status_summary", None)
         if cached is not None:
@@ -949,6 +935,20 @@ class ProductionTaskListSerializer(ProductionTaskReadSerializer):
     @extend_schema_field(serializers.CharField())
     def get_purchase_status_display(self, instance):
         return self._purchase_status_summary(instance)[1]
+
+
+class ProductionTaskListSerializer(ProductionTaskReadSerializer):
+    class Meta(ProductionTaskReadSerializer.Meta):
+        fields = [
+            "id", "task_number", "contract_number", "order_source", "order_source_display", "order_number",
+            "customer_id", "customer_code", "customer_name", "order_date", "delivery_date", "salesperson",
+            "followers", "currency_code", "delivery_method", "delivery_method_display", "status", "status_display", "status_reason",
+            "total_quantity", "total_amount", "batch_total_quantity", "quantity_difference", "products", "created_at", "updated_at",
+            "sales_order_id", "source_sales_order_number", "source_delivery_batch_number", "is_historical_unlinked",
+            "planned_start_date", "planned_end_date", "production_priority", "production_priority_display",
+            "actual_good_quantity", "bom_status", "bom_status_display", "purchase_status",
+            "purchase_status_display",
+        ]
 
 
 class ProductionTaskReasonSerializer(serializers.Serializer):

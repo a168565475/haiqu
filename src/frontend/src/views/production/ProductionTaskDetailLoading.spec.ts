@@ -16,6 +16,22 @@ describe('生产任务详情按需选项', () => {
     permissionState.allowed = true
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: { id: 'one', task_number: 'PROD-ONE', status: 'PENDING_VALIDATION', salesperson: { display_name: '业务员' }, products: [], followers: [], delivery_batches: [], current_boms: [], audit_timeline: [] }, etag: 'v1' } as never)
   })
+  it.each([
+    ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false],
+    ['VERIFIED', 'ORDER_PURCHASING', true, false],
+    ['VERIFIED', 'ORDER_COMPLETED', false, false],
+    ['VERIFIED', 'ORDER_COMPLETED', true, true],
+  ])('排产按钮遵守 BOM=%s、采购=%s 和权限=%s', async (bomStatus, purchaseStatus, allowed, visible) => {
+    permissionState.allowed = Boolean(allowed)
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: {
+      id: 'one', task_number: 'HT26201', status: 'READY', bom_status: bomStatus, purchase_status: purchaseStatus,
+      salesperson: { display_name: '业务员' }, products: [], followers: [], current_boms: [], audit_timeline: [],
+    }, etag: 'v1' } as never)
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
+    await flushPromises()
+    expect(wrapper.findAll('button').some(button => button.text() === '计划排产')).toBe(visible)
+    wrapper.unmount()
+  })
   it('产品档案默认仅首项展开，支持逐项切换，并保留人民币及分单位汇总', async () => {
     const product = { id: 'first', product_name: '露营椅', quantity: 2, unit_name: '把', local_unit_price: '12.5000', local_total_amount: '25.0000', packaging_method: '独立包装', special_requirements: '保留备注' }
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: { id: 'one', task_number: 'HT26201', status: 'READY', salesperson: { display_name: '业务员' }, followers: [], current_boms: [], audit_timeline: [], products: [product, { ...product, id: 'second', product_name: '折叠桌', quantity: 3, unit_name: '张', local_total_amount: '37.5000' }] }, etag: 'v1' } as never)

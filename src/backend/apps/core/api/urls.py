@@ -27,6 +27,8 @@ urlpatterns = [
     path("", include("apps.audit.api.urls")),
     path("", include("apps.reference_data.api.urls")),
     path("", include("apps.products.api.urls")),
+    path("", include("apps.material_catalog.api.urls")),
+    path("", include("apps.product_catalog.api.urls")),
     path("search/", GlobalSearchView.as_view(), name="global-search"),
     path("dashboard/me/", MyDashboardView.as_view(), name="dashboard-me"),
     path("dashboard/manager/", ManagerDashboardView.as_view(), name="dashboard-manager"),

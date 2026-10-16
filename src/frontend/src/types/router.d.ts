@@ -11,7 +11,6 @@ declare module 'vue-router' {
     layout?: 'erp'
     activeMenu?: string
     headerTitle?: string
-    headerSearchPlaceholder?: string
     breadcrumbs?: AppBreadcrumbItem[]
     pageWidth?: 'fluid' | 'contained'
     compactSidebar?: boolean

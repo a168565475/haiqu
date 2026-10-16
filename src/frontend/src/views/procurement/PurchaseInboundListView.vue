@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { MoreFilled, Refresh, Search } from '@element-plus/icons-vue'
+import { MoreFilled, Search } from '@element-plus/icons-vue'
 
 import { fetchProcurementInboundOrders } from '@/api/inventory'
 import { router } from '@/router'
 import { useAuthStore } from '@/stores/auth'
-import type { ProcurementInboundOrder } from '@/types/inventory'
+import type { ProcurementInboundOrder, ProcurementInboundProductSummary } from '@/types/inventory'
 
 const auth = useAuthStore()
 const canReceive = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.receive_material'))
@@ -17,18 +17,11 @@ const listReady = ref(false)
 const loadError = ref('')
 let requestId = 0
 const keyword = ref('')
-const appliedKeyword = ref('')
 const workflowStatus = ref('')
 
 const filteredRows = computed(() => workflowStatus.value
   ? rows.value.filter(row => row.workflow_status === workflowStatus.value)
   : rows.value)
-const summary = computed(() => ({
-  orders: rows.value.length,
-  pendingReceipt: rows.value.filter(canOpenReceiving).length,
-  pendingQuality: rows.value.reduce((total, row) => total + row.pending_quality_count, 0),
-  pendingProcurement: rows.value.filter(row => row.workflow_status === 'PENDING_PROCUREMENT_CONFIRMATION').length,
-}))
 
 function apiMessage(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string }; detail?: string } } })?.response?.data
@@ -54,7 +47,6 @@ async function loadRows() {
     const result = await fetchProcurementInboundOrders({ q: nextKeyword || undefined })
     if (currentRequestId !== requestId) return
     rows.value = result
-    appliedKeyword.value = nextKeyword
     listReady.value = true
   } catch (error) {
     if (currentRequestId !== requestId) return
@@ -66,6 +58,11 @@ async function loadRows() {
   }
 }
 function reset() { keyword.value = ''; workflowStatus.value = ''; void loadRows() }
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  void loadRows()
+}
 function hasOpenReturn(row: ProcurementInboundOrder): boolean {
   return row.return_status === 'QUALITY_GENERATED' || row.return_status === 'PROCUREMENT_CONFIRMED'
 }
@@ -87,8 +84,8 @@ function openDetails(row: ProcurementInboundOrder) {
 function receivingActionLabel(row: ProcurementInboundOrder): string {
   return Number(row.received_quantity) > 0 ? '再次入库' : '办理入库'
 }
-function displayOrderNumber(row: ProcurementInboundOrder): string {
-  return (row.source_type === 'SAMPLE' ? row.source_number : row.sales_order_number) || '—'
+function displayProductField(row: ProcurementInboundOrder, field: keyof ProcurementInboundProductSummary): string {
+  return row.product_summary?.map(product => product[field]?.trim() || '—').join('、') || '—'
 }
 function returnActionLabel(row: ProcurementInboundOrder): string {
   if (row.return_status === 'QUALITY_GENERATED') return '查看品质情况'
@@ -119,16 +116,11 @@ onMounted(() => { if (canView.value) void loadRows() })
         <div><h1>采购入库</h1><p>采购订单 · 仓库入库与品质进度</p></div>
       </header>
 
-      <section class="summary-strip" aria-label="采购入库统计">
-        <div><span>采购订单</span><strong>{{ listReady ? summary.orders : '—' }}</strong></div>
-        <div><span>可办理入库</span><strong>{{ listReady ? summary.pendingReceipt : '—' }}</strong></div>
-        <div><span>待品质确认</span><strong>{{ listReady ? summary.pendingQuality : '—' }}</strong></div>
-        <div><span>等待确认退货</span><strong>{{ listReady ? summary.pendingProcurement : '—' }}</strong></div>
-      </section>
-
       <form class="filters" @submit.prevent="loadRows">
-        <ElInput v-model="keyword" :prefix-icon="Search" clearable maxlength="200" placeholder="搜索采购单、生产单、订单或供应商" />
-        <ElSelect v-model="workflowStatus" clearable placeholder="入库状态：全部">
+        <ElInput v-model="keyword" class="inbound-search" aria-label="搜索采购入库" clearable maxlength="200" placeholder="搜索采购单、来源单等" title="支持采购单、生产单、销售单、打样单或供应商名称" @keydown.enter="handleSearchEnter" @clear="loadRows">
+          <template #suffix><button type="button" class="inbound-search-button" aria-label="搜索采购入库列表" @click="loadRows"><ElIcon><Search /></ElIcon></button></template>
+        </ElInput>
+        <ElSelect v-model="workflowStatus" clearable aria-label="采购入库状态" placeholder="入库状态：全部">
           <ElOption label="等待入库" value="PENDING_RECEIPT" />
           <ElOption label="部分入库" value="PARTIAL_RECEIVED" />
           <ElOption label="待品质确认" value="PENDING_QUALITY" />
@@ -136,21 +128,21 @@ onMounted(() => { if (canView.value) void loadRows() })
           <ElOption label="等待退货完成" value="PENDING_RETURN" />
           <ElOption label="已完成" value="COMPLETED" />
         </ElSelect>
-        <ElButton type="primary" native-type="submit">查询</ElButton>
-        <ElButton @click="reset">重置</ElButton>
+        <div class="inbound-filter-actions"><ElButton @click="reset">重置</ElButton></div>
       </form>
 
       <ElAlert v-if="loadError" type="error" :title="loadError" :closable="false" show-icon>
         <ElButton link @click="loadRows">重新加载</ElButton>
       </ElAlert>
-      <header class="list-toolbar">
-        <div class="list-toolbar__title"><h2>采购入库列表</h2><span>按当前状态办理入库、品质或退货确认</span></div>
-        <div class="list-toolbar__actions"><span>共 {{ listReady ? filteredRows.length : '—' }} 条</span><ElButton :icon="Refresh" :loading="loading" @click="loadRows">刷新</ElButton></div>
-      </header>
       <section class="list-card" aria-label="采购入库列表">
         <ElTable v-loading="loading" :data="filteredRows" height="100%" class="purchase-table" row-key="id" :empty-text="loadError ? '采购入库列表加载失败' : loading ? '正在加载采购入库…' : '暂无采购入库订单'" @row-click="rowClicked">
-          <ElTableColumn label="采购单" min-width="174"><template #default="{ row }"><div class="stack"><strong>{{ row.order_number }}</strong><small>{{ row.source_number || '—' }}</small></div></template></ElTableColumn>
-          <ElTableColumn label="订单编号" min-width="150"><template #default="{ row }">{{ displayOrderNumber(row) }}</template></ElTableColumn>
+          <ElTableColumn label="采购单" min-width="174" show-overflow-tooltip><template #default="{ row }"><strong class="purchase-number">{{ row.order_number }}</strong></template></ElTableColumn>
+          <ElTableColumn label="来源单号" min-width="126" show-overflow-tooltip><template #default="{ row }">{{ row.source_number || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'product_name') }}</template></ElTableColumn>
+          <ElTableColumn label="货号" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'item_number') }}</template></ElTableColumn>
+          <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'specification') }}</template></ElTableColumn>
+          <ElTableColumn label="颜色" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'color_name') }}</template></ElTableColumn>
+          <ElTableColumn label="材质" min-width="100" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'material') }}</template></ElTableColumn>
           <ElTableColumn label="供应商" min-width="210"><template #default="{ row }">{{ row.supplier_names.join('、') || '—' }}</template></ElTableColumn>
           <ElTableColumn label="采购明细" width="100" align="center"><template #default="{ row }">{{ row.line_count }} 项</template></ElTableColumn>
           <ElTableColumn label="待入库" width="92" align="center"><template #default="{ row }">{{ row.remaining_line_count }} 项</template></ElTableColumn>
@@ -183,18 +175,19 @@ onMounted(() => { if (canView.value) void loadRows() })
 .inbound-list-page { box-sizing: border-box; width: 100%; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; padding: 28px 28px 18px; display: flex; flex-direction: column; background: token.$crm-color-page; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-border-radius-base: 5px; }
 h1, h2, p { margin: 0; }
-.page-head, .summary-strip, .summary-strip > div, .filters, .list-toolbar, .list-toolbar__title, .list-toolbar__actions { display: flex; align-items: center; }
-.page-head { height: 56px; justify-content: space-between; margin-bottom: 16px; }
+.page-head, .filters { display: flex; align-items: center; }
+.page-head { height: 56px; flex: none; justify-content: space-between; margin-bottom: 16px; }
 .page-head h1 { font-size: 28px; line-height: 34px; } .page-head p { color: token.$crm-text-secondary; font-size: 12px; }
-.summary-strip { height: 46px; gap: 64px; padding: 0 26px; margin-bottom: 16px; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; background: token.$crm-color-subtle; }
-.summary-strip > div { gap: 8px; color: token.$crm-text-secondary; } .summary-strip strong { color: token.$crm-text-primary; font-size: 13px; }
-.filters { height: 32px; gap: 12px; margin-bottom: 0; } .filters > .el-input { width: min(430px, 40vw); } .filters > .el-select { width: 190px; } .filters > .el-button { height: 32px; margin: 0; }
-.list-toolbar { box-sizing: border-box; height: 38px; flex: 0 0 38px; justify-content: space-between; margin-top: 10px; }
-.list-toolbar__title { gap: 22px; min-width: 0; } .list-toolbar h2 { margin: 0; color: token.$crm-text-secondary; font-size: 14px; font-weight: 400; } .list-toolbar span { color: token.$crm-text-secondary; font-size: 12px; }
-.list-toolbar__actions { gap: 14px; } .list-toolbar__actions .el-button { width: 96px; height: 32px; margin: 0; }
+.filters { min-height: 32px; flex: none; flex-wrap: wrap; gap: 10px; margin-bottom: 0; }
+.filters > .inbound-search { width: 250px; min-width: 250px; flex: none; }
+.filters > .el-select { width: 190px; flex: none; }
+.inbound-filter-actions { display: flex; flex: none; margin-left: auto; }
+.inbound-filter-actions :deep(.el-button) { height: 32px; margin: 0; }
+.inbound-search-button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 24px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.inbound-search-button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
 .list-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; margin-top: 14px; outline: 1px solid token.$crm-border-default; outline-offset: -1px; border-radius: 5px; background: token.$crm-color-surface; }
 .purchase-table { min-height: 0; flex: 1; --el-table-border-color: #{token.$crm-border-subtle}; --el-table-row-hover-bg-color: #{token.$crm-color-row-hover}; --el-table-header-bg-color: #{token.$crm-color-subtle}; --el-table-tr-bg-color: #{token.$crm-color-surface}; --el-table-bg-color: #{token.$crm-color-surface}; }
-.stack { min-width: 0; display: flex; flex-direction: column; gap: 0; line-height: 18px; } .stack strong { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; } .stack small, .muted { overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.purchase-number { font-size: 12px; font-weight: 600; } .muted { color: token.$crm-text-secondary; font-size: 12px; }
 .more-action { display: inline-flex; align-items: center; justify-content: center; }
 .row-more-button { width: 36px; height: 32px; margin: 0; color: token.$crm-text-secondary; }
 .inbound-list-page .purchase-table :deep(.el-table__header th.el-table__cell) { height: 44px; padding: 0; color: token.$crm-text-secondary; background: token.$crm-color-subtle; border-right: 1px solid token.$crm-border-subtle; font-size: 11px; font-weight: 500; }
@@ -204,6 +197,6 @@ h1, h2, p { margin: 0; }
 .status-badge { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-width: 88px; height: 24px; padding: 0 8px; border-radius: 999px; color: token.$crm-text-inverse; background: token.$crm-neutral; font: 500 12px/18px token.$crm-font-body; white-space: nowrap; }
 .status-PARTIAL_RECEIVED { background: token.$crm-primary; } .status-PENDING_QUALITY { background: token.$crm-warning; } .status-PENDING_PROCUREMENT_CONFIRMATION { background: token.$crm-danger; } .status-PENDING_RETURN { background: token.$crm-info; } .status-COMPLETED { background: token.$crm-success; }
 .inbound-list-page :deep(.el-input__wrapper), .inbound-list-page :deep(.el-select__wrapper) { min-height: 32px; border-radius: 5px; }
-.list-card__footer { box-sizing: border-box; height: 70px; flex: 0 0 70px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; font-size: 12px; }
+.inbound-list-page .list-card__footer { box-sizing: border-box; height: auto !important; min-height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 16px !important; border-top: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; font-size: 12px; }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
 </style>

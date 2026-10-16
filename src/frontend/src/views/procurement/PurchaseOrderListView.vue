@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { MoreFilled, Plus, Search, Refresh, Filter, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { MoreFilled, Plus, Search, Filter } from '@element-plus/icons-vue'
 import BuildingOne from '@icon-park/vue-next/es/icons/BuildingOne'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -11,14 +11,12 @@ import {
   deletePurchaseOrder,
   fetchPurchaseOrderFilterOptions,
   fetchPurchaseOrders,
-  fetchPurchaseOrderStats,
 } from '@/api/purchaseOrders'
 import { useAuthStore } from '@/stores/auth'
 import PurchaseOrderCompleteDialog from '@/components/procurement/PurchaseOrderCompleteDialog.vue'
 import type {
   PurchaseOrderListItem,
   PurchaseOrderFilterOptions,
-  PurchaseOrderStats,
   PurchaseOrderStatus,
   PurchaseReturnStatus,
   VersionedPurchaseOrder,
@@ -41,31 +39,16 @@ const emptyOptions = (): PurchaseOrderFilterOptions => ({
   suppliers: [],
   statuses: [],
 })
-const emptyStats = (): PurchaseOrderStats => ({
-  total: 0,
-  draft: 0,
-  submitted: 0,
-  purchasing: 0,
-  mailed: 0,
-  unmailed: 0,
-  mailing_pending: 0,
-  amounts: [],
-})
-
 const rows = ref<PurchaseOrderListItem[]>([])
 const options = ref<PurchaseOrderFilterOptions>(emptyOptions())
-const stats = ref<PurchaseOrderStats>(emptyStats())
-const statsReady = ref(false)
 const loading = ref(false)
 const listError = ref('')
 const optionsError = ref('')
-const statsError = ref('')
 const page = ref(1)
 const pageSize = ref(50)
 const total = ref(0)
 const listReady = ref(false)
 const showMoreFilters = ref(false)
-const ordering = ref<'-updated_at' | 'updated_at'>('-updated_at')
 const deletingId = ref('')
 const completingId = ref('')
 const completionVisible = ref(false)
@@ -74,7 +57,6 @@ const completionSnapshot = ref<VersionedPurchaseOrder | null>(null)
 let disposed = false
 let requestId = 0
 let optionsRequestId = 0
-let statsRequestId = 0
 
 const filters = reactive({
   keyword: '',
@@ -117,13 +99,6 @@ function formatDateTime(value: string): string {
   }).format(parsed).replaceAll('/', '-')
 }
 
-const statusTabs = computed<Array<{ label: string; status: PurchaseOrderStatus | ''; count: number | string }>>(() => [
-  { label: '全部采购', status: '', count: statsReady.value ? stats.value.total : '—' },
-  { label: '草稿', status: 'DRAFT', count: statsReady.value ? stats.value.draft : '—' },
-  { label: '已确认', status: 'SUBMITTED', count: statsReady.value ? stats.value.submitted : '—' },
-  { label: '采购中', status: 'PURCHASING', count: statsReady.value ? stats.value.purchasing ?? '—' : '—' },
-  { label: '已完成采购', status: 'COMPLETED', count: statsReady.value ? stats.value.completed ?? '—' : '—' },
-])
 const statusOptions = computed(() => options.value.statuses?.length ? options.value.statuses : [
   { value: 'DRAFT', label: '草稿' }, { value: 'SUBMITTED', label: '已确认' },
   { value: 'PURCHASING', label: '采购中' },
@@ -170,16 +145,6 @@ function productDetails(row: PurchaseOrderListItem): string {
   ).join('\n\n')
 }
 
-function setStatus(status: PurchaseOrderStatus | ''): void {
-  filters.status = status
-  search()
-}
-
-function toggleOrdering(): void {
-  ordering.value = ordering.value === '-updated_at' ? 'updated_at' : '-updated_at'
-  search()
-}
-
 async function loadList(): Promise<void> {
   const currentRequestId = ++requestId
   loading.value = true
@@ -194,7 +159,7 @@ async function loadList(): Promise<void> {
       status: filters.status,
       return_status: filters.returnStatus,
       created_after: filters.createdAfter || undefined,
-      ordering: ordering.value,
+      ordering: '-updated_at',
     })
     if (currentRequestId !== requestId) return
     rows.value = result.data
@@ -228,28 +193,19 @@ async function loadOptions(): Promise<void> {
   }
 }
 
-async function loadStats(): Promise<void> {
-  const currentRequestId = ++statsRequestId
-  statsError.value = ''
-  try {
-    const nextStats = await fetchPurchaseOrderStats()
-    if (disposed || currentRequestId !== statsRequestId) return
-    stats.value = nextStats
-    statsReady.value = true
-  } catch (error) {
-    if (disposed || currentRequestId !== statsRequestId) return
-    statsReady.value = false
-    statsError.value = apiErrorMessage(error, '采购订单统计加载失败，请稍后重试。')
-  }
-}
-
 async function reloadAll(): Promise<void> {
-  await Promise.all([loadList(), loadOptions(), loadStats()])
+  await Promise.all([loadList(), loadOptions()])
 }
 
 function search(): void {
   page.value = 1
   void loadList()
+}
+
+function handleSearchEnter(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  search()
 }
 
 function resetFilters(): void {
@@ -411,7 +367,7 @@ async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
 onMounted(() => {
   if (canView.value) void reloadAll()
 })
-onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsRequestId++; completionVisible.value = false; completionSnapshot.value = null })
+onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; completionVisible.value = false; completionSnapshot.value = null })
 </script>
 
 <template>
@@ -422,12 +378,11 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
         <h1>采购订单</h1>
         <span v-if="canView" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
       </div>
-      <div class="page-heading__actions">
-        <ElButton v-if="canViewSuppliers" class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
+      <div v-if="!canView && canViewSuppliers" class="page-heading__actions">
+        <ElButton class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
           <BuildingOne theme="outline" size="18" :stroke-width="3" aria-hidden="true" />
           <span>供应商管理</span>
         </ElButton>
-        <ElButton v-if="canView && canAdd" type="primary" :icon="Plus" class="create-button" @click="openCreate">新建采购订单</ElButton>
       </div>
     </header>
 
@@ -437,19 +392,11 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
     </div>
 
     <template v-else>
-      <nav class="status-tabs" aria-label="按采购状态筛选">
-        <button v-for="tab in statusTabs" :key="tab.status" type="button" class="status-tab"
-          :class="{ 'is-active': filters.status === tab.status }" :aria-pressed="filters.status === tab.status"
-          :data-testid="`purchase-status-${tab.status || 'all'}`" @click="setStatus(tab.status)">
-          {{ tab.label }} <span>{{ tab.count }}</span>
-        </button>
-      </nav>
-
       <section class="filter-section" aria-label="采购订单筛选">
-        <div class="filter-row">
+        <form class="filter-row" @submit.prevent="search">
           <ElInput v-model="filters.keyword" class="keyword-filter" clearable aria-label="搜索采购订单"
-            placeholder="搜索采购单号、生产/打样单号、订单编号" @keyup.enter="search" @clear="search">
-            <template #suffix><ElButton link :icon="Search" aria-label="搜索" @click="search" /></template>
+            placeholder="搜索采购单、来源单等" title="支持采购单、生产单、销售单、打样单、客户、供应商或物料名称" @keydown.enter="handleSearchEnter" @clear="search">
+            <template #suffix><button type="button" class="purchase-search-button" aria-label="搜索采购订单列表" @click="search"><ElIcon><Search /></ElIcon></button></template>
           </ElInput>
           <ElSelect v-model="filters.supplierId" class="supplier-filter" filterable clearable placeholder="供应商：全部"
             aria-label="供应商筛选" @change="search">
@@ -462,13 +409,14 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
             <ElOption v-for="item in returnStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
           </ElSelect>
           <ElButton :icon="Filter" class="more-filters-button" :aria-expanded="showMoreFilters" aria-controls="purchase-more-filters" @click="showMoreFilters = !showMoreFilters">更多筛选</ElButton>
-          <div class="filter-row__actions">
-            <ElButton class="sort-button" data-testid="purchase-sort" :aria-label="ordering === '-updated_at' ? '更新时间从新到旧，点击改为从旧到新' : '更新时间从旧到新，点击改为从新到旧'" @click="toggleOrdering">
-              更新时间<ElIcon><ArrowDown v-if="ordering === '-updated_at'" /><ArrowUp v-else /></ElIcon>
+          <div class="purchase-list-actions">
+            <ElButton v-if="canViewSuppliers" class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
+              <BuildingOne theme="outline" size="18" :stroke-width="3" aria-hidden="true" />
+              <span>供应商管理</span>
             </ElButton>
-            <ElButton class="refresh-button" :icon="Refresh" :loading="loading" @click="reloadAll">刷新</ElButton>
+            <ElButton v-if="canAdd" type="primary" :icon="Plus" class="create-button" @click="openCreate">新建采购订单</ElButton>
           </div>
-        </div>
+        </form>
         <div v-if="showMoreFilters" id="purchase-more-filters" class="extra-filters">
           <ElSelect v-model="filters.productionTaskId" filterable clearable placeholder="全部生产订单" aria-label="生产订单筛选" @change="search">
             <ElOption v-for="item in options.production_tasks" :key="item.id" :label="productionTaskLabel(item)" :value="item.id" />
@@ -483,9 +431,6 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
       </ElAlert>
       <ElAlert v-if="optionsError" class="load-error" type="error" :title="optionsError" :closable="false" show-icon>
         <ElButton link @click="loadOptions">重试选项</ElButton>
-      </ElAlert>
-      <ElAlert v-if="statsError" class="load-error" type="error" :title="statsError" :closable="false" show-icon>
-        <ElButton link @click="loadStats">重试统计</ElButton>
       </ElAlert>
 
       <section class="list-card" aria-label="采购订单清单">
@@ -573,7 +518,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
         <footer class="list-card__footer">
           <span>共 {{ listReady ? total : '—' }} 条</span>
           <ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]"
-            layout="sizes, prev, pager, next" background @current-change="loadList" @size-change="search" />
+            :pager-count="5" layout="sizes, prev, pager, next" background @current-change="loadList" @size-change="search" />
         </footer>
       </section>
     </template>
@@ -606,32 +551,23 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
 .create-button { width: 164px; }
 .supplier-button { width: 144px; color: crm.$crm-text-primary; }
 .supplier-button :deep(> span) { display: flex; align-items: center; gap: 8px; }
-.status-tabs { flex: 0 0 46px; display: flex; align-items: stretch; margin-top: 3px; border-radius: 5px; background: crm.$crm-color-subtle; }
-.status-tab { @include mixin.reset-button; box-sizing: border-box; position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 128px; color: crm.$crm-text-secondary; cursor: pointer; }
-.status-tab:first-child { width: 130px; }
-.status-tab:nth-child(2) { width: 122px; }
-.status-tab.is-active { color: crm.$crm-text-primary; }
-.status-tab.is-active span { color: crm.$crm-primary; }
-.status-tab.is-active::after { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: crm.$crm-primary; content: ''; }
-.status-tab:focus-visible { @include mixin.focus-ring; }
-.status-tab:last-child { width: 160px; }
-.filter-section { flex: none; margin-top: 19px; }
-.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 40px; }
-.keyword-filter { flex: 0 1 300px; min-width: 210px; }
-.supplier-filter { flex: 0 1 180px; min-width: 150px; }
-.status-filter { flex: 0 1 160px; min-width: 145px; }
-.return-filter { flex: 0 1 150px; min-width: 145px; }
-.more-filters-button { width: 112px; height: 40px; color: crm.$crm-text-secondary; }
-.filter-row__actions { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; }
-.filter-row :deep(.el-input__wrapper), .filter-row :deep(.el-select__wrapper) { min-height: 40px; box-shadow: 0 0 0 1px crm.$crm-border-default inset; }
+.filter-section { flex: none; margin-top: 12px; }
+.filter-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 32px; }
+.keyword-filter { width: 250px; min-width: 250px; flex: none; }
+.supplier-filter { width: 180px; flex: none; }
+.status-filter { width: 160px; flex: none; }
+.return-filter { width: 150px; flex: none; }
+.more-filters-button { width: 112px; height: 32px; margin: 0; color: crm.$crm-text-secondary; }
+.purchase-list-actions { flex: none; display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.purchase-list-actions :deep(.el-button) { height: 32px; margin: 0; padding: 0 12px; }
+.purchase-search-button { @include mixin.reset-button; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 24px; cursor: pointer; }
+.purchase-search-button:focus-visible { @include mixin.focus-ring; }
+.filter-row :deep(.el-input__wrapper), .filter-row :deep(.el-select__wrapper) { min-height: 32px; box-shadow: 0 0 0 1px crm.$crm-border-default inset; }
 .filter-row :deep(.el-input__inner), .filter-row :deep(.el-select__placeholder) { font-size: 14px; }
 .extra-filters { display: flex; align-items: center; gap: 16px; padding-top: 12px; }
 .extra-filters :deep(.el-select) { width: 300px; }
 .extra-filters :deep(.el-date-editor) { width: 207px; flex: none; }
 .load-error { flex: none; margin-top: 8px; }
-.sort-button { width: 112px; height: 40px; margin: 0; color: crm.$crm-text-primary; }
-.sort-button :deep(.el-icon) { margin-left: 5px; }
-.refresh-button { width: 82px; height: 40px; margin: 0; color: crm.$crm-text-primary; }
 .list-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; margin-top: 8px; outline: 1px solid crm.$crm-border-default; outline-offset: -1px; border-radius: 5px; background: crm.$crm-color-surface; }
 .purchase-table { min-height: 0; flex: 1; --el-table-border-color: #{crm.$crm-border-subtle}; --el-table-row-hover-bg-color: #{crm.$crm-color-row-hover}; --el-table-header-bg-color: #{crm.$crm-color-subtle}; --el-table-tr-bg-color: #{crm.$crm-color-surface}; --el-table-bg-color: #{crm.$crm-color-surface}; }
 .purchase-list-page .purchase-table :deep(.el-table__header th.el-table__cell) { height: 48px; padding: 0; color: crm.$crm-text-secondary; background: crm.$crm-color-subtle; font-size: 12px; font-weight: 400; border-right: 1px solid crm.$crm-border-subtle; }
@@ -667,8 +603,8 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; statsR
 .row-actions { display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
 .row-more-button { color: crm.$crm-text-secondary; width: 36px; height: 32px; }
 .muted { color: crm.$crm-text-muted; }
-.list-card__footer { flex: 0 0 70px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid crm.$crm-border-subtle; color: crm.$crm-text-secondary; font-size: 14px; }
-.list-card__footer :deep(.el-pagination) { gap: 16px; --el-pagination-button-bg-color: #{crm.$crm-color-surface}; --el-pagination-button-color: #{crm.$crm-text-secondary}; }
+.purchase-list-page .list-card__footer { height: auto !important; min-height: 48px; flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 16px !important; border-top: 1px solid crm.$crm-border-subtle; color: crm.$crm-text-secondary; font-size: 14px; }
+.list-card__footer :deep(.el-pagination) { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; gap: 16px; --el-pagination-button-bg-color: #{crm.$crm-color-surface}; --el-pagination-button-color: #{crm.$crm-text-secondary}; }
 .list-card__footer :deep(.el-pagination__sizes) { margin: 0 8px 0 0; }
 .list-card__footer :deep(.el-select) { width: 136px; }
 .list-card__footer :deep(.el-select__wrapper) { min-height: 42px; }

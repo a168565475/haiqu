@@ -19,6 +19,7 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
+  padding: 0;
 }
 
 .sample-inventory-page .table-card :deep(.el-table) {
@@ -28,4 +29,5 @@
 
 .sample-inventory-page .table-footer {
   flex: none;
+  padding-inline: 16px;
 }

@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, House, Refresh } from '@element-plus/icons-vue'
+import { Close, House } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import { usePageTabsStore } from '@/stores/pageTabs'
 import { createPageTab, type PageTab } from '@/utils/pageTabs'
-import { refreshCurrentPage } from '@/utils/pageRefresh'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,9 +90,6 @@ async function closeTab(tab: PageTab) {
         </div>
       </div>
     </div>
-    <button type="button" class="global-page-tabs__refresh" data-page-refresh aria-label="刷新当前页面" title="刷新当前页面" :disabled="store.navigating" @click="navigate(() => refreshCurrentPage(router))">
-      <Refresh aria-hidden="true" />
-    </button>
   </nav>
 </template>
 
@@ -101,18 +97,16 @@ async function closeTab(tab: PageTab) {
 .global-page-tabs {
   width: 100%;
   min-width: 0;
-  height: 64px;
+  height: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  color: #1f1d18;
+  color: #6f6a61;
   font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
 }
 .global-page-tabs__list {
   flex: 1;
   min-width: 0;
-  height: 28px;
-  align-self: flex-end;
+  height: 100%;
   display: flex;
   align-items: center;
   overflow-x: auto;
@@ -121,93 +115,73 @@ async function closeTab(tab: PageTab) {
 }
 .global-page-tabs__list::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .global-page-tabs__strip {
-  position: relative;
   flex: none;
-  height: 28px;
+  height: 100%;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-right: 28px;
+  gap: 4px;
+  padding: 0 4px;
 }
 .global-page-tab {
   box-sizing: border-box;
   position: relative;
   flex: none;
-  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0;
-  height: 28px;
-  padding-right: 0;
-  border: 1px solid #ddd6c9;
-  border-bottom-width: 2px;
-  border-radius: 0;
-  background: #fcfbf7;
+  height: 44px;
+  border-radius: 5px;
   color: #6f6a61;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 13px;
+  line-height: 20px;
   white-space: nowrap;
 }
-.global-page-tab:hover { background: #f0eadf; border-color: #c9c0b2; }
-.global-page-tab[aria-selected='true'] {
-  border-color: #c84e28;
-  border-left-width: 2px;
-  color: #1f1d18;
-  font-weight: 600;
-  background: #fff4e6;
+.global-page-tab:hover { background: #f2f2ee; }
+.global-page-tab[aria-selected='true'] { color: #c84e28; font-weight: 600; }
+.global-page-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: #c84e28;
 }
 .global-page-tab__open {
   flex: none;
   min-width: 0;
-  height: 28px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 4px 0 10px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 0;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
-  font: 12px/18px 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  font: 13px/20px 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
   font-weight: inherit;
   cursor: pointer;
 }
-.global-page-tab--home { padding-right: 10px; }
-.global-page-tab--home .global-page-tab__open { padding-right: 0; }
 .global-page-tab__label { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .global-page-tab__close {
   flex: none;
-  width: 22px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 5px;
   background: transparent;
   color: #968f84;
   cursor: pointer;
 }
-.global-page-tab__close:hover:not(:disabled) { color: #6f6a61; }
-.global-page-tabs svg { width: 14px; height: 14px; flex: none; }
+.global-page-tab__close:hover:not(:disabled) { color: #6f6a61; background: #e9e8e2; }
+.global-page-tabs svg { width: 16px; height: 16px; flex: none; }
 .global-page-tab__close svg { width: 12px; height: 12px; }
-.global-page-tabs__refresh {
-  box-sizing: border-box;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid #ddd6c9;
-  border-radius: 0;
-  background: #fcfbf7;
-  color: #6f6a61;
-  cursor: pointer;
-}
-.global-page-tabs__refresh:hover { background: #f0eadf; }
 .global-page-tabs button:disabled { cursor: wait; }
-.global-page-tabs button:focus-visible, .global-page-tab:focus-visible { outline: 2px solid #3898ec; outline-offset: -2px; }
+.global-page-tabs button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.global-page-tab:focus-visible { outline: 2px solid #3898ec; outline-offset: -2px; }
 </style>

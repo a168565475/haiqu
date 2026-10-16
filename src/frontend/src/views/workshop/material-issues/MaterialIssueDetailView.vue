@@ -4,8 +4,7 @@ import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 
-import { confirmMaterialIssue, fetchMaterialIssue, previewMaterialIssue, returnMaterialIssue } from '@/api/materialIssues'
-import { scheduleProductImageUrl } from '@/api/productionScheduling'
+import { confirmMaterialIssue, fetchMaterialIssue, materialIssueProductImageUrl, previewMaterialIssue, returnMaterialIssue } from '@/api/materialIssues'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
@@ -74,7 +73,7 @@ const conflictKind = computed(() => conflictLine.value ? (overStock(conflictLine
 const productImageUrl = computed(() => {
   const taskId = issue.value?.production_task?.id
   const imageId = issue.value?.product?.image_file_id
-  return taskId && imageId ? scheduleProductImageUrl(taskId, imageId) : productImagePlaceholder
+  return taskId && imageId ? materialIssueProductImageUrl(taskId, imageId) : productImagePlaceholder
 })
 function apiMessage(error: unknown, timeoutMessage = '操作超时，请稍后重试。'): string {
   const businessMessage = (error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message
@@ -219,7 +218,7 @@ onMounted(load)
             <ElTableColumn label="物料分类" width="120"><template #default="{ row }">{{ sectionText(row.section_code) }}</template></ElTableColumn>
             <ElTableColumn label="物料 / 部位" min-width="160"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
-            <ElTableColumn label="规格" min-width="150"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+            <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
             <ElTableColumn v-if="rawLines.some(r => r.conversion_snapshot?.kind === 'PIPE')" label="管材扣库换算" min-width="230"><template #default="{ row }"><span v-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根 / {{ numberText(row.meters) }} 米</span><span v-else>—</span></template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="90" align="center"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
             <ElTableColumn prop="unit" label="单位" width="76" align="center" />
@@ -246,7 +245,7 @@ onMounted(load)
           <ElTable :data="semiLines" border row-key="id" empty-text="本次没有半成品领料明细">
             <ElTableColumn label="半成品 / 部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
-            <ElTableColumn label="规格" min-width="150"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+            <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
             <ElTableColumn prop="unit" label="单位" width="76" align="center" />
             <template v-if="hasPublicSemi">
@@ -268,7 +267,7 @@ onMounted(load)
           <ElTable :data="publicAllocations" border>
             <ElTableColumn label="分区 / 物料部位" min-width="210"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn prop="material" label="材质" min-width="110" />
-            <ElTableColumn prop="specification" label="规格" min-width="140" />
+            <ElTableColumn prop="specification" label="规格" min-width="180" class-name="specification-cell" />
             <ElTableColumn prop="color" label="颜色" min-width="100" />
             <ElTableColumn prop="warehouse_zone" label="扣库库区" min-width="200" />
             <ElTableColumn label="实际领用" min-width="130"><template #default="{ row }">{{ numberText(row.requested_quantity) }} {{ row.request_unit }}</template></ElTableColumn>
@@ -331,6 +330,7 @@ onMounted(load)
 <style scoped lang="scss">
 @use '@/styles/materialIssue';
 .material-issue-detail { display: flex; flex-direction: column; overflow: hidden; }
+.detail-table :deep(td.specification-cell .cell) { padding-top: 8px; padding-bottom: 8px; white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
 .detail-scroll { min-height: 0; flex: 1; overflow: auto; padding: 0 0 16px; }
 .detail-title { display: flex; height: 58px; align-items: flex-start; gap: 16px; }
 .detail-title h1 { margin: 0; color: #1f1d18; font: 500 34px/44px 'Noto Serif SC', 'Songti SC', serif; }

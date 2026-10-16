@@ -28,6 +28,7 @@ const props = defineProps<{
   title?: string
   subjectLabel?: string
   testId?: string
+  stageMaterial?: (payload: RawMaterialInput, display: Pick<RawMaterialInformation, 'category_name' | 'unit_name' | 'unit_code' | 'color_name'>) => void | Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -209,8 +210,17 @@ async function submit(): Promise<void> {
 
   saving.value = true
   try {
-    const created = await createRawMaterial(payload)
-    emit('created', created.data)
+    if (props.stageMaterial) {
+      await props.stageMaterial(payload, {
+        category_name: options.value.categories.find(item => item.id === selectedCategoryId)?.category_name || '',
+        unit_name: selectedUnit.unit_name,
+        unit_code: selectedUnit.unit_code,
+        color_name: options.value.colors.find(item => item.id === form.color)?.color_name || '',
+      })
+    } else {
+      const created = await createRawMaterial(payload)
+      emit('created', created.data)
+    }
     dialogVisible.value = false
   } catch (error) {
     submitError.value = apiErrorMessage(error, `${props.subjectLabel || props.categoryName || '原料'}新增失败，请稍后重试。`)
@@ -263,7 +273,7 @@ watch(
     @closed="handleClosed"
   >
     <el-alert
-      :title="categoryName
+      :title="stageMaterial ? '本次仅暂存到 BOM，保存整份 BOM 并确认新增清单后才建立原料档案。' : categoryName
         ? `类型固定为“${(itemType || 'MATERIAL') === 'MATERIAL' ? '材料' : '半成品'}”，类别固定为“${categoryName}”；保存后将刷新当前选择列表。`
         : `类型固定为“${(itemType || 'MATERIAL') === 'MATERIAL' ? '材料' : '半成品'}”；保存后将刷新当前选择列表。`"
       type="info"
@@ -386,7 +396,7 @@ watch(
         :disabled="optionsLoading || Boolean(optionsError)"
         @click="submit"
       >
-        保存
+        {{ stageMaterial ? '暂存并选中' : '保存' }}
       </el-button>
     </template>
   </el-dialog>

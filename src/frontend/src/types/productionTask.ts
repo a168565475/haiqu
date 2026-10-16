@@ -400,17 +400,6 @@ export interface ProductionTaskQuery {
   ordering?: string
 }
 
-export interface ProductionTaskStats {
-  all: number
-  draft: number
-  pending_validation: number
-  ready: number
-  in_production: number
-  completed: number
-  paused: number
-  cancelled: number
-  split_delivery: number
-}
 export interface PaginatedProductionTasks { data: ProductionTask[]; meta: PageMeta }
 export interface VersionedProductionTask { data: ProductionTask; etag: string }
 export interface ReservedContractNumber { contract_number: string; token: string }

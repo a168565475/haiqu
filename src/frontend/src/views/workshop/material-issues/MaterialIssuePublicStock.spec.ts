@@ -3,16 +3,19 @@ import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MaterialIssueFormView from './MaterialIssueFormView.vue'
 import MaterialIssueDetailView from './MaterialIssueDetailView.vue'
+import MaterialIssueListView from './MaterialIssueListView.vue'
 import MaterialIssuePartitions from '@/components/workshop/MaterialIssuePartitions.vue'
-import type { MaterialRequirement } from '@/types/materialIssue'
+import type { MaterialIssueProduct, MaterialRequirement } from '@/types/materialIssue'
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string>, query: {} as Record<string, string> }))
-const api = vi.hoisted(() => ({ options: vi.fn(), products: vi.fn(), requirements: vi.fn(), detail: vi.fn(),
+const api = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn(), products: vi.fn(), requirements: vi.fn(), detail: vi.fn(),
   create: vi.fn(), update: vi.fn(), submit: vi.fn(), preview: vi.fn(), confirm: vi.fn(), returned: vi.fn() }))
 vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('@/router', () => ({ router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
-vi.mock('@/api/materialIssues', () => ({
+vi.mock('@/api/materialIssues', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/materialIssues')>(),
+  fetchMaterialIssues: api.list,
   fetchMaterialIssueOptions: api.options, fetchEligibleMaterialIssueProducts: api.products,
   fetchMaterialRequirements: api.requirements, fetchMaterialIssue: api.detail,
   createMaterialIssue: api.create, updateMaterialIssue: api.update, submitMaterialIssue: api.submit,
@@ -26,7 +29,7 @@ const semi: MaterialRequirement = {
   order_remaining: '70', available_stock: '200', max_issue_quantity: '70', bom_version: 1, validation_errors: [],
   completed_craft: '喷塑', warehouse_zone: '半成品仓 / 一楼',
 }
-const product = { id: 'product-1', product_number: 'P001', product_name: '折叠椅', color: '黑色', quantity: '100', unit: '套', image_file_id: null }
+const product: MaterialIssueProduct = { id: 'product-1', product_number: 'P001', product_name: '折叠椅', specification: '', color: '黑色', quantity: '100', unit: '套', image_file_id: null }
 function detail(stockMode: 'PUBLIC_V2' | null = 'PUBLIC_V2') {
   return { id: 'issue-1', stock_mode: stockMode || undefined, issue_number: '领料-001', status: 'DRAFT', status_display: '草稿',
     production_task: { id: 'task-1', task_number: '生产001', customer_name: '客户' }, product,
@@ -64,6 +67,35 @@ beforeEach(() => {
   api.requirements.mockResolvedValue({ items: [structuredClone(semi)], blockers: [] })
 })
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
+
+describe('领料产品展示', () => {
+  it.each([
+    { specification_display: '47*55*79', color: '酒红色', material: 'PE', expected: ['47*55*79', '酒红色', 'PE'] },
+    { specification_display: '', color: '', material: '', expected: ['—', '—', '—'] },
+  ])('列表规格颜色材质分别显示，空值不回退拼接属性', async ({ expected, ...fields }) => {
+    route.query = {}
+    api.list.mockResolvedValue({ data: [{ ...detail(), product: { ...product, specification: '47*55*79；颜色：酒红色；材质：PE', ...fields } }], meta: { total: 1 } })
+    const wrapper = mount(MaterialIssueListView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    const cells = wrapper.findAll('tbody tr')[0]!.findAll('td')
+    expect(headers.slice(headers.indexOf('产品'), headers.indexOf('车间') + 1)).toEqual(['产品', '规格', '颜色', '材质', '车间'])
+    expect(['规格', '颜色', '材质'].map(label => cells[headers.indexOf(label)]!.text())).toEqual(expected)
+  })
+
+  it('新增和详情使用领料图片接口，不依赖排产查看权限', async () => {
+    const imageProduct = { ...product, image_file_id: 'image-1' }
+    api.products.mockResolvedValue([imageProduct])
+    const form = await formView()
+    const detailPage = await detailView({ ...detail(), product: imageProduct })
+    for (const wrapper of [form, detailPage]) {
+      const image = wrapper.find('.product-preview img')
+      expect(image.attributes('src')).toContain('/api/v1/material-issues/product-images/task-1/image-1/')
+      expect(image.classes()).not.toContain('is-placeholder')
+    }
+  })
+})
 
 describe('公共库存领料按接收订单提交', () => {
   it.each([

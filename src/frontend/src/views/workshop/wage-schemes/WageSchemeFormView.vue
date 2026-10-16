@@ -268,7 +268,7 @@ onMounted(load)
       <ElFormItem v-if="!isMetalWorkshop" data-testid="operation-product-name-field" label="工序品名" required><ElSelect v-model="form.operationProductName" filterable placeholder="选择工序目录中的品名"><ElOption v-for="item in operationProductNameOptions" :key="item" :label="item" :value="item" /></ElSelect></ElFormItem>
       <ElFormItem label="备注"><ElInput v-model="form.remark" type="textarea" :rows="4" maxlength="2000" show-word-limit /></ElFormItem>
     </ElForm></section><section class="wr-card wr-card--wide"><div class="wr-card-title"><h2>工价明细</h2><div><ElButton class="wr-history-button" @click="openHistory">选择历史数据</ElButton><ElButton class="wr-add-line-button" type="primary" :icon="Plus" @click="addLine">添加明细</ElButton></div></div>
-      <ElTable class="wr-wage-line-table" :data="form.lines" border>
+      <ElTable class="wr-wage-line-table scroll-actions-table" :data="form.lines" border>
         <ElTableColumn label="名称 / 部位" min-width="190" align="left"><template #default="{ row }"><ElSelect v-if="usesBomName" v-model="row.bom_line_id" :data-testid="isMetalWorkshop ? 'metal-bom-display-select' : 'bom-display-select'" filterable :placeholder="isMetalWorkshop ? '选择部件、材质和规格' : '选择 BOM 名称和规格'" @change="bomChanged(row)"><ElOption v-for="item in bomItemsForCraft" :key="item.id" :label="item.label" :value="item.id" /></ElSelect><ElInput v-else v-model="row.display_name" maxlength="200" /></template></ElTableColumn>
         <ElTableColumn label="申报工序" min-width="140" align="left"><template #default="{ row }"><ElSelect v-model="row.operation_id" data-testid="wage-operation-select" filterable @change="operationChanged(row)"><ElOption v-for="item in operationOptions(row.craft_id)" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></template></ElTableColumn>
         <ElTableColumn v-if="isSewingCraft" label="计数方式" width="106" align="left"><template #default="{ row }"><ElSelect v-model="row.counting_mode"><ElOption label="按套" value="SET" /><ElOption label="按片" value="PIECE" /></ElSelect></template></ElTableColumn>
@@ -279,7 +279,7 @@ onMounted(load)
         <ElTableColumn label="以往工价" width="106" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.previous_price" inputmode="decimal" /></template></ElTableColumn>
         <ElTableColumn label="修改工价" width="106" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.revised_price" inputmode="decimal" /></template></ElTableColumn>
         <ElTableColumn label="备注" min-width="145" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.note" data-testid="wage-line-note-input" maxlength="500" /></template></ElTableColumn>
-        <ElTableColumn label="操作" width="56" align="center"><template #default="{ $index }"><ElButton class="wr-delete-action" link type="primary" @click="form.lines.splice($index, 1)">删除</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="56" align="center" fixed="right"><template #default="{ $index }"><ElButton class="wr-delete-action" link type="primary" @click="form.lines.splice($index, 1)">删除</ElButton></template></ElTableColumn>
       </ElTable><footer class="wr-total">工价合计：<strong>¥{{ moneyTotal }}</strong></footer>
     </section></div>
     <footer class="wr-form-actions"><ElButton @click="router.push({ name: 'wage-schemes' })">返回</ElButton><ElButton v-if="canSubmit" type="primary" :loading="saving" @click="submitForApproval">提交厂长审批</ElButton></footer>
@@ -291,4 +291,7 @@ onMounted(load)
 @use '@/styles/workshopReporting.scss';
 
 .wr-form-page--change .wr-form-actions { margin-top: 14px; }
+@media (max-width: 1440px) {
+  [data-testid='wage-scheme-form'] > .wr-form-grid { grid-template-columns: 280px minmax(0, 1fr); overflow-x: visible; }
+}
 </style>

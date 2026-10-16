@@ -1,0 +1,107 @@
+@font-face {
+  font-family: time;
+  src: url('@/assets/boards/time.ttf') format('truetype');
+  font-display: swap;
+}
+
+@font-face {
+  font-family: dpNum;
+  src: url('@/assets/boards/dp-number.otf') format('opentype');
+  font-display: swap;
+}
+
+.board-page {
+  --board-blue: #84c6f7;
+  --board-green: #00cc99;
+  --board-yellow: #ffd63c;
+  --board-red: #ff4855;
+
+  .board-canvas {
+    background: url('@/assets/boards/header-background.png') 0 0 / 1920px 87px no-repeat;
+  }
+
+  .board-clock {
+    top: 43px;
+    color: #75b8e9;
+    font: 400 26px/1.15 time, serif;
+    letter-spacing: normal;
+  }
+
+  h1 {
+    font-family: sans-serif;
+    text-shadow: 0 3px 20px #00498d;
+  }
+
+  .board-header-actions {
+    right: 17px;
+    top: 37px;
+    gap: 8px;
+
+    button, a { color: #75b8e9; }
+    svg { width: 28px; height: 28px; }
+  }
+
+  .board-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+    font-family: sans-serif;
+    line-height: 1.15;
+  }
+
+  .board-metric {
+    min-width: 0;
+    backdrop-filter: blur(2px);
+
+    &::before, &::after { content: none; }
+
+    strong.board-metric-value {
+      position: absolute;
+      bottom: .2em;
+      max-width: 4.2em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font: 400 48px/1.15 dpNum, serif;
+
+      &.is-compact { font-size: 32px; }
+    }
+  }
+
+  .board-metric-frame {
+    position: absolute;
+    top: -10%;
+    left: -3%;
+    height: 100%;
+    width: auto;
+    pointer-events: none;
+  }
+
+  .board-metric-label {
+    color: #84c6f7;
+    font-size: 17.6px;
+    font-weight: 200;
+    line-height: 1.15;
+  }
+
+  .board-metric-unit {
+    margin-left: 8px;
+    font-family: sans-serif;
+    font-size: 24px;
+  }
+
+  .board-comparison {
+    display: inline-flex;
+    flex-direction: column;
+    right: .3em;
+    bottom: 1.7em;
+    color: #75b8e9;
+    text-align: left;
+    font-size: 16px;
+    line-height: 1.15;
+  }
+
+  .board-comparison-value {
+    margin-top: .5em;
+    font-family: dpNum, serif;
+    font-weight: 400;
+  }
+}

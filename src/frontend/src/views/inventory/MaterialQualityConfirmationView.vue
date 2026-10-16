@@ -18,6 +18,7 @@ const selectedBatchId = ref('')
 const batch = ref<MaterialInbound | null>(null)
 const rows = ref<QualityRow[]>([])
 const hoveredRowId = ref('')
+const hoveredSupplierRowId = ref('')
 const loading = ref(false)
 const confirming = ref(false)
 const confirmed = ref(false)
@@ -191,8 +192,10 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
               <tr v-for="(row, index) in rows" :key="row.line.id" @mouseenter="hoveredRowId = row.line.id" @mouseleave="hoveredRowId = ''">
                 <td><ElCheckbox v-model="row.included" :aria-label="`勾选第 ${index + 1} 项`" :disabled="locked" /></td><td class="muted">{{ index + 1 }}</td>
                 <td class="material-cell"><strong>{{ materialTitle(row.line) }}</strong></td>
-                <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
-                <td class="supplier-cell">{{ row.line.supplier_name_snapshot || '—' }}</td>
+                <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id && hoveredSupplierRowId !== row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
+                <ElTooltip :content="row.line.supplier_name_snapshot" placement="top" :show-after="150" :disabled="!row.line.supplier_name_snapshot" :teleported="true">
+                  <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name_snapshot || '—' }}</td>
+                </ElTooltip>
                 <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
                 <td><ElInput v-model="row.returnQuantity" :aria-label="`第 ${index + 1} 项退货${row.line.measurement_kind === 'PIPE' ? '根数' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" :maxlength="row.line.measurement_kind === 'PIPE' ? 14 : 19" :inputmode="row.line.measurement_kind === 'PIPE' ? 'numeric' : 'decimal'"><template v-if="row.line.measurement_kind === 'PIPE'" #append>根</template></ElInput></td>
                 <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
@@ -259,7 +262,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
 .material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
-.supplier-cell { font-size: 13px; color: token.$crm-text-secondary; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
+.quality-table .supplier-cell { font-size: 13px; color: token.$crm-text-secondary; white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
 .quality-table td:nth-child(7) { padding: 4px 11px; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }

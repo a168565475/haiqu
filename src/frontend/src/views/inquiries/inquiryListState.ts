@@ -35,13 +35,6 @@ export function readListQuery(query: Record<string, unknown>) {
     view: query.view === 'board' ? 'board' as const : 'list' as const,
   }
 }
-export function readColumns(value: string | null): string[] {
-  const defaults = columnChoices.map(item => item.key)
-  try {
-    const parsed: unknown = JSON.parse(value || 'null')
-    return Array.isArray(parsed) ? [...new Set(parsed.filter((key): key is typeof defaults[number] => typeof key === 'string' && defaults.includes(key as typeof defaults[number])))] : defaults
-  } catch { return defaults }
-}
 export function formatReceived(value: string) {
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return { date: '—', time: '' }

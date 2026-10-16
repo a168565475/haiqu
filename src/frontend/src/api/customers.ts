@@ -10,8 +10,6 @@ import type {
   CustomerBusinessSnapshotInput,
   CustomerAddress,
   CustomerAddressInput,
-  CustomerBulkResult,
-  CustomerBulkTagInput,
   CustomerClassificationChangeInput,
   CustomerClassificationResult,
   CustomerCreateInput,
@@ -102,16 +100,6 @@ export async function exportCustomers(params: CustomerListQuery = {}): Promise<B
     responseType: 'blob',
   })
   return response.data as Blob
-}
-
-export async function bulkAddCustomerTags(
-  payload: CustomerBulkTagInput,
-): Promise<CustomerBulkResult> {
-  const response = await apiClient.post<ApiDataResponse<CustomerBulkResult>>(
-    `${customersPath}bulk-add-tags/`,
-    payload,
-  )
-  return unwrapData(response)
 }
 
 export async function createCustomerTransferRequest(payload: CustomerTransferInput): Promise<void> {

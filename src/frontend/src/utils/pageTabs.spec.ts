@@ -98,13 +98,13 @@ describe('全局页面选项卡身份', () => {
 })
 
 describe('选项卡数量与先开先移除', () => {
-  it('打开第六个删除第一个，工作台计入上限且参与移除', () => {
+  it('打开第六个删除最早的普通页面，工作台固定首位并计入上限', () => {
     const home = { ...tab('home'), pinned: true }
     const tabs = [home, ...Array.from({ length: 4 }, (_, i) => tab(`page-${i}`))]
     const result = upsertPageTab(tabs, tab('new'))
     expect(MAX_PAGE_TABS).toBe(5)
     expect(result).toHaveLength(5)
-    expect(result.map(item => item.id)).toEqual([...tabs.slice(1).map(item => item.id), 'new'])
+    expect(result.map(item => item.id)).toEqual(['home', 'page-1', 'page-2', 'page-3', 'new'])
     expect(tabs).toHaveLength(5)
     expect(tabs[0]).toBe(home)
   })
@@ -119,11 +119,23 @@ describe('选项卡数量与先开先移除', () => {
     expect(tabs[0]!.title).toBe('page-0')
   })
 
-  it('连续打开保持最多5个，被移除的工作台不会自动重新插入', () => {
+  it('连续打开保持工作台和最近打开的四个普通页面', () => {
     let tabs: PageTab[] = [{ ...tab('home'), pinned: true }]
     for (let i = 0; i < 20; i++) tabs = upsertPageTab(tabs, tab(`page-${i}`))
-    expect(tabs.map(item => item.id)).toEqual(Array.from({ length: 5 }, (_, i) => `page-${i + 15}`))
-    expect(tabs.some(item => item.id === 'home')).toBe(false)
+    expect(tabs.map(item => item.id)).toEqual(['home', 'page-16', 'page-17', 'page-18', 'page-19'])
+  })
+
+  it('补回工作台时放到首位，保持普通页面打开顺序及总数上限', () => {
+    const tabs = Array.from({ length: 5 }, (_, i) => tab(`page-${i}`))
+    const result = upsertPageTab(tabs, { ...tab('home'), pinned: true })
+    expect(result.map(item => item.id)).toEqual(['home', 'page-1', 'page-2', 'page-3', 'page-4'])
+  })
+
+  it('固定工作台不能被关闭，普通页面仍可关闭', () => {
+    const home = { ...tab('home'), pinned: true }
+    const tabs = [home, tab('a')]
+    expect(removePageTab(tabs, 'home')).toEqual(tabs)
+    expect(removePageTab(tabs, 'a')).toEqual([home])
   })
 
   it('删除不存在的页不报错，不修改原数组', () => {

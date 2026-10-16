@@ -93,6 +93,8 @@ def validate_entry(entry: dict[str, Any], root: Path = ROOT) -> dict[str, Any]:
         raise ManifestError(f"{entry_id}: risk 不受支持：{entry['risk']}")
     if entry["browser_mode"] not in VALID_BROWSER_MODES:
         raise ManifestError(f"{entry_id}: browser_mode 不受支持：{entry['browser_mode']}")
+    if entry.get("result_protocol") not in (None, "json-summary-v1"):
+        raise ManifestError(f"{entry_id}: result_protocol 不受支持")
     if not isinstance(entry.get("database_target"), str) or not entry["database_target"].strip():
         raise ManifestError(f"{entry_id}: database_target 必须非空")
     if not isinstance(entry.get("account_required", False), bool):
@@ -378,7 +380,46 @@ def _markdown_report(report: dict[str, Any]) -> str:
             f"| {case['status']} | `{case['id']}` | {case['category']} | {case['risk']} | "
             f"{case['browser_mode']} | {case.get('exit_code', '')} | {reason} |"
         )
+    partial_count = summary.get("pass_with_gaps", 0)
+    if partial_count:
+        lines.extend(["", f"PASS_WITH_GAPS：{partial_count} 项检查通过但覆盖不完整，不计入 PASS。"])
+    for case in report["cases"]:
+        if case.get("coverage_gaps"):
+            lines.extend(["", f"### `{case['id']}` 未覆盖项", ""])
+            lines.extend(f"- {str(gap).replace(chr(10), ' ')}" for gap in case["coverage_gaps"])
     return "\n".join(lines) + "\n"
+
+
+def _structured_result(stdout: str, returncode: int) -> dict[str, Any]:
+    """仅解析显式登记协议的脚本，末行 JSON 保留业务结果和覆盖缺口。"""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    try:
+        result = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError as exc:
+        raise ValueError("结构化结果缺失或不是有效 JSON") from exc
+    if not isinstance(result, dict) or type(result.get("qa_result_version")) is not int or result["qa_result_version"] != 1:
+        raise ValueError("结构化结果版本缺失或不受支持")
+    status = result.get("status")
+    gaps = result.get("not_covered")
+    if not isinstance(status, str) or status not in {"PASS", "PASS_WITH_GAPS", "BLOCKED", "FAIL"}:
+        raise ValueError("结构化结果状态无效")
+    if not isinstance(gaps, list) or any(not isinstance(gap, str) or not gap.strip() for gap in gaps):
+        raise ValueError("结构化结果的未覆盖项必须为字符串数组")
+    successful = status in {"PASS", "PASS_WITH_GAPS"}
+    if successful != (returncode == 0):
+        raise ValueError("结构化结果与子进程退出码不一致")
+    if successful and result.get("cleanup") is not True:
+        raise ValueError("结构化结果没有确认临时资源已清理")
+    if (status == "PASS" and gaps) or (status == "PASS_WITH_GAPS" and not gaps):
+        raise ValueError("结构化结果状态与未覆盖项不一致")
+    parsed: dict[str, Any] = {"status": status, "coverage_gaps": gaps}
+    if status == "PASS_WITH_GAPS":
+        parsed["reason"] = f"已执行检查通过，仍有 {len(gaps)} 项覆盖缺口；不是完整验收通过"
+    elif status in {"BLOCKED", "FAIL"}:
+        failure = result.get("failure")
+        message = failure.get("message") if isinstance(failure, dict) else None
+        parsed["reason"] = message if isinstance(message, str) and message else f"子脚本报告 {status}"
+    return parsed
 
 
 def run_entry(
@@ -459,9 +500,16 @@ def run_entry(
         stdout_path.write_text(completed.stdout or "", encoding="utf-8")
         stderr_path.write_text(completed.stderr or "", encoding="utf-8")
         case["exit_code"] = completed.returncode
-        case["status"] = "PASS" if completed.returncode == 0 else "FAIL"
-        if completed.returncode != 0:
-            case["reason"] = f"子进程退出码 {completed.returncode}"
+        if entry.get("result_protocol") == "json-summary-v1":
+            try:
+                case.update(_structured_result(completed.stdout or "", completed.returncode))
+            except ValueError as exc:
+                case["status"] = "FAIL"
+                case["reason"] = str(exc)
+        else:
+            case["status"] = "PASS" if completed.returncode == 0 else "FAIL"
+            if completed.returncode != 0:
+                case["reason"] = f"子进程退出码 {completed.returncode}"
     except subprocess.TimeoutExpired as exc:
         stdout_path.write_text(exc.stdout or "", encoding="utf-8")
         stderr_path.write_text(exc.stderr or "", encoding="utf-8")
@@ -479,7 +527,7 @@ def run_entry(
 
 
 def _summary(cases: list[dict[str, Any]]) -> dict[str, int]:
-    result = {"pass": 0, "fail": 0, "blocked": 0, "skip": 0, "unknown": 0}
+    result = {"pass": 0, "pass_with_gaps": 0, "fail": 0, "blocked": 0, "skip": 0, "unknown": 0}
     for case in cases:
         key = case["status"].lower()
         if key in result:
@@ -494,7 +542,11 @@ def _exit_code(summary: dict[str, int], *, config_error: bool = False) -> int:
         return 1
     if summary["blocked"]:
         return 3
-    if summary["unknown"] or (not summary["pass"] and not summary["skip"]):
+    if summary["unknown"]:
+        return 4
+    if summary.get("pass_with_gaps", 0):
+        return 5
+    if not summary["pass"] and not summary["skip"]:
         return 4
     return 0
 
@@ -520,7 +572,7 @@ def _print_list(manifest: dict[str, Any]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="haiqu ERP QA 统一入口")
-    parser.add_argument("module", nargs="?", help="production、quotation、inquiry 或 all")
+    parser.add_argument("module", nargs="?", help="production、quotation、inquiry、material_catalog、workbench 或 all")
     parser.add_argument("--list", action="store_true", help="列出注册条目，不运行测试")
     parser.add_argument("--audit-headless", action="store_true", help="扫描 QA Playwright 启动点的 headless 门禁")
     parser.add_argument("--dry-run", action="store_true", help="只预检，不启动子进程")
@@ -555,8 +607,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         _print_list(manifest)
         return 0
-    if args.module not in {"production", "quotation", "inquiry", "all"}:
-        print("请指定 production、quotation、inquiry 或 all；可用 --list 查看注册表。", file=sys.stderr)
+    if args.module not in {"production", "quotation", "inquiry", "material_catalog", "workbench", "all"}:
+        print("请指定 production、quotation、inquiry、material_catalog、workbench 或 all；可用 --list 查看注册表。", file=sys.stderr)
         return 2
     if args.timeout is not None and args.timeout <= 0:
         print("--timeout 必须是正整数。", file=sys.stderr)
@@ -603,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
     markdown_path.write_text(_markdown_report(_sanitize(report)), encoding="utf-8")
     print(f"报告：{json_path}")
     print(f"汇总：PASS={summary['pass']} FAIL={summary['fail']} BLOCKED={summary['blocked']} UNKNOWN={summary['unknown']}")
+    if summary.get("pass_with_gaps", 0):
+        print(f"PASS_WITH_GAPS={summary['pass_with_gaps']}（有覆盖缺口，未完整验收）")
     return _exit_code(summary)
 
 

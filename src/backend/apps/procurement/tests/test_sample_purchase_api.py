@@ -60,6 +60,11 @@ class SamplePurchaseApiTests(APITestCase):
     def test_create_has_real_sample_source_and_no_bom(self):
         options = self.client.get(self.root + 'options/').data['data']
         self.assertEqual(options['sample_requests'][0]['source_type'], 'SAMPLE')
+        sources = self.client.get(self.root + 'options/', {'scope': 'sources'})
+        self.assertEqual(sources.status_code, 200, sources.data)
+        source = next(row for row in sources.data['data']['sample_requests'] if row['id'] == str(self.procurement.pk))
+        self.assertEqual(source['source_type'], 'SAMPLE')
+        self.assertTrue(source['can_create'])
         created = self.create_order()
         order = PurchaseOrder.objects.get(pk=self.sample_order_id)
         self.assertIsNone(order.production_task_id)

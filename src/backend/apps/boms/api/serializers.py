@@ -5,7 +5,7 @@ from uuid import UUID
 from rest_framework import serializers
 
 from apps.products.models import ProductInformation, RawMaterialInformation
-from apps.products.api.serializers import ProductInformationSerializer
+from apps.products.api.serializers import ProductInformationSerializer, RawMaterialInformationSerializer
 from apps.reference_data.models import (
     AccessoryColor,
     AccessoryMaterial,
@@ -22,8 +22,9 @@ from apps.reference_data.pinyin_search import build_pinyin_search
 from apps.production_tasks.api.serializers import ProductionTaskProductInputSerializer
 
 from ..maintenance import CONFIGURED_FIELD_LABELS
+from ..fabric_material_sync import FABRIC_REFERENCE_FIELDS
 from ..models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType
-from ..selectors import pipe_dimension_numbers, pipe_material_dimensions
+from ..selectors import pipe_dimension_numbers
 from .image_serializers import BomLineImageSerializer
 
 
@@ -91,7 +92,7 @@ class BomLineSerializer(serializers.ModelSerializer):
     def _raw_value(obj, key, legacy_column=""):
         raw_values = obj.raw_values or {}
         value = raw_values.get(key, "")
-        if not value and legacy_column:
+        if key not in raw_values and legacy_column:
             value = raw_values.get(legacy_column, "")
         return str(value or "")
 
@@ -924,6 +925,18 @@ class BomPreviewInputSerializer(serializers.Serializer):
     production_task_product_update = ProductionTaskProductUpdateField(required=False)
 
 
+class PendingRawMaterialSerializer(RawMaterialInformationSerializer):
+    # 原模型字段的 UniqueValidator 也要延后，否则同档复用在完整身份匹配前就被拒绝。
+    material_number = serializers.CharField(max_length=100)
+
+    def validate_material_number(self, value):
+        # 全属性匹配可能复用已存在品号；冲突由规划器在匹配后检查，不提前误拒绝。
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("请输入品号。")
+        return value
+
+
 class BomLineWriteSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
     client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
@@ -961,6 +974,7 @@ class BomLineWriteSerializer(serializers.Serializer):
     cutting_sets_per_product = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
     tube_cut_piece_count = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     source_inventory_material_id = serializers.UUIDField(required=False, allow_null=True)
+    pending_raw_material = PendingRawMaterialSerializer(required=False, write_only=True)
     source_raw_material_id = serializers.UUIDField(required=False, allow_null=True)
     hardware_material_number = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     hardware_color = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
@@ -1002,6 +1016,11 @@ class BomLineWriteSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        if attrs.get("pending_raw_material") and any(attrs.get(field) for field in (
+            "source_inventory_material_id", "source_raw_material_id", "source_cutting_material_id",
+            "source_packaging_material_id",
+        )):
+            raise serializers.ValidationError("待新增原料不能同时指定已存在的库存来源。")
         if attrs.get("fabric_source_line_id") and attrs.get("fabric_source_client_key"):
             raise serializers.ValidationError("来源面料不能同时指定已保存行和未保存行。")
         return attrs
@@ -1061,6 +1080,9 @@ class BomMaterialFlowPreviewResponseSerializer(serializers.Serializer):
 
 class BomUpdateInputSerializer(serializers.Serializer):
     sections = BomSectionWriteSerializer(many=True, allow_empty=True, max_length=20)
+    intent = serializers.ChoiceField(choices=("draft", "verify"), default="draft")
+    confirmation_token = serializers.CharField(required=False, allow_blank=True, max_length=100000)
+    quantity_confirmation_reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
     @staticmethod
     def _fixed_title_for_existing_section(section, used_titles):
@@ -1471,11 +1493,36 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 for line in section.lines.all()
             }
 
+        fabric_reference_line_ids = set()
+        for section in sections:
+            if section["title"].strip() != "面料类":
+                continue
+            for line in section["lines"]:
+                existing_line = existing_lines.get(line.get("id"))
+                previous = existing_line.raw_values or {} if existing_line else {}
+                previous_inventory_id = previous.get("source_inventory_material_id")
+                same_inventory_source = not previous_inventory_id or str(
+                    line.get("source_inventory_material_id", previous_inventory_id)
+                ) == str(previous_inventory_id)
+                if existing_line and same_inventory_source and (
+                    any(field in line and not line[field].strip() and getattr(existing_line, field).strip()
+                        for field in ("material", "specification"))
+                    or any(field in line and not line[field].strip() and str(previous.get(field) or "").strip()
+                           for field in ("fabric_width", "fabric_color_card", "fabric_color_code", "fabric_color_name"))
+                ):
+                    # 历史行可能没有完整字典 ID；明确清空可见字段仍不能借旧库存来源确认。
+                    line["fabric_source_sync_pending"] = True
+                if (any(line.get(field) or previous.get(field) for field in FABRIC_REFERENCE_FIELDS)
+                        or previous.get("fabric_source_sync_pending") or line.get("fabric_source_sync_pending")):
+                    fabric_reference_line_ids.add(id(line))
+
         direct_rows = []
         direct_source_ids = set()
         for section in sections:
             for line_number, line in enumerate(section["lines"], start=1):
                 existing_line = existing_lines.get(line.get("id"))
+                if line.get("pending_raw_material"):
+                    continue
                 existing_source_id = self._raw_source_id(
                     existing_line,
                     "source_inventory_material_id",
@@ -1535,18 +1582,16 @@ class BomUpdateInputSerializer(serializers.Serializer):
                     f"“{section['title']}”第 {line_number} 行的稳定库存原料类型或类别不匹配。"
                 )
             pipe_values = {}
-            if section["section_type"] == BomSectionType.PROFILE and not same_source:
-                source_diameter, source_thickness, _, source_shape = pipe_material_dimensions(source)
-                dimensions_match = all(
-                    not line.get(field) or bool(expected and pipe_dimension_numbers(line[field]) == expected)
-                    for field, expected in (("tube_diameter", source_diameter), ("tube_thickness", source_thickness))
-                )
-                shape_mismatch = bool(source_shape and line.get("tube_shape") and line["tube_shape"].strip() != source_shape)
-                if (line.get("material") and line["material"].strip() != source.material.strip()) or not dimensions_match or shape_mismatch:
-                    raise serializers.ValidationError(
-                        f"“{section['title']}”第 {line_number} 行的材质、形状、规格或厚度与对应原料不一致，请重新匹配；已填写参数不会自动替换。"
-                    )
-                pipe_values = {field: line[field] for field in ("material", "specification") if line.get(field)}
+            if section["section_type"] == BomSectionType.PROFILE:
+                # 保存服务按本次参数重新关联；旧来源快照不能覆盖用户刚修改的材质和规格。
+                pipe_values = {field: line[field] for field in ("material", "specification") if field in line}
+                previous_material = existing_line.material if same_source else source.material
+                if "material" in pipe_values and pipe_values["material"].strip() != previous_material.strip():
+                    line["pipe_source_sync_pending"] = True
+            fabric_values = {
+                field: line[field] for field in ("material", "specification")
+                if id(line) in fabric_reference_line_ids and field in line
+            }
             part_name = line.get("part_name", "")
             # 裁剪明细沿用已有编辑契约；稳定来源 ID 只固定来源，不覆盖裁片自填属性。
             cutting_values = {
@@ -1557,9 +1602,37 @@ class BomUpdateInputSerializer(serializers.Serializer):
             self._set_inventory_source_snapshot(line, source, existing_line)
             line.update(cutting_values)
             line.update(pipe_values)
+            line.update(fabric_values)
             if section["title"].strip() in {"管材类", "面料类"} and part_name:
                 line["part_name"] = part_name
-            direct_line_object_ids.add(id(line))
+            # 辅料字典仍可更改，不能让旧库存快照绕过当前字典校验与完整身份匹配。
+            if not (section["title"].strip() == "辅料类" and any(
+                line.get(field) for field in ("source_accessory_product_name_id", "source_accessory_specification_id",
+                                             "source_accessory_color_id", "source_accessory_material_id")
+            )):
+                direct_line_object_ids.add(id(line))
+
+        for section in sections:
+            for line_number, line in enumerate(section["lines"], start=1):
+                pending = line.get("pending_raw_material")
+                if not pending:
+                    continue
+                source = RawMaterialInformation(**pending)
+                title = section["title"].strip()
+                valid = self._active_semi_finished(source) if title == "裁剪明细" else self._active_raw_material(
+                    source, expected_categories.get(title),
+                )
+                if not valid:
+                    raise serializers.ValidationError(f"“{title}”第 {line_number} 行的待新增原料类型或类别不匹配。")
+                self._set_inventory_source_snapshot(line, source)
+                snapshot = {"五金件": self._set_hardware_source_snapshot,
+                            "塑料件类": self._set_plastic_source_snapshot,
+                            "包材类": self._set_packaging_source_snapshot,
+                            "裁剪明细": self._set_cutting_source_snapshot}.get(title)
+                if snapshot:
+                    snapshot(line, source)
+                line["_pending_raw_source"] = source
+                direct_line_object_ids.add(id(line))
 
         auxiliary_source_fields = (
             "source_accessory_product_name_id",
@@ -1964,7 +2037,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
             for section in sections
             if section["section_type"] == BomSectionType.FABRIC and section["title"].strip() == "面料类"
             for index, line in enumerate(section["lines"], start=1)
-            if id(line) not in direct_line_object_ids
+            if id(line) not in direct_line_object_ids or id(line) in fabric_reference_line_ids
         ]
         fabric_models = {
             "source_fabric_material_id": FabricMaterial,
@@ -2018,6 +2091,35 @@ class BomUpdateInputSerializer(serializers.Serializer):
                     # 完整响应回传或省略材质时，旧的面料补充值不应变成裁片自己的材质。
                     line["material"] = existing_values["cutting_material_original"]
         return sections
+
+
+class BomMaterialSaveLocationSerializer(serializers.Serializer):
+    section_title = serializers.CharField()
+    line_number = serializers.IntegerField()
+
+
+class BomNewMaterialPreviewSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    item_type = serializers.ChoiceField(choices=("MATERIAL", "SEMI_FINISHED"))
+    category_name = serializers.CharField()
+    material_name = serializers.CharField()
+    specification = serializers.CharField()
+    color_name = serializers.CharField(allow_blank=True)
+    color_label = serializers.CharField(allow_blank=True)
+    width = serializers.CharField(allow_blank=True)
+    material = serializers.CharField(allow_blank=True)
+    unit_name = serializers.CharField()
+    warehouse_name = serializers.CharField()
+    locations = BomMaterialSaveLocationSerializer(many=True)
+
+
+class BomMaterialSavePreviewDataSerializer(serializers.Serializer):
+    confirmation_token = serializers.CharField(allow_null=True)
+    new_materials = BomNewMaterialPreviewSerializer(many=True)
+
+
+class BomMaterialSavePreviewResponseSerializer(serializers.Serializer):
+    data = BomMaterialSavePreviewDataSerializer()
 
 
 class BomVerifyInputSerializer(serializers.Serializer):

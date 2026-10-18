@@ -288,7 +288,7 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
 </script>
 
 <template>
-  <section class="tube-outsourcing-page">
+  <section class="tube-outsourcing-page erp-glass-form">
     <header class="page-heading"><div class="title-row"><h1>新建管材外发单</h1><span class="status">{{ labels[source] }}</span></div><span class="muted">一个产品 · 每个部位一家加工厂</span></header>
     <ElAlert v-if="!canCreate" title="当前账号没有新建外发单权限。" type="warning" :closable="false" show-icon />
     <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon><ElButton v-if="!pending && !storageError" link @click="initialize">重新加载</ElButton></ElAlert>

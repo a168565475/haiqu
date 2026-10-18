@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
 import { useRouter } from 'vue-router'
@@ -37,15 +38,19 @@ onMounted(()=>void load())
 </script>
 
 <template>
-  <section class="internal-receipt-page">
-    <header class="receipt-heading"><h1>半成品入库记录</h1><span class="muted">共 {{ total }} 条入库明细</span><ElButton @click="router.push({name:'material-inventory'})">材料库存</ElButton></header>
-    <div class="receipt-filters"><ElInput v-model="search" clearable placeholder="搜索入库单号、生产订单、产品或部位" @keyup.enter="load(true)" @clear="load(true)" /><ElSelect v-model="source" placeholder="全部来源" aria-label="入库来源" @change="load(true)"><ElOption label="全部来源" value=""/><ElOption label="厂内入库" value="INTERNAL"/><ElOption label="外发入库" value="EXTERNAL"/></ElSelect><ElDatePicker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="入库开始日期" end-placeholder="入库结束日期" @change="load(true)"/><ElButton :loading="loading" @click="load(true)">查询</ElButton><ElButton @click="load()">刷新</ElButton></div>
+  <section class="internal-receipt-page erp-glass-list">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="receipt-heading erp-list-heading"><h1>半成品入库记录</h1><span class="muted">共 {{ total }} 条入库明细</span><ElButton class="erp-button-motion" @click="router.push({name:'material-inventory'})">材料库存</ElButton></header>
+    <div class="receipt-filters erp-list-filters"><ElInput v-model="search" clearable placeholder="搜索入库单号、生产订单、产品或部位" @keyup.enter="load(true)" @clear="load(true)" /><ElSelect v-model="source" placeholder="全部来源" aria-label="入库来源" @change="load(true)"><ElOption label="全部来源" value=""/><ElOption label="厂内入库" value="INTERNAL"/><ElOption label="外发入库" value="EXTERNAL"/></ElSelect><ElDatePicker v-model="dates" type="daterange" value-format="YYYY-MM-DD" start-placeholder="入库开始日期" end-placeholder="入库结束日期" @change="load(true)"/><ElButton class="erp-button-motion" @click="load()">刷新</ElButton><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="search=''; source=''; dates=[]; load(true)">重置</ElButton><ElButton class="erp-button-motion" type="primary" :loading="loading" @click="load(true)">应用筛选</ElButton></div></div>
+    </section>
+    <section class="erp-list-data">
     <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <div v-horizontal-overflow class="receipt-records-table receipt-table-scroll scroll-actions-container" v-loading="loading"><table class="receipt-table"><colgroup><col style="width:178px"><col style="width:96px"><col style="width:144px"><col style="width:128px"><col style="width:96px"><col style="width:80px"><col style="width:80px"><col style="width:128px"><col style="width:86px"><col style="width:76px"><col style="width:100px"><col style="width:82px"><col style="width:58px"><col style="width:106px"><col style="width:82px"><col style="width:62px"></colgroup><thead><tr><th>入库单号</th><th>入库来源</th><th>生产订单</th><th>产品</th><th>部位</th><th>品类</th><th>材质</th><th>规格</th><th>颜色</th><th>厚度</th><th>加工阶段</th><th class="number">数量</th><th>单位</th><th>入库日期</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead><tbody>
-      <tr v-for="row in rows" :key="row.id"><td :title="row.receipt_number" class="primary-text">{{ row.receipt_number }}</td><td><span class="receipt-tag" :class="{external:row.source==='EXTERNAL'}">{{ row.source_display }}</span></td><td :title="row.production_order">{{ row.production_order }}</td><td :title="row.product">{{ row.product }}</td><td :title="row.attributes.part_name" class="primary-text">{{ row.attributes.part_name }}</td><td>{{ row.attributes.category }}</td><td>{{ row.attributes.material }}</td><td :title="specification(row.attributes)">{{ specification(row.attributes) }}</td><td :title="row.attributes.color">{{ row.attributes.color }}</td><td>{{ row.attributes.tube_thickness || row.attributes.thickness || '—' }}</td><td>{{ row.stage }}</td><td class="number">{{ number(row.quantity) }}</td><td>{{ row.unit }}</td><td>{{ row.receipt_date }}</td><td><span class="receipt-tag success">已入库</span></td><td class="scroll-actions-cell"><button class="receipt-link" @click="open(row)">查看</button></td></tr>
+    <div class="erp-list-table-frame"><div v-horizontal-overflow class="receipt-records-table receipt-table-scroll erp-list-table-scroll scroll-actions-container" v-loading="loading"><table class="receipt-table erp-list-native-table erp-list-native-table--nowrap"><colgroup><col style="width:178px"><col style="width:96px"><col style="width:144px"><col style="width:128px"><col style="width:96px"><col style="width:80px"><col style="width:80px"><col style="width:128px"><col style="width:86px"><col style="width:76px"><col style="width:100px"><col style="width:82px"><col style="width:58px"><col style="width:106px"><col style="width:82px"><col style="width:62px"></colgroup><thead><tr><th>入库单号</th><th>入库来源</th><th>生产订单</th><th>产品</th><th>部位</th><th>品类</th><th>材质</th><th>规格</th><th>颜色</th><th>厚度</th><th>加工阶段</th><th class="number">数量</th><th>单位</th><th>入库日期</th><th>状态</th><th class="scroll-actions-cell">操作</th></tr></thead><tbody>
+      <tr v-for="row in rows" :key="row.id"><td :title="row.receipt_number" class="primary-text">{{ row.receipt_number }}</td><td><span class="erp-list-tag" :class="row.source==='EXTERNAL' ? 'erp-list-tag--info' : 'erp-list-tag--brand'">{{ row.source_display }}</span></td><td :title="row.production_order">{{ row.production_order }}</td><td :title="row.product">{{ row.product }}</td><td :title="row.attributes.part_name" class="primary-text">{{ row.attributes.part_name }}</td><td>{{ row.attributes.category }}</td><td>{{ row.attributes.material }}</td><td :title="specification(row.attributes)">{{ specification(row.attributes) }}</td><td :title="row.attributes.color">{{ row.attributes.color }}</td><td>{{ row.attributes.tube_thickness || row.attributes.thickness || '—' }}</td><td>{{ row.stage }}</td><td class="number">{{ number(row.quantity) }}</td><td>{{ row.unit }}</td><td>{{ row.receipt_date }}</td><td><span class="erp-list-tag erp-list-tag--success">已入库</span></td><td class="scroll-actions-cell"><button class="receipt-link" @click="open(row)">查看</button></td></tr>
       <tr v-if="!rows.length && !loading"><td colspan="16" class="empty">{{ error ? '加载失败，请重试' : '暂无入库记录' }}</td></tr>
-    </tbody></table></div>
-    <footer class="receipt-pagination"><span class="muted">按入库明细展示，实物库存合并累计</span><ElPagination v-model:current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="load()" /></footer>
+    </tbody></table></div></div>
+    <footer class="receipt-pagination erp-list-footer"><span class="muted">按入库明细展示，实物库存合并累计</span><ElPagination v-model:current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="load()" /></footer>
+    </section>
     <AppWindowDialog v-model="visible" :title="detail ? `${detail.source_display} · 来源详情` : '入库来源详情'" :width="1180" :height="660" :min-width="760" :min-height="440" class="semi-receipt-source-dialog" :close-on-click-modal="false">
       <div v-loading="detailLoading" class="receipt-detail-body"><ElAlert v-if="detailError" :title="detailError" type="error" :closable="false"/><template v-if="detail">
         <div class="receipt-detail-title"><h2>{{ detail.receipt_number }}</h2><span class="receipt-tag" :class="{external:detail.source==='EXTERNAL'}">{{ detail.source_display }}</span><span class="receipt-tag success">已入库</span></div>
@@ -58,3 +63,12 @@ onMounted(()=>void load())
     </AppWindowDialog>
   </section>
 </template>
+
+<style scoped lang="scss">
+.receipt-heading > .el-button { margin-left: auto; }
+.receipt-filters > :deep(.el-input) { width: min(100%, 320px); }
+.receipt-filters > :deep(.el-select) { width: 140px; }
+.receipt-filters > :deep(.el-date-editor) { width: 270px; flex: none; }
+.receipt-records-table .receipt-table { min-width: 1500px; }
+.receipt-link { border: 0; padding: 0; background: none; color: var(--erp-color-brand); cursor: pointer; font: inherit; }
+</style>

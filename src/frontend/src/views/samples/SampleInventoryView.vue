@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
+import { computed, onMounted, reactive, ref, useId, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -71,13 +72,39 @@ const canDeleteReceipt = computed(() => (
 const canCreateReceipt = computed(() => authStore.hasPermission('samples.add_sampleinventoryreceipt'))
 const canViewOutbound = computed(() => authStore.hasPermission('samples.view_sampleinventoryoutboundline'))
 const canViewLoans = computed(() => authStore.hasPermission('samples.view_sampleinventoryloanline'))
+const monthGradientId = `sample-monthly-${useId()}`
+const monthlyMetrics = [
+  { key: 'inbound_this_month', label: '当月入库', shortLabel: '入库' },
+  { key: 'outbound_this_month', label: '当月出库', shortLabel: '出库' },
+  { key: 'loaned_this_month', label: '当月借出', shortLabel: '借出' },
+  { key: 'current_available', label: '当前可用库存', shortLabel: '当前库存' },
+] as const
 
-const statCards = computed(() => [
-  { key: 'available', label: '当前可用库存', value: summary.value?.current_available, icon: '✓', tone: 'green' },
-  { key: 'borrowed', label: '借出中', value: summary.value?.borrowed, icon: '↗', tone: 'orange' },
-  { key: 'inbound', label: '今日入库', value: summary.value?.inbound_today, icon: '＋', tone: 'blue' },
-  { key: 'outbound', label: '今日出库', value: summary.value?.outbound_today, icon: '−', tone: 'red' },
-])
+function isInventoryCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+const monthlyBars = computed(() => {
+  const values = monthlyMetrics.map(metric => summaryLoading.value ? undefined : summary.value?.[metric.key])
+  const maximum = Math.max(0, ...values.filter(isInventoryCount))
+  return monthlyMetrics.map((metric, index) => {
+    const value = values[index]
+    const known = isInventoryCount(value)
+    return {
+      ...metric,
+      value: known ? value : null,
+      height: known && maximum > 0 ? value / maximum * 26 : 0,
+    }
+  })
+})
+const monthlyTitle = computed(() => {
+  const month = summary.value?.month
+  return month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
+    ? `本月样品 · ${Number(month.slice(5))}月`
+    : '本月样品'
+})
+const monthlyDescription = computed(() => monthlyBars.value
+  .map(metric => `${metric.label}：${metric.value ?? '未知'}件`).join('；'))
 
 function getErrorMessage(error: unknown): string {
   if (!(error instanceof AxiosError)) return '请求失败，请稍后重试。'
@@ -138,6 +165,10 @@ async function loadSummary() {
     const result = await fetchSampleInventorySummary()
     if (request !== summaryRequest) return
     summary.value = result
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(result.month || '')
+      || monthlyMetrics.some(metric => !isInventoryCount(result[metric.key]))) {
+      summaryError.value = '库存统计数据不完整，请重试。'
+    }
   } catch (error) {
     if (request !== summaryRequest) return
     summary.value = null
@@ -242,43 +273,21 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="sample-inventory-page" data-figma-node="810:8933" aria-labelledby="sample-inventory-title">
-    <header class="page-heading">
+  <section class="sample-inventory-page erp-glass-list" data-figma-node="810:8933" aria-labelledby="sample-inventory-title">
+    <section v-glass-spotlight class="erp-list-filter sample-inventory-filter">
+    <div class="sample-inventory-filter__content">
+    <header class="page-heading erp-list-heading">
       <div class="title-line">
         <h1 id="sample-inventory-title">样品库</h1>
-        <span>统一管理样品库存、出库与借出记录</span>
       </div>
-      <div class="heading-actions">
-        <ElButton type="primary" :disabled="!canCreateReceipt" @click="canCreateReceipt && (receiptDialogVisible = true)">样品入库</ElButton>
-        <ElButton :disabled="!canViewOutbound" @click="openOutboundList">样品出库</ElButton>
-        <ElButton :disabled="!canViewLoans" @click="openLoanList">样品借出</ElButton>
-      </div>
+
     </header>
 
-    <nav class="inventory-tabs" aria-label="样品库分类">
-      <button type="button" class="inventory-tab is-active" aria-current="page">样品库存</button>
-      <button type="button" class="inventory-tab" :disabled="!canViewOutbound" @click="openOutboundList">样品出库</button>
-      <button type="button" class="inventory-tab" :disabled="!canViewLoans" @click="openLoanList">样品借出</button>
-    </nav>
-
-    <div v-loading="summaryLoading" class="stats-grid">
-      <article v-for="card in statCards" :key="card.key" class="stat-card">
-        <div class="stat-copy">
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value ?? '—' }}</strong>
-        </div>
-        <span class="stat-icon" :class="`is-${card.tone}`" aria-hidden="true">
-          {{ card.icon }}
-        </span>
-      </article>
-    </div>
-
-    <div v-if="summaryError" class="load-error" role="alert">{{ summaryError }} <ElButton link @click="loadSummary">重试统计</ElButton></div>
     <div v-if="optionsError" class="load-error" role="alert">{{ optionsError }} <ElButton link @click="loadOptions">重试选项</ElButton></div>
 
-    <ElCard class="filter-card" shadow="never">
-      <ElForm class="filter-grid" label-position="top" @submit.prevent="searchInventory">
-        <ElFormItem label="关键词">
+    <div class="filter-card">
+      <ElForm class="filter-grid erp-list-filters" @submit.prevent="searchInventory">
+        <ElFormItem>
           <ElInput
             v-model="filters.keyword"
             clearable
@@ -287,18 +296,18 @@ onMounted(() => {
             maxlength="100"
           />
         </ElFormItem>
-        <ElFormItem label="产品类别">
-          <ElSelect v-model="filters.categoryName" aria-label="产品类别" clearable placeholder="全部" :loading="optionsLoading">
+        <ElFormItem>
+          <ElSelect v-model="filters.categoryName" aria-label="产品类别" clearable placeholder="产品类别" :loading="optionsLoading">
             <ElOption v-for="item in options.product_categories" :key="item" :label="item" :value="item" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="入库位置">
-          <ElSelect v-model="filters.location" aria-label="入库位置" clearable placeholder="全部" :loading="optionsLoading">
+        <ElFormItem>
+          <ElSelect v-model="filters.location" aria-label="入库位置" clearable placeholder="入库位置" :loading="optionsLoading">
             <ElOption v-for="item in options.locations" :key="item" :label="item" :value="item" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="库存状态">
-          <ElSelect v-model="filters.inventoryStatus" aria-label="库存状态" placeholder="请选择库存状态">
+        <ElFormItem>
+          <ElSelect v-model="filters.inventoryStatus" aria-label="库存状态" placeholder="库存状态">
             <ElOption
               v-for="item in inventoryStatusOptions"
               :key="item.value"
@@ -307,16 +316,47 @@ onMounted(() => {
             />
           </ElSelect>
         </ElFormItem>
-        <div class="filter-actions">
-          <ElButton type="primary" native-type="submit">查询</ElButton>
-          <ElButton @click="resetFilters">重置</ElButton>
+        <div class="filter-actions erp-list-filter-actions">
+          <ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton>
+          <ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton>
         </div>
       </ElForm>
-    </ElCard>
+    </div>
+    </div>
+    <aside class="sample-monthly-stat" :aria-label="monthlyDescription" :aria-busy="summaryLoading">
+      <div class="sample-monthly-stat__heading">
+        <span>{{ monthlyTitle }}</span>
+        <span>{{ summaryLoading ? '加载中' : '件' }}</span>
+      </div>
+      <svg class="sample-monthly-stat__chart" viewBox="0 0 288 52" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient :id="monthGradientId" x1="0" y1="0" x2="0" y2="1">
+            <stop class="sample-monthly-stat__gradient-start" offset="0%" />
+            <stop class="sample-monthly-stat__gradient-end" offset="100%" />
+          </linearGradient>
+        </defs>
+        <g v-for="(metric, index) in monthlyBars" :key="metric.key" :data-monthly-metric="metric.key">
+          <text class="sample-monthly-stat__value" :x="36 + index * 72" y="9">{{ metric.value ?? '—' }}</text>
+          <rect v-if="metric.height > 0" class="sample-monthly-stat__bar" :x="21 + index * 72" :y="38 - metric.height" width="30" :height="metric.height" rx="3" :fill="`url(#${monthGradientId})`" />
+          <text class="sample-monthly-stat__label" :x="36 + index * 72" y="51">{{ metric.shortLabel }}</text>
+        </g>
+        <line class="sample-monthly-stat__divider" x1="216" y1="12" x2="216" y2="38" />
+      </svg>
+      <div v-if="summaryError" class="sample-monthly-stat__error" role="alert">
+        <span>{{ summaryError }}</span><ElButton link @click="loadSummary">重试统计</ElButton>
+      </div>
+    </aside>
+    </section>
 
-    <div class="table-toolbar">
+    <section class="table-card erp-list-data">
+    <div class="table-toolbar erp-list-toolbar">
+      <div class="heading-actions">
+        <ElButton class="erp-button-motion" type="primary" :disabled="!canCreateReceipt" @click="canCreateReceipt && (receiptDialogVisible = true)">样品入库</ElButton>
+        <ElButton class="erp-button-motion" :disabled="!canViewOutbound" @click="openOutboundList">样品出库</ElButton>
+        <ElButton class="erp-button-motion" :disabled="!canViewLoans" @click="openLoanList">样品借出</ElButton>
+      </div>
       <span>{{ inventoryHint }}</span>
-      <ElButton :loading="loading" @click="refreshPage">刷新</ElButton>
+      <ElButton class="erp-button-motion" :loading="loading" @click="refreshPage">刷新</ElButton>
     </div>
 
     <ElAlert
@@ -330,7 +370,7 @@ onMounted(() => {
       <template #default><ElButton link type="primary" @click="refreshPage">重新加载</ElButton></template>
     </ElAlert>
 
-    <ElCard class="table-card" shadow="never">
+    <div class="erp-list-table-frame">
       <ElTable
         v-loading="loading"
         :data="rows"
@@ -369,7 +409,8 @@ onMounted(() => {
           </template>
         </ElTableColumn>
       </ElTable>
-      <footer class="table-footer">
+    </div>
+      <footer class="table-footer erp-list-footer">
         <span>共 {{ total }} 条</span>
         <ElPagination
           v-model:current-page="page"
@@ -382,7 +423,7 @@ onMounted(() => {
           @size-change="() => { page = 1; void loadRows() }"
         />
       </footer>
-    </ElCard>
+    </section>
   </section>
 
   <SampleInventoryReceiptDialog

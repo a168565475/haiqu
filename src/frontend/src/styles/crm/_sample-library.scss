@@ -38,7 +38,7 @@ $filter-gap: 14px;
 .stat-icon.is-orange { color: token.$crm-warning; background: token.$crm-warning-soft; }
 .stat-icon.is-blue { color: token.$crm-info; background: token.$crm-info-soft; }
 .stat-icon.is-red { color: token.$crm-danger; background: token.$crm-danger-soft; }
-.stat-icon.is-purple { color: #8063a7; background: #efeaf4; }
+.stat-icon.is-purple { color: var(--erp-color-neutral); background: color-mix(in srgb, var(--erp-color-neutral) 12%, var(--erp-color-surface)); }
 .filter-card, .table-card { overflow: hidden; border: 0; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; box-shadow: none; }
 .filter-card :deep(.el-card__body) { padding: 10px 16px 6px; }
 .filter-grid { display: grid; grid-template-columns: minmax(0, 250px) repeat(3, 176px) minmax(0, 1fr); gap: $filter-gap; align-items: end; }

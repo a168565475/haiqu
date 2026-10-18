@@ -127,4 +127,32 @@ describe('ReferenceDataSettingsView', () => {
 
     wrapper.unmount()
   })
+  it('输入、清空和状态变化即时筛选，按钮仍可应用和重置', async () => {
+    const wrapper = mount(ReferenceDataSettingsView, { global: { plugins: [createPinia(), ElementPlus] } })
+    await flushPromises()
+    const keywordInput = wrapper.get<HTMLInputElement>('input[placeholder="搜索字典编码、中英文名称"]')
+    await keywordInput.setValue('不存在的字典')
+    expect(wrapper.find('.dictionary-table').exists()).toBe(false)
+    expect(wrapper.text()).toContain('当前分类暂无符合条件的字典配置')
+
+    const filterButtons = wrapper.findAll('.erp-list-filter-actions button')
+    await filterButtons.find(button => button.text() === '应用筛选')!.trigger('click')
+    expect(wrapper.find('.dictionary-table').exists()).toBe(false)
+
+    await keywordInput.setValue('')
+    expect(wrapper.find('.dictionary-table').text()).toContain('CUSTOMER_LEVEL')
+
+    const statusSelect = wrapper.findComponent({ name: 'ElSelect' })
+    statusSelect.vm.$emit('update:modelValue', 'INACTIVE')
+    statusSelect.vm.$emit('change', 'INACTIVE')
+    await flushPromises()
+    expect(wrapper.find('.dictionary-table').exists()).toBe(false)
+
+    await filterButtons.find(button => button.text() === '重置')!.trigger('click')
+    expect(wrapper.find('.dictionary-table').text()).toContain('CUSTOMER_LEVEL')
+    expect(keywordInput.element.value).toBe('')
+    expect(statusSelect.props('modelValue')).toBe('')
+    wrapper.unmount()
+  })
+
 })

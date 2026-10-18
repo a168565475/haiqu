@@ -188,6 +188,36 @@ export const router = createRouter({
       },
     },
     {
+      path: '/workbench/production',
+      name: 'production-workbench',
+      component: () => import('@/views/workbench/production/ProductionDashboardView.vue'),
+      props: { role: 'owner' },
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'production-workbench',
+        headerTitle: '生产负责人工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/production-overview',
+      name: 'production-overview',
+      component: () => import('@/views/workbench/production/ProductionDashboardView.vue'),
+      props: { role: 'executive' },
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'production-overview',
+        headerTitle: '生产总览', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/workbench/workshop',
+      name: 'workshop-workbench',
+      component: () => import('@/views/workbench/production/ProductionDashboardView.vue'),
+      props: { role: 'workshop' },
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'workshop-workbench',
+        headerTitle: '车间主管工作台', pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/customers',
       name: 'customers',
       component: CustomerListView,
@@ -297,7 +327,7 @@ export const router = createRouter({
     {
       path: '/customers/:customerId/contacts',
       name: 'customer-contacts',
-      component: CustomerDetailView,
+      redirect: to => ({ name: 'customer-detail', params: { customerId: to.params.customerId }, query: to.query, hash: '#customer-contacts' }),
       meta: {
         requiresAuth: true,
         layout: 'erp',

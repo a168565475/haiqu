@@ -360,77 +360,77 @@ function viewExistingSchedule() {
 </template>
 
 <style scoped lang="scss">
-.task-schedule-dialog__content { box-sizing: border-box; min-height: 0; height: 100%; display: flex; flex-direction: column; padding: 16px 20px 14px; color: #1f1d18; background: #fcfbf7; }
+.task-schedule-dialog__content { box-sizing: border-box; min-height: 0; height: 100%; display: flex; flex-direction: column; padding: 16px 20px 14px; color: var(--erp-color-text-primary); background: var(--erp-color-surface); }
 .task-schedule-dialog__error { margin-bottom: 12px; }
-.schedule-readiness { border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; }
-.schedule-readiness header { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid #eae4da; }
+.schedule-readiness { border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-surface); }
+.schedule-readiness header { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-readiness header strong { font-family: 'Noto Serif SC', serif; font-size: 18px; }
-.schedule-readiness header span { color: #6f6a61; font-size: 12px; }
+.schedule-readiness header span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .schedule-readiness__items { height: 42px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; }
-.schedule-readiness__items > div { height: 24px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-right: 1px solid #ddd6c9; }
+.schedule-readiness__items > div { height: 24px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-right: 1px solid var(--erp-color-border); }
 .schedule-readiness__items > div:last-child { border-right: 0; }
-.schedule-readiness__items > div > span:first-child { color: #4d4c48; font-size: 13px; }
-.schedule-readiness__blocker { margin: 0; padding: 7px 14px; border-top: 1px solid #ead6cc; color: #a53c22; background: #fff6f1; font-size: 12px; line-height: 18px; }
-.readiness-tag, .product-status-tag { --el-tag-text-color: #faf9f5; box-sizing: border-box; min-width: 56px; height: 24px; justify-content: center; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; font-family: 'Noto Sans SC', sans-serif; font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; }
+.schedule-readiness__items > div > span:first-child { color: var(--erp-color-text-regular); font-size: 13px; }
+.schedule-readiness__blocker { margin: 0; padding: 7px 14px; border-top: 1px solid var(--erp-color-warning-border); color: var(--erp-color-warning); background: var(--erp-color-warning-soft); font-size: 12px; line-height: 18px; }
+.readiness-tag, .product-status-tag { --el-tag-text-color: var(--erp-color-text-inverse); box-sizing: border-box; min-width: 56px; height: 24px; justify-content: center; padding: 0 8px; border: 0; border-radius: 999px; color: var(--erp-color-text-inverse); font-family: 'Noto Sans SC', sans-serif; font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; }
 .product-status-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.product-status-tag :deep(.el-tag__content) { color: #faf9f5; }
-.is-success { background: #4f7d4b !important; }
-.is-warning { background: #b8781e !important; }
-.is-danger { background: #b53333 !important; }
-.is-neutral { background: #5e5d59 !important; }
+.product-status-tag :deep(.el-tag__content) { color: var(--erp-color-text-inverse); }
+.is-success { background: var(--erp-tag-success-background) !important; }
+.is-warning { background: var(--erp-tag-warning-background) !important; }
+.is-danger { background: var(--erp-tag-danger-background) !important; }
+.is-neutral { background: var(--erp-tag-neutral-background) !important; }
 .schedule-workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(470px, 0.95fr) minmax(620px, 1.45fr); gap: 14px; margin-top: 14px; }
-.schedule-products, .schedule-editor { min-height: 0; overflow: hidden; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; }
+.schedule-products, .schedule-editor { min-height: 0; overflow: hidden; border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-surface); }
 .schedule-products { display: flex; flex-direction: column; }
-.schedule-products > header { height: 48px; flex: none; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid #eae4da; }
+.schedule-products > header { height: 48px; flex: none; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-products > header > div { display: flex; align-items: baseline; gap: 14px; }
 .schedule-products > header strong { font-family: 'Noto Serif SC', serif; font-size: 18px; }
-.schedule-products > header span { color: #6f6a61; font-size: 12px; }
+.schedule-products > header span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .schedule-products__list { min-height: 0; flex: 1; overflow: auto; }
-.schedule-product-row { box-sizing: border-box; min-height: 116px; display: grid; grid-template-columns: 22px 64px minmax(118px, 1fr) 72px 78px; align-items: center; column-gap: 10px; padding: 12px 12px; border-bottom: 1px solid #eae4da; cursor: pointer; }
-.schedule-product-row:hover { background: #fff9f1; }
-.schedule-product-row.is-active { box-shadow: inset 3px 0 #c84e28; background: #fff9f1; }
-.schedule-product-row > img { width: 64px; height: 64px; object-fit: cover; border: 1px solid #ddd6c9; border-radius: 4px; background: #f6f3ec; }
+.schedule-product-row { box-sizing: border-box; min-height: 116px; display: grid; grid-template-columns: 22px 64px minmax(118px, 1fr) 72px 78px; align-items: center; column-gap: 10px; padding: 12px 12px; border-bottom: 1px solid var(--erp-color-border-subtle); cursor: pointer; }
+.schedule-product-row:hover { background: var(--erp-color-hover); }
+.schedule-product-row.is-active { box-shadow: inset 3px 0 var(--erp-color-border); background: var(--erp-color-selected); }
+.schedule-product-row > img { width: 64px; height: 64px; object-fit: cover; border: 1px solid var(--erp-color-border); border-radius: 4px; background: var(--erp-color-readonly); }
 .schedule-product-row > img.is-placeholder { object-fit: contain; padding: 8px; box-sizing: border-box; }
 .schedule-product-row__info { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
 .schedule-product-row__info strong, .schedule-product-row__info span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .schedule-product-row__info strong { font-size: 14px; line-height: 22px; }
-.schedule-product-row__info span { color: #6f6a61; font-size: 12px; line-height: 20px; }
-.schedule-product-row__info small { margin-top: 5px; color: #968f84; font-size: 11px; }
+.schedule-product-row__info span { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
+.schedule-product-row__info small { margin-top: 5px; color: var(--erp-color-text-muted); font-size: 11px; }
 .schedule-product-row__info b { font-size: 14px; line-height: 22px; }
 .schedule-product-row__status { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.schedule-product-row__status > span:first-child { color: #6f6a61; font-size: 11px; }
+.schedule-product-row__status > span:first-child { color: var(--erp-color-text-secondary); font-size: 11px; }
 .schedule-editor { display: flex; flex-direction: column; padding: 0 18px; }
-.schedule-editor__heading { height: 76px; flex: none; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eae4da; }
+.schedule-editor__heading { height: 76px; flex: none; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-editor__heading h2 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 22px; line-height: 30px; }
-.schedule-editor__heading span { color: #6f6a61; font-size: 12px; }
+.schedule-editor__heading span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .schedule-editor :deep(.el-button), .schedule-editor :deep(.el-input__wrapper), .schedule-editor :deep(.el-select__wrapper), .schedule-editor :deep(.el-date-editor), .schedule-editor :deep(.el-input-number) { height: 32px; min-height: 32px; }
-.schedule-editor__section { padding: 18px 0; border-bottom: 1px solid #eae4da; }
+.schedule-editor__section { padding: 18px 0; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-editor__section h3 { margin: 0 0 14px; font-family: 'Noto Serif SC', serif; font-size: 17px; }
 .quantity-section label { display: grid; grid-template-columns: 120px 240px; align-items: center; }
-.quantity-section label > span, .schedule-date-grid label > span, .schedule-craft-grid label > span { color: #4d4c48; font-size: 13px; }
+.quantity-section label > span, .schedule-date-grid label > span, .schedule-craft-grid label > span { color: var(--erp-color-text-regular); font-size: 13px; }
 .quantity-section label > div { display: grid; grid-template-columns: minmax(0, 1fr) 42px; }
 .quantity-section :deep(.el-input-number) { width: 100%; }
-.quantity-section em { display: grid; place-items: center; border: 1px solid #ddd6c9; border-left: 0; border-radius: 0 4px 4px 0; color: #4d4c48; background: #f6f3ec; font-size: 12px; font-style: normal; }
+.quantity-section em { display: grid; place-items: center; border: 1px solid var(--erp-color-border); border-left: 0; border-radius: 0 4px 4px 0; color: var(--erp-color-text-regular); background: var(--erp-color-subtle); font-size: 12px; font-style: normal; }
 .schedule-date-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 28px; }
 .schedule-date-grid label, .schedule-craft-grid label { min-width: 0; display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; }
 .schedule-date-grid :deep(.el-date-editor), .schedule-craft-grid :deep(.el-select) { width: 100%; }
 .schedule-craft-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
 .schedule-craft-field { position: relative; min-width: 0; }
-.schedule-craft-field > strong { position: absolute; z-index: 1; top: 1px; right: 34px; bottom: 1px; left: 12px; display: flex; align-items: center; overflow: hidden; color: #1f1d18; background: #fcfbf7; font-size: 13px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-.schedule-editor__tip { margin: 16px 0 0; color: #6f6a61; font-size: 12px; }
+.schedule-craft-field > strong { position: absolute; z-index: 1; top: 1px; right: 34px; bottom: 1px; left: 12px; display: flex; align-items: center; overflow: hidden; color: var(--erp-color-text-primary); background: var(--erp-color-surface); font-size: 13px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.schedule-editor__tip { margin: 16px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; }
 .task-schedule-dialog__footer { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.task-schedule-dialog__footer p { margin: 0; color: #6f6a61; font-size: 12px; }
+.task-schedule-dialog__footer p { margin: 0; color: var(--erp-color-text-secondary); font-size: 12px; }
 .task-schedule-dialog__footer > div { display: flex; gap: 10px; }
 .task-schedule-dialog__footer :deep(.el-button) { height: 32px; margin: 0; }
-.task-schedule-dialog__footer :deep(.el-button--primary) { border-color: #c84e28; background: #c84e28; }
+.task-schedule-dialog__footer :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
 </style>
 
 <style lang="scss">
 .production-task-schedule-dialog {
-  --el-color-primary: #c84e28;
+  --el-color-primary: var(--erp-color-brand);
   font-family: 'Noto Sans SC', sans-serif;
 }
 .production-task-schedule-dialog .app-window-dialog__body { min-height: 0; flex: 1; padding: 0; overflow: hidden; }
-.production-task-schedule-dialog .app-window-dialog__footer { height: 58px; display: flex; align-items: center; padding: 0 20px; border-top: 1px solid #ddd6c9; background: #fcfbf7; }
+.production-task-schedule-dialog .app-window-dialog__footer { height: 58px; display: flex; align-items: center; padding: 0 20px; border-top: 1px solid var(--erp-color-border-subtle); background: var(--erp-color-surface); }
 .production-task-schedule-dialog .el-dialog__title { font-family: 'Noto Serif SC', serif; font-size: 20px; }
 </style>

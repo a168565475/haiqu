@@ -252,6 +252,41 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertEqual(product["specification_display"], self.line.specification_snapshot)
         self.assertEqual(product["material"], "")
 
+    def test_plan_product_display_uses_known_fields_without_rewriting_snapshot(self):
+        raw_specification = "47*55*79；加厚；颜色：酒红色；材质：PE"
+        self.line.specification_snapshot = raw_specification
+        self.line.color_name_snapshot = "酒红色"
+        self.line.material_snapshot = "PE"
+        self.line.save(update_fields=["specification_snapshot", "color_name_snapshot", "material_snapshot", "updated_at"])
+        created = self.create_schedule()
+        row = ProductionScheduleProduct.objects.get(pk=created.data["data"]["products"][0]["id"])
+        original_snapshot = dict(row.product_snapshot)
+
+        response = self.client.get("/api/v1/production-schedule-items/", {"category": "METAL"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        product = response.data["data"][0]["product"]
+        self.assertEqual(product["specification"], raw_specification)
+        self.assertEqual(product["specification_display"], "47*55*79；加厚")
+        self.assertEqual(product["color_name"], "酒红色")
+        self.assertEqual(product["material"], "PE")
+        row.refresh_from_db()
+        self.assertEqual(row.product_snapshot, original_snapshot)
+
+    def test_plan_product_display_keeps_unverified_suffix_and_missing_material(self):
+        raw_specification = "47*55*79；颜色：未确认颜色；材质：未知"
+        self.line.specification_snapshot = raw_specification
+        self.line.material_snapshot = ""
+        self.line.save(update_fields=["specification_snapshot", "material_snapshot", "updated_at"])
+        self.create_schedule()
+
+        response = self.client.get("/api/v1/production-schedule-items/", {"category": "METAL"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        product = response.data["data"][0]["product"]
+        self.assertEqual(product["specification_display"], raw_specification)
+        self.assertEqual(product["material"], "")
+
     def test_candidate_create_detail_and_category_list_use_real_source(self):
         candidates = self.client.get("/api/v1/production-schedules/task-candidates/")
         self.assertEqual(candidates.status_code, 200, candidates.data)

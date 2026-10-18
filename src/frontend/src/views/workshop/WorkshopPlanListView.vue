@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ArrowDown, Refresh, Search } from '@element-plus/icons-vue'
@@ -178,54 +179,43 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <section class="schedule-page workshop-plan-list" :data-testid="`workshop-plan-${config.category.toLowerCase()}`">
-    <header class="schedule-heading"><div><h1>内部计划</h1><span>{{ config.title }} · {{ total }} 条产品计划</span></div></header>
-    <ElTabs class="internal-plan-tabs" :model-value="activePlanName" @tab-change="changePlan">
+  <section class="schedule-page workshop-plan-list erp-glass-list" :data-testid="`workshop-plan-${config.category.toLowerCase()}`">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="schedule-heading erp-list-heading"><div class="erp-list-title-row"><h1>内部计划</h1></div></header>
+    <div class="schedule-filter-bar plan-filter-bar erp-list-filters"><ElInput v-model="search" class="schedule-search" :prefix-icon="Search" clearable placeholder="搜索排产单号、生产任务单号、产品" @keyup.enter="apply" @clear="apply" /><div class="plan-date-filter"><span>{{ config.date.replace('日期', '时间') }}</span><ElDatePicker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="schedule-date-popper" @change="apply" /></div><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton><ElButton class="erp-button-motion" @click="search=''; dateRange=[]; apply()">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="apply">应用筛选</ElButton></div></div>
+    <ElAlert v-if="route.query.schedule_id" class="plan-context" type="info" :closable="false" show-icon title="已从主计划带入筛选上下文"><ElButton link type="primary" @click="router.replace({ path: route.path })">清除筛选</ElButton></ElAlert>
+    <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
+    <ElAlert v-else-if="wageStatusError" type="warning" :title="wageStatusError" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
+    </section>
+    <section class="erp-list-data">
+    <ElTabs class="internal-plan-tabs erp-list-tabs" :model-value="activePlanName" @tab-change="changePlan">
       <ElTabPane v-for="tab in planTabs" :key="tab.routeName" :name="tab.routeName" :label="tab.label" />
     </ElTabs>
-    <div class="schedule-filter-bar plan-filter-bar"><ElInput v-model="search" :prefix-icon="Search" clearable placeholder="搜索排产单号、生产任务单号、产品" @keyup.enter="apply" @clear="apply" /><div class="plan-date-filter"><span>{{ config.date.replace('日期', '时间') }}</span><ElDatePicker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" popper-class="schedule-date-popper" @change="apply" /></div><ElButton :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></div>
-    <ElAlert v-if="route.query.schedule_id" class="plan-context" type="info" :closable="false" show-icon title="已从主计划带入筛选上下文"><ElButton link type="primary" @click="router.replace({ path: route.path })">清除筛选</ElButton></ElAlert>
-    <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
-    <ElAlert v-else-if="wageStatusError" type="warning" :title="wageStatusError" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
-    <div class="schedule-table-card"><ElTable v-loading="loading" :data="rows" border row-key="id" empty-text="暂无符合条件的产品计划">
+    <div class="schedule-table-card erp-list-table-frame"><ElTable height="100%" v-loading="loading" :data="rows" border row-key="id" empty-text="暂无符合条件的产品计划">
       <ElTableColumn label="生产任务单号" width="170"><template #default="{ row }"><span class="plan-text-cell">{{ row.task_number || '—' }}</span></template></ElTableColumn>
       <ElTableColumn label="排产单号" width="170"><template #default="{ row }"><span class="plan-text-cell">{{ row.schedule_number || '—' }}</span></template></ElTableColumn>
       <ElTableColumn label="产品名称" min-width="190"><template #default="{ row }"><span class="plan-text-cell">{{ row.product.product_name || '未命名产品' }}</span></template></ElTableColumn>
-      <ElTableColumn label="规格" min-width="150"><template #default="{ row }"><span class="plan-text-cell">{{ row.product.specification || '—' }}</span></template></ElTableColumn>
+      <ElTableColumn label="规格" min-width="150"><template #default="{ row }"><span class="plan-text-cell">{{ (row.product.specification_display ?? row.product.specification) || '—' }}</span></template></ElTableColumn>
       <ElTableColumn label="颜色" width="120"><template #default="{ row }"><span class="plan-text-cell">{{ row.product.color_name || '—' }}</span></template></ElTableColumn>
+      <ElTableColumn label="材质" min-width="150"><template #default="{ row }"><span class="plan-text-cell">{{ row.product.material || '—' }}</span></template></ElTableColumn>
       <ElTableColumn label="排产数量" width="120"><template #default="{ row }">{{ row.planned_quantity }} {{ row.unit_name }}</template></ElTableColumn>
-      <ElTableColumn label="厂内工艺" min-width="150"><template #default="{ row }"><ElTag class="plan-craft-tag" :class="`is-${config.category.toLowerCase()}`" effect="dark">{{ row.craft_names.join('、') }}</ElTag></template></ElTableColumn>
+      <ElTableColumn label="厂内工艺" min-width="150"><template #default="{ row }"><ElTag class="plan-craft-tag erp-list-tag" :class="({ METAL: 'erp-list-tag--success', CUTTING: 'erp-list-tag--info', SEWING: 'erp-list-tag--brand', ASSEMBLY: 'erp-list-tag--warning' })[config.category]" effect="dark">{{ row.craft_names.join('、') }}</ElTag></template></ElTableColumn>
       <ElTableColumn prop="plan_date" :label="config.date" width="160" />
-      <ElTableColumn label="作业状态" width="112"><template #default="{ row }"><span class="plan-status-tag" :class="jobStatusTone(row)">{{ jobStatusLabel(row) }}</span></template></ElTableColumn>
+      <ElTableColumn label="作业状态" width="112"><template #default="{ row }"><span class="plan-status-tag erp-list-tag" :class="jobStatusTone(row).replace('status-', 'erp-list-tag--')">{{ jobStatusLabel(row) }}</span></template></ElTableColumn>
       <ElTableColumn label="完成进度" width="108" align="center"><template #default="{ row }">{{ progressLabel(row) }}</template></ElTableColumn>
       <ElTableColumn label="预计工价" width="110" align="right"><template #default="{ row }">{{ formatWageMoney(wageStatus(row)?.estimated_wage) }}</template></ElTableColumn>
-      <ElTableColumn label="工价状态" width="120"><template #default="{ row }"><span class="plan-status-tag" :class="wageStatusTone(row)">{{ wageStatusLabel(row) }}</span></template></ElTableColumn>
+      <ElTableColumn label="工价状态" width="120"><template #default="{ row }"><span class="plan-status-tag erp-list-tag" :class="wageStatusTone(row).replace('status-', 'erp-list-tag--')">{{ wageStatusLabel(row) }}</span></template></ElTableColumn>
       <ElTableColumn label="操作" width="100" fixed="right"><template #default="{ row }"><div class="plan-row-actions"><ElDropdown trigger="click"><ElButton link type="primary">更多<ElIcon class="el-icon--right"><ArrowDown /></ElIcon></ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-if="canReceiveFinished && config.category==='ASSEMBLY'" @click="router.push({name:'assembly-finished-receipt',query:{schedule_product_id:row.id}})">成品入库</ElDropdownItem><ElDropdownItem v-if="canReceiveSemi &amp;&amp; ['METAL','SEWING'].includes(config.category)" @click="router.push({name: 'internal-semi-receipt', query: {schedule_product_id: row.id, plan_category: config.category}})">半成品入库</ElDropdownItem><ElDropdownItem v-if="canCreateMaterialIssue" @click="createMaterialIssue(row)">生产领料</ElDropdownItem><ElDropdownItem v-if="canViewMaterialIssue" @click="openMaterialIssueRecords(row)">查看领料记录</ElDropdownItem><ElDropdownItem v-if="config.category === 'METAL' && canViewMetalProcessing" data-testid="plan-metal-processing-entry" @click="openMetalProcessing(row)">金工完成登记</ElDropdownItem><ElDropdownItem v-if="canManageWageScheme && (wageStatus(row)?.scheme_id || canCreateWageScheme)" @click="openWageScheme(row)">{{ wageStatus(row)?.scheme_id ? '查看工价' : '新建工价' }}</ElDropdownItem><ElDropdownItem v-if="canCreateWorkReport" :disabled="!wageStatus(row)?.can_report" @click="openWorkReport(row)">计件报工</ElDropdownItem><ElDropdownItem v-if="canViewWorkReport" :disabled="!wageStatus(row)?.workshop_id" @click="openWorkReportRecords(row)">查看报工记录</ElDropdownItem></ElDropdownMenu></template></ElDropdown></div></template></ElTableColumn>
     </ElTable></div>
-    <footer class="schedule-pagination"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    <footer class="schedule-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    </section>
     <WageSchemeDetailDialog v-model="wageDetailVisible" :scheme-id="wageDetailSchemeId" />
   </section>
 </template>
 
 <style lang="scss">@use '@/styles/productionScheduling.scss';</style>
 <style scoped lang="scss">
-.workshop-plan-list {
-  height: calc(100dvh - 92px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.workshop-plan-list .schedule-table-card {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.workshop-plan-list .schedule-table-card :deep(.el-table) {
-  min-height: 0;
-  flex: 1;
-}
-.workshop-plan-list .plan-text-cell {
+ .workshop-plan-list .plan-text-cell {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;

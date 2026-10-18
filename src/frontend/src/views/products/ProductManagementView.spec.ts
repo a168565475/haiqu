@@ -35,6 +35,20 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.useRealTimers() })
 
 describe('独立产品管理', () => {
+  it('搜索防抖结束前应用筛选保留新关键词，并取消重复查询', async () => {
+    await setup()
+    vi.useFakeTimers()
+    api.fetchProductCatalogNames.mockClear()
+    const search = wrapper.get('[aria-label="搜索品名"]')
+    await search.setValue('折叠桌')
+    const apply = wrapper.get('.erp-list-filter-actions').findAll('button').find(button => button.text() === '应用筛选')!
+    await apply.trigger('click'); await flushPromises()
+    expect((search.element as HTMLInputElement).value).toBe('折叠桌')
+    expect(api.fetchProductCatalogNames).toHaveBeenCalledExactlyOnceWith({ category_id: 'cat1', q: '折叠桌' })
+    await vi.advanceTimersByTimeAsync(250); await flushPromises()
+    expect(api.fetchProductCatalogNames).toHaveBeenCalledTimes(1)
+  })
+
   it('类别显示全部品名数，品名显示产品总数，搜索不缩减类别计数', async () => {
     api.fetchProductCatalogNames.mockResolvedValue([name(), { ...name('n2', '椅子'), product_count: 0 }])
     api.fetchProductCatalogs.mockResolvedValue(page([product()], 1, 51))
@@ -106,9 +120,14 @@ describe('独立产品管理', () => {
     expect(row().findAll('[data-color-id]')).toHaveLength(1)
   })
 
-  it('新增产品在表尾草稿行提交，空字段合法且不自动创建颜色', async () => {
-    await setup(); await wrapper.get('[data-action="add-product"]').trigger('click')
+  it('顶部数量后新增产品并聚焦表尾草稿，空字段合法且不自动创建颜色', async () => {
+    await setup()
+    const addProduct = wrapper.get('.detail-heading [data-action="add-product"]')
+    expect(addProduct.element.previousElementSibling?.classList.contains('product-count')).toBe(true)
+    expect(wrapper.find('.product-table-scroll [data-action="add-product"]').exists()).toBe(false)
+    await addProduct.trigger('click'); await flushPromises()
     const draft = wrapper.get('[data-new-product]')
+    expect(document.activeElement).toBe(draft.get('input').element)
     await draft.get('[aria-label="新产品货号"]').setValue('H001')
     api.createProductCatalog.mockResolvedValue({ data: { ...product('p2'), product_code: '', specification: '', item_number: 'H001', scale: '', colors: [] }, etag: '"new"' })
     api.fetchProductCatalogs.mockResolvedValue(page([product(), { ...product('p2'), colors: [] }]))
@@ -169,8 +188,10 @@ describe('独立产品管理', () => {
   it('未保存字段时禁止切换品名，取消编辑后恢复', async () => {
     await setup(); await edit('item_number', '暂存货号')
     expect(wrapper.get('button[data-name-id="n2"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.detail-heading [data-action="add-product"]').attributes('disabled')).toBeDefined()
     await field('item_number').get('[aria-label="取消编辑货号"]').trigger('click'); await flushPromises()
     expect(wrapper.get('button[data-name-id="n2"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.detail-heading [data-action="add-product"]').attributes('disabled')).toBeUndefined()
     await wrapper.get('button[data-name-id="n2"]').trigger('click'); await flushPromises()
     expect(api.fetchProductCatalogs).toHaveBeenLastCalledWith({ name_id: 'n2', page: 1, page_size: 50 })
   })

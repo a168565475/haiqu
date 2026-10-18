@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ElDialog from '@/components/common/AppWindowDialog.vue'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Delete, Edit, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -558,24 +559,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="production-page system-settings-theme" data-testid="production-data-page">
+  <section class="production-page system-settings-theme erp-glass-list" data-testid="production-data-page">
     <div v-if="!canViewPage" class="state-page">
       <h1>无生产资料权限</h1>
       <p>当前账号无法查看生产维护，请联系管理员分配相应权限。</p>
     </div>
 
     <template v-else>
-      <header class="page-heading">
+      <section v-glass-spotlight class="erp-list-filter">
+      <header class="page-heading erp-list-heading">
         <div>
           <h1>生产维护</h1>
         </div>
-        <div class="page-heading__actions">
-          <el-button :icon="Refresh" @click="reloadAll">刷新</el-button>
-          <el-button v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增{{ selectedCategory.title }}</el-button>
+        <div v-if="!hasSelectedCategory" class="page-heading__actions">
+          <el-button class="erp-button-motion" :icon="Refresh" @click="reloadAll">刷新</el-button>
+          <el-button class="erp-button-motion" v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增{{ selectedCategory.title }}</el-button>
         </div>
       </header>
 
-      <div class="metric-grid">
+      <div class="metric-grid erp-list-tabs">
         <button
           v-for="item in maintenanceGroups"
           :key="item.key"
@@ -588,24 +590,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div class="content-layout">
-        <aside class="category-panel">
-          <h2>{{ selectedGroup.label }}</h2>
-          <button
-            v-for="item in visibleCategories"
-            :key="item.key"
-            type="button"
-            :class="{ active: selectedKey === item.key }"
-            @click="selectCategory(item.key)"
-          >
-            <span>{{ item.label }}</span>
-            <em>{{ summary.category_counts[item.countKey] || 0 }}</em>
-          </button>
-          <p v-if="visibleCategories.length === 0" class="category-panel__empty">设置项待导入</p>
-        </aside>
-
-        <main v-if="hasSelectedCategory" class="data-card">
-          <div class="filter-row">
+          <div v-if="hasSelectedCategory" class="filter-row erp-list-filters">
             <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索当前资料" @keyup.enter="runSearch" />
             <el-select v-model="statusFilter" clearable placeholder="全部状态">
               <el-option label="启用" value="ACTIVE" />
@@ -630,17 +615,38 @@ onBeforeUnmount(() => {
               <el-option label="已有图片" value="true" />
               <el-option label="暂无图片" value="false" />
             </el-select>
-            <el-button type="primary" @click="runSearch">查询</el-button>
-            <el-button @click="resetFilters">重置</el-button>
+            <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="runSearch">应用筛选</el-button></div>
           </div>
 
+      </section>
+      <div class="content-layout">
+        <aside class="category-panel erp-list-filter erp-list-catalog-nav">
+          <h2>{{ selectedGroup.label }}</h2>
+          <button
+            v-for="item in visibleCategories"
+            :key="item.key"
+            type="button"
+            :class="{ active: selectedKey === item.key }"
+            @click="selectCategory(item.key)"
+          >
+            <span>{{ item.label }}</span>
+            <em>{{ summary.category_counts[item.countKey] || 0 }}</em>
+          </button>
+          <p v-if="visibleCategories.length === 0" class="category-panel__empty">设置项待导入</p>
+        </aside>
+
+        <main v-if="hasSelectedCategory" class="data-card erp-list-data">
           <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon class="load-error" />
 
-          <div class="table-heading">
+          <div class="table-heading erp-list-toolbar">
+        <div class="page-heading__actions">
+          <el-button class="erp-button-motion" :icon="Refresh" @click="reloadAll">刷新</el-button>
+          <el-button class="erp-button-motion" v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增{{ selectedCategory.title }}</el-button>
+        </div>
             <div><h2>{{ selectedCategory.label }}</h2><span>共 {{ total }} 条</span></div>
           </div>
 
-          <el-table v-loading="loading" :data="records" height="100%" row-key="id" class="production-table">
+          <div class="erp-list-table-frame"><el-table v-loading="loading" :data="records" height="100%" row-key="id" class="production-table">
             <template v-if="selectedKey === 'category'">
               <el-table-column prop="item_type_label" label="品号类型" width="130" />
               <el-table-column prop="category_name" label="品号类别" min-width="220" />
@@ -737,7 +743,7 @@ onBeforeUnmount(() => {
 
             <el-table-column label="状态" width="90">
               <template #default="scope">
-                <el-tag class="settings-tag" :type="scope.row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">
+                <el-tag class="settings-tag erp-list-tag" :class="scope.row.status === 'ACTIVE' ? 'erp-list-tag--success' : 'erp-list-tag--neutral'" :type="scope.row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">
                   {{ scope.row.status === 'ACTIVE' ? '启用' : '停用' }}
                 </el-tag>
               </template>
@@ -752,10 +758,9 @@ onBeforeUnmount(() => {
               </template>
             </el-table-column>
             <template #empty><el-empty description="暂无生产资料" /></template>
-          </el-table>
+          </el-table></div>
 
-          <el-pagination
-            v-if="total > pageSize"
+          <footer v-if="total > pageSize" class="erp-list-footer"><el-pagination
             v-model:current-page="page"
             v-model:page-size="pageSize"
             :total="total"
@@ -763,9 +768,9 @@ onBeforeUnmount(() => {
             layout="total, sizes, prev, pager, next"
             @current-change="loadRecords"
             @size-change="page = 1; loadRecords()"
-          />
+          /></footer>
         </main>
-        <main v-else class="data-card pending-card">
+        <main v-else class="data-card pending-card erp-list-data">
           <el-empty :description="selectedGroup.pendingText">
             <p>请提供对应维护表格及字段规则后再导入，当前未创建虚构数据。</p>
           </el-empty>
@@ -940,76 +945,42 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.production-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
-.page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
-.page-heading h1 { margin: 5px 0 0; font-size: 26px; line-height: 36px; }
-.page-heading p { margin: 5px 0 0; color: #7a7f87; font-size: 14px; }
-.page-heading__actions { display: flex; gap: 10px; padding-top: 28px; }
-.breadcrumb { display: flex; gap: 8px; color: #8a8f98; font-size: 13px; }
-.breadcrumb a { color: #4e5969; text-decoration: none; }
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-.metric-card { display: flex; align-items: center; justify-content: space-between; min-height: 84px; padding: 18px 20px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; color: #5f6672; text-align: left; cursor: pointer; }
-.metric-card span { color: #111827; font-size: 17px; font-weight: 600; }
-.metric-card small { color: #8a8f98; font-size: 13px; }
-.metric-card.active { border-color: #1f2937; box-shadow: 0 0 0 1px #1f2937; }
-.metric-card.active small { color: #4e5969; }
-.content-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; }
-.category-panel, .data-card { border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
-.category-panel { min-height: 0; padding: 14px 10px; overflow-y: auto; }
-.category-panel h2 { margin: 2px 12px 10px; color: #8a8f98; font-size: 13px; font-weight: 500; }
-.category-panel button { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 11px 12px; border: 0; border-radius: 8px; background: transparent; color: #4e5969; font-size: 14px; cursor: pointer; }
-.category-panel button.active { background: #171719; color: #fff; font-weight: 600; }
-.category-panel em { min-width: 26px; padding: 2px 7px; border-radius: 999px; background: #eef0f3; color: #6b7280; font-size: 12px; font-style: normal; text-align: center; }
-.category-panel button.active em { background: #3a3a3d; color: #fff; }
-.category-panel__empty { margin: 8px 12px; color: #9ca3af; font-size: 13px; line-height: 1.6; }
-.data-card { display: flex; min-width: 0; min-height: 0; flex-direction: column; padding: 18px 20px 16px; overflow: hidden; }
-.pending-card { display: grid; min-height: 420px; place-items: center; }
-.pending-card p { margin: 0; color: #8a8f98; font-size: 13px; }
-.filter-row { display: flex; flex-wrap: wrap; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid #edf0f3; }
-.filter-row :deep(.el-input) { width: min(320px, 100%); }
-.filter-row :deep(.el-select) { width: 160px; }
-.load-error { margin-top: 14px; }
-.table-heading { display: flex; align-items: center; justify-content: space-between; padding: 18px 0 12px; }
-.table-heading > div { display: flex; align-items: baseline; gap: 8px; }
-.table-heading h2 { margin: 0; font-size: 17px; }
-.table-heading span { color: #8a8f98; font-size: 13px; }
-.production-table { flex: 1; min-height: 0; width: 100%; }
-.production-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
-.color-thumb { width: 52px; height: 42px; border: 1px solid #e5e7eb; border-radius: 5px; cursor: zoom-in; }
-.empty-image { color: #a3a8b0; font-size: 12px; }
-.mapping-missing { color: #b45309; }
-.el-pagination { flex: none; justify-content: flex-end; margin-top: 16px; }
-.state-page { display: grid; min-height: 420px; place-content: center; text-align: center; }
+.page-heading__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.metric-grid { margin-bottom: 10px; }
+.metric-card small { margin-left: 8px; }
+.content-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+.category-panel { min-height: 0; overflow-y: auto; }
+.category-panel h2 { margin: 2px 12px 10px; color: var(--erp-color-text-secondary); font-size: 13px; font-weight: 500; }
+.category-panel button { display: flex; width: 100%; align-items: center; justify-content: space-between; font-size: 13px; }
+.category-panel em { font-size: 12px; font-style: normal; }
+.category-panel__empty { margin: 8px 12px; color: var(--erp-color-text-secondary); font-size: 13px; line-height: 1.6; }
+.pending-card { justify-content: center; }
+.pending-card p { margin: 0; color: var(--erp-color-text-secondary); font-size: 13px; }
+.filter-row > :deep(.el-input) { width: min(320px, 100%); }
+.filter-row > :deep(.el-select) { width: 160px; }
+.load-error { margin-bottom: 10px; }
+.table-heading > div:last-child { display: flex; align-items: baseline; gap: 8px; margin-left: auto; }
+.table-heading h2 { margin: 0; font-size: 14px; }
+.table-heading span { color: var(--erp-color-text-secondary); font-size: 13px; }
+.color-thumb { width: 52px; height: 42px; border: 1px solid var(--erp-color-border); border-radius: 5px; cursor: zoom-in; }
+.empty-image { color: var(--erp-color-text-secondary); font-size: 12px; }
+.mapping-missing { color: var(--erp-color-warning); }
+.state-page { flex: 1; min-height: 0; display: grid; place-content: center; text-align: center; }
 .state-page h1 { margin: 0 0 8px; }
-.state-page p { color: #7a7f87; }
+.state-page p { color: var(--erp-color-text-secondary); }
 .production-form :deep(.el-select), .production-form :deep(.el-input-number) { width: 100%; }
-.mapping-hint { display: block; margin-top: 6px; color: #8a8f98; line-height: 1.5; }
+.mapping-hint { display: block; margin-top: 6px; color: var(--erp-color-text-muted); line-height: 1.5; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .form-grid--footer { align-items: start; }
 .image-editor { display: flex; width: 100%; gap: 16px; align-items: flex-start; }
-.image-preview, .image-placeholder { width: 180px; height: 125px; flex: none; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc; }
-.image-placeholder { display: grid; place-items: center; color: #9ca3af; }
+.image-preview, .image-placeholder { width: 180px; height: 125px; flex: none; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-subtle); }
+.image-placeholder { display: grid; place-items: center; color: var(--erp-color-text-muted); }
 .image-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.image-actions small { width: 100%; color: #8a8f98; line-height: 1.5; }
-.file-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; cursor: pointer; }
+.image-actions small { width: 100%; color: var(--erp-color-text-muted); line-height: 1.5; }
+.file-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--erp-button-secondary-border); border-radius: 4px; background: var(--erp-button-secondary-background); cursor: pointer; }
 .file-button input { display: none; }
-.dialog-hint { margin: 2px 0 0; color: #9ca3af; font-size: 12px; }
-@media (max-width: 900px) {
-  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .content-layout { grid-template-columns: 1fr; }
-  .category-panel { display: flex; gap: 8px; overflow-x: auto; }
-  .category-panel h2 { display: none; }
-  .category-panel button { width: auto; min-width: 130px; }
-}
-@media (max-width: 640px) {
-  .page-heading { flex-direction: column; }
-  .page-heading__actions { width: 100%; padding-top: 0; }
-  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric-card { min-height: 74px; padding: 14px; }
-  .metric-card { align-items: flex-start; flex-direction: column; gap: 6px; }
-  .filter-row :deep(.el-input), .filter-row :deep(.el-select), .filter-row :deep(.el-button) { width: 100%; }
-  .form-grid { grid-template-columns: 1fr; gap: 0; }
-  .image-editor { flex-direction: column; }
-  .image-preview, .image-placeholder { width: 100%; }
-}
+.dialog-hint { margin: 2px 0 0; color: var(--erp-color-text-muted); font-size: 12px; }
+
+@media (max-width: 900px) { .content-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .category-panel { flex-direction: row; overflow-x: auto; } .category-panel h2 { display: none; } .category-panel button { flex: none; width: auto; min-width: 130px; } }
+@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; gap: 0; } .image-editor { flex-direction: column; } .image-preview, .image-placeholder { width: 100%; } }
 </style>

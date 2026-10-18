@@ -50,8 +50,10 @@ describe('工价方案列表原型列结构', () => {
     expect(source).not.toContain('wr-two-line')
     expect(source).not.toContain('label="版本"')
     expect(source).toContain('class="wr-status-tag"')
-    const styles = readFileSync(resolve(process.cwd(), 'src/styles/workshopReporting.scss'), 'utf8')
-    expect(styles).toMatch(/\.wr-list-card \.el-button\.is-link \{ color: #1685ed; \}/)
+    expect(source).toContain("'erp-list-tag'")
+    expect(source).toContain('wr-list-card erp-list-data')
+    const styles = readFileSync(resolve(process.cwd(), 'src/styles/theme/_list.scss'), 'utf8')
+    expect(styles).toContain('var(--erp-tag-info-background)')
   })
 
   it('包含原型中的完整筛选区和列表工具栏', () => {

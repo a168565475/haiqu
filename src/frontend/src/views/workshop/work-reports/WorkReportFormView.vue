@@ -168,7 +168,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section v-loading="loading" class="wr-page wr-form-page wr-report-form-page" data-testid="work-report-form">
+  <section v-loading="loading" class="wr-page wr-form-page wr-report-form-page erp-glass-form" data-testid="work-report-form">
     <header class="wr-heading wr-form-heading"><h1>{{ isEdit ? '编辑报工' : '新增报工' }}</h1></header>
 
     <section class="wr-card wr-report-basic-card">
@@ -223,7 +223,7 @@ onMounted(load)
 .wr-report-basic-card { padding: 16px 20px 10px; }
 .wr-report-basic-card > h2 { margin: 0 0 14px; }
 .wr-report-basic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.wr-report-basic-grid > div { min-width: 0; padding: 0 20px; border-right: 1px solid #ddd6c9; }
+.wr-report-basic-grid > div { min-width: 0; padding: 0 20px; border-right: 1px solid var(--erp-color-border); }
 .wr-report-basic-grid > div:first-child { padding-left: 0; }
 .wr-report-basic-grid > div:last-child { padding-right: 0; border-right: 0; }
 .wr-report-basic-grid .el-form-item { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; margin-bottom: 12px; }
@@ -237,8 +237,8 @@ onMounted(load)
 .wr-quantity-field { padding: 4px 0; }
 .wr-quantity-field.is-error .el-input__wrapper { box-shadow: 0 0 0 1px var(--el-color-danger) inset !important; }
 .wr-quantity-error { margin: 2px 0 0; color: var(--el-color-danger); font-size: 12px; line-height: 16px; text-align: left; }
-.wr-report-actions { min-height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid #ddd6c9; }
-.wr-report-actions p { margin: 0; color: #6f6a61; font-size: 13px; }
+.wr-report-actions { min-height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 1px solid var(--erp-color-border-subtle); }
+.wr-report-actions p { margin: 0; color: var(--erp-color-text-secondary); font-size: 13px; }
 .wr-report-actions > div { display: flex; gap: 20px; }
 .wr-report-actions .el-button { min-width: 110px; height: 32px; margin: 0; }
 .wr-report-actions .el-button--primary { min-width: 140px; }

@@ -13,7 +13,8 @@ const props = withDefaults(defineProps<{
   canDelete?: boolean
   compact?: boolean
   v2?: boolean
-}>(), { canChange: false, canLeave: false, canDelete: false, compact: true, v2: false })
+  glass?: boolean
+}>(), { canChange: false, canLeave: false, canDelete: false, compact: true, v2: false, glass: false })
 
 const emit = defineEmits<{
   selectionChange: [rows: ContactListItem[]]
@@ -92,10 +93,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateViewport))
     v-loading="loading"
     :data="rows"
     row-key="id"
-    stripe
+    :stripe="!props.glass"
     :border="props.v2"
     class="contact-table"
-    :class="{ 'is-compact': compact, 'contact-table--v2': props.v2 }"
+    :class="{ 'is-compact': compact, 'contact-table--v2': props.v2, 'is-glass': props.glass }"
     empty-text="暂无联系人"
     @selection-change="emit('selectionChange', $event)"
   >
@@ -124,7 +125,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateViewport))
     <ElTableColumn v-if="visibleColumns.includes('roles')" label="决策角色" :width="props.v2 ? 130 : 150">
       <template #default="{ row }">
         <ElTooltip v-if="row.active_roles.length" :content="roleLabels(row)" placement="top">
-          <ElTag effect="plain" class="role-tag" :class="{ 'is-decision-maker': row.active_roles[0].role_type === 'DECISION_MAKER' }">{{ row.active_roles[0].role_type_display }}</ElTag>
+          <ElTag :effect="props.glass ? 'dark' : 'plain'" :type="props.glass && row.active_roles[0].role_type === 'DECISION_MAKER' ? 'warning' : 'primary'" class="role-tag" :class="{ 'is-decision-maker': row.active_roles[0].role_type === 'DECISION_MAKER' }">{{ row.active_roles[0].role_type_display }}</ElTag>
         </ElTooltip>
         <span v-else>—</span>
       </template>
@@ -142,7 +143,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateViewport))
     </ElTableColumn>
     <ElTableColumn v-if="visibleColumns.includes('status')" label="任职状态" :width="props.v2 ? 100 : 110">
       <template #default="{ row }">
-        <ElTag :type="row.status === 'ACTIVE' ? 'success' : row.status === 'LEFT' ? 'info' : 'warning'" class="status-tag">{{ row.status_display }}</ElTag>
+        <ElTag :type="row.status === 'ACTIVE' ? 'success' : row.status === 'LEFT' ? 'info' : 'warning'" class="status-tag" :effect="props.glass ? 'dark' : 'light'">{{ row.status_display }}</ElTag>
       </template>
     </ElTableColumn>
     <ElTableColumn v-if="props.v2 && visibleColumns.includes('relationship')" label="关系与偏好" width="180">
@@ -166,7 +167,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateViewport))
         </div>
         <div v-else class="row-actions">
           <ElDropdown :persistent="false" trigger="click" @command="handleMore($event, row)">
-            <ElButton>更多</ElButton>
+            <ElButton :class="{ 'erp-button-motion': props.glass }">更多</ElButton>
             <template #dropdown>
               <ElDropdownMenu>
                 <ElDropdownItem command="view">查看</ElDropdownItem>
@@ -185,32 +186,32 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateViewport))
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-
-.contact-table { width: 100%; --el-table-header-bg-color: #f7f8fa; --el-table-row-hover-bg-color: #f4f4f5; --el-table-border-color: #edf0f4; }
-.contact-table :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; padding: 0; color: #18181b; font-size: 12px; font-weight: 600; }
-.contact-table :deep(.el-table__body-wrapper td.el-table__cell) { height: 48px; padding: 0; color: #30343b; font-size: 12px; }
-.contact-table:not(.is-compact) :deep(.el-table__body-wrapper td.el-table__cell) { height: 56px; }
-.contact-table :deep(.cell) { padding: 0 12px; line-height: 1.25; }
-.contact-table :deep(.el-table-column--selection .cell) { padding: 0 14px; }
+.contact-table:not(.is-glass) {
+& { width: 100%; --el-table-header-bg-color: var(--erp-table-background); --el-table-row-hover-bg-color: var(--erp-table-background); --el-table-border-color: var(--erp-table-border); }
+& :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; padding: 0; color: var(--erp-table-text); font-size: 12px; font-weight: 600; }
+& :deep(.el-table__body-wrapper td.el-table__cell) { height: 48px; padding: 0; color: var(--erp-table-text); font-size: 12px; }
+&:not(.is-compact) :deep(.el-table__body-wrapper td.el-table__cell) { height: 56px; }
+& :deep(.cell) { padding: 0 12px; line-height: 1.25; }
+& :deep(.el-table-column--selection .cell) { padding: 0 14px; }
 .contact-name { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .contact-name strong, .customer-cell, .single-line, .interaction-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.contact-name strong { color: #18181b; font-size: 12px; font-weight: 500; }
-.contact-name i { flex: none; width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 5px; color: #18181b; background: #f4f4f5; font-size: 10px; font-style: normal; }
-.contact-avatar { flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; border-radius: 50%; color: #5f6673; background: #f1f3f6; font-size: 10px; font-weight: 500; }
-.customer-cell { color: #18181b; }
-small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
+.contact-name strong { color: var(--erp-table-text); font-size: 12px; font-weight: 500; }
+.contact-name i { flex: none; width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 5px; color: var(--erp-table-text); background: var(--erp-table-background); font-size: 10px; font-style: normal; }
+.contact-avatar { flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; border-radius: 50%; color: var(--erp-table-text); background: var(--erp-table-background); font-size: 10px; font-weight: 500; }
+.customer-cell { color: var(--erp-table-text); }
+small { display: block; margin-top: 2px; color: var(--erp-table-text); font-size: 10px; }
 .role-tag, .status-tag { min-width: 64px; height: 24px; justify-content: center; border: 0; border-radius: 6px; font-size: 11px; }
-.role-tag { color: #18181b; background: #f4f4f5; }
+.role-tag { color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); }
 .method-lines { display: flex; flex-direction: column; gap: 2px; }
 .method-lines span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.method-lines span:first-child { color: #30343b; font-size: 11px; }
-.method-lines span:last-child { color: #8b929e; font-size: 10px; }
-.interaction-line { display: block; color: #5f6673; font-size: 11px; }
+.method-lines span:first-child { color: var(--erp-table-text); font-size: 11px; }
+.method-lines span:last-child { color: var(--erp-table-text); font-size: 10px; }
+.interaction-line { display: block; color: var(--erp-table-text); font-size: 11px; }
 .row-actions { display: flex; align-items: center; }
-.row-actions :deep(.el-button) { width: 64px; height: 28px; margin: 0; padding: 0; border-color: #d4d4d8; border-radius: 8px; color: #3f3f46; background: #fff; font-size: 12px; }
-.row-actions :deep(.el-button:hover) { border-color: #a1a1aa; color: #18181b; background: #f4f4f5; }
+.row-actions :deep(.el-button) { width: 64px; height: 28px; margin: 0; padding: 0; border-color: var(--erp-table-border); border-radius: 8px; color: var(--erp-table-text); background: var(--erp-table-background); font-size: 12px; }
+.row-actions :deep(.el-button:hover) { border-color: var(--erp-table-border); color: var(--erp-table-text); background: var(--erp-table-background); }
 
-.contact-table--v2 {
+&.contact-table--v2 {
   min-width: 1634px;
   font-family: token.$crm-font-body;
   --el-table-header-bg-color: #{token.$crm-color-subtle};
@@ -218,7 +219,7 @@ small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
   --el-table-border-color: #{token.$crm-border-subtle};
 }
 
-.contact-table--v2 :deep(.el-table__header-wrapper th.el-table__cell) {
+&.contact-table--v2 :deep(.el-table__header-wrapper th.el-table__cell) {
   height: 44px;
   color: token.$crm-text-primary;
   background: token.$crm-color-subtle;
@@ -226,23 +227,23 @@ small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
   font-weight: 600;
 }
 
-.contact-table--v2 :deep(.el-table__body-wrapper td.el-table__cell),
-.contact-table--v2:not(.is-compact) :deep(.el-table__body-wrapper td.el-table__cell) {
+&.contact-table--v2 :deep(.el-table__body-wrapper td.el-table__cell),
+&.contact-table--v2:not(.is-compact) :deep(.el-table__body-wrapper td.el-table__cell) {
   height: 62px;
   color: token.$crm-text-regular;
   background: token.$crm-color-surface;
   font-size: 12px;
 }
 
-.contact-table--v2 :deep(.el-table__row--striped td.el-table__cell) {
-  background: #faf7f0;
+&.contact-table--v2 :deep(.el-table__row--striped td.el-table__cell) {
+  background: var(--erp-table-background);
 }
 
-.contact-table--v2 :deep(.cell) {
+&.contact-table--v2 :deep(.cell) {
   padding: 0 14px;
 }
 
-.contact-table--v2 .contact-avatar {
+&.contact-table--v2 .contact-avatar {
   width: 32px;
   height: 32px;
   color: token.$crm-warning;
@@ -250,18 +251,18 @@ small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
   font-size: 11px;
 }
 
-.contact-table--v2 .contact-name {
+&.contact-table--v2 .contact-name {
   gap: 12px;
 }
 
-.contact-table--v2 .contact-name strong {
+&.contact-table--v2 .contact-name strong {
   min-width: 0;
   color: token.$crm-text-primary;
   font-size: 13px;
   font-weight: 600;
 }
 
-.contact-table--v2 .contact-name i {
+&.contact-table--v2 .contact-name i {
   width: auto;
   height: 24px;
   padding: 0 9px;
@@ -272,45 +273,45 @@ small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
   font-weight: 500;
 }
 
-.contact-table--v2 .role-tag,
-.contact-table--v2 .status-tag {
+&.contact-table--v2 .role-tag,
+&.contact-table--v2 .status-tag {
   min-width: 64px;
   height: 24px;
   border-radius: token.$crm-radius-2;
 }
 
-.contact-table--v2 .role-tag {
+&.contact-table--v2 .role-tag {
   color: token.$crm-text-secondary;
   background: token.$crm-color-subtle;
 }
 
-.contact-table--v2 .role-tag.is-decision-maker {
+&.contact-table--v2 .role-tag.is-decision-maker {
   color: token.$crm-warning;
   background: token.$crm-warning-soft;
 }
 
-.contact-table--v2 .status-tag.el-tag--success {
+&.contact-table--v2 .status-tag.el-tag--success {
   color: token.$crm-success;
   background: token.$crm-success-soft;
 }
 
-.contact-table--v2 .status-tag.el-tag--info {
+&.contact-table--v2 .status-tag.el-tag--info {
   color: token.$crm-text-secondary;
   background: token.$crm-color-subtle;
 }
 
-.contact-table--v2 .method-lines {
+&.contact-table--v2 .method-lines {
   gap: 4px;
 }
 
-.contact-table--v2 .method-lines span:first-child {
+&.contact-table--v2 .method-lines span:first-child {
   color: token.$crm-text-regular;
   font-size: 12px;
 }
 
-.contact-table--v2 .method-lines span:last-child,
-.contact-table--v2 .interaction-line,
-.contact-table--v2 .relationship-line {
+&.contact-table--v2 .method-lines span:last-child,
+&.contact-table--v2 .interaction-line,
+&.contact-table--v2 .relationship-line {
   color: token.$crm-text-secondary;
   font-size: 11px;
 }
@@ -343,5 +344,18 @@ small { display: block; margin-top: 2px; color: #8b929e; font-size: 10px; }
 .row-actions--v2 > button:hover,
 .row-actions--v2 .more-trigger:hover {
   color: token.$crm-primary-hover;
+}
+}
+.contact-table.is-glass {
+  .contact-name { min-width: 0; display: flex; align-items: center; gap: 8px; }
+  .contact-name strong, .customer-cell, .single-line, .interaction-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .contact-name strong { font-weight: 500; }
+  .contact-name i { flex: none; width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: var(--erp-radius-control); color: var(--erp-tag-brand-text); background: var(--erp-tag-brand-background); font-size: 10px; font-style: normal; }
+  .contact-avatar { flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; border-radius: 50%; color: var(--erp-tag-info-text); background: var(--erp-tag-info-background); font-size: 10px; font-weight: 500; }
+  small { display: block; margin-top: 2px; color: var(--erp-table-text); font-size: 10px; }
+  .method-lines { display: flex; flex-direction: column; gap: 2px; }
+  .method-lines span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .interaction-line { display: block; }
+  .row-actions { display: flex; align-items: center; }
 }
 </style>

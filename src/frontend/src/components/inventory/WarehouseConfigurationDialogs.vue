@@ -58,18 +58,18 @@ const visibleLocations = computed(() => scopedLocations.value.filter((item) => !
   || `${item.warehouse_number}${item.warehouse_name}${item.zone_name}${item.location_number}${item.unique_key}`.toLowerCase().includes(keyword.value.toLowerCase())))
 
 const warehouseTypeColors: Record<WarehouseType, string> = {
-  MATERIAL: 'rgb(240, 168, 0)',
-  SEMI_FINISHED: 'rgb(162, 194, 4)',
-  DEFECTIVE: 'rgb(0, 174, 209)',
-  FINISHED: 'rgb(235, 80, 80)',
+  MATERIAL: 'var(--erp-tag-warning-background)',
+  SEMI_FINISHED: 'var(--erp-tag-success-background)',
+  DEFECTIVE: 'var(--erp-tag-info-background)',
+  FINISHED: 'var(--erp-tag-brand-background)',
 }
 function warehouseTypeTagStyle(type: WarehouseType) {
   const color = warehouseTypeColors[type]
-  return { backgroundColor: color, borderColor: color, color: '#fff' }
+  return { backgroundColor: color, borderColor: color, color: 'var(--erp-color-text-inverse)' }
 }
 function statusTagStyle(status: RecordStatus) {
-  const color = status === 'ACTIVE' ? 'rgb(70, 194, 111)' : 'rgb(144, 147, 153)'
-  return { backgroundColor: color, borderColor: color, color: '#fff' }
+  const color = status === 'ACTIVE' ? 'var(--erp-tag-success-background)' : 'var(--erp-tag-neutral-background)'
+  return { backgroundColor: color, borderColor: color, color: 'var(--erp-color-text-inverse)' }
 }
 function apiMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
@@ -273,5 +273,5 @@ defineExpose({ open })
 </template>
 
 <style lang="scss" scoped>
-.config-body{height:100%;padding:18px 24px;box-sizing:border-box}.config-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.config-toolbar>.el-input{width:420px}.warehouse-owner{color:#2b73f0;font-weight:600}:global(.warehouse-config-fullscreen .el-dialog__body){height:auto;flex:1 1 auto;min-height:0;padding:0}
+.config-body{height:100%;padding:18px 24px;box-sizing:border-box}.config-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.config-toolbar>.el-input{width:420px}.warehouse-owner{color:var(--erp-color-info);font-weight:600}:global(.warehouse-config-fullscreen .el-dialog__body){height:auto;flex:1 1 auto;min-height:0;padding:0}
 </style>

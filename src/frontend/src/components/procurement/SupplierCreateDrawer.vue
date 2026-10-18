@@ -4,6 +4,7 @@ import { Close } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { createSupplier, fetchSupplier, fetchSupplierOptions, updateSupplier } from '@/api/suppliers'
 import { useAuthStore } from '@/stores/auth'
 import type { Supplier, SupplierInput, SupplierOptions } from '@/types/supplier'
@@ -182,8 +183,8 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
 </script>
 
 <template>
-  <ElDrawer :model-value="visible" class="supplier-create-drawer" :class="{ 'supplier-edit-drawer': isEditing }" modal-class="supplier-create-overlay" :title="title"
-    size="784px" direction="rtl" append-to-body :show-close="false" :close-on-click-modal="false" :close-on-press-escape="!saving"
+  <AppWindowDialog :model-value="visible" class="supplier-create-drawer" :class="{ 'supplier-edit-drawer': isEditing }" modal-class="supplier-create-overlay" :title="title"
+    :width="784" :show-close="false" :close-on-click-modal="false" :close-on-press-escape="!saving"
     :before-close="beforeClose" @update:model-value="emit('update:visible', $event)">
     <template #header>
       <div class="supplier-drawer-heading"><h2>{{ title }}</h2><p>带 <span>*</span> 的字段为必填项</p></div>
@@ -221,31 +222,31 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
       <ElButton v-for="item in supplier.duplicate_suppliers" :key="item.id" link :disabled="saving || loading" @click="openDuplicate(item.id)">{{ item.supplier_number }} · {{ item.status_display }}</ElButton>
     </aside>
     <template #footer><ElButton :disabled="saving" @click="close">取消</ElButton><ElButton type="primary" :loading="saving" :disabled="closing || loading || !!loadError || versionConflict || (isEditing && !etag) || !canCreate" @click="save">{{ isEditing ? '保存修改' : '创建供应商' }}</ElButton></template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
-.supplier-create-overlay { background: rgb(0 0 0 / 32%); }
+.supplier-create-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 32%, transparent); }
 .supplier-create-drawer {
   top: 0 !important; height: 100% !important; max-width: 100vw; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary}; --el-text-color-placeholder: #{token.$crm-text-muted};
-  .el-drawer__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
+  .app-window-dialog__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
   .supplier-drawer-heading { display: flex; min-width: 0; align-items: baseline; gap: 16px; }
   .supplier-drawer-heading h2 { margin: 0; font: 600 22px/28px token.$crm-font-display; }
   .supplier-drawer-heading p { margin: 0; color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; white-space: nowrap; }
   .supplier-drawer-heading p span { color: token.$crm-primary; }
   .supplier-drawer-close.el-button { width: 32px; height: 32px; padding: 0; font-size: 18px; color: token.$crm-text-secondary; }
-  .el-drawer__body { padding: 16px 24px 20px; overflow-y: auto; }
+  .app-window-dialog__body { padding: 16px 24px 20px; overflow-y: auto; }
   .supplier-drawer-form { margin-top: 0; }
   .supplier-drawer-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
   .el-form-item { margin: 0; }
   .el-form-item__label { height: 20px; margin-bottom: 4px; padding: 0; color: token.$crm-text-primary; font-size: 13px; line-height: 20px; }
   .el-form-item.is-required > .el-form-item__label::before { color: token.$crm-primary !important; }
   .el-input, .el-select { width: 100%; }
-  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px; padding: 0 12px; border-radius: 5px; box-shadow: 0 0 0 1px token.$crm-border-default inset; background: token.$crm-color-surface; font-size: 13px; }
+  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px; padding: 0 12px; border-radius: var(--erp-radius-control); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; background: var(--erp-input-surface); font-size: 13px; }
   .el-input__inner { height: 30px; font: 13px token.$crm-font-body; }
-  .supplier-number-preview .el-input__wrapper { background: token.$crm-color-subtle; }
+  .supplier-number-preview .el-input__wrapper { background: var(--erp-input-surface); }
   .supplier-number-preview .el-input__inner { color: token.$crm-text-muted; }
   .name-category-row, .payment-phone-row, .supplier-disabled-field, .supplier-remark-field { margin-top: 12px; }
   .supplier-category-help { margin-left: 12px; color: token.$crm-text-secondary; font-weight: 400; }
@@ -254,16 +255,17 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
   .supplier-disabled-field .el-switch { width: 52px; height: 32px; --el-switch-on-color: #{token.$crm-primary}; --el-switch-off-color: #{token.$crm-neutral}; }
   .supplier-disabled-field .el-switch__core { min-width: 52px; border-color: transparent; }
   .supplier-disabled-field .el-switch__inner { font-size: 12px; }
-  .el-textarea__inner { height: 84px; padding: 8px 12px 22px; font: 13px/20px token.$crm-font-body; box-shadow: 0 0 0 1px token.$crm-border-default inset; border-radius: 5px; background: token.$crm-color-surface; }
-  .el-input__count { bottom: 4px; right: 12px; font-size: 11px; background: token.$crm-color-surface; color: token.$crm-text-muted; }
-  .el-drawer__footer { flex: 0 0 64px; box-sizing: border-box; padding: 0 24px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid token.$crm-border-default; }
-  .el-drawer__footer .el-button { margin: 0; width: 110px; height: 32px; border-radius: 5px; font: 500 13px token.$crm-font-body; }
-  .el-drawer__footer .el-button--primary { width: 140px; }
+  .el-textarea__inner { height: 84px; padding: 8px 12px 22px; font: 13px/20px token.$crm-font-body; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); }
+  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  .el-input__count { bottom: 4px; right: 12px; font-size: 11px; background: var(--erp-input-surface); color: token.$crm-text-muted; }
+  .app-window-dialog__footer { flex: 0 0 64px; box-sizing: border-box; padding: 0 24px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid token.$crm-border-default; }
+  .app-window-dialog__footer .el-button { margin: 0; width: 110px; height: 32px; border-radius: 5px; font: 500 13px token.$crm-font-body; }
+  .app-window-dialog__footer .el-button--primary { width: 140px; }
   .supplier-drawer-error { color: token.$crm-danger; margin-top: 16px; overflow-wrap: anywhere; }
   .supplier-drawer-error .el-button { margin-left: 10px; color: token.$crm-primary; }
   &.supplier-edit-drawer {
-    .el-drawer__header { flex-basis: 52px; }
-    .el-drawer__body { padding-bottom: 20px; }
+    .app-window-dialog__header { flex-basis: 52px; }
+    .app-window-dialog__body { padding-bottom: 20px; }
     .supplier-drawer-form { margin-top: 12px; }
   }
   .supplier-edit-records { box-sizing: border-box; min-height: 48px; padding: 4px 12px; border-radius: 5px; background: token.$crm-color-subtle; color: token.$crm-text-secondary; }
@@ -275,3 +277,4 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
 }
 .supplier-create-select { --el-color-primary: #{token.$crm-primary}; --el-bg-color-overlay: #{token.$crm-color-surface}; font: 13px/20px token.$crm-font-body; }
 </style>
+

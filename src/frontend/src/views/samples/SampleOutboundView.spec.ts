@@ -187,7 +187,7 @@ describe('SampleOutboundView', () => {
     apiMocks.options.mockImplementationOnce(() => new Promise(resolve => { oldOptions = resolve }))
     const wrapper = await render(['samples.add_sampleinventoryoutbound'])
     expect(wrapper.findComponent({ name: 'SampleOutboundCreateDialog' }).exists()).toBe(false)
-    await wrapper.findAll('button').find(button => button.text() === '样品出库')!.trigger('click')
+    await wrapper.findAll('.heading-actions button').find(button => button.text() === '样品出库')!.trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'SampleOutboundCreateDialog' }).vm.$emit('created'); await flushPromises()
     oldList({ data: [], meta: { total: 0 } }); oldSummary({ outbound_today: 0 }); oldOptions({ outbound_methods: [], product_categories: [] })

@@ -28,6 +28,6 @@ const visibleFields = computed(() => (props.fields || []).filter(field => {
 <style scoped>
 .bom-attributes-anchor { display: inline-flex; min-width: 0; max-width: 100%; }
 .bom-attribute-line { display: flex; gap: 3px; line-height: 20px; white-space: nowrap; }
-.bom-attribute-line span { color: #756e63; }
-.bom-attribute-line b { color: #2e2a24; font-weight: 500; }
+.bom-attribute-line span { color: var(--erp-color-text-secondary); }
+.bom-attribute-line b { color: var(--erp-color-text-primary); font-weight: 500; }
 </style>

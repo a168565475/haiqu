@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -233,32 +234,29 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="sample-outbound-page" data-figma-node="812:8933" aria-labelledby="sample-outbound-title">
-    <header class="page-heading">
+  <section class="sample-outbound-page erp-glass-list" data-figma-node="812:8933" aria-labelledby="sample-outbound-title">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="page-heading erp-list-heading">
       <div class="title-line">
         <h1 id="sample-outbound-title">样品库</h1>
         <span>查看仓库出库单及样品明细</span>
       </div>
-      <div class="heading-actions">
-        <ElButton :disabled="!canViewInventory" @click="openInventoryList">样品入库</ElButton>
-        <ElButton type="primary" :disabled="!canCreateOutbound" @click="canCreateOutbound && (outboundDialogVisible = true)">样品出库</ElButton>
-        <ElButton :disabled="!canViewLoans" @click="openLoanList">样品借出</ElButton>
-      </div>
+
     </header>
 
-    <nav class="inventory-tabs" aria-label="样品库分类">
+    <nav class="inventory-tabs erp-list-tabs" aria-label="样品库分类">
       <button type="button" class="inventory-tab" :disabled="!canViewInventory" @click="openInventoryList">样品库存</button>
       <button type="button" class="inventory-tab is-active" aria-current="page">样品出库</button>
       <button type="button" class="inventory-tab" :disabled="!canViewLoans" @click="openLoanList">样品借出</button>
     </nav>
 
-    <div v-loading="summaryLoading" class="stats-grid">
-      <article v-for="card in statCards" :key="card.key" class="stat-card">
+    <div v-loading="summaryLoading" class="stats-grid erp-list-summary">
+      <article v-for="card in statCards" :key="card.key" class="stat-card erp-list-summary-item">
         <div class="stat-copy">
           <span>{{ card.label }}</span>
           <strong>{{ card.value ?? '—' }}</strong>
         </div>
-        <span class="stat-icon" :class="`is-${card.tone}`" aria-hidden="true">
+        <span class="stat-icon erp-list-tag" :class="`erp-list-tag--${({ green: 'success', orange: 'warning', blue: 'info', red: 'danger', purple: 'brand' } as Record<string, string>)[card.tone] || 'info'}`" aria-hidden="true">
           {{ card.icon }}
         </span>
       </article>
@@ -267,8 +265,8 @@ onMounted(() => {
     <div v-if="summaryError" class="load-error" role="alert">{{ summaryError }} <ElButton link @click="loadSummary">重试统计</ElButton></div>
     <div v-if="optionsError" class="load-error" role="alert">{{ optionsError }} <ElButton link @click="loadOptions">重试选项</ElButton></div>
 
-    <ElCard class="filter-card" shadow="never">
-      <ElForm class="filter-grid" label-position="top" @submit.prevent="searchOutbound">
+    <div class="filter-card">
+      <ElForm class="filter-grid erp-list-filters" label-position="top" @submit.prevent="searchOutbound">
         <ElFormItem label="关键词">
           <ElInput
             v-model="filters.keyword"
@@ -298,19 +296,26 @@ onMounted(() => {
             <ElOption v-for="item in timeOptions" :key="item.value" :label="item.label" :value="item.value" />
           </ElSelect>
         </ElFormItem>
-        <div class="filter-actions">
-          <ElButton type="primary" native-type="submit">查询</ElButton>
-          <ElButton @click="resetFilters">重置</ElButton>
+        <div class="filter-actions erp-list-filter-actions">
+          <ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton>
+          <ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton>
         </div>
       </ElForm>
-    </ElCard>
+    </div>
+    </section>
 
-    <div class="table-toolbar">
+    <section class="table-card erp-list-data">
+    <div class="table-toolbar erp-list-toolbar">
+      <div class="heading-actions">
+        <ElButton class="erp-button-motion" :disabled="!canViewInventory" @click="openInventoryList">样品入库</ElButton>
+        <ElButton class="erp-button-motion" type="primary" :disabled="!canCreateOutbound" @click="canCreateOutbound && (outboundDialogVisible = true)">样品出库</ElButton>
+        <ElButton class="erp-button-motion" :disabled="!canViewLoans" @click="openLoanList">样品借出</ElButton>
+      </div>
       <span>按明细行展示，单据编号可重复</span>
       <div class="toolbar-actions">
         <!-- TODO：接入有权限控制的完整出库导出接口后启用。 -->
-        <span title="出库记录导出接口尚未开放"><ElButton disabled>导出</ElButton></span>
-        <ElButton :loading="loading" @click="refreshPage">刷新</ElButton>
+        <span title="出库记录导出接口尚未开放"><ElButton class="erp-button-motion" disabled>导出</ElButton></span>
+        <ElButton class="erp-button-motion" :loading="loading" @click="refreshPage">刷新</ElButton>
       </div>
     </div>
 
@@ -325,7 +330,7 @@ onMounted(() => {
       <template #default><ElButton link type="primary" @click="refreshPage">重新加载</ElButton></template>
     </ElAlert>
 
-    <ElCard class="table-card" shadow="never">
+    <div class="erp-list-table-frame">
       <ElTable
         v-loading="loading"
         :data="rows"
@@ -372,7 +377,8 @@ onMounted(() => {
           </template>
         </ElTableColumn>
       </ElTable>
-      <footer class="table-footer">
+    </div>
+      <footer class="table-footer erp-list-footer">
         <span>共 {{ total }} 条</span>
         <ElPagination
           v-model:current-page="page"
@@ -385,7 +391,7 @@ onMounted(() => {
           @size-change="() => { page = 1; void loadRows() }"
         />
       </footer>
-    </ElCard>
+    </section>
   </section>
 
   <SampleOutboundCreateDialog

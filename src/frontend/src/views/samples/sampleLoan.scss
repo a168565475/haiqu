@@ -1,33 +1,14 @@
-@use '@/styles/crm/sample-library' as library;
-
-@include library.page('.sample-loan-page');
-
-.sample-loan-page {
-  display: flex;
-  height: calc(100dvh - 92px);
-  min-height: 0;
-  flex-direction: column;
-}
-
-.sample-loan-page .table-card {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.sample-loan-page .table-card :deep(.el-card__body) {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
-.sample-loan-page .table-card :deep(.el-table) {
-  min-height: 0;
-  flex: 1;
-}
-
-.sample-loan-page .table-footer {
-  flex: none;
-}
+.title-line, .heading-actions, .toolbar-actions, .stat-copy { display: flex; align-items: center; gap: 12px; }
+.title-line { gap: 20px; }.title-line span { color: var(--erp-color-text-secondary); font-size: 13px; }
+.inventory-tabs, .stats-grid { margin-bottom: 12px; }
+.stat-card { justify-content: space-between; }.stat-copy span { font-size: 12px; }.stat-icon { min-width: 28px; padding: 0 4px; }
+.filter-grid { align-items: flex-end; }
+.filter-grid :deep(.el-form-item) { width: 176px; min-width: 0; margin: 0; }
+.filter-grid :deep(.el-form-item:first-child) { width: 250px; }
+.filter-grid :deep(.el-form-item__label) { height: 22px; margin: 0; padding: 0 0 4px; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 18px; }
+.filter-grid :deep(.el-input), .filter-grid :deep(.el-select) { width: 100%; }
+.table-toolbar > span { margin-left: auto; color: var(--erp-color-text-secondary); font-size: 12px; }
+.load-error { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--erp-color-danger); font-size: 13px; }
+.list-error { margin-bottom: 10px; }
+.document-link, .receipt-link { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: var(--erp-table-text); background: transparent; font: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.document-link:hover, .receipt-link:hover { text-decoration: underline; }

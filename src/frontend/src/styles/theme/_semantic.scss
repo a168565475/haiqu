@@ -1,42 +1,26 @@
-@use './primitives' as primitive;
-
-@mixin emit-css-properties() {
-  --erp-color-page: var(--erp-primitive-color-page);
-  --erp-color-surface: var(--erp-primitive-color-surface);
-  --erp-color-subtle: var(--erp-primitive-color-subtle);
-  --erp-color-disabled: var(--erp-primitive-color-disabled);
-  --erp-color-hover: var(--erp-primitive-color-hover);
-  --erp-color-selected: var(--erp-primitive-color-selected);
-  --erp-color-text-primary: var(--erp-primitive-color-text-primary);
-  --erp-color-text-regular: var(--erp-primitive-color-text-regular);
-  --erp-color-text-secondary: var(--erp-primitive-color-text-secondary);
-  --erp-color-text-muted: var(--erp-primitive-color-text-muted);
-  --erp-color-text-inverse: var(--erp-primitive-color-text-inverse);
-  --erp-color-border: var(--erp-primitive-color-border);
-  --erp-color-border-strong: var(--erp-primitive-color-border-strong);
-  --erp-color-brand: var(--erp-primitive-color-brand);
-  --erp-color-brand-hover: var(--erp-primitive-color-brand-hover);
-  --erp-color-brand-pressed: var(--erp-primitive-color-brand-pressed);
-  --erp-color-brand-light-3: var(--erp-primitive-color-brand-light-3);
-  --erp-color-brand-light-5: var(--erp-primitive-color-brand-light-5);
-  --erp-color-brand-light-7: var(--erp-primitive-color-brand-light-7);
-  --erp-color-brand-light-8: var(--erp-primitive-color-brand-light-8);
-  --erp-color-brand-tag: var(--erp-primitive-color-brand-tag);
-  --erp-color-focus: var(--erp-primitive-color-focus);
-  --erp-color-success: var(--erp-primitive-color-success);
-  --erp-color-warning: var(--erp-primitive-color-warning);
-  --erp-color-danger: var(--erp-primitive-color-danger);
-  --erp-color-info: var(--erp-primitive-color-info);
+@mixin emit-css-properties($palette) {
+  @each $role, $value in $palette {
+    --erp-palette-#{$role}: #{$value};
+    --erp-#{$role}: var(--erp-palette-#{$role});
+  }
   --erp-font-body: var(--erp-primitive-font-body);
   --erp-font-display: var(--erp-primitive-font-display);
-  --erp-space-1: var(--erp-primitive-space-1);
-  --erp-space-2: var(--erp-primitive-space-2);
-  --erp-space-3: var(--erp-primitive-space-3);
-  --erp-space-4: var(--erp-primitive-space-4);
-  --erp-space-5: var(--erp-primitive-space-5);
-  --erp-space-6: var(--erp-primitive-space-6);
-  --erp-space-7: var(--erp-primitive-space-7);
+  @for $index from 1 through 7 {
+    --erp-space-#{$index}: var(--erp-primitive-space-#{$index});
+  }
   --erp-radius-control: var(--erp-primitive-radius-control);
   --erp-radius-card: var(--erp-primitive-radius-card);
   --erp-radius-pill: var(--erp-primitive-radius-pill);
+  --erp-glass-backdrop: blur(28px) saturate(140%);
+  --erp-glass-radius: 16px;
+  --erp-stat-glow-opacity: .7;
+  // 玻璃列表卡片的共用留白；页面显式使用，不覆盖其他业务布局。
+  --erp-filter-padding: 14px 16px 10px;
+  --erp-list-card-padding: 10px 14px 0;
+  --erp-toolbar-inline-padding: 2px;
+  --erp-toolbar-table-gap: 10px;
+  --erp-spotlight-radius: 240px;
+  --erp-motion-feedback: 180ms;
+  --erp-motion-press: 80ms;
+  --erp-motion-ease: cubic-bezier(.16, 1, .3, 1);
 }

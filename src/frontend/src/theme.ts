@@ -1,11 +1,12 @@
-export const THEME_STORAGE_KEY = 'haiqu:theme:v1'
-export const DEFAULT_THEME = 'warm' as const
+// v1 曾自动保存唯一的暖色主题；使用新键让首次升级采用已确认的新默认值。
+export const THEME_STORAGE_KEY = 'haiqu:theme:v2'
+export const DEFAULT_THEME = 'blue-gray' as const
 
-// These IDs are the extension seam for later approved palettes. Only warm is
-// enabled until a separate design decision supplies the other token values.
+// 深色保留扩展标识，取得配色确认前不加入可用主题。
 export const THEME_IDS = ['warm', 'blue-gray', 'dark'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
-export type EnabledThemeId = typeof DEFAULT_THEME
+const ENABLED_THEME_IDS = ['blue-gray', 'warm'] as const
+export type EnabledThemeId = (typeof ENABLED_THEME_IDS)[number]
 
 export interface ThemeDefinition {
   id: EnabledThemeId
@@ -16,8 +17,13 @@ export interface ThemeDefinition {
 export const AVAILABLE_THEMES: readonly ThemeDefinition[] = [
   {
     id: DEFAULT_THEME,
+    label: '冷蓝银',
+    description: '冷蓝银渐变、通透卡片与钢蓝强调色。',
+  },
+  {
+    id: 'warm',
     label: '暖色 ERP',
-    description: '使用 HAIQU ERP 第 10 节确认的暖色界面规范。',
+    description: '米白底色、暖灰边框与橙色强调色。',
   },
 ]
 
@@ -26,7 +32,7 @@ export function isThemeId(value: unknown): value is ThemeId {
 }
 
 export function isEnabledTheme(value: unknown): value is EnabledThemeId {
-  return value === DEFAULT_THEME
+  return typeof value === 'string' && (ENABLED_THEME_IDS as readonly string[]).includes(value)
 }
 
 function readStorage(): Storage | null {
@@ -60,7 +66,7 @@ export function persistTheme(theme: EnabledThemeId, storage: Storage | null = re
   try {
     storage?.setItem(THEME_STORAGE_KEY, theme)
   } catch {
-    // Private browsing and blocked storage should not prevent the theme from applying.
+    // 隐私模式或存储受限时，仍允许本次界面切换。
   }
 }
 

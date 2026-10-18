@@ -270,36 +270,37 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/theme/detail' as detail;
 @use '@/styles/crm/tokens' as token;
 .task-detail {
   $page-bg: token.$crm-color-page;
-  $surface: #fcfbf7;
-  $border: #e5dfd5;
-  $text: #1f1d18;
-  $muted: #858078;
-  $accent: #c7441d;
+  $surface: var(--erp-color-surface);
+  $border: var(--erp-color-border);
+  $text: var(--erp-color-text-primary);
+  $muted: var(--erp-color-text-regular);
+  $accent: var(--erp-color-brand);
 
   min-width: 0;
-  min-height: calc(100vh - 84px);
+  min-height: 0;
   margin: 0;
-  padding: 26px 28px 28px;
+  padding: 0;
   color: $text;
-  background: $page-bg;
+  background: transparent;
   font-family: token.$crm-font-body;
 
   .back-link {
     height: 21px;
     padding: 0;
-    color: #746f68;
+    color: var(--erp-color-text-regular);
     font-size: 14px;
   }
 
   .detail-hero {
-    height: 52px;
+    height: auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 12px;
+    margin-top: 0;
 
     &__main,
     &__badges {
@@ -316,44 +317,57 @@ onMounted(async () => {
         margin: 0;
         overflow: hidden;
         color: $text;
-        font-family: token.$crm-font-display;
-        font-size: 38px;
-        font-weight: 600;
-        line-height: 52px;
+        font-family: var(--erp-font-body);
+        font-size: 36px;
+        font-weight: 700;
+        line-height: 44px;
         text-overflow: ellipsis;
-        white-space: nowrap;
+        white-space: normal;
+        overflow-wrap: anywhere;
       }
+
+      flex-wrap: wrap
     }
 
     &__badges {
       gap: 8px;
       flex: none;
     }
+
+    min-height: 44px;
+
+    flex-wrap: wrap;
+
+    gap: 14px
   }
 
   .actions {
-    gap: 10px;
+    gap: 8px;
     flex: none;
 
     :deep(.el-button) {
       width: 100px;
-      height: 42px;
+      height: 32px;
       margin: 0;
-      border-radius: 5px;
-      font-size: 16px;
+      border-radius: 8px;
+      font-size: 13px;
     }
 
     :deep(.el-button--primary) {
       width: 122px;
       border-color: $accent;
-      background: $accent;
+      background: var(--erp-button-primary-surface);
     }
+
+    display: flex;
+
+    flex-wrap: wrap
   }
 
   .detail-subtitle {
     height: 24px;
     margin: 0;
-    color: #817b74;
+    color: var(--erp-color-text-regular);
     font-size: 14px;
     line-height: 24px;
   }
@@ -371,33 +385,30 @@ onMounted(async () => {
     justify-content: center;
     padding: 0 10px;
     border-radius: 999px;
-    color: #faf9f5;
-    background: #65625d;
+    color: var(--erp-tag-neutral-text);
+    background: var(--erp-tag-neutral-background);
     font-size: 12px;
 
     &--urgent,
-    &--danger { background: #b53333; }
+    &--danger { background: var(--erp-tag-danger-background); }
     &--high,
-    &--warning { background: #b8781e; }
+    &--warning { background: var(--erp-tag-warning-background); }
     &--low,
-    &--success { background: #4f7d4b; }
+    &--success { background: var(--erp-tag-success-background); }
     &--normal,
-    &--info { background: #3898ec; }
-    &--neutral { background: #5e5d59; }
+    &--info { background: var(--erp-tag-info-background); }
+    &--neutral { background: var(--erp-tag-neutral-background); }
   }
 
   .task-overview {
-    height: 198px;
-    box-sizing: border-box;
+    @include detail.surface;
+    height: auto;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: repeat(2, 62px);
-    gap: 26px 0;
-    margin-top: 18px;
-    padding: 24px;
-    border: 1px solid $border;
-    border-radius: 5px;
-    background: $surface;
+    grid-template-rows: auto;
+    gap: 16px;
+    margin-top: 14px;
+    padding: 16px;
 
     article {
       min-width: 0;
@@ -408,7 +419,7 @@ onMounted(async () => {
       padding-right: 20px;
 
       :deep(.el-icon) {
-        color: #9a4a32;
+        color: var(--erp-color-brand);
         font-size: 22px;
       }
 
@@ -425,30 +436,27 @@ onMounted(async () => {
 
       strong {
         overflow: hidden;
-        color: #2c2924;
+        color: var(--erp-color-text-primary);
         font-size: 16px;
         font-weight: 600;
         text-overflow: ellipsis;
         white-space: nowrap;
 
-        &.danger { color: #b53333; }
+        &.danger { color: var(--erp-color-danger); }
       }
     }
   }
 
   .detail-layout {
-    min-height: 602px;
+    min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 886px) minmax(0, 728px);
-    gap: 20px;
-    margin-top: 20px;
+    grid-template-columns: minmax(0,1.2fr) minmax(0,1fr);
+    gap: 14px;
+    margin-top: 14px;
   }
 
   .surface {
-    box-sizing: border-box;
-    border: 1px solid $border;
-    border-radius: 5px;
-    background: #fffefb;
+    @include detail.surface;
   }
 
   .section-title {
@@ -461,10 +469,11 @@ onMounted(async () => {
 
     h2 {
       margin: 0;
-      color: #26231f;
-      font-family: token.$crm-font-display;
-      font-size: 20px;
+      color: var(--erp-color-text-primary);
+      font-family: var(--erp-font-body);
+      font-size: 16px;
       font-weight: 600;
+      line-height: 24px;
     }
 
     span {
@@ -479,8 +488,8 @@ onMounted(async () => {
   }
 
   .task-content {
-    min-height: 602px;
-    padding: 24px;
+    min-height: 0;
+    padding: 16px;
     overflow: visible;
 
     &__description {
@@ -489,7 +498,7 @@ onMounted(async () => {
       > p {
         min-height: 52px;
         margin: 20px 0 0;
-        color: #504b44;
+        color: var(--erp-color-text-primary);
         font-size: 16px;
         line-height: 26px;
         white-space: pre-wrap;
@@ -505,7 +514,7 @@ onMounted(async () => {
     &__attachments {
       margin-top: 18px;
       padding-top: 18px;
-      border-top: 1px solid #ece7df;
+      border-top: 1px solid var(--erp-color-border);
 
       .section-title { height: 26px; }
     }
@@ -520,18 +529,18 @@ onMounted(async () => {
       display: grid;
       grid-template-columns: 28px minmax(0, 1fr) 150px;
       align-items: center;
-      border-bottom: 1px solid #ece8e1;
-      color: #3d3934;
+      border-bottom: 1px solid var(--erp-color-border);
+      color: var(--erp-color-text-primary);
       font-size: 16px;
 
       &.completed span {
-        color: #8b857e;
+        color: var(--erp-color-text-regular);
         text-decoration: line-through;
       }
     }
 
     small {
-      color: #8b857e;
+      color: var(--erp-color-text-regular);
       font-size: 12px;
       text-align: right;
     }
@@ -546,36 +555,37 @@ onMounted(async () => {
       padding: 0 16px;
       border: 1px solid $border;
       border-radius: 4px;
-      background: #faf8f3;
+      background: var(--erp-color-subtle);
     }
   }
 
   .attachment-empty {
-    height: 74px;
+    height: auto;
     display: grid;
     place-items: center;
     margin-top: 14px;
-    border: 1px dashed #dcd6cc;
-    border-radius: 4px;
-    color: #918b84;
-    background: #faf8f3;
+    border: 1px dashed var(--erp-color-border);
+    border-radius: 8px;
+    color: var(--erp-color-text-secondary);
+    background: var(--erp-color-subtle);
     font-size: 14px;
+    min-height: 64px;
   }
 
   .detail-aside {
-    min-height: 602px;
+    min-height: 0;
     display: grid;
-    grid-template-rows: auto 200px;
+    grid-template-rows: auto auto;
     align-content: start;
-    gap: 20px;
+    gap: 14px;
   }
 
   .activity-card {
-    min-height: 382px;
-    padding: 0 24px;
+    min-height: 0;
+    padding: 16px;
     overflow: visible;
 
-    > .section-title { height: 62px; }
+    > .section-title { height: auto; min-height: 24px; margin-bottom: 14px; }
   }
 
   .timeline {
@@ -597,7 +607,7 @@ onMounted(async () => {
         left: 4px;
         width: 1px;
         content: '';
-        background: #dcd6ce;
+        background: var(--erp-color-border);
       }
 
       i {
@@ -610,7 +620,7 @@ onMounted(async () => {
       }
 
       time {
-        color: #8b857e;
+        color: var(--erp-color-text-regular);
         font-size: 12px;
         line-height: 18px;
       }
@@ -623,7 +633,7 @@ onMounted(async () => {
       p {
         max-width: 100%;
         margin: 3px 0 0;
-        color: #666059;
+        color: var(--erp-color-text-regular);
         font-size: 12px;
         line-height: 18px;
         overflow-wrap: anywhere;
@@ -633,7 +643,7 @@ onMounted(async () => {
       small {
         display: block;
         margin-top: 2px;
-        color: #928b83;
+        color: var(--erp-color-text-secondary);
         font-size: 11px;
       }
     }
@@ -641,10 +651,10 @@ onMounted(async () => {
 
   .context-card {
     position: relative;
-    height: 200px;
-    padding: 0 24px;
+    height: auto;
+    padding: 16px;
 
-    > .section-title { height: 56px; }
+    > .section-title { height: auto; min-height: 24px; margin-bottom: 14px; }
 
     dl {
       display: grid;
@@ -655,7 +665,7 @@ onMounted(async () => {
 
       div { min-width: 0; }
       dt { color: $muted; font-size: 12px; }
-      dd { margin: 6px 0 0; overflow: hidden; color: #332f2c; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+      dd { margin: 6px 0 0; overflow: hidden; color: var(--erp-color-text-primary); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
     }
 
     > :deep(.el-button) {
@@ -673,8 +683,14 @@ onMounted(async () => {
     min-height: 80px;
     display: grid;
     place-items: center;
-    color: #918b84;
+    color: var(--erp-color-text-secondary);
     font-size: 14px;
   }
+
+  font-size: 13px;
+
+  line-height: 20px
 }
+@media (max-width:1200px) { .task-detail .detail-layout { grid-template-columns:minmax(0,1fr); } .task-detail .task-overview { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:680px) { .task-detail .task-overview { grid-template-columns:minmax(0,1fr); } .task-detail .timeline article { grid-template-columns:10px minmax(0,1fr); } .task-detail .timeline article > div { grid-column:2; } .task-detail .context-card dl { grid-template-columns:minmax(0,1fr); } }
 </style>

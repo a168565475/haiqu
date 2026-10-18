@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { isAxiosError } from 'axios'
@@ -586,7 +587,7 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
 </script>
 
 <template>
-  <section class="contact-page" :class="{ 'is-embedded': !showCustomer, 'contact-page--v2': embeddedV2 }" data-customer-contacts-v2>
+  <section class="contact-page" :class="{ 'is-embedded': !showCustomer, 'contact-page--v2': embeddedV2, 'erp-glass-list': showCustomer, 'erp-glass-list--comfortable': showCustomer && !compact }" data-customer-contacts-v2>
     <section v-if="embeddedV2" class="contact-summary-strip" aria-label="联系人概况">
       <article><span>联系人</span><strong>{{ contactSummary?.total ?? '—' }}</strong></article>
       <article><span>关键决策人</span><strong>{{ decisionMakerCount }}</strong></article>
@@ -596,45 +597,51 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
       <p v-if="priorityContactText" :title="priorityContactText">{{ priorityContactText }}</p>
     </section>
 
-    <header class="contact-heading">
-      <div><h2>联系人管理</h2><p>共 {{ activeCount }} 位在职联系人 · {{ decisionMakerCount }} 位关键决策人</p></div>
+    <section v-glass-spotlight="showCustomer" :class="showCustomer ? 'erp-list-filter' : 'embedded-filter-group'">
+    <header class="contact-heading" :class="{ 'erp-list-heading': showCustomer }">
+      <div><h1 v-if="showCustomer">联系人管理</h1><h2 v-else>联系人管理</h2><p>共 {{ activeCount }} 位在职联系人 · {{ decisionMakerCount }} 位关键决策人</p></div>
       <div v-if="!embeddedV2" class="heading-actions">
-        <ElButton v-if="canImport" :icon="Upload" @click="importVisible = true">导入联系人</ElButton>
-        <ElButton v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新增联系人</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="canImport" :icon="Upload" @click="importVisible = true">导入联系人</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新增联系人</ElButton>
       </div>
     </header>
 
-    <section class="filter-card">
+    <section class="filter-card" :class="{ 'erp-list-filters': showCustomer }">
       <ElInput v-model="query.q" :prefix-icon="Search" clearable placeholder="搜索姓名、职位、邮箱" @keyup.enter="query.page = 1; loadContacts()" />
       <ElSelect v-model="query.role_type" clearable placeholder="决策角色：全部"><ElOption v-for="item in contactOptions.role_options" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="query.status" clearable placeholder="任职状态：全部"><ElOption v-for="item in contactOptions.status_options" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="query.last_interaction" clearable placeholder="最近互动：全部"><ElOption label="7 天内" value="WITHIN_7_DAYS" /><ElOption label="30 天内" value="WITHIN_30_DAYS" /><ElOption label="90 天内" value="WITHIN_90_DAYS" /><ElOption label="从未互动" value="NEVER" /></ElSelect>
-      <ElButton type="primary" @click="query.page = 1; loadContacts()">查询</ElButton>
-      <ElButton @click="resetFilters">重置</ElButton>
+      <div v-if="showCustomer" class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="query.page = 1; loadContacts()">应用筛选</ElButton></div>
+      <template v-else><ElButton :class="{ 'erp-button-motion': showCustomer }" type="primary" @click="query.page = 1; loadContacts()">查询</ElButton><ElButton :class="{ 'erp-button-motion': showCustomer }" @click="resetFilters">重置</ElButton></template>
     </section>
 
-    <section class="contact-toolbar">
-      <div class="batch-actions"><span>已选择 {{ selected.length }} 项</span><ElButton v-if="canBulkTask" :disabled="!selected.length" @click="openBulkTask">批量发任务</ElButton><ElButton v-if="canBulkLeave" :disabled="!selected.length" @click="openBulkLeave">标记离职</ElButton></div>
+    </section>
+    <section :class="showCustomer ? 'erp-list-data' : 'embedded-data-group'">
+    <section class="contact-toolbar" :class="{ 'erp-list-toolbar': showCustomer }">
+      <div class="batch-actions"><span>已选择 {{ selected.length }} 项</span><ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="canBulkTask" :disabled="!selected.length" @click="openBulkTask">批量发任务</ElButton><ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="canBulkLeave" :disabled="!selected.length" @click="openBulkLeave">标记离职</ElButton></div>
       <div class="view-actions">
-        <ElButton v-if="embeddedV2 && canImport" class="toolbar-import-button" :icon="Upload" @click="importVisible = true">导入联系人</ElButton>
-        <ElButton v-if="embeddedV2 && canCreate" class="toolbar-create-button" type="primary" :icon="Plus" @click="openCreate">新增联系人</ElButton>
-        <ElDropdown v-if="embeddedV2 && savedViews.length" @command="applySavedView"><ElButton class="toolbar-save-view-button">保存视图</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-for="view in savedViews" :key="view.id" :command="view">{{ view.view_name }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown>
-        <ElButton v-else-if="embeddedV2" class="toolbar-save-view-button" @click="savedViewName = ''; saveViewVisible = true">保存视图</ElButton>
-        <ElDropdown v-if="!embeddedV2 && savedViews.length" @command="applySavedView"><ElButton>保存视图</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-for="view in savedViews" :key="view.id" :command="view">{{ view.view_name }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown>
-        <ElButton v-else-if="!embeddedV2" @click="savedViewName = ''; saveViewVisible = true">保存视图</ElButton>
-        <ElButton :icon="Operation" @click="columnsVisible = true">列设置</ElButton>
-        <ElButton v-if="!embeddedV2" :icon="Rank" :class="{ 'is-density-active': compact }" @click="compact = !compact">紧凑显示</ElButton>
-        <ElButton v-if="embeddedV2" :icon="Refresh" @click="loadContacts">刷新</ElButton>
-        <ElButton v-else :icon="Refresh" circle aria-label="刷新" @click="loadContacts" />
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="embeddedV2 && canImport" class="toolbar-import-button" :icon="Upload" @click="importVisible = true">导入联系人</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="embeddedV2 && canCreate" class="toolbar-create-button" type="primary" :icon="Plus" @click="openCreate">新增联系人</ElButton>
+        <ElDropdown v-if="embeddedV2 && savedViews.length" @command="applySavedView"><ElButton :class="{ 'erp-button-motion': showCustomer }" class="toolbar-save-view-button">保存视图</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-for="view in savedViews" :key="view.id" :command="view">{{ view.view_name }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-else-if="embeddedV2" class="toolbar-save-view-button" @click="savedViewName = ''; saveViewVisible = true">保存视图</ElButton>
+        <ElDropdown v-if="!embeddedV2 && savedViews.length" @command="applySavedView"><ElButton :class="{ 'erp-button-motion': showCustomer }">保存视图</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem v-for="view in savedViews" :key="view.id" :command="view">{{ view.view_name }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-else-if="!embeddedV2" @click="savedViewName = ''; saveViewVisible = true">保存视图</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" :icon="Operation" @click="columnsVisible = true">列设置</ElButton>
+        <ElButton v-if="!embeddedV2" :icon="Rank" :class="{ 'is-density-active': compact, 'erp-button-motion': showCustomer }" @click="compact = !compact">紧凑显示</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-if="embeddedV2" :icon="Refresh" @click="loadContacts">刷新</ElButton>
+        <ElButton :class="{ 'erp-button-motion': showCustomer }" v-else :icon="Refresh" circle aria-label="刷新" @click="loadContacts" />
       </div>
     </section>
 
-    <section class="table-card">
-      <ContactTable :rows="rows" :loading="loading" :show-customer="showCustomer" :visible-columns="visibleColumns" :can-change="canChange" :can-leave="canChange" :can-delete="canDelete" :compact="compact" :v2="embeddedV2" @selection-change="selected = $event" @view="openContact($event, 'view')" @edit="openContact($event, 'edit')" @history="openHistory" @leave="openLeave" @delete="deleteContactRow" />
-      <footer class="table-footer"><span>共 {{ total }} 条<span v-if="rows.some((item) => item.status === 'LEFT')"> · 其中 {{ rows.filter((item) => item.status === 'LEFT').length }} 位已离职</span></span><ElPagination v-model:current-page="query.page" v-model:page-size="query.page_size" :total="total" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" @change="loadContacts" /></footer>
+    <section :class="showCustomer ? 'contact-table-content' : 'table-card'">
+      <div :class="showCustomer ? 'erp-list-table-frame' : 'embedded-table-group'">
+      <ContactTable :glass="showCustomer" :height="showCustomer ? '100%' : undefined" :rows="rows" :loading="loading" :show-customer="showCustomer" :visible-columns="visibleColumns" :can-change="canChange" :can-leave="canChange" :can-delete="canDelete" :compact="compact" :v2="embeddedV2" @selection-change="selected = $event" @view="openContact($event, 'view')" @edit="openContact($event, 'edit')" @history="openHistory" @leave="openLeave" @delete="deleteContactRow" />
+      </div>
+      <footer class="table-footer" :class="{ 'erp-list-footer': showCustomer }"><span>共 {{ total }} 条<span v-if="rows.some((item) => item.status === 'LEFT')"> · 其中 {{ rows.filter((item) => item.status === 'LEFT').length }} 位已离职</span></span><ElPagination v-model:current-page="query.page" v-model:page-size="query.page_size" :total="total" :page-sizes="[20, 50, 100]" layout="sizes, prev, pager, next" @change="loadContacts" /></footer>
+    </section>
     </section>
 
-    <ElDrawer v-model="drawerVisible" :title="drawerMode === 'create' ? '新增联系人' : drawerMode === 'edit' ? '编辑联系人' : '联系人详情'" size="min(560px, 100vw)" :class="['cus05-contact-drawer', { 'customer-detail-drawer': embeddedV2 }]" destroy-on-close>
+    <AppWindowDialog v-model="drawerVisible" :title="drawerMode === 'create' ? '新增联系人' : drawerMode === 'edit' ? '编辑联系人' : '联系人详情'" :width="560" :class="['cus05-contact-drawer', { 'customer-detail-drawer': embeddedV2 }]" destroy-on-close>
       <ResizableDrawerHandle />
       <ElForm v-loading="drawerLoading" label-position="top" class="contact-form">
         <ElFormItem v-if="showCustomer && drawerMode === 'create'" label="所属客户 *" required><ElSelect v-model="form.customer_id" filterable :disabled="isReadOnly" placeholder="选择客户"><ElOption v-for="customer in customerOptions" :key="customer.id" :label="`${customer.account_name}（${customer.account_code}）`" :value="customer.id" /></ElSelect></ElFormItem>
@@ -653,16 +660,16 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
         </section>
       </ElForm>
       <template #footer><ElButton @click="drawerVisible = false">{{ isReadOnly ? '关闭' : '取消' }}</ElButton><ElButton v-if="!isReadOnly" type="primary" :loading="drawerLoading" @click="submitContact()">保存联系人</ElButton></template>
-    </ElDrawer>
+    </AppWindowDialog>
 
-    <ElDrawer v-model="historyVisible" size="min(1260px, 100vw)" :class="['cus05-history-drawer', { 'customer-detail-drawer': embeddedV2 }]" :with-header="false" destroy-on-close>
+    <AppWindowDialog v-model="historyVisible" :title="`${historyContact?.display_name || '联系人'} · 任职历史`" :width="1260" :class="['cus05-history-drawer', { 'customer-detail-drawer': embeddedV2 }]" :with-header="false" destroy-on-close>
       <ResizableDrawerHandle />
       <section v-loading="historyLoading" class="history-panel">
         <header><div><h2>{{ historyContact?.display_name }} · 任职历史</h2><p>保留职位、部门、决策角色和主要联系人变化</p></div><ElButton v-if="canChange && historyContact?.status !== 'LEFT'" type="primary" @click="openEmploymentRecord">新增任职记录</ElButton></header>
         <article v-if="historyContact" class="current-employment"><span class="history-avatar">{{ historyContact.display_name.slice(0, 2) }}</span><div><strong>{{ historyContact.position_title || '未填写职位' }} · {{ historyContact.department_name || '未填写部门' }}</strong><p>{{ historyContact.created_at.slice(0, 10) }} 至今 · {{ historyContact.customer.account_name }}</p><small>{{ historyContact.is_primary_contact ? '主要联系人 · ' : '' }}{{ historyContact.active_roles.map((item) => item.role_type_display).join('、') || '未设置决策角色' }}</small></div><ElTag type="success">{{ historyContact.status_display }}</ElTag><ElTag v-if="historyContact.is_primary_contact">主要联系人</ElTag></article>
         <div class="history-timeline"><article v-for="item in employmentHistory" :key="item.id"><div class="history-date"><strong>{{ item.effective_on }}</strong><span>{{ item.event_type_display }}</span></div><div><h3>{{ item.title }}</h3><p>{{ item.position_title || '未填写职位' }} · {{ item.department_name || '未填写部门' }}</p><small>{{ item.actor_employee ? `由 ${item.actor_employee.display_name} 更新` : '系统迁移记录' }}<template v-if="item.notes">；{{ item.notes }}</template></small></div></article><ElEmpty v-if="!employmentHistory.length" description="暂无任职历史" /></div>
       </section>
-    </ElDrawer>
+    </AppWindowDialog>
 
     <AppWindowDialog v-model="recordVisible" title="新增任职记录" :width="570" :height="650"><ElForm label-position="top"><ElFormItem label="生效日期" required><ElDatePicker v-model="recordForm.effective_on" type="date" value-format="YYYY-MM-DD" /></ElFormItem><ElFormItem label="记录标题" required><ElInput v-model="recordForm.title" /></ElFormItem><div class="form-grid"><ElFormItem label="职位"><ElInput v-model="recordForm.position_title" /></ElFormItem><ElFormItem label="部门"><ElInput v-model="recordForm.department_name" /></ElFormItem></div><ElFormItem label="决策角色"><ElSelect v-model="recordForm.role_types" multiple><ElOption v-for="item in contactOptions.role_options" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem><ElCheckbox v-model="recordForm.is_primary_contact">设为主要联系人</ElCheckbox><ElFormItem label="说明"><ElInput v-model="recordForm.notes" type="textarea" :rows="3" /></ElFormItem></ElForm><template #footer><ElButton @click="recordVisible = false">取消</ElButton><ElButton type="primary" :loading="recordSaving" @click="submitEmploymentRecord">保存记录</ElButton></template></AppWindowDialog>
 
@@ -678,43 +685,47 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/theme/detail' as detail;
+
 @use '@/styles/crm/tokens' as token;
 
-.contact-page { min-width: 0; min-height: 868px; display: grid; grid-template-rows: 52px 72px 40px minmax(620px, 1fr); gap: 12px; padding: 24px; color: #30343b; background: var(--erp-page-background); --el-color-primary: #18181b; }
+// 客户详情内嵌联系人继续沿用详情布局；独立列表只使用公共列表皮肤。
+.contact-page.is-embedded {
+& { min-width: 0; min-height: 868px; display: grid; grid-template-rows: 52px 72px 40px minmax(620px, 1fr); gap: 12px; padding: 24px; color: var(--erp-color-text-primary); background: var(--erp-page-background); --el-color-primary: var(--erp-color-brand); }
 @media (min-width: 981px) {
-  .contact-page:not(.is-embedded) {
+  &:not(.is-embedded) {
     height: calc(100dvh - 84px);
     min-height: 0;
     grid-template-rows: 52px 72px 40px minmax(0, 1fr);
   }
 }
 .contact-heading { height: 52px; display: flex; align-items: flex-start; justify-content: space-between; }
-.contact-heading h2 { margin: 0; color: #18181b; font-size: 22px; line-height: 30px; }
-.contact-heading p { margin: 2px 0 0; color: #737a86; font-size: 11px; line-height: 14px; }
+.contact-heading h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 22px; line-height: 30px; }
+.contact-heading p { margin: 2px 0 0; color: var(--erp-color-text-regular); font-size: 11px; line-height: 14px; }
 .heading-actions { height: 52px; display: flex; align-items: center; gap: 8px; }
 .heading-actions :deep(.el-button) { width: 116px; height: 32px; margin: 0; border-radius: 8px; font-size: 12px; }
-.heading-actions :deep(.el-button--primary) { border-color: #18181b; background: #18181b; }
-.filter-card { height: 72px; display: grid; grid-template-columns: minmax(260px, 420px) repeat(3, 188px) 84px 84px minmax(0, 1fr); align-items: center; gap: 12px; padding: 0 16px; border: 1px solid #dfe2e7; border-radius: 10px; background: #fff; }
-.filter-card :deep(.el-input__wrapper), .filter-card :deep(.el-select__wrapper) { min-height: 32px; border-radius: 8px; box-shadow: 0 0 0 1px #d4d4d8 inset; }
+.heading-actions :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
+.filter-card { height: 72px; display: grid; grid-template-columns: minmax(260px, 420px) repeat(3, 188px) 84px 84px minmax(0, 1fr); align-items: center; gap: 12px; padding: 0 16px; border: 1px solid var(--erp-color-border); border-radius: 10px; background: var(--erp-color-page); }
+.filter-card :deep(.el-input__wrapper), .filter-card :deep(.el-select__wrapper) { min-height: 32px; border-radius: 8px; box-shadow: 0 0 0 1px var(--erp-color-border) inset; }
 .filter-card :deep(.el-button) { width: 84px; height: 32px; margin: 0; border-radius: 8px; font-size: 12px; }
-.filter-card :deep(.el-button--primary) { border-color: #18181b; background: #18181b; }
+.filter-card :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
 .contact-toolbar { height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .batch-actions, .view-actions { display: flex; align-items: center; gap: 8px; }
-.batch-actions > span { width: 92px; color: #737a86; font-size: 11px; }
-.contact-toolbar :deep(.el-button) { height: 32px; margin: 0; border-color: #d4d4d8; border-radius: 8px; color: #3f3f46; background: #fff; font-size: 12px; }
-.contact-toolbar :deep(.el-button.is-density-active) { border-color: #a1a1aa; color: #18181b; background: #f4f4f5; }
+.batch-actions > span { width: 92px; color: var(--erp-color-text-regular); font-size: 11px; }
+.contact-toolbar :deep(.el-button) { height: 32px; margin: 0; border-color: var(--erp-color-border); border-radius: 8px; color: var(--erp-color-text-primary); background: var(--erp-color-page); font-size: 12px; }
+.contact-toolbar :deep(.el-button.is-density-active) { border-color: var(--erp-color-border); color: var(--erp-color-text-primary); background: var(--erp-color-page); }
 .batch-actions :deep(.el-button:first-of-type) { width: 112px; }.batch-actions :deep(.el-button:last-of-type) { width: 96px; }
 .view-actions :deep(.el-button) { min-width: 80px; }.view-actions :deep(.el-button.is-circle) { min-width: 32px; width: 32px; }
-.table-card { min-width: 0; height: 620px; display: grid; grid-template-rows: minmax(0, 1fr) 48px; overflow: hidden; padding: 16px 16px 0; border: 1px solid #dfe2e7; border-radius: 10px; background: #fff; }
+.table-card { min-width: 0; height: 620px; display: grid; grid-template-rows: minmax(0, 1fr) 48px; overflow: hidden; padding: 16px 16px 0; border: 1px solid var(--erp-table-border); border-radius: 10px; background: var(--erp-table-background); }
 .table-card > :deep(.el-table) { min-width: 0; min-height: 0; height: 100%; }
 @media (min-width: 981px) {
-  .contact-page:not(.is-embedded) .table-card { height: 100%; min-height: 0; }
+  &:not(.is-embedded) .table-card { height: 100%; min-height: 0; }
 }
-.table-footer { height: 48px; display: flex; align-items: center; justify-content: space-between; color: #737a86; font-size: 11px; }
+.table-footer { height: 48px; display: flex; align-items: center; justify-content: space-between; color: var(--erp-table-text); font-size: 11px; }
 .table-footer :deep(.el-pagination) { padding: 0; }.table-footer :deep(.el-select__wrapper), .table-footer :deep(.btn-prev), .table-footer :deep(.btn-next), .table-footer :deep(.el-pager li) { min-height: 32px; border-radius: 6px; }
-.table-footer :deep(.el-pager li.is-active) { color: #fff; background: #18181b; }
+.table-footer :deep(.el-pager li.is-active) { color: var(--erp-pagination-current-text); background: var(--erp-pagination-current-background); }
 
-.contact-page--v2 {
+&.contact-page--v2 {
   width: 100%;
   min-width: 0;
   min-height: 870px;
@@ -785,41 +796,41 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   white-space: nowrap;
 }
 
-.contact-page--v2 .contact-heading {
+&.contact-page--v2 .contact-heading {
   height: 46px;
   align-items: center;
   margin-top: 8px;
 }
 
-.contact-page--v2 .contact-heading > div:first-child {
+&.contact-page--v2 .contact-heading > div:first-child {
   min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 14px;
 }
 
-.contact-page--v2 .contact-heading h2 {
+&.contact-page--v2 .contact-heading h2 {
   color: token.$crm-text-primary;
   font-family: token.$crm-font-display;
   font-size: 24px;
   line-height: 32px;
 }
 
-.contact-page--v2 .contact-heading p {
+&.contact-page--v2 .contact-heading p {
   margin: 0;
   color: token.$crm-text-secondary;
   font-size: 11px;
   line-height: 18px;
 }
 
-.contact-page--v2 .heading-actions {
+&.contact-page--v2 .heading-actions {
   height: 32px;
   gap: 10px;
   margin-right: 12px;
   transform: translateY(-2px);
 }
 
-.contact-page--v2 .heading-actions :deep(.el-button) {
+&.contact-page--v2 .heading-actions :deep(.el-button) {
   width: 116px;
   height: 32px;
   border-color: token.$crm-border-default;
@@ -831,14 +842,14 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   font-weight: 500;
 }
 
-.contact-page--v2 .heading-actions :deep(.el-button--primary) {
+&.contact-page--v2 .heading-actions :deep(.el-button--primary) {
   width: 116px;
-  border-color: token.$crm-primary;
+  border-color: var(--erp-button-primary-border);
   color: token.$crm-text-inverse;
-  background: token.$crm-primary;
+  background: var(--erp-button-primary-surface);
 }
 
-.contact-page--v2 .filter-card {
+&.contact-page--v2 .filter-card {
   height: 32px;
   grid-template-columns: 380px 180px 170px 176px 76px 76px minmax(0, 1fr);
   gap: 10px;
@@ -849,8 +860,8 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   background: transparent;
 }
 
-.contact-page--v2 .filter-card :deep(.el-input__wrapper),
-.contact-page--v2 .filter-card :deep(.el-select__wrapper) {
+&.contact-page--v2 .filter-card :deep(.el-input__wrapper),
+&.contact-page--v2 .filter-card :deep(.el-select__wrapper) {
   min-height: 32px;
   padding: 0 12px;
   border-radius: token.$crm-radius-2;
@@ -858,15 +869,15 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   box-shadow: 0 0 0 1px token.$crm-border-default inset;
 }
 
-.contact-page--v2 .filter-card :deep(.el-input__inner),
-.contact-page--v2 .filter-card :deep(.el-select__placeholder),
-.contact-page--v2 .filter-card :deep(.el-select__selected-item) {
+&.contact-page--v2 .filter-card :deep(.el-input__inner),
+&.contact-page--v2 .filter-card :deep(.el-select__placeholder),
+&.contact-page--v2 .filter-card :deep(.el-select__selected-item) {
   color: token.$crm-text-secondary;
   font-family: token.$crm-font-body;
   font-size: 12px;
 }
 
-.contact-page--v2 .filter-card :deep(.el-button) {
+&.contact-page--v2 .filter-card :deep(.el-button) {
   width: 76px;
   height: 32px;
   border-color: token.$crm-border-default;
@@ -877,33 +888,33 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   font-size: 12px;
 }
 
-.contact-page--v2 .filter-card :deep(.el-button--primary) {
-  border-color: token.$crm-primary;
+&.contact-page--v2 .filter-card :deep(.el-button--primary) {
+  border-color: var(--erp-button-primary-border);
   color: token.$crm-text-inverse;
-  background: token.$crm-primary;
+  background: var(--erp-button-primary-surface);
 }
 
-.contact-page--v2 .filter-card > :deep(.el-button:nth-of-type(2)) {
+&.contact-page--v2 .filter-card > :deep(.el-button:nth-of-type(2)) {
   transform: translateX(-2px);
 }
 
-.contact-page--v2 .contact-toolbar {
+&.contact-page--v2 .contact-toolbar {
   height: 32px;
   margin-top: 10px;
 }
 
-.contact-page--v2 .batch-actions,
-.contact-page--v2 .view-actions {
+&.contact-page--v2 .batch-actions,
+&.contact-page--v2 .view-actions {
   gap: 10px;
 }
 
-.contact-page--v2 .batch-actions > span {
+&.contact-page--v2 .batch-actions > span {
   width: 76px;
   color: token.$crm-text-secondary;
   font-size: 11px;
 }
 
-.contact-page--v2 .contact-toolbar :deep(.el-button) {
+&.contact-page--v2 .contact-toolbar :deep(.el-button) {
   height: 32px;
   border-color: token.$crm-border-default;
   border-radius: token.$crm-radius-2;
@@ -913,43 +924,43 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   font-size: 12px;
 }
 
-.contact-page--v2 .batch-actions :deep(.el-button:first-of-type) {
+&.contact-page--v2 .batch-actions :deep(.el-button:first-of-type) {
   width: 112px;
 }
 
-.contact-page--v2 .batch-actions :deep(.el-button:last-of-type) {
+&.contact-page--v2 .batch-actions :deep(.el-button:last-of-type) {
   width: 104px;
 }
 
-.contact-page--v2 .view-actions :deep(.el-button) {
+&.contact-page--v2 .view-actions :deep(.el-button) {
   width: 92px;
 }
 
-.contact-page--v2 .view-actions :deep(.toolbar-import-button),
-.contact-page--v2 .view-actions :deep(.toolbar-create-button) {
+&.contact-page--v2 .view-actions :deep(.toolbar-import-button),
+&.contact-page--v2 .view-actions :deep(.toolbar-create-button) {
   width: 116px;
 }
 
-.contact-page--v2 .view-actions :deep(.toolbar-create-button) {
-  border-color: token.$crm-primary;
+&.contact-page--v2 .view-actions :deep(.toolbar-create-button) {
+  border-color: var(--erp-button-primary-border);
   color: token.$crm-text-inverse;
-  background: token.$crm-primary;
+  background: var(--erp-button-primary-surface);
 }
 
-.contact-page--v2 .view-actions :deep(.toolbar-save-view-button) {
+&.contact-page--v2 .view-actions :deep(.toolbar-save-view-button) {
   width: 132px;
 }
 
-.contact-page--v2 .view-actions {
+&.contact-page--v2 .view-actions {
   margin-right: 24px;
 }
 
-.contact-page--v2 .view-actions :deep(.el-button.is-circle) {
+&.contact-page--v2 .view-actions :deep(.el-button.is-circle) {
   width: 32px;
   min-width: 32px;
 }
 
-.contact-page--v2 .table-card {
+&.contact-page--v2 .table-card {
   width: 1634px;
   min-width: 1634px;
   height: 584px;
@@ -962,13 +973,13 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   margin-top: 8px;
 }
 
-.contact-page--v2 .table-card > :deep(.el-table) {
+&.contact-page--v2 .table-card > :deep(.el-table) {
   width: 1634px;
   min-width: 1634px;
   height: 100%;
 }
 
-.contact-page--v2 .table-footer {
+&.contact-page--v2 .table-footer {
   height: 52px;
   padding: 0 14px;
   border-top: 1px solid token.$crm-border-subtle;
@@ -976,10 +987,10 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   font-size: 11px;
 }
 
-.contact-page--v2 .table-footer :deep(.el-select__wrapper),
-.contact-page--v2 .table-footer :deep(.btn-prev),
-.contact-page--v2 .table-footer :deep(.btn-next),
-.contact-page--v2 .table-footer :deep(.el-pager li) {
+&.contact-page--v2 .table-footer :deep(.el-select__wrapper),
+&.contact-page--v2 .table-footer :deep(.btn-prev),
+&.contact-page--v2 .table-footer :deep(.btn-next),
+&.contact-page--v2 .table-footer :deep(.el-pager li) {
   min-width: 32px;
   min-height: 32px;
   border: 1px solid token.$crm-border-default;
@@ -987,37 +998,59 @@ onBeforeUnmount(() => { contactsRequest += 1; if (duplicateTimer) clearTimeout(d
   background: token.$crm-color-surface;
 }
 
-.contact-page--v2 .table-footer :deep(.el-pager li.is-active) {
+&.contact-page--v2 .table-footer :deep(.el-pager li.is-active) {
   border-color: token.$crm-primary;
   color: token.$crm-primary;
   background: token.$crm-color-surface;
 }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.contact-form :deep(.el-form-item) { margin-bottom: 10px; }.contact-form :deep(.el-form-item__label) { height: 19px; padding: 0; color: #3f3f46; font-size: 11px; line-height: 14px; }
-.contact-form :deep(.el-input__wrapper), .contact-form :deep(.el-select__wrapper) { min-height: 32px; border-radius: token.$crm-radius-2; }.contact-form :deep(.el-select), .contact-form :deep(.el-date-editor) { width: 100%; }
-.duplicate-notice { min-height: 54px; display: flex; flex-direction: column; justify-content: center; gap: 3px; margin: 0 0 12px; padding: 6px 14px; border: 1px solid #b9daf5; border-radius: 7px; color: #1671c5; background: #eef7ff; }
-.duplicate-notice.warning { border-color: #f1d487; color: #b45309; background: #fffaf0; }.duplicate-notice strong { font-size: 12px; }.duplicate-notice span { font-size: 10px; }
-.notes-field { margin-top: 12px; }.template-link { display: inline-flex; align-items: center; gap: 6px; margin: 16px 0 0; color: #18181b; font-size: 12px; text-decoration: none; }.file-input { display: block; width: 100%; margin: 16px 0 12px; padding: 12px; border: 1px dashed #c5cad3; border-radius: 8px; }
-.legacy-contact-data { margin-top: 16px; padding: 14px; border: 1px solid #dfe2e7; border-radius: 8px; background: #fafafa; }
-.legacy-contact-data header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #e4e4e7; }
-.legacy-contact-data header span, .legacy-contact-data dt { color: #71717a; font-size: 10px; }
-.legacy-contact-data dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; margin: 0; }
-.legacy-contact-data dl > div { min-width: 0; padding: 10px 0; border-bottom: 1px solid #eceef1; }
-.legacy-contact-data dt { margin-bottom: 3px; }.legacy-contact-data dd { overflow-wrap: anywhere; margin: 0; color: #27272a; font-size: 12px; }
-.history-panel { min-height: 100%; padding: 24px 28px 60px; background: #f7f8fa; }.history-panel > header { height: 48px; display: flex; align-items: center; justify-content: space-between; }.history-panel h2 { margin: 0; color: #18181b; font-size: 20px; }.history-panel header p { margin: 2px 0 0; color: #71717a; font-size: 11px; }.history-panel header :deep(.el-button) { width: 124px; height: 32px; border-radius: 8px; }
-.current-employment { height: 96px; display: flex; align-items: center; gap: 20px; margin-top: 16px; padding: 16px 18px; border: 1px solid #dfe2e7; border-radius: 9px; background: #fff; }.history-avatar { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #18181b; font-weight: 600; }.current-employment > div { flex: 1; }.current-employment strong { color: #18181b; font-size: 15px; }.current-employment p, .current-employment small { margin: 5px 0 0; color: #71717a; font-size: 11px; }.history-timeline { min-height: 520px; margin-top: 16px; padding: 16px 18px; border: 1px solid #dfe2e7; border-radius: 9px; background: #fff; }.history-timeline article { min-height: 108px; display: grid; grid-template-columns: 166px 1fr; padding: 14px; border-bottom: 1px solid #edf0f4; }.history-date { display: flex; flex-direction: column; gap: 4px; }.history-date strong { font-size: 12px; }.history-date span, .history-timeline small { color: #71717a; font-size: 10px; }.history-timeline h3 { margin: 0; color: #18181b; font-size: 14px; }.history-timeline p { margin: 6px 0; color: #3f3f46; font-size: 11px; }
-.leave-description { margin: 0 0 14px; color: #71717a; font-size: 12px; }.leave-options { display: flex; flex-direction: column; gap: 12px; }.cus05-leave-dialog :deep(.el-alert) { margin-bottom: 14px; }.cus05-leave-dialog :deep(.el-select), .cus05-leave-dialog :deep(.el-date-editor) { width: 100%; }
-:global(.cus05-contact-drawer .el-drawer__header) { height: 72px; margin: 0; padding: 0 24px; border-bottom: 1px solid #e4e4e7; color: #18181b; font-size: 20px; font-weight: 600; }:global(.cus05-contact-drawer .el-drawer__body) { padding: 20px 24px; }:global(.cus05-contact-drawer .el-drawer__footer) { height: 72px; display: flex; align-items: center; justify-content: flex-end; padding: 0 24px; border-top: 1px solid #e4e4e7; }:global(.cus05-contact-drawer .el-drawer__footer .el-button) { width: 96px; height: 32px; border-radius: 8px; }:global(.cus05-contact-drawer .el-drawer__footer .el-button--primary) { width: 120px; border-color: #18181b; background: #18181b; }
-:global(.customer-detail-drawer .el-drawer__header) { height: 64px; }
-:global(.customer-detail-drawer .el-drawer__body) { padding: 16px 24px; }
-:global(.customer-detail-drawer .el-drawer__footer) { height: 64px; }
-:global(.cus05-history-drawer .el-drawer__body) { padding: 0; }
-@media (max-width: 1500px) { .contact-page { padding: 20px; }.filter-card { grid-template-columns: minmax(230px, 1.5fr) repeat(3, minmax(145px, 1fr)) 72px 64px; }.filter-card :deep(.el-button) { width: 100%; }.table-card { padding-inline: 12px; } }
+@media (max-width: 1500px) { & { padding: 20px; }.filter-card { grid-template-columns: minmax(230px, 1.5fr) repeat(3, minmax(145px, 1fr)) 72px 64px; }.filter-card :deep(.el-button) { width: 100%; }.table-card { padding-inline: 12px; } }
 @media (max-width: 1599px) and (min-width: 981px) {
-  .contact-page--v2 { padding: 18px 24px 24px; }
-  .contact-page--v2 .contact-summary-strip { grid-template-columns: repeat(5, 160px) minmax(0, 1fr); }
-  .contact-page--v2 .table-card { width: 100%; min-width: 0; padding-inline: 0; }
-  .contact-page--v2 .table-card > :deep(.el-table) { width: 100%; min-width: 0; }
+  &.contact-page--v2 { padding: 18px 24px 24px; }
+  &.contact-page--v2 .contact-summary-strip { grid-template-columns: repeat(5, 160px) minmax(0, 1fr); }
+  &.contact-page--v2 .table-card { width: 100%; min-width: 0; padding-inline: 0; }
+  &.contact-page--v2 .table-card > :deep(.el-table) { width: 100%; min-width: 0; }
 }
-@media (max-width: 980px) { .contact-page { grid-template-rows: auto auto auto minmax(620px, 1fr); padding: 12px; }.filter-card { height: auto; grid-template-columns: 1fr 1fr; padding-block: 12px; }.contact-toolbar { height: auto; align-items: stretch; flex-direction: column; }.contact-heading { height: auto; align-items: stretch; flex-direction: column; gap: 8px; }.heading-actions { justify-content: flex-end; }.table-card { height: 620px; }.form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { & { grid-template-rows: auto auto auto minmax(620px, 1fr); padding: 12px; }.filter-card { height: auto; grid-template-columns: 1fr 1fr; padding-block: 12px; }.contact-toolbar { height: auto; align-items: stretch; flex-direction: column; }.contact-heading { height: auto; align-items: stretch; flex-direction: column; gap: 8px; }.heading-actions { justify-content: flex-end; }.table-card { height: 620px; }.form-grid { grid-template-columns: 1fr; } }
+}
+.embedded-filter-group, .embedded-data-group, .embedded-table-group { display: contents; }
+.contact-page.erp-glass-list {
+  .contact-heading { justify-content: space-between; }
+  .contact-heading p { margin: 2px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; }
+  .heading-actions, .batch-actions, .view-actions { display: flex; align-items: center; gap: 8px; }
+  .filter-card > :deep(.el-input) { width: 320px; }
+  .filter-card > :deep(.el-select) { width: 188px; }
+  .contact-toolbar { justify-content: space-between; }
+  .batch-actions > span { color: var(--erp-color-text-secondary); font-size: 12px; }
+  .view-actions { flex-wrap: wrap; }
+  .contact-table-content { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+}
+.form-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.contact-form :deep(.el-form-item) { margin-bottom: 10px; }.contact-form :deep(.el-form-item__label) { height: auto; padding: 0; color: var(--erp-color-text-primary); font-size: 12px; line-height: 18px; }
+.contact-form :deep(.el-input__wrapper), .contact-form :deep(.el-select__wrapper) { min-height: 32px; border-radius: 8px; }.contact-form :deep(.el-select), .contact-form :deep(.el-date-editor) { width: 100%; }
+.duplicate-notice { min-height: 54px; display: flex; flex-direction: column; justify-content: center; gap: 3px; margin: 0 0 12px; padding: 6px 14px; border: 1px solid var(--erp-color-border-strong); border-radius: 7px; color: var(--erp-color-info); background: var(--erp-color-subtle); }
+.duplicate-notice.warning { border-color: var(--erp-color-warning-border); color: var(--erp-color-warning); background: var(--erp-color-subtle); }.duplicate-notice strong { font-size: 12px; }.duplicate-notice span { font-size: 10px; }
+.notes-field { margin-top: 12px; }.template-link { display: inline-flex; align-items: center; gap: 6px; margin: 16px 0 0; color: var(--erp-color-text-primary); font-size: 12px; text-decoration: none; }.file-input { display: block; width: 100%; margin: 16px 0 12px; padding: 12px; border: 1px dashed var(--erp-input-border); border-radius: 8px; }
+.legacy-contact-data { @include detail.inset; margin-top: 16px; padding: 14px; }
+.legacy-contact-data header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--erp-color-border); }
+.legacy-contact-data header span, .legacy-contact-data dt { color: var(--erp-color-text-regular); font-size: 10px; }
+.legacy-contact-data dl { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; margin: 0; }
+.legacy-contact-data dl > div { min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--erp-color-border); }
+.legacy-contact-data dt { margin-bottom: 3px; }.legacy-contact-data dd { overflow-wrap: anywhere; margin: 0; color: var(--erp-color-text-primary); font-size: 12px; }
+.history-panel { min-height: 0; padding: 16px; background: transparent; font-family: var(--erp-font-body); font-size: 13px; }.history-panel > header { height: auto; display: flex; align-items: center; justify-content: space-between; min-height: 48px; flex-wrap: wrap; gap: 14px; }.history-panel h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 20px; font-family: var(--erp-font-body); line-height: 28px; }.history-panel header p { margin: 2px 0 0; color: var(--erp-color-text-regular); font-size: 11px; }.history-panel header :deep(.el-button) { width: 124px; height: 32px; border-radius: 8px; }
+.current-employment { @include detail.inset; height: auto; display: flex; align-items: center; gap: 14px; margin-top: 14px; padding: 14px; min-height: 80px; flex-wrap: wrap; }.history-avatar { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: var(--erp-color-text-inverse); background: var(--erp-color-brand); font-weight: 600; }.current-employment > div { flex: 1; }.current-employment strong { color: var(--erp-color-text-primary); font-size: 15px; }.current-employment p, .current-employment small { margin: 5px 0 0; color: var(--erp-color-text-regular); font-size: 11px; }.history-timeline { @include detail.inset; min-height: 0; margin-top: 14px; padding: 0 14px; }.history-timeline article { min-height: 0; display: grid; grid-template-columns: 150px minmax(0,1fr); padding: 14px 0; border-bottom: 1px solid var(--erp-color-border); gap: 14px; }.history-date { display: flex; flex-direction: column; gap: 4px; }.history-date strong { font-size: 12px; }.history-date span, .history-timeline small { color: var(--erp-color-text-regular); font-size: 10px; }.history-timeline h3 { margin: 0; color: var(--erp-color-text-primary); font-size: 14px; }.history-timeline p { margin: 6px 0; color: var(--erp-color-text-primary); font-size: 13px; overflow-wrap: anywhere; }
+.leave-description { margin: 0 0 14px; color: var(--erp-color-text-regular); font-size: 12px; }.leave-options { display: flex; flex-direction: column; gap: 12px; }.cus05-leave-dialog :deep(.el-alert) { margin-bottom: 14px; }.cus05-leave-dialog :deep(.el-select), .cus05-leave-dialog :deep(.el-date-editor) { width: 100%; }
+:global(.cus05-contact-drawer .app-window-dialog__header) { height: auto; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--erp-color-border); color: var(--erp-color-text-primary); font-size: 16px; font-weight: 600; min-height: 56px; font-family: var(--erp-font-body); }:global(.cus05-contact-drawer .app-window-dialog__body) { padding: 16px; font-size: 13px; }:global(.cus05-contact-drawer .app-window-dialog__footer) { height: auto; display: flex; align-items: center; justify-content: flex-end; padding: 12px 16px; border-top: 1px solid var(--erp-color-border); min-height: 56px; }:global(.cus05-contact-drawer .app-window-dialog__footer .el-button) { width: 96px; height: 32px; border-radius: 8px; }:global(.cus05-contact-drawer .app-window-dialog__footer .el-button--primary) { width: 120px; border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
+:global(.customer-detail-drawer .app-window-dialog__header) { height: 64px; }
+:global(.customer-detail-drawer .app-window-dialog__body) { padding: 16px 24px; }
+:global(.customer-detail-drawer .app-window-dialog__footer) { height: 64px; }
+:global(.cus05-history-drawer .app-window-dialog__body) { padding: 0; }
+
+@media (max-width: 980px) { .form-grid { grid-template-columns: 1fr; } }
+
+:global(.app-window-dialog.cus05-contact-drawer), :global(.app-window-dialog.cus05-history-drawer) { background: var(--erp-color-surface); border: 1px solid var(--erp-color-border); box-shadow: var(--erp-shadow-md); container-type:inline-size; font-family:var(--erp-font-body); color:var(--erp-color-text-primary); }
+
+.history-timeline article:last-child { border-bottom:0; }
+
+@container (max-width:600px) { .history-timeline article { grid-template-columns:minmax(0,1fr); gap:8px; } }
 </style>
+

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Setting } from '@element-plus/icons-vue'
@@ -107,27 +108,28 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
 </script>
 
 <template>
-  <section class="material-page" data-testid="material-inventory-page">
+  <section class="material-page erp-glass-list" data-testid="material-inventory-page">
     <div v-if="!canView" class="empty-state"><h1>无权查看材料库存</h1><p>请联系管理员开通材料库存查看权限。</p></div>
     <template v-else>
-      <header class="page-heading">
+      <section v-glass-spotlight class="erp-list-filter">
+      <header class="page-heading erp-list-heading">
         <h1>材料库存</h1><ElRadioGroup v-model="stockKind" class="stock-kind-switch" aria-label="库存性质" @change="stockKindChanged"><ElRadioButton value="RAW">原材料</ElRadioButton><ElRadioButton value="SEMI">半成品</ElRadioButton></ElRadioGroup>
         <span class="total-count">共 {{ total }} 条</span>
         <span class="heading-space" />
         <div class="head-actions">
-          <ElButton :icon="Refresh" @click="refresh">刷新</ElButton>
-          <ElButton v-if="stockKind === 'SEMI' &amp;&amp; (auth.user?.is_superuser || auth.hasPermission('inventory.view_internalsemifinishedreceipt'))" @click="router.push({name: 'semi-receipt-records'})">入库记录</ElButton><ElButton v-if="stockKind === 'RAW' &amp;&amp; canViewReceipts" @click="router.push({ name: 'material-inbound-details' })">入库明细</ElButton>
+          <ElButton class="erp-button-motion" :icon="Refresh" @click="refresh">刷新</ElButton>
+          <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' &amp;&amp; (auth.user?.is_superuser || auth.hasPermission('inventory.view_internalsemifinishedreceipt'))" @click="router.push({name: 'semi-receipt-records'})">入库记录</ElButton><ElButton class="erp-button-motion" v-if="stockKind === 'RAW' &amp;&amp; canViewReceipts" @click="router.push({ name: 'material-inbound-details' })">入库明细</ElButton>
           <ElDropdown v-if="canConfigure">
-            <ElButton :icon="Setting">配置</ElButton>
+            <ElButton class="erp-button-motion" :icon="Setting">配置</ElButton>
             <template #dropdown><ElDropdownMenu><ElDropdownItem @click="openConfig('warehouse')">仓库信息</ElDropdownItem><ElDropdownItem @click="openConfig('location')">库区设置</ElDropdownItem></ElDropdownMenu></template>
           </ElDropdown>
-          <ElButton v-if="stockKind === 'SEMI' && canReceiveTubeCoating" type="primary" :icon="Plus" @click="router.push({ name: 'inventory-tube-return' })">喷塑入库</ElButton>
-          <ElButton v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="router.push({ name: 'manual-material-inbound' })">材料入库</ElButton>
+          <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' && canReceiveTubeCoating" type="primary" :icon="Plus" @click="router.push({ name: 'inventory-tube-return' })">喷塑入库</ElButton>
+          <ElButton class="erp-button-motion" v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="router.push({ name: 'manual-material-inbound' })">材料入库</ElButton>
         </div>
       </header>
 
-      <section class="surface filters-card" aria-label="材料库存筛选">
-        <form class="filter-row" :class="{ 'filter-row--semi': stockKind === 'SEMI' }" @submit.prevent="search">
+      <section class="filters-card" aria-label="材料库存筛选">
+        <form class="filter-row erp-list-filters" :class="{ 'filter-row--semi': stockKind === 'SEMI' }" @submit.prevent="search">
           <ElInput v-model="filters.q" class="filter-control filter-control--search" clearable aria-label="搜索原料名称、规格、拼音或首字母" placeholder="搜索原料名称、规格、拼音或首字母">
             <template #suffix><img class="field-icon" :src="searchIcon" alt="" aria-hidden="true" /></template>
           </ElInput>
@@ -140,14 +142,14 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
           </ElSelect>
           <ElSelect v-model="filters.warehouseId" class="filter-control filter-control--warehouse" clearable aria-label="材料仓" placeholder="材料仓：全部" @change="warehouseChanged"><ElOption v-for="item in warehousesForFilter" :key="item.id" :value="item.id" :label="`${item.warehouse_number} · ${item.warehouse_name}`" /></ElSelect>
           <ElSelect v-model="filters.zoneId" class="filter-control filter-control--zone" clearable aria-label="库区" placeholder="库区：全部" @change="search"><ElOption v-for="item in zonesForFilter" :key="item.id" :value="item.id" :label="item.zone_name" /></ElSelect>
-          <ElButton type="primary" native-type="submit">查询</ElButton>
-          <ElButton @click="reset">重置</ElButton>
+          <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="reset">重置</ElButton><ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton></div>
         </form>
       </section>
 
-      <section class="surface inventory-table">
-        <header><div><h2>材料库存明细</h2><span>{{ stockKind === 'SEMI' && publicStock ? '公共半成品按实物属性、工艺和单位汇总，不关联采购批次' : publicStock ? '原材料按实物属性和库区汇总' : '原材料按长度、材料仓和库区汇总；半成品按订单、部位和工艺区分' }}</span></div><span>共 {{ total }} 条</span></header>
-        <div class="table-shell">
+      </section>
+      <section class="inventory-table erp-list-data">
+        <header class="erp-list-toolbar"><div><h2>材料库存明细</h2><span>{{ stockKind === 'SEMI' && publicStock ? '公共半成品按实物属性、工艺和单位汇总，不关联采购批次' : publicStock ? '原材料按实物属性和库区汇总' : '原材料按长度、材料仓和库区汇总；半成品按订单、部位和工艺区分' }}</span></div><span>共 {{ total }} 条</span></header>
+        <div class="table-shell erp-list-table-frame">
           <ElTable v-loading="loading" :data="rows" height="100%" stripe empty-text="暂无材料库存" row-key="inventory_key">
           <ElTableColumn type="index" label="序号" width="66" align="center" class-name="sequence-column" label-class-name="sequence-column" :index="(index: number) => (page - 1) * pageSize + index + 1" />
           <ElTableColumn label="材料分类" width="104"><template #default="{ row }">{{ sectionLabel(row) }}</template></ElTableColumn>
@@ -166,7 +168,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
           <ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="production_task_number" label="生产单号" min-width="150" /><ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="product_name" label="产品" min-width="150" /><ElTableColumn prop="latest_inbound_date" label="最近入库日期" width="129" align="center" />
           </ElTable>
         </div>
-        <footer class="page-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" layout="sizes, prev, pager, next" :total="total" :page-sizes="[20, 50, 100]" @current-change="loadRows" @size-change="page = 1; loadRows()" /></footer>
+        <footer class="page-footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" layout="sizes, prev, pager, next" :total="total" :page-sizes="[20, 50, 100]" @current-change="loadRows" @size-change="page = 1; loadRows()" /></footer>
       </section>
       <WarehouseConfigurationDialogs ref="warehouseConfiguration" warehouse-type="MATERIAL" @saved="loadOptions" />
     </template>
@@ -174,371 +176,18 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-
-.material-page {
-  box-sizing: border-box;
-  height: calc(100dvh - 92px);
-  min-height: 0;
-  padding: 28px 28px 26px;
-  overflow-y: auto;
-  background: var(--erp-page-background);
-  color: token.$crm-text-primary;
-  font-family: token.$crm-font-body;
-}
-
-.page-heading,
-.head-actions,
-.inventory-table header,
-.inventory-table header > div,
-.page-footer {
-  display: flex;
-  align-items: center;
-}
-
-.page-heading {
-  height: 46px;
-  gap: 24px;
-}
-
-.page-heading h1 {
-  margin: 0;
-  font: 700 34px/44px token.$crm-font-display;
-  letter-spacing: -1px;
-  white-space: nowrap;
-}
-
-.stock-kind-switch {
-  --el-color-primary: #{token.$crm-primary};
-}
-
-.stock-kind-switch :deep(.el-radio-button) {
-  --el-radio-button-checked-text-color: #{token.$crm-primary};
-  --el-radio-button-checked-bg-color: #{token.$crm-color-selected};
-  --el-radio-button-checked-border-color: #{token.$crm-primary};
-}
-
-.stock-kind-switch :deep(.el-radio-button__inner) {
-  box-sizing: border-box;
-  height: 32px;
-  padding: 0 14px;
-  border-radius: 0;
-  outline: 1px solid token.$crm-border-default;
-  background: token.$crm-color-surface;
-  color: token.$crm-text-primary;
-  font-size: 13px;
-  line-height: 30px;
-}
-
-.stock-kind-switch :deep(.el-radio-button:first-child .el-radio-button__inner) {
-  border-radius: token.$crm-radius-2 0 0 token.$crm-radius-2;
-}
-
-.stock-kind-switch :deep(.el-radio-button:last-child .el-radio-button__inner) {
-  border-radius: 0 token.$crm-radius-2 token.$crm-radius-2 0;
-}
-
-.stock-kind-switch :deep(.el-radio-button.is-active .el-radio-button__inner) {
-  outline-color: token.$crm-primary;
-}
-
-.stock-kind-switch :deep(.el-radio-button__original-radio:focus-visible + .el-radio-button__inner) {
-  outline-color: token.$crm-focus;
-}
-
-.total-count {
-  color: token.$crm-text-secondary;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.heading-space { flex: 1; }
-
-.head-actions {
-  gap: 10px;
-}
-
-.head-actions :deep(.el-button) {
-  height: 32px;
-  margin-left: 0;
-  border-radius: 5px;
-  padding: 0 16px;
-  font-size: 13px;
-}
-
-.head-actions :deep(.el-button--primary) {
-  --el-button-bg-color: #{token.$crm-primary};
-  --el-button-border-color: #{token.$crm-primary};
-  --el-button-hover-bg-color: #{token.$crm-primary-hover};
-  --el-button-hover-border-color: #{token.$crm-primary-hover};
-}
-
-.surface {
-  border: 1px solid token.$crm-border-default;
-  border-radius: 5px;
-  background: token.$crm-color-surface;
-}
-
-.filters-card {
-  box-sizing: border-box;
-  height: 60px;
-  padding: 13px 16px;
-  margin-top: 10px;
-}
-
-.filter-row {
-  display: grid;
-  height: 32px;
-  grid-template-columns: minmax(260px, 410px) 150px 210px 170px 82px 82px;
-  gap: 14px;
-  align-items: stretch;
-}
-
-.filter-row--semi {
-  grid-template-columns: minmax(260px, 410px) 150px 150px 210px 170px 82px 82px;
-}
-
-.filter-control {
-  width: 100%;
-  height: 32px;
-}
-
-.filter-control :deep(.el-input__wrapper),
-.filter-control :deep(.el-select__wrapper),
-.filter-row :deep(.el-button) {
-  min-height: 32px;
-  border-radius: token.$crm-radius-2;
-}
-
-.filter-control :deep(.el-input__wrapper),
-.filter-control :deep(.el-select__wrapper) {
-  padding: 0 12px;
-  background: token.$crm-color-surface;
-  box-shadow: 0 0 0 1px token.$crm-border-default inset;
-}
-
-.filter-control :deep(.el-input__wrapper:hover),
-.filter-control :deep(.el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px token.$crm-border-strong inset;
-}
-
-.filter-control :deep(.el-input__wrapper.is-focus),
-.filter-control :deep(.el-select__wrapper.is-focused) {
-  box-shadow: 0 0 0 1px token.$crm-focus inset, 0 0 0 2px rgba(56, 152, 236, 0.18);
-}
-
-.filter-control :deep(.el-input__inner),
-.filter-control :deep(.el-select__placeholder),
-.filter-control :deep(.el-select__selected-item) {
-  color: token.$crm-text-secondary;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.filter-control :deep(.el-input__inner::placeholder) {
-  color: token.$crm-text-muted;
-}
-
-.field-icon {
-  display: block;
-  width: 16px;
-  height: 16px;
-  opacity: 0.72;
-}
-
-.filter-row :deep(.el-button) {
-  height: 32px;
-  margin-left: 0;
-  padding: 0 16px;
-  font-size: 13px;
-}
-
-.filter-row :deep(.el-button--primary) {
-  --el-button-bg-color: #{token.$crm-primary};
-  --el-button-border-color: #{token.$crm-primary};
-  --el-button-hover-bg-color: #{token.$crm-primary-hover};
-  --el-button-hover-border-color: #{token.$crm-primary-hover};
-}
-
-.inventory-table {
-  display: flex;
-  height: calc(100dvh - 244px);
-  min-height: 418px;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.inventory-table header {
-  flex: 0 0 51px;
-  justify-content: space-between;
-  padding: 0 16px;
-}
-
-.inventory-table header > div {
-  gap: 34px;
-  min-width: 0;
-}
-
-.inventory-table h2 {
-  margin: 0;
-  font-size: 16px;
-  line-height: 19px;
-  white-space: nowrap;
-}
-
-.inventory-table header span {
-  overflow: hidden;
-  color: token.$crm-text-secondary;
-  font-size: 12px;
-  line-height: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.table-shell {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
-  overflow: hidden;
-}
-
-.table-shell :deep(.el-table) {
-  --el-table-border-color: #dad5ca;
-  --el-table-header-bg-color: #f1ede4;
-  --el-table-row-hover-bg-color: #fff6ea;
-  color: token.$crm-text-primary;
-  background: transparent;
-  font-size: 12px;
-}
-
-.table-shell :deep(.el-table::before),
-.table-shell :deep(.el-table__inner-wrapper::before) {
-  background-color: #dad5ca;
-}
-
-.table-shell :deep(.el-table__header th.el-table__cell) {
-  height: 44px;
-  padding: 0;
-  background: #f1ede4;
-  color: token.$crm-text-primary;
-  font-weight: 500;
-}
-
-.table-shell :deep(.el-table__body td.el-table__cell) {
-  height: 58px;
-  padding: 0;
-  border-bottom-color: #dad5ca;
-}
-
-.table-shell :deep(.el-table__body tr:nth-child(odd) td.el-table__cell) {
-  background: #fdfcf7;
-}
-
-.table-shell :deep(.el-table__body tr:nth-child(even) td.el-table__cell) {
-  background: #faf9f5;
-}
-
-.table-shell :deep(.el-table .cell) {
-  padding-right: 8px;
-  padding-left: 8px;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.table-shell :deep(.stock-quantity) {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.table-shell :deep(.sequence-column .cell) {
-  padding-right: 8px !important;
-  padding-left: 8px !important;
-  white-space: nowrap !important;
-}
-
-.page-footer {
-  box-sizing: border-box;
-  height: 48px;
-  flex: 0 0 48px;
-  justify-content: space-between;
-  margin-top: 0;
-  padding: 0 14px;
-  border-top: 1px solid token.$crm-border-default;
-  color: token.$crm-text-secondary;
-  background: token.$crm-color-surface;
-  font-size: 12px;
-}
-
-.page-footer :deep(.el-pagination) {
-  --el-pagination-button-width: 38px;
-  --el-pagination-button-height: 32px;
-  --el-pagination-hover-color: #{token.$crm-primary};
-  height: 32px;
-  gap: 10px;
-}
-
-.page-footer :deep(.el-pagination__sizes) {
-  width: 136px;
-  margin-right: 16px;
-}
-
-.page-footer :deep(.el-pagination__sizes .el-select) {
-  width: 136px;
-}
-
-.page-footer :deep(.el-pagination__sizes .el-select__wrapper) {
-  min-height: 32px;
-  border-radius: token.$crm-radius-2;
-  background: token.$crm-color-surface;
-  box-shadow: 0 0 0 1px token.$crm-border-default inset;
-}
-
-.page-footer :deep(.btn-prev),
-.page-footer :deep(.btn-next),
-.page-footer :deep(.el-pager li) {
-  min-width: 38px;
-  width: 38px;
-  height: 32px;
-  margin: 0;
-  border: 1px solid token.$crm-border-default;
-  border-radius: token.$crm-radius-2;
-  color: token.$crm-text-primary;
-  background: token.$crm-color-surface;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.page-footer :deep(.el-pager) {
-  gap: 10px;
-}
-
-.page-footer :deep(.el-pager li.is-active) {
-  border-color: token.$crm-primary;
-  color: token.$crm-text-primary;
-  background: token.$crm-color-surface;
-}
-
-.page-footer :deep(.btn-prev:disabled),
-.page-footer :deep(.btn-next:disabled) {
-  color: token.$crm-text-muted;
-  opacity: 0.55;
-}
-
-.empty-state {
-  padding: 80px;
-  text-align: center;
-  color: token.$crm-text-secondary;
-}
-
-@media (max-width: 1400px) {
-  .filter-row {
-    grid-template-columns: minmax(260px, 1fr) 140px minmax(180px, 210px) 150px 82px 82px;
-  }
-
-  .filter-row--semi {
-    grid-template-columns: minmax(260px, 1fr) 140px 140px minmax(180px, 210px) 150px 82px 82px;
-  }
-}
+.head-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.total-count { color: var(--erp-color-text-secondary); font-size: 13px; white-space: nowrap; }
+.stock-kind-switch { flex: none; }
+.filter-control--search { width: min(100%, 410px); }
+.filter-control--section, .filter-control--status { width: 150px; }
+.filter-control--warehouse { width: 210px; }
+.filter-control--zone { width: 170px; }
+.field-icon { display: block; width: 16px; height: 16px; opacity: .72; }
+.inventory-table header { justify-content: space-between; }
+.inventory-table header > div { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.inventory-table h2 { margin: 0; font-size: 16px; }
+.inventory-table header span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.table-shell :deep(.stock-quantity) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-state { padding: 80px; text-align: center; color: var(--erp-color-text-secondary); }
 </style>

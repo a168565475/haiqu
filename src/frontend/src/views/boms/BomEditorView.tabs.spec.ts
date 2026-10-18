@@ -1,10 +1,11 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElDialog } from 'element-plus'
+import ElementPlus from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/boms'
 import * as productsApi from '@/api/products'
 import BomEditorView from './BomEditorView.vue'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 
 const auth = vi.hoisted(() => ({ editable: true }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { bomId: 'b1' } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
@@ -92,7 +93,7 @@ describe('BOM 编辑页页签与核对集成', () => {
     const wrapper = open(); await flushPromises()
     try {
       expect(wrapper.findComponent(InquiryProductDialog).props('modelValue')).toBe(false)
-      const readonly = wrapper.findAllComponents(ElDialog).find(dialog => dialog.props('title') === '产品信息')!
+      const readonly = wrapper.findAllComponents(AppWindowDialog).find(dialog => dialog.props('title') === '产品信息')!
       expect(readonly.props('modelValue')).toBe(true)
       readonly.vm.$emit('update:modelValue', false); await flushPromises()
       expect(readonly.props('modelValue')).toBe(false)

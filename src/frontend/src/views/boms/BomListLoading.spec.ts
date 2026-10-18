@@ -61,7 +61,7 @@ describe('BOM 列表分区读取', () => {
     expect(api.fetchBoms).toHaveBeenCalledTimes(3)
     expect(api.fetchBoms).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, q: undefined, status: 'VERIFIED', product_category_id: 'category-1', updated_after: '2026-10-01', updated_before: '2026-10-16' }))
     expect(wrapper.find('.status-tabs').exists()).toBe(false)
-    expect(wrapper.find('.filter-row .bom-filter-actions').exists()).toBe(true)
+    expect(wrapper.find('.erp-list-toolbar .bom-filter-actions').exists()).toBe(true)
     wrapper.unmount()
   })
 })

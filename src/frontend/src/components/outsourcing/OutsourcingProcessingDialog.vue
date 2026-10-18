@@ -122,8 +122,8 @@ function confirm(): void {
 @use '../../styles/crm/tokens' as token;
 
 .outsourcing-picker-layout { display: grid; min-height: 0; height: 100%; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; }
-.picker-source-panel, .picker-table-panel { min-width: 0; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
-.picker-source-panel h3, .picker-panel-heading { margin: 0; border-bottom: 1px solid token.$crm-border-default; background: #f1eadf; }
+.picker-source-panel, .picker-table-panel { min-width: 0; overflow: hidden; border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); }
+.picker-source-panel h3, .picker-panel-heading { margin: 0; border-bottom: 1px solid token.$crm-border-default; background: var(--erp-color-subtle); }
 .picker-source-panel h3 { height: 44px; padding: 0 16px; font-size: 16px; line-height: 44px; }
 .picker-source-panel dl { display: grid; gap: 16px; margin: 0; padding: 18px 16px; }
 .picker-source-panel dl > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
@@ -133,14 +133,14 @@ function confirm(): void {
 .picker-product-summary dd { display: flex; flex-direction: column; align-items: flex-start; }
 .picker-product-summary strong { font-weight: 600; }
 .picker-product-summary small { display: block; margin-top: 3px; color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; line-height: 19px; }
-.picker-craft-tag { display: inline-flex; height: 24px; align-items: center; padding: 0 12px; border-radius: 999px; color: #fff; background: #bf6d19; font-size: 12px; }
+.picker-craft-tag { display: inline-flex; height: 24px; align-items: center; padding: 0 12px; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-brand-background); font-size: 12px; }
 .picker-table-panel { display: flex; flex-direction: column; }
 .picker-panel-heading { display: flex; min-height: 44px; align-items: center; justify-content: space-between; padding: 0 16px; background: token.$crm-color-surface; }
 .picker-panel-heading h3 { margin: 0; font-size: 16px; }
 .picker-table-wrap { min-height: 0; flex: 1; overflow: auto; }
-.picker-table { width: 100%; min-width: 1110px; table-layout: fixed; border-spacing: 0; border-collapse: separate; color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
-.picker-table th { position: sticky; z-index: 1; top: 0; height: 44px; padding: 0 16px; border-bottom: 1px solid token.$crm-border-default; color: token.$crm-text-primary; background: #f1eadf; font-size: 11px; font-weight: 600; line-height: 16px; text-align: left; white-space: nowrap; }
-.picker-table td { height: 40px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; text-overflow: ellipsis; white-space: nowrap; }
+.picker-table { width: 100%; min-width: 1110px; table-layout: fixed; border-spacing: 0; border-collapse: separate; color: var(--erp-table-text); font-size: 12px; line-height: 18px; }
+.picker-table th { position: sticky; z-index: 1; top: 0; height: 44px; padding: 0 16px; border-bottom: 1px solid var(--erp-table-grid); color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; font-weight: 600; line-height: 16px; text-align: left; white-space: nowrap; }
+.picker-table td { height: 40px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid var(--erp-table-grid); background: var(--erp-table-body-fill); text-overflow: ellipsis; white-space: nowrap; }
 .picker-table .col-select { width: 64px; }
 .picker-table .col-name { width: 150px; }
 .picker-table .col-category { width: 124px; }
@@ -151,11 +151,11 @@ function confirm(): void {
 .picker-table .col-outsourced { width: 116px; }
 .picker-table .col-inbound { width: 150px; }
 .picker-table tbody tr:not(.picker-empty-row) { cursor: pointer; }
-.picker-table tbody tr.is-selected td { background: #fff7f1; }
+.picker-table tbody tr.is-selected td { background: var(--erp-color-selected); }
 .picker-table tbody tr.is-disabled { cursor: not-allowed; }
-.picker-table tbody tr.is-disabled td { color: token.$crm-text-secondary; background: #f7f5f1; }
-.picker-table strong { color: token.$crm-text-primary; font-size: 13px; font-weight: 600; line-height: 20px; }
-.picker-empty-row td { height: 320px; color: token.$crm-text-secondary; text-align: center; }
+.picker-table tbody tr.is-disabled td { color: var(--erp-table-text); background: var(--erp-color-disabled); }
+.picker-table strong { color: var(--erp-table-text); font-size: 13px; font-weight: 600; line-height: 20px; }
+.picker-empty-row td { height: 320px; color: var(--erp-table-text); text-align: center; }
 .picker-dialog-footer { display: flex; align-items: center; justify-content: space-between; color: token.$crm-text-secondary; }
 .picker-dialog-footer > div { display: flex; gap: 12px; }
 

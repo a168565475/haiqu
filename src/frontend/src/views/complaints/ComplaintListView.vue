@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -185,78 +186,121 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="complaint-page" :class="{ embedded }">
+  <section class="complaint-page erp-glass-list" :class="{ embedded }">
     <el-empty v-if="!canView" description="当前账号无权查看客诉" :image-size="72" />
     <template v-else>
       <el-alert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false" />
       <el-alert v-if="statsError" type="warning" :title="`统计加载失败：${statsError}`" :closable="false"><template #default><el-button link @click="loadStats">重试统计</el-button></template></el-alert>
-      <header v-if="!embedded" class="page-heading">
-        <div><p class="eyebrow">SERVICE RECOVERY</p><h1>{{ embedded ? '客户客诉' : '客诉管理' }}</h1><p>{{ embedded ? '当前客户的客诉受理、责任协同与处理进度' : '跟踪受理、责任协同、处理进度与客户确认；赔付由财务模块执行' }}</p></div>
-        <div class="heading-actions"><el-button v-if="!embedded" :icon="DataAnalysis" @click="showAnalysis = !showAnalysis">{{ showAnalysis ? '收起分析' : '展开分析' }}</el-button><el-button v-if="canCreate" type="primary" :icon="Plus" @click="createVisible = true">新建客诉</el-button></div>
+      <section v-glass-spotlight class="erp-list-filter" :class="{ 'embedded-filter-group': embedded }">
+      <header v-if="!embedded" class="page-heading erp-list-heading">
+        <div><p class="eyebrow">SERVICE RECOVERY</p><h1>{{ embedded ? '客户客诉' : '客诉管理' }}</h1></div>
+        <div class="heading-actions"><el-button class="erp-button-motion" v-if="!embedded" :icon="DataAnalysis" @click="showAnalysis = !showAnalysis">{{ showAnalysis ? '收起分析' : '展开分析' }}</el-button><el-button class="erp-button-motion" v-if="canCreate" type="primary" :icon="Plus" @click="createVisible = true">新建客诉</el-button></div>
       </header>
-      <div v-else class="embedded-toolbar">
+      <div v-else class="embedded-toolbar erp-list-toolbar">
         <span>当前客户的客诉受理、责任协同与处理进度</span>
-        <el-button v-if="canCreate" type="primary" :icon="Plus" @click="createVisible = true">新建客诉</el-button>
+        <el-button class="erp-button-motion" v-if="canCreate" type="primary" :icon="Plus" @click="createVisible = true">新建客诉</el-button>
       </div>
 
-      <section class="metric-strip" :aria-busy="statsLoading" :aria-label="statsLoading ? '正在加载客诉统计' : '客诉统计'"><article v-for="card in metricCards" :key="card.label" :class="`metric--${card.tone}`"><span>{{ card.label }}</span><strong>{{ statsLoading ? '…' : card.value }}</strong><small>{{ card.note }}</small></article></section>
+      <section v-if="embedded" class="metric-strip" :aria-busy="statsLoading" :aria-label="statsLoading ? '正在加载客诉统计' : '客诉统计'"><article v-for="card in metricCards" :key="card.label" :class="`metric--${card.tone}`"><span>{{ card.label }}</span><strong>{{ statsLoading ? '…' : card.value }}</strong><small>{{ card.note }}</small></article></section>
       <el-alert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" class="error"><template #default><el-button link type="primary" @click="refresh">重试</el-button></template></el-alert>
 
-      <section class="filter-panel">
+      <section class="filter-panel erp-list-filters">
         <el-input v-model="filters.q" :prefix-icon="Search" clearable placeholder="搜索客户 / 客诉编号 / 标题" @keyup.enter="applyFilters" />
         <el-select v-model="filters.complaint_type_item_id" clearable placeholder="客诉类型：全部"><el-option v-for="item in complaintTypes" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.severity_item_id" clearable placeholder="严重程度：全部"><el-option v-for="item in severities" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.status" clearable placeholder="处理状态：全部"><el-option v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></el-select>
         <el-select v-model="filters.owner_employee_id" clearable placeholder="负责人：全部"><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.sla_status" clearable placeholder="SLA：全部"><el-option label="正常" value="NORMAL" /><el-option label="即将到期" value="AT_RISK" /><el-option label="已超时" value="OVERDUE" /><el-option label="已结束" value="COMPLETED" /></el-select>
-        <el-button type="primary" @click="applyFilters">查询</el-button><el-button @click="resetFilters">重置</el-button>
+        <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</el-button></div>
+      </section>
+
       </section>
 
       <section v-if="showAnalysis && !embedded" class="analysis-grid">
-        <article><h2>客诉类型分布</h2><div v-if="stats?.by_type.length" class="bars"><p v-for="item in stats.by_type.slice(0, 5)" :key="item.complaint_type_item_id"><span>{{ item.complaint_type_item__display_name }}</span><i><b :style="{ width: `${Math.max(item.count / maxTypeCount * 100, 6)}%` }" /></i><strong>{{ item.count }}</strong></p></div><div v-else class="empty">暂无数据</div></article>
-        <article><h2>SLA 处理状态</h2><div class="sla-grid"><p><span>正常处理中</span><strong>{{ stats?.sla.normal ?? '—' }}</strong></p><p class="risk"><span>24 小时内到期</span><strong>{{ stats?.sla.at_risk ?? '—' }}</strong></p><p class="overdue"><span>已超时</span><strong>{{ stats?.sla.overdue ?? '—' }}</strong></p><p class="done"><span>已结束</span><strong>{{ stats ? stats.closed + stats.cancelled : '—' }}</strong></p></div></article>
-        <article><h2>责任协同概览</h2><div v-if="stats?.by_owner.length" class="owners"><p v-for="item in stats.by_owner.slice(0, 5)" :key="item.owner_employee_id"><span>{{ item.owner_employee__display_name }}</span><strong>{{ item.count }} 条</strong></p></div><div v-else class="empty">暂无数据</div></article>
+        <article class="erp-list-data"><h2>客诉类型分布</h2><div v-if="stats?.by_type.length" class="bars"><p v-for="item in stats.by_type.slice(0, 5)" :key="item.complaint_type_item_id"><span>{{ item.complaint_type_item__display_name }}</span><i><b :style="{ width: `${Math.max(item.count / maxTypeCount * 100, 6)}%` }" /></i><strong>{{ item.count }}</strong></p></div><div v-else class="empty">暂无数据</div></article>
+        <article class="erp-list-data"><h2>SLA 处理状态</h2><div class="sla-grid"><p><span>正常处理中</span><strong>{{ stats?.sla.normal ?? '—' }}</strong></p><p class="risk"><span>24 小时内到期</span><strong>{{ stats?.sla.at_risk ?? '—' }}</strong></p><p class="overdue"><span>已超时</span><strong>{{ stats?.sla.overdue ?? '—' }}</strong></p><p class="done"><span>已结束</span><strong>{{ stats ? stats.closed + stats.cancelled : '—' }}</strong></p></div></article>
+        <article class="erp-list-data"><h2>责任协同概览</h2><div v-if="stats?.by_owner.length" class="owners"><p v-for="item in stats.by_owner.slice(0, 5)" :key="item.owner_employee_id"><span>{{ item.owner_employee__display_name }}</span><strong>{{ item.count }} 条</strong></p></div><div v-else class="empty">暂无数据</div></article>
       </section>
 
-      <section class="table-card">
-        <div class="table-toolbar"><span>共 {{ total }} 条，已选择 {{ selectedRows.length }} 条</span><div><el-dropdown><el-button :icon="Setting">列设置</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item v-for="(_, key) in visibleColumns" :key="key"><el-checkbox v-model="visibleColumns[key]">{{ ({ customer: '客户', order: '关联订单', type: '类型', severity: '等级', status: '状态', owner: '负责人', sla: 'SLA', updated: '最近更新' } as Record<string, string>)[key] }}</el-checkbox></el-dropdown-item></el-dropdown-menu></template></el-dropdown><el-button :icon="Download" @click="exportCurrentPage">导出当前页</el-button><el-button :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button></div></div>
-        <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的真实客诉" @selection-change="selectedRows = $event">
+      <section class="table-card erp-list-data">
+        <div class="table-toolbar erp-list-toolbar"><span>共 {{ total }} 条，已选择 {{ selectedRows.length }} 条</span><div><el-dropdown><el-button class="erp-button-motion" :icon="Setting">列设置</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item v-for="(_, key) in visibleColumns" :key="key"><el-checkbox v-model="visibleColumns[key]">{{ ({ customer: '客户', order: '关联订单', type: '类型', severity: '等级', status: '状态', owner: '负责人', sla: 'SLA', updated: '最近更新' } as Record<string, string>)[key] }}</el-checkbox></el-dropdown-item></el-dropdown-menu></template></el-dropdown><el-button class="erp-button-motion" :icon="Download" @click="exportCurrentPage">导出当前页</el-button><el-button class="erp-button-motion" :icon="Refresh" :loading="loading" @click="refresh">刷新</el-button></div></div>
+        <div class="erp-list-table-frame" :class="{ 'embedded-table-group': embedded }">
+        <el-table :height="embedded ? undefined : '100%'" :max-height="embedded ? 'min(520px, 56vh)' : undefined" v-loading="loading" :data="rows" row-key="id" empty-text="暂无符合条件的真实客诉" @selection-change="selectedRows = $event">
           <el-table-column v-if="embedded" type="selection" width="48" />
           <el-table-column label="客诉编号" min-width="150"><template #default="{ row }"><button class="code-link" @click="openDetail(row)">{{ row.complaint_code }}</button></template></el-table-column>
           <el-table-column v-if="visibleColumns.customer" label="客户" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.customer.account_name }}</template></el-table-column>
           <el-table-column v-if="visibleColumns.order" label="关联订单" min-width="150"><template #default="{ row }">{{ row.source_order_reference || '—' }}</template></el-table-column>
           <el-table-column v-if="visibleColumns.type" label="类型" min-width="116"><template #default="{ row }">{{ row.complaint_type.display_name }}</template></el-table-column>
-          <el-table-column v-if="visibleColumns.severity" label="等级" width="96"><template #default="{ row }"><span class="solid-tag" :class="`solid-tag--${severityClass(row.severity.item_code)}`">{{ row.severity.display_name }}</span></template></el-table-column>
-          <el-table-column v-if="visibleColumns.status" label="状态" min-width="120"><template #default="{ row }"><span class="solid-tag" :class="`solid-tag--${statusClass(row)}`">{{ row.status_label }}</span></template></el-table-column>
+          <el-table-column v-if="visibleColumns.severity" label="等级" width="96"><template #default="{ row }"><span class="solid-tag" :class="['erp-list-tag', `erp-list-tag--${severityClass(row.severity.item_code)}`]">{{ row.severity.display_name }}</span></template></el-table-column>
+          <el-table-column v-if="visibleColumns.status" label="状态" min-width="120"><template #default="{ row }"><span class="solid-tag" :class="['erp-list-tag', `erp-list-tag--${statusClass(row)}`]">{{ row.status_label }}</span></template></el-table-column>
           <el-table-column v-if="visibleColumns.owner" label="负责人" min-width="116"><template #default="{ row }">{{ row.owner.display_name }}</template></el-table-column>
           <el-table-column v-if="visibleColumns.sla" label="SLA" min-width="188"><template #default="{ row }"><span :class="{ overdue: row.sla_status === 'OVERDUE' }">{{ slaText(row) }}</span></template></el-table-column>
           <el-table-column v-if="visibleColumns.updated" label="最近更新" min-width="170"><template #default="{ row }">{{ complaintDate(row.updated_at) }}</template></el-table-column>
           <el-table-column label="操作" width="142" fixed="right"><template #default="{ row }"><el-button link @click="openDetail(row)">查看</el-button><el-dropdown v-if="canEdit || canProcess" trigger="click"><el-button link>更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item v-if="canEdit" @click="openDetail(row, 'edit')">编辑客诉信息</el-dropdown-item><el-dropdown-item v-if="canProcess && !['CLOSED', 'CANCELLED'].includes(row.status)" @click="openDetail(row, 'progress')">更新处理进展</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
+        </div>
+        <footer class="erp-list-footer">
         <el-pagination v-if="total" v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="PAGE_SIZES" :total="total" layout="total, sizes, prev, pager, next" class="pagination" @change="changePage" />
+        </footer>
       </section>
 
-      <ComplaintCreateDialog v-model="createVisible" :options="options" :complaint-types="complaintTypes" :severities="severities" :fixed-customer-id="embedded ? customerId : ''" :fixed-customer-name="customerName" @created="refresh" />
+      <ComplaintCreateDialog v-model="createVisible" :embedded="embedded" :options="options" :complaint-types="complaintTypes" :severities="severities" :fixed-customer-id="embedded ? customerId : ''" :fixed-customer-name="customerName" @created="refresh" />
     </template>
   </section>
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-.complaint-page { min-width: 0; min-height: calc(100vh - 112px); margin: 0; padding: 26px 30px 34px; color: #292624; background: token.$crm-color-page; font-family: token.$crm-font-body; }.complaint-page.embedded { min-height: 0; margin: 0; padding: 20px 26px 28px; }
-.complaint-page:not(.embedded) { box-sizing: border-box; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.page-heading, .heading-actions, .filter-panel, .table-toolbar, .table-toolbar > div { display: flex; align-items: center; }.page-heading { min-height: 88px; justify-content: space-between; }.eyebrow { margin: 0 !important; color: #a04b34 !important; font-size: 11px !important; font-weight: 700; letter-spacing: 1.8px; }.page-heading h1 { margin: 2px 0 3px; font-family: token.$crm-font-display; font-size: 38px; font-weight: 600; line-height: 45px; }.page-heading p { margin: 0; color: #77716b; font-size: 14px; }.heading-actions { gap: 10px; }.heading-actions :deep(.el-button) { height: 42px; margin: 0; border-radius: 4px; font-size: 16px; }.heading-actions :deep(.el-button--primary), .filter-panel :deep(.el-button--primary) { border-color: #c7441d; background: #c7441d; }
-.metric-strip { height: 88px; display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; margin: 16px 0; border: 1px solid #ded9d1; border-radius: 5px; background: #fcfbf8; }.metric-strip article { position: relative; display: grid; grid-template-columns: auto 1fr; grid-template-rows: 26px 26px; align-content: center; padding: 0 28px; border-right: 1px solid #e5e0d8; }.metric-strip article:last-child { border-right: 0; }.metric-strip article::before { position: absolute; top: 20px; bottom: 20px; left: 0; width: 3px; content: ''; background: #3898ec; }.metric-strip .metric--danger::before { background: #b53333; }.metric-strip .metric--warning::before { background: #b8781e; }.metric-strip .metric--success::before { background: #4f7d4b; }.metric-strip span { grid-column: 1 / 3; color: #746f69; font-size: 13px; }.metric-strip strong { font-family: token.$crm-font-display; font-size: 27px; }.metric-strip small { align-self: end; margin: 0 0 2px 12px; color: #8a847e; font-size: 12px; }
-.error { margin-bottom: 14px; }.filter-panel { gap: 10px; overflow-x: auto; margin-bottom: 14px; padding: 14px 16px; border: 1px solid #ded9d1; border-radius: 5px; background: #fcfbf8; }.filter-panel > :deep(.el-input) { width: 286px; min-width: 286px; }.filter-panel > :deep(.el-select) { width: 160px; min-width: 145px; }.filter-panel :deep(.el-input__wrapper), .filter-panel :deep(.el-select__wrapper) { min-height: 42px; border-radius: 4px; background: #fffefb; box-shadow: 0 0 0 1px #d8d3cc inset; }.filter-panel :deep(.el-button) { height: 42px; margin: 0; border-radius: 4px; font-size: 15px; }
-.analysis-grid { display: grid; grid-template-columns: 1.2fr .9fr 1fr; gap: 14px; margin-bottom: 14px; }.analysis-grid > article { min-height: 226px; padding: 20px 22px; border: 1px solid #ded9d1; border-radius: 5px; background: #fffefb; }.analysis-grid h2 { margin: 0 0 18px; font-family: token.$crm-font-display; font-size: 20px; }.bars p { display: grid; grid-template-columns: 110px 1fr 38px; align-items: center; gap: 10px; margin: 14px 0; font-size: 13px; }.bars i { height: 9px; overflow: hidden; background: #ebe7df; }.bars b { height: 100%; display: block; background: #c7441d; }.bars strong { color: #8f3b24; text-align: right; }.sla-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.sla-grid p { min-height: 58px; display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 0 14px; color: #276e75; background: #e3eff0; font-size: 13px; }.sla-grid p.risk { color: #8c5c16; background: #f3ead8; }.sla-grid p.overdue { color: #9c2f2f; background: #f3dddd; }.sla-grid p.done { color: #416b3e; background: #e5eee2; }.sla-grid strong { font-size: 19px; }.owners p { display: flex; justify-content: space-between; margin: 0; padding: 11px 0; border-bottom: 1px solid #e8e3db; font-size: 14px; }.owners strong { color: #8f3b24; }.empty { min-height: 140px; display: grid; place-items: center; color: #918b84; }
-.table-card { overflow: hidden; border: 1px solid #ded9d1; border-radius: 5px; background: #fffefb; }.complaint-page:not(.embedded) .table-card { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }.table-toolbar { height: 56px; justify-content: space-between; padding: 0 16px; color: #746f69; font-size: 14px; }.table-toolbar > div { gap: 10px; }.table-toolbar :deep(.el-button) { height: 36px; margin: 0; border-radius: 4px; font-size: 14px; }.table-card :deep(.el-table) { min-width: 1480px; flex: 1 1 auto; min-height: 0; height: 100%; --el-table-header-bg-color: #ebe7df; --el-table-border-color: #e4dfd7; --el-table-row-hover-bg-color: #f7f4ee; color: #413d39; font-size: 15px; }.table-card :deep(.el-table th.el-table__cell) { height: 48px; padding: 0; color: #514c47; font-size: 15px; }.table-card :deep(.el-table td.el-table__cell) { height: 57px; padding: 0; }.code-link { padding: 0; border: 0; color: #8f3b24; background: none; cursor: pointer; font-size: 15px; font-weight: 600; }.solid-tag { min-width: 62px; height: 28px; display: inline-flex; align-items: center; justify-content: center; padding: 0 9px; border-radius: 3px; color: #faf9f5; background: #5e5d59; font-size: 13px; }.solid-tag--danger { background: #b53333; }.solid-tag--warning { background: #b8781e; }.solid-tag--success { background: #4f7d4b; }.solid-tag--info { background: #3898ec; }.solid-tag--neutral { background: #5e5d59; }.overdue { color: #b53333; font-weight: 600; }.pagination { height: 58px; justify-content: flex-end; padding: 0 16px; border-top: 1px solid #e4dfd7; }.pagination :deep(.el-pagination__total) { margin-right: auto; }
-.embedded .eyebrow, .embedded .analysis-grid { display: none; }.embedded-toolbar { min-height: 54px; display: flex; align-items: center; justify-content: space-between; color: #77716b; font-size: 13px; }.embedded-toolbar :deep(.el-button--primary) { height: 38px; border-color: #c7441d; border-radius: 4px; background: #c7441d; }.embedded .metric-strip { height: 72px; margin-top: 6px; }.embedded .metric-strip article { padding-inline: 18px; }
-@media (max-width: 1450px) { .complaint-page { padding-inline: 22px; }.table-card { overflow-x: auto; }.analysis-grid { grid-template-columns: 1fr 1fr; }.analysis-grid > article:last-child { grid-column: 1 / 3; } }
-@media (max-height: 800px) and (min-width: 769px) {
-  .complaint-page:not(.embedded) .page-heading { height: 64px; min-height: 64px; }
-  .complaint-page:not(.embedded) .metric-strip { height: 64px; min-height: 64px; flex: 0 0 64px; margin-block: 8px; }
-  .complaint-page:not(.embedded) .filter-panel { height: 42px; min-height: 42px; flex: 0 0 42px; margin-bottom: 8px; }
-  .complaint-page:not(.embedded) .analysis-grid { max-height: 150px; flex: 0 0 150px; overflow-y: auto; margin-bottom: 8px; }
-  .complaint-page:not(.embedded) .table-card { min-height: 180px; flex: 1 1 180px; }
+.complaint-page.erp-glass-list {
+  overflow: auto;
+  > .table-card { min-height: 200px; }
+  .page-heading { justify-content: space-between; }
+  .page-heading p { margin: 0; font-size: 12px; color: var(--erp-color-text-secondary); }
+  .page-heading .eyebrow { display: none; }
+  .heading-actions, .table-toolbar > div { display: flex; align-items: center; gap: 8px; }
+  .metric-strip { margin-bottom: 12px; }
+  .metric-strip small { font-size: 12px; }
+  .filter-panel > :deep(.el-input) { width: 286px; }
+  .filter-panel > :deep(.el-select) { width: 160px; }
+  .analysis-grid { display: grid; flex: none; grid-template-columns: 1.2fr .9fr 1fr; gap: 14px; }
+  .analysis-grid h2 { margin: 0 0 12px; font-size: 16px; }
+  .bars p { display: grid; grid-template-columns: 110px 1fr 38px; align-items: center; gap: 10px; margin: 12px 0; font-size: 12px; }
+  .bars i { height: 9px; overflow: hidden; background: var(--erp-table-header-background); }
+  .bars b { height: 100%; display: block; background: var(--erp-tag-info-background); }
+  .bars strong { text-align: right; }
+  .sla-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sla-grid p { min-height: 48px; display: flex; align-items: center; justify-content: space-between; margin: 0; padding: 0 12px; color: var(--erp-tag-info-text); background: var(--erp-tag-info-background); font-size: 12px; border-radius: var(--erp-radius-control); }
+  .sla-grid .risk { color: var(--erp-tag-warning-text); background: var(--erp-tag-warning-background); }
+  .sla-grid .overdue { color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); }
+  .sla-grid .done { color: var(--erp-tag-success-text); background: var(--erp-tag-success-background); }
+  .sla-grid strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+  .owners p { display: flex; justify-content: space-between; margin: 0; padding: 10px 0; border-bottom: 1px solid var(--erp-color-border); font-size: 12px; }
+  .empty { min-height: 140px; display: grid; place-items: center; color: var(--erp-color-text-secondary); }
+  .table-toolbar { justify-content: space-between; font-size: 12px; }
+  .code-link { padding: 0; border: 0; color: var(--erp-table-text); background: none; cursor: pointer; font: inherit; font-weight: 600; }
+  .code-link:hover { text-decoration: underline; }
+  .overdue { font-weight: 600; }
+  @media (max-width: 1100px) { .analysis-grid { grid-template-columns: 1fr; } }
 }
+.complaint-page.erp-glass-list.embedded {
+  height: auto;
+  overflow: visible;
+  font-size: 13px;
+  line-height: 20px;
+
+  .embedded-toolbar { justify-content: space-between; color: var(--erp-color-text-secondary); margin-bottom: 14px; }
+  .metric-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 0 0 14px; }
+  .metric-strip article { min-width: 0; padding: 12px 14px; border-radius: var(--erp-radius-control); background: var(--erp-glass-inner-background); }
+  .metric-strip span, .metric-strip small { display: block; color: var(--erp-color-text-secondary); }
+  .metric-strip span { font-size: 13px; }
+  .metric-strip strong { display: block; margin: 4px 0; font-size: 24px; line-height: 32px; font-variant-numeric: tabular-nums; }
+  .error { margin-bottom: 14px; }
+  .table-card, .embedded-table-group { flex: none; min-height: 0; }
+  .table-toolbar, .embedded-table-group :deep(.el-table .cell) { font-size: 13px; line-height: 20px; }
+  .filter-panel :deep(.el-input__inner), .filter-panel :deep(.el-select__placeholder) { font-size: 13px; }
+  .table-toolbar > div { flex-wrap: wrap; }
+  .overdue { color: var(--erp-color-danger); }
+
+  @media (max-width: 1100px) { .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+}
+
 </style>

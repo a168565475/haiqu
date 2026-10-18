@@ -70,5 +70,5 @@ function resizeWithKeyboard(event: KeyboardEvent) {
 </template>
 
 <style lang="scss" scoped>
-.drawer-resize-handle{position:absolute;z-index:3;top:0;bottom:0;left:0;width:10px;padding:0;border:0;background:transparent;cursor:ew-resize;touch-action:none}.drawer-resize-handle span{position:absolute;top:50%;left:3px;width:3px;height:48px;border-radius:2px;background:#c9cdd4;opacity:0;transform:translateY(-50%);transition:opacity .15s,background-color .15s}.drawer-resize-handle:hover span,.drawer-resize-handle:focus-visible span{background:#3898ec;opacity:1}.drawer-resize-handle:focus-visible{outline:2px solid #3898ec;outline-offset:-2px}
+.drawer-resize-handle{position:absolute;z-index:3;top:0;bottom:0;left:0;width:10px;padding:0;border:0;background:transparent;cursor:ew-resize;touch-action:none}.drawer-resize-handle span{position:absolute;top:50%;left:3px;width:3px;height:48px;border-radius:2px;background:var(--erp-color-border-strong);opacity:0;transform:translateY(-50%);transition:opacity .15s,background-color .15s}.drawer-resize-handle:hover span,.drawer-resize-handle:focus-visible span{background:var(--erp-color-focus);opacity:1}.drawer-resize-handle:focus-visible{outline:2px solid var(--erp-color-focus);outline-offset:-2px}
 </style>

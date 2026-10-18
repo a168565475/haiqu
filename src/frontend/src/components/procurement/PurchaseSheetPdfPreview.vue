@@ -95,15 +95,15 @@ onBeforeUnmount(release)
 .el-dialog.purchase-pdf-dialog {
   box-sizing: border-box; margin-bottom: 0; padding: 0; height: 1030px;
   border-radius: 6px; background: crm.$crm-color-surface; color: crm.$crm-text-primary;
-  box-shadow: 0 8px 24px #00000029; font-family: crm.$crm-font-body;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 16.078%, transparent); font-family: crm.$crm-font-body;
   --el-color-primary: #{crm.$crm-primary}; --el-fill-color-blank: #{crm.$crm-color-surface};
   --el-border-color: #{crm.$crm-border-default};
   .el-dialog__header { box-sizing: border-box; height: 108px; padding: 20px 26px 14px; margin: 0; }
   .el-dialog__headerbtn { top: 20px; right: 12px; width: 32px; height: 32px; font-size: 20px; }
   .el-dialog__headerbtn .el-dialog__close { color: crm.$crm-text-secondary; }
   .pdf-meta-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .pdf-meta-row .el-tag { flex: none; border: 0; border-radius: 999px; height: 24px; background: crm.$crm-color-subtle; color: crm.$crm-neutral; font-size: 12px; }
-  .pdf-meta-row .el-tag.published { background: crm.$crm-success-soft; color: crm.$crm-success; }
+  .pdf-meta-row .el-tag { flex: none; border: 0; border-radius: 999px; height: 24px; background: var(--erp-tag-brand-background); color: var(--erp-color-text-inverse); font-size: 12px; }
+  .pdf-meta-row .el-tag.published { background: var(--erp-tag-success-background); color: var(--erp-color-text-inverse); }
   .pdf-meta { margin: 0; font-size: 16px; line-height: 24px; color: crm.$crm-text-secondary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .el-dialog__body { padding: 0 26px; }
   .pdf-notice { box-sizing: border-box; height: 42px; margin-bottom: 14px; padding: 0 16px; display: flex; align-items: center; gap: 12px; border-radius: 4px; font-size: 14px; color: crm.$crm-text-secondary; background: crm.$crm-color-subtle; }

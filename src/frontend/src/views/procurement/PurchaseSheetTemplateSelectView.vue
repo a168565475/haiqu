@@ -155,8 +155,8 @@ onMounted(() => void load())
 .order-bar strong { font-size: 16px; font-weight: 500; line-height: 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .order-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .order-identity strong { min-width: 0; }
-.order-identity :deep(.el-tag) { flex: none; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; font: 500 12px/18px crm.$crm-font-body; background: crm.$crm-info; color: #faf9f5; }
-.order-identity :deep(.el-tag.is-completed) { background: crm.$crm-success; }
+.order-identity :deep(.el-tag) { flex: none; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; font: 500 12px/18px crm.$crm-font-body; background: var(--erp-tag-info-background); color: var(--erp-color-text-inverse); }
+.order-identity :deep(.el-tag.is-completed) { background: var(--erp-tag-success-background); }
 .order-total strong { color: crm.$crm-primary; font-size: 22px; }
 .supplier-section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .supplier-section > header { display: flex; align-items: center; justify-content: space-between; flex: 0 0 28px; margin-bottom: 12px; }
@@ -175,8 +175,8 @@ onMounted(() => void load())
 .template-field { display: flex; align-items: center; gap: 12px; padding-top: 12px; }
 .template-field label { flex: 0 0 84px; font-size: 14px; color: crm.$crm-text-secondary; line-height: 22px; }
 .template-field :deep(.el-select) { flex: 1; min-width: 0; }
-.template-field :deep(.el-select__wrapper) { height: 32px; min-height: 32px; padding: 0 12px; background: crm.$crm-color-surface; font-size: 13px; }
-.template-field :deep(.el-select__wrapper.is-disabled) { background: crm.$crm-color-surface; box-shadow: 0 0 0 1px crm.$crm-border-default inset; }
+.template-field :deep(.el-select__wrapper) { height: 32px; min-height: 32px; padding: 0 12px; background: var(--erp-input-surface); font-size: 13px; }
+.template-field :deep(.el-select__wrapper.is-disabled) { background: var(--erp-color-disabled); box-shadow: 0 0 0 1px var(--erp-control-border) inset; }
 .action-bar { flex: 0 0 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 -28px; padding: 0 28px; background: crm.$crm-color-surface; }
 .selection-summary { display: flex; align-items: center; gap: 10px; font-size: 14px; white-space: nowrap; }
 .selection-summary strong { color: crm.$crm-primary; font-weight: 500; min-width: 48px; }

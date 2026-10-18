@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import ElementPlus, { ElInput } from 'element-plus'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { fetchTaskOptions, fetchTasks } from '@/api/tasks'
@@ -64,5 +64,16 @@ it('嵌入客户页保留客户、新建负责人及范围切换约束，移除�
   await flushPromises()
   expect(vm.filters).toMatchObject({ scope: 'ME', customer_id: 'customer-2', page: 1 })
   expect(fetchTaskOptions).toHaveBeenLastCalledWith('ME')
+  wrapper.unmount()
+})
+
+
+it.each([false, true])('任务编号和标题独立显示（嵌入模式：%s）', async embedded => {
+  vi.mocked(fetchTasks).mockResolvedValue({ data: [{ id: 'task-1', task_number: 'RW2026101701', title: '联系客户', customer: { name: '客户甲' }, source: null, priority: 'NORMAL', assignee: { display_name: '业务甲' }, due_at: '2026-10-17T03:45:00Z', status: 'PENDING', status_display: '待处理', display_status: 'PENDING', origin_type_display: '手工创建' }], meta: { total: 1 } } as never)
+  const wrapper = mount(TaskCenterView, { global: { ...global, stubs: { TaskCreateDialog: true } }, props: { embedded } })
+  await flushPromises()
+  expect(wrapper.findAll('thead th').slice(0, 2).map(cell => cell.text())).toEqual(['任务编号', '任务标题'])
+  expect(wrapper.get('.task-link').text()).toBe('联系客户')
+  expect(wrapper.findAll('tbody tr')[0]!.findAll('td')[0]!.text()).toBe('RW2026101701')
   wrapper.unmount()
 })

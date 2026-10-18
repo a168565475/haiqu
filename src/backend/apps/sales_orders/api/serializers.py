@@ -326,6 +326,7 @@ class SalesOrderListSerializer(SalesAccessSerializerMixin, serializers.ModelSeri
     source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
     customer_code = serializers.CharField(source="customer_account.account_code", read_only=True)
     customer_name = serializers.CharField(source="customer_account.account_name", read_only=True)
+    customer_country_code = serializers.CharField(source="customer_account.primary_country_code", read_only=True)
     salesperson = SalesOrderEmployeeSummarySerializer(read_only=True)
     merchandiser = SalesOrderEmployeeSummarySerializer(read_only=True)
     has_remaining_production_capacity = serializers.SerializerMethodField()
@@ -354,6 +355,7 @@ class SalesOrderListSerializer(SalesAccessSerializerMixin, serializers.ModelSeri
             "status_display",
             "customer_code",
             "customer_name",
+            "customer_country_code",
             "customer_po_number",
             "contract_number",
             "order_date",

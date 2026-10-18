@@ -10,6 +10,9 @@ import { useAuthStore } from '@/stores/auth'
 import { usePageTabsStore } from '@/stores/pageTabs'
 import { useReferenceCacheSync } from '@/composables/useReferenceCacheSync'
 import { pageInstanceKey } from '@/utils/pageInstanceKey'
+import { glassListRouteNames } from '@/config/glassListRoutes'
+import { glassDetailRouteNames } from '@/config/glassDetailRoutes'
+import { glassFormRouteNames } from '@/config/glassFormRoutes'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,27 +67,32 @@ const fastReadLoadingRoute = computed(() => [
   'boms', 'purchase-orders', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'material-quality-confirmation',
 ].includes(String(route.name || '')))
 const compactBusinessRoutes = [
-  'customer-duplicates', 'customer-transfer', 'contacts',
+  'customer-duplicates', 'contacts',
   'inquiries', 'inquiry-create', 'inquiry-edit', 'inquiry-detail',
   ...quotationRoutes,
   'sales-orders', 'sales-order-create', 'sales-order-edit', 'sales-order-detail',
   'complaints', 'complaint-detail',
   'tasks', 'task-detail',
 ]
-const compactBusinessRoute = computed(() => compactBusinessRoutes.includes(String(route.name || '')))
-const viewportTableRoute = computed(() => [
+const glassDetailRoute = computed(() => (glassDetailRouteNames as readonly string[]).includes(String(route.name || '')))
+const glassFormRoute = computed(() => (glassFormRouteNames as readonly string[]).includes(String(route.name || '')))
+const compactBusinessRoute = computed(() => !glassDetailRoute.value && !glassFormRoute.value && compactBusinessRoutes.includes(String(route.name || '')))
+const glassListRoute = computed(() => (glassListRouteNames as readonly string[]).includes(String(route.name || '')))
+const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop-outsourcing-tube-detail', 'material-issue-detail'].includes(String(route.name))) && (glassListRoute.value || [
   'assembly-finished-receipt', 'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records',
   'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return', 'inventory-tube-return',
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
   'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns',
+  'supplier-purchase-sheet-editor', 'sample-edit', 'sample-materials', 'sample-warehouse-review',
+  'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
   'material-inventory', 'workshop-scheduling',
   'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
   'sample-outbound', 'sample-loans',
   'reference-data-settings', 'master-data-center', 'production-data', 'number-rules',
-].includes(String(route.name || '')))
+].includes(String(route.name || ''))))
 const contentScrollRoutes = [
   'customer-transfer',
   'bom-edit',
@@ -108,6 +116,10 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         'sample-library-layout': ['sample-inventory', 'sample-inventory-receipt-detail', 'sample-outbound-detail', 'sample-loan-detail', 'sample-outbound', 'sample-loans'].includes(String(route.name)),
         'quotation-layout': quotationRoute,
         'quotation-list-layout': route.name === 'quotations',
+        'customer-list-layout': route.name === 'customers',
+        'glass-list-layout': glassListRoute,
+        'glass-detail-layout': glassDetailRoute,
+        'glass-form-layout': glassFormRoute,
         'settings-layout': settingsRoute,
         'business-compact-layout': compactBusinessRoute,
         'production-scheduling-detail-layout': route.name === 'workshop-scheduling-detail',
@@ -146,17 +158,23 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .fast-read-loading :deep(.el-loading-mask) { transition-duration: 120ms; }
 .sample-library-layout :deep(#erp-main-content) { overflow: auto; }
 .viewport-table-layout :deep(#erp-main-content) { overflow: hidden; }
+.customer-list-layout :deep(.page-container) { padding: 0; }
 .content-scroll-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
-.quotation-layout :deep(#erp-main-content) { overflow: auto; background: var(--erp-page-background); }
+.quotation-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .quotation-layout :deep(.page-container) { padding: 14px; }
 .wage-scheme-detail-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .quotation-layout :deep(.page-container__content) { min-height: 100%; }
 .quotation-list-layout :deep(#erp-main-content) { overflow: hidden; }
 .quotation-list-layout :deep(.page-container) { padding-bottom: 5px; }
 .quotation-list-layout :deep(.page-container__content) { min-height: 0; }
-.settings-layout :deep(#erp-main-content) { overflow: auto; background: var(--erp-page-background); }
+.glass-list-layout :deep(#erp-main-content .page-container) { padding: 0; }
+.glass-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
+.glass-detail-layout.viewport-table-layout :deep(#erp-main-content) { overflow: hidden; }
+.glass-detail-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+.glass-form-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+.settings-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .settings-layout :deep(.page-container) { padding: 14px; }
-.production-scheduling-detail-layout :deep(#erp-main-content) { overflow: auto; background: var(--erp-page-background); }
+.production-scheduling-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .bom-create-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .bom-create-layout :deep(.page-container), .bom-create-layout :deep(.page-container__content) { min-height: max-content; }
 .sample-form-layout :deep(.page-container) { padding: 0; }
@@ -164,106 +182,106 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .sample-create-layout :deep(#erp-main-content .sample-create-page .application-heading-actions .el-button) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: 5px !important;
+  border-radius: var(--erp-radius-control) !important;
   line-height: 20px !important;
 }
 .sample-material-layout :deep(.page-container) { padding: 0; }
 
-.business-compact-layout :deep(#erp-main-content .page-container:not(.page-container--flush)) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .page-container:not(.page-container--flush)) {
   padding: 14px;
 }
 
-.business-compact-layout.quotation-list-layout :deep(#erp-main-content .page-container:not(.page-container--flush)) {
+.business-compact-layout.quotation-list-layout:not(.glass-list-layout) :deep(#erp-main-content .page-container:not(.page-container--flush)) {
   padding-bottom: 5px;
 }
 
-.business-compact-layout :deep(#erp-main-content) {
-  background: var(--erp-page-background);
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content) {
+  background: transparent;
 }
 
-.business-compact-layout :deep(#erp-main-content .el-button) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-button) {
   height: 32px !important;
   min-height: 32px !important;
   border-radius: 5px !important;
 }
 
-.business-compact-layout :deep(#erp-main-content .el-input__wrapper),
-.business-compact-layout :deep(#erp-main-content .el-select__wrapper),
-.business-compact-layout :deep(#erp-main-content .el-date-editor.el-input__wrapper),
-.business-compact-layout :deep(#erp-main-content .el-input-number) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-input__wrapper),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-select__wrapper),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-date-editor.el-input__wrapper),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-input-number) {
   height: 32px !important;
   min-height: 32px !important;
   border-radius: 5px !important;
 }
 
-.business-compact-layout :deep(#erp-main-content .el-textarea__inner) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-textarea__inner) {
   border-radius: 5px !important;
 }
 
-.business-compact-layout :deep(#erp-main-content .el-form-item) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .el-form-item) {
   margin-bottom: 10px !important;
 }
 
-.business-compact-layout :deep(#erp-main-content .header-actions),
-.business-compact-layout :deep(#erp-main-content .heading-actions),
-.business-compact-layout :deep(#erp-main-content .editor-actions),
-.business-compact-layout :deep(#erp-main-content .filter-panel),
-.business-compact-layout :deep(#erp-main-content .filters),
-.business-compact-layout :deep(#erp-main-content .task-filters),
-.business-compact-layout :deep(#erp-main-content .quotation-filter__grid),
-.business-compact-layout :deep(#erp-main-content .quotation-toolbar),
-.business-compact-layout :deep(#erp-main-content .task-toolbar),
-.business-compact-layout :deep(#erp-main-content .table-toolbar),
-.business-compact-layout :deep(#erp-main-content .filter-grid),
-.business-compact-layout :deep(#erp-main-content .filter-card),
-.business-compact-layout :deep(#erp-main-content .contact-toolbar),
-.business-compact-layout :deep(#erp-main-content .batch-actions),
-.business-compact-layout :deep(#erp-main-content .view-actions),
-.business-compact-layout :deep(#erp-main-content .quotation-list-page__heading-actions),
-.business-compact-layout :deep(#erp-main-content .quotation-toolbar > div),
-.business-compact-layout :deep(#erp-main-content .quotation-filter__actions),
-.business-compact-layout :deep(#erp-main-content .filter-actions),
-.business-compact-layout :deep(#erp-main-content .detail-toolbar),
-.business-compact-layout :deep(#erp-main-content .batch-head),
-.business-compact-layout :deep(#erp-main-content .task-titlebar__actions),
-.business-compact-layout :deep(#erp-main-content .task-toolbar__selection),
-.business-compact-layout :deep(#erp-main-content .task-toolbar__tools) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .header-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .heading-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .editor-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .filter-panel),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .filters),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .task-filters),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-filter__grid),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-toolbar),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .task-toolbar),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .table-toolbar),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .filter-grid),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .filter-card),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .contact-toolbar),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .batch-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .view-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-list-page__heading-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-toolbar > div),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-filter__actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .filter-actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .detail-toolbar),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .batch-head),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .task-titlebar__actions),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .task-toolbar__selection),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .task-toolbar__tools) {
   gap: 10px !important;
 }
 
-.business-compact-layout :deep(#erp-main-content :where(.header-actions, .heading-actions, .editor-actions, .filter-panel, .filters, .task-filters, .quotation-filter__grid, .quotation-toolbar, .task-toolbar, .table-toolbar, .filter-grid, .filter-card, .contact-toolbar, .batch-actions, .view-actions, .quotation-list-page__heading-actions, .quotation-filter__actions, .filter-actions, .detail-toolbar, .batch-head, .task-titlebar__actions, .task-toolbar__selection, .task-toolbar__tools) .el-button + .el-button),
-.business-compact-layout :deep(#erp-main-content .quotation-toolbar > div .el-button + .el-button) {
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content :where(.header-actions, .heading-actions, .editor-actions, .filter-panel, .filters, .task-filters, .quotation-filter__grid, .quotation-toolbar, .task-toolbar, .table-toolbar, .filter-grid, .filter-card, .contact-toolbar, .batch-actions, .view-actions, .quotation-list-page__heading-actions, .quotation-filter__actions, .filter-actions, .detail-toolbar, .batch-head, .task-titlebar__actions, .task-toolbar__selection, .task-toolbar__tools) .el-button + .el-button),
+.business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .quotation-toolbar > div .el-button + .el-button) {
   margin-left: 0 !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-dialog),
-:global(body:has(.business-compact-layout) .el-drawer) {
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-dialog),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer)) {
   border-radius: 5px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-button),
-:global(body:has(.business-compact-layout) .el-drawer .el-button),
-:global(body:has(.business-compact-layout) .el-popper .el-button) {
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-button),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-button),
+:global(body:has(.business-compact-layout) .el-popper:not(.erp-list-filter-popover) .el-button) {
   height: 32px !important;
   min-height: 32px !important;
   border-radius: 5px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-input__wrapper),
-:global(body:has(.business-compact-layout) .el-overlay .el-select__wrapper),
-:global(body:has(.business-compact-layout) .el-overlay .el-date-editor.el-input__wrapper),
-:global(body:has(.business-compact-layout) .el-overlay .el-input-number),
-:global(body:has(.business-compact-layout) .el-drawer .el-input__wrapper),
-:global(body:has(.business-compact-layout) .el-drawer .el-select__wrapper),
-:global(body:has(.business-compact-layout) .el-drawer .el-date-editor.el-input__wrapper),
-:global(body:has(.business-compact-layout) .el-popper .el-input__wrapper),
-:global(body:has(.business-compact-layout) .el-popper .el-select__wrapper) {
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-input__wrapper),
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-select__wrapper),
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-date-editor.el-input__wrapper),
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-input-number),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-input__wrapper),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-select__wrapper),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-date-editor.el-input__wrapper),
+:global(body:has(.business-compact-layout) .el-popper:not(.erp-list-filter-popover) .el-input__wrapper),
+:global(body:has(.business-compact-layout) .el-popper:not(.erp-list-filter-popover) .el-select__wrapper) {
   height: 32px !important;
   min-height: 32px !important;
   border-radius: 5px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-popper),
+:global(body:has(.business-compact-layout) .el-popper:not(.erp-list-filter-popover)),
 :global(body:has(.business-compact-layout) .el-select-dropdown),
 :global(body:has(.business-compact-layout) .el-dropdown-menu) {
   border-radius: 5px !important;
@@ -277,22 +295,22 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
   border-radius: 5px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-textarea__inner),
-:global(body:has(.business-compact-layout) .el-drawer .el-textarea__inner) {
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-textarea__inner),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-textarea__inner) {
   border-radius: 5px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-form-item),
-:global(body:has(.business-compact-layout) .el-drawer .el-form-item),
-:global(body:has(.business-compact-layout) .el-popper .el-form-item) {
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-form-item),
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-form-item),
+:global(body:has(.business-compact-layout) .el-popper:not(.erp-list-filter-popover) .el-form-item) {
   margin-bottom: 10px !important;
 }
 
-:global(body:has(.business-compact-layout) .el-overlay .el-dialog__header) { padding: 16px 20px 12px; }
-:global(body:has(.business-compact-layout) .el-overlay .el-dialog__body) { padding: 12px 20px; }
-:global(body:has(.business-compact-layout) .el-overlay .el-dialog__footer) { padding: 12px 20px 16px; }
-:global(body:has(.business-compact-layout) .el-drawer__header) { min-height: 60px; margin-bottom: 0; padding: 14px 20px; }
-:global(body:has(.business-compact-layout) .el-drawer__body) { padding: 14px 20px; }
-:global(body:has(.business-compact-layout) .el-drawer__footer) { padding: 12px 20px 16px; }
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-dialog__header) { padding: 16px 20px 12px; }
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-dialog__body) { padding: 12px 20px; }
+:global(body:has(.business-compact-layout) .el-overlay:not(:has(.cus05-contact-drawer, .cus05-history-drawer)) .el-dialog__footer) { padding: 12px 20px 16px; }
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-drawer__header) { min-height: 60px; margin-bottom: 0; padding: 14px 20px; }
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-drawer__body) { padding: 14px 20px; }
+:global(body:has(.business-compact-layout) .el-drawer:not(.cus05-contact-drawer, .cus05-history-drawer) .el-drawer__footer) { padding: 12px 20px 16px; }
 
 </style>

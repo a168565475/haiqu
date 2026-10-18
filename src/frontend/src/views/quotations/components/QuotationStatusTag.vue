@@ -31,12 +31,12 @@ withDefaults(defineProps<{
   white-space: nowrap;
 }
 
-.is-strong { color: #faf9f5; }
-.is-strong.is-brand { background: #c96442; }
-.is-strong.is-info { background: #3898ec; }
-.is-strong.is-success { background: #4f7d4b; }
-.is-strong.is-warning { background: #b8781e; }
-.is-strong.is-danger { background: #b53333; }
-.is-strong.is-neutral { background: #5e5d59; }
+.is-strong { color: var(--erp-tag-neutral-text); }
+.is-strong.is-brand { background: var(--erp-tag-brand-background); }
+.is-strong.is-info { background: var(--erp-tag-info-background); }
+.is-strong.is-success { background: var(--erp-tag-success-background); }
+.is-strong.is-warning { background: var(--erp-tag-warning-background); }
+.is-strong.is-danger { background: var(--erp-tag-danger-background); }
+.is-strong.is-neutral { background: var(--erp-tag-neutral-background); }
 
 </style>

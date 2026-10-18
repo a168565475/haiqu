@@ -1,6 +1,7 @@
 @use './crm/tokens' as crm;
+@use './theme/detail' as detail;
 
-// D4 冻结图：44px 表头、40px 行、32px 控件、5px 圆角。
+// 保留 D4 的44px表头、40px行和32px控件，详情面板接入共享玻璃材质。
 // 独立六列资料、单表支根米、10px 单元格左右 padding；表格滚动、备注及底栏固定。
 .tube-outsourcing-detail-page,
 .tube-outsourcing-detail-dialog,
@@ -10,76 +11,76 @@
   --el-color-primary-light-5: #{crm.$crm-primary-light-5};
   --el-color-primary-light-7: #{crm.$crm-primary-light-7};
   --el-color-primary-light-8: #{crm.$crm-primary-light-8};
-  --el-color-primary-light-9: #fff4e6;
-  --el-color-primary-dark-2: #9f351a;
-  --el-bg-color: #fcfbf7;
-  --el-bg-color-overlay: #fcfbf7;
-  --el-fill-color-blank: #fcfbf7;
-  --el-fill-color-light: #f0eadf;
-  --el-fill-color: #f0eadf;
-  --el-border-color: #ddd6c9;
-  --el-border-color-light: #eae4da;
-  --el-border-color-lighter: #eae4da;
-  --el-text-color-primary: #1f1d18;
-  --el-text-color-regular: #4d4c48;
-  --el-text-color-secondary: #6f6a61;
-  --el-text-color-placeholder: #968f84;
+  --el-color-primary-light-9: var(--erp-color-selected);
+  --el-color-primary-dark-2: var(--erp-color-brand-pressed);
+  --el-bg-color: var(--erp-color-elevated);
+  --el-bg-color-overlay: var(--erp-color-elevated);
+  --el-fill-color-blank: var(--erp-color-surface);
+  --el-fill-color-light: var(--erp-color-subtle);
+  --el-fill-color: var(--erp-color-subtle);
+  --el-border-color: var(--erp-color-border);
+  --el-border-color-light: var(--erp-color-border-subtle);
+  --el-border-color-lighter: var(--erp-color-border-subtle);
+  --el-text-color-primary: var(--erp-color-text-primary);
+  --el-text-color-regular: var(--erp-color-text-regular);
+  --el-text-color-secondary: var(--erp-color-text-secondary);
+  --el-text-color-placeholder: var(--erp-control-placeholder);
   --el-border-radius-base: 5px;
   --el-font-size-base: 12px;
   --el-font-family: 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif;
   --el-component-size: 32px;
-  color: #1f1d18;
+  color: var(--erp-color-text-primary);
   font: 12px/18px var(--el-font-family);
 
   *, *::before, *::after { box-sizing: border-box; }
   h1 { margin: 0; font: 500 34px/44px 'Noto Serif SC Variable', serif; }
   h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
-  .muted { color: #968f84; }
+  .muted { color: var(--erp-color-text-muted); }
   .brand { color: crm.$crm-primary; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .title-row { display: flex; align-items: center; gap: 12px; }
   .info-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; }
   .info-cell { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
-  .info-cell > span:first-child { color: #6f6a61; }
+  .info-cell > span:first-child { color: var(--erp-color-text-secondary); }
   .info-cell > strong { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; background: #c96442; color: #faf9f5; white-space: nowrap; }
-  .status.warning { background: #b8781e; }
-  .status.neutral { background: #5e5d59; }
-  .status.info { background: #3898ec; }
-  .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: #6f6a61; }
+  .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; background: var(--erp-tag-brand-background); color: var(--erp-color-text-inverse); white-space: nowrap; }
+  .status.warning { background: var(--erp-tag-warning-background); }
+  .status.neutral { background: var(--erp-tag-neutral-background); }
+  .status.info { background: var(--erp-tag-info-background); }
+  .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--erp-color-text-secondary); }
   .form-field > span { font-size: 12px; }
-  .form-field.required > span::before { content: '* '; color: #b53333; }
+  .form-field.required > span::before { content: '* '; color: var(--erp-color-danger); }
   .field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 24px; }
   .field-grid .el-date-editor, .field-grid .el-input, .field-grid .el-select { width: 100%; }
-  .tube-detail-table-wrap { border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: #b8afa1 #f1ede4; }
+  .tube-detail-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle); }
   .tube-detail-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 12px; }
   .tube-detail-table thead { position: sticky; top: 0; z-index: 2; }
-  .tube-detail-table th { height: 44px; padding: 0 16px; background: #eee8dc; color: #6f6a61; font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }
+  .tube-detail-table th { height: 44px; padding: 0 16px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }
   .tube-detail-table td { height: 40px; padding: 0 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 18px; }
-  .tube-detail-table th, .tube-detail-table td { border-right: 1px solid #eae4da; border-bottom: 1px solid #eae4da; }
+  .tube-detail-table th, .tube-detail-table td { border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); }
   .tube-detail-table th:last-child, .tube-detail-table td:last-child { border-right: 0; }
   .tube-detail-table tbody tr:last-child td { border-bottom: 0; }
-  .tube-detail-table tr:hover td { background: #fff6ea; }
+  .tube-detail-table tr:hover td { background: var(--erp-color-hover); }
   .tube-detail-table .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; }
-  .tube-detail-table td.empty-cell { height: 140px; text-align: center; color: #968f84; }
-  .tube-detail-table .el-button.is-link { padding: 0; height: 32px; min-height: 32px; color: #3478af; }
+  .tube-detail-table td.empty-cell { height: 140px; text-align: center; color: var(--erp-color-text-muted); }
+  .tube-detail-table .el-button.is-link { padding: 0; height: 32px; min-height: 32px; color: var(--erp-color-info); }
   .el-button { height: 32px; min-height: 32px; font: 500 12px/18px var(--el-font-family); padding: 0 14px; border-radius: 5px; }
   .el-button + .el-button { margin-left: 0; }
   .el-button:focus-visible { outline: 2px solid crm.$crm-primary; outline-offset: 2px; }
   .el-input, .el-select, .el-date-editor { --el-component-size: 32px; }
-  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px !important; box-shadow: 0 0 0 1px #ddd6c9 inset; border-radius: 5px; background: #fcfbf7; }
+  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px !important; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); }
   .el-input__inner { height: 30px; font-size: 12px; font-family: inherit; }
   .el-select__placeholder { font-size: 12px; }
-  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus { box-shadow: 0 0 0 1px #{crm.$crm-primary} inset !important; }
-  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: #e8e1d5; }
-  .el-textarea__inner { border-radius: 5px; min-height: 74px !important; font: 12px/22px var(--el-font-family); padding: 8px 12px; resize: none; }
+  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important; }
+  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: var(--erp-input-disabled-background); }
+  .el-textarea__inner { border-radius: var(--erp-radius-control); min-height: 74px !important; font: 12px/22px var(--el-font-family); padding: 8px 12px; resize: none; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
 }
 
 .tube-outsourcing-detail-page {
-  height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px;
+  height: 100%; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 14px; background: transparent;
   .page-heading { min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-  .panel { border: 1px solid #ddd6c9; background: #fcfbf7; border-radius: 5px; padding: 16px; min-width: 0; }
-  .d4-order-code { color: #6f6a61; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .panel { @include detail.surface; padding: 16px; }
+  .d4-order-code { color: var(--erp-color-text-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
   .d4-context { flex-shrink: 0; }
   .d4-context .info-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px 20px; }
   .d4-context .info-cell { grid-template-columns: 84px minmax(0, 1fr); }
@@ -96,14 +97,25 @@
   .d4-order-remark { flex-shrink: 0; display: flex; align-items: baseline; gap: 16px; min-height: 36px; }
   .d4-order-remark > span { width: 64px; flex-shrink: 0; }
   .d4-order-remark p { margin: 0; line-height: 22px; overflow-wrap: anywhere; }
-  .footer-bar { display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 12px 16px; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; flex-shrink: 0; }
+  .footer-bar { @include detail.surface; display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 12px 16px; flex-shrink: 0; }
   .footer-bar > div:first-child { margin-right: auto; }
   .footer-bar strong { font-size: 18px; color: crm.$crm-primary; margin: 0 5px; }
-  .footer-bar small { display: block; color: #968f84; margin-top: 4px; font-size: 11px; }
+  .footer-bar small { display: block; color: var(--erp-color-text-muted); margin-top: 4px; font-size: 11px; }
   .d4-footer { flex-shrink: 0; }
   .d4-fallback { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .el-skeleton { padding: 20px; }
   > .el-alert { flex-shrink: 0; }
+}
+@media (max-width: 1280px) {
+  .tube-outsourcing-detail-page .d4-context .info-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tube-outsourcing-detail-page .page-heading,
+  .tube-outsourcing-detail-page .section-heading,
+  .tube-outsourcing-detail-page .footer-bar { flex-wrap: wrap; gap: 12px; }
+}
+@media (max-width: 800px) {
+  .tube-outsourcing-detail-page .d4-context .info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tube-outsourcing-detail-page .d4-lifecycle { flex-wrap: wrap; }
+  .tube-outsourcing-detail-page .d4-lifecycle .d4-cancellation-note { flex-basis: 100%; white-space: normal; }
 }
 
 .tube-outsourcing-detail-page .d4-lines,
@@ -117,7 +129,7 @@
   p { line-height: 22px; }
   .d4-dialog-context { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 12px; line-height: 22px; padding-bottom: 16px; }
   .d4-dialog-context strong { font-weight: 600; }
-  .d4-dialog-context span { color: #6f6a61; }
+  .d4-dialog-context span { color: var(--erp-color-text-secondary); }
   .d4-dispatch-fields { grid-template-columns: 230px 230px minmax(0, 1fr); gap: 20px; }
   .d4-dispatch-location strong { height: 32px; display: flex; align-items: center; font-weight: 500; }
   .d4-dialog-section { display: flex; gap: 14px; align-items: center; margin-top: 20px; margin-bottom: 12px; }
@@ -126,7 +138,7 @@
   .d4-dispatch-lines { max-height: 420px; }
   .d4-dispatch-footer { display: flex; width: 100%; align-items: center; gap: 12px; }
   .d4-dispatch-footer > div { margin-right: auto; text-align: left; font-size: 12px; line-height: 20px; }
-  .d4-dispatch-footer strong { font-weight: 500; color: #c84e28; }
+  .d4-dispatch-footer strong { font-weight: 500; color: var(--erp-color-brand); }
   .d4-dispatch-footer small { display: block; font-size: 11px; line-height: 18px; }
   .d4-cancel .info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; }
   .d4-cancel .info-cell { grid-template-columns: 70px minmax(0, 1fr); }

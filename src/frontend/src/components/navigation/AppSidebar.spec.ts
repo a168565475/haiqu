@@ -22,7 +22,7 @@ const sidebarIconKeys = [
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
-  workbench: ['manager-workbench', 'sales-workbench'],
+  workbench: ['manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench'],
   'customer-management': ['customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'analytics'],
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['products', 'product-catalog', 'raw-materials', 'material-catalog'],
@@ -33,7 +33,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   boards: boardEntries.map(([name]) => name),
 }
 
-const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
+const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
   'purchase-inbounds', 'purchase-returns', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
@@ -125,7 +125,7 @@ describe('全局悬停侧栏', () => {
     }
   })
 
-  it('九组真实二级菜单完整渲染三十五枚对应图标，待开放项也保留图形', async () => {
+  it('九组真实二级菜单完整渲染三十八枚对应图标，待开放项也保留图形', async () => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, permissions: [...auth.user!.permissions,
       'product_catalog.view_productcatalog', 'material_catalog.view_materialcatalog'] }
@@ -144,8 +144,8 @@ describe('全局悬停侧栏', () => {
         renderedKeys.push(key)
       }
     }
-    expect(renderedKeys).toHaveLength(35)
-    expect(new Set(renderedKeys).size).toBe(35)
+    expect(renderedKeys).toHaveLength(38)
+    expect(new Set(renderedKeys).size).toBe(38)
   })
 
   it('二级悬停复用一个背景，不改变当前路由或选中项', async () => {
@@ -239,7 +239,7 @@ describe('全局悬停侧栏', () => {
   it('管理员可从工作台分组分别打开主管版和业务员版', async () => {
     const { router } = await setup()
     await wrapper.get('[data-menu-key="workbench"]').trigger('click')
-    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['主管工作台', '业务员工作台'])
+    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['主管工作台', '业务员工作台', '生产负责人工作台', '生产总览', '车间主管工作台'])
     await panel().get('[data-menu-key="sales-workbench"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('sales-workbench')
@@ -260,6 +260,29 @@ describe('全局悬停侧栏', () => {
     auth.user = { ...auth.user!, permissions: [] }
     await nextTick()
     expect(wrapper.find('[data-menu-key="workbench"]').exists()).toBe(false)
+  })
+
+  it.each([
+    ['production_tasks.view_productiontask', ['production-workbench', 'production-overview']],
+    ['workshop_reporting.view_workreport', ['workshop-workbench']],
+  ])('生产入口按源模块权限展示：%s', async (permission, expected) => {
+    const { auth } = await setup()
+    auth.user = { ...auth.user!, is_superuser: false, permissions: [permission] }
+    await nextTick()
+    await wrapper.get('[data-menu-key="workbench"]').trigger('click')
+    expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(expected)
+  })
+
+  it.each([
+    ['production-workbench', '/workbench/production', '生产负责人工作台', 'owner'],
+    ['production-overview', '/workbench/production-overview', '生产总览', 'executive'],
+    ['workshop-workbench', '/workbench/workshop', '车间主管工作台', 'workshop'],
+  ])('%s 提供独立生产视角及页签', (name, path, title, role) => {
+    const resolved = applicationRouter.resolve({ name })
+    expect(resolved.path).toBe(path)
+    expect(resolved.matched.at(-1)?.props.default).toEqual({ role })
+    expect(resolved.meta.activeMenu).toBe(name)
+    expect(createPageTab(resolved)?.title).toBe(title)
   })
 
   it.each([

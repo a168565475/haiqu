@@ -42,10 +42,10 @@ const resolvedTitle = computed(() => props.title || props.activity?.reason || re
   justify-content: center;
   padding: 0 8px;
   overflow: hidden;
-  border: 0;
+  border: 1px solid var(--erp-tag-neutral-border);
   border-radius: token.$crm-radius-pill;
-  color: #faf9f5;
-  background: token.$crm-neutral;
+  color: var(--erp-tag-neutral-text);
+  background: var(--erp-tag-neutral-background);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
@@ -54,22 +54,32 @@ const resolvedTitle = computed(() => props.title || props.activity?.reason || re
 }
 
 .customer-activity-tag.is-success {
-  background: token.$crm-success;
+  border-color: var(--erp-tag-success-border);
+  color: var(--erp-tag-success-text);
+  background: var(--erp-tag-success-background);
 }
 
 .customer-activity-tag.is-info {
-  background: token.$crm-info;
+  border-color: var(--erp-tag-info-border);
+  color: var(--erp-tag-info-text);
+  background: var(--erp-tag-info-background);
 }
 
 .customer-activity-tag.is-warning {
-  background: token.$crm-warning;
+  border-color: var(--erp-tag-warning-border);
+  color: var(--erp-tag-warning-text);
+  background: var(--erp-tag-warning-background);
 }
 
 .customer-activity-tag.is-danger {
-  background: token.$crm-danger;
+  border-color: var(--erp-tag-danger-border);
+  color: var(--erp-tag-danger-text);
+  background: var(--erp-tag-danger-background);
 }
 
 .customer-activity-tag.is-neutral {
-  background: token.$crm-neutral;
+  border-color: var(--erp-tag-neutral-border);
+  color: var(--erp-tag-neutral-text);
+  background: var(--erp-tag-neutral-background);
 }
 </style>

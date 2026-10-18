@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { Calendar, InfoFilled, Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
@@ -138,30 +139,33 @@ onBeforeUnmount(() => { disposed = true; rowsVersion++; optionsVersion++ })
 </script>
 
 <template>
-  <section class="detail-page" data-testid="material-inbound-details-page">
+  <section class="detail-page erp-glass-list" data-testid="material-inbound-details-page">
     <div v-if="!canView" class="empty-state"><h1>无权查看入库明细</h1><p>请联系管理员开通材料入库记录查看权限。</p></div>
     <template v-else>
-      <header class="page-head">
-        <div class="title-line"><h1>材料入库明细</h1><span>共 {{ rows.length }} 条</span><span>只读记录</span></div>
-        <ElButton @click="router.push({ name: 'material-inventory' })">返回材料库存</ElButton>
+      <section v-glass-spotlight class="erp-list-filter">
+      <header class="page-head erp-list-heading">
+        <div class="title-line erp-list-title-row"><h1>材料入库明细</h1><span>共 {{ rows.length }} 条</span><span>只读记录</span></div>
+        <ElButton class="erp-button-motion" @click="router.push({ name: 'material-inventory' })">返回材料库存</ElButton>
       </header>
-      <section class="summary-strip" aria-label="当前结果统计" :aria-busy="loading">
-        <div><span>入库单</span><strong>{{ summary.batches }}</strong></div>
-        <div><span>入库明细</span><strong>{{ summary.details }}</strong></div>
-        <div><span>涉及采购单</span><strong>{{ summary.purchaseOrders }}</strong></div>
-        <div><span>今日入库</span><strong>{{ summary.today }}</strong></div>
+      <section class="summary-strip erp-list-summary" aria-label="当前结果统计" :aria-busy="loading">
+        <div class="erp-list-summary-item"><span>入库单</span><strong>{{ summary.batches }}</strong></div>
+        <div class="erp-list-summary-item"><span>入库明细</span><strong>{{ summary.details }}</strong></div>
+        <div class="erp-list-summary-item"><span>涉及采购单</span><strong>{{ summary.purchaseOrders }}</strong></div>
+        <div class="erp-list-summary-item"><span>今日入库</span><strong>{{ summary.today }}</strong></div>
       </section>
-      <form class="filters-row" aria-label="入库记录筛选" @submit.prevent="loadRows">
+      <form class="filters-row erp-list-filters" aria-label="入库记录筛选" @submit.prevent="loadRows">
         <ElInput v-model="filters.q" aria-label="搜索入库记录" :prefix-icon="Search" clearable maxlength="200" placeholder="搜索入库单号、采购单号、物料、供应商" />
         <ElDatePicker v-model="filters.inboundDate" aria-label="入库日期" type="date" value-format="YYYY-MM-DD" :prefix-icon="Calendar" placeholder="入库日期：全部" clearable />
         <ElSelect v-model="filters.warehouseId" aria-label="材料仓" :loading="optionsLoading" clearable placeholder="材料仓：全部"><ElOption v-for="item in options.warehouses" :key="item.id" :value="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" /></ElSelect>
         <ElSelect v-model="filters.sectionTitle" aria-label="BOM分区" :loading="optionsLoading" clearable placeholder="BOM 分区：全部"><ElOption v-for="item in options.sections" :key="item" :value="item" :label="item" /></ElSelect>
-        <ElButton native-type="submit" type="primary" :loading="loading">查询</ElButton><ElButton @click="reset">重置</ElButton>
+        <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="reset">重置</ElButton><ElButton class="erp-button-motion" native-type="submit" type="primary" :loading="loading">应用筛选</ElButton></div>
       </form>
-      <div class="table-toolbar"><h2>入库追溯明细</h2><span>共 {{ rows.length }} 条</span><ElButton :icon="Refresh" :loading="loading || optionsLoading" @click="refresh">刷新</ElButton></div>
+      </section>
+      <section class="erp-list-data">
+      <div class="table-toolbar erp-list-toolbar"><h2>入库追溯明细</h2><span>共 {{ rows.length }} 条</span><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading || optionsLoading" @click="refresh">刷新</ElButton></div>
       <div v-if="rowsError || optionsError" class="load-error" role="alert">{{ rowsError || optionsError }}</div>
-      <div v-loading="loading" class="detail-table-scroll" :aria-busy="loading" tabindex="0" aria-label="入库明细表格">
-        <table class="detail-table">
+      <div v-loading="loading" class="erp-list-table-frame"><div class="detail-table-scroll erp-list-table-scroll" :aria-busy="loading" tabindex="0" aria-label="入库明细表格">
+        <table class="detail-table erp-list-native-table">
           <colgroup><col v-for="(width, index) in [194,182,113,221,180,251,130,202,125,216]" :key="index" :style="{ width: width / 1814 * 100 + '%' }" /></colgroup>
           <thead><tr><th v-for="label in ['入库单','来源单据','分类','物料信息','规格','供应商','入库数量','仓库位置','操作人','操作时间']" :key="label" scope="col">{{ label }}</th></tr></thead>
           <tbody>
@@ -180,65 +184,31 @@ onBeforeUnmount(() => { disposed = true; rowsVersion++; optionsVersion++ })
             <tr v-if="!rows.length"><td colspan="10" class="table-empty">{{ rowsError ? '记录加载失败，请刷新重试' : loading ? '正在加载入库记录…' : '暂无符合条件的已确认入库记录' }}</td></tr>
           </tbody>
         </table>
-      </div>
-      <p class="readonly-note"><ElIcon><InfoFilled /></ElIcon><span>仅展示已确认记录；采购入库显示品质合格数量，额外入库提交后直接计入库存。</span></p>
+      </div></div>
+      <p class="readonly-note erp-list-footer"><ElIcon><InfoFilled /></ElIcon><span>仅展示已确认记录；采购入库显示品质合格数量，额外入库提交后直接计入库存。</span></p>
+      </section>
     </template>
   </section>
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-.detail-page {
-  box-sizing: border-box; display: flex; min-height: 0; height: calc(100dvh - 92px); flex-direction: column; overflow: hidden; padding: 28px 28px 26px;
-  background: token.$crm-color-page; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
-  --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default};
-  --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary};
-  --el-text-color-placeholder: #{token.$crm-text-muted}; --el-fill-color-blank: #{token.$crm-color-surface};
-  --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
-}
-h1, h2, p { margin: 0; }
-.page-head, .title-line, .summary-strip, .summary-strip > div, .table-toolbar, .readonly-note { display: flex; align-items: center; }
-.page-head { height: 56px; flex: none; justify-content: space-between; margin-bottom: 16px; }
-.title-line { gap: 24px; } h1 { font: 700 28px/34px token.$crm-font-body; }
-.title-line span, .table-toolbar > span { color: token.$crm-text-secondary; font-size: 12px; }
-.page-head > .el-button { width: 128px; height: 40px; }
-.summary-strip { box-sizing: border-box; height: 46px; flex: none; gap: 72px; padding: 0 28px; margin-bottom: 16px; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; background: token.$crm-color-subtle; }
-.summary-strip > div { gap: 8px; } .summary-strip strong { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.filters-row { display: grid; height: 38px; flex: none; grid-template-columns: minmax(280px, 1.8fr) minmax(180px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) 82px 82px; gap: 14px; margin-bottom: 16px; }
-.filters-row > * { min-width: 0; width: 100%; } .filters-row > .el-button { height: 38px; margin: 0; }
-.filters-row :deep(.el-date-editor) { box-sizing: border-box; width: 100%; height: 38px; }
-.table-toolbar { height: 40px; flex: none; gap: 24px; margin-bottom: 8px; }
-.table-toolbar h2 { margin-right: auto; font: 700 16px/22px token.$crm-font-body; }
-.table-toolbar > .el-button { width: 82px; height: 38px; }
-.detail-table-scroll { min-height: 280px; flex: 1; overflow: auto; border-radius: token.$crm-radius-2; outline-offset: 3px; box-shadow: 0 0 0 1px token.$crm-border-default; background: token.$crm-color-surface; }
-.detail-table { table-layout: fixed; border-collapse: separate; border-spacing: 0; width: 100%; }
-.detail-table th, .detail-table td { box-sizing: border-box; padding: 8px 10px 8px 12px; text-align: left; overflow-wrap: anywhere; border-right: 1px solid token.$crm-border-subtle; border-bottom: 1px solid token.$crm-border-subtle; }
-.detail-table th { position: sticky; z-index: 1; top: 0; height: 42px; background: token.$crm-color-subtle; color: token.$crm-text-secondary; font-size: 12px; font-weight: 500; }
-.detail-table td { height: 62px; font-size: 12px; line-height: 18px; } .detail-table th:last-child, .detail-table td:last-child { border-right: 0; }
-.stack { display: flex; flex-direction: column; gap: 2px; } .stack small, .secondary { color: token.$crm-text-secondary; font-size: 11px; line-height: 16px; }
-.stack strong { font-size: 12px; line-height: 18px; } .material-cell strong { font-size: 13px; } .warehouse-cell strong { font-size: 12px; font-weight: 400; }
-.detail-table .specification-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.detail-table .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 24px; }
+.title-line span, .table-toolbar > span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.page-head > .el-button { margin-left: auto; }
+.filters-row > :deep(.el-input) { width: min(100%, 380px); }
+.filters-row > :deep(.el-select), .filters-row > :deep(.el-date-editor) { width: 190px; }
+.table-toolbar h2 { margin: 0 auto 0 0; font-size: 16px; }
+.detail-table { min-width: 1400px; }
+.stack { display: flex; flex-direction: column; gap: 2px; }
+.stack small, .secondary { color: var(--erp-table-text); font-size: 11px; line-height: 16px; }
+.stack strong { font-size: 12px; line-height: 18px; }
+.detail-table .specification-cell, .detail-table .specification-cell > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-table .specification-cell > span { display: block; }
+.detail-table .quantity-cell { font-weight: 700; text-align: right; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
-.detail-table .category-cell { text-align: center; padding-left: 0; padding-right: 0; }
-.detail-table .quantity-cell { padding-right: 14px; color: token.$crm-success; font-size: 14px; line-height: 20px; font-weight: 700; text-align: right; }
-.detail-page :deep(.el-tag) { min-width: 56px; max-width: 100%; height: 24px; padding: 0 8px; border: 0; color: token.$crm-text-primary; background: token.$crm-color-subtle; font-size: 12px; line-height: 22px; white-space: nowrap; }
-.readonly-note { height: 32px; flex: none; gap: 8px; margin-top: 14px; padding-left: 8px; color: token.$crm-text-secondary; font-size: 12px; }
-.readonly-note .el-icon { flex-shrink: 0; font-size: 16px; }
-.detail-page :deep(.el-button) { border-radius: token.$crm-radius-2; font: 13px token.$crm-font-body; }
-.filters-row :deep(.el-input__wrapper), .filters-row :deep(.el-select__wrapper) { box-sizing: border-box; min-height: 38px; padding: 0 12px; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
-.filters-row :deep(.el-input__wrapper:hover), .filters-row :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px token.$crm-border-strong inset; }
-.filters-row :deep(.el-input__wrapper.is-focus), .filters-row :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px token.$crm-focus inset, 0 0 0 2px rgba(56, 152, 236, 0.18); }
-.filters-row :deep(.el-input__inner), .filters-row :deep(.el-select__placeholder), .filters-row :deep(.el-select__selected-item) { height: 36px; color: token.$crm-text-secondary; font: 12px token.$crm-font-body; }
-.filters-row :deep(.el-input__prefix) { margin-right: 6px; font-size: 16px; }
-.table-empty { height: 280px !important; text-align: center !important; color: token.$crm-text-secondary; }
-.load-error { flex: none; padding: 6px 0; color: token.$crm-danger; font-size: 12px; }
-.empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
-
-@media (max-width: 1100px) {
-  .filters-row { grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(140px, 1fr)) 82px 82px; }
-}
+.material-attribute-tooltip span { color: var(--erp-color-text-muted); min-width: 42px; }
+.readonly-note { margin: 0; justify-content: flex-start; }
+.load-error { flex: none; padding: 6px 0; color: var(--erp-color-danger); font-size: 12px; }
+.empty-state { padding: 80px; text-align: center; color: var(--erp-color-text-secondary); }
 </style>
-

@@ -16,7 +16,7 @@ const references = { tube: {}, fabric: {}, accessory: {}, accessories: [] }
 const wrappers: ReturnType<typeof mount>[] = []
 // 单元测试只替换弹层外壳；保留 Select 自身 Teleport，避免测试桩改变选项注册生命周期。
 const overlay = { props: ['modelValue'], template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>' }
-const global = { plugins: [ElementPlus], stubs: { ElDrawer: overlay, ElDialog: overlay } }
+const global = { plugins: [ElementPlus], stubs: { AppWindowDialog: overlay, ElDrawer: overlay, ElDialog: overlay } }
 async function editor(lines = [line()]) {
   const wrapper = mount(Editor, { props: { modelValue: lines, units, fullscreen: false, 'onUpdate:modelValue': (value: SampleMaterialLine[]) => wrapper.setProps({ modelValue: value }) }, global })
   wrappers.push(wrapper); await flushPromises(); return wrapper

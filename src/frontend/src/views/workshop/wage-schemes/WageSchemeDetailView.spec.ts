@@ -93,7 +93,7 @@ describe('工价方案审批确认', () => {
   it('确认弹窗按钮使用车间模块设计规范', () => {
     const styles = readFileSync(resolve(process.cwd(), 'src/styles/workshopReporting.scss'), 'utf8')
     expect(styles).toMatch(/\.wr-confirm-message-box \.el-message-box__btns \.el-button \{[^}]*height:\s*32px;[^}]*border-radius:\s*5px;/)
-    expect(styles).toMatch(/\.wr-confirm-message-box \.el-message-box__btns \.el-button--primary \{[^}]*background:\s*#c84e28;/)
+    expect(styles).toMatch(/\.wr-confirm-message-box \.el-message-box__btns \.el-button--primary \{[^}]*background:\s*var\(--erp-button-primary-surface\);/)
   })
 
   it('不再填写生效日期，按统一按钮规范确认后直接批准', async () => {

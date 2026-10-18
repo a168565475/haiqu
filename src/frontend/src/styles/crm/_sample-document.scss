@@ -1,26 +1,28 @@
 @use './tokens' as token;
 @use './sample-controls' as sample;
+@use '../theme/detail' as detail;
 
 // 入库、出库、借出单据共用的只读页结构；仅在页面根类内使用。
 @mixin page {
   @include sample.controls;
   :deep(.el-button) { height: 34px; }
   min-width: 0;
-  min-height: 966px;
-  margin-top: -6px;
+  min-height: 0;
+  margin-top: 0;
+  background: transparent;
   color: token.$crm-text-primary;
   .breadcrumb { height: 14px; color: token.$crm-text-muted; font-size: 12px; line-height: 14px; }
   .detail-heading { display: flex; height: 36px; align-items: center; justify-content: space-between; margin: 10px 0 14px; }
   .heading-title { display: flex; align-items: center; gap: 10px; }
   .heading-title h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 36px; }
   .back-button { width: 98px; }
-  .detail-card { position: relative; overflow: hidden; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
+  .detail-card { @include detail.surface; position: relative; overflow: hidden; }
   .overview-card { height: 148px; }
-  .operation-card { height: 108px; margin-top: 12px; }
-  .lines-card { height: 300px; margin-top: 12px; }
-  .source-card { height: 200px; margin-top: 12px; }
+  .operation-card { height: 108px; margin-top: 14px; }
+  .lines-card { height: 300px; margin-top: 14px; }
+  .source-card { height: 200px; margin-top: 14px; }
   .card-title { display: flex; height: 44px; align-items: center; box-sizing: border-box; margin: 0; padding: 0 16px; border-bottom: 1px solid token.$crm-border-subtle; font-size: 15px; font-weight: 500; }
-  .overview-grid { display: grid; height: 104px; grid-template-columns: 264px 202px 202px 252px 192px minmax(0, 1fr); align-items: start; padding: 12px 16px 0; }
+  .overview-grid { display: grid; height: calc(100% - 44px); grid-template-columns: 264px 202px 202px 252px 192px minmax(0, 1fr); align-items: start; padding: 12px 16px 0; }
   .info-field { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
   .info-field > span { color: token.$crm-text-muted; font-size: 11px; line-height: 16px; }
   .info-field strong { overflow: hidden; color: token.$crm-text-primary; font-size: 13px; font-weight: 500; line-height: 24px; text-overflow: ellipsis; white-space: nowrap; }
@@ -30,7 +32,7 @@
   .title-with-count { justify-content: space-between; }
   .title-with-count h2 { margin: 0; font-size: 15px; font-weight: 500; }
   .title-with-count > span { color: token.$crm-text-muted; font-size: 12px; text-align: right; }
-  .lines-table { height: 256px; overflow: auto; font-size: 12px; }
+  .lines-table { height: calc(100% - 44px); overflow: auto; font-size: 12px; }
   .lines-table-head, .lines-table-row { display: grid; align-items: center; padding: 0 16px; }
   .lines-table-head { position: sticky; z-index: 1; top: 0; height: 44px; border-bottom: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; font-weight: 500; }
   .lines-table-head > span, .lines-table-row > span, .lines-table-row > button { min-width: 0; overflow: hidden; padding-right: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -39,20 +41,35 @@
   .source-link { padding: 0; border: 0; color: token.$crm-text-primary; background: transparent; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
   .source-link:not(:disabled):hover { text-decoration: underline; }
   .source-link:disabled { cursor: default; }
-  .source-list { height: 156px; overflow: auto; }
+  .source-list { height: calc(100% - 44px); overflow: auto; }
   .source-row { display: grid; min-height: 58px; grid-template-columns: 224px 230px 130px minmax(0, 1fr); align-items: center; padding: 0 16px; color: token.$crm-text-regular; font-size: 13px; }
   .source-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .source-status { justify-self: start; }
   .source-flow { color: token.$crm-text-muted; font-size: 12px; }
-  .prototype-note { display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; margin-top: 12px; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; font-size: 12px; }
+  .prototype-note { @include detail.surface; display: flex; min-height: 64px; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; margin-top: 14px; font-size: 12px; }
   .prototype-note > span { color: token.$crm-text-muted; }
   .prototype-note strong { flex-shrink: 0; color: token.$crm-success; font-weight: 500; }
-  .detail-error { min-height: 640px; margin-top: 14px; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
+  .detail-error { @include detail.surface; min-height: 640px; margin-top: 14px; }
   .detail-empty { padding: 28px 16px; color: token.$crm-text-muted; font-size: 12px; text-align: center; }
   @media (max-width: 1700px) {
     .overview-grid { grid-template-columns: 1.3fr .8fr .8fr 1.3fr .8fr .8fr; gap: 12px; padding-right: 100px; }
     .completed-tag { right: 16px; }
     .operation-grid { grid-template-columns: 1.1fr 1fr; gap: 24px; }
     .source-row { grid-template-columns: 190px 190px 112px minmax(0, 1fr); }
+  }
+  @media (max-width: 1200px) {
+    .overview-card { height: auto; min-height: 148px; }
+    .overview-grid { height: auto; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-bottom: 16px; }
+    .completed-tag { top: 60px; }
+  }
+  @media (max-width: 800px) {
+    .detail-heading { height: auto; min-height: 36px; gap: 12px; flex-wrap: wrap; }
+    .heading-title { min-width: 0; flex-wrap: wrap; }
+    .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-right: 16px; }
+    .completed-tag { position: static; margin: 0 16px 12px; }
+    .operation-card { height: auto; min-height: 108px; }
+    .operation-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; padding-bottom: 14px; }
+    .source-row { min-width: 650px; }
+    .prototype-note { align-items: flex-start; flex-wrap: wrap; }
   }
 }

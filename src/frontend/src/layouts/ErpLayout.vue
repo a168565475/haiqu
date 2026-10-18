@@ -1,6 +1,10 @@
+<script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
+</script>
+
 <template>
   <div class="erp-layout erp-layout--crm-v2">
-    <header class="erp-layout__header" aria-label="ERP 顶部区域">
+    <header v-glass-spotlight class="erp-layout__header" aria-label="ERP 顶部区域">
       <slot name="header" />
     </header>
     <div class="erp-layout__body">
@@ -30,7 +34,7 @@
   gap: 14px;
   padding: 0 14px 14px;
   overflow: hidden;
-  color: #1f1d18;
+  color: var(--erp-color-text-primary);
   background: var(--erp-page-background);
   font-family: var(--erp-font-body, 'Noto Sans SC', 'Microsoft YaHei', sans-serif);
 }
@@ -53,8 +57,8 @@
   display: flex;
   flex-direction: column;
   overflow: visible;
-  border-radius: 10px;
-  background: #fafaf7;
+  border-radius: var(--erp-glass-radius);
+  background: transparent;
   font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
 }
 
@@ -74,13 +78,18 @@
 }
 
 .erp-layout__header {
+  box-sizing: border-box;
   flex: none;
   width: 100%;
   height: 48px;
   min-height: 48px;
-  overflow: hidden;
-  border-radius: 10px;
-  background: #fafaf7;
+  overflow: visible;
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  -webkit-backdrop-filter: var(--erp-glass-backdrop);
+  backdrop-filter: var(--erp-glass-backdrop);
 }
 
 .erp-layout__main {
@@ -89,6 +98,21 @@
   min-height: 0;
   overflow: auto;
   outline: none;
-  background: var(--erp-page-background);
+  background: transparent;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .erp-layout__header { background: var(--erp-color-surface); }
+}
+
+@media print {
+  .erp-layout,
+  .erp-layout__header,
+  .erp-layout__main {
+    background: #fff;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 </style>

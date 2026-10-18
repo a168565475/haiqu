@@ -19,7 +19,7 @@ export const useThemeStore = defineStore('theme', {
   }),
   getters: {
     availableThemes: () => AVAILABLE_THEMES,
-    isWarm: (state) => state.current === DEFAULT_THEME,
+    isWarm: (state) => state.current === 'warm',
   },
   actions: {
     initialize() {

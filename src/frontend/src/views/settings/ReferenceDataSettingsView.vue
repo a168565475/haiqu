@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ElDialog from '@/components/common/AppWindowDialog.vue'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { AxiosError } from 'axios'
 import {
@@ -104,6 +105,19 @@ const summary = ref<ReferenceDataSummary>({
 const selectedCategoryKey = ref(categories[0].key)
 const keyword = ref('')
 const statusFilter = ref<ReferenceStatus | ''>('')
+const appliedKeyword = ref('')
+const appliedStatus = ref<ReferenceStatus | ''>('')
+
+function applyFilters(): void {
+  appliedKeyword.value = keyword.value
+  appliedStatus.value = statusFilter.value
+}
+
+function resetFilters(): void {
+  keyword.value = ''
+  statusFilter.value = ''
+  applyFilters()
+}
 
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
 function can(permission: string): boolean {
@@ -133,10 +147,10 @@ const canViewProductionData = computed(() => [
 ].some(can))
 const selectedCategory = computed(() => categories.find((item) => item.key === selectedCategoryKey.value) ?? categories[0])
 const visibleDictionaryTypes = computed(() => {
-  const query = keyword.value.trim().toLocaleLowerCase()
+  const query = appliedKeyword.value.trim().toLocaleLowerCase()
   return dictionaryTypes.value.filter((item) => {
     const inCategory = selectedCategory.value.groups.includes(item.group_code)
-    const matchesStatus = !statusFilter.value || item.status === statusFilter.value
+    const matchesStatus = !appliedStatus.value || item.status === appliedStatus.value
     const matchesQuery = !query || [item.code, item.chinese_name, item.english_name]
       .some((value) => value.toLocaleLowerCase().includes(query))
     return inCategory && matchesStatus && matchesQuery
@@ -581,7 +595,7 @@ onMounted(loadPage)
 </script>
 
 <template>
-  <section class="reference-settings system-settings-theme" data-testid="reference-settings-page">
+  <section class="reference-settings system-settings-theme erp-glass-list" data-testid="reference-settings-page">
     <div v-if="!canViewPage || permissionDenied" class="state-page">
       <div class="state-page__icon state-page__icon--locked"><el-icon><Lock /></el-icon></div>
       <h1>无配置权限</h1>
@@ -589,23 +603,25 @@ onMounted(loadPage)
     </div>
 
     <template v-else>
-      <header class="page-heading">
+      <section v-glass-spotlight class="erp-list-filter">
+      <header class="page-heading erp-list-heading">
         <div>
           <h1>字典与业务参数</h1>
         </div>
-        <div class="page-heading__actions">
-          <el-button v-if="canViewProductionData" class="page-heading__link" tag="a" href="/settings/production-data">生产维护</el-button>
-          <el-button class="page-heading__link" tag="a" href="/settings/email-accounts">邮件账户</el-button>
-          <el-button v-if="authStore.hasPermission('workflow.view_slapolicy')" class="page-heading__link" tag="a" href="/settings/inquiry-handling-time">询盘处理时限</el-button>
-          <el-button v-if="canViewMasterData" class="page-heading__link" tag="a" href="/settings/master-data">基础资料中心</el-button>
-          <el-button v-if="authStore.user?.is_superuser || authStore.hasPermission('reference_data.view_numberrule')" class="page-heading__link" tag="a" href="/settings/number-rules">编号规则</el-button>
-          <el-button class="page-heading__link" tag="a" href="/settings/theme">界面主题</el-button>
-          <el-button v-if="can(permissions.viewParameter)" class="page-heading__link" data-testid="open-parameters" @click="parameterDrawerVisible = true">业务参数</el-button>
-          <el-button :icon="Download" @click="exportConfiguration">导出配置</el-button>
-          <el-button v-if="summary.pending_changes > 0 && can(permissions.publishRelease)" type="primary" @click="openPublishDialog">发布配置</el-button>
-          <el-button v-if="can(permissions.addItem)" type="primary" :icon="Plus" @click="openCreateItem()">新增字典项</el-button>
-        </div>
+
       </header>
+          <div v-if="!loading && !loadError" class="filter-card erp-list-filters">
+            <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索字典编码、中英文名称" @input="applyFilters" @clear="applyFilters" @keyup.enter="applyFilters" />
+            <el-select v-model="statusFilter" class="status-filter" placeholder="全部状态" @change="applyFilters">
+              <el-option label="全部状态" value="" />
+              <el-option label="启用" value="ACTIVE" />
+              <el-option label="停用" value="INACTIVE" />
+            </el-select>
+            <span class="filter-card__version">当前版本 v{{ summary.config_version ?? 0 }}</span>
+            <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</el-button></div>
+          </div>
+
+      </section>
 
       <div v-if="loadError" class="state-page state-page--compact">
         <div class="state-page__icon"><el-icon><Warning /></el-icon></div>
@@ -617,7 +633,7 @@ onMounted(loadPage)
       <el-skeleton v-else-if="loading" :rows="10" animated class="loading-card" />
 
       <div v-else class="settings-layout">
-        <aside class="category-panel card-shell">
+        <aside class="category-panel card-shell erp-list-filter erp-list-catalog-nav">
           <div class="category-panel__title">配置分类</div>
           <button
             v-for="category in categories"
@@ -633,33 +649,35 @@ onMounted(loadPage)
         </aside>
 
         <main class="settings-main">
-          <section class="filter-card card-shell">
-            <el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索字典编码、中英文名称" />
-            <el-select v-model="statusFilter" class="status-filter" placeholder="全部状态">
-              <el-option label="全部状态" value="" />
-              <el-option label="启用" value="ACTIVE" />
-              <el-option label="停用" value="INACTIVE" />
-            </el-select>
-            <span class="filter-card__version">当前版本 v{{ summary.config_version ?? 0 }}</span>
-          </section>
-
-          <section class="dictionary-card card-shell">
-            <div class="section-heading">
+          <section class="dictionary-card card-shell erp-list-data">
+            <div class="section-heading erp-list-toolbar">
+        <div class="page-heading__actions">
+          <el-button v-if="canViewProductionData" class="page-heading__link erp-button-motion" tag="a" href="/settings/production-data">生产维护</el-button>
+          <el-button class="page-heading__link erp-button-motion" tag="a" href="/settings/email-accounts">邮件账户</el-button>
+          <el-button v-if="authStore.hasPermission('workflow.view_slapolicy')" class="page-heading__link erp-button-motion" tag="a" href="/settings/inquiry-handling-time">询盘处理时限</el-button>
+          <el-button v-if="canViewMasterData" class="page-heading__link erp-button-motion" tag="a" href="/settings/master-data">基础资料中心</el-button>
+          <el-button v-if="authStore.user?.is_superuser || authStore.hasPermission('reference_data.view_numberrule')" class="page-heading__link erp-button-motion" tag="a" href="/settings/number-rules">编号规则</el-button>
+          <el-button class="page-heading__link erp-button-motion" tag="a" href="/settings/theme">界面主题</el-button>
+          <el-button v-if="can(permissions.viewParameter)" class="page-heading__link erp-button-motion" data-testid="open-parameters" @click="parameterDrawerVisible = true">业务参数</el-button>
+          <el-button class="erp-button-motion" :icon="Download" @click="exportConfiguration">导出配置</el-button>
+          <el-button class="erp-button-motion" v-if="summary.pending_changes > 0 && can(permissions.publishRelease)" type="primary" @click="openPublishDialog">发布配置</el-button>
+          <el-button class="erp-button-motion" v-if="can(permissions.addItem)" type="primary" :icon="Plus" @click="openCreateItem()">新增字典项</el-button>
+        </div>
               <div>
                 <h2>{{ selectedCategory.label }}字典项</h2>
                 <span>共 {{ visibleDictionaryTypes.length }} 类</span>
               </div>
-              <el-button v-if="can(permissions.changeType)" :icon="Sort" @click="openSortDialog">批量排序</el-button>
+              <el-button class="erp-button-motion" v-if="can(permissions.changeType)" :icon="Sort" @click="openSortDialog">批量排序</el-button>
             </div>
 
             <el-empty v-if="!visibleDictionaryTypes.length" description="当前分类暂无符合条件的字典配置" />
-            <el-table v-else :data="visibleDictionaryTypes" class="dictionary-table" table-layout="fixed">
+            <div v-else class="erp-list-table-frame"><el-table :data="visibleDictionaryTypes" height="100%" class="dictionary-table" table-layout="fixed">
               <el-table-column prop="code" label="字典编码" min-width="176" show-overflow-tooltip />
               <el-table-column prop="chinese_name" label="中文名称" min-width="140" show-overflow-tooltip />
               <el-table-column prop="english_name" label="英文名称" min-width="170" show-overflow-tooltip />
               <el-table-column label="状态" width="96" class-name="dictionary-status-column">
                 <template #default="{ row }">
-                  <el-tag class="settings-tag" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light" round>
+                  <el-tag class="settings-tag erp-list-tag" :class="row.status === 'ACTIVE' ? 'erp-list-tag--success' : 'erp-list-tag--neutral'" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light" round>
                     {{ row.status === 'ACTIVE' ? '启用' : '停用' }}
                   </el-tag>
                 </template>
@@ -687,7 +705,7 @@ onMounted(loadPage)
                   </el-dropdown>
                 </template>
               </el-table-column>
-            </el-table>
+            </el-table></div>
           </section>
         </main>
       </div>
@@ -803,81 +821,37 @@ onMounted(loadPage)
 </template>
 
 <style scoped lang="scss">
-.reference-settings { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #202124; }
-.page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
-.page-heading h1 { margin: 0; font-size: 24px; line-height: 34px; font-weight: 650; }
-.page-heading p { margin: 6px 0 0; color: #7a7f87; font-size: 14px; }
-.page-heading__actions { display: flex; gap: 12px; flex: none; }
-.page-heading__link,
-.page-heading__link:hover,
-.page-heading__link:focus,
-.page-heading__link:visited { text-decoration: none; }
-.settings-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: stretch; }
-.card-shell { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 1px 2px rgb(16 24 40 / 3%); }
-.category-panel { min-height: 0; padding: 16px 12px; overflow-y: auto; }
-.category-panel__title { padding: 0 12px 12px; color: #8a8f98; font-size: 13px; }
-.category-button { width: 100%; height: 44px; display: flex; align-items: center; justify-content: space-between; margin: 2px 0; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: #4b4f57; cursor: pointer; font: inherit; }
-.category-button:hover { background: #f5f6f7; }
-.category-button.is-active { background: #18181b; color: #fff; }
-.category-button__count { min-width: 24px; height: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0 7px; border-radius: 11px; background: #f0f1f2; color: #666b73; font-size: 12px; }
-.category-button.is-active .category-button__count { background: rgb(255 255 255 / 18%); color: #fff; }
-.settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
-.filter-card { min-height: 84px; display: flex; align-items: center; gap: 12px; padding: 18px 20px; }
-.filter-card :deep(.el-input) { max-width: 420px; }
+.page-heading__actions { display: flex; flex: 1 0 100%; flex-wrap: wrap; gap: 8px; }
+.page-heading__link { text-decoration: none; }
+.settings-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; }
+.category-panel { min-height: 0; overflow-y: auto; }
+.category-panel__title { padding: 0 12px 10px; color: var(--erp-color-text-secondary); font-size: 13px; }
+.category-button { width: 100%; display: flex; align-items: center; justify-content: space-between; font: inherit; font-size: 13px; }
+.category-button__count { font-size: 12px; }
+.settings-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.filter-card > :deep(.el-input) { width: min(420px, 100%); }
 .status-filter { width: 140px; }
-.filter-card__version { margin-left: auto; color: #8a8f98; font-size: 13px; }
-.dictionary-card { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 0 20px 18px; overflow: hidden; }
-.section-heading { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.section-heading > div { display: flex; align-items: baseline; gap: 10px; }
-.section-heading h2 { margin: 0; font-size: 17px; font-weight: 650; }
-.section-heading span { color: #969aa2; font-size: 12px; }
-.dictionary-table { flex: 1; min-height: 0; width: 100%; }
-.dictionary-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
-.dictionary-table :deep(th.el-table__cell) { height: 46px; background: #f7f8fa; color: #73777f; font-weight: 500; }
-.dictionary-table :deep(td.el-table__cell) { height: 54px; }
-.loading-card, .state-page { padding: 48px; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; }
-.state-page { min-height: 520px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.state-page--compact { min-height: 360px; }
-.state-page__icon { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: #fff2df; color: #d58a1c; font-size: 26px; }
-.state-page__icon--locked { background: #f0f1f3; color: #666b73; }
+.filter-card__version { color: var(--erp-color-text-secondary); font-size: 13px; }
+.section-heading > div:not(.page-heading__actions) { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.section-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.section-heading span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.state-page { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.state-page__icon { font-size: 26px; color: var(--erp-color-warning); }
 .state-page h1, .state-page h2 { margin: 18px 0 0; font-size: 20px; }
-.state-page p { max-width: 480px; margin: 8px 0 20px; color: #7b8088; }
+.state-page p { max-width: 480px; margin: 8px 0 20px; color: var(--erp-color-text-secondary); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.drawer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -4px 0 18px; color: #777c84; font-size: 13px; }
+.drawer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -4px 0 18px; color: var(--erp-color-text-secondary); font-size: 13px; }
 .parameter-editor__name { margin-bottom: 4px; font-size: 16px; font-weight: 650; }
-.parameter-editor__code { margin-bottom: 20px; color: #92969e; font-size: 12px; }
-.parameter-editor__help, .sort-help { margin: 14px 0 0; color: #7b8088; font-size: 13px; line-height: 1.6; }
+.parameter-editor__code { margin-bottom: 20px; color: var(--erp-color-text-muted); font-size: 12px; }
+.parameter-editor__help, .sort-help { margin: 14px 0 0; color: var(--erp-color-text-secondary); font-size: 13px; line-height: 1.6; }
 .publish-summary { display: flex; gap: 12px; margin-bottom: 20px; padding: 16px; border-radius: 8px; background: var(--erp-surface-background); }
-.publish-summary > .el-icon { margin-top: 2px; color: #409eff; font-size: 22px; }
+.publish-summary > .el-icon { margin-top: 2px; color: var(--erp-color-info); font-size: 22px; }
 .publish-summary strong { font-size: 15px; }
-.publish-summary p { margin: 5px 0 0; color: #7b8088; font-size: 13px; }
-.sort-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid #eceef1; }
+.publish-summary p { margin: 5px 0 0; color: var(--erp-color-text-secondary); font-size: 13px; }
+.sort-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--erp-color-border-subtle); }
 
-@media (max-width: 1200px) {
-  .page-heading { flex-wrap: wrap; }
-  .page-heading > div:first-child { flex: 1 0 100%; }
-  .page-heading h1 { white-space: nowrap; }
-  .page-heading__actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
-}
 
-@media (max-width: 1599px) {
-  .settings-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; }
-}
-
-@media (max-width: 1100px) {
-  .settings-layout { grid-template-columns: 1fr; }
-  .category-panel { position: static; display: flex; gap: 6px; overflow-x: auto; padding: 10px; }
-  .category-panel__title { display: none; }
-  .category-button { flex: 0 0 auto; width: auto; gap: 10px; }
-}
-
-@media (max-width: 768px) {
-  .page-heading { flex-direction: column; }
-  .page-heading__actions { width: 100%; }
-  .page-heading__actions .el-button { flex: 1; }
-  .filter-card { flex-wrap: wrap; }
-  .filter-card :deep(.el-input), .status-filter { width: 100%; max-width: none; }
-  .filter-card__version { margin-left: 0; }
-  .form-grid { grid-template-columns: 1fr; }
-}
+@media (max-width: 1599px) { .settings-layout { grid-template-columns: 220px minmax(0, 1fr); } }
+@media (max-width: 1100px) { .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .category-panel { flex-direction: row; overflow-x: auto; } .category-panel__title { display: none; } .category-button { flex: 0 0 auto; width: auto; gap: 10px; } }
+@media (max-width: 768px) { .form-grid { grid-template-columns: 1fr; } }
 </style>

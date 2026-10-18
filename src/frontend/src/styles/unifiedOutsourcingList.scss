@@ -1,85 +1,27 @@
-@use './crm/tokens' as crm;
-
-// 已确认D4列表：44px表头、40px行、32px控件、10px内边距、5px圆角、14px间距。
-// 四周只由外框绘制；表格只绘制内部网格，关闭组件补线和末行末列重复边。
-.outsourcing-page.outsourcing-order-list-page.d4-list-page {
-  --el-color-primary: #{crm.$crm-primary};
-  --el-color-primary-light-9: #fff4e6;
-  --el-color-primary-dark-2: #9f351a;
-  --el-fill-color-blank: #fcfbf7;
-  --el-fill-color-light: #f0eadf;
-  --el-border-color: #ddd6c9;
-  --el-border-color-light: #eae4da;
-  --el-text-color-primary: #1f1d18;
-  --el-text-color-regular: #4d4c48;
-  --el-text-color-secondary: #6f6a61;
-  --el-text-color-placeholder: #968f84;
-  --el-border-radius-base: 5px;
-  --el-font-size-base: 12px;
-  --el-component-size: 32px;
-  height: calc(100dvh - 84px); min-height: 0; padding: 0;
-  display: flex; flex-direction: column; gap: 14px; overflow: hidden;
-  color: #1f1d18; font: 12px/18px 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif;
-
-  .outsourcing-heading { min-height: 44px; margin: 0; flex-shrink: 0; }
-  .heading-title { gap: 12px; }
-  .heading-title h1 { font: 500 34px/44px 'Noto Serif SC Variable', serif; letter-spacing: normal; }
-  .heading-title > span { font-size: 12px; }
-  .heading-actions { gap: 12px; }
-  .secondary-action { min-width: 0; padding: 0 14px; height: 32px; border-radius: 5px; font-size: 12px; font-weight: 500; }
-  .el-button { height: 32px; min-height: 32px; padding: 0 14px; border-radius: 5px; font: 500 12px/18px 'Noto Sans SC Variable', sans-serif; }
-  .el-button + .el-button { margin-left: 0; }
-  .el-button--primary:not(.is-link) { background: crm.$crm-primary; border-color: crm.$crm-primary; }
-  .el-button--primary:not(.is-link):hover, .el-button--primary:not(.is-link):focus-visible { background: #9f351a; border-color: #9f351a; }
-  .el-button:focus-visible { outline: 2px solid crm.$crm-primary; outline-offset: 2px; }
-  .el-button--primary.is-disabled, .el-button--primary.is-disabled:hover { background: #eee9df; border-color: #d8cfc2; color: #9b9388; }
-  .unified-outsourcing-tabs { height: 40px; flex-shrink: 0; gap: 40px; margin: 0; border-bottom-color: #eae4da; }
-  .unified-outsourcing-tabs button { height: auto; padding: 0 0 10px; border-bottom-width: 2px; color: #4d4c48; font-weight: 400; }
-  .unified-outsourcing-tabs button.is-active { border-bottom-color: crm.$crm-primary; color: crm.$crm-primary; }
-  #outsourcing-orders-panel { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; }
-  .unified-order-filter-bar { flex-wrap: nowrap; height: 32px; flex-shrink: 0; gap: 14px; margin: 0; }
-  .unified-order-filter-bar > .el-input { width: 320px; }
+// 委外列表只保留业务布局，玻璃、控件、表格和分页外观由全局列表样式负责。
+.outsourcing-order-list-page.erp-glass-list {
+  .heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+  .heading-title > span, .list-toolbar small { color: var(--erp-color-text-secondary); font-size: 12px; }
+  .heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .heading-actions > a.el-button { text-decoration: none; }
+  .unified-outsourcing-tabs { margin-bottom: 10px; }
+  .unified-outsourcing-tabs small { margin-left: 8px; font-size: 12px; }
+  .unified-order-filter-bar > .el-input { width: 320px; max-width: 100%; }
   .unified-order-filter-bar > .el-select { width: 168px; }
   .unified-order-filter-bar > .factory-picker { width: 180px; }
-  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px; background: #fcfbf7; border-radius: 5px; box-shadow: 0 0 0 1px #ddd6c9 inset; }
-  .el-input__inner { height: 30px; font-size: 12px; font-family: inherit; }
-  .el-select__placeholder { font-size: 12px; }
-  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused { box-shadow: 0 0 0 1px #{crm.$crm-primary} inset !important; }
-  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: #e8e1d5; }
-  .list-toolbar { margin: 0; flex-shrink: 0; }
-  .list-toolbar strong { font-size: 16px; line-height: 24px; font-weight: 600; }
-  .list-toolbar small { display: inline; font-size: 12px; }
-  .d4-list-frame { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid #ddd6c9; border-radius: 5px; overflow: hidden; background: #fcfbf7; }
-  .d4-list-table-area { flex: 1; min-height: 0; }
-  .d4-list-table { --el-table-header-bg-color: #eee8dc; --el-table-tr-bg-color: #fcfbf7; --el-table-bg-color: #fcfbf7; --el-table-row-hover-bg-color: #fff6ea; --el-table-border-color: #eae4da; border: 0; font-size: 12px; color: #1f1d18; }
-  .el-table::before, .el-table::after, .el-table__inner-wrapper::before, .el-table__border-left-patch { display: none; }
-  .el-table th.el-table__cell { height: 44px; padding: 0; background: #eee8dc; color: #6f6a61; font-size: 11px; font-weight: 500; }
-  .el-table td.el-table__cell { height: 40px; padding: 0; }
-  .el-table .cell { padding: 0 10px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .el-table th.el-table__cell:last-child, .el-table td.el-table__cell:last-child { border-right: 0; }
-  .el-table tbody tr:last-child td.el-table__cell { border-bottom: 0; }
-  .el-table__body tr:hover td.el-table__cell { background: #fff6ea; }
+  .list-description { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
   .el-table__body tr { cursor: pointer; }
-  .num .cell { text-align: right; font-variant-numeric: tabular-nums; }
-  .table-product { display: inline; font-weight: 400; }
-  .brand { color: crm.$crm-primary; }
-  .unified-source-tag { height: 24px; padding: 0 7px; border: 1px solid #ddd6c9; border-radius: 5px; background: #f6f3ec; color: #6f6a61; font-size: 12px; }
-  .craft-tag, .status-tag { min-width: 0; height: 24px; padding: 0 8px; line-height: 18px; }
-  .status-tag { min-width: 56px; padding: 0 7px; }
-  .craft-sewing { background: crm.$crm-primary; }
-  .status-pending { background: #c96442; }
-  .status-processing, .status-partial { background: #b8781e; }
-  .status-cancelled { background: #5e5d59; }
-  .cell-actions { height: 32px; display: flex; align-items: center; }
-  .cell-actions .el-button.is-link { height: 32px; padding: 0; color: #3478af; }
+  .num .cell { font-variant-numeric: tabular-nums; }
+  .table-product { font-weight: 400; }
+  .brand { color: var(--erp-color-brand); }
+  .craft-tag { min-width: 0; padding: 0 6px; }
+  .cell-actions { display: flex; align-items: center; }
+  .cell-actions .el-button.is-link { padding: 0; }
   .cell-actions .el-icon { margin-left: 3px; }
-  .d4-list-empty { min-height: 240px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; line-height: 20px; color: #968f84; }
-  .d4-list-empty strong { font-size: 14px; font-weight: 500; color: #6f6a61; }
+  .d4-list-empty { min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; line-height: 20px; color: var(--erp-color-text-secondary); }
+  .d4-list-empty strong { font-size: 14px; font-weight: 500; }
   .d4-list-empty .el-icon { font-size: 22px; }
-  .el-table__empty-block { height: 100% !important; }
   .el-table__empty-text { width: 100%; }
-  .d4-list-pager { height: 48px; flex-shrink: 0; justify-content: flex-end; gap: 14px; padding: 0 14px; border: 0; border-top: 1px solid #eae4da; background: #fcfbf7; font-size: 12px; }
-  .d4-list-pager > span:first-child { margin-right: auto; }
   .page-size-picker { width: 128px; }
-  .el-pagination { --el-pagination-button-height: 32px; --el-pagination-button-width: 32px; --el-pagination-button-bg-color: #f6f3ec; --el-pagination-hover-color: #{crm.$crm-primary}; }
+  .outsourcing-source-workspace { flex: 1; min-height: 0; padding: 0; overflow: auto; background: transparent; }
 }

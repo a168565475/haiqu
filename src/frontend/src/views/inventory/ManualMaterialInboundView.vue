@@ -107,7 +107,7 @@ onMounted(() => { if (canReceive.value) void loadBase() })
 </script>
 
 <template>
-  <section class="manual-inbound-page" data-testid="manual-material-inbound-page">
+  <section class="manual-inbound-page erp-glass-form" data-testid="manual-material-inbound-page">
     <div v-if="!canReceive" class="empty-state"><h1>无权进行材料入库</h1><p>请联系管理员开通材料入库权限。</p></div>
     <template v-else>
       <header class="page-head"><div><h1>材料入库</h1><p>额外入库 · 提交后直接计入已确认库存</p></div><ElButton :icon="Refresh" :loading="loading" @click="loadBase">刷新</ElButton></header>
@@ -141,20 +141,21 @@ onMounted(() => { if (canReceive.value) void loadBase() })
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-.manual-inbound-page { box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0; overflow-y: auto; padding: 28px; background: token.$crm-color-page; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+@use '@/styles/theme/detail' as detail;
+.manual-inbound-page { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-border-radius-base: 5px; }
 h1, h2, p { margin: 0; } i { color: token.$crm-danger; font-style: normal; }
 .page-head, .notice, .form-card > header, .material-summary, .submit-bar { display: flex; align-items: center; }
 .page-head { height: 56px; justify-content: space-between; margin-bottom: 16px; } .page-head h1 { font-size: 28px; line-height: 34px; } .page-head p { color: token.$crm-text-secondary; font-size: 12px; }
-.notice { gap: 18px; height: 42px; padding: 0 16px; margin-bottom: 16px; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; background: token.$crm-color-subtle; } .notice strong { color: token.$crm-primary; } .notice span { color: token.$crm-text-secondary; }
-.form-card { padding: 0 20px 22px; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
+.notice { gap: 18px; height: 42px; padding: 0 16px; margin-bottom: 16px; @include detail.inset; } .notice strong { color: token.$crm-primary; } .notice span { color: token.$crm-text-secondary; }
+.form-card { @include detail.surface; padding: 0 20px 22px; }
 .form-card > header { height: 50px; justify-content: space-between; border-bottom: 1px solid token.$crm-border-subtle; } .form-card h2 { font-size: 16px; } .form-card header span { color: token.$crm-text-secondary; font-size: 12px; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 20px; padding: 22px 0; } label { display: flex; min-width: 0; flex-direction: column; gap: 7px; } label > span { font-weight: 500; } label :deep(.el-select), label :deep(.el-date-editor) { width: 100%; }
-.material-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; padding: 14px 16px; margin-bottom: 20px; border-radius: token.$crm-radius-2; background: token.$crm-color-subtle; }
+.material-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; padding: 14px 16px; margin-bottom: 20px; @include detail.inset; }
 .material-summary > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; } .material-summary span { color: token.$crm-text-secondary; font-size: 11px; } .material-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .remark-field :deep(.el-textarea__inner) { resize: vertical; }
 .submit-bar { justify-content: flex-end; gap: 10px; height: 64px; } .submit-bar .el-button { width: 112px; height: 38px; margin: 0; }
-.manual-inbound-page :deep(.el-input__wrapper), .manual-inbound-page :deep(.el-select__wrapper) { min-height: 38px; border-radius: token.$crm-radius-2; }
+.manual-inbound-page :deep(.el-input__wrapper), .manual-inbound-page :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
 @media (max-width: 1100px) { .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .material-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 </style>

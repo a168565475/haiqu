@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
@@ -206,16 +207,17 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
 </script>
 
 <template>
-  <section class="bom-list-page" aria-label="BOM 列表">
-    <header class="bom-page-heading">
+  <section class="bom-list-page erp-glass-list" aria-label="BOM 列表">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="bom-page-heading erp-list-heading">
       <div class="bom-page-heading__title"><h1>BOM 管理</h1><span>{{ total }} 个 BOM</span></div>
     </header>
 
-    <ElAlert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false"><ElButton size="small" @click="loadFilterOptions">重试选项</ElButton></ElAlert>
+    <ElAlert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false"><ElButton class="erp-button-motion" size="small" @click="loadFilterOptions">重试选项</ElButton></ElAlert>
 
-    <section class="filter-row" aria-label="BOM 快速筛选">
+    <section class="filter-row erp-list-filters" aria-label="BOM 快速筛选">
         <ElInput v-model="filters.q" class="search-filter" clearable placeholder="搜索 BOM / 任务 / 订单 / 产品" @keydown.enter="handleSearchEnter" @clear="search">
-          <template #suffix><button type="button" class="bom-search-button" aria-label="搜索 BOM" @click="search"><img :src="searchIcon" alt="" aria-hidden="true" /></button></template>
+          <template #suffix><button type="button" class="bom-search-button erp-list-search-button" aria-label="搜索 BOM" @click="search"><img :src="searchIcon" alt="" aria-hidden="true" /></button></template>
         </ElInput>
         <ElSelect v-model="filters.status" placeholder="确认状态：全部" clearable @change="search">
           <ElOption label="待确认" value="PENDING_CONFIRMATION" />
@@ -235,18 +237,22 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
           clearable
           @change="search"
         />
-        <ElPopover placement="bottom-end" :width="260" trigger="click">
-          <template #reference><ElButton :icon="ArrowDown">更多筛选</ElButton></template>
+        <ElPopover popper-class="erp-list-filter-popover" placement="bottom-end" :width="260" trigger="click">
+          <template #reference><ElButton class="erp-button-motion" :icon="ArrowDown">更多筛选</ElButton></template>
           <div class="more-filter-panel"><span>当前页已展示全部可用筛选项。</span><ElButton text type="primary" @click="openProductInformation">产品信息</ElButton><ElButton text type="primary" @click="resetFilters">重置全部筛选</ElButton></div>
         </ElPopover>
-      <div v-if="canCreate" class="bom-filter-actions">
-        <ElButton type="primary" :icon="Plus" @click="openCreate()">新建 BOM</ElButton>
-      </div>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton></div>
     </section>
 
-    <section class="list-card" aria-label="BOM 清单">
+    </section>
+
+    <section class="list-card erp-list-data" aria-label="BOM 清单">
+      <div class="erp-list-toolbar">      <div v-if="canCreate" class="bom-filter-actions">
+        <ElButton class="erp-button-motion" type="primary" :icon="Plus" @click="openCreate()">新建 BOM</ElButton>
+      </div></div>
+      <div class="erp-list-table-frame">
       <ElAlert v-if="errorMessage" type="error" :closable="false" show-icon>{{ errorMessage }}</ElAlert>
-      <ElTable v-else v-loading="loading" :data="rows" border row-key="id" empty-text="暂无 BOM，可从生产任务单新建">
+      <ElTable v-else v-loading="loading" :data="rows" height="100%" border row-key="id" empty-text="暂无 BOM，可从生产任务单新建">
         <ElTableColumn prop="bom_number" label="BOM 编号" width="150" />
         <ElTableColumn label="生产任务单" width="120"><template #default="scope"><span class="cell-single">{{ scope.row.production_task_number || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="产品编码" width="160"><template #default="scope"><span class="cell-single">{{ scope.row.product_code_snapshot || scope.row.product_number_snapshot || '—' }}</span></template></ElTableColumn>
@@ -255,7 +261,7 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
         <ElTableColumn label="颜色" width="140"><template #default="scope"><span class="cell-single">{{ scope.row.product_color_snapshot || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="订单数量" width="120" align="right"><template #default="scope"><span class="quantity-cell"><strong>{{ number(scope.row.current_order_quantity) }}</strong><span v-if="scope.row.product_unit_name">{{ scope.row.product_unit_name }}</span></span></template></ElTableColumn>
         <ElTableColumn label="用料分区" min-width="250" show-overflow-tooltip><template #default="scope">{{ sectionText(scope.row) }}</template></ElTableColumn>
-        <ElTableColumn label="确认状态" width="140" align="center"><template #default="scope"><ElTag :type="statusType(scope.row)" effect="light">{{ statusText(scope.row) }}</ElTag></template></ElTableColumn>
+        <ElTableColumn label="确认状态" width="140" align="center"><template #default="scope"><ElTag :type="statusType(scope.row)" effect="dark">{{ statusText(scope.row) }}</ElTag></template></ElTableColumn>
         <ElTableColumn label="更新人" width="120"><template #default="scope"><span class="cell-single">{{ scope.row.updated_by_name || '—' }}</span></template></ElTableColumn>
         <ElTableColumn label="更新时间" width="170"><template #default="scope"><span class="cell-single">{{ dateTime(scope.row.updated_at) }}</span></template></ElTableColumn>
         <ElTableColumn label="操作" width="72" align="center" fixed="right" class-name="operation-column">
@@ -273,44 +279,21 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
           </template>
         </ElTableColumn>
       </ElTable>
-      <footer class="list-card__footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" :total="total" @current-change="loadRows" @size-change="search" /></footer>
+      </div>
+      <footer class="list-card__footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" :total="total" @current-change="loadRows" @size-change="search" /></footer>
     </section>
 
   </section>
 </template>
 
 <style scoped lang="scss">
-.bom-list-page { box-sizing: border-box; min-width: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 26px 28px 18px; color: #1f1d18; background: var(--erp-page-background); }
-.bom-page-heading, .bom-page-heading__title, .bom-filter-actions, .filter-row, .list-card__footer { display: flex; align-items: center; }
-.bom-page-heading { height: 46px; flex: none; justify-content: space-between; }
-.bom-page-heading__title { gap: 14px; }
-.bom-page-heading h1 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 34px; line-height: 46px; }
-.bom-page-heading__title > span { color: #6f6a61; font-size: 13px; }
-.bom-filter-actions { flex: none; margin-left: auto; }
-.bom-filter-actions :deep(.el-button) { width: 140px; height: 38px; margin: 0; border-radius: 5px; border-color: #c84e28; background: #c84e28; }
-.filter-row { min-height: 38px; flex: none; flex-wrap: wrap; gap: 10px 14px; margin-top: 17px; }
+.bom-page-heading__title { display: flex; align-items: center; gap: 14px; }
+.bom-page-heading__title > span { color: var(--erp-color-text-secondary); font-size: 13px; }
 .filter-row .search-filter { width: 250px; min-width: 250px; flex: none; }
 .filter-row > :deep(.el-select) { width: 196px; flex: none; }
 .filter-row > :deep(.el-date-editor) { width: 258px; flex: none; }
-.filter-row :deep(.el-input__wrapper), .filter-row :deep(.el-select__wrapper), .filter-row :deep(.el-button) { min-height: 38px; border-radius: 5px; }
-.bom-search-button { display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
-.bom-search-button img { width: 16px; height: 16px; }
-.bom-search-button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
-.list-card { min-height: 0; flex: 1; display: flex; flex-direction: column; margin-top: 22px; overflow: hidden; border: 1px solid #e3dfd7; border-radius: 5px; background: #fdfcf9; }
-.list-card :deep(.el-table) { min-height: 0; flex: 1; color: #1f1d18; }
-.list-card :deep(.el-table th.el-table__cell) { height: 44px; padding: 0; color: #6f6a61; background: #efebe3; font-size: 11px; font-weight: 500; }
-.list-card :deep(.el-table .el-table__cell) { padding: 0; }
-.list-card :deep(.el-table .cell) { padding: 0 16px; }
-.list-card :deep(.operation-column .cell) { padding: 0 8px; }
-.list-card :deep(.el-table .el-table__row) { height: 40px; font-size: 12px; }
-.list-card :deep(.el-table .el-table__row > td.el-table__cell) { height: 40px; }
-.list-card :deep(.el-table__row:hover > td) { background: #fff6ea; }
 .cell-single { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quantity-cell { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 4px; white-space: nowrap; }
-.quantity-cell > span { color: #6f6a61; font-size: 11px; }
-.list-card :deep(.el-tag) { min-width: 76px; height: 24px; justify-content: center; border: 0; border-radius: 999px; }
-.bom-list-page .list-card__footer { height: auto !important; min-height: 48px; flex: none; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 16px !important; border-top: 1px solid #e3dfd7; color: #6f6a61; font-size: 12px; }
-.list-card__footer :deep(.el-pagination) { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; --el-pagination-button-bg-color: #fdfcf9; }
-.list-card__footer :deep(.is-active) { color: #c84e28; background: #fdfcf9; border: 1px solid #c84e28; }
-.more-filter-panel { display: flex; flex-direction: column; gap: 8px; color: #6f6a61; font-size: 12px; }
+.quantity-cell > span { color: var(--erp-table-text); font-size: 11px; }
+.more-filter-panel { display: flex; flex-direction: column; gap: 8px; color: var(--erp-color-text-secondary); font-size: 12px; }
 </style>

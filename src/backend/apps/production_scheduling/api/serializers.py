@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 from rest_framework import serializers
 
 from apps.audit.models import AuditLog
 from apps.production_tasks.models import ProductionTaskStatus
+from apps.sales_orders.presentation import specification_display
 
 from ..models import ProductionSchedule, ProductionScheduleProduct
 
@@ -146,7 +149,14 @@ class ScheduleItemReadSerializer(serializers.Serializer):
             ProductionTaskStatus.CANCELLED: ("CANCELLED", "已取消"),
         }.get(task_status, ("IN_PROGRESS", "进行中"))
         source = schedule.source_snapshot or {}
-        product = instance.product_snapshot or {}
+        product = dict(instance.product_snapshot or {})
+        # 旧排产快照没有材质字段；展示时复用任务产品的独立字段，不回写业务快照。
+        product.setdefault("material", instance.product_line.material_snapshot)
+        product["specification_display"] = specification_display(SimpleNamespace(
+            specification_snapshot=product.get("specification", ""),
+            color_snapshot=product.get("color_name", ""),
+            material_snapshot=product["material"],
+        ))
         category = self.context.get("category")
         category_crafts = [
             link.craft_name_snapshot

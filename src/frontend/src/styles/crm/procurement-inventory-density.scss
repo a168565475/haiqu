@@ -11,7 +11,7 @@ $list-roots: ':is(.purchase-list-page, .inbound-list-page, .return-page, .sheet-
 $overlay-roots: ':is(.supplier-create-drawer, .purchase-template-create-drawer, .purchase-template-history-drawer, .purchase-return-detail-confirm, .purchase-order-complete-dialog, .purchase-publish-dialog, .warehouse-config-fullscreen, .inventory-fullscreen, .inbound-dialog, .batch-inbound-dialog)';
 
 /* 按钮与单行表单控件统一 32px，多行文本和单据正文保持内容高度。 */
-#{$operation-roots} :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-autocomplete .el-input__wrapper, .el-cascader .el-input__wrapper, .el-input-number),
+#{$operation-roots}:not(.erp-glass-list) :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-autocomplete .el-input__wrapper, .el-cascader .el-input__wrapper, .el-input-number),
 #{$overlay-roots} :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-autocomplete .el-input__wrapper, .el-cascader .el-input__wrapper, .el-input-number),
 body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-autocomplete .el-input__wrapper, .el-cascader .el-input__wrapper, .el-input-number) {
   box-sizing: border-box;
@@ -20,14 +20,14 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) :is(.e
   border-radius: 5px;
 }
 
-#{$operation-roots} .el-input-number :is(.el-input, .el-input__wrapper),
+#{$operation-roots}:not(.erp-glass-list) .el-input-number :is(.el-input, .el-input__wrapper),
 #{$overlay-roots} .el-input-number :is(.el-input, .el-input__wrapper),
 body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-input-number :is(.el-input, .el-input__wrapper) {
   height: 32px !important;
   min-height: 32px !important;
 }
 
-#{$operation-roots} :is(.el-tag, [class*='status-tag'], [class*='status-badge']),
+#{$operation-roots}:not(.erp-glass-list) :is(.el-tag, [class*='status-tag'], [class*='status-badge']),
 #{$overlay-roots} :is(.el-tag, [class*='status-tag'], [class*='status-badge']),
 body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) :is(.el-tag, [class*='status-tag'], [class*='status-badge']) {
   box-sizing: border-box;
@@ -36,13 +36,13 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) :is(.e
   line-height: 22px !important;
 }
 
-#{$operation-roots} .el-form-item,
+#{$operation-roots}:not(.erp-glass-list) .el-form-item,
 #{$overlay-roots} .el-form-item,
 body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-form-item {
   margin-bottom: 12px;
 }
 
-#{$operation-roots} .el-form-item__label,
+#{$operation-roots}:not(.erp-glass-list) .el-form-item__label,
 #{$overlay-roots} .el-form-item__label,
 body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-form-item__label {
   padding-bottom: 4px;
@@ -50,44 +50,48 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
 }
 
 /* Element Plus 普通数据表格。 */
-#{$data-roots} .el-table,
+#{$data-roots}:not(.erp-glass-list) .el-table,
 #{$overlay-roots} .el-table {
   width: 100%;
   overflow: hidden;
   border-radius: 5px;
-  --el-table-border-color: #ddd6c9;
-  --el-table-header-bg-color: #f0eadf;
-  --el-table-row-hover-bg-color: #fff6ea;
-  --el-table-current-row-bg-color: #fff4e6;
-  color: #4d4c48;
+  --el-table-border-color: var(--erp-table-border);
+  --el-table-bg-color: var(--erp-table-background);
+  --el-table-tr-bg-color: var(--erp-table-background);
+  --el-table-text-color: var(--erp-table-text);
+  --el-table-header-text-color: var(--erp-table-header-text);
+  --el-table-header-bg-color: var(--erp-table-header-background);
+  --el-table-row-hover-bg-color: var(--erp-table-hover);
+  --el-table-current-row-bg-color: var(--erp-table-selected);
+  color: var(--erp-table-text);
 }
 
-#{$data-roots} .el-table__header-wrapper th.el-table__cell,
+#{$data-roots}:not(.erp-glass-list) .el-table__header-wrapper th.el-table__cell,
 #{$overlay-roots} .el-table__header-wrapper th.el-table__cell {
   box-sizing: border-box;
   height: 44px !important;
   padding: 0 !important;
-  color: #6f6a61 !important;
-  background: #f0eadf !important;
+  color: var(--erp-table-header-text) !important;
+  background: var(--erp-table-header-background) !important;
   font-size: 11px !important;
   font-weight: 500 !important;
   line-height: 16px !important;
 }
 
-#{$data-roots} .el-table__body tr,
-#{$data-roots} .el-table__body-wrapper td.el-table__cell,
+#{$data-roots}:not(.erp-glass-list) .el-table__body tr,
+#{$data-roots}:not(.erp-glass-list) .el-table__body-wrapper td.el-table__cell,
 #{$overlay-roots} .el-table__body tr,
 #{$overlay-roots} .el-table__body-wrapper td.el-table__cell {
   box-sizing: border-box;
   height: 40px !important;
   padding: 0 !important;
-  color: #4d4c48;
-  background: #fcfbf7;
+  color: var(--erp-table-text);
+  background: var(--erp-table-background);
   font-size: 12px !important;
   line-height: 18px !important;
 }
 
-#{$data-roots} .el-table__cell > .cell,
+#{$data-roots}:not(.erp-glass-list) .el-table__cell > .cell,
 #{$overlay-roots} .el-table__cell > .cell {
   padding-right: 16px !important;
   padding-left: 16px !important;
@@ -97,31 +101,31 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
   text-overflow: ellipsis;
 }
 
-#{$data-roots} .el-table__header-wrapper .cell,
+#{$data-roots}:not(.erp-glass-list) .el-table__header-wrapper .cell,
 #{$overlay-roots} .el-table__header-wrapper .cell {
   white-space: normal;
 }
 
-#{$data-roots} .el-table__body-wrapper .cell,
+#{$data-roots}:not(.erp-glass-list) .el-table__body-wrapper .cell,
 #{$overlay-roots} .el-table__body-wrapper .cell {
   white-space: nowrap;
 }
 
 /* 双行主信息使用 18px 行高，总高度 36px，完整落在 40px 数据行内。 */
-#{$data-roots} :is(.stack, .cell-stack) {
+#{$data-roots}:not(.erp-glass-list) :is(.stack, .cell-stack) {
   gap: 0 !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
   line-height: 18px !important;
 }
 
-#{$data-roots} :is(.stack, .cell-stack) > * {
+#{$data-roots}:not(.erp-glass-list) :is(.stack, .cell-stack) > * {
   min-height: 0;
   font-size: 12px !important;
   line-height: 18px !important;
 }
 
-#{$data-roots} .el-table .el-checkbox__inner,
+#{$data-roots}:not(.erp-glass-list) .el-table .el-checkbox__inner,
 #{$overlay-roots} .el-table .el-checkbox__inner {
   width: 14px;
   height: 14px;
@@ -143,27 +147,27 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
 }
 
 /* 原生业务表格与相同规范对齐；采购单据编辑正文不在此范围。 */
-#{$data-roots} table:not(.reference-contract-table) {
+#{$data-roots}:not(.erp-glass-list) table:not(.reference-contract-table) {
   width: 100%;
   border-collapse: collapse;
-  color: #4d4c48;
+  color: var(--erp-table-text);
   font-size: 12px;
   line-height: 18px;
 }
 
-#{$data-roots} table:not(.reference-contract-table) thead th {
+#{$data-roots}:not(.erp-glass-list) table:not(.reference-contract-table) thead th {
   box-sizing: border-box;
   height: 44px;
   padding: 0 16px !important;
-  color: #6f6a61;
-  background: #f0eadf;
+  color: var(--erp-table-header-text);
+  background: var(--erp-table-header-background);
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
   vertical-align: middle;
 }
 
-#{$data-roots} table:not(.reference-contract-table) tbody td {
+#{$data-roots}:not(.erp-glass-list) table:not(.reference-contract-table) tbody td {
   box-sizing: border-box;
   height: 40px !important;
   padding: 0 16px !important;
@@ -172,7 +176,7 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
   vertical-align: middle;
 }
 
-#{$list-roots} table:not(.reference-contract-table) > tbody > tr:not(.expanded-row) > td {
+#{$list-roots}:not(.erp-glass-list) table:not(.reference-contract-table) > tbody > tr:not(.expanded-row) > td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -205,11 +209,11 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
 }
 
 /* 列表工具栏、表格与分页区使用已确认的垂直节奏。 */
-#{$list-roots} :is(.filters, .filter-row, .filter-grid, .toolbar, .filter-card, .filter-section) {
+#{$list-roots}:not(.erp-glass-list) :is(.filters, .filter-row, .filter-grid, .toolbar, .filter-card, .filter-section) {
   min-height: 32px;
 }
 
-#{$list-roots} :is(.table-toolbar, .list-toolbar, .toolbar-actions) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-toolbar, .list-toolbar, .toolbar-actions) {
   min-height: 32px !important;
   margin-top: 10px !important;
   margin-bottom: 0 !important;
@@ -217,11 +221,11 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
   padding-bottom: 0 !important;
 }
 
-#{$list-roots} :is(.table-card, .list-card, .inventory-table) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-card, .list-card, .inventory-table) {
   margin-top: 14px !important;
 }
 
-#{$list-roots} :is(.table-footer, .page-footer, .pager, .list-card__footer, footer) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-footer, .page-footer, .pager, .list-card__footer, footer) {
   box-sizing: border-box;
   height: 48px !important;
   min-height: 48px !important;
@@ -229,17 +233,17 @@ body:has(#{$operation-roots}) .el-overlay:not(:has(.purchase-pdf-dialog)) .el-fo
   padding-bottom: 0 !important;
 }
 
-#{$list-roots} .el-pagination {
+#{$list-roots}:not(.erp-glass-list) .el-pagination {
   gap: 10px;
   --el-pagination-button-width: 38px;
   --el-pagination-button-height: 32px;
 }
 
-#{$list-roots} .el-pagination .el-select {
+#{$list-roots}:not(.erp-glass-list) .el-pagination .el-select {
   width: 136px;
 }
 
-#{$list-roots} .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
+#{$list-roots}:not(.erp-glass-list) .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
   box-sizing: border-box;
   min-width: 38px !important;
   height: 32px !important;

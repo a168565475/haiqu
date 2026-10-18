@@ -30,11 +30,32 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M15 10h3m-3 4h3m-3 4h2"/></g>
     </g>
 
+    <g v-else-if="name === 'production-workbench'">
+      <title>生产负责人工作台</title>
+      <path d="M3 21V11l6-4v4l6-4v14Z" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M15 21h6V3h-4v8M6 16h1m4 0h1"/>
+      <path class="accent part" d="M18 14v4m-2-2h4" style="stroke:var(--icon-accent,#c84e28)"/>
+    </g>
+
+    <g v-else-if="name === 'production-overview'">
+      <title>生产总览</title>
+      <rect x="3" y="3" width="18" height="15" rx="2" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M8 21h8m-4-3v3"/>
+      <path class="accent part" d="M6 14l4-4 4 2 4-6" style="stroke:var(--icon-accent,#c84e28)"/>
+    </g>
+
+    <g v-else-if="name === 'workshop-workbench'">
+      <title>车间主管工作台</title>
+      <rect x="3" y="4" width="18" height="17" rx="2" style="fill:var(--icon-muted,#e7e9e4)"/>
+      <path d="M8 2v4m8-4v4M3 9h18m-9 0v12M3 15h9"/>
+      <path class="accent part" d="m14 15 2 2 3-4" style="stroke:var(--icon-accent,#c84e28)"/>
+    </g>
+
     <g v-else-if="name === 'customers'">
       <title>客户列表</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><rect x="4" y="3" width="16" height="18" rx="1.5"/></g>
       <path d="M2 7h3m-3 5h3m-3 5h3"/>
-      <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><circle cx="12.5" cy="9" r="2.5"/><path d="M8.5 17c0-3 1.5-4 4-4s4 1 4 4Z"/></g>
+      <g class="accent part" style="stroke:var(--icon-accent,#c84e28);fill:var(--icon-selected-fill,none)"><circle cx="12.5" cy="9" r="2.5"/><path d="M8.5 17c0-3 1.5-4 4-4s4 1 4 4Z"/></g>
     </g>
 
     <g v-else-if="name === 'complaints'">
@@ -272,5 +293,8 @@ defineProps<{ name: string }>()
 <style scoped>
 .confirmed-secondary-sidebar-icon {
   display: block;
+  width: 100%;
+  height: 100%;
+  flex: none;
 }
 </style>

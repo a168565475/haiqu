@@ -1,0 +1,21 @@
+// 详情逐个面板接入，保留各模块的业务布局和滚动方式。
+@mixin surface {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  backdrop-filter: var(--erp-glass-backdrop);
+}
+
+// 内层信息分组只保留轻边界，不叠加第二层玻璃模糊和投影。
+@mixin inset {
+  box-sizing: border-box;
+  min-width: 0;
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-radius-control);
+  background: var(--erp-glass-inner-background);
+  box-shadow: none;
+  backdrop-filter: none;
+}

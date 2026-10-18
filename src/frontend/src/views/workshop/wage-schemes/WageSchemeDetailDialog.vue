@@ -30,19 +30,19 @@ let requestSequence = 0
 let linesSectionObserver: ResizeObserver | null = null
 
 const tableCssVariables = {
-  '--el-table-bg-color': '#fcfbf7',
-  '--el-table-tr-bg-color': '#fcfbf7',
-  '--el-table-header-bg-color': '#f0eadf',
-  '--el-table-border-color': '#ddd6c9',
-  '--el-table-row-hover-bg-color': '#fff6ea',
-  '--el-table-current-row-bg-color': '#fff4e6',
+  '--el-table-bg-color': 'var(--erp-table-body-fill)',
+  '--el-table-tr-bg-color': 'var(--erp-table-body-fill)',
+  '--el-table-header-bg-color': 'var(--erp-table-header-fill)',
+  '--el-table-border-color': 'var(--erp-table-grid)',
+  '--el-table-row-hover-bg-color': 'var(--erp-color-hover)',
+  '--el-table-current-row-bg-color': 'var(--erp-color-selected)',
 } as CSSProperties
 const tableHeaderCellStyle: CSSProperties = {
   boxSizing: 'border-box',
   height: '44px',
   padding: '0',
-  color: '#6f6a61',
-  background: '#f0eadf',
+  color: 'var(--erp-table-header-text)',
+  background: 'var(--erp-table-header-fill)',
   fontSize: '11px',
   fontWeight: '400',
   lineHeight: '16px',
@@ -51,8 +51,8 @@ const tableBodyCellStyle: CSSProperties = {
   boxSizing: 'border-box',
   height: '36px',
   padding: '0',
-  color: '#4d4c48',
-  background: '#fcfbf7',
+  color: 'var(--erp-table-text)',
+  background: 'var(--erp-table-body-fill)',
   fontSize: '12px',
   lineHeight: '18px',
 }
@@ -92,11 +92,11 @@ function eventStatusClass(action: string) {
 
 function eventTimelineColor(action: string) {
   return ({
-    APPROVED: '#4f7d4b',
-    SUBMITTED: '#3898ec',
-    RETURNED: '#b53333',
-    CHANGE_CREATED: '#b8781e',
-  } as Record<string, string>)[action] || '#5e5d59'
+    APPROVED: 'var(--erp-color-success)',
+    SUBMITTED: 'var(--erp-color-info)',
+    RETURNED: 'var(--erp-color-danger)',
+    CHANGE_CREATED: 'var(--erp-color-warning)',
+  } as Record<string, string>)[action] || 'var(--erp-color-neutral)'
 }
 
 function formatDateTime(value: string) {
@@ -298,10 +298,12 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 </template>
 
 <style lang="scss">
+@use '@/styles/theme/detail' as detail;
+
 .app-window-dialog.wage-detail-dialog {
   font-family: 'Noto Sans SC Variable', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
-  --el-color-primary: #c84e28;
-  --el-border-color-lighter: #ddd6c9;
+  --el-color-primary: var(--erp-color-brand);
+  --el-border-color-lighter: var(--erp-color-border-subtle);
 
   .app-window-dialog__body {
     min-height: 0;
@@ -309,13 +311,13 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   }
 
   .wage-detail-dialog__table {
-    --el-table-bg-color: #fcfbf7;
-    --el-table-tr-bg-color: #fcfbf7;
-    --el-table-header-bg-color: #f0eadf;
-    --el-table-border-color: #ddd6c9;
-    --el-table-row-hover-bg-color: #fff6ea;
-    --el-table-current-row-bg-color: #fff4e6;
-    color: #4d4c48;
+    --el-table-bg-color: var(--erp-table-body-fill);
+    --el-table-tr-bg-color: var(--erp-table-body-fill);
+    --el-table-header-bg-color: var(--erp-table-header-fill);
+    --el-table-border-color: var(--erp-table-grid);
+    --el-table-row-hover-bg-color: var(--erp-color-hover);
+    --el-table-current-row-bg-color: var(--erp-color-selected);
+    color: var(--erp-table-text);
     font-size: 12px;
   }
 
@@ -323,8 +325,8 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     box-sizing: border-box;
     height: 44px !important;
     padding: 0 !important;
-    color: #6f6a61 !important;
-    background: #f0eadf !important;
+    color: var(--erp-table-header-text) !important;
+    background: var(--erp-table-header-fill) !important;
     font-size: 11px !important;
     font-weight: 400 !important;
     line-height: 16px !important;
@@ -338,8 +340,8 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     box-sizing: border-box;
     height: 36px !important;
     padding: 0 !important;
-    color: #4d4c48;
-    background: #fcfbf7;
+    color: var(--erp-table-text);
+    background: var(--erp-table-body-fill);
     font-size: 12px !important;
     line-height: 18px !important;
   }
@@ -351,11 +353,11 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   }
 
   .el-table__body tr:hover > td.el-table__cell {
-    background: #fff6ea !important;
+    background: var(--erp-color-hover) !important;
   }
 
   .el-table td.is-money .cell {
-    color: #1f1d18;
+    color: var(--erp-table-text);
     font-size: 13px;
     font-weight: 600;
     line-height: 20px;
@@ -370,13 +372,13 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 
   strong {
     flex: none;
-    color: #1f1d18;
+    color: var(--erp-color-text-primary);
     font-family: 'Noto Serif SC Variable', 'Noto Serif SC', 'Songti SC', serif;
     font-weight: 600;
   }
 
   > span {
-    color: #4d4c48;
+    color: var(--erp-color-text-regular);
     font-family: 'Noto Sans SC Variable', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
     font-size: 12px;
   }
@@ -387,10 +389,12 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   height: 100%;
   min-height: 0;
   grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 24px;
+  gap: 14px;
 }
 
 .wage-detail-dialog__section {
+  @include detail.inset;
+  padding: 14px;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -401,7 +405,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     flex: none;
     margin: 0 0 10px;
     padding-left: 16px;
-    color: #1f1d18;
+    color: var(--erp-color-text-primary);
     font-size: 16px;
     line-height: 24px;
 
@@ -412,7 +416,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
       left: 0;
       width: 4px;
       border-radius: 2px;
-      background: #c84e28;
+      background: var(--erp-color-brand);
       content: '';
     }
   }
@@ -423,8 +427,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 }
 
 .wage-detail-dialog__section--events {
-  padding-left: 24px;
-  border-left: 1px solid #ddd6c9;
+  padding-left: 14px;
 }
 
 .wage-detail-dialog__approval-list {
@@ -439,21 +442,19 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 
   .el-timeline-item__timestamp {
     margin-bottom: 8px;
-    color: #968f84;
+    color: var(--erp-color-text-muted);
     font-size: 11px;
     line-height: 16px;
   }
 
   .el-timeline-item__tail {
-    border-left-color: #ddd6c9;
+    border-left-color: var(--erp-color-border);
   }
 }
 
 .wage-detail-dialog__event {
+  @include detail.inset;
   padding: 14px 16px;
-  border: 1px solid #ddd6c9;
-  border-radius: 5px;
-  background: #fcfbf7;
 
   header {
     display: flex;
@@ -463,7 +464,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     strong {
       min-width: 0;
       overflow: hidden;
-      color: #1f1d18;
+      color: var(--erp-color-text-primary);
       font-size: 13px;
       font-weight: 600;
       line-height: 20px;
@@ -474,7 +475,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 
   p {
     margin: 10px 0 0;
-    color: #4d4c48;
+    color: var(--erp-color-text-regular);
     font-size: 12px;
     line-height: 20px;
     overflow-wrap: anywhere;
@@ -489,7 +490,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 .wage-detail-dialog__table {
   width: 100%;
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: var(--erp-radius-control);
 }
 
 .wage-status-tag {
@@ -501,18 +502,18 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   justify-content: center;
   padding: 0 8px;
   border-radius: 999px;
-  color: #faf9f5 !important;
+  color: var(--erp-color-text-inverse) !important;
   font-family: 'Noto Sans SC Variable', 'Noto Sans SC', 'Microsoft YaHei', sans-serif !important;
   font-size: 12px !important;
   font-weight: 500;
   line-height: 18px;
   white-space: nowrap;
 
-  &.is-success { background: #4f7d4b; }
-  &.is-info { background: #3898ec; }
-  &.is-warning { background: #b8781e; }
-  &.is-danger { background: #b53333; }
-  &.is-neutral { background: #5e5d59; }
+  &.is-success { background: var(--erp-tag-success-background); }
+  &.is-info { background: var(--erp-tag-info-background); }
+  &.is-warning { background: var(--erp-tag-warning-background); }
+  &.is-danger { background: var(--erp-tag-danger-background); }
+  &.is-neutral { background: var(--erp-tag-neutral-background); }
 }
 
 .wage-detail-dialog__footer {
@@ -541,11 +542,11 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 
   .wage-detail-dialog__content {
     grid-template-columns: minmax(0, 1fr) 280px;
-    gap: 16px;
+    gap: 14px;
   }
 
   .wage-detail-dialog__section--events {
-    padding-left: 16px;
+    padding-left: 14px;
   }
 }
 </style>

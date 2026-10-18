@@ -455,7 +455,7 @@ onMounted(() => { void loadOptions() })
 </script>
 
 <template>
-  <section v-loading="loading || sourceLoading || bomLoading" class="outsourcing-page outsourcing-order-form-page" data-testid="outsourcing-order-form-page">
+  <section v-loading="loading || sourceLoading || bomLoading" class="outsourcing-page outsourcing-order-form-page erp-glass-form" data-testid="outsourcing-order-form-page">
     <header class="outsourcing-heading"><div class="heading-title"><h1>新增外发单</h1></div></header>
     <ElAlert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon><ElButton @click="retryLoad">重新加载</ElButton></ElAlert>
     <ElAlert v-if="selectedMetalSource" data-testid="metal-source-context" :title="`已选金工来源：${selectedMetalSource.issue_number} · ${selectedMetalSource.part_name}，可交接 ${selectedMetalSource.available_pieces} 支。保存后进入详情登记交接，按实际交接确定材料来源。`" type="info" :closable="false" show-icon />
@@ -547,11 +547,11 @@ onMounted(() => { void loadOptions() })
 <style lang="scss" scoped>
 .outsourcing-order-form-page .processing-card,
 .outsourcing-order-form-page .material-card { max-height: none; overflow: visible; }
-.processing-row-tip { position: fixed; z-index: 3000; display: flex; flex-wrap: wrap; gap: 4px 12px; box-sizing: border-box; padding: 10px 12px; border: 1px solid #d8c6aa; border-radius: 4px; background: #fffdf8; box-shadow: 0 8px 24px #2d241c22; color: #76543a; font-size: 12px; line-height: 20px; pointer-events: none; }
-.processing-row-tip strong { color: #3b2b20; white-space: nowrap; }
+.processing-row-tip { position: fixed; z-index: 3000; display: flex; flex-wrap: wrap; gap: 4px 12px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--erp-color-border); border-radius: 4px; background: var(--erp-color-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 13.333%, transparent); color: var(--erp-color-text-regular); font-size: 12px; line-height: 20px; pointer-events: none; }
+.processing-row-tip strong { color: var(--erp-color-text-primary); white-space: nowrap; }
 .quantity-input-with-unit { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .quantity-input-with-unit > span { flex: none; white-space: nowrap; }
 .quantity-input-with-unit :deep(.el-input),
 .quantity-input-with-unit :deep(.el-input-number) { flex: 1; width: 0; min-width: 0; }
-.return-measure-card p { font-size: 13px; color: #76685b; line-height: 1.6; }
+.return-measure-card p { font-size: 13px; color: var(--erp-color-text-secondary); line-height: 1.6; }
 </style>

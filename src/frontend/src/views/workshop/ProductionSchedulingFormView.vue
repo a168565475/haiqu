@@ -174,7 +174,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section v-loading="loading" class="schedule-page schedule-form" data-testid="production-scheduling-form">
+  <section v-loading="loading" class="schedule-page schedule-form erp-glass-form" data-testid="production-scheduling-form">
     <header class="schedule-heading"><div><h1>{{ isEditing ? '编辑排产' : '新增排产' }}</h1><span>按产品分别填写数量、日期和工艺</span></div></header>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false" />
     <section class="schedule-section basic-section">
@@ -236,8 +236,10 @@ onMounted(async () => {
 <style lang="scss">@use '@/styles/productionScheduling.scss';</style>
 <style scoped lang="scss">
 .schedule-form {
-  height: calc(100dvh - 92px);
+  height: auto;
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
+  color: var(--erp-color-text-primary);
+  background: transparent;
 }
 </style>

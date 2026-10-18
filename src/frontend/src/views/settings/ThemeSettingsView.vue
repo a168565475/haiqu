@@ -29,7 +29,7 @@ function selectTheme(theme: EnabledThemeId): void {
     <div class="theme-settings__card" aria-labelledby="theme-options-title">
       <div class="theme-settings__intro">
         <h2 id="theme-options-title">主题方案</h2>
-        <p>当前提供已确认的暖色 ERP 主题。其他主题仅保留扩展接口，待设计确认后再开放。</p>
+        <p>默认使用冷蓝银，也可选择暖色 ERP。选择会保存在当前浏览器；深色主题待配色确认后开放。</p>
       </div>
 
       <div class="theme-settings__options" role="list">
@@ -43,7 +43,7 @@ function selectTheme(theme: EnabledThemeId): void {
           :data-theme-option="theme.id"
           @click="selectTheme(theme.id)"
         >
-          <span class="theme-option__preview" aria-hidden="true">
+          <span class="theme-option__preview" :data-theme-preview="theme.id" aria-hidden="true">
             <span class="theme-option__preview-sidebar" />
             <span class="theme-option__preview-content">
               <span class="theme-option__preview-header" />
@@ -169,13 +169,14 @@ function selectTheme(theme: EnabledThemeId): void {
   overflow: hidden;
   border: 1px solid var(--erp-color-border);
   border-radius: 4px;
-  background: var(--erp-color-page);
+  background: var(--erp-page-background);
 }
 
 .theme-option__preview-sidebar {
   width: 30px;
   flex: none;
-  background: var(--erp-color-text-primary);
+  border-right: 1px solid var(--erp-glass-border);
+  background: var(--erp-glass-background);
 }
 
 .theme-option__preview-content {
@@ -188,7 +189,7 @@ function selectTheme(theme: EnabledThemeId): void {
   width: 68%;
   height: 8px;
   border-radius: 2px;
-  background: var(--erp-color-border-strong);
+  background: var(--erp-color-brand);
 }
 
 .theme-option__preview-lines {

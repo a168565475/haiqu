@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { materialFieldOptions, materialFieldSelectionOnly, validateSampleMaterials } from '@/utils/sampleMaterial'
 import { sampleMaterialCategories, type SampleMaterialLine, type SampleMaterialReferences, type SampleMaterialUnit } from '@/types/sampleMaterial'
 import SampleMaterialFieldInput from './SampleMaterialFieldInput.vue'
@@ -43,7 +44,7 @@ async function apply(next: boolean) {
 }
 </script>
 <template>
-  <ElDrawer :model-value="modelValue" class="sample-material-line-drawer" :title="`${sampleMaterialCategories.find(item => item.key === line.category)?.label} · 放大编辑`" size="600px" append-to-body destroy-on-close :close-on-click-modal="false" :before-close="close">
+  <AppWindowDialog :model-value="modelValue" class="sample-material-line-dialog" :title="`${sampleMaterialCategories.find(item => item.key === line.category)?.label} · 放大编辑`" :width="600" destroy-on-close :close-on-click-modal="false" :before-close="close">
     <div class="material-line-drawer">
       <p class="drawer-help">编辑名称、规格和本次需求数量。应用后，填写完成再提交仓库。</p>
       <ElForm label-position="top" @submit.prevent>
@@ -59,7 +60,7 @@ async function apply(next: boolean) {
       <p v-if="error" role="alert" class="drawer-error">{{ error }}</p>
     </div>
     <template #footer><ElButton :disabled="applying" @click="close">取消</ElButton><ElButton :disabled="disabled || applying" @click="apply(false)">应用修改</ElButton><ElButton v-if="hasNext || canAddNext !== false" type="primary" :disabled="disabled || applying" @click="apply(true)">{{ hasNext ? '保存编辑下一条' : '保存新增下一条' }}</ElButton></template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
@@ -68,3 +69,4 @@ async function apply(next: boolean) {
 .drawer-fields :deep(.el-select) { width: 100%; }
 .drawer-error { color: token.$crm-danger; font-size: 13px; }
 </style>
+

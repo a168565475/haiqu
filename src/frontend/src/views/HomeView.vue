@@ -5,6 +5,7 @@ import { storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
 
 import { fetchCustomer, fetchCustomers, fetchCustomerStats } from '@/api/customers'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { fetchWorkbenchDashboard, fetchWorkbenchTask, fetchWorkbenchTasks, transitionWorkbenchTask } from '@/api/workbench'
 import ResizableDrawerHandle from '@/components/ResizableDrawerHandle.vue'
 import WorkbenchQuickDrawer from '@/components/workbench/WorkbenchQuickDrawer.vue'
@@ -261,7 +262,7 @@ onMounted(() => {
     <WorkbenchQuickDrawer v-if="mode === 'SALES'" v-model="communicationDrawerVisible" action="COMMUNICATION" :employee-id="employeeId" @saved="refreshWorkbench" />
     <WorkbenchQuickDrawer v-if="mode === 'SALES'" v-model="inquiryDrawerVisible" action="INQUIRY" :employee-id="employeeId" @saved="refreshWorkbench" />
 
-    <ElDrawer v-model="taskDrawerVisible" title="任务详情" size="420px" destroy-on-close append-to-body>
+    <AppWindowDialog v-model="taskDrawerVisible" title="任务详情" :width="420" destroy-on-close :close-on-click-modal="false">
       <ResizableDrawerHandle />
       <div v-loading="taskDrawerLoading" class="task-detail">
         <template v-if="selectedTask">
@@ -280,30 +281,37 @@ onMounted(() => {
           {{ selectedTask.status === 'PENDING' ? '开始处理' : '标记完成' }}
         </ElButton>
       </template>
-    </ElDrawer>
+    </AppWindowDialog>
   </div>
 </template>
 
 <style lang="scss" scoped>
-.workbench-page { min-width: 0; color: #18181b; }
+@use '@/styles/workbench' as workbench;
+
+.workbench-page { min-width: 0; color: var(--erp-color-text-primary); font-family: var(--erp-font-body); }
 .workbench-page__heading { height: 72px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-top: 0; }
-.workbench-page__heading h1 { margin: 0; color: #27272a; font-size: 28px; font-weight: 700; line-height: 32px; letter-spacing: -.02em; }
-.workbench-page__heading p { margin: 0; color: #71717a; font-size: 13px; line-height: 20px; }
+.workbench-page__heading h1 { margin: 0; color: var(--erp-color-text-primary); font-size: 28px; font-weight: 700; line-height: 32px; letter-spacing: -.02em; }
+.workbench-page__heading p { margin: 0; color: var(--erp-color-text-secondary); font-size: 13px; line-height: 20px; }
 .workbench-page__actions { display: flex; gap: 12px; }
-.page-action { min-width: 104px; height: 32px; padding: 0 16px; border: 1px solid #d4d4d8; border-radius: 8px; color: #3f3f46; background: #fff; font-size: 13px; font-weight: 500; cursor: pointer; }
-.page-action--primary { border-color: #18181b; color: #fff; background: #18181b; }
-.workbench-inline-error { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; padding: 8px 12px; border: 1px solid #fecaca; border-radius: 8px; color: #b91c1c; background: #fef2f2; font-size: 12px; }
-.workbench-inline-error small { flex: none; color: #71717a; }
-.workbench-forbidden { min-height: 560px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; text-align: center; }
-.workbench-forbidden__icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: #71717a; background: #f4f4f5; font-size: 22px; font-weight: 700; }
+.page-action { @include workbench.secondary-button; min-width: 104px; height: 32px; padding: 0 16px; border-width: 1px; border-style: solid; font-size: 13px; font-weight: 500; cursor: pointer; }
+.page-action--primary:not([aria-disabled='true']) {
+  border-color: var(--erp-button-primary-border); color: var(--erp-button-primary-text); background: var(--erp-button-primary-surface); box-shadow: var(--erp-button-primary-shadow);
+  &:hover { background: var(--erp-button-primary-hover-surface); }
+  &:active { background: var(--erp-button-primary-pressed-background); }
+}
+.page-action[aria-disabled='true'] { cursor: not-allowed; }
+.workbench-inline-error { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; padding: 8px 12px; border: 1px solid var(--erp-color-danger-border); border-radius: 8px; color: var(--erp-color-danger); background: var(--erp-color-danger-soft); font-size: 12px; }
+.workbench-inline-error small { flex: none; color: var(--erp-color-text-secondary); }
+.workbench-forbidden { min-height: 560px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; border: 1px solid var(--erp-glass-border); border-radius: var(--erp-glass-radius); background: var(--erp-glass-background); box-shadow: var(--erp-glass-shadow); backdrop-filter: var(--erp-glass-backdrop); text-align: center; }
+.workbench-forbidden__icon { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: var(--erp-color-text-secondary); background: var(--erp-color-subtle); font-size: 22px; font-weight: 700; }
 .workbench-forbidden h1 { margin: 18px 0 8px; font-size: 20px; }
-.workbench-forbidden p { max-width: 520px; margin: 0; color: #71717a; font-size: 13px; line-height: 22px; }
+.workbench-forbidden p { max-width: 520px; margin: 0; color: var(--erp-color-text-secondary); font-size: 13px; line-height: 22px; }
 .task-detail { min-height: 260px; }
 .task-detail h2 { margin: 0 0 20px; font-size: 18px; }
 .task-detail dl { margin: 0; }
-.task-detail dl div { display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f4f4f5; }
-.task-detail dt { color: #71717a; }
-.task-detail dd { margin: 0; color: #3f3f46; line-height: 22px; }
+.task-detail dl div { display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--erp-color-subtle); }
+.task-detail dt { color: var(--erp-color-text-secondary); }
+.task-detail dd { margin: 0; color: var(--erp-color-text-regular); line-height: 22px; }
 @media (max-width: 768px) {
   .workbench-page__heading { height: auto; margin-bottom: 16px; }
   .workbench-page__heading h1 { font-size: 20px; }
@@ -311,3 +319,4 @@ onMounted(() => {
   .workbench-inline-error { align-items: flex-start; flex-direction: column; }
 }
 </style>
+

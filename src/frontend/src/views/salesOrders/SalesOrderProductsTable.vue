@@ -61,14 +61,14 @@ function numberText(value: string | number | null | undefined): string {
 </template>
 
 <style scoped>
-.products-table-scroll{max-width:100%;overflow-x:auto;border-radius:5px}
+.products-table-scroll{max-width:100%;overflow-x:auto;border-radius:8px;border:1px solid var(--erp-glass-border);background:var(--erp-table-background)}
 .products-table{width:100%;min-width:900px;border-collapse:collapse;table-layout:fixed;font-size:13px;line-height:1.6}
-.products-table th{padding:12px;text-align:left;background:#f0eadf;color:#6f6a61;font-weight:500}
-.products-table td{padding:12px;vertical-align:top;border-bottom:1px solid #ddd6c9;overflow-wrap:anywhere}
+.products-table th{padding:12px;text-align:left;background:var(--erp-table-header-background);color:var(--erp-table-text);font-weight:500}
+.products-table td{padding:12px;vertical-align:top;border-bottom:1px solid var(--erp-table-border);overflow-wrap:anywhere}
 .products-table th:nth-child(1){width:29%}.products-table th:nth-child(2){width:10%}.products-table th:nth-child(3){width:11%}.products-table th:nth-child(4){width:6%}.products-table th:nth-child(5){width:14%}.products-table th:nth-child(6){width:17%}.products-table th:nth-child(7){width:13%}
 .product-details dl{display:grid;grid-template-columns:30px minmax(0,1fr);gap:5px 8px;margin:0}
-.products-table dt,.muted{color:#6f6a61}.products-table dd{margin:0;min-width:0;white-space:pre-wrap}
-.product-details small{display:block;color:#6f6a61;font-size:11px;line-height:1.5}
+.products-table dt,.muted{color:var(--erp-table-text)}.products-table dd{margin:0;min-width:0;white-space:pre-wrap}
+.product-details small{display:block;color:var(--erp-color-text-regular);font-size:11px;line-height:1.5}
 .price-values{display:grid;gap:2px;margin:0}.price-values dt:not(:first-child){margin-top:6px}
-.price-note{white-space:pre-wrap}.catalog-error{margin:0 0 12px;color:#ad6b05;font-size:13px}.empty-cell{text-align:center;color:#6f6a61}
+.price-note{white-space:pre-wrap}.catalog-error{margin:0 0 12px;color:var(--erp-color-danger);font-size:13px}.empty-cell{text-align:center;color:var(--erp-color-text-regular)}.products-table tbody tr:last-child td { border-bottom:0; }
 </style>

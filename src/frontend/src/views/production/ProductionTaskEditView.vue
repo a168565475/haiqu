@@ -443,7 +443,7 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <main class="production-edit-page production-task-edit-page" v-loading="loading" :aria-busy="loading">
+  <main class="production-edit-page production-task-edit-page erp-glass-form" v-loading="loading" :aria-busy="loading">
     <template v-if="task && !loadError">
       <header class="page-heading">
         <div class="heading-title"><h1>编辑生产任务单</h1><strong>{{ task.task_number }}</strong><span :class="['task-status', 'status-' + task.status.toLowerCase()]">{{ task.status_display }}</span></div>
@@ -564,6 +564,7 @@ onMounted(() => { void load() })
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
+@use '@/styles/theme/detail' as detail;
 
 .production-edit-page { min-width: 0; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body; --el-color-primary: #{token.$crm-primary}; }
 h1, h2, h3, p, dl { margin: 0; }
@@ -573,12 +574,12 @@ h3 { font-size: 13px; line-height: 20px; font-weight: 600; }
 .page-heading { justify-content: space-between; min-height: 46px; margin-bottom: 14px; }
 .page-heading h1 { font: 600 34px/44px token.$crm-font-display; }
 .heading-title > strong { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.task-status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; background: token.$crm-warning; color: #faf9f5; font-size: 12px; font-weight: 500; line-height: 18px; }
-.status-draft { background: token.$crm-neutral; }
-.status-in_production, .status-completed { background: token.$crm-success; }
-.status-cancelled { background: token.$crm-danger; }
+.task-status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; background: var(--erp-tag-warning-background); color: var(--erp-color-text-inverse); font-size: 12px; font-weight: 500; line-height: 18px; }
+.status-draft { background: var(--erp-tag-neutral-background); }
+.status-in_production, .status-completed { background: var(--erp-tag-success-background); }
+.status-cancelled { background: var(--erp-tag-danger-background); }
 .review-alert { margin-bottom: 14px; border: 1px solid token.$crm-border-default; border-radius: 5px; }
-.summary-bar, .task-sidebar, .edit-section, .save-bar { box-sizing: border-box; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; min-width: 0; }
+.summary-bar, .task-sidebar, .edit-section, .save-bar { @include detail.surface; }
 .summary-bar { display: grid; grid-template-columns: 1.2fr 1fr 1fr; padding: 12px 16px; margin-bottom: 14px; font-variant-numeric: tabular-nums; }
 .summary-bar > div { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
 .summary-bar > div + div { padding-left: 24px; border-left: 1px solid token.$crm-border-default; }
@@ -587,7 +588,7 @@ h3 { font-size: 13px; line-height: 20px; font-weight: 600; }
 .summary-bar .summary-money { font-size: 22px; line-height: 28px; }
 .editor-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 14px; align-items: start; }
 .editor-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.side-title { padding: 10px 14px; background: token.$crm-color-subtle; border-bottom: 1px solid token.$crm-border-default; border-radius: 4px 4px 0 0; }
+.side-title { padding: 10px 14px; background: var(--erp-glass-inner-background); border-bottom: 1px solid token.$crm-border-default; border-radius: calc(var(--erp-glass-radius) - 1px) calc(var(--erp-glass-radius) - 1px) 0 0; }
 .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; padding: 14px; }
 .info-wide { grid-column: 1 / -1; }
 .info-grid label, .price-fields label, .pack-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -602,11 +603,11 @@ label i, .required-legend i { color: token.$crm-danger; font-style: normal; }
 .section-title-row > span, .source-note { font-size: 12px; color: token.$crm-text-secondary; }
 .source-note { display: flex; align-items: center; gap: 5px; margin-bottom: 12px; }
 .product-files { display: flex; flex-direction: column; gap: 10px; }
-.product-file { min-width: 0; border: 1px solid token.$crm-border-default; border-radius: 5px; }
+.product-file { @include detail.inset; }
 .product-summary { display: flex; align-items: center; gap: 8px; min-height: 32px; box-sizing: border-box; padding: 5px 10px; list-style: none; cursor: pointer; border-radius: 4px; }
 .product-summary::-webkit-details-marker { display: none; }
 .product-summary:hover { background: token.$crm-color-row-hover; }
-.product-file[open] > summary { border-bottom: 1px solid token.$crm-border-default; border-radius: 4px 4px 0 0; background: #f8f5ef; }
+.product-file[open] > summary { border-bottom: 1px solid token.$crm-border-default; border-radius: calc(var(--erp-radius-control) - 1px) calc(var(--erp-radius-control) - 1px) 0 0; background: var(--erp-glass-inner-background); }
 .file-arrow { width: 16px; height: 16px; flex: 0 0 16px; color: token.$crm-text-secondary; }
 .product-file[open] .file-arrow { transform: rotate(90deg); color: token.$crm-primary; }
 .file-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
@@ -644,12 +645,12 @@ dd { margin: 2px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .comparison-card { border-top: 1px solid token.$crm-border-default; margin-top: 12px; padding-top: 14px; }
 .product-table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid token.$crm-border-default; border-radius: 5px; }
 table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-th, td { box-sizing: border-box; padding: 6px 16px; border-bottom: 1px solid token.$crm-border-default; text-align: left; overflow-wrap: anywhere; }
-th { height: 44px; background: token.$crm-color-subtle; color: token.$crm-text-secondary; font-weight: 500; }
+th, td { box-sizing: border-box; padding: 6px 16px; border-bottom: 1px solid var(--erp-table-grid); text-align: left; overflow-wrap: anywhere; }
+th { height: 44px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-weight: 500; }
 td { height: 34px; }
 tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover td { background: token.$crm-color-row-hover; }
-.new-value { color: token.$crm-primary; background: #fffaf3; }
+tbody tr:hover td { background: var(--erp-color-hover); }
+.new-value { color: token.$crm-primary; background: var(--erp-color-subtle); }
 .no-changes { color: token.$crm-text-secondary; }
 .impact-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
 .impact-note .el-icon { flex-shrink: 0; color: token.$crm-warning; margin-top: 2px; }
@@ -657,12 +658,13 @@ tbody tr:hover td { background: token.$crm-color-row-hover; }
 .save-bar > span { font-size: 12px; color: token.$crm-text-secondary; }
 .save-bar > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .production-edit-page :deep(.el-button) { height: 32px; margin: 0; border-radius: 5px; font-size: 13px; }
-.production-edit-page :deep(.el-input__wrapper), .production-edit-page :deep(.el-select__wrapper) { min-height: 32px; box-sizing: border-box; border-radius: 5px; }
+.production-edit-page :deep(.el-input__wrapper), .production-edit-page :deep(.el-select__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; border-radius: var(--erp-radius-control); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
 .production-edit-page :deep(.el-input__wrapper) { height: 32px; }
 .production-edit-page :deep(.el-input__inner) { height: 30px; }
-.production-edit-page :deep(.el-input-group__append) { padding: 0 9px; background: token.$crm-color-subtle; }
-.production-edit-page :deep(.el-textarea__inner) { min-height: 78px !important; border-radius: 5px; font: inherit; padding: 8px 10px; }
-.readonly-field :deep(.el-input__wrapper) { background: token.$crm-color-subtle; }
+.production-edit-page :deep(.el-input-group__append) { padding: 0 9px; background: var(--erp-input-surface); }
+.production-edit-page :deep(.el-textarea__inner) { min-height: 78px !important; border-radius: var(--erp-radius-control); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; font: inherit; padding: 8px 10px; }
+.production-edit-page :deep(.el-input__wrapper.is-focus), .production-edit-page :deep(.el-select__wrapper.is-focused), .production-edit-page :deep(.el-textarea__inner:focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+.readonly-field :deep(.el-input__wrapper) { background: var(--erp-color-readonly); }
 .production-edit-page :deep(.el-button:focus-visible), summary:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
 .product-detail-editor { margin-top: 22px; }
 .product-detail-editor h3 { margin-bottom: 12px; }

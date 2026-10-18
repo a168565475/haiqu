@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
@@ -182,10 +183,11 @@ onBeforeUnmount(() => { rowsRequest++ })
 </script>
 
 <template>
-  <section class="sample-list-page" aria-label="打样申请列表" data-figma-node="1897:18624">
-    <CrmPageHeader title="打样申请" :count="total" count-label="份申请" />
+  <section class="sample-list-page erp-glass-list" aria-label="打样申请列表" data-figma-node="1897:18624">
+    <section v-glass-spotlight class="erp-list-filter">
+    <CrmPageHeader class="erp-list-heading" title="打样申请" :count="total" count-label="份申请" />
 
-    <div class="filters" role="search" aria-label="打样申请筛选">
+    <div class="filters erp-list-filters" role="search" aria-label="打样申请筛选">
       <ElInput
         v-model="filters.q"
         class="search-input"
@@ -196,25 +198,29 @@ onBeforeUnmount(() => { rowsRequest++ })
         @keydown.enter="handleSearchEnter"
         @clear="searchSamples"
       >
-        <template #suffix><button type="button" class="sample-search-button" aria-label="搜索打样申请列表" @click="searchSamples"><ElIcon><Search /></ElIcon></button></template>
+        <template #suffix><button type="button" class="sample-search-button erp-list-search-button" aria-label="搜索打样申请列表" @click="searchSamples"><ElIcon><Search /></ElIcon></button></template>
       </ElInput>
       <ElSelect v-model="filters.status" class="status-filter" aria-label="当前环节" clearable placeholder="当前环节：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="filters.sample_type" class="type-filter" aria-label="样品类型" clearable placeholder="样品类型：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.sample_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="filters.owner_employee_id" class="owner-filter" aria-label="业务员" clearable filterable placeholder="业务员：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.owners" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
-      <ElPopover v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="340" :teleported="false">
-        <template #reference><ElButton class="more-filters">更多筛选</ElButton></template>
+      <ElPopover popper-class="erp-list-filter-popover" v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="340" :teleported="false">
+        <template #reference><ElButton class="erp-button-motion more-filters">更多筛选</ElButton></template>
         <ElForm label-position="top" @submit.prevent="() => { searchSamples(); moreFiltersVisible = false }">
           <ElFormItem label="申请日期"><ElDatePicker v-model="requestedDates" class="requested-dates" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" range-separator="至" format="YYYY-MM-DD" :teleported="false" /></ElFormItem>
           <ElFormItem label="快递单号"><ElInput v-model="filters.tracking_number" clearable placeholder="输入快递单号" /></ElFormItem>
-          <div class="popover-actions"><ElButton @click="resetFilters">重置</ElButton><ElButton type="primary" native-type="submit">应用筛选</ElButton></div>
+          <div class="popover-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton></div>
         </ElForm>
       </ElPopover>
-      <ElButton class="reset-button" @click="resetFilters">重置</ElButton>
-      <div class="sample-actions"><ElButton v-if="canCreate" class="create-button" type="primary" @click="openCreate">申请打样</ElButton></div>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion reset-button" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="searchSamples">应用筛选</ElButton></div>
+
     </div>
 
-    <div class="table-card">
-      <div v-if="errorMessage" class="data-state" role="alert"><strong>{{ errorMessage }}</strong><ElButton @click="loadRows">重新加载</ElButton></div>
+    </section>
+
+    <div class="table-card erp-list-data">
+      <div class="erp-list-toolbar">      <div class="sample-actions"><ElButton v-if="canCreate" class="erp-button-motion create-button" type="primary" @click="openCreate">申请打样</ElButton></div></div>
+      <div class="erp-list-table-frame">
+      <div v-if="errorMessage" class="data-state" role="alert"><strong>{{ errorMessage }}</strong><ElButton class="erp-button-motion" @click="loadRows">重新加载</ElButton></div>
       <ElTable v-else v-loading="loading" class="sample-table" :data="rows" row-key="id" height="100%" :row-class-name="rowClassName">
         <ElTableColumn label="申请编号" width="156"><template #default="{ row }"><button class="sample-link" :title="row.request_number" @click="openDetail(row.id)">{{ row.request_number }}</button></template></ElTableColumn>
         <ElTableColumn label="提交日期" width="100"><template #default="{ row }">{{ row.submitted_on || (row.status === 'DRAFT' ? '未提交' : '—') }}</template></ElTableColumn>
@@ -229,9 +235,10 @@ onBeforeUnmount(() => { rowsRequest++ })
         <ElTableColumn label="当前环节" width="128"><template #default="{ row }"><SampleStatusTag :status="row.status" :label="row.status_display" /></template></ElTableColumn>
         <ElTableColumn label="材料情况" width="120"><template #default="{ row }"><SampleStatusTag v-if="row.material_summary" :status="row.material_summary.status" :label="row.material_summary.label" /><span v-else class="muted">—</span></template></ElTableColumn>
         <ElTableColumn label="操作" width="72" align="center" fixed="right"><template #default="{ row }"><div class="row-actions"><ElDropdown :persistent="false" trigger="click"><ElButton link>更多</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem @click="openDetail(row.id)">查看</ElDropdownItem><ElDropdownItem v-if="row.application_actions?.is_application" @click="router.push({ name: 'sample-material-detail', params: { sampleId: row.id } })">查看用料需求</ElDropdownItem><ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_PENDING' && authStore.moduleCan('samples.edit_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue', params: { sampleId: row.id } })">发起样品领料</ElDropdownItem><ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_REVIEW' && authStore.moduleCan('samples.review_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue-confirm', params: { sampleId: row.id } })">确认实际领料</ElDropdownItem><ElDropdownItem :disabled="!canEditRow(row) || mutationPending" @click="openEdit(row.id)">{{ editLabel(row) }}</ElDropdownItem><ElDropdownItem v-if="canDelete && authStore.moduleCan('samples.delete_samplerequest', undefined, row)" :disabled="mutationPending || loading" divided @click="deleteSampleRow(row)">永久删除</ElDropdownItem></ElDropdownMenu></template></ElDropdown></div></template></ElTableColumn>
-        <template #empty><div class="data-state"><strong>{{ loading ? '正在加载打样申请…' : hasFilters ? '没有符合条件的打样申请' : '暂无打样申请' }}</strong><template v-if="!loading"><p>{{ hasFilters ? '调整筛选条件后重试。' : '创建第一份打样申请，开始跟进样品。' }}</p><ElButton v-if="hasFilters" @click="resetFilters">重置筛选</ElButton><ElButton v-else-if="canCreate" type="primary" @click="openCreate">申请打样</ElButton></template></div></template>
+        <template #empty><div class="data-state"><strong>{{ loading ? '正在加载打样申请…' : hasFilters ? '没有符合条件的打样申请' : '暂无打样申请' }}</strong><template v-if="!loading"><p>{{ hasFilters ? '调整筛选条件后重试。' : '创建第一份打样申请，开始跟进样品。' }}</p><ElButton class="erp-button-motion" v-if="hasFilters" @click="resetFilters">重置筛选</ElButton><ElButton class="erp-button-motion" v-else-if="canCreate" type="primary" @click="openCreate">申请打样</ElButton></template></div></template>
       </ElTable>
-      <footer class="table-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :disabled="loading" background layout="sizes, prev, pager, next" :pager-count="5" :page-sizes="[20, 50, 100]" :total="total" @current-change="loadRows" @size-change="() => { page = 1; void loadRows() }" /></footer>
+      </div>
+      <footer class="table-footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :disabled="loading" background layout="sizes, prev, pager, next" :pager-count="5" :page-sizes="[20, 50, 100]" :total="total" @current-change="loadRows" @size-change="() => { page = 1; void loadRows() }" /></footer>
     </div>
 
   </section>

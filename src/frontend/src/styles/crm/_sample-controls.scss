@@ -1,8 +1,8 @@
 @use './tokens' as token;
 @use './mixins' as mixin;
 
-// 已确认的 V3 表单提交按钮（列表仍使用 CRM 主色）。
-$action-primary: #c96442;
+// 表单提交按钮复用共享品牌动作色。
+$action-primary: var(--erp-button-primary-background);
 
 // Teleport 弹层没有页面的 scoped 属性，允许在限定类名内生成普通选择器。
 @function control-selector($selector, $scoped) {
@@ -38,9 +38,9 @@ $action-primary: #c96442;
     font-weight: 500;
   }
   #{control-selector('.el-button:not(.is-disabled):hover', $scoped)} { background: token.$crm-color-subtle; border-color: token.$crm-border-strong; }
-  #{control-selector('.el-button--primary', $scoped)} { color: token.$crm-text-inverse; background: token.$crm-primary; border-color: token.$crm-primary; }
-  #{control-selector('.el-button--primary:not(.is-disabled):hover', $scoped)} { background: token.$crm-primary-hover; border-color: token.$crm-primary-hover; }
-  #{control-selector('.el-button--primary:not(.is-disabled):active', $scoped)} { background: token.$crm-primary-pressed; }
+  #{control-selector('.el-button--primary', $scoped)} { color: token.$crm-text-inverse; background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
+  #{control-selector('.el-button--primary:not(.is-disabled):hover', $scoped)} { background: var(--erp-button-primary-hover-surface); border-color: var(--erp-button-primary-border); }
+  #{control-selector('.el-button--primary:not(.is-disabled):active', $scoped)} { background: var(--erp-button-primary-pressed-background); }
   #{control-selector('.el-button.is-link', $scoped)} { height: auto; padding: 0; color: token.$crm-primary; background: transparent; border: 0; }
   #{control-selector('.el-button.is-disabled', $scoped)} { color: token.$crm-text-muted; opacity: .55; }
   #{control-selector('.el-button:focus-visible', $scoped)}, button:focus-visible { @include mixin.focus-ring; }
@@ -48,8 +48,8 @@ $action-primary: #c96442;
     min-height: 40px;
     padding: 0 12px;
     border-radius: token.$crm-radius-2;
-    background: #fff;
-    box-shadow: 0 0 0 1px #e8e6dc inset;
+    background: var(--erp-input-background);
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset;
     font-size: 14px;
   }
   #{control-selector('.el-input__wrapper.is-focus', $scoped)}, #{control-selector('.el-select__wrapper.is-focused', $scoped)} { box-shadow: 0 0 0 1px token.$crm-focus inset; }

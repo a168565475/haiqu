@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -242,6 +243,10 @@ function selectDay(row: WorkReportDay) {
   void loadReports()
 }
 
+function resetWorkshop() {
+  selectedWorkshopId.value = workshops.value.find(item => item.id === routeWorkshopId.value)?.id || workshops.value[0]?.id || ''
+  changeWorkshop()
+}
 function changeWorkshop() {
   dayPage.value = 1
   void loadDays(true)
@@ -260,19 +265,20 @@ onMounted(() => { void initialize() })
 </script>
 
 <template>
-  <section class="wr-page wr-report-records-page" data-testid="work-report-days">
-    <header class="wr-report-records__heading">
+  <section class="wr-page wr-report-records-page erp-glass-list" data-testid="work-report-days">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="wr-report-records__heading erp-list-heading">
       <h1>报工记录</h1>
       <ElButton
         v-if="canCreate"
-        class="wr-report-records__create"
+        class="erp-button-motion wr-report-records__create"
         type="primary"
         :icon="Plus"
         @click="router.push({ name: 'work-report-new', query: newReportQuery })"
       >新增报工</ElButton>
     </header>
 
-    <section class="wr-report-context" aria-label="当前生产任务信息">
+    <section class="wr-report-context erp-list-filters" aria-label="当前生产任务信息">
       <div class="wr-report-context__items">
         <span><b>生产任务：</b>{{ scheduleProduct?.task_number || '—' }}</span>
         <i aria-hidden="true" />
@@ -300,20 +306,22 @@ onMounted(() => { void initialize() })
         <i aria-hidden="true" />
         <span><b>订单数量：</b>{{ quantityText(scheduleProduct?.order_quantity) }} {{ scheduleProduct?.unit_name || '' }}</span>
       </div>
-      <ElButton class="wr-report-context__refresh" :icon="Refresh" :loading="dayLoading || detailLoading" @click="refresh">刷新</ElButton>
+      <ElButton class="erp-button-motion wr-report-context__refresh" :icon="Refresh" :loading="dayLoading || detailLoading" @click="refresh">刷新</ElButton>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetWorkshop">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="changeWorkshop">应用筛选</ElButton></div>
     </section>
 
+    </section>
     <ElAlert v-if="errorMessage" class="wr-report-records__error" type="error" :closable="false" show-icon :title="errorMessage">
       <template #default><ElButton link type="primary" @click="initialize">重新加载</ElButton></template>
     </ElAlert>
 
     <div v-else class="wr-report-records__layout">
-      <section class="wr-report-days-panel" aria-label="报工日期列表">
-        <header class="wr-report-days-panel__header">
+      <section class="wr-report-days-panel erp-list-data" aria-label="报工日期列表">
+        <header class="wr-report-days-panel__header erp-list-toolbar">
           <h2>报工日期</h2>
           <span>当前车间：{{ selectedWorkshop?.name || '—' }}</span>
         </header>
-        <div class="wr-report-days-panel__table" v-loading="dayLoading">
+        <div class="wr-report-days-panel__table erp-list-table-frame" v-loading="dayLoading">
           <ElTable
             :data="days"
             height="100%"
@@ -330,7 +338,7 @@ onMounted(() => { void initialize() })
             <template #empty><ElEmpty :image-size="56" description="当前车间暂无报工记录" /></template>
           </ElTable>
         </div>
-        <footer class="wr-report-days-panel__pagination">
+        <footer class="wr-report-days-panel__pagination erp-list-footer">
           <span>共 {{ dayTotal }} 条</span>
           <ElPagination
             v-model:current-page="dayPage"
@@ -344,8 +352,8 @@ onMounted(() => { void initialize() })
         </footer>
       </section>
 
-      <section class="wr-report-details-panel" aria-label="所选日期报工明细">
-        <header class="wr-report-details-panel__header">
+      <section class="wr-report-details-panel erp-list-data" aria-label="所选日期报工明细">
+        <header class="wr-report-details-panel__header erp-list-toolbar">
           <div>
             <h2>{{ selectedDate || '暂无日期' }}<template v-if="selectedWorkshop"> · {{ selectedWorkshop.name }}</template></h2>
             <span>{{ selectedDay?.report_count || 0 }} 次保存 · {{ selectedDay?.line_count || 0 }} 条工序</span>
@@ -372,7 +380,7 @@ onMounted(() => { void initialize() })
                 @click="router.push({ name: 'work-report-edit', params: { reportId: report.id } })"
               >编辑</ElButton>
             </header>
-            <ElTable :data="report.lines" border>
+            <div class="erp-list-table-frame"><ElTable :data="report.lines" border>
               <ElTableColumn prop="employee_name" label="员工" width="76" />
               <ElTableColumn label="生产线" width="64" align="center"><template #default="{ row }">{{ row.production_line ? `${row.production_line}线` : '—' }}</template></ElTableColumn>
               <ElTableColumn prop="operation_name" label="工序" width="96" show-overflow-tooltip />
@@ -392,7 +400,7 @@ onMounted(() => { void initialize() })
               </ElTableColumn>
               <ElTableColumn label="工价" width="80" align="right"><template #default="{ row }">{{ formatWageMoney(row.unit_price) }}</template></ElTableColumn>
               <ElTableColumn label="金额" width="88" align="right"><template #default="{ row }"><strong>{{ formatWageMoney(row.amount) }}</strong></template></ElTableColumn>
-            </ElTable>
+            </ElTable></div>
           </article>
 
           <ElEmpty

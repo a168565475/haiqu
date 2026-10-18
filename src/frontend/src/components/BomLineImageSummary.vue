@@ -48,7 +48,7 @@ const previewUrls = computed(() => images.value.map((image) => bomLineImageUrl(i
   min-height: 32px;
   align-items: center;
   gap: 7px;
-  color: #64748b;
+  color: var(--erp-color-text-secondary);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -62,8 +62,8 @@ const previewUrls = computed(() => images.value.map((image) => bomLineImageUrl(i
   width: 32px;
   height: 32px;
   flex: none;
-  border: 1px solid #dbe3ee;
+  border: 1px solid var(--erp-color-border);
   border-radius: 4px;
-  background: #e2e8f0;
+  background: var(--erp-color-subtle);
 }
 </style>

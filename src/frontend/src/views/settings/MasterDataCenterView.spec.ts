@@ -83,7 +83,7 @@ describe('MasterDataCenterView', () => {
     expect(wrapper.find('[data-testid="country-flag"]').attributes('src')).toBe('https://flagcdn.com/24x18/cn.png')
     expect(wrapper.find('[data-testid="country-flag"]').attributes('alt')).toBe('中国国旗')
     expect(wrapper.find('.data-card__header .settings-tag').exists()).toBe(false)
-    expect(wrapper.find('.data-card__header button').exists()).toBe(false)
+    expect(wrapper.findAll('.data-card__header button').map(button => button.text())).toEqual(['导出数据'])
   })
 
   it('没有任一基础资料查看权限时显示独立无权限状态且不请求汇总', async () => {

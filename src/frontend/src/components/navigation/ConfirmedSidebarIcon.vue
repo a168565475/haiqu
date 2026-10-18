@@ -109,6 +109,9 @@ defineProps<{ name: string }>()
 <style scoped>
 .confirmed-sidebar-icon {
   display: block;
+  width: 100%;
+  height: 100%;
+  flex: none;
   stroke: var(--sidebar-icon-ink, #283133);
 }
 

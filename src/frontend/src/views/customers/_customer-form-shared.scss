@@ -71,7 +71,7 @@
   :deep(.el-input__wrapper.is-focus),
   :deep(.el-select__wrapper.is-focused),
   :deep(.el-textarea__inner:focus) {
-    box-shadow: 0 0 0 1px token.$crm-focus inset, 0 0 0 2px rgba(token.$crm-focus, 0.12);
+    box-shadow: 0 0 0 1px token.$crm-focus inset, 0 0 0 2px color-mix(in srgb, var(--erp-color-focus) 12%, transparent);
   }
 
   :deep(.el-input.is-disabled .el-input__wrapper),
@@ -115,16 +115,21 @@
     background: token.$crm-color-row-hover;
   }
 
-  :deep(.el-button--primary),
+  :deep(.el-button--primary) {
+    border-color: var(--erp-button-primary-border);
+    color: token.$crm-text-inverse;
+    background: var(--erp-button-primary-surface);
+  }
+
   :deep(.el-button--primary:hover),
   :deep(.el-button--primary:focus-visible) {
-    border-color: token.$crm-primary;
+    border-color: var(--erp-button-primary-border);
+    background: var(--erp-button-primary-hover-surface);
     color: token.$crm-text-inverse;
-    background: token.$crm-primary;
   }
 
   :deep(.el-button--primary:active) {
-    border-color: token.$crm-primary-pressed;
-    background: token.$crm-primary-pressed;
+    border-color: var(--erp-button-primary-border);
+    background: var(--erp-button-primary-pressed-background);
   }
 }

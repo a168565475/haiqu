@@ -9,6 +9,7 @@ import type { TaskDetail, TaskOptions, TaskScope } from '@/types/task'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
+  embedded?: boolean
   scope?: TaskScope
   options?: TaskOptions | null
   fixedCustomerId?: string
@@ -17,6 +18,7 @@ const props = withDefaults(defineProps<{
   fixedInquiryId?: string
   fixedInquiryNumber?: string
 }>(), {
+  embedded: false,
   scope: 'ME',
   options: null,
   fixedCustomerId: '',
@@ -117,16 +119,16 @@ watch(() => props.modelValue, async value => {
 </script>
 
 <template>
-  <AppWindowDialog :model-value="modelValue" title="新建任务" :width="984" :height="660" class="task-operation-dialog task-create-dialog" destroy-on-close :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting" @update:model-value="value => { if (!value) close() }">
-    <ElForm v-loading="loadingOptions" label-position="top" :disabled="submitting" class="create-layout">
-      <section class="edit-column">
+  <AppWindowDialog :model-value="modelValue" title="新建任务" :width="984" :height="embedded ? 'auto' : 660" :class="embedded ? 'task-create-dialog--embedded' : 'task-operation-dialog task-create-dialog'" destroy-on-close :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting" @update:model-value="value => { if (!value) close() }">
+    <ElForm v-loading="loadingOptions" label-position="top" :disabled="submitting" class="create-layout" :class="{ 'create-layout--embedded erp-glass-list': embedded }">
+      <section class="edit-column" :class="{ 'erp-list-surface': embedded }">
         <h3>编辑任务</h3>
         <ElFormItem v-if="fixedInquiryId" label="关联询盘"><ElInput :model-value="fixedInquiryNumber || fixedInquiryId" disabled /></ElFormItem>
         <ElFormItem v-if="fixedCustomerId" label="关联客户"><ElInput :model-value="fixedCustomerName || fixedCustomerId" disabled /></ElFormItem>
         <ElFormItem label="任务标题" required><ElInput v-model="form.title" maxlength="250" /></ElFormItem>
         <ElFormItem label="说明"><ElInput v-model="form.description" type="textarea" :rows="7" maxlength="2000" show-word-limit /></ElFormItem>
       </section>
-      <section class="schedule-column">
+      <section class="schedule-column" :class="{ 'erp-list-surface': embedded }">
         <h3>安排任务</h3>
         <ElFormItem label="负责人" required><ElSelect v-model="form.assignee_employee_id" filterable><ElOption v-for="item in availableOptions?.assignees" :key="item.id" :label="`${item.name}（${item.code}）`" :value="item.id" /></ElSelect></ElFormItem>
         <ElFormItem label="任务类型"><ElSelect v-model="form.task_type"><ElOption v-for="item in availableOptions?.task_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem>
@@ -135,12 +137,52 @@ watch(() => props.modelValue, async value => {
       </section>
     </ElForm>
     <template #footer>
-      <ElButton :disabled="submitting" @click="close">取消</ElButton>
-      <ElButton type="primary" :loading="submitting" :disabled="loadingOptions || !availableOptions" @click="submit">创建任务</ElButton>
+      <ElButton :class="{ 'erp-button-motion': embedded }" :disabled="submitting" @click="close">取消</ElButton>
+      <ElButton :class="{ 'erp-button-motion': embedded }" type="primary" :loading="submitting" :disabled="loadingOptions || !availableOptions" @click="submit">创建任务</ElButton>
     </template>
   </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
-.create-layout{height:508px;display:grid;grid-template-columns:1.15fr .85fr}.create-layout>section{box-sizing:border-box;padding:28px 34px}.create-layout h3{margin:0 0 22px;color:#19181b;font-size:20px;line-height:30px}.edit-column{background:#fbf9f7}.schedule-column{border-left:1px solid #ebe6df;background:#f7f3ed}.create-layout :deep(.el-select),.create-layout :deep(.el-date-editor){width:100%}.create-layout :deep(.el-form-item__label){color:#444345;font-size:14px}.create-layout :deep(.el-input__wrapper),.create-layout :deep(.el-select__wrapper),.create-layout :deep(.el-textarea__inner){background:#fcfbf9;box-shadow:0 0 0 1px #e5e0da inset}.create-layout :deep(.el-form-item){margin-bottom:18px}.create-layout :deep(.el-textarea__inner){min-height:220px!important}
+.create-layout:not(.create-layout--embedded){height:508px;display:grid;grid-template-columns:1.15fr .85fr}.create-layout:not(.create-layout--embedded)>section{box-sizing:border-box;padding:28px 34px}.create-layout:not(.create-layout--embedded) h3{margin:0 0 22px;color:var(--erp-color-text-primary);font-size:20px;line-height:30px}.create-layout:not(.create-layout--embedded) .edit-column{background:var(--erp-color-surface)}.create-layout:not(.create-layout--embedded) .schedule-column{border-left:1px solid var(--erp-color-border);background:var(--erp-color-subtle)}.create-layout:not(.create-layout--embedded) :deep(.el-select),.create-layout:not(.create-layout--embedded) :deep(.el-date-editor){width:100%}.create-layout:not(.create-layout--embedded) :deep(.el-form-item__label){color:var(--erp-color-text-primary);font-size:14px}.create-layout:not(.create-layout--embedded) :deep(.el-input__wrapper),.create-layout:not(.create-layout--embedded) :deep(.el-select__wrapper),.create-layout:not(.create-layout--embedded) :deep(.el-textarea__inner){background:var(--erp-input-background);box-shadow:0 0 0 1px var(--erp-color-border) inset}.create-layout:not(.create-layout--embedded) :deep(.el-form-item){margin-bottom:18px}.create-layout:not(.create-layout--embedded) :deep(.el-textarea__inner){min-height:220px!important}
+
+.create-layout.create-layout--embedded {
+  display: grid;
+  grid-template-columns: 1.15fr .85fr;
+  height: auto;
+  gap: 14px;
+  font-size: 13px;
+  line-height: 20px;
+
+  > section { min-width: 0; padding: 16px; }
+  h3 { margin: 0 0 14px; font-size: 16px; line-height: 24px; }
+  :deep(.el-select), :deep(.el-date-editor) { width: 100%; }
+  :deep(.el-form-item__label) { color: var(--erp-color-text-primary); font-size: 13px; }
+  :deep(.el-input__wrapper), :deep(.el-select__wrapper), :deep(.el-textarea__inner) {
+    border-radius: var(--erp-radius-control);
+    background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
+    &.is-focus, &.is-focused, &:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  }
+  :deep(.el-input__inner), :deep(.el-select__placeholder), :deep(.el-textarea__inner) { font-size: 13px; }
+  :deep(.el-input.is-disabled .el-input__wrapper), :deep(.el-select__wrapper.is-disabled), :deep(.el-textarea.is-disabled .el-textarea__inner) { background: var(--erp-input-disabled-background); }
+  :deep(.el-form-item:last-child) { margin-bottom: 0; }
+}
+@container (max-width: 680px) { .create-layout.create-layout--embedded { grid-template-columns: 1fr; } }
+</style>
+
+<style lang="scss">
+.task-create-dialog--embedded.app-window-dialog.el-dialog {
+  container-type: inline-size;
+  border-color: var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  backdrop-filter: var(--erp-glass-backdrop);
+
+  .app-window-dialog__body { padding: 16px; }
+  .app-window-dialog__footer { padding: 12px 16px; background: transparent; }
+  .app-window-dialog__footer .el-button { border-radius: var(--erp-radius-control); font-size: 13px; }
+}
 </style>

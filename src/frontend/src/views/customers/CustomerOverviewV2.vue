@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter, type RouteLocationRaw } from 'vue-router'
 
+import CustomerContactsPanel from '@/components/customers/CustomerContactsPanel.vue'
 import CustomerActivityTag from '@/components/customers/CustomerActivityTag.vue'
 import {
   buildCustomerHealthSummary,
@@ -11,14 +12,17 @@ import {
   formatTimelineDate,
   timelineCategory,
 } from './customerOverview'
-import type { ContactListItem, ContactMethodType } from '@/types/contact'
+import type { ContactListItem } from '@/types/contact'
 import type { CustomerDetail, CustomerSummary, CustomerTimelineEvent } from '@/types/customer'
 import type { TaskSummary } from '@/types/task'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   customer: CustomerDetail
   summary: CustomerSummary | null
   contacts: ContactListItem[]
+  contactsLoading?: boolean
+  contactsError?: string
+  canEditCustomer?: boolean
   timeline: CustomerTimelineEvent[]
   timelineLoading: boolean
   tasks: TaskSummary[]
@@ -27,13 +31,15 @@ const props = defineProps<{
   canViewTasks: boolean
   canCreateTask: boolean
   completingTaskId: string
-}>()
+}>(), { canEditCustomer: true })
 
 const emit = defineEmits<{
   completeTask: [task: TaskSummary]
   createTask: []
   editCustomer: []
   openContacts: []
+  retryContacts: []
+  contactsChanged: []
   refresh: []
   retryTasks: []
 }>()
@@ -53,9 +59,6 @@ const primaryContact = computed(() => (
   || props.contacts[0]
   || null
 ))
-const otherContacts = computed(() => props.contacts
-  .filter((item) => item.id !== primaryContact.value?.id)
-  .slice(0, 2))
 const latestInteractionAt = computed(() => props.timeline[0]?.occurred_at || props.customer.last_contact_at)
 const health = computed(() => buildCustomerHealthSummary(
   props.customer,
@@ -104,29 +107,6 @@ const customerTags = computed(() => {
   if (!labels.length) labels.push(...props.customer.customer_types.map((item) => item.display_name))
   return labels.length ? labels.join('  ·  ') : '—'
 })
-
-function contactInitials(contact: ContactListItem | null): string {
-  if (!contact) return '—'
-  const value = (contact.english_name || contact.display_name).trim()
-  if (!value) return '—'
-  const words = value.split(/\s+/).filter(Boolean)
-  if (words.length >= 2) return `${words[0]?.[0] || ''}${words.at(-1)?.[0] || ''}`.toUpperCase()
-  return value.slice(0, 2).toUpperCase()
-}
-
-function contactRole(contact: ContactListItem): string {
-  return contact.position_title
-    || contact.department_name
-    || contact.active_roles.map((item) => item.role_type_display).join('、')
-    || ''
-}
-
-function contactMethod(contact: ContactListItem | null, types: ContactMethodType[]): string {
-  if (!contact) return ''
-  const method = contact.methods.find((item) => types.includes(item.method_type) && item.is_primary)
-    || contact.methods.find((item) => types.includes(item.method_type))
-  return method?.display_value || method?.masked_value || ''
-}
 
 function timelineOwner(item: CustomerTimelineEvent): string {
   const data = item.event_data || {}
@@ -188,7 +168,7 @@ function taskTime(task: TaskSummary): string {
   return formatted === '—' ? '时间异常' : formatted.slice(5)
 }
 
-function taskTone(task: TaskSummary): string {
+function taskTone(task: TaskSummary): 'warning' | 'info' | 'neutral' {
   if (task.status === 'PENDING') return 'warning'
   if (task.status === 'IN_PROGRESS') return 'info'
   return 'neutral'
@@ -205,8 +185,8 @@ function openTask(task: TaskSummary) {
 </script>
 
 <template>
-  <main class="customer-overview-v2" data-customer-overview-v2>
-    <section class="overview-metrics" aria-label="客户业务概览">
+  <main class="customer-overview-v2 erp-glass-list" data-customer-overview-v2>
+    <section class="overview-metrics erp-list-surface" aria-label="客户业务概览">
       <div class="overview-metric overview-metric--wide">
         <span>累计销售额</span>
         <strong>{{ formatSalesMoney(customer.lifetime_sales_amount) }}</strong>
@@ -246,48 +226,11 @@ function openTask(task: TaskSummary) {
     </section>
 
     <section class="overview-layout">
-      <article class="overview-panel customer-card">
+      <article class="overview-panel erp-list-surface customer-card">
         <header class="panel-title">
-          <h2>客户名片</h2>
-          <button type="button" aria-label="编辑客户" @click="emit('editCustomer')">✎</button>
+          <h2>基本资料</h2>
+          <ElButton class="erp-button-motion" text type="primary" aria-label="编辑客户" :disabled="!canEditCustomer" @click="emit('editCustomer')">编辑</ElButton>
         </header>
-
-        <section class="primary-contact">
-          <p class="section-label">主要联系人</p>
-          <template v-if="primaryContact">
-            <span class="contact-avatar contact-avatar--primary">{{ contactInitials(primaryContact) }}</span>
-            <strong class="contact-name">{{ primaryContact.display_name }}</strong>
-            <span class="soft-tag is-warning primary-badge">主要</span>
-            <span v-if="contactRole(primaryContact)" class="contact-role">{{ contactRole(primaryContact) }}</span>
-            <span v-if="contactMethod(primaryContact, ['EMAIL'])" class="contact-method contact-email" :title="contactMethod(primaryContact, ['EMAIL'])">✉&nbsp; {{ contactMethod(primaryContact, ['EMAIL']) }}</span>
-            <span v-if="contactMethod(primaryContact, ['MOBILE', 'PHONE'])" class="contact-method contact-phone" :title="contactMethod(primaryContact, ['MOBILE', 'PHONE'])">⌕&nbsp; {{ contactMethod(primaryContact, ['MOBILE', 'PHONE']) }}</span>
-            <a
-              v-if="contactMethod(primaryContact, ['EMAIL'])"
-              class="crm-secondary-button send-mail"
-              :href="`mailto:${contactMethod(primaryContact, ['EMAIL'])}`"
-            >发送邮件</a>
-          </template>
-          <button v-else class="empty-link" type="button" @click="emit('openContacts')">暂无主要联系人</button>
-        </section>
-
-        <section class="other-contacts">
-          <p class="section-label">其他联系人</p>
-          <div v-if="otherContacts[0]" class="other-contact other-contact--first">
-            <span class="contact-avatar">{{ contactInitials(otherContacts[0]) }}</span>
-            <strong>{{ otherContacts[0].display_name }}</strong>
-            <span v-if="contactRole(otherContacts[0])" class="role">{{ contactRole(otherContacts[0]) }}</span>
-            <span v-if="contactMethod(otherContacts[0], ['EMAIL'])" class="email" :title="contactMethod(otherContacts[0], ['EMAIL'])">✉&nbsp; {{ contactMethod(otherContacts[0], ['EMAIL']) }}</span>
-            <span v-if="contactMethod(otherContacts[0], ['MOBILE', 'PHONE'])" class="phone" :title="contactMethod(otherContacts[0], ['MOBILE', 'PHONE'])">⌕&nbsp; {{ contactMethod(otherContacts[0], ['MOBILE', 'PHONE']) }}</span>
-          </div>
-          <div v-if="otherContacts[1]" class="other-contact other-contact--second">
-            <span class="contact-avatar">{{ contactInitials(otherContacts[1]) }}</span>
-            <strong>{{ otherContacts[1].display_name }}</strong>
-            <span v-if="contactRole(otherContacts[1])" class="role">{{ contactRole(otherContacts[1]) }}</span>
-            <span v-if="contactMethod(otherContacts[1], ['EMAIL'])" class="email" :title="contactMethod(otherContacts[1], ['EMAIL'])">✉&nbsp; {{ contactMethod(otherContacts[1], ['EMAIL']) }}</span>
-            <span v-if="contactMethod(otherContacts[1], ['MOBILE', 'PHONE'])" class="phone" :title="contactMethod(otherContacts[1], ['MOBILE', 'PHONE'])">⌕&nbsp; {{ contactMethod(otherContacts[1], ['MOBILE', 'PHONE']) }}</span>
-          </div>
-          <button v-if="!otherContacts.length" class="empty-link empty-link--others" type="button" @click="emit('openContacts')">暂无其他联系人</button>
-        </section>
 
         <dl class="customer-profile">
           <div><dt>国家/地区</dt><dd>{{ countryLabel }}</dd></div>
@@ -296,10 +239,11 @@ function openTask(task: TaskSummary) {
           <div><dt>客户标签</dt><dd class="is-accent" :title="customerTags">{{ customerTags }}</dd></div>
           <div><dt>备注</dt><dd :title="customer.notes || '暂无备注'">{{ customer.notes || '暂无备注' }}</dd></div>
         </dl>
+        <CustomerContactsPanel :customer-id="customer.id" :contacts="contacts" :loading="contactsLoading" :error="contactsError" @retry="emit('retryContacts')" @changed="emit('contactsChanged')" />
       </article>
 
-      <article class="overview-panel timeline-panel">
-        <header class="timeline-toolbar">
+      <article class="overview-panel erp-list-surface timeline-panel">
+        <header class="timeline-toolbar erp-list-filters">
           <h2>互动时间轴</h2>
           <ElSelect v-model="timelineTypeDraft" class="timeline-type-select" aria-label="互动类型" placeholder="全部类型" clearable>
             <ElOption v-for="item in timelineTypeOptions" :key="item" :label="item" :value="item" />
@@ -308,7 +252,7 @@ function openTask(task: TaskSummary) {
             <ElOption label="有相关业务" value="RELATED" />
             <ElOption label="无相关业务" value="UNRELATED" />
           </ElSelect>
-          <ElButton @click="applyTimelineFilters">筛选</ElButton>
+          <ElButton class="erp-button-motion" @click="applyTimelineFilters">筛选</ElButton>
         </header>
         <div class="timeline-table-head" role="row">
           <span>日期</span><span>类型</span><span>内容摘要</span><span>负责人</span><span>相关业务</span>
@@ -335,16 +279,16 @@ function openTask(task: TaskSummary) {
           <div v-if="!timelineLoading && !visibleTimeline.length" class="panel-empty">当前筛选暂无互动记录</div>
         </div>
         <footer class="timeline-footer">
-          <span>当前 {{ filteredTimeline.length }} 条</span>
-          <div><span>20条/页</span><button type="button" disabled>‹</button><button type="button" class="active">1</button><button type="button" disabled>›</button></div>
+          <span>显示 {{ visibleTimeline.length }} / {{ filteredTimeline.length }} 条</span>
+          <ElButton class="erp-button-motion" text type="primary" @click="router.push({ name: 'customer-timeline', params: { customerId: customer.id } })">查看全部互动</ElButton>
         </footer>
       </article>
 
       <div class="overview-right-rail">
-        <article class="overview-panel next-actions-panel">
+        <article class="overview-panel erp-list-surface next-actions-panel">
           <header class="panel-title">
             <h2>下一步动作</h2>
-            <ElButton :disabled="!canCreateTask" @click="emit('createTask')">新建任务</ElButton>
+            <ElButton class="erp-button-motion" :disabled="!canCreateTask" @click="emit('createTask')">新建任务</ElButton>
           </header>
           <div class="action-table-head" role="row">
             <span>计划时间</span><span>任务内容</span><span>负责人</span><span>状态</span>
@@ -368,7 +312,7 @@ function openTask(task: TaskSummary) {
               <time>{{ taskTime(task) }}</time>
               <strong :title="task.title">{{ task.title }}</strong>
               <span :title="task.assignee?.display_name || '—'">{{ task.assignee?.display_name || '—' }}</span>
-              <i class="soft-tag" :class="`is-${taskTone(task)}`">{{ task.status_display || task.display_status || '待处理' }}</i>
+              <CustomerActivityTag :label="task.status_display || task.display_status || '待处理'" :tone="taskTone(task)" />
             </div>
             <div v-if="tasksError" class="panel-empty panel-empty--error">
               <span>{{ tasksError }}</span><button type="button" @click="emit('retryTasks')">重试</button>
@@ -378,10 +322,10 @@ function openTask(task: TaskSummary) {
           </div>
         </article>
 
-        <article class="overview-panel customer-health-panel">
+        <article class="overview-panel erp-list-surface customer-health-panel">
           <header class="panel-title">
             <h2>客户健康</h2>
-            <span class="soft-tag" :class="`is-${health.tone}`">{{ health.label }}</span>
+            <CustomerActivityTag :label="health.label" :tone="health.tone" />
           </header>
           <div class="health-list">
             <div v-for="fact in health.facts" :key="fact.label" class="health-row">
@@ -392,7 +336,7 @@ function openTask(task: TaskSummary) {
           </div>
           <footer class="health-footer">
             <span>数据更新&nbsp; {{ formatOverviewDateTime(snapshot?.as_of_at || customer.updated_at).slice(0, 10) }}</span>
-            <ElButton @click="emit('refresh')">刷新评估</ElButton>
+            <ElButton class="erp-button-motion" @click="emit('refresh')">刷新评估</ElButton>
           </footer>
         </article>
       </div>
@@ -401,589 +345,78 @@ function openTask(task: TaskSummary) {
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-
-.customer-overview-v2 {
-  width: 100%;
-  min-width: 0;
-  height: 870px;
-  overflow: hidden;
-  color: token.$crm-text-primary;
-  background: token.$crm-color-page;
-  font-family: token.$crm-font-body;
-}
-
-.overview-metrics {
-  width: calc(100% - 56px);
-  height: 88px;
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 180px 180px 140px 140px 140px 210px 140px minmax(0, 1fr);
-  overflow: hidden;
-  margin: 18px 28px 0;
-  border: 1px solid token.$crm-border-default;
-  border-radius: token.$crm-radius-3;
-  background: token.$crm-color-surface;
-}
-
-.overview-metric {
-  position: relative;
-  min-width: 0;
-  border-right: 1px solid token.$crm-border-subtle;
-}
-
-.overview-metric > span {
-  position: absolute;
-  top: 12px;
-  left: 16px;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.overview-metric > strong {
-  position: absolute;
-  top: 37px;
-  left: 16px;
-  max-width: calc(100% - 32px);
-  overflow: hidden;
-  color: token.$crm-text-primary;
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 26px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.overview-metric--wide > strong,
-.overview-metric--credit > strong {
-  font-size: 18px;
-}
-
-.overview-metric--credit small {
-  position: absolute;
-  top: 64px;
-  left: 16px;
-  color: token.$crm-text-secondary;
-  font-size: 10px;
-  line-height: 16px;
-}
-
-.credit-track {
-  position: absolute;
-  top: 70px;
-  left: 86px;
-  width: 96px;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: token.$crm-color-subtle;
-}
-
-.credit-track b {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: token.$crm-primary;
-}
-
-.overview-snapshot {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, 18px);
-  align-content: center;
-  gap: 8px 20px;
-  padding: 0 16px;
-}
-
-.overview-snapshot p {
-  display: flex;
-  gap: 8px;
-  overflow: hidden;
-  margin: 0;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  line-height: 18px;
-  white-space: nowrap;
-}
-
-.overview-snapshot b {
-  overflow: hidden;
-  color: inherit;
-  font-weight: 400;
-  text-overflow: ellipsis;
-}
-
-.overview-snapshot .is-accent {
-  color: token.$crm-primary;
-  font-weight: 500;
-}
-
-.overview-layout {
-  width: calc(100% - 56px);
-  height: 694px;
-  display: grid;
-  grid-template-columns: 300px 620px 690px;
-  gap: 12px;
-  margin: 12px 28px 28px;
-}
-
-.overview-panel {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid token.$crm-border-default;
-  border-radius: token.$crm-radius-3;
-  background: token.$crm-color-surface;
-}
-
-.panel-title {
-  position: relative;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-}
-
-.panel-title h2,
-.timeline-toolbar h2 {
-  margin: 0;
-  color: token.$crm-text-primary;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 24px;
-}
-
-.panel-title > button {
-  padding: 0;
-  border: 0;
-  color: token.$crm-text-secondary;
-  background: transparent;
-  font-size: 14px;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-.panel-title :deep(.el-button),
-.timeline-toolbar :deep(.el-button),
-.health-footer :deep(.el-button) {
-  height: 32px;
-  margin: 0;
-  padding: 0 16px;
-  border-color: token.$crm-border-default;
-  border-radius: token.$crm-radius-2;
-  color: token.$crm-text-primary;
-  background: token.$crm-color-surface;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.section-label {
-  margin: 0;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.primary-contact {
-  position: relative;
-  height: 168px;
-  margin: 0 18px;
-  border-bottom: 1px solid token.$crm-border-subtle;
-}
-
-.primary-contact .section-label {
-  position: absolute;
-  top: 4px;
-  left: 0;
-}
-
-.contact-avatar {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 50%;
-  color: token.$crm-warning;
-  background: token.$crm-color-subtle;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.contact-avatar--primary {
-  position: absolute;
-  top: 31px;
-  left: 0;
-  width: 36px;
-  height: 36px;
-  font-size: 12px;
-}
-
-.contact-name {
-  position: absolute;
-  top: 25px;
-  left: 48px;
-  max-width: 112px;
-  overflow: hidden;
-  font-size: 13px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.primary-badge {
-  position: absolute;
-  top: 24px;
-  left: 164px;
-}
-
-.contact-role {
-  position: absolute;
-  top: 48px;
-  left: 48px;
-  max-width: 190px;
-  overflow: hidden;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.contact-method {
-  position: absolute;
-  left: 48px;
-  width: 214px;
-  overflow: hidden;
-  color: token.$crm-text-secondary;
-  font-size: 10px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.contact-email { top: 71px; }
-.contact-phone { top: 92px; }
-
-.crm-secondary-button {
-  height: 32px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 16px;
-  border: 1px solid token.$crm-border-default;
-  border-radius: token.$crm-radius-2;
-  color: token.$crm-text-primary;
-  background: token.$crm-color-surface;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.crm-secondary-button:disabled {
-  color: token.$crm-text-disabled;
-  background: token.$crm-color-disabled;
-  cursor: not-allowed;
-}
-
-.send-mail {
-  position: absolute;
-  top: 117px;
-  left: 48px;
-  width: 106px;
-}
-
-.other-contacts {
-  position: relative;
-  height: 230px;
-  margin: 0 18px;
-  border-bottom: 1px solid token.$crm-border-subtle;
-}
-
-.other-contacts > .section-label {
-  position: absolute;
-  top: 14px;
-  left: 0;
-}
-
-.other-contact {
-  position: absolute;
-  left: 0;
-  width: 264px;
-  height: 68px;
-}
-
-.other-contact--first { top: 48px; }
-.other-contact--second { top: 134px; }
-.other-contact .contact-avatar { position: absolute; top: 1px; left: 0; }
-.other-contact strong { position: absolute; top: -1px; left: 44px; max-width: 100px; overflow: hidden; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.other-contact .role { position: absolute; top: 0; left: 150px; max-width: 104px; overflow: hidden; color: token.$crm-text-secondary; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.other-contact .email,
-.other-contact .phone { position: absolute; left: 44px; width: 210px; overflow: hidden; color: token.$crm-text-secondary; font-size: 9px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.other-contact .email { top: 22px; }
-.other-contact .phone { top: 40px; }
-
-.empty-link {
-  position: absolute;
-  top: 56px;
-  left: 48px;
-  padding: 0;
-  border: 0;
-  color: token.$crm-text-muted;
-  background: transparent;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.empty-link--others { top: 56px; left: 0; }
-
-.customer-profile {
-  display: grid;
-  grid-template-rows: repeat(5, 38px);
-  margin: 15px 18px 0;
-}
-
-.customer-profile > div {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  align-items: center;
-}
-
-.customer-profile dt,
-.customer-profile dd {
-  overflow: hidden;
-  margin: 0;
-  font-size: 10px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.customer-profile dt { color: token.$crm-text-secondary; font-weight: 500; }
-.customer-profile dd { color: token.$crm-text-primary; }
-.customer-profile dd.is-accent { color: token.$crm-primary; }
-
-.soft-tag {
-  width: fit-content;
-  max-width: 100%;
-  height: 24px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 9px;
-  overflow: hidden;
-  border-radius: 4px;
-  color: token.$crm-text-secondary;
-  background: token.$crm-color-subtle;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 500;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.soft-tag.is-success { color: token.$crm-success; background: token.$crm-success-soft; }
-.soft-tag.is-info { color: #4d7088; background: #e6eef2; }
-.soft-tag.is-warning { color: token.$crm-warning; background: token.$crm-warning-soft; }
-.soft-tag.is-danger { color: token.$crm-danger; background: token.$crm-danger-soft; }
-.soft-tag.is-neutral { color: token.$crm-text-secondary; background: token.$crm-color-subtle; }
-
-.timeline-toolbar {
-  height: 48px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 16px;
-}
-
-.timeline-toolbar h2 {
-  margin-right: auto;
-}
-
-.timeline-toolbar :deep(.el-select) {
-  flex: 0 0 auto;
-}
-
-.timeline-toolbar :deep(.timeline-type-select) { width: 112px; }
-.timeline-toolbar :deep(.timeline-relation-select) { width: 82px; }
-.timeline-toolbar :deep(.el-button) { width: 56px; height: 32px; padding: 0 12px; }
-.timeline-toolbar :deep(.el-select__wrapper) { min-height: 32px; padding: 0 10px; border-radius: token.$crm-radius-2; box-shadow: inset 0 0 0 1px token.$crm-border-default; background: token.$crm-color-surface; }
-.timeline-toolbar :deep(.el-select__placeholder),
-.timeline-toolbar :deep(.el-select__selected-item) { color: token.$crm-text-primary; font-size: 11px; }
-
-.timeline-table-head,
-.timeline-row {
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 92px 66px 230px 80px minmax(0, 1fr);
-  padding-left: 16px;
-}
-
-.timeline-table-head {
-  height: 40px;
-  align-items: center;
-  color: token.$crm-text-secondary;
-  background: token.$crm-color-subtle;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
-.timeline-table-body {
-  position: relative;
-  height: 546px;
-}
-
-.timeline-row {
-  height: 54px;
-  box-sizing: border-box;
-  align-items: center;
-  border-bottom: 1px solid token.$crm-border-subtle;
-}
-
+.customer-overview-v2.erp-glass-list { height: auto; min-width: 0; gap: 14px; padding: 0; font-size: 13px; line-height: 20px; }
+.overview-metrics { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); padding: 16px; gap: 16px; }
+.overview-metric { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.overview-metric > span, .overview-metric small { color: var(--erp-color-text-secondary); }
+.overview-metric > strong { font-size: 20px; line-height: 28px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.overview-metric small { font-size: 12px; line-height: 18px; }
+.credit-track { display: block; height: 4px; border-radius: 2px; overflow: hidden; background: var(--erp-color-subtle); }
+.credit-track b { display: block; height: 100%; max-width: 100%; border-radius: inherit; background: var(--erp-color-brand); }
+.overview-snapshot { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--erp-color-border); }
+.overview-snapshot p { display: flex; gap: 8px; min-width: 0; margin: 0; flex-wrap: wrap; color: var(--erp-color-text-secondary); }
+.overview-snapshot b { font-weight: 500; color: var(--erp-color-text-primary); overflow-wrap: anywhere; }
+.overview-snapshot .is-accent, .customer-profile dd.is-accent { color: var(--erp-color-brand); }
+.overview-layout { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(0, 1.55fr) minmax(0, 1.2fr); align-items: start; gap: 14px; min-width: 0; }
+.overview-panel { min-width: 0; padding: 16px; }
+.panel-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.panel-title h2, .timeline-toolbar h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; font-weight: 700; line-height: 24px; }
+.panel-title :deep(.el-button), .timeline-toolbar :deep(.el-button), .health-footer :deep(.el-button), .timeline-footer :deep(.el-button) { height: 32px; margin: 0; }
+.customer-profile { display: grid; gap: 12px; margin: 0 0 16px; }
+.customer-profile > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px; }
+.customer-profile dt, .customer-profile dd { margin: 0; overflow-wrap: anywhere; }
+.customer-profile dt { color: var(--erp-color-text-secondary); }
+.customer-profile dd { color: var(--erp-color-text-primary); }
+.timeline-panel .timeline-toolbar { gap: 8px; margin-bottom: 12px; }
+.timeline-toolbar h2 { width: 100%; margin-bottom: 4px; }
+.timeline-toolbar :deep(.timeline-type-select) { width: 130px; }
+.timeline-toolbar :deep(.timeline-relation-select) { width: 118px; }
+.timeline-table-head, .timeline-row { display: grid; grid-template-columns: 78px 60px minmax(0, 1fr) 62px 70px; gap: 8px; align-items: center; padding: 8px; }
+.timeline-table-head { min-height: 38px; box-sizing: border-box; border-radius: var(--erp-radius-control); background: var(--erp-table-header-background); color: var(--erp-table-header-text); }
+.timeline-table-body, .action-table-body { position: relative; min-height: 56px; }
+.timeline-row { min-height: 54px; box-sizing: border-box; border-bottom: 1px solid var(--erp-color-border); }
+.timeline-row:last-child { border-bottom: 0; }
 .timeline-row > * { min-width: 0; }
-.timeline-row time { display: flex; flex-direction: column; justify-content: center; color: token.$crm-text-secondary; font-size: 10px; font-style: normal; line-height: 15px; }
-.timeline-type-cell { display: flex; align-items: center; }
-.timeline-type-cell :deep(.customer-activity-tag) { font-size: 11px; }
-.timeline-summary { display: block; overflow: hidden; padding-right: 12px; color: token.$crm-text-primary; font-size: 11px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-owner { overflow: hidden; padding-right: 10px; color: token.$crm-text-secondary; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-related-link,
-.timeline-related-empty { min-width: 0; overflow: hidden; padding-right: 8px; color: token.$crm-text-muted; font-size: 10px; font-weight: 500; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-related-link { width: fit-content; max-width: calc(100% - 8px); padding-left: 0; border: 0; color: token.$crm-primary; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
+.timeline-row time { display: flex; flex-direction: column; font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--erp-color-text-secondary); }
+.timeline-summary, .timeline-owner, .timeline-related-empty, .timeline-related-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.timeline-related-link { padding: 0; border: 0; color: var(--erp-color-brand); background: transparent; text-align: left; font: inherit; cursor: pointer; }
 .timeline-related-link:hover { text-decoration: underline; }
-.timeline-related-link:focus-visible { border-radius: 2px; outline: 2px solid token.$crm-primary; outline-offset: 2px; }
-
-.timeline-footer {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  color: token.$crm-text-secondary;
-  font-size: 11px;
-  line-height: 18px;
-}
-
-.timeline-footer > div { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 500; }
-.timeline-footer button { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 4px; color: token.$crm-text-secondary; background: transparent; font: inherit; }
-.timeline-footer button.active { border-color: token.$crm-primary; color: token.$crm-primary; }
-
-.overview-right-rail {
-  height: 694px;
-  display: grid;
-  grid-template-rows: 320px 360px;
-  gap: 14px;
-}
-
-.action-table-head,
-.action-row {
-  display: grid;
-  grid-template-columns: 26px 142px 302px 100px 104px;
-  padding-left: 16px;
-}
-
-.action-table-head {
-  height: 40px;
-  align-items: center;
-  color: token.$crm-text-secondary;
-  background: token.$crm-color-subtle;
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
+.timeline-footer, .health-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-top: 12px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.overview-right-rail { display: grid; align-items: start; gap: 14px; min-width: 0; }
+.action-table-head, .action-row { display: grid; grid-template-columns: 18px 80px minmax(0, 1fr) 62px 66px; gap: 6px; align-items: center; padding: 8px 0; }
+.action-table-head { min-height: 38px; box-sizing: border-box; border-radius: var(--erp-radius-control); background: var(--erp-table-header-background); color: var(--erp-table-header-text); font-size: 12px; }
 .action-table-head span:nth-child(1) { grid-column: 2; }
 .action-table-head span:nth-child(2) { grid-column: 3; }
 .action-table-head span:nth-child(3) { grid-column: 4; }
 .action-table-head span:nth-child(4) { grid-column: 5; }
-.action-table-body { position: relative; height: 228px; }
-
-.action-row {
-  height: 68px;
-  box-sizing: border-box;
-  align-items: center;
-  border-bottom: 1px solid token.$crm-border-subtle;
-  cursor: pointer;
-}
-
+.action-row { min-height: 48px; border-bottom: 1px solid var(--erp-color-border); cursor: pointer; }
+.action-row:last-child { border-bottom: 0; }
+.action-row:hover { background: var(--erp-table-hover); }
 .action-row > * { min-width: 0; }
-.action-row :deep(.el-checkbox) { width: 14px; height: 14px; margin: 0; }
-.action-row :deep(.el-checkbox__inner) { width: 14px; height: 14px; border-color: token.$crm-border-default; border-radius: 2px; }
-.action-row time,
-.action-row > span { overflow: hidden; color: token.$crm-text-secondary; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.action-row > strong { overflow: hidden; padding-right: 12px; color: token.$crm-text-primary; font-size: 11px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.action-row > .soft-tag { justify-self: start; }
-
-.customer-health-panel .panel-title > .soft-tag { margin-right: 25px; }
-.health-list { height: 256px; padding: 0 16px; }
-.health-row { height: 64px; display: grid; grid-template-columns: 26px 374px minmax(0, 1fr); align-items: center; border-bottom: 1px solid token.$crm-border-subtle; }
+.action-row :deep(.el-checkbox) { margin: 0; }
+.action-row time, .action-row > span, .action-row > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 20px; font-weight: 400; }
+.health-list { display: grid; }
+.health-row { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 4px 8px; padding: 12px 0; border-bottom: 1px solid var(--erp-color-border); }
 .health-row:last-child { border-bottom: 0; }
-.health-dot { width: 12px; height: 12px; border-radius: 50%; background: token.$crm-neutral; }
-.health-dot.is-success { background: token.$crm-success; }
-.health-dot.is-info { background: #4d7088; }
-.health-dot.is-warning { background: token.$crm-warning; }
-.health-dot.is-danger { background: token.$crm-danger; }
-.health-row strong { overflow: hidden; color: token.$crm-text-primary; font-size: 11px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.health-row > span { overflow: hidden; color: token.$crm-text-secondary; font-size: 10px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.health-footer { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; color: token.$crm-text-secondary; font-size: 10px; line-height: 16px; }
-.health-footer :deep(.el-button) { width: 110px; }
-
-.panel-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: token.$crm-text-muted;
-  font-size: 11px;
-}
-
-.panel-empty--error { color: token.$crm-danger; }
-.panel-empty button { padding: 0; border: 0; color: token.$crm-primary; background: transparent; font: inherit; cursor: pointer; }
-
+.health-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--erp-tag-neutral-background); }
+.health-dot.is-success { background: var(--erp-tag-success-background); }
+.health-dot.is-info { background: var(--erp-tag-info-background); }
+.health-dot.is-warning { background: var(--erp-tag-warning-background); }
+.health-dot.is-danger { background: var(--erp-tag-danger-background); }
+.health-row strong { font-weight: 500; overflow-wrap: anywhere; }
+.health-row > span { grid-column: 2; color: var(--erp-color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.panel-empty { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 20px 0; color: var(--erp-color-text-secondary); }
+.panel-empty--error { color: var(--erp-color-danger); }
+.panel-empty button { padding: 0; border: 0; color: var(--erp-color-brand); background: transparent; font: inherit; cursor: pointer; }
 @media (max-width: 1599px) {
-  .customer-overview-v2 { height: 1242px; }
-
-  .overview-metrics {
-    width: calc(100% - 48px);
-    grid-template-columns: 160px 160px 120px 120px 120px 190px 120px minmax(0, 1fr);
-    margin-inline: 24px;
-  }
-
-  .overview-layout {
-    width: calc(100% - 48px);
-    height: 1066px;
-    grid-template-columns: 300px minmax(0, 1fr);
-    grid-template-rows: 694px 360px;
-    margin-inline: 24px;
-  }
-
-  .overview-right-rail {
-    height: 360px;
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: 360px;
-    gap: 12px;
-  }
-
-  .action-table-head,
-  .action-row { grid-template-columns: 26px 130px minmax(220px, 1fr) 90px 90px; }
-
-  .health-row { grid-template-columns: 26px minmax(250px, 1fr) 180px; }
+  .overview-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .overview-layout { grid-template-columns: minmax(260px, .8fr) minmax(0, 1.55fr); }
+  .overview-right-rail { grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-
+@media (max-width: 900px) {
+  .overview-layout { grid-template-columns: minmax(0, 1fr); }
+  .overview-right-rail { grid-template-columns: minmax(0, 1fr); }
+  .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

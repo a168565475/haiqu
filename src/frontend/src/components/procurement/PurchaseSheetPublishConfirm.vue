@@ -57,7 +57,7 @@ function close(): void {
 .el-dialog.purchase-publish-dialog {
   box-sizing: border-box; padding: 0; margin-bottom: 0;
   min-height: 672px; border-radius: 6px; background: crm.$crm-color-surface; color: crm.$crm-text-primary;
-  box-shadow: 0 8px 24px #00000029; font-family: crm.$crm-font-body;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 16.078%, transparent); font-family: crm.$crm-font-body;
   --el-color-primary: #{crm.$crm-primary}; --el-color-primary-light-3: #{crm.$crm-primary-light-3};
   --el-fill-color-blank: #{crm.$crm-color-surface}; --el-border-color: #{crm.$crm-border-default};
   --el-text-color-regular: #{crm.$crm-text-primary};
@@ -75,7 +75,7 @@ function close(): void {
   dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .publish-number { display: flex; align-items: center; gap: 14px; }
   .publish-number > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .publish-number .el-tag { flex-shrink: 0; width: 68px; height: 36px; border: 0; border-radius: 999px; padding: 0; color: crm.$crm-neutral; background: crm.$crm-color-subtle; font: 500 16px/22px crm.$crm-font-body; }
+  .publish-number .el-tag { flex-shrink: 0; width: 68px; height: 36px; border: 0; border-radius: 999px; padding: 0; color: var(--erp-color-text-inverse); background: var(--erp-tag-brand-background); font: 500 16px/22px crm.$crm-font-body; }
   .publish-amount { display: flex; align-items: center; gap: 12px; line-height: 36px; }
   .publish-amount strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 28px; font-weight: 700; }
   .publish-amount > span { display: flex; align-items: center; gap: 12px; flex-shrink: 0; font-size: 18px; color: crm.$crm-text-secondary; }

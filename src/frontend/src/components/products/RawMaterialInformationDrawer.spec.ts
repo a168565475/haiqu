@@ -22,10 +22,10 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('@/api/rawMaterials', () => apiMocks)
 
-const drawerStub = {
-  name: 'ElDrawer',
-  props: ['modelValue', 'size'],
-  template: '<div v-if="modelValue"><slot name="header" /><slot /><slot name="footer" /></div>',
+const appWindowDialogStub = {
+  name: 'AppWindowDialog',
+  props: ['modelValue', 'title', 'width', 'closeOnClickModal'],
+  template: '<div v-if="modelValue" class="app-window-dialog"><slot name="title" /><slot /><slot name="footer" /></div>',
 }
 
 const options = {
@@ -45,7 +45,7 @@ const options = {
 
 const mountDrawer = (mode: 'create' | 'edit' = 'edit') => mount(RawMaterialInformationDrawer, {
   props: { modelValue: true, mode, materialId: mode === 'edit' ? 'raw-1' : undefined },
-  global: { plugins: [ElementPlus], stubs: { ElDrawer: drawerStub } },
+  global: { plugins: [ElementPlus], stubs: { AppWindowDialog: appWindowDialogStub } },
 })
 
 describe('RawMaterialInformationDrawer', () => {
@@ -89,7 +89,7 @@ describe('RawMaterialInformationDrawer', () => {
   it('新增态为空值起步，选择材料包材后才显示包装字段', async () => {
     const wrapper = mountDrawer('create')
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('896px')
+    expect(wrapper.findComponent({ name: 'AppWindowDialog' }).props('width')).toBe('896px')
     expect(wrapper.text()).not.toContain('是否包材辅料')
 
     const selects = wrapper.findAllComponents({ name: 'ElSelect' })

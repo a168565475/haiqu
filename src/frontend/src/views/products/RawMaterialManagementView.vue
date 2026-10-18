@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Delete, Search } from '@element-plus/icons-vue'
 import MaterialAttributeOptions from '@/components/products/MaterialAttributeOptions.vue'
@@ -132,6 +133,20 @@ function changeCategory() {
   addingName.value = false
   void loadList()
 }
+function applyCatalogFilters() {
+  if (navigationLocked.value || optionsLoading.value) return
+  clearTimeout(searchTimer)
+  searchTimer = undefined
+  page.value = 1
+  void loadList()
+}
+
+function resetCatalogFilters() {
+  if (navigationLocked.value || optionsLoading.value) return
+  category.value = definitions.value?.categories[0]?.key ?? ''
+  changeCategory()
+}
+
 function searchNames() {
   clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
@@ -233,38 +248,40 @@ onBeforeUnmount(() => { ++detailSequence; ++listSequence; ++optionsSequence; cle
 </script>
 
 <template>
-  <section class="material-catalog-page" aria-label="原料管理">
+  <section class="material-catalog-page erp-glass-list erp-glass-list--catalog" aria-label="原料管理">
     <p v-if="!canView" class="page-message" role="alert">无权查看原料管理</p>
-    <div v-else-if="optionsError" class="page-message" role="alert">{{ optionsError }} <button type="button" @click="initialize">重新加载</button></div>
+    <div v-else-if="optionsError" class="page-message" role="alert">{{ optionsError }} <button class="erp-list-button erp-button-motion" type="button" @click="initialize">重新加载</button></div>
     <template v-else>
-      <aside class="catalog-sidebar" aria-label="品名列表">
+      <aside v-glass-spotlight class="catalog-sidebar erp-list-filter" aria-label="品名列表">
         <MaterialCatalogSelect v-model="category" ariaLabel="原料类别" :options="categoryOptions"
           :placeholder="optionsLoading ? '加载分类中…' : '暂无分类'" :disabled="optionsLoading || navigationLocked" @change="changeCategory" />
-        <div class="catalog-search"><Search aria-hidden="true" /><input v-model="search" type="search" aria-label="搜索品名" placeholder="搜索品名" :disabled="optionsLoading || navigationLocked" @input="searchNames" /></div>
-        <button v-if="canAdd" type="button" class="add-name" data-testid="create-name" :disabled="!category || optionsLoading || navigationLocked" @click="startName">新增品名</button>
+        <div class="catalog-search"><Search aria-hidden="true" /><input class="erp-list-control" v-model="search" type="search" aria-label="搜索品名" placeholder="搜索品名" :disabled="optionsLoading || navigationLocked" @input="searchNames" /></div>
+        <div class="erp-list-filter-actions"><button class="erp-list-button erp-button-motion" type="button" :disabled="optionsLoading || navigationLocked" @click="resetCatalogFilters">重置</button><button type="button" class="erp-list-button erp-button-motion erp-list-button--primary" :disabled="optionsLoading || navigationLocked" @click="applyCatalogFilters">应用筛选</button></div>
+        <button v-if="canAdd" type="button" class="erp-list-button erp-button-motion add-name" data-testid="create-name" :disabled="!category || optionsLoading || navigationLocked" @click="startName">新增品名</button>
         <form v-if="addingName" class="new-name-form" @submit.prevent="saveName">
-          <input v-model="newName" aria-label="新品名" placeholder="输入新品名" :disabled="creating" />
+          <input class="erp-list-control" v-model="newName" aria-label="新品名" placeholder="输入新品名" :disabled="creating" />
           <MaterialCatalogSelect v-if="templateOptions.length > 1" v-model="newTemplate" ariaLabel="品名模板"
             :options="templateOptions" placeholder="选择品名模板" :disabled="creating" />
-          <div class="new-name-actions"><button type="button" class="primary-button" data-testid="save-name" :disabled="creating" @click="saveName">{{ creating ? '保存中' : '保存' }}</button><button type="button" :disabled="creating" @click="addingName = false">取消</button></div>
+          <div class="new-name-actions"><button type="button" class="erp-list-button erp-button-motion erp-list-button--primary primary-button" data-testid="save-name" :disabled="creating" @click="saveName">{{ creating ? '保存中' : '保存' }}</button><button class="erp-list-button erp-button-motion" type="button" :disabled="creating" @click="addingName = false">取消</button></div>
           <p v-if="createError" class="error-message" role="alert">{{ createError }}</p>
         </form>
-        <div v-if="listError" class="error-message" role="alert">{{ listError }} <button type="button" :disabled="navigationLocked" @click="loadList()">重试</button></div>
-        <nav class="material-names" data-testid="material-names" :aria-busy="listLoading">
+        <div v-if="listError" class="error-message" role="alert">{{ listError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked" @click="loadList()">重试</button></div>
+        <nav class="material-names erp-list-catalog-nav" data-testid="material-names" aria-label="原料品名列表" tabindex="0" :aria-busy="listLoading">
           <button v-for="item in names" :key="item.id" type="button" :title="item.name" :data-catalog-id="item.id" :class="{ selected: selectedId === item.id }"
             :aria-current="selectedId === item.id ? 'true' : undefined" :disabled="navigationLocked || listLoading" @click="selectCatalog(item.id)">{{ item.name }}</button>
           <span v-if="!names.length && !listLoading && !optionsLoading && !listError" class="list-empty">暂无品名</span>
           <span v-if="listLoading" class="list-empty" role="status">加载中…</span>
         </nav>
-        <div v-if="totalPages > 1" class="list-pagination">
-          <button type="button" aria-label="上一页品名" :disabled="page <= 1 || navigationLocked || listLoading" @click="changePage(page - 1)">‹</button>
+        <div v-if="totalPages > 1" class="list-pagination erp-list-footer">
+          <button class="erp-list-button erp-button-motion" type="button" aria-label="上一页品名" :disabled="page <= 1 || navigationLocked || listLoading" @click="changePage(page - 1)">‹</button>
           <span>{{ page }} / {{ totalPages }}</span>
-          <button type="button" aria-label="下一页品名" :disabled="page >= totalPages || navigationLocked || listLoading" @click="changePage(page + 1)">›</button>
+          <button class="erp-list-button erp-button-motion" type="button" aria-label="下一页品名" :disabled="page >= totalPages || navigationLocked || listLoading" @click="changePage(page + 1)">›</button>
         </div>
       </aside>
-      <main class="catalog-detail" :data-catalog-id="catalog?.id" :aria-busy="detailLoading">
-        <div v-if="versionWarning" class="version-warning" data-testid="version-warning" role="alert">{{ versionWarning }} <button type="button" data-testid="reload-detail" :disabled="navigationLocked || detailLoading" @click="selectCatalog(selectedId, true)">重新读取</button></div>
-        <div v-if="detailError" class="error-message" role="alert">{{ detailError }} <button type="button" :disabled="navigationLocked || detailLoading" @click="selectCatalog(selectedId, true)">重试</button></div>
+      <main class="catalog-detail erp-list-data" :data-catalog-id="catalog?.id" :aria-busy="detailLoading">
+        <header class="erp-list-heading"><h1>原料管理</h1></header>
+        <div v-if="versionWarning" class="version-warning" data-testid="version-warning" role="alert">{{ versionWarning }} <button class="erp-list-button erp-button-motion" type="button" data-testid="reload-detail" :disabled="navigationLocked || detailLoading" @click="selectCatalog(selectedId, true)">重新读取</button></div>
+        <div v-if="detailError" class="error-message" role="alert">{{ detailError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked || detailLoading" @click="selectCatalog(selectedId, true)">重试</button></div>
         <p v-if="detailLoading && !catalog" class="page-message" role="status">正在读取属性…</p>
         <template v-if="catalog && template">
           <section :key="catalog.id" class="base-attributes" aria-label="基本属性">
@@ -278,7 +295,7 @@ onBeforeUnmount(() => { ++detailSequence; ++listSequence; ++optionsSequence; cle
                       <MaterialAttributeOptions v-for="shape in shapes" :key="shape.id" :data-shape-id="shape.id" :label="shape.value" :field-key="dimension.key" :kind="dimension.kind" scope="BASE" :parent-id="shape.id"
                         :options="optionItems(dimension, 'BASE', shape.id)" :available-units="[]" :readonly="!canChange" :disabled="editingDisabled"
                         :on-save="value => saveOption(dimension, 'BASE', value, shape.id)" :on-remove="id => removeOption(dimension, id)">
-                        <template #label="{ remove, busy }"><span class="shape-label">{{ shape.value }}<button v-if="canChange" type="button" class="delete-shape" data-action="delete" :aria-label="`删除${shape.value}`" :title="`删除${shape.value}`" :disabled="editingDisabled || busy" @click="remove(shape.id)"><Delete aria-hidden="true" /></button></span></template>
+                        <template #label="{ remove, busy }"><span class="shape-label">{{ shape.value }}<button v-if="canChange" type="button" class="erp-list-button erp-button-motion delete-shape" data-action="delete" :aria-label="`删除${shape.value}`" :title="`删除${shape.value}`" :disabled="editingDisabled || busy" @click="remove(shape.id)"><Delete aria-hidden="true" /></button></span></template>
                       </MaterialAttributeOptions>
                       <p v-if="!shapes.length" class="dimension-hint">先添加{{ field.label }}，再维护对应{{ dimension.label }}。</p>
                     </template>
@@ -310,59 +327,46 @@ onBeforeUnmount(() => { ++detailSequence; ++listSequence; ++optionsSequence; cle
   </section>
 </template>
 
-<style scoped>
-.material-catalog-page { display: flex; gap: 8px; height: 100%; min-height: 0; padding: 0; overflow: hidden; box-sizing: border-box; background: #f7f5f2; color: #17191c; font-size: 13px; line-height: 1.5; }
-.catalog-sidebar, .catalog-detail { box-sizing: border-box; border: 1px solid #ece8e2; border-radius: 5px; background: #fcfbf9; }
-.catalog-sidebar { width: 240px; flex: 0 0 240px; display: flex; flex-direction: column; gap: 8px; padding: 16px; min-height: 0; overflow-y: auto; }
-button, input { font: inherit; }
-button { cursor: pointer; }
-button:disabled, input:disabled { cursor: not-allowed; opacity: 1; }
-.catalog-sidebar > .material-catalog-select { flex-shrink: 0; }
-.catalog-search input, .new-name-form input { width: 100%; height: 32px; min-height: 32px; box-sizing: border-box; border: 1px solid #ddd6c9; border-radius: 5px; padding: 0 10px; background: #fcfbf7; color: #1f1d18; }
-.catalog-search { position: relative; flex-shrink: 0; }
-.catalog-search svg { position: absolute; top: calc(50% - 8px); left: 10px; width: 16px; height: 16px; color: #6f6a61; pointer-events: none; }
-.catalog-search input { padding-left: 34px; }
-.catalog-sidebar input::placeholder { color: #968f84; opacity: 1; }
-.add-name { height: 32px; min-height: 32px; border: 1px solid #ff510a; border-radius: 5px; background: transparent; color: #f04b09; font-weight: 600; }
-.add-name:hover:not(:disabled) { background: #fff0e2; }
-.material-names { flex: 1; min-height: 90px; overflow-y: auto; }
-.material-names > button { display: block; box-sizing: border-box; width: 100%; height: 32px; min-height: 32px; padding: 4px 10px; border: 0; border-bottom: 1px solid #efede9; border-left: 4px solid transparent; border-radius: 5px; text-align: left; color: #17191c; background: transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.material-names > button:hover:not(:disabled):not(.selected) { background: #f5f2ed; }
-.material-names > button.selected { background: #fff0e2; border-left-color: #ff510a; border-bottom-color: transparent; color: #17191c; font-weight: 600; }
-.list-empty { display: block; padding: 10px 14px; color: #85888d; }
-.catalog-detail { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; }
-h2 { font-size: 17px; line-height: 24px; font-weight: 600; margin: 0 0 12px; }
-.spray-attributes { margin-top: 12px; padding-top: 12px; border-top: 1px solid #dcd8d2; }
+<style scoped lang="scss">
+.material-catalog-page { grid-template-rows: minmax(0, 1fr); }
+.material-catalog-page > .page-message { grid-column: 1 / -1; }
+.material-catalog-page.erp-glass-list--catalog > .catalog-sidebar { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: visible; }
+.catalog-sidebar > :not(.material-names) { flex-shrink: 0; min-width: 0; }
+.catalog-search { position: relative; }
+.catalog-search svg { position: absolute; top: 8px; left: 10px; width: 16px; height: 16px; color: var(--erp-input-placeholder); pointer-events: none; }
+.catalog-search input { width: 100%; padding-left: 34px; }
+.catalog-sidebar .erp-list-filter-actions { flex-wrap: wrap; margin-left: 0; }
+.material-names { flex: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.material-names::-webkit-scrollbar { display: none; }
+.catalog-detail { overflow: hidden; }
+h2 { min-width: 0; margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
+.page-message, .list-message, .list-empty { margin: 0; padding: 12px 0; color: var(--erp-color-text-secondary); }
+.error-message { margin: 4px 0; color: var(--erp-color-danger); overflow-wrap: anywhere; }
+.catalog-detail { overflow-y: auto; }
+.material-names > button { position: relative; display: block; width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.material-names > button.selected, .material-names > button.selected:hover { background: color-mix(in srgb, var(--erp-menu-selected-background) 88%, var(--erp-menu-accent)); color: var(--erp-menu-accent); }
+.material-names > button.selected::before { content: ''; position: absolute; inset: 6px auto 6px 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--erp-menu-accent); }
+.spray-attributes { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--erp-color-border); }
 .section-title { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
-.section-title h2 { margin: 0; }
-.spray-toggle { display: flex; align-items: center; gap: 6px; color: #17191c; cursor: pointer; }
-.spray-toggle input { width: 15px; height: 15px; margin: 0; accent-color: #ff510a; }
+.base-attributes > h2 { margin-bottom: 12px; }
+.spray-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.spray-toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--erp-color-brand); }
 .section-group { display: flex; align-items: flex-start; gap: 12px; margin: 12px 0; }
 .section-labels { display: flex; flex: 0 0 120px; flex-direction: column; gap: 8px; padding-top: 4px; }
 .section-labels > span { display: flex; align-items: center; gap: 12px; min-height: 32px; }
-.section-labels > span::after { content: ''; flex: 1; border-top: 1px dashed #dadce0; }
+.section-labels > span::after { content: ''; flex: 1; border-top: 1px dashed var(--erp-color-border); }
 .section-body { flex: 1; min-width: 0; max-width: 820px; }
-.shape-dimensions { flex: 1; min-width: 0; padding-left: 12px; border-left: 1px solid #dcd8d2; }
+.shape-dimensions { flex: 1; min-width: 0; padding-left: 12px; border-left: 1px solid var(--erp-color-border); }
 .shape-dimensions :deep(.attribute-label) { width: 84px; }
-.shape-dimensions :deep(.attribute-label::after) { display: none; }
+.shape-dimensions :deep(.attribute-label::after), .shape-heading :deep(.attribute-label) { display: none; }
 .shape-heading { max-width: 100%; }
-.shape-heading :deep(.attribute-label) { display: none; }
 .shape-label { display: flex; align-items: center; overflow-wrap: anywhere; }
-.delete-shape { display: inline-flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #55595e; }
+.delete-shape { display: inline-flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; flex: 0 0 32px; width: 32px; padding: 0; }
 .delete-shape svg { width: 16px; height: 16px; }
 .shape-label:hover .delete-shape, .shape-label:focus-within .delete-shape { opacity: 1; pointer-events: auto; }
-.dimension-hint { margin: 4px 0; line-height: 32px; color: #85888d; }
+.dimension-hint { margin: 4px 0; line-height: 32px; color: var(--erp-color-text-secondary); }
 .new-name-form { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
 .new-name-actions { display: flex; gap: 8px; }
-.new-name-actions button, .list-pagination button, .page-message button, .error-message button, .version-warning button { height: 32px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; padding: 0 10px; color: #17191c; }
-.new-name-actions .primary-button { color: #f04b09; background: #fff; border-color: #ff510a; }
-.list-pagination { display: flex; align-items: center; justify-content: space-between; }
-.page-message { margin: 0; padding: 10px 0; color: #85888d; }
-.material-catalog-page > .page-message { padding: 24px; }
-.error-message { margin: 0 0 10px; color: #b42318; }
-.version-warning { margin-bottom: 14px; padding: 8px 10px; border: 1px solid #edc58b; border-radius: 5px; background: #fff7e8; color: #80551d; }
-.catalog-search input:disabled, .new-name-form input:disabled, .catalog-sidebar button:disabled, .version-warning button:disabled, .error-message button:disabled { color: #6f6a61; border-color: #ddd6c9; background: #e8e1d5; }
-.catalog-sidebar input:focus { border-color: #3898ec; }
-button:focus-visible, input:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.version-warning { margin-bottom: 14px; padding: 8px 10px; border: 1px solid var(--erp-tag-warning-border); border-radius: var(--erp-radius-control); background: var(--erp-tag-warning-background); color: var(--erp-tag-warning-text); }
 @media (hover: none) { .delete-shape { opacity: 1; pointer-events: auto; } }
 </style>

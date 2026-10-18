@@ -1,0 +1,200 @@
+// Element Plus 自身在组件根节点声明变量，这里把它们接到统一用途色。
+// 尺寸保持组件原有约定；共享表面质感随主题切换。
+.el-button:where(:not(.el-button--primary, .el-button--success, .el-button--warning, .el-button--danger, .el-button--info)) {
+  --el-button-bg-color: var(--erp-button-secondary-background);
+  --el-button-text-color: var(--erp-button-secondary-text);
+  --el-button-border-color: var(--erp-button-secondary-border);
+  --el-button-hover-bg-color: var(--erp-button-secondary-hover-background);
+  --el-button-hover-border-color: var(--erp-button-secondary-hover-border);
+  --el-button-hover-text-color: var(--erp-button-secondary-text);
+  --el-button-active-bg-color: var(--erp-button-secondary-pressed-background);
+  --el-button-active-border-color: var(--erp-button-secondary-hover-border);
+  --el-button-active-text-color: var(--erp-button-secondary-text);
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--erp-button-primary-background);
+  --el-button-text-color: var(--erp-button-primary-text);
+  --el-button-border-color: var(--erp-button-primary-background);
+  --el-button-hover-bg-color: var(--erp-button-primary-hover-background);
+  --el-button-hover-border-color: var(--erp-button-primary-hover-background);
+  --el-button-hover-text-color: var(--erp-button-primary-text);
+  --el-button-active-bg-color: var(--erp-button-primary-pressed-background);
+  --el-button-active-border-color: var(--erp-button-primary-pressed-background);
+  --el-button-active-text-color: var(--erp-button-primary-text);
+}
+
+.el-button {
+  --el-button-outline-color: var(--erp-color-focus);
+  --el-button-disabled-bg-color: var(--erp-button-disabled-background);
+  --el-button-disabled-text-color: var(--erp-button-disabled-text);
+  --el-button-disabled-border-color: var(--erp-button-disabled-border);
+}
+
+// 渐变、高光和阴影由用途色统一提供，文字按钮与标签按钮不套实体表面。
+.el-button:where(:not(.is-text, .is-link, .is-plain, .is-disabled, .el-button--primary, .el-button--success, .el-button--warning, .el-button--danger, .el-button--info)) {
+  border-radius: var(--erp-radius-control);
+  background: var(--erp-button-secondary-surface);
+  box-shadow: var(--erp-button-secondary-shadow);
+  &:hover, &:focus-visible { background: var(--erp-button-secondary-hover-surface); }
+  &:active { background: var(--erp-button-secondary-pressed-background); box-shadow: none; }
+}
+.el-button--primary:where(:not(.is-text, .is-link, .is-plain, .is-disabled)) {
+  border-radius: var(--erp-radius-control);
+  border-color: var(--erp-button-primary-border);
+  background: var(--erp-button-primary-surface);
+  box-shadow: var(--erp-button-primary-shadow);
+  &:hover, &:focus-visible { background: var(--erp-button-primary-hover-surface); }
+  &:active { background: var(--erp-button-primary-pressed-background); box-shadow: none; }
+}
+.el-button.is-disabled { box-shadow: none; }
+
+.el-input, .el-textarea, .el-select {
+  --el-input-bg-color: var(--erp-input-background);
+  --el-input-text-color: var(--erp-input-text);
+  --el-input-border-color: var(--erp-input-border);
+  --el-input-hover-border-color: var(--erp-input-hover-border);
+  --el-input-focus-border-color: var(--erp-input-focus-border);
+  --el-input-placeholder-color: var(--erp-input-placeholder);
+  --el-select-border-color-hover: var(--erp-input-hover-border);
+  --el-select-input-focus-border-color: var(--erp-input-focus-border);
+}
+.el-input__wrapper, .el-select__wrapper { background: var(--erp-input-surface); }
+.el-input.is-disabled .el-input__wrapper { background: var(--erp-input-disabled-background); }
+.el-select__wrapper.is-disabled { background: var(--erp-input-disabled-background); }
+
+// 所有业务弹窗复用客户列表筛选框的实心控件规范。
+// AppWindowDialog 的内容由插槽注入，使用 body 前缀和 !important 覆盖旧弹窗局部尺寸，保留业务字段与校验逻辑。
+body .app-window-dialog {
+  :is(
+    .el-input:not(.el-textarea) .el-input__wrapper,
+    .el-select__wrapper,
+    .el-date-editor.el-input__wrapper,
+    .el-date-editor.el-range-editor,
+    .el-autocomplete .el-input__wrapper,
+    .el-cascader .el-input__wrapper,
+    .el-input-number .el-input__wrapper
+  ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    box-sizing: border-box;
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 12px !important;
+    border-radius: var(--erp-radius-control) !important;
+    background: var(--erp-input-surface) !important;
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset !important;
+  }
+
+  :is(
+    .el-input:not(.el-textarea) .el-input__wrapper:hover,
+    .el-select__wrapper:hover,
+    .el-date-editor.el-input__wrapper:hover,
+    .el-date-editor.el-range-editor:hover,
+    .el-autocomplete .el-input__wrapper:hover,
+    .el-cascader .el-input__wrapper:hover,
+    .el-input-number .el-input__wrapper:hover
+  ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset !important;
+  }
+
+  :is(
+    .el-input:not(.el-textarea) .el-input__wrapper.is-focus,
+    .el-select__wrapper.is-focused,
+    .el-date-editor.el-input__wrapper:focus-within,
+    .el-date-editor.el-range-editor:focus-within,
+    .el-autocomplete .el-input__wrapper.is-focus,
+    .el-cascader.is-focus .el-input__wrapper,
+    .el-input-number .el-input__wrapper.is-focus
+  ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important;
+  }
+
+  :is(.el-input__inner, .el-select__placeholder, .el-select__selected-item, .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    color: var(--erp-input-text) !important;
+    font-size: 12px !important;
+    line-height: 18px;
+  }
+
+  :is(.el-input__inner, .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))::placeholder { color: var(--erp-input-placeholder) !important; }
+
+  :is(
+    .el-input.is-disabled .el-input__wrapper,
+    .el-select__wrapper.is-disabled,
+    .el-date-editor.is-disabled,
+    .el-input-number.is-disabled .el-input__wrapper
+  ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    background: var(--erp-input-disabled-background) !important;
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset !important;
+  }
+
+  :is(.el-input.is-disabled .el-input__inner, .el-select__wrapper.is-disabled .el-select__placeholder, .el-range-editor.is-disabled .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    color: var(--erp-input-disabled-text) !important;
+  }
+
+  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    padding: 8px 12px !important;
+    border: 0 !important;
+    border-radius: var(--erp-radius-control) !important;
+    background: var(--erp-input-surface) !important;
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset !important;
+    color: var(--erp-input-text) !important;
+    font-size: 12px !important;
+  }
+
+  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):hover {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset !important;
+  }
+
+  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):focus {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important;
+  }
+
+  .el-textarea.is-disabled .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    background: var(--erp-input-disabled-background) !important;
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset !important;
+    color: var(--erp-input-disabled-text) !important;
+  }
+}
+
+.el-table {
+  --el-table-bg-color: var(--erp-table-background);
+  --el-table-tr-bg-color: var(--erp-table-background);
+  --el-table-header-bg-color: var(--erp-table-header-background);
+  --el-table-header-text-color: var(--erp-table-header-text);
+  --el-table-text-color: var(--erp-table-text);
+  --el-table-border-color: var(--erp-table-border);
+  --el-table-row-hover-bg-color: var(--erp-table-hover);
+  --el-table-current-row-bg-color: var(--erp-table-selected);
+}
+
+.el-select__popper, .el-dropdown__popper, .el-picker__popper, .el-popper.is-light {
+  --el-bg-color-overlay: var(--erp-dropdown-background);
+  --el-fill-color-blank: var(--erp-dropdown-background);
+  --el-border-color-light: var(--erp-dropdown-border);
+  --el-fill-color-light: var(--erp-dropdown-hover-background);
+  --el-text-color-regular: var(--erp-dropdown-text);
+}
+.el-select-dropdown__item.is-selected {
+  color: var(--erp-dropdown-selected-text);
+  background: var(--erp-dropdown-selected-background);
+}
+.el-select-dropdown__item.is-hovering:not(.is-selected) { background: var(--erp-dropdown-hover-background); }
+
+// 默认Tooltip使用dark effect，但产品提示气泡的表面仍按主题用途色绘制。
+.el-popper.is-dark {
+  color: var(--erp-color-text-primary);
+  border-color: var(--erp-tooltip-border);
+  background: var(--erp-tooltip-background);
+}
+.el-popper.is-dark > .el-popper__arrow::before {
+  border-color: var(--erp-tooltip-border);
+  background: var(--erp-tooltip-background);
+}
+
+@each $type, $tone in ('primary': 'brand', 'success': 'success', 'warning': 'warning', 'danger': 'danger', 'info': 'info') {
+  .el-tag.el-tag--#{$type} {
+    --el-tag-bg-color: var(--erp-tag-#{$tone}-background);
+    --el-tag-border-color: var(--erp-tag-#{$tone}-border);
+    --el-tag-text-color: var(--erp-tag-#{$tone}-text);
+    --el-tag-hover-color: var(--erp-tag-#{$tone}-background);
+  }
+}

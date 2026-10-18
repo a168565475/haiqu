@@ -304,49 +304,49 @@ onMounted(load)
 </template>
 
 <style lang="scss" scoped>
-.supplier-form-page { min-width: 1280px; min-height: calc(100vh - 56px); padding: 24px 32px 40px; color: #202124; background: var(--erp-page-background); --el-color-primary: #18181b; }
+.supplier-form-page { min-width: 1280px; min-height: calc(100vh - 56px); padding: 24px 32px 40px; color: var(--erp-color-text-primary); background: var(--erp-page-background); --el-color-primary: var(--erp-color-brand); }
 .form-heading { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
 .form-heading > div:first-child { display: flex; align-items: center; gap: 12px; }
-.breadcrumb { margin-bottom: 5px; color: #8a8f98; font-size: 12px; }
-.breadcrumb span { padding: 0 5px; color: #b8bcc3; }
+.breadcrumb { margin-bottom: 5px; color: var(--erp-color-text-muted); font-size: 12px; }
+.breadcrumb span { padding: 0 5px; color: var(--erp-color-text-muted); }
 .form-heading h1 { margin: 0; font-size: 24px; line-height: 30px; }
 .form-heading__actions { display: flex; gap: 8px; }
 .form-heading__actions :deep(.el-button + .el-button) { margin-left: 0; }
 .load-error { margin-bottom: 16px; }
 .form-layout { display: grid; grid-template-columns: minmax(0, 1080px) 516px; gap: 20px; min-height: 650px; }
-.form-card, .info-card { border: 1px solid #e4e7eb; border-radius: 8px; background: #fff; box-shadow: 0 1px 2px rgb(15 23 42 / 3%); }
+.form-card, .info-card { border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); box-shadow: 0 1px 2px color-mix(in srgb, var(--erp-shadow-color) 3%, transparent); }
 .form-card { min-height: 650px; padding: 0 28px 28px; }
-.card-title { display: flex; min-height: 70px; align-items: center; border-bottom: 1px solid #eceef1; }
+.card-title { display: flex; min-height: 70px; align-items: center; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .card-title h2, .info-card h2 { margin: 0; font-size: 16px; }
-.card-title p { margin: 5px 0 0; color: #8a8f98; font-size: 12px; }
-.card-title i { color: #e24a4a; font-style: normal; }
+.card-title p { margin: 5px 0 0; color: var(--erp-color-text-muted); font-size: 12px; }
+.card-title i { color: var(--erp-color-danger); font-style: normal; }
 .supplier-form { padding-top: 22px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 30px; row-gap: 2px; }
 .supplier-form :deep(.el-form-item) { margin-bottom: 20px; }
-.supplier-form :deep(.el-form-item__label) { height: 23px; padding: 0; color: #3f434a; font-size: 13px; line-height: 20px; }
+.supplier-form :deep(.el-form-item__label) { height: 23px; padding: 0; color: var(--erp-color-text-primary); font-size: 13px; line-height: 20px; }
 .supplier-form :deep(.el-input), .supplier-form :deep(.el-select) { width: 100%; }
-.field-help { width: 100%; margin: 5px 0 0; color: #969ba4; font-size: 11px; line-height: 16px; }
+.field-help { width: 100%; margin: 5px 0 0; color: var(--erp-color-text-muted); font-size: 11px; line-height: 16px; }
 .category-field, .remark-field { grid-column: 1 / -1; }
-.category-options { display: grid; width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; padding: 13px 16px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fafbfc; }
+.category-options { display: grid; width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; padding: 13px 16px; border: 1px solid var(--erp-color-border); border-radius: 4px; background: var(--erp-color-subtle); }
 .category-options :deep(.el-checkbox) { margin-right: 0; }
 .remark-field :deep(.el-textarea__inner) { min-height: 116px !important; }
 .side-column { display: flex; flex-direction: column; gap: 16px; }
 .info-card { padding: 20px; }
-.info-card__title { display: flex; align-items: center; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid #eceef1; }
-.info-card__title .el-icon { color: #62666d; }
+.info-card__title { display: flex; align-items: center; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--erp-color-border-subtle); }
+.info-card__title .el-icon { color: var(--erp-color-text-regular); }
 .rule-list, .record-list { margin: 0; }
-.rule-list > div, .record-list > div { display: grid; grid-template-columns: 106px minmax(0, 1fr); gap: 14px; padding: 13px 0; border-bottom: 1px solid #f0f1f3; font-size: 13px; }
+.rule-list > div, .record-list > div { display: grid; grid-template-columns: 106px minmax(0, 1fr); gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--erp-color-border-subtle); font-size: 13px; }
 .rule-list > div:last-child, .record-list > div:last-child { border-bottom: 0; }
-.rule-list dt, .record-list dt { color: #8a8f98; }
-.rule-list dd, .record-list dd { margin: 0; color: #30343a; text-align: right; }
+.rule-list dt, .record-list dt { color: var(--erp-color-text-muted); }
+.rule-list dd, .record-list dd { margin: 0; color: var(--erp-color-text-primary); text-align: right; }
 .info-card > h2 { margin-bottom: 12px; }
-.duplicate-card > p { margin: 0 0 12px; color: #7a7f87; font-size: 12px; line-height: 20px; }
-.duplicate-card button { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 10px 12px; border: 1px solid #e4e7eb; border-radius: 5px; color: #30343a; background: #fafbfc; cursor: pointer; }
-.duplicate-card button:hover { border-color: #aeb3bb; }
-.duplicate-card button span { color: #3d8d45; font-size: 12px; }
-.duplicate-card button span.is-disabled { color: #d9534f; }
+.duplicate-card > p { margin: 0 0 12px; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
+.duplicate-card button { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--erp-color-border); border-radius: 5px; color: var(--erp-color-text-primary); background: var(--erp-button-secondary-surface); cursor: pointer; }
+.duplicate-card button:hover { border-color: var(--erp-color-border); }
+.duplicate-card button span { color: var(--erp-color-success); font-size: 12px; }
+.duplicate-card button span.is-disabled { color: var(--erp-color-text-disabled); }
 .state-page { display: grid; min-height: 520px; place-content: center; gap: 10px; text-align: center; }
 .state-page h1, .state-page p { margin: 0; }
-.state-page p { color: #7a7f87; }
+.state-page p { color: var(--erp-color-text-secondary); }
 .state-page .el-button { margin-top: 6px; }
 </style>

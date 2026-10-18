@@ -27,4 +27,8 @@ docker compose --env-file "$ERP_ENV_FILE" -f deployment/compose.yml ps
 
 更新时先保留数据库/附件备份及旧镜像，再完成本地构建和镜像加载、切换新版本 context 目录，执行 `config`、必要迁移和 `up -d --no-build`；不要把本地数据库再次覆盖到已使用的服务器库，也不要执行 `down -v`。
 
+当前工厂试用阶段按用户明确要求不新增服务器备份；这不授权删除已有备份、覆盖数据或自动执行迁移。2026-10-18 更新仅切换应用镜像，不运行迁移或目录导入。增量切换必须显式传入 `RELEASE_TAG`、`ERP_BUILD_CONTEXT`、`ERP_ENV_FILE`，使用 `up -d --no-deps --no-build --pull never backend web`，并核对实际运行镜像 ID、公开网页同源 API 请求及既有数据保全结果。
+
+在 Windows 构建时，PDFJS 可能生成以句点结尾的许可证文件名。应保全这些文件的原始名称和内容，以已校验的 tar 归档作为 Docker 构建上下文输入；目录上下文可能改变其内容。发布前直接核对镜像内文件哈希，不只检查本机 `dist`。
+
 部署专用 [Gunicorn 26.2.0](https://pypi.org/project/gunicorn/26.2.0/) 与 [Nginx stable 1.30.6-alpine](https://github.com/docker-library/official-images/blob/master/library/nginx) 已固定；Gunicorn 已核对 PyPI 发布并在 Python 3.13 基础镜像实际安装验证，现有业务 requirements 不变。

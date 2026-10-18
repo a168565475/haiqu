@@ -289,7 +289,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 </script>
 
 <template>
-  <section v-loading="loading" class="confirm-page">
+  <section v-loading="loading" class="confirm-page erp-glass-form">
     <header class="page-heading">
       <div><h1>确认采购订单</h1><p>核对供应商、交期、数量及单价</p></div>
       <ElButton class="back-button" @click="router.push({ name: 'purchase-orders' })"><img :src="backIcon" alt="" class="purchase-icon" />返回列表</ElButton>
@@ -395,19 +395,20 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
-.confirm-page { height: calc(100dvh - 92px); box-sizing: border-box; padding: 30px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: crm.$crm-color-page; font-family: crm.$crm-font-body; font-size: 14px;
+@use '@/styles/theme/detail' as detail;
+.confirm-page { height: auto; min-height: 0; box-sizing: border-box; padding: 30px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font-family: crm.$crm-font-body; font-size: 14px;
   --el-color-primary: #{crm.$crm-primary}; --el-text-color-primary: #{crm.$crm-text-primary}; --el-text-color-regular: #{crm.$crm-text-regular}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-color: #{crm.$crm-border-default}; --el-border-color-light: #{crm.$crm-border-subtle}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-fill-color-light: #{crm.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .purchase-icon { width: 16px; height: 16px; flex: none; }
 .confirm-page :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 10px; }
-.page-heading { flex: 0 0 50px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.page-heading > div { display: flex; align-items: center; gap: 26px; }
+.page-heading { flex: none; min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.page-heading > div { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .page-heading h1 { margin: 0; font: 700 38px/50px crm.$crm-font-display; letter-spacing: -1px; }
 .page-heading p { margin: 8px 0 0; font-size: 13px; color: crm.$crm-text-secondary; }
 .back-button { width: 142px; height: 42px; border-color: crm.$crm-primary; }
-.detail-card { border-radius: 5px; background: crm.$crm-color-surface; box-shadow: inset 0 0 0 1px crm.$crm-border-default; overflow: hidden; }
+.detail-card { @include detail.surface; overflow: hidden; }
 .detail-card h2 { margin: 0; font-size: 20px; line-height: 28px; }
-.detail-card { flex: 1; min-height: 150px; display: flex; flex-direction: column; margin-bottom: 8px; }
+.detail-card { flex: none; min-height: 150px; display: flex; flex-direction: column; margin-bottom: 14px; }
 .detail-card > header { display: flex; flex: 0 0 53px; align-items: center; justify-content: space-between; padding: 0 18px; }
 .detail-title-context { display: flex; min-width: 0; align-items: center; gap: 14px; }
 .detail-title-context > span, .source-context span, .product-context span { flex: none; color: crm.$crm-text-secondary; font-size: 12px; }
@@ -417,20 +418,23 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .product-context strong { max-width: 190px; }
 .product-context small { overflow: hidden; color: crm.$crm-text-secondary; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .purchase-order-number { flex: none; margin-left: 14px; }
-.detail-table { flex: 1; min-height: 0; width: 100%; --el-table-border-color: #{crm.$crm-border-subtle}; --el-table-tr-bg-color: #{crm.$crm-color-surface}; --el-table-bg-color: #{crm.$crm-color-surface}; --el-table-header-bg-color: #{crm.$crm-color-subtle}; --el-table-row-hover-bg-color: #{crm.$crm-color-row-hover}; }
+.detail-table { flex: none; min-height: 0; width: 100%; --el-table-border-color: var(--erp-table-grid); --el-table-tr-bg-color: var(--erp-table-body-fill); --el-table-bg-color: var(--erp-table-body-fill); --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-row-hover-bg-color: var(--erp-color-hover); }
 .confirm-page .detail-card .detail-table :deep(.el-table__header tr),
 .confirm-page .detail-card .detail-table :deep(.el-table__header th.el-table__cell) { height: 40px !important; }
-.confirm-page .detail-card .detail-table :deep(.el-table__header th.el-table__cell) { padding: 0 !important; border-right: 1px solid crm.$crm-border-subtle; background: crm.$crm-color-subtle; color: crm.$crm-text-secondary; font-size: 11px; font-weight: 400; }
+.confirm-page .detail-card .detail-table :deep(.el-table__header th.el-table__cell) { padding: 0 !important; border-right: 1px solid var(--erp-table-grid); background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 400; }
 .confirm-page .detail-card .detail-table :deep(.el-table__body tr),
 .confirm-page .detail-card .detail-table :deep(.el-table__body td.el-table__cell) { height: 40px !important; }
-.confirm-page .detail-card .detail-table :deep(.el-table__body td.el-table__cell) { padding: 0 !important; border-right: 1px solid crm.$crm-border-subtle; color: crm.$crm-text-primary; }
+.confirm-page .detail-card .detail-table :deep(.el-table__body td.el-table__cell) { padding: 0 !important; border-right: 1px solid var(--erp-table-grid); color: var(--erp-table-text); }
 .confirm-page .detail-card .detail-table :deep(.el-table__header th:first-child),
-.confirm-page .detail-card .detail-table :deep(.el-table__body td:first-child) { border-left: 1px solid crm.$crm-border-subtle; }
+.confirm-page .detail-card .detail-table :deep(.el-table__body td:first-child) { border-left: 0; }
 .confirm-page .detail-card .detail-table :deep(.cell) { padding: 0 16px; font-size: 12px; line-height: 18px; }
 .confirm-page .detail-card .detail-table :deep(th:first-child .cell),
 .confirm-page .detail-card .detail-table :deep(td:first-child .cell) { padding: 0 8px !important; }
 .confirm-page .detail-card .detail-table :deep(th .cell) { font-size: 11px; line-height: 16px; white-space: nowrap; }
-.detail-table :deep(.el-table__inner-wrapper::before) { display: none; }
+.detail-table :deep(.el-table__inner-wrapper::before), .detail-table :deep(.el-table__inner-wrapper::after) { display: none; }
+.confirm-page .detail-card .detail-table :deep(.el-table__header th.el-table__cell:last-child),
+.confirm-page .detail-card .detail-table :deep(.el-table__body td.el-table__cell:last-child) { border-right: 0; }
+.detail-table :deep(.el-table__body tr:last-child td) { border-bottom: 0; }
 .detail-table :deep(.el-input), .detail-table :deep(.el-select), .detail-table :deep(.el-date-editor) { width: 100%; height: 32px; }
 .detail-table :deep(.el-input__wrapper), .detail-table :deep(.el-select__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; font-size: 12px; }
 .detail-table :deep(.el-input__wrapper) { padding: 1px 13px; }
@@ -442,13 +446,13 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 .material-detail { display: block; color: crm.$crm-text-secondary; font-size: 12px; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .quantity-cell { flex-direction: row; align-items: center; justify-content: flex-end; gap: 4px; white-space: nowrap; }
 .quantity-cell small { color: crm.$crm-text-secondary; font-size: 12px; line-height: 19px; }
-.action-bar { display: flex; flex: 0 0 72px; align-items: center; justify-content: space-between; gap: 16px; background: crm.$crm-color-surface; }
+.action-bar { @include detail.surface; display: flex; flex: none; flex-wrap: wrap; min-height: 72px; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; }
 .summary-counts { display: flex; align-items: center; gap: 10px; font-size: 16px; white-space: nowrap; }
 .summary-counts strong { color: crm.$crm-primary; font-weight: 500; }
-.summary-actions { display: flex; align-items: center; gap: 16px; }
+.summary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
 .summary-actions :deep(.el-button) { height: 42px; margin: 0; }
 .save-button { width: 134px; border-color: crm.$crm-primary; color: crm.$crm-primary; }
 .confirm-button { width: 200px; }
@@ -486,8 +490,8 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 :global(.purchase-confirm-message-box .el-message-box__message) { line-height: 20px; }
 :global(.purchase-confirm-message-box .el-message-box__btns) { gap: 12px; padding: 0 16px 16px; }
 :global(.purchase-confirm-message-box .el-message-box__btns .el-button) { min-width: 72px; height: 32px !important; min-height: 32px !important; margin-left: 0; padding: 0 16px; border-radius: crm.$crm-radius-2; font-size: 13px; }
-:global(.purchase-confirm-message-box .el-message-box__btns .el-button--primary) { border-color: crm.$crm-primary; color: crm.$crm-text-inverse; background: crm.$crm-primary; }
-:global(.purchase-confirm-message-box .el-message-box__btns .el-button--primary:hover) { border-color: crm.$crm-primary-hover; background: crm.$crm-primary-hover; }
+:global(.purchase-confirm-message-box .el-message-box__btns .el-button--primary) { border-color: var(--erp-button-primary-border); color: var(--erp-color-text-inverse); background: var(--erp-button-primary-surface); }
+:global(.purchase-confirm-message-box .el-message-box__btns .el-button--primary:hover) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-hover-surface); }
 :global(.purchase-confirm-errors p) { margin: 0 0 8px; }
 :global(.purchase-confirm-errors ul) { box-sizing: border-box; max-height: min(50dvh, 360px); margin: 0; padding-left: 20px; overflow-y: auto; }
 :global(.purchase-confirm-errors li + li) { margin-top: 4px; }

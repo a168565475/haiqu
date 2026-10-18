@@ -369,7 +369,7 @@ onMounted(() => { resetColumns(); void refreshAll() })
     @update-page-size="updatePageSize"
   >
     <template #filters>
-      <div class="customer-record-filters">
+      <div class="customer-record-filters erp-list-filters">
         <ElInput v-model="filters.q" class="customer-record-filters__search" clearable :prefix-icon="Search" :placeholder="`搜索${config.title.replace('客户', '')}编号、主题、产品`" @keyup.enter="search" />
         <ElSelect v-model="filters.status" clearable placeholder="状态：全部">
           <ElOption v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -381,21 +381,23 @@ onMounted(() => { resetColumns(); void refreshAll() })
           <ElOption v-for="item in subtypeOptions" :key="item.value" :label="item.label" :value="item.value" />
         </ElSelect>
         <ElDatePicker v-if="props.kind !== 'orders'" v-model="filters.date" type="date" value-format="YYYY-MM-DD" :placeholder="props.kind === 'quotations' ? '有效期至' : props.kind === 'samples' ? '申请日期至' : '接收日期'" />
-        <ElButton type="primary" @click="search">查询</ElButton>
-        <ElButton @click="reset">重置</ElButton>
+        <div class="erp-list-filter-actions">
+          <ElButton class="erp-button-motion" @click="reset">重置</ElButton>
+          <ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton>
+        </div>
       </div>
     </template>
 
     <template #saved-views>
       <ElDropdown v-if="savedViews.length" trigger="click" @command="applySavedView">
-        <ElButton>已存视图 <ElIcon><ArrowDown /></ElIcon></ElButton>
+        <ElButton class="erp-button-motion">已存视图 <ElIcon><ArrowDown /></ElIcon></ElButton>
         <template #dropdown><ElDropdownMenu><ElDropdownItem v-for="view in savedViews" :key="view.id" :command="view">{{ view.view_name }}</ElDropdownItem></ElDropdownMenu></template>
       </ElDropdown>
     </template>
 
     <template #column-settings>
       <ElPopover placement="bottom-end" trigger="click" :width="180">
-        <template #reference><ElButton :icon="Setting">列设置</ElButton></template>
+        <template #reference><ElButton class="erp-button-motion" :icon="Setting">列设置</ElButton></template>
         <div class="customer-record-columns">
           <ElCheckbox v-for="item in allColumns[props.kind]" :key="item.key" v-model="visibleColumns[item.key]" @change="persistColumns">{{ item.label }}</ElCheckbox>
         </div>
@@ -451,29 +453,15 @@ onMounted(() => { resetColumns(); void refreshAll() })
 
   <AppWindowDialog v-model="saveVisible" :class="{ 'customer-detail-dialog': props.kind === 'inquiries' }" title="保存当前视图" :width="420" :height="240">
     <ElInput v-model="saveName" maxlength="100" show-word-limit placeholder="输入视图名称" @keyup.enter="saveView" />
-    <template #footer><ElButton @click="saveVisible = false">取消</ElButton><ElButton type="primary" :loading="saveLoading" @click="saveView">保存</ElButton></template>
+    <template #footer><ElButton class="erp-button-motion" @click="saveVisible = false">取消</ElButton><ElButton class="erp-button-motion" type="primary" :loading="saveLoading" @click="saveView">保存</ElButton></template>
   </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-
-.customer-record-filters {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.customer-record-filters__search { width: 330px; }
-.customer-record-filters :deep(.el-select) { width: 160px; }
-.customer-record-filters :deep(.el-date-editor) { width: 180px; }
-.customer-record-filters :deep(.el-button) { width: 76px; height: 36px; margin: 0; border-radius: token.$crm-radius-2; }
+.customer-record-filters { width: 100%; }
+.customer-record-filters .customer-record-filters__search { width: 280px; max-width: 100%; flex: 0 1 280px; }
+.customer-record-filters :deep(.el-select) { width: 160px; max-width: 100%; }
+.customer-record-filters :deep(.el-date-editor) { width: 180px; max-width: 100%; }
 .customer-record-columns { display: flex; flex-direction: column; gap: 8px; }
 .customer-record-columns :deep(.el-checkbox) { margin-right: 0; }
-
-@media (max-width: 1599px) {
-  .customer-record-filters { min-width: 1180px; }
-  .customer-record-filters__search { width: 280px; }
-  :deep(.customer-detail-list-shell__filters) { overflow-x: auto; }
-}
 </style>

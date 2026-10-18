@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { useRoute } from 'vue-router'
 import FinishedReceiptRecordsPanel from './FinishedReceiptRecordsPanel.vue'
 import AssemblyPlanPicker from './AssemblyPlanPicker.vue'
@@ -143,13 +144,13 @@ const configZones = computed(() => finishedZones.value.filter(item => !configKey
 function packaging(quantity: number, perBox: number | null | undefined) { const q = Math.max(Number(quantity) || 0, 0); const p = Math.max(Number(perBox) || 0, 0); if (!p) return { boxes: null, tail: null, slots: null }; const boxes = Math.floor(q / p); const tail = q % p; return { boxes, tail, slots: boxes + (tail ? 1 : 0) } }
 function optionalNumber(value: number | null) { return value == null ? '' : String(value) }
 const warehouseTypeColors: Record<WarehouseType, string> = {
-  MATERIAL: 'rgb(240, 168, 0)',
-  SEMI_FINISHED: 'rgb(162, 194, 4)',
-  DEFECTIVE: 'rgb(0, 174, 209)',
-  FINISHED: 'rgb(235, 80, 80)',
+  MATERIAL: 'var(--erp-tag-warning-background)',
+  SEMI_FINISHED: 'var(--erp-tag-success-background)',
+  DEFECTIVE: 'var(--erp-tag-info-background)',
+  FINISHED: 'var(--erp-tag-brand-background)',
 }
-function warehouseTypeTagStyle(type: WarehouseType) { const color = warehouseTypeColors[type]; return { backgroundColor: color, borderColor: color, color: '#fff' } }
-function statusTagStyle(status: RecordStatus) { const color = status === 'ACTIVE' ? 'rgb(70, 194, 111)' : 'rgb(144, 147, 153)'; return { backgroundColor: color, borderColor: color, color: '#fff' } }
+function warehouseTypeTagStyle(type: WarehouseType) { const color = warehouseTypeColors[type]; return { backgroundColor: color, borderColor: color, color: 'var(--erp-color-text-inverse)' } }
+function statusTagStyle(status: RecordStatus) { const color = status === 'ACTIVE' ? 'var(--erp-tag-success-background)' : 'var(--erp-tag-neutral-background)'; return { backgroundColor: color, borderColor: color, color: 'var(--erp-color-text-inverse)' } }
 function time(value: string) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
 function message(error: unknown, fallback: string) { const value = error as { response?: { data?: { error?: { message?: string } }; status?: number } }; return value.response?.data?.error?.message || fallback }
 
@@ -386,15 +387,18 @@ onMounted(() => { void Promise.all([loadRows(), loadOptions()]) })
 </script>
 
 <template>
-  <section class="finished-stock-page">
-    <header class="fg-heading"><h1>成品库存</h1><span class="fg-muted" v-if="stockTab==='stock'">共 {{ total }} 条库存记录</span><div class="fg-heading-actions"><ElDropdown v-if="canConfigure" trigger="click" @command="openConfig"><ElButton>仓库配置</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem command="warehouse">仓库信息</ElDropdownItem><ElDropdownItem command="location">库位信息</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElDropdown v-if="canInbound" trigger="click" disabled><ElButton disabled>其他入库</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem @click="openInbound">生产入库</ElDropdownItem><ElDropdownItem @click="openBatchInbound">批量入库</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElButton v-if="canInbound" type="primary" @click="planPickerVisible=true">成品入库</ElButton></div></header>
-    <nav class="fg-tabs" aria-label="成品库存视图"><button :class="{active:stockTab==='stock'}" @click="switchStockTab('stock')">库存汇总</button><button :class="{active:stockTab==='records'}" @click="switchStockTab('records')">入库记录</button></nav>
+  <section class="finished-stock-page erp-glass-list">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="fg-heading erp-list-heading"><h1>成品库存</h1><span class="fg-muted" v-if="stockTab==='stock'">共 {{ total }} 条库存记录</span><div class="fg-heading-actions"><ElDropdown v-if="canConfigure" trigger="click" @command="openConfig"><ElButton class="erp-button-motion">仓库配置</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem command="warehouse">仓库信息</ElDropdownItem><ElDropdownItem command="location">库位信息</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElDropdown v-if="canInbound" trigger="click" disabled><ElButton class="erp-button-motion" disabled>其他入库</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem @click="openInbound">生产入库</ElDropdownItem><ElDropdownItem @click="openBatchInbound">批量入库</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElButton class="erp-button-motion" v-if="canInbound" type="primary" @click="planPickerVisible=true">成品入库</ElButton></div></header>
+    <nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button :class="{active:stockTab==='stock'}" @click="switchStockTab('stock')">库存汇总</button><button :class="{active:stockTab==='records'}" @click="switchStockTab('records')">入库记录</button></nav>
+      <section v-if="stockTab==='stock'" class="fg-filters erp-list-filters"><ElInput v-model="keyword" clearable placeholder="搜索品号、品名、货号、规格或颜色" @keyup.enter="search" @clear="search"/><ElSelect v-model="warehouseFilter" clearable placeholder="全部仓库" @change="changeWarehouseFilter"><ElOption v-for="item in filterOptions.warehouses" :key="item.id" :value="item.id" :label="item.warehouse_name"/></ElSelect><ElSelect v-model="zoneFilter" clearable placeholder="全部库区" @change="search"><ElOption v-for="item in filterOptions.zones.filter(z=>!warehouseFilter||z.warehouse===warehouseFilter)" :key="item.id" :value="item.id" :label="item.zone_name"/></ElSelect><div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="keyword=''; warehouseFilter=''; zoneFilter=''; search()">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton></div></section>
+    </section>
     <FinishedReceiptRecordsPanel v-if="stockTab==='records'"/>
-    <div v-else class="fg-stock-body">
-      <section class="fg-filters"><ElInput v-model="keyword" clearable placeholder="搜索品号、品名、货号、规格或颜色" @keyup.enter="search" @clear="search"/><ElSelect v-model="warehouseFilter" clearable placeholder="全部仓库" @change="changeWarehouseFilter"><ElOption v-for="item in filterOptions.warehouses" :key="item.id" :value="item.id" :label="item.warehouse_name"/></ElSelect><ElSelect v-model="zoneFilter" clearable placeholder="全部库区" @change="search"><ElOption v-for="item in filterOptions.zones.filter(z=>!warehouseFilter||z.warehouse===warehouseFilter)" :key="item.id" :value="item.id" :label="item.zone_name"/></ElSelect><ElButton @click="search">查询</ElButton></section>
-      <div class="fg-toolbar"><span class="fg-muted">已选 {{selectedRows.length}} 条</span><ElButton v-if="canOutbound" :disabled="!selectedRows.length" @click="openOutbound">批量出库</ElButton><span class="fg-muted">同产品、颜色、单位及库区汇总；来源和具体库位在详情中查看</span><ElButton class="fg-refresh" @click="refresh">刷新</ElButton></div>
+    <div v-else class="fg-stock-body erp-list-data">
+
+      <div class="fg-toolbar erp-list-toolbar"><span class="fg-muted">已选 {{selectedRows.length}} 条</span><ElButton class="erp-button-motion" v-if="canOutbound" :disabled="!selectedRows.length" @click="openOutbound">批量出库</ElButton><span class="fg-muted">同产品、颜色、单位及库区汇总；来源和具体库位在详情中查看</span><ElButton class="erp-button-motion fg-refresh" @click="refresh">刷新</ElButton></div>
       <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"/>
-      <section class="fg-table-card" v-loading="loading"><div class="fg-table-scroll"><table class="fg-table"><colgroup><col v-for="(width,i) in [50,80,120,160,95,165,90,95,65,105,75,90,95,135,120]" :key="i" :style="{width:width+'px'}"></colgroup><thead><tr><th class="center"><input type="checkbox" aria-label="全选库存" :checked="rows.length>0&&selectedRows.length===rows.length" @change="selectedRows=($event.target as HTMLInputElement).checked?[...rows]:[]"></th><th v-for="name in ['类别','品号','品名','货号','规格','颜色','当前库存','单位','仓库','库区','在库记录','占用箱位','最近入库日期','操作']" :key="name">{{name}}</th></tr></thead><tbody><tr v-for="row in rows" :key="row.inventory_key" :class="{selected:selectedRows.some(r=>r.inventory_key===row.inventory_key)}"><td class="center"><input type="checkbox" :aria-label="'选择'+row.product_number+row.actual_color+row.zone_name" :checked="selectedRows.some(r=>r.inventory_key===row.inventory_key)" @change="toggleStock(row,($event.target as HTMLInputElement).checked)"></td><td>{{row.category||'—'}}</td><td :title="row.product_number">{{row.product_number||'—'}}</td><td :title="row.product_name">{{row.product_name}}</td><td>{{row.item_number||'—'}}</td><td :title="row.specification">{{row.specification||'—'}}</td><td>{{row.actual_color||'—'}}</td><td class="num">{{Number(row.inventory_quantity).toLocaleString()}}</td><td>{{row.unit_name}}</td><td>{{row.warehouse_name}}</td><td>{{row.zone_name}}</td><td class="num">{{row.batch_count}}</td><td class="num">{{row.occupied_box_slots??'未计算'}}</td><td>{{row.latest_inbound_time?new Date(row.latest_inbound_time).toLocaleDateString('sv-SE'):'—'}}</td><td><ElButton link type="primary" @click="openStockDetail(row)">库存详情</ElButton></td></tr></tbody></table><div class="fg-empty" v-if="!loading&&!rows.length">暂无符合条件的成品库存</div></div><footer class="fg-pager"><span>共 {{total}} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search"/></footer></section>
+      <section class="fg-stock-table" v-loading="loading"><div class="erp-list-table-frame"><div class="fg-table-scroll erp-list-table-scroll"><table class="fg-table erp-list-native-table erp-list-native-table--nowrap"><colgroup><col v-for="(width,i) in [50,80,120,160,95,165,90,95,65,105,75,90,95,135,120]" :key="i" :style="{width:width+'px'}"></colgroup><thead><tr><th class="center"><input type="checkbox" aria-label="全选库存" :checked="rows.length>0&&selectedRows.length===rows.length" @change="selectedRows=($event.target as HTMLInputElement).checked?[...rows]:[]"></th><th v-for="name in ['类别','品号','品名','货号','规格','颜色','当前库存','单位','仓库','库区','在库记录','占用箱位','最近入库日期','操作']" :key="name">{{name}}</th></tr></thead><tbody><tr v-for="row in rows" :key="row.inventory_key" :class="{selected:selectedRows.some(r=>r.inventory_key===row.inventory_key)}"><td class="center"><input type="checkbox" :aria-label="'选择'+row.product_number+row.actual_color+row.zone_name" :checked="selectedRows.some(r=>r.inventory_key===row.inventory_key)" @change="toggleStock(row,($event.target as HTMLInputElement).checked)"></td><td>{{row.category||'—'}}</td><td :title="row.product_number">{{row.product_number||'—'}}</td><td :title="row.product_name">{{row.product_name}}</td><td>{{row.item_number||'—'}}</td><td :title="row.specification">{{row.specification||'—'}}</td><td>{{row.actual_color||'—'}}</td><td class="num">{{Number(row.inventory_quantity).toLocaleString()}}</td><td>{{row.unit_name}}</td><td>{{row.warehouse_name}}</td><td>{{row.zone_name}}</td><td class="num">{{row.batch_count}}</td><td class="num">{{row.occupied_box_slots??'未计算'}}</td><td>{{row.latest_inbound_time?new Date(row.latest_inbound_time).toLocaleDateString('sv-SE'):'—'}}</td><td><ElButton link type="primary" @click="openStockDetail(row)">库存详情</ElButton></td></tr></tbody></table><div class="fg-empty" v-if="!loading&&!rows.length">暂无符合条件的成品库存</div></div></div><footer class="fg-pager erp-list-footer"><span>共 {{total}} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search"/></footer></section>
     </div>
     <AssemblyPlanPicker v-model="planPickerVisible"/>
     <ElDialog v-model="stockDetailVisible" title="成品库存 · 库位详情" :width="1180" :height="660" class="fg-window" destroy-on-close><div v-loading="stockDetailLoading"><ElAlert v-if="stockDetailError" :title="stockDetailError" type="error"/><template v-if="stockDetailRow"><div class="fg-detail-title"><b>{{stockDetailRow.product_name}}</b><span class="fg-muted">当前库存 {{stockDetailRow.inventory_quantity}} {{stockDetailRow.unit_name}}</span></div><dl class="fg-detail-fields"><div v-for="([key,value]) in [['品号',stockDetailRow.product_number],['货号',stockDetailRow.item_number],['类别',stockDetailRow.category],['规格',stockDetailRow.specification],['颜色',stockDetailRow.actual_color],['仓库 / 库区',stockDetailRow.warehouse_name+' / '+stockDetailRow.zone_name]]" :key="key"><dt>{{key}}</dt><dd>{{value||'—'}}</dd></div></dl><h2 class="fg-detail-heading">存放库位</h2><div class="fg-table-card"><table class="fg-table compact"><thead><tr><th>库位</th><th>当前数量</th><th>单位</th><th>占用箱位</th></tr></thead><tbody><tr v-for="l in stockLocations" :key="l.location_id"><td>{{l.location_number}}</td><td>{{l.quantity}}</td><td>{{stockDetailRow.unit_name}}</td><td>{{l.slots??'未计算'}}{{l.unknown_packaging&&l.slots!=null?'（部分未计算）':''}}</td></tr></tbody></table></div><p class="fg-helper">库存按实物汇总；入库记录保留各原单来源，不限制其他订单按既有规则使用库存。</p></template></div><template #footer><ElButton @click="stockDetailVisible=false">关闭</ElButton></template></ElDialog>
@@ -500,57 +504,65 @@ onMounted(() => { void Promise.all([loadRows(), loadOptions()]) })
 <style lang="scss" scoped>
 @use '@/styles/crm/tokens' as token;
 .finished-stock-page > .fg-stock-body > .fg-table-card > .fg-table-scroll > .fg-table {
-  > thead > tr > th:last-child { position: sticky; right: 0; z-index: 3; background: token.$crm-color-subtle; }
-  > tbody > tr > td:last-child { position: sticky; right: 0; z-index: 2; background: token.$crm-color-surface; }
-  > tbody > tr:hover > td:last-child { background: token.$crm-color-row-hover; }
-  > tbody > tr.selected > td:last-child { background: token.$crm-color-selected; }
+  > thead > tr > th:last-child { position: sticky; right: 0; z-index: 3; background: var(--erp-table-header-fill); }
+  > tbody > tr > td:last-child { position: sticky; right: 0; z-index: 2; background: var(--erp-table-body-fill); }
+  > tbody > tr:hover > td:last-child { background: var(--erp-color-hover); }
+  > tbody > tr.selected > td:last-child { background: var(--erp-color-selected); }
 }
 .finished-stock-page .fg-filters > :deep(.el-select){width:160px;flex:0 0 160px}
 .finished-stock-page .fg-filters > :deep(.el-input){width:410px;flex:0 0 410px}
 @media(max-width:1500px){.finished-stock-page .fg-filters > :deep(.el-input){width:280px;flex-basis:280px}}
-.inventory-page{box-sizing:border-box;height:calc(100dvh - 84px);min-width:1450px;display:flex;flex-direction:column;gap:16px;padding:24px 28px 20px;background:var(--erp-page-background);color:#111827}.page-head,.head-actions,.toolbar,.pager,.fullscreen-toolbar{display:flex;align-items:center}.page-head{justify-content:space-between}.page-head h1,.fullscreen-toolbar h2{margin:0;font-size:28px}.page-head p,.fullscreen-toolbar p{margin:4px 0 0;color:#6b7280}.head-actions{gap:10px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.summary-grid article{padding:14px 18px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}.summary-grid span{display:block;color:#6b7280;font-size:13px}.summary-grid strong{display:block;margin-top:6px;font-size:24px}.toolbar{gap:10px}.toolbar :deep(.el-input){width:390px}.toolbar :deep(.el-select){width:180px}.table-card{flex:1;min-height:0;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#fff}.pager{justify-content:space-between;color:#6b7280}.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0 18px;margin-top:18px}.span-2{grid-column:span 2}.outbound-common{display:grid;grid-template-columns:1fr 1.5fr 2fr;gap:18px;margin-top:18px}.fullscreen-body{box-sizing:border-box;height:calc(100vh - 70px);padding:0 28px 24px}.fullscreen-toolbar{justify-content:space-between;height:76px}.fullscreen-toolbar :deep(.el-input){width:430px}:global(.inventory-fullscreen .el-dialog__body){padding:0}:global(.inventory-fullscreen .el-dialog__header){margin:0;padding:18px 28px;border-bottom:1px solid #e5e7eb}:deep(.el-input-number){width:100%}:deep(.el-select){width:100%}:deep(.el-cascader){width:100%}
-.warehouse-owner{color:#2b73f0;font-weight:600}
+.inventory-page{box-sizing:border-box;height:calc(100dvh - 84px);min-width:1450px;display:flex;flex-direction:column;gap:16px;padding:24px 28px 20px;background:var(--erp-page-background);color:var(--erp-color-text-primary)}.page-head,.head-actions,.toolbar,.pager,.fullscreen-toolbar{display:flex;align-items:center}.page-head{justify-content:space-between}.page-head h1,.fullscreen-toolbar h2{margin:0;font-size:28px}.page-head p,.fullscreen-toolbar p{margin:4px 0 0;color:var(--erp-color-text-secondary)}.head-actions{gap:10px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.summary-grid article{padding:14px 18px;border:1px solid var(--erp-color-border);border-radius:10px;background:var(--erp-color-surface)}.summary-grid span{display:block;color:var(--erp-color-text-secondary);font-size:13px}.summary-grid strong{display:block;margin-top:6px;font-size:24px}.toolbar{gap:10px}.toolbar :deep(.el-input){width:390px}.toolbar :deep(.el-select){width:180px}.table-card{flex:1;min-height:0;border:1px solid var(--erp-table-grid);border-radius:10px;overflow:hidden;background:var(--erp-table-body-fill)}.pager{justify-content:space-between;color:var(--erp-color-text-secondary)}.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0 18px;margin-top:18px}.span-2{grid-column:span 2}.outbound-common{display:grid;grid-template-columns:1fr 1.5fr 2fr;gap:18px;margin-top:18px}.fullscreen-body{box-sizing:border-box;height:calc(100vh - 70px);padding:0 28px 24px}.fullscreen-toolbar{justify-content:space-between;height:76px}.fullscreen-toolbar :deep(.el-input){width:430px}:global(.inventory-fullscreen .el-dialog__body){padding:0}:global(.inventory-fullscreen .el-dialog__header){margin:0;padding:18px 28px;border-bottom:1px solid var(--erp-color-border-subtle)}:deep(.el-input-number){width:100%}:deep(.el-select){width:100%}:deep(.el-cascader){width:100%}
+.warehouse-owner{color:var(--erp-color-info);font-weight:600}
 .fullscreen-body{height:100%;min-height:0}
 :global(.app-window-dialog.inventory-fullscreen .el-dialog__body){height:auto;flex:1 1 auto;min-height:0;padding:0}
 .inbound-form-shell{max-height:calc(100vh - 190px);overflow-y:auto;padding:0 2px 4px}
 .inbound-form{display:flex;flex-direction:column;gap:12px}
-.inbound-block{padding:14px 16px 0;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+.inbound-block{padding:14px 16px 0;border:1px solid var(--erp-color-border);border-radius:10px;background:var(--erp-color-surface)}
 .inbound-block-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
-.inbound-block-head>span{display:flex;width:24px;height:24px;flex:0 0 24px;align-items:center;justify-content:center;border-radius:50%;background:#1f2937;color:#fff;font-size:12px;font-weight:700}
-.inbound-block-head h3{margin:0;color:#111827;font-size:15px;font-weight:650;line-height:24px}
-.inbound-block-head p{margin:1px 0 0;color:#94a3b8;font-size:12px;line-height:18px}
-.inbound-block-head em{display:inline-flex;align-items:center;margin-left:6px;padding:1px 7px;border-radius:999px;background:#eef2f6;color:#64748b;font-size:11px;font-style:normal;font-weight:500;vertical-align:2px}
+.inbound-block-head>span{display:flex;width:24px;height:24px;flex:0 0 24px;align-items:center;justify-content:center;border-radius:50%;background:var(--erp-color-brand);color:var(--erp-color-text-inverse);font-size:12px;font-weight:700}
+.inbound-block-head h3{margin:0;color:var(--erp-color-text-primary);font-size:15px;font-weight:650;line-height:24px}
+.inbound-block-head p{margin:1px 0 0;color:var(--erp-color-text-muted);font-size:12px;line-height:18px}
+.inbound-block-head em{display:inline-flex;align-items:center;margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--erp-color-subtle);color:var(--erp-color-text-secondary);font-size:11px;font-style:normal;font-weight:500;vertical-align:2px}
 .inbound-grid{display:grid;gap:0 16px}
 .three-columns{grid-template-columns:repeat(3,minmax(0,1fr))}
 .location-columns{grid-template-columns:minmax(0,.85fr) minmax(0,2.15fr)}
 .package-columns{grid-template-columns:repeat(4,minmax(0,1fr))}
-.optional-block{background:#fafbfc}
+.optional-block{background:var(--erp-color-subtle)}
 .remark-block{padding-top:12px}
 .inbound-footer{display:flex;width:100%;align-items:center;justify-content:space-between}
-.inbound-footer>span{color:#94a3b8;font-size:12px}
-.inbound-footer i{color:#f56c6c;font-style:normal}
+.inbound-footer>span{color:var(--erp-color-text-muted);font-size:12px}
+.inbound-footer i{color:var(--erp-color-danger);font-style:normal}
 .inbound-footer>div{display:flex;gap:10px}
 .inbound-form :deep(.el-form-item){margin-bottom:14px}
-.inbound-form :deep(.el-form-item__label){padding-bottom:6px;color:#374151;font-size:13px;font-weight:600;line-height:20px}
+.inbound-form :deep(.el-form-item__label){padding-bottom:6px;color:var(--erp-color-text-primary);font-size:13px;font-weight:600;line-height:20px}
 .inbound-form :deep(.el-input__wrapper),.inbound-form :deep(.el-select__wrapper){min-height:36px}
 :global(.inbound-dialog){overflow:hidden;border-radius:12px}
-:global(.inbound-dialog .el-dialog__header){margin-right:0;padding:18px 24px 14px;border-bottom:1px solid #eef0f3}
-:global(.inbound-dialog .el-dialog__body){padding:16px 24px 14px;background:#f7f8fa}
-:global(.inbound-dialog .el-dialog__footer){padding:14px 24px 16px;border-top:1px solid #eef0f3}
-:global(.inbound-location-cascader .el-cascader-node.is-disabled){color:#8a8f99;opacity:1}
-.batch-inbound-body{box-sizing:border-box;height:calc(100vh - 142px);padding:0 24px 18px;background:#f7f8fa}
+:global(.inbound-dialog .el-dialog__header){margin-right:0;padding:18px 24px 14px;border-bottom:1px solid var(--erp-color-border-subtle)}
+:global(.inbound-dialog .el-dialog__body){padding:16px 24px 14px;background:var(--erp-color-subtle)}
+:global(.inbound-dialog .el-dialog__footer){padding:14px 24px 16px;border-top:1px solid var(--erp-color-border-subtle)}
+:global(.inbound-location-cascader .el-cascader-node.is-disabled){color:var(--erp-color-text-disabled);opacity:1}
+.batch-inbound-body{box-sizing:border-box;height:calc(100vh - 142px);padding:0 24px 18px;background:var(--erp-color-subtle)}
 .batch-inbound-toolbar{display:flex;height:96px;align-items:center;justify-content:space-between;gap:24px}
-.batch-inbound-toolbar h2{margin:0;color:#111827;font-size:18px}
-.batch-inbound-toolbar p{margin:6px 0 0;color:#6b7280;font-size:13px}
+.batch-inbound-toolbar h2{margin:0;color:var(--erp-color-text-primary);font-size:18px}
+.batch-inbound-toolbar p{margin:6px 0 0;color:var(--erp-color-text-secondary);font-size:13px}
 .batch-product-picker{display:flex;width:760px;align-items:center;gap:10px}
 .batch-product-picker :deep(.el-select){flex:1}
 .batch-product-cell{display:flex;flex-direction:column;gap:4px;line-height:18px}
-.batch-product-cell strong{color:#1f2937;font-size:13px}
-.batch-product-cell span{color:#8492a6;font-size:12px}
+.batch-product-cell strong{color:var(--erp-color-text-primary);font-size:13px}
+.batch-product-cell span{color:var(--erp-color-text-muted);font-size:12px}
 .batch-inbound-footer{display:flex;width:100%;align-items:center;justify-content:space-between}
-.batch-inbound-footer>span{color:#6b7280;font-size:13px}
+.batch-inbound-footer>span{color:var(--erp-color-text-secondary);font-size:13px}
 .batch-inbound-footer>div{display:flex;gap:10px}
-:global(.batch-inbound-dialog .el-dialog__footer){padding:14px 24px;border-top:1px solid #e5e7eb}
-:global(.batch-inbound-dialog .el-table){background:#fff}
+:global(.batch-inbound-dialog .el-dialog__footer){padding:14px 24px;border-top:1px solid var(--erp-color-border-subtle)}
+:global(.batch-inbound-dialog .el-table){background:var(--erp-table-body-fill)}
 :global(.batch-inbound-dialog .el-table .cell){padding:0 8px}
+</style>
+
+<style scoped lang="scss">
+.fg-filters > :deep(.el-input) { width: min(100%, 410px); }
+.fg-filters > :deep(.el-select) { width: 160px; }
+.fg-heading-actions { margin-left: auto; flex-wrap: wrap; }
+.fg-table.erp-list-native-table { min-width: 1620px; }
+.fg-stock-table { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 </style>

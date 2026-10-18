@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import { createCommunication } from '@/api/crm'
 import { createInquiry } from '@/api/workbench'
 import { fetchCustomers } from '@/api/customers'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import ResizableDrawerHandle from '@/components/ResizableDrawerHandle.vue'
 import { useOptions } from '@/composables/useOptions'
 import { useAuthStore } from '@/stores/auth'
@@ -129,7 +130,7 @@ async function submit() {
 </script>
 
 <template>
-  <ElDrawer v-model="visible" :title="title" size="440px" destroy-on-close append-to-body>
+  <AppWindowDialog v-model="visible" :title="title" :width="440" destroy-on-close :close-on-click-modal="false">
     <ResizableDrawerHandle />
     <ElAlert
       v-if="action === 'INQUIRY' && !employeeId"
@@ -183,10 +184,11 @@ async function submit() {
       <ElButton @click="visible = false">取消</ElButton>
       <ElButton type="primary" :loading="submitting" :disabled="!canSubmit" @click="submit">保存</ElButton>
     </template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
 .quick-drawer__alert { margin-bottom: 16px; }
 .quick-drawer__row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 </style>
+

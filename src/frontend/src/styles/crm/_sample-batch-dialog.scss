@@ -24,7 +24,7 @@
     max-height: calc(100vh - 32px);
     overflow: hidden;
     padding: 0;
-    box-shadow: 0 12px 32px rgba(20, 20, 19, .18);
+    box-shadow: 0 12px 32px color-mix(in srgb, var(--erp-shadow-color) 18%, transparent);
   }
   .el-dialog__body, .el-dialog__footer { box-sizing: border-box; min-height: 0; }
   .el-dialog__body { flex: 1; min-height: 0; overflow: auto; padding: 14px 24px 40px; }

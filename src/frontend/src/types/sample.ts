@@ -726,10 +726,14 @@ export interface SampleInventoryResult {
 }
 
 export interface SampleInventorySummary {
+  month: string
   current_available: number
   borrowed: number
   inbound_today: number
   outbound_today: number
+  inbound_this_month: number
+  outbound_this_month: number
+  loaned_this_month: number
 }
 
 export interface SampleInventoryOptions {

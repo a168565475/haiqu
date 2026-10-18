@@ -114,43 +114,37 @@ onBeforeUnmount(() => { alive = false; emit('lock', props.product.id, false) })
       <div class="product-colors">
         <span v-for="color in item.colors" :key="color.id" class="product-color" :data-color-id="color.id">
           <span>{{ color.value }}</span>
-          <button v-if="canChange" type="button" class="color-delete icon-button" :aria-label="`删除颜色${color.value}`" :title="`删除颜色${color.value}`" :disabled="blocked" @click="removeColor(color.id)"><Delete aria-hidden="true" /></button>
+          <button v-if="canChange" type="button" class="erp-list-button erp-button-motion color-delete icon-button" :aria-label="`删除颜色${color.value}`" :title="`删除颜色${color.value}`" :disabled="blocked" @click="removeColor(color.id)"><Delete aria-hidden="true" /></button>
         </span>
         <span v-if="!item.colors.length" class="no-colors">尚未维护颜色</span>
         <form v-if="addingColor" class="color-editor" @submit.prevent="saveColor">
-          <input ref="colorInput" v-model="colorDraft" aria-label="新颜色" placeholder="输入颜色" maxlength="200" :aria-invalid="!!colorError" :disabled="blocked || savingColor || !canChange" />
+          <input class="erp-list-control" ref="colorInput" v-model="colorDraft" aria-label="新颜色" placeholder="输入颜色" maxlength="200" :aria-invalid="!!colorError" :disabled="blocked || savingColor || !canChange" />
           <ProductCatalogSaveButton type="submit" class="small-save" data-action="save-color" label="保存" ariaLabel="保存颜色" :loading="savingColor" :disabled="blocked || !canChange" />
-          <button type="button" class="icon-button" aria-label="取消添加颜色" title="取消添加颜色" :disabled="savingColor" @click="addingColor = false; colorError = ''"><Close aria-hidden="true" /></button>
+          <button type="button" class="erp-list-button erp-button-motion icon-button" aria-label="取消添加颜色" title="取消添加颜色" :disabled="savingColor" @click="addingColor = false; colorError = ''"><Close aria-hidden="true" /></button>
         </form>
-        <button v-else-if="canChange" type="button" class="add-color" data-action="add-color" aria-label="添加颜色" :disabled="blocked" @click="startColor"><Plus aria-hidden="true" />颜色</button>
+        <button v-else-if="canChange" type="button" class="erp-list-button erp-list-button--primary erp-button-motion add-color" data-action="add-color" aria-label="添加颜色" :disabled="blocked" @click="startColor"><Plus aria-hidden="true" />颜色</button>
         <ProductCatalogError v-if="colorError" :message="colorError" />
       </div>
-      <div v-if="warning || readError" class="version-warning" role="alert">{{ warning || readError }}<button type="button" data-action="reload" :disabled="loading || pending > 0" @click="retryRead">重新读取</button></div>
+      <div v-if="warning || readError" class="version-warning" role="alert">{{ warning || readError }}<button class="erp-list-button erp-button-motion" type="button" data-action="reload" :disabled="loading || pending > 0" @click="retryRead">重新读取</button></div>
     </td>
   </tr>
 </template>
 
 <style scoped lang="scss">
 .product-colors { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 32px; }
-.product-color { position: relative; display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; box-sizing: border-box; padding: 3px 34px 3px 10px; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.product-color:hover, .product-color:focus-within { background: #fff6ea; }
-button, input { font: inherit; }
-button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0; box-sizing: border-box; height: 32px; padding: 0 8px; border: 1px solid #ddd6c9; border-radius: 5px; color: #1f1d18; background: #fcfbf7; cursor: pointer; }
-button:hover:not(:disabled):not([aria-busy='true']) { background: #f0eadf; border-color: #c9c0b2; }
-button:active:not(:disabled):not([aria-busy='true']) { background: #e8e1d5; border-color: #c9c0b2; }
+.product-color { position: relative; display: inline-flex; align-items: center; min-height: 32px; max-width: 100%; box-sizing: border-box; padding: 3px 34px 3px 10px; border: 1px solid var(--erp-input-border); border-radius: var(--erp-radius-control); background: var(--erp-input-surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+.product-color:hover, .product-color:focus-within { background: var(--erp-table-hover); }
+button { flex-shrink: 0; padding: 0 8px; }
 svg { width: 16px; height: 16px; }
-.icon-button { width: 32px; padding: 0; border-color: transparent; background: transparent; color: #6f6a61; }
+.icon-button { width: 32px; padding: 0; }
 .color-delete { position: absolute; right: 0; top: calc(50% - 16px); opacity: 0; pointer-events: none; }
 .product-color:hover .color-delete, .product-color:focus-within .color-delete, .color-delete:focus-visible { opacity: 1; pointer-events: auto; }
 .color-editor { display: flex; align-items: center; gap: 6px; max-width: 100%; }
-.color-editor input { box-sizing: border-box; height: 32px; width: 150px; min-width: 0; padding: 0 10px; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; color: #1f1d18; }
-.color-editor input:focus { border-color: #3898ec; }
-.color-editor input[aria-invalid='true'] { border-color: #b53333; }
-.color-editor input::placeholder, .no-colors { color: #968f84; }
-.small-save { min-width: 48px; color: #c84e28; border-color: #c84e28; }
-button:disabled, input:disabled { opacity: 1; cursor: not-allowed; color: #6f6a61; background: #e8e1d5; border-color: #ddd6c9; }
-button:focus-visible, input:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
-.version-warning { margin: 6px 0 0; color: #b53333; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.color-editor input { width: 150px; min-width: 0; }
+.color-editor input[aria-invalid='true'] { border-color: var(--erp-color-danger); }
+.no-colors { color: var(--erp-color-text-secondary); }
+.small-save { min-width: 48px; }
+.version-warning { margin: 6px 0 0; color: var(--erp-color-danger); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .version-warning button { margin: 4px 0 0 6px; }
 @media (hover: none) { .color-delete { opacity: 1; pointer-events: auto; } }
 </style>

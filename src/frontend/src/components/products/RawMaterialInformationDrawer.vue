@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import {
   createRawMaterial,
   fetchRawMaterial,
@@ -423,27 +424,22 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
 </script>
 
 <template>
-  <ElDrawer
+  <AppWindowDialog
     :model-value="modelValue"
-    :size="drawerSize"
-    :modal="false"
-    append-to-body
+    :title="title"
+    :width="drawerSize"
+    height="auto"
     destroy-on-close
-    class="raw-material-information-drawer"
+    class="raw-material-information-dialog"
     :before-close="beforeClose"
+    :close-on-click-modal="false"
     :close-on-press-escape="!saving"
     :show-close="!saving"
     @closed="emit('closed')"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <template #header>
-      <div class="drawer-heading">
-        <h2>{{ title }}</h2>
-        <p>{{ mode === 'create' ? '类别随类型联动，包材专属字段仅在包材类别显示。' : '修改当前原料资料；保存时会校验数据版本。' }}</p>
-      </div>
-    </template>
-
     <div ref="drawerRoot" class="drawer-content" :aria-busy="loading || optionsLoading">
+      <p class="dialog-subtitle">{{ mode === 'create' ? '类别随类型联动，包材专属字段仅在包材类别显示。' : '修改当前原料资料；保存时会校验数据版本。' }}</p>
       <div v-if="detailError" class="drawer-state" role="alert">
         <strong>{{ detailError }}</strong>
         <ElButton @click="loadDrawer">重新读取</ElButton>
@@ -563,27 +559,21 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
         {{ mode === 'create' ? '保存原料' : '保存修改' }}
       </ElButton>
     </template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 
-:global(.raw-material-information-drawer.el-drawer),
-:global(.raw-material-information-drawer .el-drawer) {
-  top: 64px;
-  height: calc(100% - 64px);
-  border-left: 1px solid token.$crm-border-default;
+:global(.raw-material-information-dialog.app-window-dialog) {
+  max-width: calc(100vw - 32px);
   background: token.$crm-color-surface;
-  box-shadow: -8px 0 24px rgb(31 29 24 / 8%);
 }
-:global(.raw-material-information-drawer .el-drawer__header) { min-height: 90px; margin: 0; padding: 14px 24px 10px; border-bottom: 1px solid token.$crm-border-subtle; }
-:global(.raw-material-information-drawer .el-drawer__body) { min-height: 0; padding: 0 24px; overflow-y: auto; }
-:global(.raw-material-information-drawer .el-drawer__footer) { min-height: 60px; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 24px; border-top: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; }
-:global(.raw-material-information-drawer .el-drawer__footer .el-button) { width: 126px; height: 36px; border-radius: token.$crm-radius-2; }
-:global(.raw-material-information-drawer .el-drawer__footer .el-button--primary) { width: 143px; border-color: token.$crm-primary; background: token.$crm-primary; }
-.drawer-heading h2 { margin: 0; color: token.$crm-text-primary; font: 700 24px/34px token.$crm-font-display; }
-.drawer-heading p { margin: 2px 0 0; color: token.$crm-text-secondary; font: 12px/18px token.$crm-font-body; }
+:global(.raw-material-information-dialog .app-window-dialog__body) { padding: 0 24px; }
+:global(.raw-material-information-dialog .app-window-dialog__footer) { min-height: 60px; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 24px; background: token.$crm-color-surface; }
+:global(.raw-material-information-dialog .app-window-dialog__footer .el-button) { width: 126px; height: 36px; border-radius: token.$crm-radius-2; }
+:global(.raw-material-information-dialog .app-window-dialog__footer .el-button--primary) { width: 143px; }
+.dialog-subtitle { margin: 14px 0 0; color: token.$crm-text-secondary; font: 12px/18px token.$crm-font-body; }
 .drawer-content { min-height: 100%; }
 .drawer-content > .el-alert { margin: 12px 0; }
 .drawer-state { min-height: 360px; display: grid; place-content: center; justify-items: center; gap: 16px; color: token.$crm-text-secondary; }
@@ -596,10 +586,10 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; }
 .raw-form :deep(.el-form-item) { margin-bottom: 8px; }
 .raw-form :deep(.el-form-item__label) { height: 20px; padding: 0 0 3px; color: token.$crm-text-primary; font: 12px/17px token.$crm-font-body; }
-.raw-form :deep(.el-input__wrapper), .raw-form :deep(.el-select__wrapper) { min-height: 36px; border-radius: token.$crm-radius-2; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
+.raw-form :deep(.el-input__wrapper), .raw-form :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; }
 .raw-form :deep(.el-form-item__error) { position: static; padding-top: 2px; line-height: 14px; }
 .raw-form :deep(.el-select) { width: 100%; }
-.raw-form :deep(.el-textarea__inner) { min-height: 58px !important; border-radius: token.$crm-radius-2; box-shadow: 0 0 0 1px token.$crm-border-default inset; resize: none; }
+.raw-form :deep(.el-textarea__inner) { min-height: 58px !important; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; resize: none; }
 .raw-form small { display: block; margin-top: 2px; color: token.$crm-text-muted; font: 10px/14px token.$crm-font-body; }
 .raw-form .field-warning { color: token.$crm-danger; }
 .notes-field { margin-top: 4px; }

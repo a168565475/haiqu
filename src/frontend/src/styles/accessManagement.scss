@@ -9,11 +9,11 @@
   button { cursor: pointer; white-space: nowrap; &:hover {background: t.$crm-color-selected;} }
   button:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
   button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {outline: 2px solid t.$crm-focus; outline-offset: 2px;}
-  .primary { background: t.$crm-primary; border-color: t.$crm-primary; color: #faf9f5; &:hover {background: t.$crm-primary-hover;} }
+  .primary { background: t.$crm-primary; border-color: t.$crm-primary; color: var(--erp-button-primary-text); &:hover {background: t.$crm-primary-hover;} }
   input[type='checkbox'] {width:14px;height:14px;padding:0;margin:0;vertical-align:middle;accent-color:t.$crm-primary;flex:none;}
   input::placeholder {color:t.$crm-text-muted;}
   .text-button {border:0;padding:0;color:t.$crm-primary;background:transparent;font-size:12px;}
-  .access-tag {display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:24px;padding:0 8px;border-radius:999px;background:t.$crm-success;color:#faf9f5;font:500 12px/18px t.$crm-font-body;vertical-align:middle;&.neutral{background:t.$crm-neutral;}}
+  .access-tag {display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:24px;padding:0 8px;border-radius:999px;background:var(--erp-tag-success-background);color:var(--erp-tag-success-text);font:500 12px/18px t.$crm-font-body;vertical-align:middle;&.neutral{background:var(--erp-tag-neutral-background);}}
   table {width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;border:1px solid t.$crm-border-default;border-radius:5px;text-align:left;}
   th, td {padding:0 16px;border-bottom:1px solid t.$crm-border-default;}
   th {height:44px;font-size:11px;line-height:16px;font-weight:500;background:t.$crm-color-subtle;color:t.$crm-text-secondary;position:sticky;top:0;z-index:1;}

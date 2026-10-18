@@ -48,5 +48,5 @@ const formattedTime = computed(() => {
 </template>
 
 <style scoped lang="scss">
-.attempt-summary{display:grid;grid-template-columns:92px 1fr;gap:8px 12px;margin:14px 0;padding:14px;border:1px solid #e4e4e7;border-radius:8px;background:#f7f7f8;font-size:12px}.attempt-summary dt{color:#71717a}.attempt-summary dd{min-width:0;margin:0;overflow-wrap:anywhere}.resolution-form{margin-top:14px}.black-button{color:#fff!important;border-color:#18181b!important;background:#18181b!important}
+@use '@/styles/theme/detail' as detail;.attempt-summary{@include detail.inset;display:grid;grid-template-columns:92px 1fr;gap:8px 12px;margin:14px 0;padding:14px;font-size:12px}.attempt-summary dt{color:var(--erp-color-text-regular)}.attempt-summary dd{min-width:0;margin:0;overflow-wrap:anywhere}.resolution-form{margin-top:14px}.black-button{color:var(--erp-button-primary-text)!important;border-color:var(--erp-button-primary-border) !important;background:var(--erp-button-primary-surface)!important}
 </style>

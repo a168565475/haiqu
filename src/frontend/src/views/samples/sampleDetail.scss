@@ -1,9 +1,10 @@
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/crm/sample-controls' as sample;
 @use '@/styles/crm/sample-workspace' as workspace;
+@use '@/styles/theme/detail' as detail;
 
-.sample-detail-page { @include workspace.frame; height: calc(100dvh - 92px); min-width: 0; }
-.detail-scroll { flex: 1; min-height: 0; padding: 20px; overflow: auto; }
+.sample-detail-page { @include workspace.frame; height: auto; min-width: 0; background: transparent; }
+.detail-scroll { flex: 1; min-height: 0; padding: 0; overflow: visible; }
 .page-header { display: flex; min-height: 78px; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
 .identity-block { min-width: 0; }
 .title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -11,7 +12,7 @@
 .sample-type-label { padding: 4px 10px; border-radius: 4px; color: token.$crm-text-regular; background: token.$crm-color-subtle; font-size: 12px; line-height: 16px; }
 .identity-block p { margin: 3px 0 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .refresh-error { margin-bottom: 16px; }
-.status-flow { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 92px; margin-bottom: 14px; padding: 16px 18px; border: 1px solid token.$crm-border-subtle; border-radius: 4px; background: token.$crm-color-surface; }
+.status-flow { @include detail.surface; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 92px; margin-bottom: 14px; padding: 16px 18px; }
 .status-step { display: flex; min-width: 0; align-items: center; gap: 8px; color: token.$crm-text-muted; font-size: 13px; }
 .status-step span { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border: 1px solid token.$crm-border-default; border-radius: 50%; font-size: 12px; }
 .status-step strong { font-weight: 500; line-height: 22px; }
@@ -21,9 +22,17 @@
 .status-step.done span { color: token.$crm-text-inverse; border-color: token.$crm-success; background: token.$crm-success; }
 .status-step.active { color: token.$crm-primary; }
 .status-step.active span { color: token.$crm-text-inverse; border-color: token.$crm-primary; background: token.$crm-primary; }
-.content-grid { display: grid; grid-template-columns: minmax(0, 1130fr) minmax(0, 494fr); gap: 16px; }
+.content-grid { display: grid; grid-template-columns: minmax(0, 1130fr) minmax(0, 494fr); gap: 14px; }
 .main-column, .side-column { display: grid; min-width: 0; align-content: start; gap: 14px; }
-.detail-card { padding: 14px 16px; overflow: hidden; }
+.sample-detail-page .detail-card { @include detail.surface; padding: 14px 16px; overflow: hidden; }
+.sample-detail-page :deep(.material-application-info) { @include detail.surface; }
+.sample-detail-page :deep(.sample-material-progress) { @include detail.surface; }
+.sample-detail-page :deep(.material-application-info .sample-section) { @include detail.inset; }
+.sample-detail-page :deep(.parameter-panel) { @include detail.inset; }
+.sample-detail-page .product-detail-grid,
+.sample-detail-page .record-note,
+.sample-detail-page .parameter-list article,
+.sample-detail-page .auxiliary-summary { @include detail.inset; }
 .detail-card :deep(h2) { height: 28px; margin-bottom: 12px; padding: 0; border: 0; font-family: token.$crm-font-body; font-size: 16px; font-weight: 500; line-height: 28px; }
 .next-card { min-height: 190px; }
 .timeline-card { min-height: 450px; }
@@ -109,17 +118,30 @@
 .sample-detail-page :deep(.sample-workflow-dialog) { padding: 24px; border-radius: 4px; background: token.$crm-color-surface; }
 .sample-detail-page :deep(.sample-workflow-dialog .el-dialog__title) { color: token.$crm-text-primary; font-family: token.$crm-font-display; font-size: 22px; line-height: 30px; }
 .sample-detail-page :deep(.sample-workflow-dialog .el-button) { height: 44px; border-radius: 4px; }
-.sample-detail-page :deep(.sample-workflow-dialog .el-button--primary) { color: token.$crm-text-inverse; background: sample.$action-primary; border-color: sample.$action-primary; }
+.sample-detail-page :deep(.sample-workflow-dialog .el-button--primary) { color: token.$crm-text-inverse; background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
 .sample-detail-page :deep(.sample-workflow-dialog .el-textarea__inner) { padding: 12px; border-radius: 4px; box-shadow: 0 0 0 1px token.$crm-border-subtle inset; color: token.$crm-text-primary; font-size: 14px; line-height: 22px; }
 @media (max-width: 1440px) {
-  .detail-scroll { padding-right: 24px; padding-left: 24px; }
   .content-grid { grid-template-columns: minmax(0, 1fr) 340px; }
   .basic-grid, .product-grid, .record-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
   .product-detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .auxiliary-grid { grid-template-columns: 1fr; }
+  .sample-detail-page :deep(.material-application-info) { height: auto; min-height: 200px; }
+  .sample-detail-page :deep(.material-application-summary) { height: auto; min-height: 110px; }
+  .sample-detail-page :deep(.summary-fields) { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 }
 @media (max-width: 1100px) {
   .content-grid { grid-template-columns: minmax(0, 1fr); }
   .side-column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-flow { gap: 8px; padding: 16px; }
+}
+@media (max-width: 800px) {
+  .page-header { align-items: flex-start; flex-wrap: wrap; }
+  .detail-actions { flex-wrap: wrap; }
+  .status-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .side-column, .parameter-list { grid-template-columns: minmax(0, 1fr); }
+  .basic-grid, .product-grid, .record-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .special-note { grid-column: 1 / -1; }
+  .sample-detail-page :deep(.material-application-info) { height: auto; }
+  .sample-detail-page :deep(.material-application-summary) { height: auto; }
+  .sample-detail-page :deep(.summary-fields) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 }

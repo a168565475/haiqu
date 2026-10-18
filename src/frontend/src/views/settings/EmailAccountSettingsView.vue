@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -414,16 +415,16 @@ onMounted(loadAccounts)
 </script>
 
 <template>
-  <section class="email-account-settings system-settings-theme" data-testid="email-account-settings-page">
-    <header class="page-heading">
+  <section class="email-account-settings system-settings-theme erp-glass-list" data-testid="email-account-settings-page">
+    <section v-glass-spotlight class="erp-list-filter"><header class="erp-list-heading">
       <div>
         <h1>邮件账户</h1>
       </div>
       <div class="page-actions">
-        <el-button :icon="Refresh" :loading="loading" @click="loadAccounts">刷新</el-button>
-        <el-button data-testid="create-email-account" type="primary" :icon="Plus" @click="openCreate">新增邮件账户</el-button>
+        <el-button class="erp-button-motion" :icon="Refresh" :loading="loading" @click="loadAccounts">刷新</el-button>
+
       </div>
-    </header>
+    </header></section>
 
     <el-alert
       title="安全提示"
@@ -437,8 +438,8 @@ onMounted(loadAccounts)
       <template #default><el-button size="small" @click="loadAccounts">重试</el-button></template>
     </el-alert>
 
-    <el-card shadow="never" class="table-card">
-      <el-table v-loading="loading" :data="accounts" empty-text="暂无邮件账户，请先新增一个 SMTP 配置。">
+    <section class="table-card erp-list-data"><div class="erp-list-toolbar"><el-button class="erp-button-motion" data-testid="create-email-account" type="primary" :icon="Plus" @click="openCreate">新增邮件账户</el-button></div><div class="erp-list-table-frame">
+      <el-table height="100%" v-loading="loading" :data="accounts" empty-text="暂无邮件账户，请先新增一个 SMTP 配置。">
         <el-table-column label="邮件账户" min-width="200">
           <template #default="{ row }"><b>{{ row.display_name }}</b><small>{{ row.sender_name || '未设置发件人名称' }}</small></template>
         </el-table-column>
@@ -472,7 +473,7 @@ onMounted(loadAccounts)
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </div></section>
 
     <el-dialog
       v-model="editorVisible"
@@ -590,4 +591,4 @@ onMounted(loadAccounts)
   </section>
 </template>
 
-<style scoped lang="scss"> .email-account-settings{min-width:0;color:#1d2129}.crumb{display:flex;gap:8px;align-items:center;margin-bottom:14px;color:#86909c;font-size:13px}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.page-heading h1{margin:0;font-size:28px}.page-heading p{margin:8px 0 0;color:#86909c}.page-actions{display:flex;gap:10px}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:16px 0}.metrics article{min-width:0;padding:16px 18px;border:1px solid #e5e6eb;border-radius:8px;background:#fff}.metrics span,.table-card small{display:block;color:#86909c;font-size:12px}.metrics strong{display:block;overflow:hidden;margin-top:8px;font-size:22px;text-overflow:ellipsis;white-space:nowrap}.table-card b{display:block}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid #dbe6f5;border-radius:8px;background:#f7faff}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:#4e5969;font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:#4e5969;font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:#d46b08;font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:#fff}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #f2f3f5}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:#86909c;font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:#86909c;font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:#4e5969;line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.page-heading{flex-direction:column}.page-actions{width:100%}.metrics{grid-template-columns:1fr}.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}} </style>
+<style scoped lang="scss"> .table-card b,.table-card small{display:block;color:var(--erp-table-text)}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid var(--erp-color-brand-light-7);border-radius:8px;background:var(--erp-color-info-soft)}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:var(--erp-color-text-regular);font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:var(--erp-color-text-regular);font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:var(--erp-color-warning);font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:var(--erp-color-surface)}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--erp-color-border-subtle)}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:var(--erp-color-text-muted);font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:var(--erp-color-text-muted);font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:var(--erp-color-text-regular);line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}} </style>

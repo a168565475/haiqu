@@ -43,10 +43,7 @@ vi.mock('@/api/samples', () => ({
     meta: { page: 1, page_size: 50, total: 1, total_pages: 1 },
   }),
   fetchSampleInventorySummary: apiMocks.summary.mockResolvedValue({
-    current_available: 6,
-    borrowed: 0,
-    inbound_today: 6,
-    outbound_today: 0,
+    month: '2026-10', current_available: 6, borrowed: 0, inbound_today: 6, outbound_today: 0, inbound_this_month: 6, outbound_this_month: 0, loaned_this_month: 0,
   }),
   fetchSampleInventoryOptions: apiMocks.options.mockResolvedValue({
     product_categories: ['户外桌椅'],
@@ -63,7 +60,7 @@ vi.mock('@/api/samples', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   apiMocks.fetchInventory.mockResolvedValue({ data: [fixture.row], meta: { page: 1, page_size: 50, total: 1, total_pages: 1 } })
-  apiMocks.summary.mockResolvedValue({ current_available: 6, borrowed: 0, inbound_today: 6, outbound_today: 0 })
+  apiMocks.summary.mockResolvedValue({ month: '2026-10', current_available: 6, borrowed: 0, inbound_today: 6, outbound_today: 0, inbound_this_month: 6, outbound_this_month: 0, loaned_this_month: 0, })
   apiMocks.options.mockResolvedValue({ product_categories: ['户外桌椅'], locations: ['样品库'] })
   apiMocks.deleteReceipt.mockResolvedValue(undefined)
 })
@@ -77,6 +74,43 @@ async function render(permissions: string[] = []) {
 }
 
 describe('SampleInventoryView', () => {
+  it('以真实月数量绘制同尺度四柱，移除旧说明、路由栏及外部标签', async () => {
+    apiMocks.summary.mockResolvedValueOnce({
+      month: '2026-10', current_available: 20, borrowed: 5, inbound_today: 0, outbound_today: 0,
+      inbound_this_month: 40, outbound_this_month: 10, loaned_this_month: 5,
+    })
+    const wrapper = await render()
+    expect(wrapper.find('.sample-monthly-stat__heading').text()).toContain('本月样品 · 10月')
+    expect(wrapper.findAll('.sample-monthly-stat__value').map(item => item.text())).toEqual(['40', '10', '5', '20'])
+    expect(wrapper.findAll('.sample-monthly-stat__bar').map(item => Number(item.attributes('height')))).toEqual([26, 6.5, 3.25, 13])
+    expect(wrapper.text()).not.toContain('统一管理样品库存、出库与借出记录')
+    expect(wrapper.find('.inventory-tabs').exists()).toBe(false)
+    expect(wrapper.find('.stats-grid').exists()).toBe(false)
+    expect(wrapper.findAll('.filter-grid .el-form-item__label')).toHaveLength(0)
+    const selects = wrapper.findComponent({ name: 'ElForm' }).findAllComponents({ name: 'ElSelect' })
+    expect(selects.map(item => item.props('placeholder'))).toEqual(['产品类别', '入库位置', '库存状态'])
+    expect(selects[2]!.props('modelValue')).toBe('AVAILABLE')
+    expect(wrapper.text()).toContain('有库存（>0）')
+  })
+
+  it('真实零显示0且不绘制虚假高度，缺失字段保持未知并允许重试', async () => {
+    apiMocks.summary.mockResolvedValueOnce({
+      month: '2026-10', current_available: 0, borrowed: 0, inbound_today: 0, outbound_today: 0,
+      inbound_this_month: 0, outbound_this_month: 0, loaned_this_month: 0,
+    })
+    const wrapper = await render()
+    expect(wrapper.findAll('.sample-monthly-stat__value').map(item => item.text())).toEqual(['0', '0', '0', '0'])
+    expect(wrapper.findAll('.sample-monthly-stat__bar')).toHaveLength(0)
+    apiMocks.summary.mockResolvedValueOnce({ month: '2026-10', current_available: 6 })
+    await wrapper.findAll('button').find(item => item.text() === '刷新')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.sample-monthly-stat__value').map(item => item.text())).toEqual(['—', '—', '—', '6'])
+    expect(wrapper.find('.sample-monthly-stat__error').text()).toContain('库存统计数据不完整')
+    await wrapper.findAll('button').find(item => item.text() === '重试统计')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.sample-monthly-stat__error').exists()).toBe(false)
+  })
+
   it('展示打样数量、入库数量和扣减后的剩余库存', async () => {
     const pinia = createPinia()
     useAuthStore(pinia).user = {
@@ -115,7 +149,7 @@ describe('SampleInventoryView', () => {
     expect(wrapper.text()).toContain('RK-20260902-001')
     expect(wrapper.text()).toContain('SYGJ-20260828-016')
     expect(wrapper.text()).toContain('铝框休闲椅')
-    expect(wrapper.text()).toContain('当前可用库存6')
+    expect(wrapper.find('.sample-monthly-stat').attributes('aria-label')).toContain('当前可用库存：6件')
     expect(wrapper.text()).toContain('有库存（>0）')
     expect(wrapper.text()).toContain('仅显示剩余库存大于 0 的入库明细')
     expect(wrapper.text()).not.toContain('未发生出库或借出')
@@ -143,18 +177,18 @@ describe('SampleInventoryView', () => {
   it('统计失败显示未知而不是零，允许独立重试', async () => {
     apiMocks.summary.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
-    expect(wrapper.findAll('.stat-copy strong').map(item => item.text())).toEqual(['—', '—', '—', '—'])
+    expect(wrapper.findAll('.sample-monthly-stat__value').map(item => item.text())).toEqual(['—', '—', '—', '—'])
     expect(wrapper.find('[role="alert"]').text()).toContain('库存统计加载失败')
     await wrapper.findAll('button').find(item => item.text() === '重试统计')!.trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('6')
+    expect(wrapper.find('.sample-monthly-stat__value').text()).toBe('6')
   })
 
   it('无权限时禁用入库与跨页入口，并隐藏删除', async () => {
     const wrapper = await render()
     expect(wrapper.findAll('.heading-actions button').every(item => item.attributes('disabled') !== undefined)).toBe(true)
-    expect(wrapper.findAll('.inventory-tab').slice(1).every(item => item.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.find('.inventory-tabs').exists()).toBe(false)
     expect(wrapper.findAll('button').some(item => item.text() === '删除')).toBe(false)
     expect(wrapper.findComponent({ name: 'SampleInventoryReceiptDialog' }).exists()).toBe(false)
   })
@@ -191,7 +225,7 @@ describe('SampleInventoryView', () => {
     apiMocks.fetchInventory.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
     expect(wrapper.find('.list-error').exists()).toBe(true)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('6')
+    expect(wrapper.find('.sample-monthly-stat__value').text()).toBe('6')
     await wrapper.findAll('button').find(item => item.text() === '重新加载')!.trigger('click'); await flushPromises()
     expect(wrapper.find('.list-error').exists()).toBe(false)
     expect(wrapper.text()).toContain(fixture.row.receipt_number)
@@ -231,17 +265,17 @@ describe('SampleInventoryView', () => {
     apiMocks.summary.mockImplementationOnce(() => new Promise(resolve => { oldSummary = resolve }))
     apiMocks.options.mockImplementationOnce(() => new Promise(resolve => { oldOptions = resolve }))
     const wrapper = await render(['samples.add_sampleinventoryreceipt'])
-    apiMocks.summary.mockResolvedValueOnce({ current_available: 12, borrowed: 0, inbound_today: 12, outbound_today: 0 })
+    apiMocks.summary.mockResolvedValueOnce({ month: '2026-10', current_available: 12, borrowed: 0, inbound_today: 12, outbound_today: 0, inbound_this_month: 12, outbound_this_month: 0, loaned_this_month: 0, })
     apiMocks.options.mockResolvedValueOnce({ product_categories: ['新增类别'], locations: ['新增库位'] })
     expect(wrapper.findComponent({ name: 'SampleInventoryReceiptDialog' }).exists()).toBe(false)
     await wrapper.findAll('button').find(button => button.text() === '样品入库')!.trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'SampleInventoryReceiptDialog' }).vm.$emit('created')
     await flushPromises()
-    oldSummary({ current_available: 1, borrowed: 0, inbound_today: 1, outbound_today: 0 })
+    oldSummary({ month: '2026-10', current_available: 1, borrowed: 0, inbound_today: 1, outbound_today: 0, inbound_this_month: 1, outbound_this_month: 0, loaned_this_month: 0, })
     oldOptions({ product_categories: ['旧类别'], locations: ['旧库位'] })
     await flushPromises()
-    expect(wrapper.find('.stat-copy strong').text()).toBe('12')
+    expect(wrapper.find('.sample-monthly-stat__value').text()).toBe('12')
     expect(wrapper.findAllComponents({ name: 'ElOption' }).some(item => item.props('value') === '新增库位')).toBe(true)
     expect(wrapper.findAllComponents({ name: 'ElOption' }).some(item => item.props('value') === '旧库位')).toBe(false)
   })

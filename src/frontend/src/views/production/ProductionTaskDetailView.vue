@@ -300,7 +300,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="task-detail-page" aria-label="生产任务单详情" :aria-busy="loading" v-loading="loading">
+  <section class="task-detail-page erp-glass-detail" aria-label="生产任务单详情" :aria-busy="loading" v-loading="loading">
     <div v-if="loading" class="loading-state" role="status">正在加载生产任务单…</div>
     <div v-else-if="loadError" class="load-error" role="alert"><strong>详情加载失败</strong><span>{{ loadError }}</span><ElButton type="primary" @click="loadTask">重新加载</ElButton></div>
     <template v-else-if="task">
@@ -417,8 +417,9 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
+@use '@/styles/theme/detail' as detail;
 
-.task-detail-page { min-width: 0; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body; }
+.task-detail-page { min-width: 0; container-type: inline-size; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body; }
 h1, h2, p, dl { margin: 0; }
 h2 { font-size: 16px; line-height: 24px; font-weight: 600; }
 dt { color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
@@ -426,16 +427,16 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .detail-heading, .detail-heading__title, .detail-heading__actions { display: flex; align-items: center; flex-wrap: wrap; }
 .detail-heading { justify-content: space-between; gap: 12px; min-height: 46px; margin-bottom: 14px; }
 .detail-heading__title { gap: 14px; min-width: 0; }
-.detail-heading h1 { font: 600 34px/44px token.$crm-font-display; }
+.detail-heading h1 { font: 700 36px/44px token.$crm-font-body; }
 .task-number { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.task-status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; background: token.$crm-warning; color: #faf9f5; font-size: 12px; font-weight: 500; line-height: 18px; }
-.status-draft { background: token.$crm-neutral; }
-.status-in_production, .status-completed { background: token.$crm-success; }
-.status-cancelled { background: token.$crm-danger; }
+.task-status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; background: var(--erp-tag-warning-background); color: var(--erp-color-text-inverse); font-size: 12px; font-weight: 500; line-height: 18px; }
+.status-draft { background: var(--erp-tag-neutral-background); }
+.status-in_production, .status-completed { background: var(--erp-tag-success-background); }
+.status-cancelled { background: var(--erp-tag-danger-background); }
 .detail-heading__actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.task-detail-page :deep(.el-button) { height: 32px; margin: 0; border-radius: 5px; font-size: 13px; }
+.task-detail-page :deep(.el-button) { height: 32px; margin: 0; font-size: 13px; }
 .task-detail-page :deep(.el-button:focus-visible), summary:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
-.summary-bar, .task-sidebar, .detail-card { box-sizing: border-box; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
+.summary-bar, .task-sidebar, .detail-card { @include detail.surface; }
 .summary-bar { display: grid; grid-template-columns: 1.2fr 1fr 1fr; padding: 12px 16px; margin-bottom: 14px; }
 .summary-bar > div { display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
 .summary-bar > div + div { padding-left: 24px; border-left: 1px solid token.$crm-border-default; }
@@ -445,7 +446,7 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .summary-bar, .file-amount, .task-number { font-variant-numeric: tabular-nums; }
 .dossier-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 14px; align-items: start; }
 .task-sidebar, .dossier-main { min-width: 0; }
-.basic-card > h2 { padding: 10px 14px; background: token.$crm-color-subtle; border-bottom: 1px solid token.$crm-border-default; border-radius: 4px 4px 0 0; }
+.basic-card > h2 { padding: 14px 16px 0; }
 .info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; padding: 14px; }
 .info-grid label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .info-grid label > span { color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
@@ -461,7 +462,7 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .status-steps > div:not(:last-child)::after { content: ''; position: absolute; top: 13px; left: calc(50% + 17px); right: calc(-50% + 17px); height: 2px; background: token.$crm-border-default; }
 .status-steps i { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid token.$crm-border-default; border-radius: 50%; background: token.$crm-color-surface; font-style: normal; }
 .status-steps i svg { width: 16px; height: 16px; }
-.status-steps .is-done i { color: #faf9f5; background: token.$crm-primary; border-color: token.$crm-primary; }
+.status-steps .is-done i { color: var(--erp-color-text-inverse); background: token.$crm-primary; border-color: token.$crm-primary; }
 .status-steps .is-done::after { background: token.$crm-primary; }
 .status-steps .is-current { color: token.$crm-text-primary; font-weight: 600; }
 .status-steps .is-current i { color: token.$crm-primary; border-color: token.$crm-primary; }
@@ -474,12 +475,12 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .schedule-dates { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid token.$crm-border-default; padding-top: 12px; }
 .detail-card { padding: 14px 16px; min-width: 0; }
 .products-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
-.product-files { display: flex; flex-direction: column; gap: 10px; }
-.product-file { border: 1px solid token.$crm-border-default; border-radius: 5px; min-width: 0; }
-.product-file summary { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px; list-style: none; cursor: pointer; border-radius: 4px; }
+.product-files { display: flex; flex-direction: column; gap: 14px; }
+.product-file { @include detail.inset; }
+.product-file summary { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px; list-style: none; cursor: pointer; border-radius: var(--erp-radius-control); }
 .product-file summary::-webkit-details-marker { display: none; }
 .product-file summary:hover { background: token.$crm-color-row-hover; }
-.product-file[open] > summary { border-bottom: 1px solid token.$crm-border-default; border-radius: 4px 4px 0 0; background: #f8f5ef; }
+.product-file[open] > summary { border-bottom: 1px solid token.$crm-border-subtle; border-radius: var(--erp-radius-control) var(--erp-radius-control) 0 0; background: var(--erp-glass-inner-background); }
 .file-arrow { width: 16px; height: 16px; flex: 0 0 16px; color: token.$crm-text-secondary; }
 .product-file[open] .file-arrow { transform: rotate(90deg); color: token.$crm-primary; }
 .file-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
@@ -517,20 +518,21 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .load-error { padding: 48px 16px; display: flex; align-items: center; flex-direction: column; gap: 16px; color: token.$crm-text-secondary; }
 .load-error strong { color: token.$crm-text-primary; font-size: 20px; }
 .loading-state { padding: 80px 16px 24px; text-align: center; color: token.$crm-text-secondary; }
-.pmc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.pmc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .pmc-form label { display: flex; flex-direction: column; gap: 8px; color: token.$crm-text-secondary; font-size: 13px; }
 .pmc-form .el-date-editor, .pmc-form .el-select { width: 100%; }
 @media (max-width: 1350px) {
   .file-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bottom-grid { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 1100px) {
+@media (max-width: 650px) { .pmc-form { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 1100px) {
   .dossier-layout { grid-template-columns: minmax(0, 1fr); }
   .task-sidebar { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
   .handoff-card { border-top: 0; border-left: 1px solid token.$crm-border-default; }
 }
-@media (max-width: 650px) {
-  .task-sidebar, .summary-bar, .pmc-form { grid-template-columns: minmax(0, 1fr); }
+@container (max-width: 650px) {
+  .task-sidebar, .summary-bar { grid-template-columns: minmax(0, 1fr); }
   .handoff-card { border-left: 0; border-top: 1px solid token.$crm-border-default; }
   .summary-bar { gap: 12px; }
   .summary-bar > div + div { padding: 12px 0 0; border-left: 0; border-top: 1px solid token.$crm-border-default; }
@@ -544,7 +546,7 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
   .timeline small, .timeline p { grid-column: 1; }
   .requirements-card dl > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
-@media (max-width: 420px) {
+@container (max-width: 420px) {
   .file-fields { grid-template-columns: minmax(0, 1fr); }
   .file-pack { grid-column: auto; }
   .status-steps > div { overflow-wrap: anywhere; }

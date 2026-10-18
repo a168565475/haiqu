@@ -28,52 +28,51 @@ const visible = computed({ get: () => props.modelValue, set: value => { if (!pro
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
 // INQ-V4-03/04 使用 Warm ERP 弹层变量，与详情页卡片样式分别作用于各自容器。
-$surface: #faf9f5;
-$border: #e8e6dc;
-$primary: #c96442;
-.el-overlay.inquiry-v4-overlay { background: rgba(15, 14, 13, .38); }
+$surface: var(--erp-color-subtle);
+$border: var(--erp-color-border);
+$primary: var(--erp-color-brand);
+.el-overlay.inquiry-v4-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 38%, transparent); }
 .inquiry-v4-select {
-  --el-color-primary: #c96442; --el-fill-color-light: #f5e8e2; --el-border-color-light: #e8e6dc;
+  --el-color-primary: var(--erp-color-brand); --el-fill-color-light: var(--erp-color-subtle); --el-border-color-light: var(--erp-color-border);
   font-family: token.$crm-font-body;
-  &.el-popper { border-color: #e8e6dc; border-radius: 6px; box-shadow: 0 6px 24px rgba(20,20,19,.08); }
-  .el-dropdown-menu { background: #faf9f5; }
+  &.el-popper { border-color: var(--erp-color-border); border-radius: 6px; box-shadow: 0 6px 24px color-mix(in srgb, var(--erp-shadow-color) 8%, transparent); }
+  .el-dropdown-menu { background: var(--erp-color-subtle); }
   .el-dropdown-menu__item,.el-select-dropdown__item { font-size: 13px; }
-  .el-dropdown-menu__item:not(.is-disabled):focus,.el-dropdown-menu__item:not(.is-disabled):hover { background: #f5e8e2; color: #c96442; }
+  .el-dropdown-menu__item:not(.is-disabled):focus,.el-dropdown-menu__item:not(.is-disabled):hover { background: var(--erp-dropdown-hover-background); color: var(--erp-dropdown-selected-text); }
 }
 .el-dialog.inquiry-action-dialog {
-  --el-color-primary: #{$primary}; --el-color-primary-light-9: #f5e8e2; --el-border-color: #{$border};
-  --el-border-color-hover: #d1cfc5; --el-border-radius-base: 6px; --el-text-color-primary: #141413;
-  --el-text-color-regular: #4d4c48; --el-fill-color-blank: #fff;
+  --el-color-primary: #{$primary}; --el-color-primary-light-9: var(--erp-color-selected); --el-border-color: #{$border};
+  --el-border-color-hover: var(--erp-color-border); --el-border-radius-base: 6px; --el-text-color-primary: var(--erp-color-text-primary);
+  --el-text-color-regular: var(--erp-color-text-primary); --el-fill-color-blank: var(--erp-color-surface);
   display: flex; flex-direction: column; max-height: calc(100dvh - 32px);
-  padding: 0; margin: 0; overflow: hidden; border: 1px solid $border; border-radius: 8px;
-  background: $surface; box-shadow: 0 6px 24px rgba(20,20,19,.08); color: #141413; font: 13px token.$crm-font-body;
+  padding: 0; margin: 0; overflow: hidden; color: var(--erp-color-text-primary); font: 13px/20px var(--erp-font-body);
   .el-dialog__header { flex: 0 0 44px; min-height: 44px; box-sizing: border-box; padding: 0 104px 0 16px; margin: 0; border-bottom: 1px solid $border; }
-  .el-dialog__title { font: 600 16px/22px token.$crm-font-display; }
-  .inquiry-dialog-subtitle { margin: 0 0 14px; color: #5e5d59; font-size: 12px; line-height: 20px; }
+  .el-dialog__title { font: 600 16px/24px var(--erp-font-body); }
+  .inquiry-dialog-subtitle { margin: 0 0 14px; color: var(--erp-color-text-regular); font-size: 12px; line-height: 20px; }
   .el-dialog__body { flex: 1; min-height: 0; padding: 18px 23px; overflow-y: auto; color: inherit; font: inherit; }
   .inquiry-dialog-content { min-height: 100%; }
   .el-dialog__footer { flex: 0 0 56px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 23px; border-top: 1px solid $border; }
-  .el-button { min-width: 92px; height: 32px; margin: 0; padding: 0 18px; border-radius: 6px; border-color: $border; background: $surface; color: #141413; font: 500 13px/22px token.$crm-font-body; }
-  .el-button--primary { background: $primary; border-color: $primary; color: $surface; }
-  .el-button--danger { background: token.$crm-danger; border-color: token.$crm-danger; color: $surface; }
+  .el-button { min-width: 92px; height: 32px; margin: 0; padding: 0 18px; border-radius: 8px; border-color: $border; background: var(--erp-button-secondary-surface); color: var(--erp-color-text-primary); font: 500 13px/22px token.$crm-font-body; }
+  .el-button--primary { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); color: var(--erp-button-primary-text); }
+  .el-button--danger { background: token.$crm-danger; border-color: token.$crm-danger; color: var(--erp-color-text-inverse); }
   .el-button:hover:not(:disabled) { filter: brightness(.96); }
   .el-button:active:not(:disabled) { filter: brightness(.91); }
   .el-button.is-disabled { opacity: .5; cursor: not-allowed; }
   button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
   .el-form { margin-top: 14px; }
   .el-form-item { margin: 0 0 14px; }
-  .el-form-item__label { height: auto; margin: 0; padding: 0 0 7px; font: 500 12px/20px token.$crm-font-body; color: #4d4c48; }
+  .el-form-item__label { height: auto; margin: 0; padding: 0 0 7px; font: 500 12px/20px token.$crm-font-body; color: var(--erp-color-text-primary); }
   .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before { display: none; }
   .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::after { content: ' *'; margin-left: 3px; }
   .el-form-item__content { line-height: 22px; }
-  .el-input__wrapper, .el-select__wrapper { min-height: 32px; box-shadow: 0 0 0 1px $border inset; border-radius: 6px; padding: 1px 12px; background: #fff; }
+  .el-input__wrapper, .el-select__wrapper { min-height: 32px; box-shadow: 0 0 0 1px $border inset; border-radius: 8px; padding: 1px 12px; background: var(--erp-input-background); }
   .el-input__wrapper.is-focus, .el-select__wrapper.is-focused { box-shadow: 0 0 0 1px token.$crm-focus inset; }
-  .el-input__inner, .el-select__selected-item { font: 13px token.$crm-font-body; color: #141413; }
-  .el-textarea__inner { padding: 10px 12px; border-radius: 6px; box-shadow: 0 0 0 1px $border inset; font: 13px/22px token.$crm-font-body; resize: none; }
+  .el-input__inner, .el-select__selected-item { font: 13px token.$crm-font-body; color: var(--erp-color-text-primary); }
+  .el-textarea__inner { padding: 10px 12px; border-radius: 8px; box-shadow: 0 0 0 1px $border inset; font: 13px/22px token.$crm-font-body; resize: none; }
   .el-input, .el-select, .el-date-editor { width: 100%; }
   .inquiry-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .inquiry-dialog-hint { margin: 0; color: #5e5d59; font-size: 12px; line-height: 20px; }
-  .inquiry-dialog-error { padding: 10px 12px; margin: 0 0 14px; color: token.$crm-danger; background: token.$crm-danger-soft; border: 1px solid token.$crm-danger-border; border-radius: 6px; overflow-wrap: anywhere; }
+  .inquiry-dialog-hint { margin: 0; color: var(--erp-color-text-regular); font-size: 12px; line-height: 20px; }
+  .inquiry-dialog-error { padding: 10px 12px; margin: 0 0 14px; color: token.$crm-danger; background: token.$crm-danger-soft; border: 1px solid token.$crm-danger-border; border-radius: 8px; overflow-wrap: anywhere; }
   .inquiry-check-list { display: grid; gap: 14px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 13px; line-height: 26px;
     li { display: flex; gap: 18px; align-items: center; }
     b { color: token.$crm-success; font-size: 18px; font-weight: 400; }

@@ -31,14 +31,14 @@ function returnToWorkbench() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e2e4e8;
+  border: 1px solid var(--erp-color-border);
   border-radius: 12px;
   background: var(--erp-surface-background);
 }
 
 .not-found-page h1 {
   margin: 0;
-  color: #25272b;
+  color: var(--erp-color-text-primary);
   font-size: 24px;
   line-height: 1.4;
 }

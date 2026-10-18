@@ -189,14 +189,14 @@ function remainder(row: MaterialRequirement) {
 
 <style scoped lang="scss">
 .issue-partitions { display: grid; gap: 16px; }
-.partition { overflow: hidden; background: #fcfaf6; border: 1px solid #ddd6c9; border-radius: 6px; }
+.partition { overflow: hidden; background: var(--erp-color-subtle); border: 1px solid var(--erp-color-border); border-radius: 6px; }
 .partition header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; gap: 16px; }
 .partition header > div { display: flex; align-items: baseline; gap: 18px; }
-h2 { margin: 0; font-size: 18px; color: #2e2b25; }
-.partition header span, .partition-note, .picker-tip { font-size: 12px; color: #776e60; }
-.partition-note { padding: 12px 18px; background: #faf6ed; border-top: 1px solid #e5dccb; line-height: 20px; }
-small { display: block; font-size: 12px; color: #81776a; line-height: 20px; }
-.partition :deep(.el-table th.el-table__cell), .selector-content :deep(.el-table th.el-table__cell) { background: #f0eadf; color: #706758; height: 44px; padding: 0; font-weight: 500; }
+h2 { margin: 0; font-size: 18px; color: var(--erp-color-text-primary); }
+.partition header span, .partition-note, .picker-tip { font-size: 12px; color: var(--erp-color-text-secondary); }
+.partition-note { padding: 12px 18px; background: var(--erp-color-subtle); border-top: 1px solid var(--erp-color-border-subtle); line-height: 20px; }
+small { display: block; font-size: 12px; color: var(--erp-color-text-secondary); line-height: 20px; }
+.partition :deep(.el-table th.el-table__cell), .selector-content :deep(.el-table th.el-table__cell) { background: var(--erp-table-header-fill); color: var(--erp-table-header-text); height: 44px; padding: 0; font-weight: 500; }
 .partition :deep(.el-table td.el-table__cell), .selector-content :deep(.candidate-table td.el-table__cell) { height: 40px; padding: 0; }
 .selector-content { display: grid; gap: 12px; }
 .selector-filters { display: flex; align-items: center; gap: 12px; }
@@ -204,11 +204,11 @@ small { display: block; font-size: 12px; color: #81776a; line-height: 20px; }
 .selector-filters :deep(.el-select) { width: 180px; }
 .selector-filters :deep(.el-input__wrapper), .selector-filters :deep(.el-select__wrapper), .selector-filters :deep(.el-button) { min-height: 32px; height: 32px; }
 .quantity-input :deep(.el-input__inner) { text-align: center; }
-.quantity-input.is-rule-error :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px #e5484d inset; }
-.quantity-input.is-rule-error :deep(.el-input__inner) { color: #c93439; }
-:global(.material-issue-rule-tooltip.el-popper.is-light) { max-width: 280px; padding: 7px 10px; border-color: #efb2b4; background: #fff2f2; color: #c93439; font-size: 12px; line-height: 18px; }
-:global(.material-issue-rule-tooltip.el-popper.is-light .el-popper__arrow::before) { border-color: #efb2b4; background: #fff2f2; }
-.selector-content :deep(.candidate-table .el-table__body tr.is-picked > td.el-table__cell) { background: #fff2e9; }
-.selector-content :deep(.candidate-table .el-table__body tr.is-picked:hover > td.el-table__cell) { background: #f9e8dd; }
+.quantity-input.is-rule-error :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px var(--erp-color-danger) inset; }
+.quantity-input.is-rule-error :deep(.el-input__inner) { color: var(--erp-color-danger); }
+:global(.material-issue-rule-tooltip.el-popper.is-light) { max-width: 280px; padding: 7px 10px; border-color: var(--erp-color-danger-border); background: var(--erp-color-danger-soft); color: var(--erp-color-danger); font-size: 12px; line-height: 18px; }
+:global(.material-issue-rule-tooltip.el-popper.is-light .el-popper__arrow::before) { border-color: var(--erp-color-danger-border); background: var(--erp-color-danger-soft); }
+.selector-content :deep(.candidate-table .el-table__body tr.is-picked > td.el-table__cell) { background: var(--erp-color-selected); }
+.selector-content :deep(.candidate-table .el-table__body tr.is-picked:hover > td.el-table__cell) { background: var(--erp-color-selected); }
 .picker-tip { margin-right: auto; }
 </style>

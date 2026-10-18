@@ -57,8 +57,8 @@ def _source_lines(request, filters):
     return lines
 
 
-def unified_order_candidates(request, filters):
-    """UNION 只选择排序和定位列；三个渠道统一计数、排序和分页。"""
+def unified_order_sources(request, filters):
+    """返回统一列表使用的三个授权查询，供列表和只读统计共用。"""
     regular = request.user.has_perm(VIEW_PERMISSIONS[0])
     metal = request.user.has_perm(VIEW_PERMISSIONS[1])
     visible_handoffs = MetalProcessingOriginalHandoff.objects.filter(
@@ -126,6 +126,12 @@ def unified_order_candidates(request, filters):
         originals = originals.filter(original_search)
         reworks = reworks.filter(Q(order_number__icontains=keyword)
                                 | Q(source__issue_line__issue__production_task__task_number__icontains=keyword))
+    return originals, reworks, tubes
+
+
+def unified_order_candidates(request, filters):
+    """UNION 只选择排序和定位列；三个渠道统一计数、排序和分页。"""
+    originals, reworks, tubes = unified_order_sources(request, filters)
     fields = ("id", "updated_at", "record_type", "unified_source", "unified_access")
     return originals.order_by().values(*fields).distinct().union(
         reworks.order_by().values(*fields), tubes.order_by().values(*fields).distinct(), all=True,

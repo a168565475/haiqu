@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   width?: number | string
   height?: number | string
   fullscreen?: boolean
+  withHeader?: boolean
   minWidth?: number
   minHeight?: number
   centerOnResize?: boolean
@@ -34,6 +35,7 @@ const props = withDefaults(defineProps<{
   width: 680,
   height: 'auto',
   fullscreen: false,
+  withHeader: true,
   minWidth: 360,
   minHeight: 180,
   centerOnResize: false,
@@ -471,8 +473,10 @@ onBeforeUnmount(() => {
         :aria-label="title"
         tabindex="-1"
       >
-        <header class="el-dialog__header app-window-dialog__header" @pointerdown="beginInteraction($event, 'drag')">
-          <span class="el-dialog__title"><slot name="title">{{ title }}</slot></span>
+        <header v-if="withHeader" class="el-dialog__header app-window-dialog__header" @pointerdown="beginInteraction($event, 'drag')">
+          <div class="app-window-dialog__heading">
+            <slot name="header"><span class="el-dialog__title"><slot name="title">{{ title }}</slot></span></slot>
+          </div>
           <div class="app-window-dialog__actions">
             <button v-if="minimizable" type="button" :aria-label="state === 'minimized' ? '还原' : '最小化'" :title="state === 'minimized' ? '还原' : '最小化'" @click="minimize"><ElIcon><Rank v-if="state === 'minimized'" /><Minus v-else /></ElIcon></button>
             <button type="button" :aria-label="state === 'maximized' ? '还原' : '最大化'" :title="state === 'maximized' ? '还原' : '最大化'" @click="toggleMaximize">
@@ -502,7 +506,7 @@ onBeforeUnmount(() => {
 .app-window-overlay {
   position: fixed;
   inset: 0;
-  background: rgb(31 29 24 / 34%);
+  background: color-mix(in srgb, var(--erp-overlay-scrim-color) 34%, transparent);
 
   &.is-minimized {
     pointer-events: none;
@@ -524,7 +528,7 @@ onBeforeUnmount(() => {
   border-radius: token.$crm-radius-3;
   color: token.$crm-text-primary;
   background: token.$crm-color-surface;
-  box-shadow: 0 18px 48px rgb(31 29 24 / 18%);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--erp-shadow-color) 18%, transparent);
   font-family: token.$crm-font-body;
   pointer-events: auto;
   outline: none;
@@ -540,7 +544,7 @@ onBeforeUnmount(() => {
 
   &.is-minimized {
     border-radius: token.$crm-radius-2;
-    box-shadow: 0 8px 24px rgb(31 29 24 / 20%);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 20%, transparent);
 
     .app-window-dialog__header {
       border-bottom: 0;
@@ -572,6 +576,11 @@ onBeforeUnmount(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+.app-window-dialog__heading {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .app-window-dialog__actions {
@@ -640,16 +649,16 @@ onBeforeUnmount(() => {
 
 /* 业务弹窗统一执行 ERP 32px 单行控件规范，避免调用页旧样式重新放大控件。 */
 .app-window-dialog {
-  :deep(.el-button),
-  :deep(.el-input:not(.el-textarea) .el-input__wrapper),
-  :deep(.el-select__wrapper),
-  :deep(.el-date-editor.el-input__wrapper),
-  :deep(.el-date-editor.el-range-editor),
-  :deep(.el-autocomplete .el-input__wrapper),
-  :deep(.el-cascader .el-input__wrapper),
-  :deep(.el-input-number),
-  :deep(.el-input-number .el-input),
-  :deep(.el-input-number .el-input__wrapper) {
+  :deep(.el-button:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-input:not(.el-textarea) .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-date-editor.el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-date-editor.el-range-editor:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-autocomplete .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-cascader .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-input-number:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-input-number .el-input:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))),
+  :deep(.el-input-number .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))) {
     box-sizing: border-box;
     height: 32px !important;
     min-height: 32px !important;

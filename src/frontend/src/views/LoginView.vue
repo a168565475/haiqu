@@ -206,13 +206,17 @@ async function submitLogin() {
   min-width: 1200px;
   min-height: 100vh;
   overflow: hidden;
-  color: #38130d;
-  background: linear-gradient(90deg, #e8c76b 0%, #d67a38 38%, #ab4029 68%, #4a1a13 100%);
+  color: var(--erp-color-text-primary);
+  background: var(--erp-login-background);
 }
 
 .ambient {
   position: absolute;
   pointer-events: none;
+}
+
+.login-page img {
+  filter: var(--erp-login-art-filter);
 }
 
 .ambient img {
@@ -252,7 +256,7 @@ async function submitLogin() {
   position: absolute;
   inset: 0 0 0 auto;
   width: 900px;
-  background: linear-gradient(90deg, rgba(51, 14, 10, 0), rgba(51, 14, 10, 0.18) 38%, rgba(51, 14, 10, 0.48));
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--erp-overlay-scrim-color) 18%, transparent) 38%, color-mix(in srgb, var(--erp-overlay-scrim-color) 48%, transparent));
   pointer-events: none;
 }
 
@@ -329,7 +333,7 @@ async function submitLogin() {
   height: 36px;
   padding: 0 16px;
   border-radius: 18px;
-  background: rgba(255, 241, 218, 0.82);
+  background: color-mix(in srgb, var(--erp-color-surface) 82%, transparent);
   font-size: 13px;
   font-weight: 500;
   line-height: 36px;
@@ -361,7 +365,7 @@ async function submitLogin() {
   left: calc(100vw - 600px);
   width: 440px;
   min-height: 620px;
-  color: #fff8ec;
+  color: var(--erp-color-text-inverse);
 }
 
 .login-header {
@@ -420,18 +424,18 @@ async function submitLogin() {
   height: 60px;
   padding: 0 18px;
   border-radius: 14px;
-  background: rgba(255, 246, 232, 0.14);
+  background: color-mix(in srgb, var(--erp-color-text-inverse) 14%, transparent);
   box-shadow: none;
 }
 
 .login-form :deep(.el-input__wrapper:hover) {
-  background: rgba(255, 246, 232, 0.18);
+  background: color-mix(in srgb, var(--erp-color-text-inverse) 18%, transparent);
   box-shadow: none;
 }
 
 .login-form :deep(.el-input__wrapper.is-focus) {
-  background: rgba(255, 246, 232, 0.2);
-  box-shadow: 0 0 0 1px rgba(255, 241, 218, 0.42) inset;
+  background: color-mix(in srgb, var(--erp-color-text-inverse) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--erp-color-text-inverse) 42%, transparent) inset;
 }
 
 .login-form :deep(.el-input__prefix-inner) {
@@ -446,13 +450,13 @@ async function submitLogin() {
 
 .login-form :deep(.el-input__inner) {
   height: 60px;
-  color: #fff8ec;
+  color: var(--erp-color-text-inverse);
   font-size: 16px;
   line-height: 24px;
 }
 
 .login-form :deep(.el-input__inner::placeholder) {
-  color: rgba(255, 248, 236, 0.72);
+  color: color-mix(in srgb, var(--erp-color-text-inverse) 72%, transparent);
 }
 
 .login-form :deep(.el-input__suffix-inner) {
@@ -472,7 +476,7 @@ async function submitLogin() {
 
 .password-toggle:focus-visible {
   border-radius: 4px;
-  outline: 2px solid rgba(255, 241, 218, 0.8);
+  outline: 2px solid color-mix(in srgb, var(--erp-color-text-inverse) 80%, transparent);
   outline-offset: 2px;
 }
 
@@ -484,7 +488,7 @@ async function submitLogin() {
 
 .login-form :deep(.el-form-item__error) {
   top: 60px;
-  color: #fff1da;
+  color: var(--erp-color-surface);
   font-size: 12px;
   line-height: 18px;
 }
@@ -504,8 +508,8 @@ async function submitLogin() {
   margin: 0;
   border: 0;
   border-radius: 14px;
-  color: #38130d;
-  background: #fff1da;
+  color: var(--erp-color-text-primary);
+  background: var(--erp-color-surface);
   box-shadow: none;
   font-size: 16px;
   font-weight: 500;
@@ -515,13 +519,13 @@ async function submitLogin() {
 .login-button:hover,
 .login-button:focus {
   border: 0;
-  color: #38130d;
-  background: #fff7e9;
+  color: var(--erp-color-text-primary);
+  background: var(--erp-color-hover);
 }
 
 .login-actions p {
   margin: 0;
-  color: rgba(255, 248, 236, 0.72);
+  color: color-mix(in srgb, var(--erp-color-text-inverse) 72%, transparent);
   font-size: 13px;
   line-height: 20px;
 }

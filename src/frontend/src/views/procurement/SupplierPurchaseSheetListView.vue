@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref, watch } from 'vue'
 import { VideoPlay, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -193,26 +194,27 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="sheet-list-page">
-    <header class="page-heading">
+  <section class="sheet-list-page erp-glass-list">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="page-heading erp-list-heading">
       <h1>供应商采购表</h1>
       <span class="total-count">共 {{ total }} 张</span>
       <span class="heading-space" />
-      <div class="heading-actions">
-        <ElButton class="manage-button" :disabled="busy" @click="router.push({ name: 'purchase-contract-templates' })">模板管理</ElButton>
-        <ElButton class="download-button" data-testid="sheet-batch-download" :icon="Download" :loading="downloading" :disabled="!downloadReady" @click="batchDownload">批量下载</ElButton>
-        <ElButton class="publish-button" data-testid="sheet-batch-publish" type="primary" :icon="VideoPlay" :loading="publishing" :disabled="!publishReady" :title="canPublish ? '请选择1至100张草稿采购表' : '没有发布采购表权限'" @click="openBatchPublish">批量发布（{{ selected.length }}）</ElButton>
-      </div>
     </header>
+    </section>
 
     <div v-if="loadError" class="load-error" role="alert"><span>{{ loadError }}</span><ElButton :disabled="loading || busy" @click="load">重新加载</ElButton></div>
 
-    <header class="list-toolbar">
-      <h2>采购表清单</h2>
-      <span>{{ canPublish ? '草稿可编辑，发布后只读' : '当前账号没有发布权限' }}</span>
-    </header>
-
-    <section class="table-card">
+    <section class="table-card erp-list-data">
+      <div class="erp-list-toolbar">
+      <div class="heading-actions">
+        <ElButton class="manage-button erp-button-motion" :disabled="busy" @click="router.push({ name: 'purchase-contract-templates' })">模板管理</ElButton>
+        <ElButton class="download-button erp-button-motion" data-testid="sheet-batch-download" :icon="Download" :loading="downloading" :disabled="!downloadReady" @click="batchDownload">批量下载</ElButton>
+        <ElButton class="publish-button erp-button-motion" data-testid="sheet-batch-publish" type="primary" :icon="VideoPlay" :loading="publishing" :disabled="!publishReady" :title="canPublish ? '请选择1至100张草稿采购表' : '没有发布采购表权限'" @click="openBatchPublish">批量发布（{{ selected.length }}）</ElButton>
+      </div>
+        <div class="list-description"><h2>采购表清单</h2><span>{{ canPublish ? '草稿可编辑，发布后只读' : '当前账号没有发布权限' }}</span></div>
+      </div>
+      <div class="erp-list-table-frame">
       <ElTable ref="tableRef" v-loading="loading" :data="rows" height="100%" row-key="id" @selection-change="selected = $event">
         <ElTableColumn type="selection" width="46" align="center" header-align="center" :selectable="() => !busy && !loading" />
         <ElTableColumn label="采购表编号" width="214"><template #default="{ row }"><div class="stack"><strong>{{ row.sheet_number }}</strong><span>V{{ row.version_number }}</span></div></template></ElTableColumn>
@@ -225,7 +227,8 @@ onMounted(() => {
         <ElTableColumn label="操作" min-width="232" fixed="right" align="center"><template #default="{ row }"><ElButton :disabled="busy || loading" link type="primary" @click="edit(row)">{{ row.status === 'DRAFT' ? '编辑' : '查看' }}</ElButton><ElButton :disabled="busy || loading" link @click="downloadXlsx(row)">Excel</ElButton><ElButton v-if="row.status === 'PUBLISHED'" link @click="download(row)">PDF</ElButton></template></ElTableColumn>
         <template #empty><div class="empty"><strong>{{ loadError ? '采购表加载失败' : '暂无供应商采购表' }}</strong><span>{{ loadError ? '请重新加载后继续操作' : '请先确认采购订单并选择合同模板' }}</span></div></template>
       </ElTable>
-      <footer><span>已选择{{ selected.length }}张　·　草稿{{ draftSelected.length }}张　·　已发布{{ publishedSelected.length }}张</span><ElPagination :disabled="busy || loading" background v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="load" @size-change="resetPageAndLoad" /></footer>
+      </div>
+      <footer class="erp-list-footer"><span>已选择{{ selected.length }}张　·　草稿{{ draftSelected.length }}张　·　已发布{{ publishedSelected.length }}张</span><ElPagination :disabled="busy || loading" background v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="load" @size-change="resetPageAndLoad" /></footer>
     </section>
 
     <AppWindowDialog
@@ -261,45 +264,24 @@ onMounted(() => {
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
-.sheet-list-page { box-sizing: border-box; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: crm.$crm-color-page; font: 14px/20px crm.$crm-font-body; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 5px; }
-.sheet-list-page > :is(.page-heading, .list-toolbar, .table-card, .load-error) { min-width: 0; }
-.sheet-list-page h1, .sheet-list-page h2 { margin: 0; }
-
-.page-heading { flex: 0 0 46px; display: flex; align-items: center; gap: 24px; }
-.page-heading h1 { font: 700 34px/44px crm.$crm-font-display; letter-spacing: -1px; white-space: nowrap; }
-.total-count { color: crm.$crm-text-secondary; white-space: nowrap; }
+.total-count { color: var(--erp-color-text-secondary); white-space: nowrap; font-size: 12px; }
 .heading-space { flex: 1; }
-.heading-actions { display: flex; gap: 16px; }
-.heading-actions :deep(.el-button) { height: 32px; margin: 0; border-radius: 5px; font-size: 13px; }
-.heading-actions :deep(.el-icon) { font-size: 16px; margin-right: 8px; }
-.manage-button, .download-button { width: 110px; }.publish-button { width: 176px; }
-.heading-actions :deep(.el-button.is-disabled) { background: crm.$crm-color-subtle; color: crm.$crm-text-muted; border-color: transparent; }
-.load-error { padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; background: crm.$crm-danger-soft; color: crm.$crm-danger; flex: none; }
-.list-toolbar { flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; margin-top: 10px; color: crm.$crm-text-secondary; }
-.list-toolbar h2, .list-toolbar span { font-size: 13px; font-weight: 400; }
-.table-card { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; margin-top: 14px; border: 1px solid crm.$crm-border-default; border-radius: 5px; background: crm.$crm-color-surface; }
-.table-card :deep(.el-table) { min-height: 0; flex: 1; font-size: 12px; color: crm.$crm-text-primary; --el-table-bg-color: #{crm.$crm-color-surface}; --el-table-tr-bg-color: #{crm.$crm-color-surface}; --el-table-header-bg-color: #{crm.$crm-color-subtle}; --el-table-header-text-color: #{crm.$crm-text-primary}; --el-table-border-color: #{crm.$crm-border-subtle}; --el-table-row-hover-bg-color: #{crm.$crm-color-row-hover}; }
-.table-card :deep(.el-table__inner-wrapper::before) { display: none; }
-.table-card :deep(.el-table .el-table__header th.el-table__cell) { height: 44px; padding: 0; font-weight: 500; }
-.table-card :deep(.el-table .el-table__body td.el-table__cell) { height: 40px; padding: 0; }
-.table-card :deep(.el-table .cell) { padding: 0 16px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
-.table-card :deep(.el-table-column--selection .cell) { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 0 !important; }
+.heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.manage-button, .download-button { width: 110px; }
+.publish-button { width: 176px; }
+.load-error { padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; background: var(--erp-color-danger-soft); color: var(--erp-color-danger); flex: none; }
+.list-description { display: flex; flex-wrap: wrap; align-items: center; margin-left: auto; gap: 12px; color: var(--erp-color-text-secondary); }
+.list-description h2, .list-description span { margin: 0; font-size: 13px; font-weight: 400; }
+.table-card :deep(.el-table-column--selection .cell) { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 0; }
 .table-card :deep(.el-table-column--selection .el-checkbox) { display: inline-flex; align-items: center; justify-content: center; height: 100%; margin: 0; }
-.stack { display: flex; flex-direction: column; gap: 0; }
-.stack span { color: crm.$crm-text-secondary; }
+.stack { display: flex; flex-direction: column; gap: 0; line-height: 18px; }
+.stack span { color: var(--erp-table-text); }
 .table-card strong { font-weight: 500; }
-.table-card :deep(.el-tag) { width: 68px; height: 24px; border: none; border-radius: 999px; background: crm.$crm-color-subtle; color: crm.$crm-text-secondary; font-size: 12px; }
-.table-card :deep(.el-tag.published) { color: crm.$crm-success; background: crm.$crm-success-soft; }
+.table-card :deep(.el-tag) { width: 68px; height: 24px; border-radius: var(--erp-radius-pill); font-size: 12px; }
 .table-card :deep(.el-button.is-link) { font-size: 12px; }
 .table-card :deep(.el-button.is-link + .el-button.is-link) { margin-left: 16px; }
-.table-card > footer { height: 48px; flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid crm.$crm-border-subtle; box-sizing: border-box; color: crm.$crm-text-secondary; font-size: 13px; }
-.table-card :deep(.el-pagination) { gap: 10px; --el-pagination-button-bg-color: transparent; --el-pagination-hover-color: #{crm.$crm-primary}; }
-.table-card :deep(.el-pagination .el-select) { width: 136px; }
-.table-card :deep(.el-pagination .el-select__wrapper) { height: 32px; background: crm.$crm-color-surface; }
-.table-card :deep(.el-pagination .number) { min-width: 38px; height: 32px; }
-.table-card :deep(.el-pager li.is-active) { background: crm.$crm-primary; }
-.empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: crm.$crm-text-secondary; }
-.empty strong { color: crm.$crm-text-primary; font-size: 20px; }
+.empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--erp-color-text-secondary); }
+.empty strong { color: var(--erp-color-text-primary); font-size: 20px; }
 .batch-publish-dialog__body { display: flex; flex-direction: column; gap: 16px; }
 .batch-publish-dialog__count { display: flex; height: 44px; align-items: baseline; gap: 8px; color: crm.$crm-text-regular; font-size: 14px; }
 .batch-publish-dialog__count strong { color: crm.$crm-text-primary; font: 700 30px/40px crm.$crm-font-display; }

@@ -62,7 +62,7 @@ const emit = defineEmits<{
   margin: 0;
   padding: 0;
   list-style: none;
-  color: #4d4c48;
+  color: var(--erp-color-text-regular);
   font-size: 13px;
   line-height: 20px;
   white-space: nowrap;
@@ -80,29 +80,29 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  color: #4d4c48;
+  color: var(--erp-color-text-regular);
   text-decoration: none;
 }
 
 .app-breadcrumb a:hover {
-  color: #c84e28;
+  color: var(--erp-color-brand);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .app-breadcrumb a:active {
-  color: #9f351a;
+  color: var(--erp-color-brand-pressed);
 }
 
 .app-breadcrumb a:focus-visible,
 .app-breadcrumb__current-button:focus-visible {
   border-radius: 2px;
-  outline: 2px solid #3898ec;
+  outline: 2px solid var(--erp-color-focus);
   outline-offset: 2px;
 }
 
 .app-breadcrumb [aria-current='page'] {
-  color: #1f1d18;
+  color: var(--erp-color-text-primary);
   font-weight: 500;
 }
 
@@ -120,16 +120,16 @@ const emit = defineEmits<{
 }
 
 .app-breadcrumb__current-button:hover {
-  color: #c84e28;
+  color: var(--erp-color-brand);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .app-breadcrumb__current-button:active {
-  color: #9f351a;
+  color: var(--erp-color-brand-pressed);
 }
 
 .app-breadcrumb__separator {
-  color: #968f84;
+  color: var(--erp-color-text-muted);
 }
 </style>

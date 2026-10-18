@@ -12,7 +12,7 @@
   }
 }
 
-.scroll-actions-container[data-horizontal-overflow='true'] > table {
+.scroll-actions-container[data-horizontal-overflow='true'] > table:not(.erp-list-native-table) {
   > thead > tr > .scroll-actions-cell {
     position: sticky;
     right: 0;

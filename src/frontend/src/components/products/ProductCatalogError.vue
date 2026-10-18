@@ -66,12 +66,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.product-catalog-field-error { position: absolute; right: 0; top: -6px; z-index: 1; display: flex; color: #b53333; background: #fcfbf7; border-radius: 5px; }
+.product-catalog-field-error { position: absolute; right: 0; top: -6px; z-index: 1; display: flex; color: var(--erp-color-danger); background: var(--erp-tooltip-background); border-radius: 5px; }
 svg { width: 16px; height: 16px; }
-.product-catalog-field-error:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.product-catalog-field-error:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
 .error-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
 <style lang="scss">
-.product-catalog-error-popper.el-popper { max-width: min(300px, calc(100vw - 16px)); padding: 8px 12px; border: 1px solid #b53333; border-radius: 5px; color: #b53333; background: #fcfbf7; box-shadow: none; font-size: 12px; line-height: 18px; }
-.product-catalog-error-popper.el-popper .el-popper__arrow::before { border-color: #b53333; background: #fcfbf7; }
+.product-catalog-error-popper.el-popper { max-width: min(300px, calc(100vw - 16px)); padding: 8px 12px; border: 1px solid var(--erp-color-danger); border-radius: 5px; color: var(--erp-color-danger); background: var(--erp-tooltip-background); box-shadow: var(--erp-overlay-shadow); font-size: 12px; line-height: 18px; }
+.product-catalog-error-popper.el-popper .el-popper__arrow::before { border-color: var(--erp-color-danger); background: var(--erp-tooltip-background); }
 </style>

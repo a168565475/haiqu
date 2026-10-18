@@ -1,0 +1,57 @@
+:is(.glass-detail-layout, .glass-form-layout) #erp-main-content h1:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .sample-form-page .edit-heading *)) {
+  font-family: var(--erp-font-body);
+  font-size: 36px !important;
+  font-weight: 700;
+  line-height: 44px !important;
+}
+
+// 路由显式接入，避免详情改造改变列表、编辑页或打印纸面的布局。
+.glass-detail-layout #erp-main-content,
+.glass-form-layout #erp-main-content,
+.cus05-contact-drawer,
+.cus05-history-drawer,
+body:has(:is(.glass-detail-layout, .glass-form-layout)) :is(.app-window-overlay, .el-overlay, .el-drawer, .el-popper) {
+  .el-button:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)) {
+    height: 32px;
+    min-height: 32px;
+    border-radius: var(--erp-radius-control);
+  }
+
+  :is(.el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)), .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)), .el-date-editor.el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)), .el-input-number:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *))) {
+    min-height: 32px;
+    height: 32px;
+    border-radius: var(--erp-radius-control);
+  }
+
+  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)) { border-radius: var(--erp-radius-control); }
+
+  .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)),
+  .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)) {
+    background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+  }
+
+  .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)):hover,
+  .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)):hover {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset;
+  }
+
+  .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)).is-focus,
+  .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)).is-focused {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset;
+  }
+
+  .el-form-item.is-error :is(.el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)), .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *))) {
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-color-danger) inset;
+  }
+
+  .el-input.is-disabled .el-input__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)),
+  .el-select__wrapper:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *)).is-disabled {
+    background: var(--erp-input-disabled-background);
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset;
+  }
+}
+
+@media print {
+  .glass-detail-layout #erp-main-content { overflow: visible; }
+}

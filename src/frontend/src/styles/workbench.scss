@@ -1,0 +1,61 @@
+// 只由工作台组件显式引用，沿用全站主题颜色与玻璃参数。
+@mixin glass-card {
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  // 倾斜卡片不使用 fixed 背景反光，避免变换后每张卡重复绘制背景光弧。
+  background: var(--erp-glass-background);
+  box-shadow: var(--erp-glass-shadow);
+  backdrop-filter: var(--erp-glass-backdrop);
+  transition: transform 360ms var(--erp-motion-ease);
+
+  @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+    transform: perspective(1200px) rotateX(var(--erp-tilt-x, 0deg)) rotateY(var(--erp-tilt-y, 0deg));
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    background: var(--erp-color-surface);
+  }
+
+  @media (prefers-reduced-motion: reduce), print {
+    transform: none;
+    transition: none;
+  }
+
+  @media print {
+    border-color: var(--erp-print-border);
+    background: var(--erp-print-background);
+    color: var(--erp-print-text);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+}
+
+@mixin secondary-button {
+  border-color: var(--erp-button-secondary-border);
+  border-radius: var(--erp-radius-control);
+  color: var(--erp-button-secondary-text);
+  background: var(--erp-button-secondary-surface);
+  box-shadow: var(--erp-button-secondary-shadow);
+
+  &:hover:not(:disabled, [aria-disabled='true']) {
+    background: var(--erp-button-secondary-hover-surface);
+  }
+
+  &:active:not(:disabled, [aria-disabled='true']) {
+    background: var(--erp-button-secondary-pressed-background);
+    box-shadow: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--erp-color-focus);
+    outline-offset: 3px;
+  }
+
+  &:disabled, &[aria-disabled='true'] {
+    border-color: var(--erp-button-disabled-border);
+    color: var(--erp-button-disabled-text);
+    background: var(--erp-button-disabled-background);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}

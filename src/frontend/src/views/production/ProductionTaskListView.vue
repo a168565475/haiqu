@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -192,6 +193,7 @@ async function loadFilterOptions(): Promise<boolean> {
   }
 }
 
+function resetListFilters() { searchText.value = ''; activeStatusTab.value = 'all'; quantityPending.value = false; dueSoon.value = false; resetAdvancedFilters(); search() }
 function search() { page.value = 1; void loadRows() }
 function handleSearchEnter(event: KeyboardEvent) {
   if (event.isComposing) return
@@ -354,16 +356,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="production-list-page" aria-label="生产任务单列表">
-    <header class="page-heading">
+  <section class="production-list-page erp-glass-list" aria-label="生产任务单列表">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="page-heading erp-list-heading">
       <div class="page-heading__title"><h1>生产任务单</h1><span>{{ total }} 条</span></div>
     </header>
 
-    <ElAlert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false"><ElButton size="small" @click="loadFilterOptions">重试选项</ElButton></ElAlert>
+    <ElAlert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false"><ElButton class="erp-button-motion" size="small" @click="loadFilterOptions">重试选项</ElButton></ElAlert>
 
-    <section class="list-filters" aria-label="生产任务单筛选">
+    <section class="list-filters erp-list-filters" aria-label="生产任务单筛选">
         <ElInput v-model="searchText" class="search-filter" clearable placeholder="搜索任务 / 订单 / 客户 / 产品" @keydown.enter="handleSearchEnter" @clear="search">
-          <template #suffix><button type="button" class="production-search-button" aria-label="搜索生产任务单" @click="search"><img :src="searchIcon" alt="" aria-hidden="true" /></button></template>
+          <template #suffix><button type="button" class="production-search-button erp-list-search-button" aria-label="搜索生产任务单" @click="search"><img :src="searchIcon" alt="" aria-hidden="true" /></button></template>
         </ElInput>
         <ElSelect v-model="activeStatusTab" aria-label="状态筛选" @change="() => applyStatusTab(activeStatusTab)">
           <ElOption v-for="item in statusOptions" :key="item.key" :label="`状态：${item.label}`" :value="item.key" />
@@ -377,8 +380,8 @@ onBeforeUnmount(() => {
           <ElOption label="交期：全部" :value="false" />
           <ElOption label="交期：近 30 天" :value="true" />
         </ElSelect>
-        <ElPopover v-model:visible="advancedVisible" placement="bottom-start" :width="760" trigger="click" popper-class="production-filter-popper">
-          <template #reference><ElButton :class="{ 'is-filter-active': advancedFilterCount > 0 }">更多筛选<template v-if="advancedFilterCount">（{{ advancedFilterCount }}）</template><ElIcon><ArrowDown /></ElIcon></ElButton></template>
+        <ElPopover v-model:visible="advancedVisible" placement="bottom-start" :width="760" trigger="click" popper-class="production-filter-popper erp-list-filter-popover">
+          <template #reference><ElButton class="erp-button-motion" :class="{ 'is-filter-active': advancedFilterCount > 0 }">更多筛选<template v-if="advancedFilterCount">（{{ advancedFilterCount }}）</template><ElIcon><ArrowDown /></ElIcon></ElButton></template>
           <section v-if="advancedVisible" class="advanced-filter-panel" v-loading="optionsLoading">
             <header><strong>更多筛选</strong><span>按业务字段组合筛选生产任务单</span></header>
             <div class="advanced-filter-grid">
@@ -391,18 +394,20 @@ onBeforeUnmount(() => {
               <label><span>交货方式</span><ElSelect v-model="advancedFilters.delivery_method" clearable placeholder="全部方式"><ElOption v-for="item in options?.delivery_methods || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
               <label><span>数量校验</span><ElCheckbox v-model="quantityPending">仅看数量待确认</ElCheckbox></label>
             </div>
-            <footer><ElButton @click="resetAdvancedFilters">重置</ElButton><ElButton type="primary" @click="applyAdvancedFilters">应用筛选</ElButton></footer>
+            <footer><ElButton class="erp-button-motion" @click="resetAdvancedFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="applyAdvancedFilters">应用筛选</ElButton></footer>
           </section>
         </ElPopover>
-      <div class="list-filter-actions">
-        <ElButton :icon="Upload" :loading="exportLoading" :disabled="!total" @click="exportList">导出</ElButton>
-        <ElButton v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新建生产任务单</ElButton>
-      </div>
+      <div class="list-filter-actions erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetListFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton></div>
     </section>
 
-    <section class="table-card">
-      <ElAlert v-if="errorMessage" class="list-error" type="error" :title="errorMessage" show-icon :closable="false"><ElButton size="small" @click="loadRows">重试</ElButton></ElAlert>
-      <ElTable v-else v-loading="loading" :data="rows" row-key="id" empty-text="暂无生产任务单" @cell-mouse-enter="showRowProducts" @cell-mouse-leave="rowTooltipVisible = false">
+    </section>
+    <section class="table-card erp-list-data">
+      <div class="list-filter-actions erp-list-toolbar">
+        <ElButton class="erp-button-motion" :icon="Upload" :loading="exportLoading" :disabled="!total" @click="exportList">导出</ElButton>
+        <ElButton class="erp-button-motion" v-if="canCreate" type="primary" :icon="Plus" @click="openCreate">新建生产任务单</ElButton>
+      </div>
+      <ElAlert v-if="errorMessage" class="list-error" type="error" :title="errorMessage" show-icon :closable="false"><ElButton class="erp-button-motion" size="small" @click="loadRows">重试</ElButton></ElAlert>
+      <div v-else class="erp-list-table-frame"><ElTable height="100%" v-loading="loading" :data="rows" row-key="id" empty-text="暂无生产任务单" @cell-mouse-enter="showRowProducts" @cell-mouse-leave="rowTooltipVisible = false">
         <ElTableColumn
           prop="task_number"
           label="任务编号"
@@ -415,9 +420,9 @@ onBeforeUnmount(() => {
         <ElTableColumn prop="delivery_date" label="交期" min-width="102"><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
         <ElTableColumn label="业务员" min-width="78" show-overflow-tooltip><template #default="{ row }">{{ row.salesperson.display_name }}</template></ElTableColumn>
         <ElTableColumn label="跟单员" min-width="78" show-overflow-tooltip><template #default="{ row }">{{ row.followers.map((item: { display_name: string }) => item.display_name).join('、') || '待选择' }}</template></ElTableColumn>
-        <ElTableColumn label="状态" width="110" align="center"><template #default="{ row }"><ElTag class="status-tag" :class="`status-tag--${statusClass(row.status)}`" effect="dark">{{ row.status_display }}</ElTag></template></ElTableColumn>
-        <ElTableColumn label="BOM状态" width="120" align="center"><template #default="{ row }"><ElTag class="status-tag progress-status-tag" :class="`status-tag--${progressStatusClass(row.bom_status)}`" effect="dark">{{ row.bom_status_display || '未建立' }}</ElTag></template></ElTableColumn>
-        <ElTableColumn label="采购状态" width="130" align="center"><template #default="{ row }"><ElTag class="status-tag progress-status-tag" :class="`status-tag--${progressStatusClass(row.purchase_status)}`" effect="dark">{{ row.purchase_status_display || '未发起' }}</ElTag></template></ElTableColumn>
+        <ElTableColumn label="状态" width="110" align="center"><template #default="{ row }"><ElTag class="status-tag erp-list-tag" :class="`erp-list-tag--${statusClass(row.status)}`" effect="dark">{{ row.status_display }}</ElTag></template></ElTableColumn>
+        <ElTableColumn label="BOM状态" width="120" align="center"><template #default="{ row }"><ElTag class="status-tag erp-list-tag progress-status-tag" :class="`erp-list-tag--${progressStatusClass(row.bom_status)}`" effect="dark">{{ row.bom_status_display || '未建立' }}</ElTag></template></ElTableColumn>
+        <ElTableColumn label="采购状态" width="130" align="center"><template #default="{ row }"><ElTag class="status-tag erp-list-tag progress-status-tag" :class="`erp-list-tag--${progressStatusClass(row.purchase_status)}`" effect="dark">{{ row.purchase_status_display || '未发起' }}</ElTag></template></ElTableColumn>
         <ElTableColumn label="操作" width="80" align="center" fixed="right">
           <template #default="{ row }">
             <div class="row-actions">
@@ -440,9 +445,9 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </ElTableColumn>
-      </ElTable>
+      </ElTable></div>
       <ElTooltip virtual-triggering :virtual-ref="hoveredRowElement" :visible="rowTooltipVisible" :content="hoveredProductDetails" popper-class="production-product-tooltip" placement="top" />
-      <footer class="table-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search" /></footer>
+      <footer class="table-footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search" /></footer>
     </section>
 
 
@@ -466,74 +471,41 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped lang="scss">
-.production-list-page { box-sizing: border-box; min-width: 0; height: 100%; min-height: 0; display: flex; flex-direction: column; padding: 0; color: #1f1d18; background: var(--erp-page-background); --el-color-primary: #c84e28; }
-.page-heading, .page-heading__title, .list-filters, .list-filter-actions, .table-footer, .row-actions { display: flex; align-items: center; }
-.page-heading { height: 46px; flex: none; justify-content: space-between; }
-.page-heading__title { gap: 14px; }
-.page-heading h1 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 34px; font-weight: 700; line-height: 46px; }
-.page-heading__title > span { color: #6f6a61; font-size: 13px; }
-.list-filters { min-height: 32px; flex: none; flex-wrap: wrap; gap: 10px; margin-top: 17px; }
-.list-filters .search-filter { width: 250px; min-width: 250px; flex: none; }
+.page-heading__title { display: flex; align-items: baseline; gap: 14px; }
+.page-heading__title > span { color: var(--erp-color-text-secondary); font-size: 13px; }
+.list-filters .search-filter { width: min(100%, 250px); flex: none; }
 .list-filters > :deep(.el-select) { width: 142px; flex: none; }
-.list-filters :deep(.el-input__wrapper), .list-filters :deep(.el-select__wrapper), .list-filters :deep(.el-button) { min-height: 32px; border-radius: 5px; }
-.list-filters :deep(.el-button) { margin: 0; padding: 0 13px; }
-.list-filter-actions { flex: none; gap: 12px; margin-left: auto; }
-.list-filter-actions :deep(.el-button) { height: 32px; }
-.list-filter-actions :deep(.el-button--primary) { min-width: 174px; border-color: #c84e28; background: #c84e28; }
-.production-search-button { display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
-.production-search-button img { width: 16px; height: 16px; }
-.production-search-button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.product-summary:focus-visible, .row-action-trigger:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
 .product-summary { padding: 0; line-height: 20px; }
 .product-summary > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.product-summary:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
-.table-card { min-height: 0; flex: 1; display: flex; flex-direction: column; margin-top: 22px; overflow: hidden; border: 1px solid #ddd6c9; border-radius: 5px; background: #fdfcf9; }
-.table-card :deep(.el-table) { min-height: 0; flex: 1; color: #1f1d18; --el-table-border-color: #ddd6c9; }
-.table-card :deep(.el-table__inner-wrapper::before) { display: none; }
-.table-card :deep(.el-table__body tbody tr:last-child > td) { border-bottom: 0; }
-.table-card :deep(.el-table__header-wrapper th) { height: 44px; padding: 0; color: #6f6a61; background: #f0eadf; font-size: 11px; font-weight: 500; }
-.production-list-page .table-card :deep(.el-table__body tr), .production-list-page .table-card :deep(.el-table__body td.el-table__cell) { height: 34px !important; font-size: 12px; }
-.table-card :deep(.el-table__cell) { padding: 0; border-right: 0; }
-.table-card :deep(.el-table .cell) { padding: 0 16px; }
-.table-card :deep(.el-table__row:hover > td) { background: #fff6ea; }
-.table-card :deep(.status-tag) { min-width: 56px; height: 24px; justify-content: center; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; font-size: 12px; font-weight: 500; line-height: 18px; }
-.table-card :deep(.status-tag--brand) { background: #c96442; }
-.table-card :deep(.status-tag--info) { background: #3898ec; }
-.table-card :deep(.status-tag--success) { background: #4f7d4b; }
-.table-card :deep(.status-tag--warning) { background: #b8781e; }
-.table-card :deep(.status-tag--danger) { background: #b53333; }
-.table-card :deep(.status-tag--neutral) { background: #5e5d59; }
-.link-button { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: #1f1d18; background: transparent; font: inherit; font-size: 12px; font-weight: 500; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.link-button { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: var(--erp-table-text); background: transparent; font: inherit; font-weight: 500; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .link-button:hover { text-decoration: underline; }
-.row-actions { justify-content: center; }
-.row-action-trigger { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 0; border-radius: 5px; color: #1f1d18; background: transparent; cursor: pointer; }
-.row-action-trigger:hover { background: #efebe3; }
-.row-action-trigger:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.row-actions { display: flex; justify-content: center; align-items: center; }
+.row-action-trigger { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 0; border-radius: var(--erp-radius-control); color: var(--erp-table-text); background: transparent; cursor: pointer; }
+.row-action-trigger:hover { background: var(--erp-table-hover); }
 .row-action-dots { display: inline-flex; align-items: center; gap: 3px; }
 .row-action-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
-.production-list-page .table-footer { height: auto !important; min-height: 48px; flex: none; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 16px !important; border-top: 1px solid #ddd6c9; color: #6f6a61; font-size: 12px; }
-.table-footer :deep(.el-pagination) { min-width: 0; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; --el-pagination-button-bg-color: #fdfcf9; }
-.table-footer :deep(.is-active) { color: #c84e28; background: #fdfcf9; border: 1px solid #c84e28; }
-.list-error { margin: 16px; }
-.lifecycle-dialog__summary { margin-bottom: 18px; color: #52525b; font-size: 14px; }
-.lifecycle-dialog__summary strong { color: #18181b; }
+.lifecycle-dialog__summary { margin-bottom: 18px; color: var(--erp-color-text-regular); font-size: 14px; }
+.lifecycle-dialog__summary strong { color: var(--erp-color-text-primary); }
 .finish-quantities { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.pmc-confirm-note { margin: 0 0 18px; padding: 10px 12px; color: #6f6a61; background: #f6f3ec; font-size: 13px; line-height: 20px; }
+.pmc-confirm-note { margin: 0 0 18px; padding: 10px 12px; color: var(--erp-color-text-secondary); background: var(--erp-color-subtle); font-size: 13px; line-height: 20px; }
 .pmc-confirm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.pmc-confirm-grid label { min-width: 0; display: flex; flex-direction: column; gap: 7px; color: #4d4c48; font-size: 13px; }
+.pmc-confirm-grid label { min-width: 0; display: flex; flex-direction: column; gap: 7px; color: var(--erp-color-text-regular); font-size: 13px; }
 .pmc-confirm-grid :deep(.el-date-editor) { width: 100%; height: 32px; }
 </style>
 
+
 <style lang="scss">
 .production-product-tooltip { white-space: pre-line; max-width: min(560px, calc(100vw - 32px)); }
-.production-filter-popper { padding: 0 !important; border-radius: 10px !important; }
+.production-filter-popper .advanced-filter-panel { padding: 0; }
 .advanced-filter-panel { padding: 18px; }
 .advanced-filter-panel header { display: flex; flex-direction: column; gap: 3px; margin-bottom: 16px; }
-.advanced-filter-panel header strong { color: #18181b; font-size: 16px; }
-.advanced-filter-panel header span { color: #71717a; font-size: 12px; }
+.advanced-filter-panel header strong { color: var(--erp-color-text-primary); font-size: 16px; }
+.advanced-filter-panel header span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .advanced-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 12px; }
-.advanced-filter-grid label { min-width: 0; display: flex; flex-direction: column; gap: 6px; color: #3f3f46; font-size: 12px; }
+.advanced-filter-grid label { min-width: 0; display: flex; flex-direction: column; gap: 6px; color: var(--erp-color-text-primary); font-size: 12px; }
 .advanced-filter-grid .delivery-range { grid-column: span 2; }
 .advanced-filter-grid .el-input, .advanced-filter-grid .el-select, .advanced-filter-grid .el-date-editor { width: 100%; }
-.advanced-filter-panel footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #e4e4e7; }
-.danger-menu-item { color: #f56c6c !important; }
+.advanced-filter-panel footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--erp-color-border); }
+.danger-menu-item { color: var(--erp-color-danger) !important; }
 </style>

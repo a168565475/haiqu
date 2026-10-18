@@ -172,8 +172,8 @@ function confirm(): void {
 @use '../../styles/crm/tokens' as token;
 
 .material-picker-layout { display: grid; min-height: 0; height: 100%; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; }
-.material-source-panel, .material-table-panel { min-width: 0; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
-.material-source-panel h3 { height: 44px; margin: 0; padding: 0 16px; border-bottom: 1px solid token.$crm-border-default; background: #f1eadf; font-size: 16px; line-height: 44px; }
+.material-source-panel, .material-table-panel { min-width: 0; overflow: hidden; border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); }
+.material-source-panel h3 { height: 44px; margin: 0; padding: 0 16px; border-bottom: 1px solid token.$crm-border-default; background: var(--erp-color-subtle); font-size: 16px; line-height: 44px; }
 .material-source-panel dl { display: grid; gap: 18px; margin: 0; padding: 18px 16px; }
 .material-source-panel dl > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 8px; }
 .material-source-panel dt { color: token.$crm-text-secondary; }
@@ -182,16 +182,16 @@ function confirm(): void {
 .material-product-summary dd { display: flex; flex-direction: column; align-items: flex-start; }
 .material-product-summary strong { font-weight: 600; }
 .material-product-summary small { display: block; margin-top: 3px; color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; line-height: 19px; }
-.material-craft-tag { display: inline-flex; height: 24px; align-items: center; padding: 0 12px; border-radius: 999px; color: #fff; background: #bf6d19; font-size: 12px; }
+.material-craft-tag { display: inline-flex; height: 24px; align-items: center; padding: 0 12px; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-brand-background); font-size: 12px; }
 .material-table-panel { display: flex; flex-direction: column; }
 .material-tabs { display: flex; height: 44px; align-items: flex-end; gap: 22px; padding: 0 16px; border-bottom: 1px solid token.$crm-border-default; }
 .material-tabs button { position: relative; height: 44px; padding: 0; border: 0; color: token.$crm-text-secondary; background: transparent; cursor: pointer; font: inherit; }
-.material-tabs button.is-active { color: #c94b27; font-weight: 600; }
-.material-tabs button.is-active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: #c94b27; content: ''; }
+.material-tabs button.is-active { color: var(--erp-color-brand); font-weight: 600; }
+.material-tabs button.is-active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: var(--erp-color-selected); content: ''; }
 .material-table-wrap { min-height: 0; flex: 1; overflow: auto; }
-.material-picker-table { width: 100%; min-width: 900px; table-layout: fixed; border-spacing: 0; border-collapse: separate; color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
-.material-picker-table th { position: sticky; z-index: 1; top: 0; height: 44px; padding: 0 16px; border-bottom: 1px solid token.$crm-border-default; color: token.$crm-text-primary; background: #f1eadf; font-size: 11px; font-weight: 600; line-height: 16px; text-align: left; white-space: nowrap; }
-.material-picker-table td { height: 40px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; text-overflow: ellipsis; white-space: nowrap; }
+.material-picker-table { width: 100%; min-width: 900px; table-layout: fixed; border-spacing: 0; border-collapse: separate; color: var(--erp-table-text); font-size: 12px; line-height: 18px; }
+.material-picker-table th { position: sticky; z-index: 1; top: 0; height: 44px; padding: 0 16px; border-bottom: 1px solid var(--erp-table-grid); color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; font-weight: 600; line-height: 16px; text-align: left; white-space: nowrap; }
+.material-picker-table td { height: 40px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid var(--erp-table-grid); background: var(--erp-table-body-fill); text-overflow: ellipsis; white-space: nowrap; }
 .material-picker-table .col-select { width: 56px; }
 .material-picker-table .col-number { width: 110px; }
 .material-picker-table .col-name { width: 128px; }
@@ -203,15 +203,15 @@ function confirm(): void {
 .material-picker-table .col-procurement { width: 145px; }
 .material-picker-table .col-issue { width: 156px; }
 .material-picker-table tbody tr:not(.material-empty-row) { cursor: pointer; }
-.material-picker-table tbody tr.is-selected td { background: #fff7f1; }
+.material-picker-table tbody tr.is-selected td { background: var(--erp-color-selected); }
 .material-picker-table tbody tr.is-disabled { cursor: not-allowed; opacity: .64; }
-.material-picker-table strong { display: block; overflow: hidden; color: token.$crm-text-primary; font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; }
-.material-picker-table small { color: token.$crm-text-secondary; font-size: 11px; }
+.material-picker-table strong { display: block; overflow: hidden; color: var(--erp-table-text); font-size: 13px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; }
+.material-picker-table small { color: var(--erp-table-text); font-size: 11px; }
 .material-picker-table .quantity-basis { display: block; overflow: hidden; text-overflow: ellipsis; }
 .material-picker-table .el-input-number { width: 104px; }
 .issue-input-with-unit { display: flex; align-items: center; gap: 6px; }
 .issue-input-with-unit span { color: token.$crm-text-secondary; }
-.material-empty-row td { height: 270px; color: token.$crm-text-secondary; text-align: center; }
+.material-empty-row td { height: 270px; color: var(--erp-table-text); text-align: center; }
 .material-footnote { flex: none; margin: 0; padding: 10px 16px; border-top: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; font-size: 12px; }
 .material-dialog-footer { display: flex; align-items: center; justify-content: space-between; color: token.$crm-text-secondary; }
 .material-dialog-footer > div { display: flex; gap: 12px; }

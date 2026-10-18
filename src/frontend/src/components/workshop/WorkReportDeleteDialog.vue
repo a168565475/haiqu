@@ -76,6 +76,6 @@ async function refresh() {
 }
 .work-report-delete-actions {display:flex;justify-content:flex-end;gap:8px;
   button {height:32px;border:1px solid t.$crm-border-default;border-radius:5px;padding:0 12px;background:t.$crm-color-surface;color:inherit;font-size:13px;cursor:pointer;}
-  button:disabled {opacity:.45;cursor:not-allowed;} .delete-confirm {background:t.$crm-danger;color:#fff;border-color:t.$crm-danger;}
+  button:disabled {opacity:.45;cursor:not-allowed;} .delete-confirm {background:t.$crm-danger;color:var(--erp-color-text-inverse);border-color:t.$crm-danger;}
 }
 </style>

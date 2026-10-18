@@ -47,10 +47,10 @@ function submit() {
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
-.purchase-order-complete-backdrop { background: rgb(31 29 24 / 36%); }
+.purchase-order-complete-backdrop { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 36%, transparent); }
 .el-dialog.purchase-order-complete-dialog {
   box-sizing: border-box; height: 748px; padding: 0; margin-bottom: 0; border-radius: 7px; display: flex; flex-direction: column;
-  color: token.$crm-text-primary; background: token.$crm-color-surface; box-shadow: 0 8px 24px #00000029; font: 18px/24px token.$crm-font-body;
+  color: token.$crm-text-primary; background: token.$crm-color-surface; box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 16.078%, transparent); font: 18px/24px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-color-primary-light-3: #{token.$crm-primary-light-3}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary};
   .el-dialog__header { height: 136px; flex-shrink: 0; box-sizing: border-box; padding: 32px 32px 0; margin: 0; }
   .el-dialog__header h2 { margin: 0; font: 700 34px/44px token.$crm-font-display; }

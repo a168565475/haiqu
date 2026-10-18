@@ -1,3 +1,6 @@
+from datetime import date, datetime
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.utils import timezone
@@ -8,12 +11,19 @@ from apps.organizations.models import Employee
 
 from ..models import (
     SampleInventoryLine,
+    SampleInventoryLoan,
+    SampleInventoryLoanLine,
+    SampleInventoryOutbound,
+    SampleInventoryOutboundLine,
     SampleInventoryReceipt,
     SampleItem,
     SampleProduct,
     SampleRequest,
     SampleRequestStatus,
+    SampleOutboundMethod,
 )
+from ..loan_services import delete_sample_inventory_loan
+from ..outbound_services import delete_sample_inventory_outbound
 
 
 class SampleInventoryApiTests(APITestCase):
@@ -182,15 +192,108 @@ class SampleInventoryApiTests(APITestCase):
         self.assertEqual(
             summary.data["data"],
             {
+                "month": timezone.localdate().strftime("%Y-%m"),
                 "current_available": 6,
                 "borrowed": 2,
                 "inbound_today": 10,
                 "outbound_today": 0,
+                "inbound_this_month": 10,
+                "outbound_this_month": 0,
+                "loaned_this_month": 0,
             },
         )
         self.assertEqual(options.status_code, 200, options.data)
         self.assertEqual(options.data["data"]["product_categories"], ["户外桌椅"])
         self.assertEqual(options.data["data"]["locations"], ["样品库"])
+
+    @patch("apps.samples.api.inventory_views.timezone.localdate", return_value=date(2026, 10, 17))
+    def test_month_summary_uses_local_month_boundaries_and_quantities(self, _localdate):
+        # 上海月界限对应 UTC 前一日 16:00；月末最后一秒计入，下月零点排除。
+        moments = [
+            "2026-09-30T15:59:59+00:00",
+            "2026-09-30T16:00:00+00:00",
+            "2026-10-31T15:59:59+00:00",
+            "2026-10-31T16:00:00+00:00",
+        ]
+        self.receipt.submitted_at = datetime.fromisoformat(moments[0])
+        self.receipt.save(update_fields=["submitted_at"])
+        for index, moment in enumerate(moments):
+            timestamp = datetime.fromisoformat(moment)
+            receipt = SampleInventoryReceipt.objects.create(
+                receipt_number=f"RK-MONTH-{index}",
+                submitted_by_employee=self.employee,
+                submitted_at=timestamp,
+            )
+            line = SampleInventoryLine.objects.create(
+                receipt=receipt, sample_item=self.sample_item,
+                product_name_snapshot="月份边界样品", sampling_quantity=10,
+                received_quantity=10, outbound_quantity=2, loaned_quantity=3,
+            )
+            outbound = SampleInventoryOutbound.objects.create(
+                outbound_number=f"CK-MONTH-{index}",
+                operated_by_employee=self.employee, operated_at=timestamp,
+            )
+            SampleInventoryOutboundLine.objects.create(
+                outbound=outbound, inventory_line=line, outbound_quantity=2,
+                outbound_method=SampleOutboundMethod.SALESPERSON_CARRY,
+            )
+            loan = SampleInventoryLoan.objects.create(
+                loan_number=f"JC-MONTH-{index}",
+                operated_by_employee=self.employee, operated_at=timestamp,
+            )
+            SampleInventoryLoanLine.objects.create(
+                loan=loan, inventory_line=line, loan_quantity=3,
+                borrower_name="测试借用人", purpose_note="测试用途",
+            )
+
+        with timezone.override("Asia/Shanghai"):
+            response = self.client.get("/api/v1/sample-inventory/summary/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["month"], "2026-10")
+        self.assertEqual(response.data["data"]["inbound_this_month"], 20)
+        self.assertEqual(response.data["data"]["outbound_this_month"], 4)
+        self.assertEqual(response.data["data"]["loaned_this_month"], 6)
+        self.assertEqual(response.data["data"]["current_available"], 26)
+
+    @patch("apps.samples.api.inventory_views.timezone.localdate", return_value=date(2027, 1, 15))
+    def test_month_summary_returns_real_zero_and_keeps_current_stock(self, _localdate):
+        self.receipt.submitted_at = datetime.fromisoformat("2026-12-31T15:59:59+00:00")
+        self.receipt.save(update_fields=["submitted_at"])
+        with timezone.override("Asia/Shanghai"):
+            response = self.client.get("/api/v1/sample-inventory/summary/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["month"], "2027-01")
+        self.assertEqual(response.data["data"]["inbound_this_month"], 0)
+        self.assertEqual(response.data["data"]["outbound_this_month"], 0)
+        self.assertEqual(response.data["data"]["loaned_this_month"], 0)
+        self.assertEqual(response.data["data"]["current_available"], 6)
+
+    def test_deleted_documents_no_longer_contribute_to_monthly_totals(self):
+        outbound = SampleInventoryOutbound.objects.create(
+            outbound_number="CK-MONTH-DELETE", operated_by_employee=self.employee,
+            operated_at=timezone.now(),
+        )
+        SampleInventoryOutboundLine.objects.create(
+            outbound=outbound, inventory_line=self.inventory_line, outbound_quantity=2,
+            outbound_method=SampleOutboundMethod.SALESPERSON_CARRY,
+        )
+        loan = SampleInventoryLoan.objects.create(
+            loan_number="JC-MONTH-DELETE", operated_by_employee=self.employee,
+            operated_at=timezone.now(),
+        )
+        SampleInventoryLoanLine.objects.create(
+            loan=loan, inventory_line=self.inventory_line, loan_quantity=2,
+            borrower_name="测试借用人", purpose_note="测试用途",
+        )
+        before = self.client.get("/api/v1/sample-inventory/summary/").data["data"]
+        self.assertEqual(before["outbound_this_month"], 2)
+        self.assertEqual(before["loaned_this_month"], 2)
+        delete_sample_inventory_outbound(outbound_id=outbound.pk, actor_employee=self.employee)
+        delete_sample_inventory_loan(loan_id=loan.pk, actor_employee=self.employee)
+        after = self.client.get("/api/v1/sample-inventory/summary/").data["data"]
+        self.assertEqual(after["outbound_this_month"], 0)
+        self.assertEqual(after["loaned_this_month"], 0)
+        self.assertEqual(after["current_available"], 10)
 
     def test_inventory_permission_is_required(self):
         user_model = get_user_model()
@@ -205,3 +308,5 @@ class SampleInventoryApiTests(APITestCase):
         response = self.client.get("/api/v1/sample-inventory/")
 
         self.assertEqual(response.status_code, 403, response.data)
+        summary = self.client.get("/api/v1/sample-inventory/summary/")
+        self.assertEqual(summary.status_code, 403, summary.data)

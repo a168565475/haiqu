@@ -33,7 +33,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section v-loading="loading" class="material-issue-page material-stock-detail" data-testid="material-inventory-detail">
+  <section v-loading="loading" class="material-issue-page material-stock-detail erp-glass-detail" data-testid="material-inventory-detail">
     <header class="mi-page-head"><div><ElButton link :icon="ArrowLeft" @click="router.push({ name: 'material-inventory' })">返回材料库存</ElButton><h1>{{ summary?.material_number || '材料库存详情' }} · {{ summary?.material_name || '' }}</h1><p>{{ summary?.category }} · {{ summary?.specification || '无规格' }} · {{ summary?.color || '无颜色' }}</p></div><ElButton :icon="Refresh" @click="load">刷新</ElButton></header>
     <section v-if="summary" class="stock-cards"><article><span>当前合格库存</span><strong>{{ numberText(summary.current_quantity) }}</strong><small v-if="summary.measurement_kind === 'PIPE'">根 / {{ summary.meter_quantity }} 米</small><small v-else>{{ summary.unit }}</small></article><article><span>公共可用库存</span><strong>{{ numberText(summary.available_quantity) }}</strong><small>{{ summary.unit }}</small></article><article><span>累计入库</span><strong>{{ numberText(summary.cumulative_inbound_quantity) }}</strong><small>{{ summary.unit }}</small></article><article><span>累计确认发料</span><strong>{{ numberText(summary.cumulative_issued_quantity) }}</strong><small>{{ summary.unit }}</small></article></section>
     <section class="mi-surface stock-tabs"><ElTabs v-model="activeTab">
@@ -46,5 +46,22 @@ onMounted(load)
 
 <style scoped lang="scss">
 @use '@/styles/materialIssue';
-.material-stock-detail { display: flex; flex-direction: column; gap: 14px; }.mi-page-head h1 { margin-top: 2px; }.stock-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }.stock-cards article { padding: 16px 18px; border: 1px solid #d8d1c5; border-radius: 6px; background: #fcfbf7; }.stock-cards span,.stock-cards small { color: #7a746b; font-size: 12px; }.stock-cards strong { margin: 0 6px 0 12px; font-size: 24px; }.stock-tabs { padding: 0 16px 16px; }.stock-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }.zones { overflow: hidden; }
+@use '@/styles/theme/detail' as detail;
+.material-stock-detail { display: flex; height: auto; overflow: visible; flex-direction: column; gap: 14px; }
+.material-stock-detail > * { flex-shrink: 0; }
+.mi-page-head { flex-wrap: wrap; gap: 14px; }
+.mi-page-head > div { min-width: 0; }
+.mi-page-head h1 { margin-top: 2px; overflow-wrap: anywhere; font: 700 36px/44px var(--erp-font-body); }
+.stock-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; }
+.stock-cards article { @include detail.surface; display: flex; flex-direction: column; gap: 6px; padding: 16px; }
+.stock-cards span,.stock-cards small { color: var(--erp-color-text-secondary); font-size: 13px; }
+.stock-cards strong { font-size: 24px; line-height: 32px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stock-tabs { padding: 0 16px 16px; }
+.stock-tabs :deep(.el-tabs__header) { margin-bottom: 14px; }
+.stock-tabs :deep(.el-tabs__item) { color: var(--erp-color-text-secondary); font-size: 13px; }
+.stock-tabs :deep(.el-tabs__item.is-active) { color: var(--erp-color-brand); }
+.stock-tabs :deep(.el-tabs__nav-wrap::after) { height: 1px; background: var(--erp-color-border-subtle); }
+.zones { padding: 0 16px 16px; }
+.zones .mi-section-title { padding: 14px 0; font-size: 16px; line-height: 24px; }
+.stock-tabs :deep(.el-table), .zones :deep(.el-table) { --el-table-border-color: var(--erp-table-grid); --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-tr-bg-color: var(--erp-table-body-fill); --el-table-row-hover-bg-color: var(--erp-table-hover); color: var(--erp-table-text); border-radius: var(--erp-radius-control); font-size: 13px; }
 </style>

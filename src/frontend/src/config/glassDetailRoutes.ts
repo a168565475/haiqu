@@ -1,0 +1,28 @@
+// 只统一已审计详情的外壳和控件，页面业务分区由各 View 自己负责。
+export const glassDetailRouteNames = [
+  'complaint-detail',
+  'inquiry-detail',
+  'quotation-versions',
+  'quotation-preview',
+  'quotation-packaging',
+  'sales-order-detail',
+  'bom-preview',
+  'production-task-detail',
+  'sample-inventory-receipt-detail',
+  'sample-outbound-detail',
+  'sample-loan-detail',
+  'sample-material-detail',
+  'sample-detail',
+  'task-detail',
+  'wage-scheme-detail',
+  'work-report-day-detail',
+  'material-issue-detail',
+  'material-inventory-detail',
+  'workshop-outsourcing-tube-detail',
+  'workshop-outsourcing-rework-detail',
+  'workshop-outsourcing-detail',
+  'workshop-outsourcing-factory-detail',
+  'workshop-scheduling-detail',
+  'purchase-order-detail',
+  'purchase-inbound-detail'
+] as const

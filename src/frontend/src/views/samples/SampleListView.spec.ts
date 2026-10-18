@@ -133,7 +133,7 @@ describe('打样列表筛选和操作边界', () => {
     expect(wrapper.find('.table-toolbar').exists()).toBe(false)
     expect(wrapper.findAll('.el-checkbox')).toHaveLength(0)
     expect(wrapper.find('.create-button').text()).toBe('申请打样')
-    expect(wrapper.find('.filters .sample-actions .create-button').exists()).toBe(true)
+    expect(wrapper.find('.erp-list-toolbar .sample-actions .create-button').exists()).toBe(true)
   })
 
   it('日期筛选发送完整自然日；重置删除日期条件', async () => {

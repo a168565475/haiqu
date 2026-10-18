@@ -258,7 +258,7 @@ onMounted(load)
 </script>
 
 <template>
-  <section v-loading="loading" class="wr-page wr-form-page" :class="{ 'wr-form-page--change': isChange }" data-testid="wage-scheme-form">
+  <section v-loading="loading" class="wr-page wr-form-page erp-glass-form" :class="{ 'wr-form-page--change': isChange }" data-testid="wage-scheme-form">
     <header class="wr-heading wr-form-heading"><h1>{{ isChange ? '变更工价方案' : '新增工价方案' }}</h1></header>
     <div class="wr-form-grid"><section class="wr-card"><div class="wr-card-title"><h2>基本信息</h2></div><ElForm label-position="top">
       <ElFormItem label="排产产品" required><ElSelect v-model="form.scheduleProductId" filterable placeholder="选择排产产品" :disabled="isChange"><ElOption v-for="item in context?.schedule_products || []" :key="item.id" :label="`${item.task_number} · ${item.product_name}（${item.product_number}）`" :value="item.id" /></ElSelect></ElFormItem>

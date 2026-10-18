@@ -1,4 +1,5 @@
 @use './crm/tokens' as crm;
+@use './theme/detail' as detail;
 
 // D2 确认图参数：外边框 1px #ddd6c9；内部网格 1px #eae4da；
 // 表头 44px / #eee8dc，行 40px，控件 32px，标签 24px；页面间距 14px。
@@ -6,58 +7,58 @@
 .tube-outsourcing-page,
 .tube-outsourcing-dialog {
   --el-color-primary: #{crm.$crm-primary};
-  --el-color-primary-light-9: #fff4e6;
-  --el-color-primary-dark-2: #9f351a;
-  --el-bg-color: #fcfbf7;
-  --el-fill-color-blank: #fcfbf7;
-  --el-fill-color-light: #f0eadf;
-  --el-border-color: #ddd6c9;
-  --el-border-color-light: #eae4da;
-  --el-text-color-primary: #1f1d18;
-  --el-text-color-regular: #4d4c48;
-  --el-text-color-secondary: #6f6a61;
-  --el-text-color-placeholder: #968f84;
+  --el-color-primary-light-9: var(--erp-color-selected);
+  --el-color-primary-dark-2: var(--erp-color-brand-pressed);
+  --el-bg-color: var(--erp-color-elevated);
+  --el-fill-color-blank: var(--erp-color-surface);
+  --el-fill-color-light: var(--erp-color-subtle);
+  --el-border-color: var(--erp-color-border);
+  --el-border-color-light: var(--erp-color-border-subtle);
+  --el-text-color-primary: var(--erp-color-text-primary);
+  --el-text-color-regular: var(--erp-color-text-regular);
+  --el-text-color-secondary: var(--erp-color-text-secondary);
+  --el-text-color-placeholder: var(--erp-control-placeholder);
   --el-border-radius-base: 5px;
   --el-font-size-base: 12px;
   --el-component-size: 32px;
-  color: #4d4c48;
+  color: var(--erp-color-text-regular);
   font: 12px/18px 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif;
 
   *, *::before, *::after { box-sizing: border-box; }
-  h1 { margin: 0; color: #1f1d18; font: 500 34px/44px 'Noto Serif SC Variable', serif; }
-  h2 { margin: 0; color: #1f1d18; font-size: 16px; line-height: 24px; font-weight: 600; }
-  .muted { color: #968f84; }
+  h1 { margin: 0; color: var(--erp-color-text-primary); font: 500 34px/44px 'Noto Serif SC Variable', serif; }
+  h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; line-height: 24px; font-weight: 600; }
+  .muted { color: var(--erp-color-text-muted); }
   .brand { color: crm.$crm-primary; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .title-row { display: flex; align-items: center; gap: 12px; }
   .info-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; }
   .info-cell { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
-  .info-cell > span:first-child { color: #6f6a61; }
+  .info-cell > span:first-child { color: var(--erp-color-text-secondary); }
   .info-cell > b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .notice { background: #f6f3ec; padding: 12px 16px; color: #6f6a61; border-radius: 5px; line-height: 20px; }
-  .notice.warning { background: #faeedb; color: #815518; }
-  .tube-table-wrap { border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: #b8afa1 #f1ede4; }
+  .notice { background: var(--erp-color-page); padding: 12px 16px; color: var(--erp-color-text-secondary); border-radius: 5px; line-height: 20px; }
+  .notice.warning { background: var(--erp-color-warning-soft); color: var(--erp-color-warning); }
+  .tube-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle); }
   .tube-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 12px; }
   .tube-table thead { position: sticky; top: 0; z-index: 2; }
-  .tube-table th { height: 44px; padding: 0 16px; background: #eee8dc; color: #6f6a61; font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }
+  .tube-table th { height: 44px; padding: 0 16px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }
   .tube-table td { height: 40px; padding: 0 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 18px; }
-  .tube-table th, .tube-table td { border-right: 1px solid #eae4da; border-bottom: 1px solid #eae4da; }
+  .tube-table th, .tube-table td { border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); }
   .tube-table th:last-child, .tube-table td:last-child { border-right: 0; }
   .tube-table tbody tr:last-child td { border-bottom: 0; }
-  .tube-table tr:hover td { background: #fff6ea; }
+  .tube-table tr:hover td { background: var(--erp-color-hover); }
   .tube-table .num { text-align: right; }
   .tube-table .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; }
-  .tube-table td.empty-cell { height: 140px; text-align: center; color: #968f84; }
+  .tube-table td.empty-cell { height: 140px; text-align: center; color: var(--erp-color-text-muted); }
   .el-button { height: 32px; min-height: 32px; font-family: inherit; font-size: 12px; line-height: 18px; font-weight: 500; padding: 0 14px; border-radius: 5px; }
   .el-button + .el-button { margin-left: 0; }
   .el-input, .el-select, .el-date-editor { --el-component-size: 32px; }
   .el-select { width: 100%; }
-  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px !important; box-shadow: 0 0 0 1px #ddd6c9 inset; border-radius: 5px; background: #fcfbf7; }
+  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px !important; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); }
   .el-input__inner { height: 30px; font-size: 12px; font-family: inherit; }
   .el-select__placeholder { font-size: 12px; }
-  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus { box-shadow: 0 0 0 1px #{crm.$crm-primary} inset !important; }
-  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: #e8e1d5; }
-  .el-textarea__inner { border-radius: 5px; min-height: 74px !important; font: 12px/22px 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif; padding: 8px 12px; resize: vertical; }
+  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important; }
+  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: var(--erp-input-disabled-background); }
+  .el-textarea__inner { border-radius: var(--erp-radius-control); min-height: 74px !important; font: 12px/22px 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif; padding: 8px 12px; resize: vertical; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
   .tube-table .el-input__wrapper { padding: 1px 8px; }
   .tube-table .el-input__inner { text-align: right; }
 }
@@ -65,12 +66,12 @@
 .tube-outsourcing-page {
   height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px;
   .page-heading { min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-  .panel { border: 1px solid #ddd6c9; background: #fcfbf7; border-radius: 5px; padding: 16px; min-width: 0; flex-shrink: 0; }
-  .dispatch-context { margin-top: 14px; padding-top: 14px; border-top: 1px solid #eae4da; }
-  .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; background: #c96442; color: #faf9f5; white-space: nowrap; }
-  .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: #6f6a61; }
+  .panel { border: 1px solid var(--erp-color-border); background: var(--erp-color-surface); border-radius: 5px; padding: 16px; min-width: 0; flex-shrink: 0; }
+  .dispatch-context { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--erp-color-border-subtle); }
+  .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; background: var(--erp-tag-brand-background); color: var(--erp-color-text-inverse); white-space: nowrap; }
+  .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--erp-color-text-secondary); }
   .form-field > span { font-size: 12px; }
-  .form-field.required > span::before { content: '* '; color: #b53333; }
+  .form-field.required > span::before { content: '* '; color: var(--erp-color-danger); }
   .field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 24px; }
   .field-grid .el-date-editor, .field-grid .el-input, .field-grid .el-select { width: 100%; }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 32px; }
@@ -78,11 +79,17 @@
   .workspace { display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; overflow: auto; }
   .workspace > * { flex-shrink: 0; }
   .workspace .tube-table th, .workspace .tube-table td { padding-left: 8px; padding-right: 8px; }
-  .footer-bar { display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 12px 16px; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; flex-shrink: 0; }
+  .footer-bar { display: flex; align-items: center; gap: 14px; min-height: 68px; padding: 12px 16px; border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-surface); flex-shrink: 0; }
   .footer-bar > div:first-child { margin-right: auto; }
   .footer-bar strong { font-size: 18px; color: crm.$crm-primary; margin: 0 5px; }
-  .footer-bar small { display: block; color: #968f84; margin-top: 4px; font-size: 11px; }
+  .footer-bar small { display: block; color: var(--erp-color-text-muted); margin-top: 4px; font-size: 11px; }
   > .el-alert { flex-shrink: 0; }
+}
+
+.tube-outsourcing-page.erp-glass-form {
+  background: transparent;
+  .panel, .footer-bar { @include detail.surface; }
+  .notice:not(.warning) { @include detail.inset; }
 }
 
 .tube-outsourcing-dialog {

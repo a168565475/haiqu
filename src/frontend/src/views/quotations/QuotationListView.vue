@@ -2,12 +2,15 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
-import { MoreFilled } from '@element-plus/icons-vue'
+import { MoreFilled, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { createQuotationDraft, deleteQuotation, exportQuotations, fetchQuotation, fetchQuotationCreationOptions, fetchQuotationOptions, fetchQuotations } from '@/api/quotations'
 import { fetchAllMasterDataRecords } from '@/api/referenceData'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import CrmPageHeader from '@/components/crm/CrmPageHeader.vue'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
+import exportIcon from '@/assets/crm-v2/export.svg'
 import searchIcon from '@/assets/crm-v2/search.svg'
 import { useAuthStore } from '@/stores/auth'
 import type { QuotationCreationOption, QuotationListItem, QuotationListOptions, QuotationListQuery } from '@/types/quotation'
@@ -270,37 +273,36 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="quotation-list-page" aria-label="报价列表">
-    <header class="quotation-list-page__heading">
-      <div class="quotation-list-page__title"><h1>报价列表</h1><span>{{ total }} 份报价</span></div>
-    </header>
-
-    <section class="quotation-filter" aria-label="筛选报价">
-      <form class="quotation-filter__grid" @submit.prevent="search">
+  <section class="quotation-list-page erp-glass-list" aria-label="报价列表">
+    <section v-glass-spotlight class="quotation-filter erp-list-filter" aria-label="筛选报价">
+      <CrmPageHeader class="quotation-list-page__heading erp-list-heading" title="报价列表" :count="total" count-label="份报价" />
+      <form class="quotation-filter__grid erp-list-filters" @submit.prevent="search">
         <ElInput v-model="filters.search" class="quotation-search" aria-label="搜索报价" placeholder="搜索客户、报价编号等" title="支持客户名称、报价编号或主题" clearable @keydown.enter="handleSearchEnter" @clear="search">
           <template #suffix><button type="button" class="quotation-search-button" aria-label="搜索报价列表" @click="search"><img :src="searchIcon" alt="" aria-hidden="true" /></button></template>
         </ElInput>
         <ElSelect v-model="filters.display_status" class="quotation-status-filter" aria-label="报价状态" placeholder="报价状态：全部" clearable :loading="optionLoading" @change="search"><ElOption v-for="item in options?.display_statuses" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
         <ElSelect v-model="filters.owner_employee_id" class="quotation-owner-filter" aria-label="报价负责人" placeholder="负责人：全部" clearable :loading="optionLoading" @change="search"><ElOption v-for="item in options?.owners" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
         <ElSelect v-model="filters.currency_code" class="quotation-currency-filter" aria-label="报价币种" placeholder="币种：全部" clearable :loading="optionLoading" @change="search"><ElOption v-for="item in options?.currencies" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
-        <div class="quotation-filter__actions">
-          <ElPopover v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="360">
-            <template #reference><ElButton>更多筛选</ElButton></template>
-            <div class="quotation-more-content"><ElDatePicker v-model="filters.valid_to" type="date" value-format="YYYY-MM-DD" placeholder="有效期截至" /><ElButton type="primary" @click="search">查询</ElButton></div>
+        <div class="erp-list-filter-actions">
+          <ElPopover v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="360" popper-class="erp-list-filter-popover">
+            <template #reference><ElButton class="erp-button-motion">更多筛选</ElButton></template>
+            <div class="quotation-more-content"><ElDatePicker v-model="filters.valid_to" type="date" value-format="YYYY-MM-DD" placeholder="有效期截至" /><ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton></div>
           </ElPopover>
-          <ElButton @click="reset">重置</ElButton>
-        </div>
-        <div class="quotation-list-actions">
-          <ElButton :loading="exportLoading" :disabled="!canExport" @click="exportList">导出</ElButton>
-          <ElButton v-if="canCreate" type="primary" @click="openCreate">＋ 新建报价</ElButton>
+          <ElButton class="erp-button-motion" @click="reset">重置</ElButton>
+          <ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton>
         </div>
       </form>
     </section>
 
     <ElAlert v-if="errorMessage" class="quotation-error" type="error" :title="errorMessage" :closable="false" show-icon><template #default><ElButton link @click="reloadQuotationList">重新加载</ElButton></template></ElAlert>
 
-    <ElCard class="quotation-table-card" shadow="never">
-      <ElTable v-loading="loading" :data="rows" :empty-text="errorMessage ? '报价列表加载失败' : '暂无报价，可点击右上角新建报价。'">
+    <section class="quotation-table-card erp-list-data" aria-label="报价数据列表">
+      <div class="quotation-list-actions erp-list-toolbar">
+        <ElButton v-if="canCreate" class="quotation-create-button erp-button-motion" type="primary" :icon="Plus" @click="openCreate">新建报价</ElButton>
+        <ElButton class="quotation-export-button erp-button-motion" :loading="exportLoading" :disabled="!canExport" @click="exportList"><img v-if="!exportLoading" class="quotation-button-icon" :src="exportIcon" alt="" aria-hidden="true" />导出</ElButton>
+      </div>
+      <div class="erp-list-table-frame">
+      <ElTable v-loading="loading" :data="rows" row-key="id" height="100%" border :empty-text="errorMessage ? '报价列表加载失败' : '暂无报价，可点击新建报价。'">
         <ElTableColumn prop="quotation_number" label="报价编号" width="190"><template #default="{ row }"><button class="quotation-link" @click="openDetail(row)">{{ row.quotation_number }}</button></template></ElTableColumn>
         <ElTableColumn prop="customer_name" label="客户名称" min-width="308" show-overflow-tooltip />
         <ElTableColumn label="版本" width="64"><template #default="{ row }">{{ row.current_version ? `V${row.current_version.version_number}` : '—' }}</template></ElTableColumn>
@@ -319,8 +321,9 @@ onMounted(async () => {
           </ElEmpty>
         </template>
       </ElTable>
-      <div class="quotation-table-card__footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" background layout="sizes, prev, pager, next" :page-sizes="[20, 50, 100]" :total="total" @current-change="() => { void loadRows() }" @size-change="() => { page = 1; void loadRows() }" /></div>
-    </ElCard>
+      </div>
+      <div class="quotation-table-card__footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" background layout="sizes, prev, pager, next" :page-sizes="[20, 50, 100]" :total="total" @current-change="() => { void loadRows() }" @size-change="() => { page = 1; void loadRows() }" /></div>
+    </section>
     <AppWindowDialog v-model="createVisible" class="quotation-create-dialog" title="新建报价" :width="840" :height="680" :close-on-click-modal="false">
       <p class="quotation-create-form__lead">创建草稿后，继续填写产品明细和价格。</p>
       <ElForm label-position="top" class="quotation-create-form">
@@ -335,86 +338,72 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
-.quotation-list-page { min-width: 0; color: #1f2329; }
-.quotation-list-page__heading, .quotation-list-page__title, .quotation-table-card__footer { display: flex; align-items: center; }
-.quotation-list-page__heading { min-height: 64px; justify-content: space-between; margin-bottom: 20px; }
-.quotation-list-page__title { gap: 48px; }.quotation-list-page__title h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 40px; }.quotation-list-page__title span { color: #646a73; font-size: 13px; }
-.quotation-filter, .quotation-table-card { overflow: hidden; border-radius: 8px; background: #fff; }.quotation-filter { height: 112px; box-sizing: border-box; margin-bottom: 16px; border: 0; box-shadow: 0 4px 12px rgb(0 0 0 / 6%); }.quotation-filter :deep(.el-card__body) { height: 100%; box-sizing: border-box; background: #fff; }.quotation-error { margin-bottom: 12px; }
-.quotation-table-card { min-height: calc(100vh - 456px); border: 1px solid #e4e4e7; box-shadow: none; }.quotation-table-card :deep(.el-card__body), .quotation-table-card :deep(.el-table), .quotation-table-card :deep(.el-table__inner-wrapper) { background: #fff; }.quotation-table-card :deep(.el-card__body) { padding: 0; }.quotation-table-card :deep(.el-table__header th.el-table__cell) { height: 44px; padding-top: 0; padding-bottom: 0; color: #1f2329; background: #f7f7f8; }.quotation-table-card :deep(.el-table__body td.el-table__cell) { height: 48px; padding-top: 0; padding-bottom: 0; background: #fff; }.quotation-table-card :deep(.el-table__row:hover > td.el-table__cell) { background: #fafafa; }.quotation-link { max-width: 100%; overflow: hidden; padding: 0; border: 0; color: #3f3f46; background: transparent; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }.quotation-link:hover { color: #18181b; text-decoration: underline; }.quotation-status { display: inline-flex; align-items: center; height: 24px; padding: 0 12px; border-radius: 4px; font-size: 12px; white-space: nowrap; }.status--draft, .status--locked, .status--superseded { color: #646a73; background: #f2f3f5; }.status--ready-to-send, .status--expired { color: #dc7609; background: #fffcf0; }.status--sent { color: #0973dc; background: #f0f8ff; }.status--accepted { color: #18a058; background: #ecf8f1; }.status--rejected, .status--withdrawn { color: #f04438; background: #fef0f0; }.quotation-table-card :deep(.el-dropdown) { margin-left: 8px; }.quotation-table-card :deep(.el-button--small) { min-width: 52px; color: #3f3f46; border-color: #d4d4d8; }
-.quotation-table-card__footer { justify-content: space-between; min-height: 56px; padding: 10px 16px; border-top: 1px solid #e4e4e7; color: #52525b; font-size: 13px; }.quotation-table-card__footer :deep(.el-pager li.is-active) { color: #fff; background: #18181b; }
-.quotation-filter :deep(.el-card__body) { padding: 8px 16px 6px; }
-.quotation-create-form { margin-top:16px; }.quotation-create-form :deep(.el-select),.quotation-create-form :deep(.el-date-editor) { width:100%; }.quotation-create-form__row { display:grid; grid-template-columns:120px 1fr; gap:12px; }.quotation-create-form__submit { color:#fff!important; border-color:#18181b!important; background:#18181b!important; }
-@media (max-width: 1150px) { .quotation-list-page__title { gap: 20px; } }
-@media (max-width: 900px) { .quotation-list-page__heading, .quotation-table-card__footer { align-items: flex-start; flex-direction: column; gap: 10px; }.quotation-table-card :deep(.el-table) { width: max-content; min-width: 100%; } }
-@media (max-width: 600px) { .quotation-list-page__title { align-items: flex-start; flex-direction: column; gap: 2px; }.quotation-list-page__title h1 { font-size: 24px; } }
-
-.quotation-filter__grid { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.quotation-search { width: 250px; min-width: 250px; flex: none; }
+.quotation-search { width: min(250px, 100%); min-width: 0; flex: none; }
 .quotation-status-filter { width: 148px; flex: none; }
 .quotation-owner-filter { width: 128px; flex: none; }
 .quotation-currency-filter { width: 120px; flex: none; }
-.quotation-filter__actions, .quotation-list-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.quotation-filter__actions :deep(.el-button), .quotation-list-actions :deep(.el-button) { margin: 0; height: 32px; padding: 0 12px; }
-.quotation-list-actions { margin-left: auto; }
-.quotation-list-actions :deep(.el-button) { width: 76px; }
-.quotation-list-actions :deep(.el-button--primary) { width: 112px; color: #faf8f2; border-color: var(--quotation-accent); background: var(--quotation-accent); }
-.quotation-search-button { display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center; margin: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; }
+.quotation-list-actions :deep(.quotation-create-button) { width: 112px; }
+.quotation-list-actions :deep(.quotation-export-button) { width: 76px; }
+.quotation-button-icon { width: 16px; height: 16px; }
+.quotation-list-actions :deep(.el-button > span) { gap: 8px; }
+.quotation-search-button {
+  display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center;
+  margin: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer;
+}
 .quotation-search-button img { width: 16px; height: 16px; }
-.quotation-search-button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.quotation-search-button:focus-visible, .quotation-link:focus-visible, .row-more:focus-visible {
+  outline: 2px solid var(--erp-color-focus); outline-offset: 2px;
+}
 .quotation-more-content { display: flex; align-items: center; gap: 10px; }
 .quotation-more-content :deep(.el-date-editor) { width: 230px; }
-
-/* QUO-V2-01 报价列表 / 1920 · 已确认方向 */
-.quotation-list-page {
-  --quotation-accent: #c84e28;
-  height: 100%;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  color: #1f1d18;
-  font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+.quotation-error { flex: none; }
+.quotation-link {
+  max-width: 100%; overflow: hidden; padding: 0; border: 0; color: var(--erp-table-text);
+  background: transparent; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
-.quotation-list-page__heading { height: 48px; min-height: 48px; flex: none; margin: 0; }
-.quotation-list-page__title { align-items: baseline; gap: 48px; }
-.quotation-list-page__title h1 { font-family: 'Noto Serif SC', 'STSong', serif; font-size: 36px; font-weight: 600; line-height: 48px; }
-.quotation-list-page__title span { color: #6f6a61; font-size: 12px; }
-.quotation-filter { position: relative; height: auto; flex: none; margin: 16px 0 0; overflow: visible; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.quotation-filter :deep(.el-input__wrapper),.quotation-filter :deep(.el-select__wrapper) { min-height: 38px; border-radius: 5px; background: #fcfbf7; box-shadow: 0 0 0 1px #ddd6c9 inset; }
-.quotation-table-card { min-height: 0; margin-top: 14px; flex: 1; display: flex; overflow: hidden; border: 0; border-radius: 5px; background: #fcfbf7; box-shadow: none; }
-.quotation-table-card :deep(.el-card__body) { min-height: 0; flex: 1; display: flex; flex-direction: column; padding: 0; background: #fcfbf7; }
-.quotation-table-card :deep(.el-table) { --el-table-border-color: #eae4da; --el-table-header-bg-color: #efe8dd; --el-table-row-hover-bg-color: #f8f3eb; flex: 1; color: #1f1d18; background: #fcfbf7; }
-.quotation-table-card :deep(.el-table__inner-wrapper::before) { display: none; }
-.quotation-table-card :deep(.el-table__header th.el-table__cell) { height: 44px; padding: 0; color: #6f6a61; background: #efe8dd; font-size: 12px; font-weight: 500; }
-.quotation-table-card :deep(.el-table__body td.el-table__cell) { height: 52px; padding: 0; background: #fcfbf7; font-size: 12px; }
-.quotation-table-card :deep(.cell) { padding-right: 16px; padding-left: 16px; }
-.quotation-link { color: var(--quotation-accent); }
-.quotation-link:hover { color: var(--quotation-accent); }
-.quotation-status { min-width: 72px; height: 24px; justify-content: center; padding: 0 8px; border-radius: 999px; }
-.status--draft,.status--locked,.status--superseded { color: #5e5d59; background: #f0eee6; }
-.status--ready-to-send { color: #b8781e; background: #faeedb; }
-.status--sent { color: #3898ec; background: #e6f3fd; }
-.status--accepted { color: #4f7d4b; background: #e8f0e2; }
-.status--expired,.status--rejected,.status--withdrawn { color: #b8442c; background: #f7e5e4; }
-.row-more { width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 0; color: #1f1d18; background: transparent; cursor: pointer; }
+.quotation-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.quotation-status {
+  display: inline-flex; min-width: 72px; height: 24px; align-items: center; justify-content: center;
+  padding: 0 8px; border: 1px solid var(--erp-tag-neutral-border); border-radius: var(--erp-radius-pill);
+  color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background);
+  font-size: 12px; line-height: 18px; white-space: nowrap;
+}
+.status--ready-to-send {
+  color: var(--erp-tag-warning-text); background: var(--erp-tag-warning-background); border-color: var(--erp-tag-warning-border);
+}
+.status--sent {
+  color: var(--erp-tag-info-text); background: var(--erp-tag-info-background); border-color: var(--erp-tag-info-border);
+}
+.status--accepted {
+  color: var(--erp-tag-success-text); background: var(--erp-tag-success-background); border-color: var(--erp-tag-success-border);
+}
+.status--expired, .status--rejected, .status--withdrawn {
+  color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); border-color: var(--erp-tag-danger-border);
+}
+.row-more {
+  width: 32px; height: 32px; display: inline-grid; place-items: center; padding: 0; border: 0;
+  border-radius: var(--erp-radius-control); color: var(--erp-table-text); background: transparent; cursor: pointer;
+}
+.row-more:hover { background: var(--erp-table-selected); }
 .row-more .el-icon { font-size: 17px; }
-.quotation-table-card__footer { height: 52px; min-height: 52px; flex: none; padding: 0 16px; border-top: 1px solid #eae4da; color: #6f6a61; font-size: 12px; }
-.quotation-table-card__footer :deep(.el-pagination) { --el-pagination-hover-color: var(--quotation-accent); }
-.quotation-table-card__footer :deep(.el-select__wrapper),.quotation-table-card__footer :deep(.btn-prev),.quotation-table-card__footer :deep(.btn-next),.quotation-table-card__footer :deep(.el-pager li) { height: 36px; border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; }
-.quotation-table-card__footer :deep(.el-pager li.is-active) { color: #1f1d18; border-color: var(--quotation-accent); background: #fcfbf7; }
+
 .quotation-create-form { margin-top: 24px; }
-.quotation-create-form__lead { margin: -8px 0 0; color: #6f6a61; font-size: 14px; }
+.quotation-create-form :deep(.el-select), .quotation-create-form :deep(.el-date-editor) { width: 100%; }
+.quotation-create-form__row { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+.quotation-create-form__submit { color: var(--erp-color-text-inverse) !important; border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-surface) !important; }
+.quotation-create-form__lead { margin: -8px 0 0; color: var(--erp-color-text-regular); font-size: 14px; }
 .quotation-create-form :deep(.el-form-item) { margin-bottom: 22px; }
-.quotation-create-form :deep(.el-form-item__label) { padding-bottom: 8px; color: #1f1d18; font-size: 14px; font-weight: 600; }
-.quotation-create-form :deep(.el-select),.quotation-create-form :deep(.el-date-editor) { width: 100%; }
-.quotation-create-form :deep(.el-input__wrapper),.quotation-create-form :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: 4px; background: #fcfbf7; box-shadow: 0 0 0 1px #ddd6c9 inset; }
-.quotation-create-form small { display: block; margin-top: 7px; color: #6f6a61; font-size: 12px; }
-.quotation-create-form__row { grid-template-columns: 1fr 1fr; gap: 32px; }
-:global(.quotation-create-dialog) { border-radius: 6px; background: #fcfbf7; }
+.quotation-create-form :deep(.el-form-item__label) { padding-bottom: 8px; color: var(--erp-color-text-primary); font-size: 14px; font-weight: 600; }
+.quotation-create-form :deep(.el-input__wrapper), .quotation-create-form :deep(.el-select__wrapper) {
+  height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+}
+.quotation-create-form :deep(.el-input__wrapper.is-focus), .quotation-create-form :deep(.el-select__wrapper.is-focused) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+.quotation-create-form small { display: block; margin-top: 7px; color: var(--erp-color-text-regular); font-size: 12px; }
+:global(.quotation-create-dialog) { border-radius: 6px; background: var(--erp-color-surface); }
 :global(.quotation-create-dialog .el-dialog__header) { margin: 0; padding: 32px 44px 0; }
 :global(.quotation-create-dialog .el-dialog__title) { font-family: 'Noto Serif SC', 'STSong', serif; font-size: 30px; font-weight: 600; }
 :global(.quotation-create-dialog .el-dialog__body) { padding: 14px 44px 10px; }
-:global(.quotation-create-dialog .el-dialog__footer) { margin: 0 44px; padding: 20px 0 24px; border-top: 1px solid #ddd6c9; }
+:global(.quotation-create-dialog .el-dialog__footer) { margin: 0 44px; padding: 20px 0 24px; border-top: 1px solid var(--erp-color-border); }
 :global(.quotation-create-dialog .el-dialog__footer .el-button) { width: 108px; height: 44px; border-radius: 4px; }
-:global(.quotation-create-dialog .quotation-create-form__submit) { width: 140px!important; color: #fff!important; border-color: #c84e28!important; background: #c84e28!important; }
-
+:global(.quotation-create-dialog .quotation-create-form__submit) { width: 140px !important; color: var(--erp-color-text-inverse) !important; border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-surface) !important; }
 </style>

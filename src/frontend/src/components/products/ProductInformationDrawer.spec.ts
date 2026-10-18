@@ -20,17 +20,17 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('@/api/products', () => apiMocks)
 
-const drawerStub = {
-  name: 'ElDrawer',
-  props: ['modelValue', 'size'],
-  template: '<div v-if="modelValue"><slot name="header" /><slot /><slot name="footer" /></div>',
+const appWindowDialogStub = {
+  name: 'AppWindowDialog',
+  props: ['modelValue', 'title', 'width', 'closeOnClickModal'],
+  template: '<div v-if="modelValue" class="app-window-dialog"><slot name="title" /><slot /><slot name="footer" /></div>',
 }
 
 const mountDrawer = (product = fixture) => {
   apiMocks.fetchProduct.mockResolvedValue({ data: product, etag: '"etag-1"' })
   return mount(ProductInformationDrawer, {
     props: { modelValue: true, mode: 'edit', productId: product.id },
-    global: { plugins: [ElementPlus], stubs: { ElDrawer: drawerStub } },
+    global: { plugins: [ElementPlus], stubs: { AppWindowDialog: appWindowDialogStub } },
   })
 }
 
@@ -46,11 +46,11 @@ describe('ProductInformationDrawer', () => {
     apiMocks.updateProduct.mockResolvedValue({ data: fixture, etag: '"etag-2"' })
   })
 
-  it('编辑态展示 12 个字段并使用 748px 抽屉', async () => {
+  it('编辑态展示 12 个字段并使用 748px 窗口', async () => {
     const wrapper = mountDrawer()
     await flushPromises()
 
-    expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('748px')
+    expect(wrapper.findComponent({ name: 'AppWindowDialog' }).props('width')).toBe('748px')
     for (const label of ['品号', '类型', '产品编码', '品名', '类别', '货号', '规格', '单位', '仓库号', '仓库名称', '规模', '状态']) {
       expect(wrapper.text()).toContain(label)
     }

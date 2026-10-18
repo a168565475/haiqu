@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import * as api from '@/api/inquiries'
 import { fetchPublishedOptions } from '@/api/referenceData'
 import InquiryListView from './InquiryListView.vue'
 
+vi.mock('@icon-park/vue-next', () => ({ More: { template: '<span />' } }))
 vi.mock('vue-router', async original => ({
   ...await original<typeof import('vue-router')>(),
   onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn(),
@@ -81,5 +82,22 @@ describe('询盘列表搜索', () => {
     const query = vi.mocked(api.fetchInquiries).mock.calls[0]?.[0]
     expect(query).toEqual(expect.objectContaining({ page: 1, country_code: 'DE' }))
     expect(query).not.toHaveProperty('q')
+  })
+
+  it('询盘编号独立于客户名称，接收日期时间在同一单元格显示', async () => {
+    vi.mocked(api.fetchInquiries).mockResolvedValue({ data: [{ id: 'inq-1', inquiry_number: 'XPD2026101701', customer: { name: '客户甲', country_code: 'DE' }, source: { display_name: '网站' }, priority: '', owner: null, product_summary: { first_description: '椅子', item_count: 1 }, received_at: '2026-10-17T03:45:00Z', sla_summary: { state: 'NONE' }, status: 'DRAFT', status_display: '草稿', allowed_actions: {} }], meta: { total: 1, total_pages: 1, page: 1, page_size: 50 } } as never)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/inquiries', component: { template: '<div />' } }] })
+    await router.push('/inquiries')
+    const wrapper = mount(InquiryListView, { global: { plugins: [createPinia(), ElementPlus, router] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    expect(headers.slice(0, 2)).toEqual(['询盘编号', '客户名称'])
+    expect(wrapper.get('.identity').text()).toBe('客户甲')
+    const cells = wrapper.findAll('tbody tr')[0]!.findAll('td')
+    expect(cells[0]!.text()).toBe('XPD2026101701')
+    expect(wrapper.get('.received-date').text()).toBe('2026-10-17 11:45')
+    const received = wrapper.findAllComponents({ name: 'ElTableColumn' }).find(column => column.props('label') === '接收时间')
+    expect(received?.props('width')).toBe(180)
   })
 })

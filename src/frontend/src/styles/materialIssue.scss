@@ -1,8 +1,11 @@
 @use '@/styles/crm/tokens' as token;
+@use '@/styles/theme/detail' as detail;
 
 .material-issue-page {
   box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0;
-  overflow: auto; background: var(--erp-page-background); color: token.$crm-text-primary; font-family: token.$crm-font-body;
+  overflow: auto; color: token.$crm-text-primary; font-family: token.$crm-font-body;
+  &:not(.erp-glass-detail) { background: var(--erp-page-background); }
+  &.erp-glass-detail { background: transparent; font-size: 13px; line-height: 20px; }
 }
 .material-issue-page :deep(.el-button) { height: 32px; min-height: 32px; }
 .material-issue-page :deep(.el-input), .material-issue-page :deep(.el-select), .material-issue-page :deep(.el-date-editor) { --el-component-size: 32px; }
@@ -14,9 +17,10 @@
 .mi-actions { display: flex; gap: 10px; }
 .mi-actions .el-button + .el-button { margin-left: 0; }
 .mi-surface { border: 1px solid token.$crm-border-default; border-radius: 6px; background: token.$crm-color-surface; }
+.erp-glass-detail .mi-surface { @include detail.surface; }
 .mi-table-panel { min-height: 260px; overflow: hidden; }
-.mi-table-panel :deep(.el-table) { --el-table-header-bg-color: #f1ede4; --el-table-row-hover-bg-color: #fff6ea; height: 100%; }
-.mi-table-panel :deep(.el-table th.el-table__cell) { height: 44px; padding: 0; background: #f1ede4; color: token.$crm-text-primary; font-weight: 500; }
+.mi-table-panel :deep(.el-table) { --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-row-hover-bg-color: var(--erp-color-hover); height: 100%; }
+.mi-table-panel :deep(.el-table th.el-table__cell) { height: 44px; padding: 0; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-weight: 500; }
 .mi-table-panel :deep(.el-table td.el-table__cell) { height: 40px; padding: 0; font-weight: 400; }
 .mi-table-panel :deep(.el-table .cell) { padding-right: 16px !important; padding-left: 16px !important; }
 .mi-pagination { display: flex; height: 48px; align-items: center; justify-content: space-between; color: token.$crm-text-secondary; font-size: 12px; }

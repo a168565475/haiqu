@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ElDialog from '@/components/common/AppWindowDialog.vue'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { AxiosError } from 'axios'
 import {
@@ -15,7 +16,6 @@ import {
   Lock,
   Plus,
   Refresh,
-  Search,
   Warning,
 } from '@element-plus/icons-vue'
 
@@ -669,7 +669,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 </script>
 
 <template>
-  <section class="master-data-page system-settings-theme" data-testid="master-data-center">
+  <section class="master-data-page system-settings-theme erp-glass-list" data-testid="master-data-center">
     <div v-if="!canViewPage" class="state-page">
       <el-icon><Lock /></el-icon>
       <h1>无配置权限</h1>
@@ -677,18 +677,31 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
     </div>
 
     <template v-else>
-      <header class="page-heading">
+      <section v-glass-spotlight class="erp-list-filter">
+      <header class="page-heading erp-list-heading">
         <div>
           <h1>基础资料中心</h1>
         </div>
-        <div class="page-heading__actions">
-          <el-button :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
-          <el-button v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增资料</el-button>
-        </div>
+
       </header>
+          <div class="filter-card erp-list-filters" aria-label="基础资料筛选">
+            <label><span>关键词</span><el-input v-model="keyword" placeholder="输入名称或编码" clearable @keyup.enter="searchRecords" /></label>
+            <label><span>状态</span><el-select v-model="statusFilter" placeholder="全部状态" clearable>
+              <el-option label="启用" value="ACTIVE" /><el-option label="停用" value="INACTIVE" />
+            </el-select></label>
+            <label><span>标准来源</span><el-select v-model="sourceFilter" placeholder="全部来源" clearable>
+              <el-option v-for="source in summary.standard_sources" :key="source" :label="source" :value="source" />
+            </el-select></label>
+            <label v-if="selectedCategory.key === 'country'"><span>洲别</span><el-select v-model="continentFilter" placeholder="全部洲别" clearable>
+              <el-option v-for="continent in continentOptions" :key="continent" :label="continent" :value="continent" />
+            </el-select></label>
+            <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="searchRecords">应用筛选</el-button></div>
+          </div>
+
+      </section>
 
       <div class="page-grid">
-        <aside class="category-card">
+        <aside class="category-card erp-list-filter erp-list-catalog-nav">
           <h2>资料分类</h2>
           <button
             v-for="category in categories"
@@ -704,23 +717,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
         </aside>
 
         <main class="main-column">
-          <section class="filter-card" aria-label="基础资料筛选">
-            <label><span>关键词</span><el-input v-model="keyword" placeholder="输入名称或编码" clearable @keyup.enter="searchRecords" /></label>
-            <label><span>状态</span><el-select v-model="statusFilter" placeholder="全部状态" clearable>
-              <el-option label="启用" value="ACTIVE" /><el-option label="停用" value="INACTIVE" />
-            </el-select></label>
-            <label><span>标准来源</span><el-select v-model="sourceFilter" placeholder="全部来源" clearable>
-              <el-option v-for="source in summary.standard_sources" :key="source" :label="source" :value="source" />
-            </el-select></label>
-            <label v-if="selectedCategory.key === 'country'"><span>洲别</span><el-select v-model="continentFilter" placeholder="全部洲别" clearable>
-              <el-option v-for="continent in continentOptions" :key="continent" :label="continent" :value="continent" />
-            </el-select></label>
-            <el-button type="primary" :icon="Search" @click="searchRecords">查询</el-button>
-            <el-button @click="resetFilters">重置</el-button>
-          </section>
-
-          <section class="data-card" v-loading="loading">
-            <div class="data-card__header">
+          <section class="data-card erp-list-data" v-loading="loading">
+            <div class="data-card__header erp-list-toolbar">
+        <div class="page-heading__actions">
+          <el-button class="erp-button-motion" :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
+          <el-button class="erp-button-motion" v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增资料</el-button>
+        </div>
               <div><h2>{{ selectedCategory.title }}</h2><span>共 {{ visibleRecords.length }} 项</span></div>
             </div>
 
@@ -747,7 +749,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                 show-icon
                 title="公司本位币未配置；生产任务仍按已维护的兑人民币汇率换算，汇率不会自动更新。"
               />
-              <el-table :data="visibleRecords" class="master-table" data-testid="master-data-table" height="100%" row-key="id">
+              <div class="erp-list-table-frame"><el-table :data="visibleRecords" class="master-table" data-testid="master-data-table" height="100%" row-key="id">
                 <el-table-column
                   v-for="column in currentColumns"
                   :key="column.key"
@@ -761,7 +763,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                       <span class="country-name-cell"><img v-if="countryFlagUrl(row.code)" class="country-flag" data-testid="country-flag" :src="countryFlagUrl(row.code)" :alt="`${row.chinese_name}国旗`" loading="lazy"><span v-else class="country-flag" data-testid="country-flag" :aria-label="`${row.chinese_name}国旗`">{{ countryFlag(row.code) }}</span><span>{{ row.chinese_name }}</span></span>
                     </template>
                     <span v-else-if="selectedCategory.key === 'country' && column.key === 'continent'">{{ countryContinent(row) }}</span>
-                    <el-tag v-if="column.key === 'status'" class="settings-tag" :type="row.status === 'ACTIVE' ? 'success' : 'info'" round>
+                    <el-tag v-if="column.key === 'status'" class="settings-tag erp-list-tag" :class="row.status === 'ACTIVE' ? 'erp-list-tag--success' : 'erp-list-tag--neutral'" :type="row.status === 'ACTIVE' ? 'success' : 'info'" round>
                       {{ row.status === 'ACTIVE' ? '启用' : '停用' }}
                     </el-tag>
                     <span v-else-if="!(selectedCategory.key === 'country' && ['chinese_name', 'continent'].includes(column.key))">{{ cellValue(row, column.key) }}</span>
@@ -781,7 +783,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                     </el-dropdown>
                   </template>
                 </el-table-column>
-              </el-table>
+              </el-table></div>
             </template>
           </section>
         </main>
@@ -849,66 +851,30 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 </template>
 
 <style scoped lang="scss">
-.master-data-page { display: flex; flex-direction: column; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: hidden; color: #1d2129; }
-.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
-.page-heading h1 { margin: 0; font-size: 24px; line-height: 1.35; }
-.page-heading__actions { display: flex; flex: none; gap: 10px; }
-.page-grid { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
-.category-card, .filter-card, .data-card { border: 1px solid #e4e7ed; border-radius: 10px; background: #fff; }
-.category-card { min-height: 0; padding: 14px 10px; overflow-y: auto; }
-.category-card h2 { margin: 0 5px 14px; font-size: 16px; font-weight: 600; }
-.category-item { width: 100%; height: 38px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 0 14px; border: 0; border-radius: 7px; color: #1d2129; background: #fff; cursor: pointer; font: inherit; font-size: 13px; }
-.category-item > span:last-child { color: #98a2b3; font-size: 12px; }
-.category-item:hover { background: #f5f6f8; }
-.category-item.is-active { color: #fff; background: #18181b; }
-.category-item.is-active > span:last-child { color: #fff; }
-.category-item.is-locked:not(.is-active) { color: #98a2b3; }
-.main-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.filter-card { min-height: 76px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 11px 14px; }
-.filter-card label { width: 220px; display: flex; flex-direction: column; gap: 5px; color: #667085; font-size: 12px; }
-.data-card { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 12px; overflow: hidden; }
-.data-card__header { height: 38px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
-.data-card__header > div { display: flex; align-items: center; gap: 12px; }
-.data-card__header h2 { margin: 0; font-size: 16px; }
-.data-card__header span { color: #667085; font-size: 12px; }
+.page-heading__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.page-grid { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; }
+.category-card { min-height: 0; overflow-y: auto; }
+.category-card h2 { margin: 0 5px 10px; font-size: 14px; font-weight: 600; }
+.category-item { width: 100%; display: flex; align-items: center; justify-content: space-between; font: inherit; font-size: 13px; }
+.category-item > span:last-child, .category-item.is-locked:not(.is-active) { color: var(--erp-color-text-secondary); font-size: 12px; }
+.main-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.filter-card { align-items: flex-end; }
+.filter-card label { width: 220px; display: flex; flex-direction: column; gap: 5px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.data-card__header > div:last-child { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.data-card__header h2 { margin: 0; font-size: 14px; }
+.data-card__header span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .base-currency-alert { margin: 4px 0 10px; }
-.master-table { flex: 1; min-height: 0; width: 100%; }
-.master-table :deep(.el-scrollbar__wrap) { overflow-y: auto; }
 .country-name-cell { display: inline-flex; align-items: center; gap: 7px; }
 .country-flag { display: inline-flex; width: 16px; height: 12px; justify-content: center; object-fit: cover; font-size: 15px; line-height: 1; }
-.pagination-row { display: flex; justify-content: flex-end; padding: 12px 2px 0; }
-.card-state { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
-.card-state > .el-icon { font-size: 34px; color: #e6a23c; }
-.card-state h3 { margin: 12px 0 6px; color: #1d2129; font-size: 17px; }
+.card-state, .state-page { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--erp-color-text-secondary); text-align: center; }
+.card-state > .el-icon, .state-page > .el-icon { font-size: 34px; color: var(--erp-color-warning); }
+.card-state h3 { margin: 12px 0 6px; color: var(--erp-color-text-primary); font-size: 17px; }
 .card-state p { max-width: 560px; margin: 0 0 16px; font-size: 13px; line-height: 1.7; }
-.state-page { min-height: 620px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #667085; text-align: center; }
-.state-page > .el-icon { font-size: 42px; color: #909399; }
-.state-page h1 { margin: 16px 0 8px; color: #1d2129; }
-.state-page p { margin: 0; }
 .master-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; margin-top: 16px; }
 .master-form :deep(.el-form-item:has(textarea)) { grid-column: 1 / -1; }
 
-@media (max-width: 1599px) and (min-width: 769px) {
-  .page-grid { grid-template-columns: 156px minmax(0, 1fr); gap: 12px; }
-  .category-card { min-height: 0; }
-  .category-item { padding: 0 10px; }
-  .filter-card label { width: min(190px, 22vw); }
-  .data-card :deep(.compact-hidden) { display: none; }
-}
 
-@media (max-width: 900px) {
-  .page-heading { align-items: flex-start; flex-direction: column; }
-  .page-grid { grid-template-columns: 1fr; }
-  .category-card { min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .category-card h2 { grid-column: 1 / -1; }
-  .category-item { margin: 0; }
-  .filter-card { align-items: stretch; flex-direction: column; }
-  .filter-card label { width: 100%; }
-}
-
-@media (max-width: 640px) {
-  .category-card { grid-template-columns: 1fr 1fr; }
-  .page-heading__actions { width: 100%; }
-  .master-form { grid-template-columns: 1fr; }
-}
+@media (max-width: 1599px) and (min-width: 769px) { .page-grid { grid-template-columns: 156px minmax(0, 1fr); } .data-card :deep(.compact-hidden) { display: none; } }
+@media (max-width: 900px) { .page-grid { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .category-card { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); } .category-card h2 { grid-column: 1 / -1; } .filter-card label { width: min(220px, 100%); } }
+@media (max-width: 640px) { .category-card { grid-template-columns: 1fr 1fr; } .master-form { grid-template-columns: 1fr; } }
 </style>

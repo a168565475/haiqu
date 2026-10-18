@@ -1,0 +1,48 @@
+.erp-glass-spotlight {
+  position: relative;
+  isolation: isolate;
+}
+
+.erp-glass-spotlight::before,
+.erp-glass-spotlight::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: var(--erp-spotlight-active, 0);
+  transition: opacity 220ms ease-out;
+}
+
+.erp-glass-spotlight::before {
+  z-index: -1;
+  inset: 0;
+  background: radial-gradient(
+    circle var(--erp-spotlight-radius) at var(--erp-spotlight-x, 50%) var(--erp-spotlight-y, 50%),
+    var(--erp-spotlight-fill),
+    transparent 100%
+  );
+}
+
+.erp-glass-spotlight::after {
+  z-index: 1;
+  // 提亮层与已有的 1px 边框重合，不另画一圈边框。
+  inset: -1px;
+  padding: 1px;
+  background: radial-gradient(
+    circle var(--erp-spotlight-radius) at calc(var(--erp-spotlight-x, 50%) + 1px) calc(var(--erp-spotlight-y, 50%) + 1px),
+    var(--erp-spotlight-edge),
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+@media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce), print {
+  .erp-glass-spotlight::before,
+  .erp-glass-spotlight::after {
+    display: none;
+    transition: none;
+  }
+}

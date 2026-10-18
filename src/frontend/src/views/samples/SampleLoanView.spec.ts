@@ -179,7 +179,7 @@ describe('SampleLoanView', () => {
     apiMocks.options.mockImplementationOnce(() => new Promise(resolve => { oldOptions = resolve }))
     const wrapper = await render(['samples.add_sampleinventoryloan'])
     expect(wrapper.findComponent({ name: 'SampleLoanCreateDialog' }).exists()).toBe(false)
-    await wrapper.findAll('button').find(button => button.text() === '样品借出')!.trigger('click')
+    await wrapper.findAll('.heading-actions button').find(button => button.text() === '样品借出')!.trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'SampleLoanCreateDialog' }).vm.$emit('created'); await flushPromises()
     oldList({ data: [], meta: { total: 0 } }); oldSummary({ active_documents: 0 }); oldOptions({ borrower_names: [], product_categories: [] })

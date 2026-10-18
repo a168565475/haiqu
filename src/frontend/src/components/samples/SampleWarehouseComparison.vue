@@ -37,7 +37,7 @@ function supplyChanged(key: string, value: string) { emit('update:modelValue', p
 h2 { width: auto; flex: none; margin: 0; font-family: token.$crm-font-display; font-size: 22px; line-height: 30px; }
 .comparison-toolbar p { flex: 1; min-width: 0; margin: 0; }
 .comparison-toolbar p { color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; }
-.warehouse-comparison .comparison-toolbar :deep(.el-button) { width: auto; min-width: 96px; height: 32px; flex: none; padding: 0 16px; border-radius: 5px; background: #fff; font-size: 13px; }
+.warehouse-comparison .comparison-toolbar :deep(.el-button) { width: auto; min-width: 96px; height: 32px; flex: none; padding: 0 16px; border-radius: 5px; background: var(--erp-color-surface); font-size: 13px; }
 .warehouse-tabs :deep(button) { width: 152px; flex: 0 0 152px; }
 .warehouse-tabs :deep(.el-checkbox) { height: 32px; flex: none; align-items: center; color: token.$crm-text-secondary; }
 .comparison-table { height: 312px; min-height: 0; overflow: auto; }
@@ -48,8 +48,8 @@ th { height: 44px; padding: 0 16px; font-size: 12px; font-weight: 500; line-heig
 td { height: 34px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid token.$crm-border-subtle; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .supply-field { display: flex; align-items: center; gap: 4px; }
 .supply-field :deep(.el-input) { flex: 1; min-width: 0; }
-.supply-field :deep(.el-input__wrapper) { min-height: 32px; height: 32px; padding: 1px 7px; border-radius: 5px; background: #fff; box-shadow: 0 0 0 1px token.$crm-border-subtle inset; }
-.supply-field :deep(.el-input__wrapper.is-focus) { box-shadow: 0 0 0 1px token.$crm-primary inset; }
+.supply-field :deep(.el-input__wrapper) { min-height: 32px; height: 32px; padding: 1px 7px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.supply-field :deep(.el-input__wrapper.is-focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 .shortage-cell { color: token.$crm-text-secondary; background: transparent; }
 .shortage-cell.has-shortage { color: token.$crm-primary; }
 .supply-result { display: inline-flex; height: 24px; align-items: center; padding: 0 10px; border-radius: 4px; color: token.$crm-neutral; background: token.$crm-color-page; font-size: 12px; line-height: 22px; white-space: nowrap; }

@@ -216,7 +216,7 @@ onMounted(load)
 
 .wr-approval-page {
   display: flex;
-  min-height: calc(100dvh - 64px);
+  min-height: 0;
   flex-direction: column;
   gap: 14px;
 }
@@ -232,7 +232,6 @@ onMounted(load)
 
 .wr-approval-card {
   padding: 16px;
-  border-radius: 5px;
 
   h2 { margin-bottom: 14px; }
 }
@@ -241,15 +240,15 @@ onMounted(load)
   display: grid;
   margin: 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid #ddd6c9;
-  border-left: 1px solid #ddd6c9;
+  border-top: 1px solid var(--erp-color-border-subtle);
+  border-left: 1px solid var(--erp-color-border);
 
   > div {
     display: grid;
     min-height: 40px;
     grid-template-columns: 88px minmax(0, 1fr);
-    border-right: 1px solid #ddd6c9;
-    border-bottom: 1px solid #ddd6c9;
+    border-right: 1px solid var(--erp-color-border);
+    border-bottom: 1px solid var(--erp-color-border-subtle);
   }
 
   > div.is-wide { grid-column: span 4; }
@@ -266,8 +265,8 @@ onMounted(load)
     line-height: 20px;
   }
 
-  dt { color: #6f6a61; background: #f0eadf; }
-  dd { color: #4d4c48; overflow-wrap: anywhere; }
+  dt { color: var(--erp-color-text-secondary); background: var(--erp-color-subtle); }
+  dd { color: var(--erp-color-text-regular); overflow-wrap: anywhere; }
 }
 
 .wr-approval-table { width: 100%; }

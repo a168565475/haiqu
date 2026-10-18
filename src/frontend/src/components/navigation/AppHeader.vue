@@ -40,7 +40,7 @@ async function handleUserCommand(command: string | number | object) {
 
 <template>
   <div class="app-header app-header--page-tabs app-header--crm-v2">
-    <div class="app-header__brand" data-app-brand>
+    <div class="app-header__brand" data-app-brand :style="{ '--brand-image': `url(${headerLogo})` }">
       <img :src="headerLogo" alt="HiTree" width="120" height="40" />
     </div>
     <div class="app-header__context">
@@ -82,27 +82,51 @@ async function handleUserCommand(command: string | number | object) {
 .app-header {
   box-sizing: border-box;
   width: 100%;
-  height: 48px;
+  height: 100%;
   display: flex;
   align-items: center;
   gap: 20px;
   padding: 0 20px;
-  color: #1f1d18;
+  color: var(--erp-color-text-primary);
   font-family: var(--erp-font-body, 'Noto Sans SC', 'Microsoft YaHei', sans-serif);
 }
 
 .app-header__brand {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
   padding-right: 20px;
-  border-right: 1px solid #e0e1db;
+  border-right: 1px solid var(--erp-color-border);
 }
 .app-header__brand img {
   display: block;
   width: 120px;
   height: 40px;
   object-fit: contain;
+  opacity: 0;
+}
+
+// 树形直接滤色原图，保留分面的明暗；字标单独取主题色。
+.app-header__brand::before,
+.app-header__brand::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: 40px;
+  pointer-events: none;
+}
+.app-header__brand::before {
+  clip-path: inset(0 69% 0 0);
+  background: var(--brand-image) center / contain no-repeat;
+  filter: var(--erp-logo-filter);
+}
+.app-header__brand::after {
+  clip-path: inset(0 0 0 31%);
+  mask: var(--brand-image) center / contain no-repeat;
+  background: var(--erp-logo-wordmark-color);
 }
 .app-header__context {
   flex: 1;
@@ -127,11 +151,11 @@ async function handleUserCommand(command: string | number | object) {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: inherit;
+  color: var(--erp-header-user-color);
   cursor: pointer;
 }
-.app-header__user:hover:not(:disabled) { background: #f2f2ee; }
-.app-header__user:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.app-header__user:hover:not(:disabled) { background: var(--erp-menu-hover-background); }
+.app-header__user:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
 .app-header__user:disabled { cursor: wait; }
 .app-header__user-name {
   max-width: 160px;

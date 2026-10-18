@@ -91,7 +91,7 @@ function formatDueAt(value: string | null): string {
         <div class="funnel-list">
           <div v-for="(item, index) in salesFunnelDemo" :key="item.label" class="funnel-row">
             <div class="funnel-row__meta"><span>{{ item.label }}</span><small>{{ [24, 16, 11, 6, 4][index] }} 个</small><strong>{{ item.value }}</strong></div>
-            <div class="funnel-row__track"><span :style="{ width: `${item.ratio}%`, background: item.color }" /></div>
+            <div class="funnel-row__track"><span :style="{ width: `${item.ratio}%` }" /></div>
           </div>
           <div class="funnel-conversion"><span>询盘 → 预计成交转化率</span><strong>16.7%</strong></div>
         </div>
@@ -143,48 +143,54 @@ function formatDueAt(value: string | null): string {
 .sales-workbench__risk,
 .sales-workbench__milestones { height: 310px; }
 .task-tabs { display: flex; gap: 10px; }
-.task-tabs span { min-width: 76px; padding: 5px 10px; border-radius: 6px; color: #71717a; background: #f4f4f5; font-size: 12px; text-align: center; }
-.task-tabs .is-active { color: #1478db; background: #eaf4ff; }
-.currency-tag { padding: 5px 16px; border-radius: 6px; color: #71717a; background: #f4f4f5; font-size: 12px; }
+.task-tabs span { min-width: 76px; padding: 5px 10px; border-radius: 6px; color: var(--erp-color-text-secondary); background: var(--erp-color-subtle); font-size: 12px; text-align: center; }
+.task-tabs .is-active { color: var(--erp-color-brand); background: var(--erp-color-selected); }
+.currency-tag { padding: 5px 16px; border-radius: 6px; color: var(--erp-color-text-secondary); background: var(--erp-color-subtle); font-size: 12px; }
 
 .work-table-wrap { height: 100%; overflow: hidden; }
-.work-table { width: 100%; border-collapse: collapse; table-layout: fixed; color: #3f3f46; font-size: 13px; }
-.work-table th { height: 42px; padding: 0 16px; border-bottom: 1px solid #e4e4e7; color: #71717a; background: #f4f5f7; font-weight: 500; text-align: left; }
-.work-table td { height: 46px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid #e4e4e7; text-overflow: ellipsis; white-space: nowrap; }
+.work-table { width: 100%; border-collapse: collapse; table-layout: fixed; color: var(--erp-color-text-regular); font-size: 13px; }
+.work-table th { height: 42px; padding: 0 16px; border-bottom: 1px solid var(--erp-color-border-subtle); color: var(--erp-color-text-secondary); background: var(--erp-table-header-background); font-weight: 500; text-align: left; }
+.work-table td { height: 46px; padding: 0 16px; overflow: hidden; border-bottom: 1px solid var(--erp-color-border-subtle); text-overflow: ellipsis; white-space: nowrap; }
 .work-table tr:last-child td { border-bottom: 0; }
 .work-table th:nth-child(1) { width: 31%; }
 .work-table th:nth-child(2) { width: 24%; }
 .work-table th:nth-child(3) { width: 19%; }
 .work-table th:nth-child(4) { width: 14%; }
 .work-table th:nth-child(5) { width: 12%; }
-.work-table__title { color: #18181b; font-weight: 500; }
-.work-table .is-overdue { color: #dc2626; }
-.priority-tag { display: inline-flex; padding: 2px 8px; border-radius: 999px; color: #52525b; background: #f4f4f5; font-size: 11px; line-height: 18px; }
-.priority-tag--high, .priority-tag--urgent { color: #b91c1c; background: #fee2e2; }
-.priority-tag--low { color: #52525b; background: #f4f4f5; }
-.text-button { padding: 0; border: 0; color: #18181b; background: transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
+.work-table__title { color: var(--erp-color-text-primary); font-weight: 500; }
+.work-table .is-overdue { color: var(--erp-color-danger); }
+.priority-tag { display: inline-flex; padding: 2px 8px; border-radius: 999px; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); font-size: 11px; line-height: 18px; }
+.priority-tag--high, .priority-tag--urgent { color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); }
+.priority-tag--low { color: var(--erp-tag-info-text); background: var(--erp-tag-info-background); }
+.text-button { padding: 0; border: 0; color: var(--erp-color-brand); background: transparent; font-size: 13px; font-weight: 600; cursor: pointer; }
+.text-button:focus-visible, .risk-row:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: -2px; border-radius: var(--erp-radius-control); }
+.risk-row:hover, .work-table tbody tr:hover { background: var(--erp-table-hover); }
 
 .funnel-list { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 10px 20px 12px; }
-.funnel-row__meta { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; margin-bottom: 5px; color: #3f3f46; font-size: 12px; }
-.funnel-row__meta small { color: #8b8f97; }
-.funnel-row__meta strong { color: #18181b; font-size: 12px; }
-.funnel-row__track { height: 10px; overflow: hidden; border-radius: 999px; background: #f4f4f5; }
-.funnel-row__track span { display: block; height: 100%; border-radius: inherit; }
-.funnel-conversion { display: flex; align-items: center; justify-content: space-between; color: #8b8f97; font-size: 11px; }
-.funnel-conversion strong { color: #008a33; font-size: 18px; }
+.funnel-row__meta { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; margin-bottom: 5px; color: var(--erp-color-text-regular); font-size: 12px; }
+.funnel-row__meta small { color: var(--erp-color-text-muted); }
+.funnel-row__meta strong { color: var(--erp-color-text-primary); font-size: 12px; }
+.funnel-row__track { height: 10px; overflow: hidden; border-radius: 999px; background: var(--erp-color-subtle); }
+.funnel-row__track span { display: block; height: 100%; border-radius: inherit; background: var(--erp-color-brand); }
+.funnel-row:nth-child(2) .funnel-row__track span { background: var(--erp-color-brand-light-3); }
+.funnel-row:nth-child(3) .funnel-row__track span { background: var(--erp-color-brand-light-5); }
+.funnel-row:nth-child(4) .funnel-row__track span { background: var(--erp-color-warning); }
+.funnel-row:nth-child(5) .funnel-row__track span { background: var(--erp-color-success); }
+.funnel-conversion { display: flex; align-items: center; justify-content: space-between; color: var(--erp-color-text-muted); font-size: 11px; }
+.funnel-conversion strong { color: var(--erp-color-success); font-size: 18px; }
 
 .risk-list, .milestone-list { height: 100%; padding: 6px 16px; }
-.risk-row, .milestone-row { width: 100%; height: 55px; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; border-bottom: 1px solid #e4e4e7; color: #3f3f46; background: transparent; text-align: left; }
+.risk-row, .milestone-row { width: 100%; height: 55px; display: flex; align-items: center; gap: 12px; padding: 0; border: 0; border-bottom: 1px solid var(--erp-color-border-subtle); color: var(--erp-color-text-regular); background: transparent; text-align: left; }
 .risk-row { cursor: pointer; }
 .risk-row:last-child, .milestone-row:last-child { border-bottom: 0; }
-.risk-row__dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #dc2626; }
+.risk-row__dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--erp-color-danger); }
 .risk-row__main, .milestone-row__main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
-.risk-row__main strong, .milestone-row__main strong { overflow: hidden; color: #18181b; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.risk-row__main small, .milestone-row__main small { overflow: hidden; color: #71717a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.risk-row__level { flex: none; padding: 2px 8px; border-radius: 999px; color: #b91c1c; background: #fee2e2; font-size: 11px; }
-.risk-row__date, .milestone-row__date { width: 72px; flex: none; color: #71717a; font-size: 11px; text-align: right; }
-.milestone-row__icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 6px; color: #1478db; background: #eaf4ff; font-size: 12px; }
-.milestone-row__status { width: 55px; flex: none; color: #52525b; font-size: 11px; text-align: right; }
+.risk-row__main strong, .milestone-row__main strong { overflow: hidden; color: var(--erp-color-text-primary); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.risk-row__main small, .milestone-row__main small { overflow: hidden; color: var(--erp-color-text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.risk-row__level { flex: none; padding: 2px 8px; border-radius: 999px; color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); font-size: 11px; }
+.risk-row__date, .milestone-row__date { width: 72px; flex: none; color: var(--erp-color-text-secondary); font-size: 11px; text-align: right; }
+.milestone-row__icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 6px; color: var(--erp-color-brand); background: var(--erp-color-selected); font-size: 12px; }
+.milestone-row__status { width: 55px; flex: none; color: var(--erp-color-text-secondary); font-size: 11px; text-align: right; }
 
 @media (max-width: 1599px) and (min-width: 769px) {
   .sales-workbench__main-grid { grid-template-columns: minmax(0, 820fr) minmax(0, 496fr); }

@@ -1,0 +1,299 @@
+// 显式接入的业务列表骨架；不改变未接入页面和嵌入式列表。
+.erp-glass-list {
+  --erp-list-row-height: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  color: var(--erp-color-text-primary);
+  background: transparent;
+  font-family: var(--erp-font-body);
+
+  .erp-list-filter,
+  .erp-list-data,
+  .erp-list-surface {
+    box-sizing: border-box;
+    min-width: 0;
+    border: 1px solid var(--erp-glass-border);
+    border-radius: var(--erp-glass-radius);
+    background: var(--erp-glass-surface);
+    box-shadow: var(--erp-glass-shadow);
+    backdrop-filter: var(--erp-glass-backdrop);
+  }
+
+  .erp-list-filter {
+    flex: none;
+    padding: var(--erp-filter-padding);
+  }
+
+  .erp-list-filter .erp-list-heading,
+  .erp-list-data .erp-list-heading {
+    display: flex;
+    align-items: center;
+    height: auto;
+    min-height: 44px;
+    margin: 0 0 12px;
+    gap: 20px;
+  }
+
+  .erp-list-filter .erp-list-heading h1,
+  .erp-list-data .erp-list-heading h1 {
+    margin: 0;
+    color: var(--erp-color-text-primary);
+    font-family: var(--erp-font-body);
+    font-size: 36px !important;
+    font-weight: 700;
+    line-height: 44px !important;
+    letter-spacing: normal;
+  }
+
+  .erp-list-heading .crm-page-header__title-row { align-items: baseline; gap: 20px; }
+  .erp-list-title-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 20px; min-width: 0; }
+  .erp-list-heading .crm-page-header__count,
+  .erp-list-count { padding: 0; font-size: 13px; line-height: 20px; color: var(--erp-color-text-secondary); }
+
+  .erp-list-filters {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .erp-list-filter-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
+  .erp-list-filters > label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .erp-list-filters .el-range-editor { height: 32px; min-height: 32px; padding: 0 12px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+  .erp-list-filters .el-range-input { color: var(--erp-input-text); font-size: 12px; }
+
+  .erp-list-filters .el-input,
+  .erp-list-filters .el-select { min-width: 0; height: 32px; }
+
+  .erp-list-filters .el-input__wrapper,
+  .erp-list-select .el-select__wrapper,
+  .erp-list-filters .el-select__wrapper {
+    box-sizing: border-box;
+    min-height: 32px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--erp-radius-control);
+    background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
+    &.is-focus, &.is-focused { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+    &.is-disabled { background: var(--erp-input-disabled-background); }
+  }
+
+  .erp-list-filters .el-input__inner,
+  .erp-list-select .el-select__placeholder,
+  .erp-list-filters .el-select__placeholder { color: var(--erp-input-text); font-size: 12px; line-height: 18px; }
+  .erp-list-filters .el-input__inner::placeholder { color: var(--erp-input-placeholder); }
+  .erp-list-filters .is-disabled .el-input__inner,
+  .erp-list-select .is-disabled .el-select__placeholder,
+  .erp-list-filters .is-disabled .el-select__placeholder { color: var(--erp-input-disabled-text); }
+  .erp-list-filters .el-input.is-disabled .el-input__wrapper { background: var(--erp-input-disabled-background); }
+
+  .erp-list-toolbar,
+  .erp-list-filters,
+  .erp-list-heading {
+    .el-button { height: 32px; min-height: 32px; margin: 0; padding: 0 12px; font-size: 13px; border-radius: var(--erp-radius-control); }
+    .el-button > span { gap: 8px; }
+    .el-button img { width: 16px; height: 16px; }
+  }
+
+  .erp-list-table-scroll { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
+  .erp-list-native-table {
+    width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed;
+    background: var(--erp-table-background); color: var(--erp-table-text); font-size: 12px; line-height: 18px;
+    th, td { box-sizing: border-box; padding: 0 16px; text-align: left; border: 0; border-right: 1px solid var(--erp-table-border); border-bottom: 1px solid var(--erp-table-border); }
+    th { position: sticky; top: 0; z-index: 2; height: 38px; background: var(--erp-table-header-background); color: var(--erp-table-header-text); font-weight: 500; }
+    td { height: var(--erp-list-row-height); background: var(--erp-table-background); }
+    .num, .number { text-align: right; font-variant-numeric: tabular-nums; }
+    .center { text-align: center; }
+    .empty, .empty-cell { height: 120px; text-align: center; color: var(--erp-color-text-secondary); }
+    th:last-child, td:last-child { border-right: 0; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: var(--erp-table-hover); }
+    tbody tr.is-selected td, tbody tr.selected td { background: var(--erp-table-selected); }
+    .scroll-actions-cell, .erp-list-sticky-action { position: sticky; right: 0; z-index: 1; }
+    th.scroll-actions-cell, th.erp-list-sticky-action { z-index: 3; }
+  }
+  .erp-list-native-table--nowrap { th, td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
+  .erp-list-summary { display: flex; flex: none; flex-wrap: wrap; gap: 12px; margin: 0; }
+  .erp-list-summary + .erp-list-filters { margin-top: 12px; }
+  .erp-list-summary-item { display: flex; flex: 1 1 160px; min-height: 46px; align-items: center; gap: 12px; padding: 8px 12px; border-radius: var(--erp-radius-control); background: var(--erp-color-surface); color: var(--erp-color-text-secondary); }
+  .erp-list-summary-item strong { color: var(--erp-color-text-primary); font-size: 22px; font-variant-numeric: tabular-nums; }
+  .erp-list-tabs { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .erp-list-tabs > button { height: 32px; padding: 0 14px; border: 1px solid var(--erp-color-border); border-radius: var(--erp-radius-control); color: var(--erp-color-text-primary); background: var(--erp-input-surface); cursor: pointer; }
+  .erp-list-tabs > button.active, .erp-list-tabs > button.is-active { color: var(--erp-button-primary-text); background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
+  &.erp-glass-list--scroll { overflow: auto; }
+  &.erp-glass-list--comfortable { --erp-list-row-height: 56px; }
+  &.erp-glass-list--scroll > .erp-list-data { flex: none; }
+  &.erp-glass-list--catalog { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+  &.erp-glass-list--catalog > .erp-list-filter { overflow: auto; }
+  @media (max-width: 1100px) { &.erp-glass-list--catalog { grid-template-columns: 180px minmax(0, 1fr); } }
+
+  .erp-list-data {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    padding: var(--erp-list-card-padding);
+  }
+
+  .erp-list-toolbar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 32px;
+    margin: 0 0 var(--erp-toolbar-table-gap);
+    padding-inline: var(--erp-toolbar-inline-padding);
+  }
+
+  .erp-list-table-frame {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid var(--erp-table-frame-border);
+    border-radius: var(--erp-radius-control);
+    background: var(--erp-table-background);
+
+    .el-table {
+      flex: 1; min-width: 0; min-height: 0; border: 0; border-radius: 0; color: var(--erp-table-text);
+      --el-table-border-color: var(--erp-table-border); --el-table-bg-color: var(--erp-table-background); --el-table-tr-bg-color: var(--erp-table-background);
+      --el-table-text-color: var(--erp-table-text); --el-table-header-text-color: var(--erp-table-header-text); --el-table-header-bg-color: var(--erp-table-header-background);
+      --el-table-row-hover-bg-color: var(--erp-table-hover); --el-table-current-row-bg-color: var(--erp-table-selected);
+    }
+    // 外框只由frame绘制，取消组件库外围补丁及固定列覆盖层重复边缘。
+    .el-table::before, .el-table::after, .el-table__inner-wrapper::before, .el-table__inner-wrapper::after,
+    .el-table__border-left-patch, .el-table__border-right-patch, .el-table__border-bottom-patch,
+    .el-table-fixed-column--left::before, .el-table-fixed-column--right::before { display: none; }
+
+    .el-table__header-wrapper th.el-table__cell {
+      height: 38px !important;
+      padding: 0 !important;
+      background: var(--erp-table-header-background) !important;
+      color: var(--erp-table-header-text) !important;
+      border-bottom: 1px solid var(--erp-table-border);
+    }
+    .el-table__body-wrapper td.el-table__cell {
+      height: var(--erp-list-row-height) !important;
+      padding: 0 !important;
+      background: var(--erp-table-background);
+      color: var(--erp-table-text);
+      border-bottom: 1px solid var(--erp-table-border);
+    }
+    th.el-table__cell, td.el-table__cell { border-right: 1px solid var(--erp-table-border); }
+    th.el-table__cell:last-child, td.el-table__cell:last-child { border-right: 0; }
+    .el-table__body tr:last-child td.el-table__cell { border-bottom: 0; }
+    .el-table .cell { padding: 0 16px; font-size: 12px; line-height: 18px; }
+    .el-table__body tr:hover > td.el-table__cell { background: var(--erp-table-hover) !important; }
+    .el-table__body tr.current-row > td.el-table__cell { background: var(--erp-table-selected) !important; }
+    .el-table__empty-block { min-height: 120px; }
+  }
+
+  .erp-list-footer {
+    box-sizing: border-box;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+    border: 0;
+    color: var(--erp-color-text-secondary);
+    font-size: 12px;
+
+    .pagination, .el-pagination { display: flex; align-items: center; gap: 6px; margin: 0; padding: 0; height: 28px; --el-pagination-button-height: 28px; }
+    .el-pagination { margin-left: auto; }
+    .el-select { width: 112px; height: 28px; }
+    .el-select__wrapper { min-height: 28px; height: 28px; padding: 0 8px; border-radius: 5px; background: var(--erp-pagination-background); box-shadow: 0 0 0 1px var(--erp-pagination-border) inset; }
+    .el-select__placeholder, .el-pagination__total, .el-pagination__jump { font-size: 12px; line-height: 18px; color: var(--erp-pagination-text); }
+    .el-button, .erp-list-button, .btn-prev, .btn-next, .el-pager li {
+      min-width: 28px; height: 28px; min-height: 28px; margin: 0; padding: 0 8px;
+      border: 1px solid var(--erp-pagination-border); border-radius: 5px;
+      background: var(--erp-pagination-background); color: var(--erp-pagination-text);
+      box-shadow: none; font-size: 12px; line-height: 18px;
+    }
+    .el-button:hover:not(:disabled), .erp-list-button:hover:not(:disabled), .btn-prev:hover:not(:disabled), .btn-next:hover:not(:disabled), .el-pager li:hover:not(.is-active) {
+      background: var(--erp-pagination-hover-background); border-color: var(--erp-pagination-hover-border); color: var(--erp-pagination-text);
+    }
+    .el-button.active, .erp-list-button.active, .el-pager li.is-active { background: var(--erp-pagination-current-background); color: var(--erp-pagination-current-text); border-color: var(--erp-pagination-current-border); }
+    .el-button:disabled, .erp-list-button:disabled, .btn-prev:disabled, .btn-next:disabled { background: var(--erp-pagination-disabled-background); color: var(--erp-pagination-disabled-text); }
+  }
+}
+
+.erp-list-search-button { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 30px; padding: 0; border: 0; background: transparent; color: var(--erp-input-placeholder); cursor: pointer; }
+.erp-list-search-button img { width: 16px; height: 16px; }
+.erp-list-search-button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.erp-list-control { box-sizing: border-box; height: 32px; min-width: 0; padding: 0 12px; border: 1px solid var(--erp-input-border); border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow); color: var(--erp-input-text); font: inherit; font-size: 12px; }
+.erp-list-control::placeholder { color: var(--erp-input-placeholder); }
+.erp-list-control:focus { border-color: var(--erp-input-focus-border); outline: none; }
+.erp-list-control[aria-invalid='true'], .erp-list-control[aria-invalid='true']:focus { border-color: var(--erp-color-danger); }
+.erp-list-control:disabled { background: var(--erp-input-disabled-background); color: var(--erp-input-disabled-text); }
+.erp-list-button { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 32px; padding: 0 12px; border: 1px solid var(--erp-button-secondary-border); border-radius: var(--erp-radius-control); background: var(--erp-button-secondary-surface); box-shadow: var(--erp-button-secondary-shadow); color: var(--erp-button-secondary-text); cursor: pointer; font: inherit; font-size: 13px; }
+.erp-list-button--primary { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); box-shadow: var(--erp-button-primary-shadow); color: var(--erp-button-primary-text); }
+.erp-list-button:hover:not(:disabled), .erp-list-button:focus-visible:not(:disabled) { background: var(--erp-button-secondary-hover-surface); border-color: var(--erp-button-secondary-hover-border); }
+.erp-list-button--primary:hover:not(:disabled), .erp-list-button--primary:focus-visible:not(:disabled) { background: var(--erp-button-primary-hover-surface); border-color: var(--erp-button-primary-hover-background); }
+.erp-list-button:active:not(:disabled) { background: var(--erp-button-secondary-pressed-background); box-shadow: none; }
+.erp-list-button--primary:active:not(:disabled) { background: var(--erp-button-primary-pressed-background); }
+.erp-list-button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.erp-list-button:disabled { background: var(--erp-button-disabled-background); border-color: var(--erp-button-disabled-border); color: var(--erp-button-disabled-text); box-shadow: none; opacity: 1; cursor: not-allowed; }
+.erp-list-catalog-nav { display: flex; flex-direction: column; gap: 6px; }
+// 目录由父容器滚动；大量品名不能挤压按钮，长名称仍可自然增高。
+.erp-list-catalog-nav button { flex: none; min-height: 32px; padding: 6px 12px; border: 0; border-radius: var(--erp-radius-control); background: transparent; color: var(--erp-color-text-primary); text-align: left; line-height: 20px; cursor: pointer; }
+.erp-list-catalog-nav button:hover:not(:disabled) { background: var(--erp-table-hover); }
+.erp-list-catalog-nav button.active, .erp-list-catalog-nav button.is-active, .erp-list-catalog-nav button.selected { background: var(--erp-table-selected); color: var(--erp-color-brand); }
+.erp-list-tag {
+  display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--erp-tag-info-border); border-radius: var(--erp-radius-pill); background: var(--erp-tag-info-background); color: var(--erp-tag-info-text); font-size: 12px; line-height: 18px;
+  @each $tone in info, brand, success, warning, danger, neutral {
+    &--#{$tone} { background: var(--erp-tag-#{$tone}-background); border-color: var(--erp-tag-#{$tone}-border); color: var(--erp-tag-#{$tone}-text); }
+  }
+}
+
+// 高级筛选浮层脱离列表DOM，显式加类后共用控件材质，业务表单布局由各页负责。
+.el-popper.el-popover.erp-list-filter-popover {
+  max-width: calc(100vw - 32px);
+  height: auto;
+  padding: 16px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-radius-control);
+  background: var(--erp-dropdown-background);
+  box-shadow: var(--erp-overlay-shadow);
+  color: var(--erp-color-text-primary);
+  font-family: var(--erp-font-body);
+
+  .el-input__wrapper, .el-select__wrapper, .el-range-editor {
+    height: 32px; min-height: 32px; padding: 0 12px;
+    border-radius: var(--erp-radius-control); background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
+    &.is-focus, &.is-focused, &.is-active { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  }
+  .el-input__inner, .el-select__placeholder, .el-range-input { font-size: 12px; line-height: 18px; color: var(--erp-input-text); }
+  .el-input__inner::placeholder { color: var(--erp-input-placeholder); }
+  .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled, .el-range-editor.is-disabled { background: var(--erp-input-disabled-background); }
+  .is-disabled .el-input__inner, .is-disabled .el-select__placeholder, .is-disabled .el-range-input { color: var(--erp-input-disabled-text); }
+  .el-button { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); font-size: 13px; }
+  .el-button:not(.el-button--primary, .is-text, .is-link, .is-disabled) { background: var(--erp-button-secondary-surface); }
+  .el-button--primary:not(.is-disabled) { background: var(--erp-button-primary-surface); }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .erp-glass-list .erp-list-filter, .erp-glass-list .erp-list-data { background: var(--erp-color-surface); }
+}
+
+@media print {
+  .erp-glass-list .erp-list-filter, .erp-glass-list .erp-list-data { background: var(--erp-print-background); box-shadow: none; backdrop-filter: none; }
+}

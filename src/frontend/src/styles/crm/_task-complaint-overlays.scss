@@ -5,7 +5,7 @@
   padding: 0;
   overflow: hidden;
   border-radius: 6px;
-  background: #fbfaf7;
+  background: var(--erp-color-surface);
   font-family: token.$crm-font-body;
 
   .el-dialog__header {
@@ -15,12 +15,12 @@
     align-items: center;
     margin: 0;
     padding: 0 30px;
-    border-bottom: 1px solid #e8e3dc;
+    border-bottom: 1px solid var(--erp-color-border-subtle);
   }
 
   .el-dialog__title {
-    color: #181716;
-    font-family: token.$crm-font-display;
+    color: var(--erp-color-text-primary);
+    font-family: var(--erp-font-body);
     font-size: 24px;
     font-weight: 600;
     line-height: 32px;
@@ -32,7 +32,7 @@
     top: 0;
   }
 
-  .el-dialog__body { padding: 30px; color: #242424; }
+  .el-dialog__body { padding: 30px; color: var(--erp-color-text-regular); }
   .el-dialog__footer {
     height: 80px;
     box-sizing: border-box;
@@ -40,8 +40,8 @@
     align-items: center;
     justify-content: flex-end;
     padding: 0 30px;
-    border-top: 1px solid #e8e3dc;
-    background: #fbfaf7;
+    border-top: 1px solid var(--erp-color-border-subtle);
+    background: var(--erp-color-surface);
   }
 
   .el-dialog__footer .el-button {
@@ -53,38 +53,36 @@
   }
 
   .el-dialog__footer .el-button--primary {
-    border-color: #c7441d;
-    background: #c7441d;
+    border-color: var(--erp-button-primary-border);
+    background: var(--erp-button-primary-surface);
   }
 
   .el-form-item__label { font-size: 14px; line-height: 22px; }
-  .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before { color: #db2d22; }
+  .el-form-item.is-required:not(.is-no-asterisk).asterisk-left > .el-form-item__label::before { color: var(--erp-color-danger); }
   .el-input__wrapper,
-  .el-select__wrapper { min-height: 42px; border-radius: 4px; }
-  .el-textarea__inner { border-radius: 4px; }
+  .el-select__wrapper { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); }
+  .el-textarea__inner { border-radius: var(--erp-radius-control); }
+  .el-input__wrapper.is-focus,
+  .el-select__wrapper.is-focused,
+  .el-textarea__inner:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 }
 
-.task-complaint-overlay { background-color: rgba(24, 23, 21, .45); }
+.task-complaint-overlay { background-color: var(--erp-overlay-backdrop); }
 
-.task-create-dialog { height: 660px; background: #fbf9f7; }
+.task-create-dialog { height: 660px; background: var(--erp-color-surface); }
 .task-create-dialog .el-dialog__body { height: 508px; box-sizing: border-box; padding: 0; }
-.task-reassign-dialog { height: 646px; background: #fcfaf8; }
-.task-reassign-dialog .el-dialog__body { height: 494px; box-sizing: border-box; }
-.task-reschedule-dialog { height: 698px; background: #faf9f5; }
-.task-reschedule-dialog .el-dialog__body { height: 546px; box-sizing: border-box; }
-.task-bulk-complete-dialog { height: 674px; background: #f9f8f5; }
+.task-reassign-dialog .el-dialog__body { box-sizing: border-box; }
+.task-reschedule-dialog .el-dialog__body { box-sizing: border-box; }
+.task-bulk-complete-dialog { height: 674px; background: var(--erp-color-surface); }
 .task-bulk-complete-dialog .el-dialog__body { height: 522px; box-sizing: border-box; }
-.task-bulk-reassign-dialog { height: 604px; background: #fbfaf6; }
+.task-bulk-reassign-dialog { height: 604px; background: var(--erp-color-surface); }
 .task-bulk-reassign-dialog .el-dialog__body { height: 452px; box-sizing: border-box; }
 
-.complaint-create-dialog { height: 850px; background: #faf9f6; }
+.complaint-create-dialog { height: 850px; background: var(--erp-color-surface); }
 .complaint-create-dialog .el-dialog__body { height: 698px; box-sizing: border-box; }
-.complaint-edit-dialog { height: 864px; background: #fbf9f6; }
-.complaint-edit-dialog .el-dialog__body { height: 712px; box-sizing: border-box; }
-.complaint-progress-dialog { height: 792px; background: #faf8f6; }
-.complaint-progress-dialog .el-dialog__body { height: 640px; box-sizing: border-box; }
-.complaint-preview-dialog { height: 792px; background: #f9f7f2; }
-.complaint-preview-dialog .el-dialog__body { height: 640px; box-sizing: border-box; padding: 0; }
+.complaint-edit-dialog .el-dialog__body { box-sizing: border-box; }
+.complaint-progress-dialog .el-dialog__body { box-sizing: border-box; }
+.complaint-preview-dialog .el-dialog__body { box-sizing: border-box; padding: 0; }
 
 .task-operation-dialog.app-window-dialog,
 .complaint-operation-dialog.app-window-dialog {

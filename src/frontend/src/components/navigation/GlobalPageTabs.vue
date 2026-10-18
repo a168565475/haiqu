@@ -100,7 +100,7 @@ async function closeTab(tab: PageTab) {
   height: 100%;
   display: flex;
   align-items: center;
-  color: #6f6a61;
+  color: var(--erp-color-text-secondary);
   font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
 }
 .global-page-tabs__list {
@@ -130,29 +130,31 @@ async function closeTab(tab: PageTab) {
   align-items: center;
   height: 44px;
   border-radius: 5px;
-  color: #6f6a61;
+  color: var(--erp-color-text-secondary);
   font-size: 13px;
   line-height: 20px;
   white-space: nowrap;
 }
-.global-page-tab:hover { background: #f2f2ee; }
-.global-page-tab[aria-selected='true'] { color: #c84e28; font-weight: 600; }
-.global-page-tab[aria-selected='true']::after {
+.global-page-tab:hover { background: var(--erp-menu-hover-background); }
+.global-page-tab[aria-selected='true'] { color: var(--erp-menu-accent); font-weight: 600; }
+.global-page-tab[aria-selected='true'] .global-page-tab__open::after {
   content: '';
   position: absolute;
-  right: 12px;
-  bottom: 0;
-  left: 12px;
-  height: 2px;
-  border-radius: 1px;
-  background: #c84e28;
+  right: 4px;
+  bottom: -6px;
+  left: 4px;
+  height: 3px;
+  border-radius: 4px 4px 1px 1px;
+  background: var(--erp-tab-active-indicator);
 }
 .global-page-tab__open {
+  position: relative;
   flex: none;
   min-width: 0;
   height: 32px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 0 12px;
   border: 0;
@@ -175,13 +177,13 @@ async function closeTab(tab: PageTab) {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #968f84;
+  color: var(--erp-color-text-muted);
   cursor: pointer;
 }
-.global-page-tab__close:hover:not(:disabled) { color: #6f6a61; background: #e9e8e2; }
+.global-page-tab__close:hover:not(:disabled) { color: var(--erp-color-text-secondary); background: var(--erp-menu-hover-background); }
 .global-page-tabs svg { width: 16px; height: 16px; flex: none; }
 .global-page-tab__close svg { width: 12px; height: 12px; }
 .global-page-tabs button:disabled { cursor: wait; }
-.global-page-tabs button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
-.global-page-tab:focus-visible { outline: 2px solid #3898ec; outline-offset: -2px; }
+.global-page-tabs button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.global-page-tab:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: -2px; }
 </style>

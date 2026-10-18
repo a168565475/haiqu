@@ -1,59 +1,63 @@
 /* 客户管理数据表格统一超紧凑规范。仅匹配客户管理菜单及其业务详情页。 */
 $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-page, .customer-detail-list-shell, .complaint-page, .inquiry-page, .inquiry-detail-page, .inquiry-editor, .quotation-list-page, .quotation-editor-page, .price-history-page, .quotation-preview-page, .quotation-packaging-page, .order-page, .sales-order-editor-page, .sales-detail-page, .task-center)';
 
-#{$customer-table-roots} .el-table,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table,
 .customer-management-table-dialog .el-table,
 .quotation-price-dialog .el-table,
 .sales-order-dialog .el-table {
   width: 100%;
   overflow: hidden;
   border-radius: 5px;
-  --el-table-border-color: #ddd6c9;
-  --el-table-header-bg-color: #f0eadf;
-  --el-table-row-hover-bg-color: #fff6ea;
-  --el-table-current-row-bg-color: #fff4e6;
-  color: #4d4c48;
+  --el-table-border-color: var(--erp-table-border);
+  --el-table-bg-color: var(--erp-table-background);
+  --el-table-tr-bg-color: var(--erp-table-background);
+  --el-table-text-color: var(--erp-table-text);
+  --el-table-header-text-color: var(--erp-table-header-text);
+  --el-table-header-bg-color: var(--erp-table-header-background);
+  --el-table-row-hover-bg-color: var(--erp-table-hover);
+  --el-table-current-row-bg-color: var(--erp-table-selected);
+  color: var(--erp-table-text);
 }
 
-#{$customer-table-roots} .el-table__header-wrapper th.el-table__cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__header-wrapper th.el-table__cell,
 .customer-management-table-dialog .el-table__header-wrapper th.el-table__cell,
 .quotation-price-dialog .el-table__header-wrapper th.el-table__cell,
 .sales-order-dialog .el-table__header-wrapper th.el-table__cell {
   box-sizing: border-box;
   height: 44px !important;
   padding: 0 !important;
-  color: #6f6a61 !important;
-  background: #f0eadf !important;
+  color: var(--erp-table-header-text) !important;
+  background: var(--erp-table-header-background) !important;
   font-size: 12px !important;
   font-weight: 500 !important;
   line-height: 18px !important;
 }
 
-#{$customer-table-roots} .el-table__header-wrapper th.el-table__cell > .cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__header-wrapper th.el-table__cell > .cell,
 .customer-management-table-dialog .el-table__header-wrapper th.el-table__cell > .cell,
 .quotation-price-dialog .el-table__header-wrapper th.el-table__cell > .cell,
 .sales-order-dialog .el-table__header-wrapper th.el-table__cell > .cell {
   padding-right: 16px !important;
   padding-left: 16px !important;
-  color: #6f6a61 !important;
+  color: var(--erp-table-header-text) !important;
   font-size: 12px !important;
   line-height: 18px !important;
 }
 
-#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__body-wrapper td.el-table__cell,
 .customer-management-table-dialog .el-table__body-wrapper td.el-table__cell,
 .quotation-price-dialog .el-table__body-wrapper td.el-table__cell,
 .sales-order-dialog .el-table__body-wrapper td.el-table__cell {
   box-sizing: border-box;
   height: 40px !important;
   padding: 0 !important;
-  color: #4d4c48;
-  background: #fcfbf7;
+  color: var(--erp-table-text);
+  background: var(--erp-table-background);
   font-size: 12px !important;
   line-height: 18px !important;
 }
 
-#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell > .cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__body-wrapper td.el-table__cell > .cell,
 .customer-management-table-dialog .el-table__body-wrapper td.el-table__cell > .cell,
 .quotation-price-dialog .el-table__body-wrapper td.el-table__cell > .cell,
 .sales-order-dialog .el-table__body-wrapper td.el-table__cell > .cell {
@@ -63,7 +67,7 @@ $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-pag
   line-height: 18px !important;
 }
 
-#{$customer-table-roots} .el-table__body-wrapper td.el-table__cell > .cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__body-wrapper td.el-table__cell > .cell,
 .customer-management-table-dialog .el-table__body-wrapper td.el-table__cell > .cell,
 .quotation-price-dialog .el-table__body-wrapper td.el-table__cell > .cell,
 .sales-order-dialog .el-table__body-wrapper td.el-table__cell > .cell {
@@ -72,14 +76,14 @@ $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-pag
   white-space: nowrap;
 }
 
-#{$customer-table-roots} .el-table__body tr:hover > td.el-table__cell,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table__body tr:hover > td.el-table__cell,
 .customer-management-table-dialog .el-table__body tr:hover > td.el-table__cell,
 .quotation-price-dialog .el-table__body tr:hover > td.el-table__cell,
 .sales-order-dialog .el-table__body tr:hover > td.el-table__cell {
-  background: #fff6ea !important;
+  background: var(--erp-table-hover) !important;
 }
 
-#{$customer-table-roots} .el-table .el-checkbox__inner,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .el-checkbox__inner,
 .customer-management-table-dialog .el-table .el-checkbox__inner,
 .quotation-price-dialog .el-table .el-checkbox__inner,
 .sales-order-dialog .el-table .el-checkbox__inner {
@@ -87,9 +91,9 @@ $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-pag
   height: 14px;
 }
 
-#{$customer-table-roots} .el-table .el-tag,
-#{$customer-table-roots} .el-table [class*='status-tag'],
-#{$customer-table-roots} .el-table .solid-tag,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .el-tag,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table [class*='status-tag'],
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .solid-tag,
 .customer-management-table-dialog .el-table .el-tag,
 .quotation-price-dialog .el-table .el-tag,
 .sales-order-dialog .el-table .el-tag {
@@ -98,31 +102,31 @@ $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-pag
   line-height: 22px !important;
 }
 
-#{$customer-table-roots} .el-table td .cell > b,
-#{$customer-table-roots} .el-table td .cell > strong,
-#{$customer-table-roots} .el-table .identity strong,
-#{$customer-table-roots} .el-table .product-cell b,
-#{$customer-table-roots} .el-table .order-link,
-#{$customer-table-roots} .el-table .quotation-link,
-#{$customer-table-roots} .el-table .task-link,
-#{$customer-table-roots} .el-table .code-link,
-#{$customer-table-roots} .el-table .contact-name strong,
-#{$customer-table-roots} .el-table .customer-identity__name,
-#{$customer-table-roots} .products-table tbody th[scope='row'] {
+#{$customer-table-roots}:not(.erp-glass-list) .el-table td .cell > b,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table td .cell > strong,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .identity strong,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .product-cell b,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .order-link,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .quotation-link,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .task-link,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .code-link,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .contact-name strong,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .customer-identity__name,
+#{$customer-table-roots}:not(.erp-glass-list) .products-table tbody th[scope='row'] {
   font-size: 13px !important;
   line-height: 20px !important;
 }
 
-#{$customer-table-roots} .el-table td small,
-#{$customer-table-roots} .el-table .identity small,
-#{$customer-table-roots} .el-table .product-cell small,
-#{$customer-table-roots} .el-table .customer-identity__meta {
+#{$customer-table-roots}:not(.erp-glass-list) .el-table td small,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .identity small,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .product-cell small,
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .customer-identity__meta {
   margin-top: 0 !important;
   font-size: 11px;
   line-height: 16px !important;
 }
 
-#{$customer-table-roots} .el-table .muted {
+#{$customer-table-roots}:not(.erp-glass-list) .el-table .muted {
   margin-top: 0 !important;
   font-size: 11px !important;
   line-height: 16px !important;
@@ -144,43 +148,43 @@ $customer-table-roots: ':is(.customer-list-page, .duplicate-center, .contact-pag
 }
 
 /* 原生表格与 Element Plus 表格使用同一套尺寸和字体参数。 */
-#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table),
+#{$customer-table-roots}:not(.erp-glass-list) :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table),
 .sales-order-dialog .mini-table {
   width: 100%;
   overflow: hidden;
   border-collapse: collapse;
   border-radius: 5px;
-  color: #4d4c48;
+  color: var(--erp-table-text);
   font-size: 12px;
   line-height: 18px;
 }
 
-#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) thead th,
+#{$customer-table-roots}:not(.erp-glass-list) :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) thead th,
 .sales-order-dialog .mini-table thead th {
   box-sizing: border-box;
   height: 44px;
   padding: 0 16px !important;
-  color: #6f6a61;
-  background: #f0eadf;
+  color: var(--erp-table-header-text);
+  background: var(--erp-table-header-background);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
 }
 
-#{$customer-table-roots} :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) tbody td,
-#{$customer-table-roots} .products-table tbody th,
+#{$customer-table-roots}:not(.erp-glass-list) :is(.products-table, .item-table table, .quotation-lines-table, .quotation-container-table, .mini-table) tbody td,
+#{$customer-table-roots}:not(.erp-glass-list) .products-table tbody th,
 .sales-order-dialog .mini-table tbody td {
   box-sizing: border-box;
   height: 40px;
   padding: 4px 16px !important;
-  border-bottom: 1px solid #ddd6c9;
-  color: #4d4c48;
-  background: #fcfbf7;
+  border-bottom: 1px solid var(--erp-table-border);
+  color: var(--erp-table-text);
+  background: var(--erp-table-background);
   font-size: 12px;
   line-height: 18px;
 }
 
-#{$customer-table-roots} :is(.products-table, .quotation-lines-table, .quotation-container-table, .mini-table) :is(th, td),
+#{$customer-table-roots}:not(.erp-glass-list) :is(.products-table, .quotation-lines-table, .quotation-container-table, .mini-table) :is(th, td),
 .sales-order-dialog .mini-table :is(th, td) {
   overflow: hidden;
   text-overflow: ellipsis;

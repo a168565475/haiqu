@@ -2,6 +2,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { createBomAuxiliaryReference } from '@/api/boms'
 import { fetchAllProductionDataRecords } from '@/api/productionData'
 import type { BomAuxiliaryProductOption } from '@/types/bom'
@@ -87,7 +88,7 @@ watch(() => props.modelValue, (value) => {
 </script>
 
 <template>
-  <ElDialog v-model="visible" title="新增辅料资料" width="720px" append-to-body destroy-on-close :close-on-click-modal="false" class="auxiliary-reference-create-dialog bom-reference-create-dialog" @closed="reset">
+  <AppWindowDialog v-model="visible" title="新增辅料资料" :width="720" destroy-on-close :close-on-click-modal="false" class="auxiliary-reference-create-dialog bom-reference-create-dialog" @closed="reset">
     <ElAlert title="数据将写入“生产维护 / 辅料维护”，保存后可直接在当前辅料选择页使用。" type="info" :closable="false" class="create-tip" />
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" show-icon :closable="false" class="create-tip" />
     <ElForm ref="formRef" v-loading="loading" :model="form" :rules="rules" label-position="top">
@@ -104,7 +105,7 @@ watch(() => props.modelValue, (value) => {
       </div>
     </ElForm>
     <template #footer><ElButton :disabled="saving" @click="visible = false">取消</ElButton><ElButton type="primary" :loading="saving" :disabled="loading || Boolean(errorMessage)" @click="submit">保存</ElButton></template>
-  </ElDialog>
+  </AppWindowDialog>
 </template>
 
 <style lang="scss" scoped>

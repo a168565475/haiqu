@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.db.models import ExpressionWrapper, F, IntegerField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -21,7 +23,7 @@ from ..inventory_services import (
     create_sample_inventory_receipt,
     delete_sample_inventory_receipt,
 )
-from ..models import SampleInventoryOutboundLine
+from ..models import SampleInventoryLoanLine, SampleInventoryOutboundLine
 from .inventory_serializers import (
     SampleInventoryLineSerializer,
     SampleInventoryEligibleEnvelopeSerializer,
@@ -70,11 +72,14 @@ class SampleInventoryLineViewSet(mixins.ListModelMixin, CustomerApiViewSetBase):
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
         today = timezone.localdate()
+        month_start = today.replace(day=1)
+        next_month_start = (month_start + timedelta(days=32)).replace(day=1)
+        visible_inventory_lines = self.base_queryset()
         available_expression = ExpressionWrapper(
             F("received_quantity") - F("outbound_quantity") - F("loaned_quantity"),
             output_field=IntegerField(),
         )
-        totals = self.base_queryset().aggregate(
+        totals = visible_inventory_lines.aggregate(
             current_available=Coalesce(Sum(available_expression), Value(0)),
             borrowed=Coalesce(Sum("loaned_quantity"), Value(0)),
             inbound_today=Coalesce(
@@ -84,11 +89,46 @@ class SampleInventoryLineViewSet(mixins.ListModelMixin, CustomerApiViewSetBase):
                 ),
                 Value(0),
             ),
+            inbound_this_month=Coalesce(
+                Sum(
+                    "received_quantity",
+                    filter=Q(
+                        receipt__submitted_at__date__gte=month_start,
+                        receipt__submitted_at__date__lt=next_month_start,
+                    ),
+                ),
+                Value(0),
+            ),
         )
-        outbound_today = SampleInventoryOutboundLine.objects.filter(
-            outbound__operated_at__date=today
-        ).aggregate(total=Coalesce(Sum("outbound_quantity"), Value(0)))["total"]
-        return Response({"data": {**totals, "outbound_today": outbound_today}})
+        outbound_totals = SampleInventoryOutboundLine.objects.filter(
+            inventory_line__in=visible_inventory_lines,
+        ).aggregate(
+            outbound_today=Coalesce(
+                Sum("outbound_quantity", filter=Q(outbound__operated_at__date=today)),
+                Value(0),
+            ),
+            outbound_this_month=Coalesce(
+                Sum(
+                    "outbound_quantity",
+                    filter=Q(
+                        outbound__operated_at__date__gte=month_start,
+                        outbound__operated_at__date__lt=next_month_start,
+                    ),
+                ),
+                Value(0),
+            ),
+        )
+        loaned_this_month = SampleInventoryLoanLine.objects.filter(
+            inventory_line__in=visible_inventory_lines,
+            loan__operated_at__date__gte=month_start,
+            loan__operated_at__date__lt=next_month_start,
+        ).aggregate(total=Coalesce(Sum("loan_quantity"), Value(0)))["total"]
+        return Response({"data": {
+            **totals,
+            **outbound_totals,
+            "month": month_start.strftime("%Y-%m"),
+            "loaned_this_month": loaned_this_month,
+        }})
 
     @extend_schema(responses=SampleInventoryOptionsEnvelopeSerializer)
     @action(detail=False, methods=["get"], url_path="options")

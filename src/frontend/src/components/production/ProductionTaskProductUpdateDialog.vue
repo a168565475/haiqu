@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import type {
   ProductOption,
   ProductionTaskDetailInput,
@@ -126,7 +127,7 @@ watch(() => props.modelValue, (visible) => { if (visible) reset() })
 </script>
 
 <template>
-  <ElDialog :model-value="modelValue" :title="`填写更换后的生产任务信息 · ${product?.product_name || ''}`" width="1180px" append-to-body destroy-on-close @update:model-value="emit('update:modelValue', $event)">
+  <AppWindowDialog :model-value="modelValue" :title="`填写更换后的生产任务信息 · ${product?.product_name || ''}`" :width="1180" destroy-on-close :close-on-click-modal="false" @update:model-value="emit('update:modelValue', $event)">
     <ElForm label-position="top" class="update-form">
       <div class="form-grid">
         <ElFormItem label="色卡" required><ElSelect v-model="selectedColorCard" placeholder="请选择" @change="changeCard"><ElOption v-for="item in colorCards" :key="item" :label="item" :value="item" /></ElSelect></ElFormItem>
@@ -154,7 +155,7 @@ watch(() => props.modelValue, (visible) => { if (visible) reset() })
       </div>
     </ElForm>
     <template #footer><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" @click="confirm">确认使用</ElButton></template>
-  </ElDialog>
+  </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">

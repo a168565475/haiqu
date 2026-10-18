@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
-import { MoreFilled, Refresh, Search } from '@element-plus/icons-vue'
+import { MoreFilled, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 
@@ -105,6 +106,13 @@ function applyFilters(): void {
   void load()
 }
 
+function resetFilters(): void {
+  search.value = ''
+  craftId.value = ''
+  processingType.value = ''
+  applyFilters()
+}
+
 function openDetail(row: OutsourcingFactory): void {
   void router.push(`/workshop/outsourcing/factories/${row.id}`)
 }
@@ -176,16 +184,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="outsourcing-page factory-list-page" data-testid="factory-list-page">
-    <header class="outsourcing-heading">
+  <section class="outsourcing-page factory-list-page erp-glass-list" data-testid="factory-list-page">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="outsourcing-heading erp-list-heading">
       <div class="heading-title"><h1>加工厂管理</h1><span>共 {{ total }} 家</span></div>
-      <div class="heading-actions">
-        <RouterLink class="secondary-action" to="/workshop/outsourcing">返回委外加工</RouterLink>
-        <ElButton v-if="canCreate" type="primary" @click="openCreate">＋ 新增加工厂</ElButton>
-      </div>
     </header>
 
-    <div class="outsourcing-filter-bar factory-filter-bar">
+    <div class="outsourcing-filter-bar factory-filter-bar erp-list-filters">
       <ElInput v-model="search" :prefix-icon="Search" clearable placeholder="搜索加工厂名称、联系人、电话" @keyup.enter="applyFilters" @clear="applyFilters" />
       <ElSelect v-model="craftId" placeholder="外协工序：全部" clearable @change="applyFilters">
         <ElOption v-for="craft in crafts" :key="craft.id" :label="craft.name" :value="craft.id" />
@@ -193,14 +198,21 @@ onMounted(() => {
       <ElSelect v-model="processingType" placeholder="加工类型：全部" clearable @change="applyFilters">
         <ElOption v-for="item in processingTypes" :key="item" :label="item" :value="item" />
       </ElSelect>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</ElButton></div>
     </div>
+    </section>
 
-    <div class="list-toolbar"><strong>加工厂资料</strong><div><ElSelect model-value="UPDATED" disabled><ElOption label="更新时间" value="UPDATED" /></ElSelect><ElButton :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></div></div>
+    <section class="erp-list-data">
+    <div class="list-toolbar erp-list-toolbar">      <div class="heading-actions">
+        <RouterLink class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing">返回委外加工</RouterLink>
+        <ElButton v-if="canCreate" class="erp-button-motion" :icon="Plus" type="primary" @click="openCreate">新增加工厂</ElButton>
+      </div>
+<strong>加工厂资料</strong><div><ElSelect model-value="UPDATED" disabled><ElOption label="更新时间" value="UPDATED" /></ElSelect><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></div></div>
     <ElAlert v-if="loadError" :title="loadError" type="error" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
-    <div v-else class="outsourcing-table-card">
-      <ElTable v-loading="loading" :data="rows" border row-key="id" empty-text="暂无加工厂资料" @row-click="openDetail">
+    <div v-else class="outsourcing-table-card erp-list-table-frame">
+      <ElTable v-loading="loading" :data="rows" border height="100%" row-key="id" empty-text="暂无加工厂资料" @row-click="openDetail">
         <ElTableColumn prop="name" label="加工厂名称" min-width="160" />
-        <ElTableColumn label="外协工序" width="130"><template #default="{ row }"><div class="craft-stack"><span v-for="craft in row.crafts" :key="craft.id" class="craft-tag" :class="`craft-${craftTone(craft.name)}`">{{ craft.name }}</span></div></template></ElTableColumn>
+        <ElTableColumn label="外协工序" width="130"><template #default="{ row }"><div class="craft-stack"><span v-for="craft in row.crafts" :key="craft.id" class="craft-tag erp-list-tag" :class="[`craft-${craftTone(craft.name)}`, craftTone(craft.name) === 'sewing' ? 'erp-list-tag--brand' : craftTone(craft.name) === 'cutting' ? 'erp-list-tag--info' : craftTone(craft.name) === 'spray' ? 'erp-list-tag--success' : craftTone(craft.name) === 'printing' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ craft.name }}</span></div></template></ElTableColumn>
         <ElTableColumn prop="processing_type" label="加工类型" min-width="140" />
         <ElTableColumn label="预产量" width="110"><template #default="{ row }">{{ formatOutput(row) }}</template></ElTableColumn>
         <ElTableColumn prop="contact_name" label="联系人" width="110" />
@@ -212,7 +224,8 @@ onMounted(() => {
         <ElTableColumn label="操作" width="94" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" @click.stop><ElButton text :icon="MoreFilled" aria-label="加工厂操作" /><template #dropdown><ElDropdownMenu><ElDropdownItem @click="router.push(`/workshop/outsourcing/factories/${row.id}`)">查看详情</ElDropdownItem><ElDropdownItem v-if="canChange" @click="openEdit(row)">编辑</ElDropdownItem><ElDropdownItem v-if="canDisable && row.status === 'ACTIVE'" divided @click="openDisable(row)">停用</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
       </ElTable>
     </div>
-    <footer class="outsourcing-pagination"><span>共 {{ total }} 家</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    <footer class="outsourcing-pagination erp-list-footer"><span>共 {{ total }} 家</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    </section>
 
     <FactoryFormDialog v-model="dialogVisible" :mode="dialogMode" :factory="editingFactory" :crafts="crafts" :saving="saving" @submit="save" />
     <AppWindowDialog v-model="disableDialogVisible" title="停用加工厂" :width="480" :height="236" class="outsourcing-confirm-dialog" destroy-on-close :close-on-click-modal="!disabling" :close-on-press-escape="!disabling" :show-close="!disabling">
@@ -223,3 +236,18 @@ onMounted(() => {
 </template>
 
 <style lang="scss">@use '@/styles/outsourcing.scss';</style>
+
+<style scoped lang="scss">
+.heading-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.heading-title > span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.factory-filter-bar > .el-input { width: min(410px, 100%); flex: 1 1 250px; }
+.factory-filter-bar > .el-select { width: 170px; flex: none; }
+.factory-filter-bar > .el-select:last-of-type { width: 210px; }
+.list-toolbar > strong { margin-left: auto; font-size: 13px; font-weight: 400; color: var(--erp-color-text-secondary); }
+.list-toolbar > div:last-child { display: flex; align-items: center; gap: 8px; }
+.list-toolbar .el-select { width: 120px; }
+.craft-stack { display: flex; flex-wrap: wrap; gap: 4px; }
+.craft-tag { min-width: 84px; }
+.outsourcing-table-card :deep(.el-table__row) { cursor: pointer; }
+</style>

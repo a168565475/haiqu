@@ -94,7 +94,7 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <section v-loading="loading" class="schedule-page schedule-detail" data-testid="production-scheduling-detail">
+  <section v-loading="loading" class="schedule-page schedule-detail erp-glass-detail" data-testid="production-scheduling-detail">
     <header class="schedule-heading detail-heading"><div><ElButton :icon="Back" @click="router.push('/workshop/scheduling')">返回</ElButton><h1>排产计划详情</h1></div><div><ElButton v-if="canVoid" @click="openVoidDialog">整单作废</ElButton><ElButton v-if="canEdit" type="primary" @click="router.push(`/workshop/scheduling/${scheduleId}/edit`)">编辑排产</ElButton></div></header>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
     <template v-if="schedule">
@@ -121,9 +121,3 @@ onMounted(() => { void load() })
 </template>
 
 <style lang="scss">@use '@/styles/productionScheduling.scss';</style>
-<style scoped lang="scss">
-.schedule-page.schedule-detail {
-  min-height: calc(100dvh - 92px);
-  margin-bottom: 0;
-}
-</style>

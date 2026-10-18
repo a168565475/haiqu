@@ -1,7 +1,7 @@
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/crm/sample-batch-dialog' as batch;
 
-.sample-loan-overlay { background: rgba(0, 0, 0, .34); }
+.sample-loan-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 34%, transparent); }
 .sample-loan-create-dialog {
   @include batch.dialog;
   &.el-dialog { min-height: min(440px, calc(100vh - 32px)); }

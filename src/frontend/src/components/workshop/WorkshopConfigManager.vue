@@ -8,7 +8,6 @@ import {
   createWorkshopConfig,
   fetchWorkshopConfigDetail,
   fetchWorkshopConfigList,
-  fetchWorkshopConfigSummary,
   updateWorkshopConfig,
 } from '@/api/workshopConfig'
 import { useAuthStore } from '@/stores/auth'
@@ -54,7 +53,6 @@ const craftRows = computed(() => rows.value as Craft[])
 const operationRows = computed(() => rows.value as Operation[])
 const workshops = ref<Workshop[]>([])
 const crafts = ref<Craft[]>([])
-const summary = ref<Record<string, number>>({})
 const loading = ref(false)
 const loadError = ref('')
 const page = ref(1)
@@ -96,24 +94,6 @@ const isMetalCraft = (craft: Craft | null | undefined) => (
   craft?.workshop_name === '金工车间'
 )
 const editorHeight = computed(() => ({ employees: 620, crafts: 670, operations: 700 })[props.kind])
-const summaryItems = computed(() => {
-  if (props.kind === 'employees') return [
-    { label: '全部员工', value: summary.value.total || 0 },
-    { label: '在职', value: summary.value.active || 0 },
-    { label: '离职', value: summary.value.left || 0 },
-    { label: '在职主管', value: summary.value.active_supervisors || 0 },
-  ]
-  if (props.kind === 'crafts') return [
-    { label: '全部工艺', value: summary.value.total || 0 },
-    { label: '厂内', value: summary.value.internal || 0 },
-    { label: '厂外', value: summary.value.external || 0 },
-  ]
-  return [
-    { label: '全部工序', value: summary.value.total || 0 },
-    { label: '启用', value: summary.value.active || 0 },
-    { label: '停用', value: summary.value.inactive || 0 },
-  ]
-})
 
 function apiErrorMessage(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, unknown> } } } })?.response?.data
@@ -189,7 +169,6 @@ async function reloadAll(): Promise<void> {
   try {
     await Promise.all([
       loadList(),
-      fetchWorkshopConfigSummary(props.kind).then((result) => { summary.value = result }),
       loadDependencies(),
     ])
   } catch (error) {
@@ -388,15 +367,9 @@ onMounted(() => { void reloadAll() })
     </div>
 
     <template v-else>
-      <header class="manager-heading" :class="{ 'manager-heading--without-summary': kind === 'operations' }">
-        <div><h1>{{ metadata.title }}</h1><span>共 {{ total }} 条</span></div>
+      <header class="manager-heading">
         <ElButton v-if="canAdd" type="primary" :icon="Plus" @click="openCreate">{{ metadata.createLabel }}</ElButton>
       </header>
-      <div v-if="kind !== 'operations'" class="summary-strip">
-        <div v-for="(item, index) in summaryItems" :key="item.label" class="summary-item" :class="{ 'is-current': index === 0 }">
-          <span>{{ item.label }}</span><strong>{{ item.value }}</strong>
-        </div>
-      </div>
       <ElAlert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon class="load-error" />
 
       <div class="filter-panel">
@@ -576,33 +549,36 @@ onMounted(() => { void reloadAll() })
   min-height: 32px !important;
   border-radius: token.$crm-radius-2;
 }
-.manager :deep(.el-button--primary) { border-color: token.$crm-primary; color: token.$crm-text-inverse; background: token.$crm-primary; }
-.manager :deep(.el-button--primary:hover) { border-color: token.$crm-primary-hover; background: token.$crm-primary-hover; }
+.manager :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); color: var(--erp-color-text-inverse); background: var(--erp-button-primary-surface); }
+.manager :deep(.el-button--primary:hover) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-hover-surface); }
+.manager :deep(.el-input:not(.el-textarea) .el-input__wrapper),
+.manager :deep(.el-select__wrapper),
+.manager :deep(.el-input-number),
+.manager :deep(.el-input-number .el-input__wrapper) {
+  border-radius: var(--erp-radius-control);
+  background: var(--erp-input-surface);
+  box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+}
+.manager :deep(.el-input:not(.el-textarea) .el-input__wrapper.is-focus),
+.manager :deep(.el-select__wrapper.is-focused),
+.manager :deep(.el-input-number .el-input__wrapper.is-focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+.manager :deep(.el-input.is-disabled .el-input__wrapper),
+.manager :deep(.el-select__wrapper.is-disabled) { background: var(--erp-input-disabled-background); }
 
-.manager-heading { display: flex; height: 46px; flex: none; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 4px; }
-.manager-heading--without-summary { margin-bottom: 14px; }
-.manager-heading > div { display: flex; align-items: baseline; gap: 8px; }
-.manager-heading h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; font-weight: 600; line-height: 44px; }
-.manager-heading span { color: token.$crm-text-secondary; font-size: 12px; }
+.manager-heading { display: flex; height: 46px; flex: none; align-items: center; justify-content: flex-end; gap: 24px; margin-bottom: 14px; }
 .manager-heading :deep(.el-button--primary) { min-width: 140px; }
 .load-error { flex: none; margin: -7px 0 10px; }
-.summary-strip { box-sizing: border-box; display: flex; height: 46px; flex: none; align-items: stretch; margin: 0 0 17px; border-top: 1px solid token.$crm-border-default; border-bottom: 1px solid token.$crm-border-default; color: token.$crm-text-regular; background: token.$crm-color-surface; }
-.summary-item { position: relative; display: flex; min-width: 150px; flex: 1; align-items: center; justify-content: center; gap: 12px; font-size: 13px; }
-.summary-item + .summary-item { border-left: 1px solid token.$crm-border-subtle; }
-.summary-item span { color: token.$crm-text-secondary; }
-.summary-item strong { color: token.$crm-text-primary; font-size: 12px; font-weight: 600; }
-.summary-item.is-current::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 4px; background: token.$crm-primary; content: ''; }
 .table-card { display: flex; min-height: 0; flex: 1; flex-direction: column; margin-top: 14px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
 .table-region { min-height: 0; flex: 1; }
 .table-region > :deep(.el-table) { height: 100%; }
-.table-card :deep(.el-table) { --el-table-border-color: #{token.$crm-border-default}; --el-table-header-bg-color: #{token.$crm-color-subtle}; --el-table-tr-bg-color: #{token.$crm-color-surface}; --el-table-row-hover-bg-color: #{token.$crm-color-row-hover}; color: token.$crm-text-regular; font-size: 12px; }
-.table-card :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; padding: 0; color: token.$crm-text-primary; background: token.$crm-color-subtle; font-size: 11px; line-height: 16px; }
+.table-card :deep(.el-table) { --el-table-border-color: var(--erp-table-grid); --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-tr-bg-color: var(--erp-table-body-fill); --el-table-row-hover-bg-color: var(--erp-color-hover); color: var(--erp-table-text); font-size: 12px; }
+.table-card :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; padding: 0; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; line-height: 16px; }
 .table-card :deep(.el-table__body-wrapper td.el-table__cell) { height: 40px; padding: 0; }
 .table-card :deep(.cell) { padding-right: 16px; padding-left: 16px; line-height: 18px; }
-.table-card :deep(.el-tag) { min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: token.$crm-radius-pill; color: token.$crm-text-inverse; font-size: 12px; font-weight: 500; line-height: 24px; }
-.table-card :deep(.el-tag--success) { background: token.$crm-success; }
-.table-card :deep(.el-tag--warning) { background: token.$crm-warning; }
-.table-card :deep(.el-tag--info) { background: token.$crm-neutral; }
+.table-card :deep(.el-tag) { min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: token.$crm-radius-pill; color: var(--erp-color-text-inverse); font-size: 12px; font-weight: 500; line-height: 24px; }
+.table-card :deep(.el-tag--success) { background: var(--erp-tag-success-background); }
+.table-card :deep(.el-tag--warning) { background: var(--erp-tag-warning-background); }
+.table-card :deep(.el-tag--info) { background: var(--erp-tag-neutral-background); }
 .row-action-trigger { width: 32px !important; padding: 0 !important; color: token.$crm-text-secondary; }
 .pagination-bar { box-sizing: border-box; display: flex; height: 48px; flex: none; align-items: center; justify-content: space-between; padding: 8px 12px 8px 16px; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; font-size: 12px; }
 .pagination-bar :deep(.el-pagination) { height: 32px; margin: 0; }
@@ -614,6 +590,8 @@ onMounted(() => { void reloadAll() })
 .editor-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
 .editor-form :deep(.el-select), .editor-form :deep(.el-input-number) { width: 100%; }
 .editor-form :deep(.el-alert) { grid-column: 1 / -1; border-radius: token.$crm-radius-2; }
+.editor-form :deep(.el-textarea__inner) { border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.editor-form :deep(.el-textarea__inner:focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 
 :global(.workshop-editor-dialog .editor-form .el-input:not(.el-textarea) .el-input__wrapper),
 :global(.workshop-editor-dialog .editor-form .el-select__wrapper),

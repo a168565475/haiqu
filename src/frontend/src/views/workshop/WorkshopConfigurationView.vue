@@ -125,9 +125,9 @@ function closeManager(): void {
 .workshop-page {
   box-sizing: border-box;
   min-width: 0;
-  min-height: calc(100vh - 92px);
+  min-height: 0;
   color: token.$crm-text-primary;
-  background: token.$crm-color-page;
+  background: transparent;
   font-family: token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary};
   --el-border-color: #{token.$crm-border-default};
@@ -137,17 +137,17 @@ function closeManager(): void {
 }
 
 .page-heading { display: flex; min-height: 62px; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 14px; }
-.page-heading h1 { margin: 0; color: token.$crm-text-primary; font-family: token.$crm-font-display; font-size: 34px; font-weight: 600; line-height: 44px; }
+.workshop-page > .page-heading h1 { margin: 0; color: var(--erp-color-text-primary); font-family: var(--erp-font-body); font-size: 36px !important; font-weight: 700; line-height: 44px; }
 .subtitle { margin: 2px 0 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 18px; }
-.page-heading :deep(.el-tag) { height: 24px; margin-top: 4px; padding: 0 8px; border-color: transparent; border-radius: token.$crm-radius-pill; color: token.$crm-text-inverse; background: token.$crm-neutral; font-size: 12px; line-height: 24px; }
+.page-heading :deep(.el-tag) { height: 24px; margin-top: 4px; padding: 0 8px; border-color: transparent; border-radius: token.$crm-radius-pill; color: var(--erp-color-text-inverse); background: var(--erp-tag-neutral-background); font-size: 12px; line-height: 24px; }
 
-.scope-alert { margin-bottom: 14px; border: 1px solid token.$crm-warning-border; border-radius: token.$crm-radius-2; background: token.$crm-warning-soft; }
+.scope-alert { margin-bottom: 14px; border: 1px solid var(--erp-glass-border); border-radius: token.$crm-radius-2; background: var(--erp-glass-background); }
 .scope-alert :deep(.el-alert__title) { color: token.$crm-text-regular; font-size: 12px; }
 .scope-alert :deep(.el-alert__icon) { color: token.$crm-warning; }
 
 .entry-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.entry-card { position: relative; min-width: 0; min-height: 248px; padding: 24px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-3; color: inherit; background: token.$crm-color-surface; box-shadow: none; font: inherit; text-align: left; cursor: pointer; transition: border-color 120ms ease, background-color 120ms ease; }
-.entry-card:hover { border-color: token.$crm-border-strong; background: token.$crm-color-row-hover; }
+.entry-card { position: relative; min-width: 0; min-height: 248px; padding: 24px; overflow: hidden; border: 1px solid var(--erp-glass-border); border-radius: var(--erp-glass-radius); color: inherit; background: var(--erp-glass-background); font: inherit; text-align: left; cursor: pointer; transition: border-color 120ms ease, background-color 120ms ease; }
+.entry-card:hover { border-color: var(--erp-color-border-strong); background: var(--erp-glass-inner-background); }
 .entry-card:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
 .entry-card__order { position: absolute; top: 18px; right: 20px; color: token.$crm-text-disabled; font-size: 20px; font-weight: 600; }
 .entry-card__icon { display: grid; width: 44px; height: 44px; margin-bottom: 18px; place-content: center; border-radius: token.$crm-radius-2; }
@@ -160,7 +160,8 @@ function closeManager(): void {
 .entry-card--orange .entry-card__icon { color: token.$crm-warning; background: token.$crm-warning-soft; }
 .entry-card--purple .entry-card__icon { color: token.$crm-primary; background: token.$crm-primary-light-8; }
 
-.dependency-note { margin-top: 14px; padding: 16px 20px; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-3; background: token.$crm-color-surface; }
+.dependency-note { margin-top: 14px; padding: 16px 20px; border: 1px solid var(--erp-glass-border); border-radius: var(--erp-glass-radius); background: var(--erp-glass-background); }
+.scope-alert, .entry-card, .dependency-note { box-shadow: var(--erp-glass-shadow); -webkit-backdrop-filter: var(--erp-glass-backdrop); backdrop-filter: var(--erp-glass-backdrop); }
 .dependency-note h2 { margin: 0 0 6px; font-size: 15px; line-height: 22px; }
 .dependency-note p { margin: 0; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
 .fullscreen-title { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -169,6 +170,10 @@ function closeManager(): void {
 .fullscreen-title strong { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
 
 :global(.workshop-manager-dialog .app-window-dialog__body) { padding: 0; overflow: hidden; }
+
+@supports not (backdrop-filter: blur(1px)) {
+  .scope-alert, .entry-card, .dependency-note { background: var(--erp-color-surface); }
+}
 
 @media (max-width: 1000px) {
   .entry-grid { grid-template-columns: 1fr; }

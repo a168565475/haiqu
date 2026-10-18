@@ -404,7 +404,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 </script>
 
 <template>
-  <section v-loading="loading" class="editor-page" :class="{ 'is-published': isPublished }" :aria-busy="busy">
+  <section v-loading="loading" class="editor-page erp-glass-form" :class="{ 'is-published': isPublished }" :aria-busy="busy">
     <div v-if="loadError" class="load-error" role="alert"><span>{{ loadError }}</span><ElButton :disabled="loading" @click="load">重新加载</ElButton></div>
     <div v-if="isPublished" class="published-notice"><img :src="publishedLock" alt=""><strong>正式内容已锁定</strong><span>当前 V{{ sheet?.version_number }} 为只读版本，如需修改请创建新版本。</span></div>
 
@@ -553,13 +553,13 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
-.editor-page { box-sizing: border-box; height: calc(100dvh - 92px); min-width: 0; min-height: 0; overflow: auto; padding: 14px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: crm.$crm-color-page; font: 16px/24px crm.$crm-font-body; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 4px; }
-.editor-page > :is(.editor-layout, .load-error) { min-width: 1344px; }
+@use '@/styles/theme/detail' as detail;
+.editor-page { box-sizing: border-box; height: 100%; min-width: 0; min-height: 0; overflow: hidden; padding: 14px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font: 16px/24px crm.$crm-font-body; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 4px; }
+.editor-page > :is(.editor-layout, .load-error) { min-width: 0; }
 
 .load-error { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px; background: crm.$crm-danger-soft; color: crm.$crm-danger; }
 .editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 398px minmax(0,1fr); gap: 14px; }
-.property-panel,.canvas-area { box-sizing: border-box; overflow: auto; border: 1px solid crm.$crm-border-default; border-radius: 4px; scrollbar-gutter: stable; }
-.property-panel { background: crm.$crm-color-surface; }
+.property-panel,.canvas-area { @include detail.surface; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .panel-nav { box-sizing: border-box; height: 48px; padding: 8px 23px; border-bottom: 1px solid crm.$crm-border-subtle; }
 .panel-back-button { width: 32px; height: 32px; min-height: 32px; padding: 0; margin: 0; color: crm.$crm-text-secondary; }
 .property-panel::-webkit-scrollbar,.canvas-area::-webkit-scrollbar { width: 12px; height: 12px; }
@@ -575,10 +575,10 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .property-panel .terms-section { min-height: 736px; padding-top: 20px; border-bottom: none; }
 .property-panel .seal-section { min-height: 188px; }
 .property-panel :deep(.el-date-editor),.property-panel :deep(.el-select) { width: 100%; }
-.property-panel :deep(.el-date-editor) { height: 38px; }
-.property-panel :deep(.el-input__wrapper),.property-panel :deep(.el-select__wrapper) { height: 38px; min-height: 38px; box-sizing: border-box; padding: 0 12px; background: crm.$crm-color-surface; font-size: 16px; }
+.property-panel :deep(.el-date-editor) { height: 32px; }
+.property-panel :deep(.el-input__wrapper),.property-panel :deep(.el-select__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; padding: 0 12px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: 0 0 0 1px var(--erp-input-border) inset; font-size: 16px; }
 .property-panel :deep(.el-input__inner),.property-panel :deep(.el-select__selected-item) { color: crm.$crm-text-secondary; font-size: 16px; }
-.property-panel :deep(.el-textarea__inner) { padding: 4px 12px; min-height: 54px; font: 16px/24px crm.$crm-font-body; color: crm.$crm-text-secondary; background: crm.$crm-color-surface; resize: vertical; }
+.property-panel :deep(.el-textarea__inner) { padding: 4px 12px; min-height: 54px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; font: 16px/24px crm.$crm-font-body; color: crm.$crm-text-secondary; background: var(--erp-input-surface); resize: vertical; }
 .property-panel .long-term :deep(.el-textarea__inner) { min-height: 78px !important; }
 .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .seal-editor { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; color: crm.$crm-text-secondary; }
@@ -588,7 +588,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
 .panel-actions :deep(.el-button) { width: 100%; height: 32px; min-height: 32px; margin: 0; padding: 0 10px; }
 .panel-actions :deep(.el-icon) { margin-right: 6px; }
-.canvas-area { padding: 25px 0 32px; background: crm.$crm-color-subtle; }
+.canvas-area { padding: 25px 0 32px; }
 .a4-canvas { box-sizing: border-box; width: 892px; min-height: 1271px; margin: 0 auto; padding: 28px 30px 30px; background: #fff; }
 .contract-sheet { box-sizing: border-box; border: 1px solid crm.$crm-text-primary; font: 16px/24px crm.$crm-font-body; overflow-wrap: anywhere; }
 .contract-title-row { box-sizing: border-box; min-height: 65px; padding: 6px 10px; display: flex; gap: 20px; align-items: center; justify-content: center; border-bottom: 1px solid crm.$crm-text-primary; font: 700 28px/36px crm.$crm-font-display; }
@@ -650,7 +650,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .published-notice img { width: 22px; height: 24px; flex: none; }
 .published-notice strong { font-size: 20px; color: crm.$crm-success; }
 .is-published .editor-layout { grid-template-columns: 422px minmax(0,1fr); gap: 11px; }
-.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 20px 23px; display: flex; flex-direction: column; gap: 16px; border: 1px solid crm.$crm-border-default; border-radius: 4px; background: crm.$crm-color-surface; font-size: 18px; line-height: 28px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: crm.$crm-border-default transparent; }
+.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 20px 23px; display: flex; flex-direction: column; gap: 16px; @include detail.surface; font-size: 18px; line-height: 28px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: crm.$crm-border-default transparent; }
 .published-info > * { flex: none; }
 .published-info > .panel-back-button { align-self: flex-start; }
 .published-info h2 { margin: 0; font-size: 22px; line-height: 32px; }
@@ -667,7 +667,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .published-other dl > div { align-items: start; }
 .published-other small { display: block; margin-top: 4px; font-size: 16px; color: crm.$crm-text-muted; }
 .is-published .canvas-area { padding: 11px 0 32px; }
-.is-published .a4-canvas { width: 953px; min-height: 1317.15px; margin: 0 0 0 110px; padding: 29.85px 32.15px 34.44px; box-shadow: 0 2px 12px #00000008; }
+.is-published .a4-canvas { width: 953px; min-height: 1317.15px; margin: 0 0 0 110px; padding: 29.85px 32.15px 34.44px; box-shadow: 0 2px 12px color-mix(in srgb, var(--erp-shadow-color) 3.137%, transparent); }
 .is-published .contract-sheet { font-size: 17.09px; line-height: 25.636px; }
 .is-published .contract-title-row { min-height: 70.04px; gap: 22.96px; padding: 6px 10px; font-size: 34px; line-height: 44px; flex-wrap: wrap; }
 .is-published .contract-title-row > span { font-size: 30px; }

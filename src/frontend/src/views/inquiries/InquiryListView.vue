@@ -20,6 +20,7 @@ import exportIcon from '@/assets/crm-v2/export.svg'
 import searchIcon from '@/assets/crm-v2/search.svg'
 import { allRowsAllow, columnChoices, filterKeys, formatEstimatedAmount, formatReceived, readListQuery, slaPresentation, statusTone, priorityTone } from './inquiryListState'
 import { handlingStageLabel } from './inquiryWorktime'
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,7 +49,7 @@ const deleteError = ref('')
 const deleteTarget = ref<InquiryRow | null>(null)
 const deletePreview = ref<InquiryDeletionPreview | null>(null)
 const deleteEtag = ref('')
-const tableColumns = columnChoices.map(item => ({ key: item.key, label: item.label, width: ({ country:113, source:110, priority:114, owner:119, amount:162, product:160, received:120, sla:130, status:130, reminder:130 } as Record<string, number>)[item.key] }))
+const tableColumns = columnChoices.map(item => ({ key: item.key, label: item.label, width: ({ country:113, source:110, priority:114, owner:119, amount:162, product:160, received:180, sla:130, status:130, reminder:130 } as Record<string, number>)[item.key] }))
 const dateShortcuts = [{ text: '最近 30 天', value: () => { const end = new Date(); const start = new Date(); start.setDate(start.getDate() - 29); return [start, end] } }]
 watch(moreVisible, opened => {
   if (!opened) return
@@ -268,9 +269,10 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </script>
 
 <template>
-  <section class="inquiry-page" aria-label="询盘列表">
-    <CrmPageHeader title="询盘列表" :count="total" count-label="条询盘" />
-    <div class="filters">
+  <section class="inquiry-page erp-glass-list" aria-label="询盘列表">
+    <section v-glass-spotlight class="erp-list-filter" aria-label="筛选询盘">
+    <CrmPageHeader class="erp-list-heading" title="询盘列表" :count="total" count-label="条询盘" />
+    <div class="filters erp-list-filters">
       <el-input
         v-model="filters.q"
         class="search-filter"
@@ -290,8 +292,8 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
       <el-select popper-class="inquiry-v4-select" v-model="filters.status" class="status-filter" aria-label="状态筛选" placeholder="状态：全部" clearable @change="applyFilters"><el-option v-for="item in options?.statuses" :key="item.code" :label="item.display_name" :value="item.code" /></el-select>
       <el-select popper-class="inquiry-v4-select" v-model="filters.source_code" class="source-filter" aria-label="来源筛选" placeholder="来源：全部" clearable @change="applyFilters"><el-option v-for="item in options?.sources" :key="item.item_code" :label="item.display_name" :value="item.item_code" /></el-select>
       <el-select popper-class="inquiry-v4-select" v-model="filters.country_code" class="country-filter" aria-label="国家地区筛选" placeholder="国家/地区：全部" filterable clearable @change="applyFilters"><el-option v-for="country in options?.countries" :key="country" :label="country" :value="country" /></el-select>
-      <el-popover v-model:visible="moreVisible" trigger="click" placement="bottom-end" :width="520" :show-arrow="false" popper-class="inquiry-v4-popover inquiry-v4-filters">
-        <template #reference><el-button class="more-filter"><img :src="filterIcon" alt="" />更多筛选<span v-if="extraCount">({{ extraCount }})</span></el-button></template>
+      <el-popover v-model:visible="moreVisible" trigger="click" placement="bottom-end" :width="520" :show-arrow="false" popper-class="inquiry-v4-popover inquiry-v4-filters erp-list-filter-popover">
+        <template #reference><el-button class="more-filter erp-button-motion"><img :src="filterIcon" alt="" />更多筛选<span v-if="extraCount">({{ extraCount }})</span></el-button></template>
         <h2>更多筛选</h2>
         <el-form label-position="top" class="inquiry-filter-form" @submit.prevent="applyMore">
           <el-form-item label="负责人"><el-select popper-class="inquiry-v4-select" v-model="moreFilters.owner_employee_id" placeholder="全部负责人" filterable clearable><el-option v-for="item in options?.owners" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item>
@@ -301,17 +303,22 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <el-form-item label="预估金额"><el-input v-model="amountInput" aria-label="预估金额筛选" placeholder="USD 10,000 以上" clearable @keyup.enter="applyMore"/></el-form-item>
           <el-form-item label="产品关键词"><el-input v-model="moreFilters.product_q" placeholder="折叠椅 / 露营桌" clearable @keyup.enter="applyMore"/></el-form-item>
           <p v-if="filterError" class="filter-error" role="alert">{{ filterError }}</p>
-          <div class="popover-footer"><el-button @click="resetMore">重置</el-button><el-button type="primary" @click="applyMore">应用筛选</el-button></div>
+          <div class="popover-footer"><el-button class="erp-button-motion" @click="resetMore">重置</el-button><el-button class="erp-button-motion" type="primary" @click="applyMore">应用筛选</el-button></div>
         </el-form>
       </el-popover>
-      <div class="inquiry-actions">
-        <el-button v-if="auth.hasPermission('inquiries.view_inquiry')" class="export-button" :loading="exporting" @click="downloadExport"><img v-if="!exporting" :src="exportIcon" alt="" />导出</el-button>
-        <el-button v-if="auth.hasPermission('inquiries.add_inquiry')" type="primary" class="create-button" :icon="Plus" @click="routeTo('inquiry-create')">新建询盘</el-button>
-      </div>
+      <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="searchInquiries">应用筛选</el-button></div>
     </div>
-    <div v-if="view === 'list'" class="data-surface">
+    </section>
+    <section class="data-surface erp-list-data" aria-label="询盘数据">
+      <div class="inquiry-actions erp-list-toolbar">
+        <el-button v-if="auth.hasPermission('inquiries.add_inquiry')" type="primary" class="create-button erp-button-motion" :icon="Plus" @click="routeTo('inquiry-create')">新建询盘</el-button>
+        <el-button v-if="auth.hasPermission('inquiries.view_inquiry')" class="export-button erp-button-motion" :loading="exporting" @click="downloadExport"><img v-if="!exporting" :src="exportIcon" alt="" />导出</el-button>
+      </div>
+    <div v-if="view === 'list'" class="inquiry-list-body">
+      <div class="erp-list-table-frame">
       <el-table v-loading="loading" :data="rows" row-key="id" height="100%" class="inquiry-table is-compact">
-        <el-table-column label="客户名称 / 询盘编号" min-width="249"><template #default="{ row }"><button class="identity" @click="routeTo('inquiry-detail', row.id)"><strong :title="row.customer.name">{{ row.customer.name || '—' }}</strong><small>{{ row.inquiry_number }}</small></button></template></el-table-column>
+        <el-table-column prop="inquiry_number" label="询盘编号" width="180" show-overflow-tooltip />
+        <el-table-column label="客户名称" min-width="249"><template #default="{ row }"><button class="identity" @click="routeTo('inquiry-detail', row.id)"><strong :title="row.customer.name">{{ row.customer.name || '—' }}</strong></button></template></el-table-column>
         <el-table-column v-for="column in tableColumns" :key="column.key" :label="column.label" :width="column.width" show-overflow-tooltip><template #default="{ row }">
             <template v-if="column.key === 'country'">{{ row.customer.country_code || '—' }}</template>
             <template v-else-if="column.key === 'source'">{{ row.source.display_name || '—' }}</template>
@@ -319,7 +326,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
             <template v-else-if="column.key === 'owner'"><span :class="{ 'unassigned': !row.owner }">{{ row.owner?.display_name || '未分配' }}</span></template>
             <template v-else-if="column.key === 'amount'"><strong class="estimated-amount" :class="{ 'missing-value': formatEstimatedAmount(row) === '—' }">{{ formatEstimatedAmount(row) }}</strong></template>
             <template v-else-if="column.key === 'product'">{{ row.product_summary.first_description || '—' }}<small v-if="row.product_summary.item_count > 1" class="secondary">等 {{ row.product_summary.item_count }} 项</small></template>
-            <template v-else-if="column.key === 'received'"><span class="received-date">{{ formatReceived(row.received_at).date }}</span><small class="secondary">{{ formatReceived(row.received_at).time }}</small></template>
+            <template v-else-if="column.key === 'received'"><span class="received-date">{{ formatReceived(row.received_at).date }} {{ formatReceived(row.received_at).time }}</span></template>
             <template v-else-if="column.key === 'sla'"><span class="handling-cell" :title="row.sla_summary.working_time ? '按工作时间计算，午休及休息时间不计时' : '按原连续时间规则计算'" :class="`sla-${slaPresentation(row.sla_summary).tone}`"><small v-if="row.sla_summary.stage_code">{{ handlingStageLabel(row.sla_summary.stage_code) }}<span v-if="(row.sla_summary.active_count ?? 0) > 1"> 等{{ row.sla_summary.active_count }}项</span></small><span>{{ slaPresentation(row.sla_summary).label }}</span></span></template>
             <template v-else-if="column.key === 'status'"><StatusTag :label="row.display_stage_label || row.status_display || '—'" :tone="statusTone(row.status)" /></template>
             <template v-else-if="column.key === 'reminder'"><StatusTag v-if="row.sla_summary.state !== 'NONE'" :label="slaPresentation(row.sla_summary).reminder" :tone="slaPresentation(row.sla_summary).tone" /><span v-else class="missing-value">—</span></template>
@@ -327,9 +334,11 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
         <el-table-column label="操作" width="100" align="center" fixed="right"><template #default="{ row }"><el-dropdown :persistent="false" popper-class="inquiry-v4-select" v-if="hasRowActions(row)" trigger="click" @command="(command: string) => rowCommand(command, row)"><button class="row-more" :aria-label="`${row.inquiry_number} 更多操作`" :disabled="loading || acting"><More theme="filled" :size="24" /></button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="routeTo('inquiry-detail', row.id)">查看询盘</el-dropdown-item><el-dropdown-item v-if="canChange && row.allowed_actions.set_priority" command="priority">设置优先级</el-dropdown-item><el-dropdown-item v-if="canAssign && row.allowed_actions.assign" command="assign">分配负责人</el-dropdown-item><el-dropdown-item v-if="row.allowed_actions.create_quotation" command="quote">创建报价</el-dropdown-item><el-dropdown-item v-if="canMarkInvalid && row.allowed_actions.mark_invalid" command="mark_invalid">标记无效</el-dropdown-item><el-dropdown-item v-if="canDelete && auth.canFor('inquiries.delete_inquiry', row)" command="delete" divided>永久删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown><button v-else class="view-link" @click="routeTo('inquiry-detail', row.id)">查看</button></template></el-table-column>
         <template #empty><div class="table-empty" role="status"><template v-if="errorMessage"><p>{{ errorMessage }}</p><el-button @click="load">重新加载</el-button></template><template v-else-if="!loading"><p>暂无符合条件的询盘</p><el-button @click="resetFilters">清除筛选</el-button></template></div></template>
       </el-table>
-      <footer class="table-footer"><span aria-live="polite">共 {{ total }} 条</span><div class="pagination"><el-select popper-class="inquiry-v4-select" v-model="pageSize" aria-label="每页条数" :disabled="loading" @change="changeSize"><el-option v-for="size in [20, 50, 100]" :key="size" :value="size" :label="`${size} 条 / 页`" /></el-select><el-button :icon="ArrowLeft" :disabled="loading || page <= 1" aria-label="上一页" @click="changePage(page - 1)" /><el-button v-for="number in visiblePages" :key="number" :class="{ active: page === number }" :aria-current="page === number ? 'page' : undefined" :aria-label="`第 ${number} 页`" :disabled="loading" @click="changePage(number)">{{ number }}</el-button><el-button :icon="ArrowRight" :disabled="loading || page >= totalPages" aria-label="下一页" @click="changePage(page + 1)" /></div></footer>
+      </div>
+      <footer class="table-footer erp-list-footer"><span aria-live="polite">共 {{ total }} 条</span><div class="pagination"><el-select popper-class="inquiry-v4-select" v-model="pageSize" aria-label="每页条数" :disabled="loading" @change="changeSize"><el-option v-for="size in [20, 50, 100]" :key="size" :value="size" :label="`${size} 条 / 页`" /></el-select><el-button :icon="ArrowLeft" :disabled="loading || page <= 1" aria-label="上一页" @click="changePage(page - 1)" /><el-button v-for="number in visiblePages" :key="number" :class="{ active: page === number }" :aria-current="page === number ? 'page' : undefined" :aria-label="`第 ${number} 页`" :disabled="loading" @click="changePage(number)">{{ number }}</el-button><el-button :icon="ArrowRight" :disabled="loading || page >= totalPages" aria-label="下一页" @click="changePage(page + 1)" /></div></footer>
     </div>
     <div v-else v-loading="loading" class="board"><el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" /><section v-for="lane in boardLanes" :key="lane.code" class="lane"><h2>{{ lane.label }} <span>{{ lane.count }}</span></h2><button v-for="card in lane.cards" :key="card.id" class="board-card" @click="routeTo('inquiry-detail', card.id)"><strong>{{ card.customer.name }}</strong><small>{{ card.inquiry_number }}</small><p>{{ card.product_summary.first_description || card.subject }}</p><footer>{{ card.owner?.display_name || '未分配' }}<StatusTag :label="slaPresentation(card.sla_summary).reminder" :tone="slaPresentation(card.sla_summary).tone" /></footer></button><el-empty v-if="!lane.cards.length" description="暂无数据" :image-size="50" /></section></div>
+    </section>
     <InquiryActionDialog v-model="actionVisible" :title="actionKind === 'assign' ? '分配负责人' : '标记无效'" :subtitle="`已选择 ${actionRows.length} 条询盘`" :width="actionKind === 'assign' ? 520 : 500" :height="actionKind === 'assign' ? 468 : 482" :confirm-width="96" :busy="acting" :disabled="!options" :error="actionError" :danger="actionKind !== 'assign'" :confirm-label="`${actionKind === 'assign' ? '确认分配' : '确认标记'}`" @confirm="submitAction">
       <InquiryNotice v-if="actionKind === 'assign'" title="确认后更新询盘负责人">分配人、原负责人、新负责人和分配时间将保留在历史记录中。</InquiryNotice>
       <InquiryNotice v-else tone="warning" title="关闭后仍保留全部询盘记录">无效询盘不计入转化率；系统记录操作人、原因和时间。</InquiryNotice>
@@ -347,70 +356,50 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-.inquiry-page {
-  --el-color-primary: #{token.$crm-primary}; --el-color-primary-light-9: #fff4e6; --el-border-color: #ddd6c9; --el-border-radius-base: 5px;
-  --el-fill-color-blank: #fcfbf7; --el-text-color-regular: #4d4c48; --el-text-color-placeholder: #968f84;
-  height: 100%; min-height: 0; padding: 14px; display: flex; flex-direction: column;
-  color: token.$crm-text-primary; background: token.$crm-color-page; font-family: token.$crm-font-body;
-  :deep(.el-button) { margin-left: 0; font-family: inherit; font-size: 13px; height: 36px; }
-  :deep(.el-button--primary) { --el-button-bg-color: #c84e28; --el-button-border-color: #c84e28; --el-button-hover-bg-color: #b94320; --el-button-hover-border-color: #b94320; --el-button-active-bg-color: #9f351a; }
-  :deep(.el-button.is-disabled) { color: #b6aea1; background: #e8e1d5; border-color: #ddd6c9; }
-  :deep(.el-input__wrapper), :deep(.el-select__wrapper) { height: 38px; min-height: 38px; background: #fcfbf7; border-radius: 5px; box-shadow: 0 0 0 1px #ddd6c9 inset; font-size: 13px; }
-  :deep(.el-input__wrapper.is-focus), :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 2px #3898ec inset; }
-  img { width: 16px; height: 16px; }
-  :deep(.el-button > span) { gap: 8px; }
-  button:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
-}
-.inquiry-actions { display: flex; flex: none; align-items: center; gap: 8px; margin-left: auto; }
-.inquiry-actions :deep(.el-button) { padding: 0 8px; }
+.inquiry-list-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .create-button { width: 112px; }
 .export-button { width: 76px; }
 .inquiry-search-button {
   display: inline-flex; width: 20px; height: 24px; align-items: center; justify-content: center;
   margin: 0; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer;
+  img { width: 16px; height: 16px; }
 }
-.estimated-amount { font-size: 13px; }
-.filters { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 32px; margin-top: 12px;
-  .search-filter { width: 250px; min-width: 250px; flex: none; }
+button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.filters {
+  .search-filter { width: 250px; max-width: 100%; flex: none; }
   .status-filter { width: 128px; flex: none; }
   .source-filter { width: 120px; flex: none; }
   .country-filter { width: 160px; flex: none; }
-  .more-filter { min-width: 102px; height: 32px; flex: none; padding: 0 12px; }
-}
-.inquiry-page .data-surface { flex: 1; min-height: 0; margin-top: 14px; border: 1px solid #ddd6c9; border-radius: 6px; background: #fcfbf7; overflow: hidden; display: flex; flex-direction: column;
-  .inquiry-table { flex: 1; min-height: 0; --el-table-bg-color: #fcfbf7; --el-table-tr-bg-color: #fcfbf7; --el-table-header-bg-color: #f0eadf; --el-table-border-color: #eae4da; --el-table-row-hover-bg-color: #fff6ea; color: #4d4c48; }
-  :deep(.el-table__inner-wrapper::before) { display: none; }
-  :deep(th.el-table__cell) { height: 44px; padding: 0; color: #6f6a61; background: #f0eadf; font-weight: 500; }
-  :deep(td.el-table__cell) { height: 52px; padding: 0; border-right: 1px solid #eae4da; }
-  :deep(.inquiry-table.is-compact td.el-table__cell) { height: 40px; }
-  :deep(td.el-table__cell:last-child) { border-right: 0; }
-  :deep(.el-table .cell) { padding: 0 16px; font-size: 12px; line-height: 18px; }
-  :deep(.el-table th .cell) { font-size: 11px; line-height: 16px; }
-  :deep(.el-table__empty-block) { min-height: 240px; }
+  .more-filter { min-width: 102px; flex: none; }
 }
 .identity { display: block; width: 100%; padding: 0; border: 0; text-align: left; background: transparent; cursor: pointer; font-family: inherit;
-  strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; color: #1f1d18; font-weight: 700; }
-  small { display: block; color: #968f84; font-size: 11px; line-height: 16px; }
-  &:hover strong { color: #c84e28; }
+  strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; color: var(--erp-table-text); font-weight: 700; }
+  small { display: block; color: var(--erp-table-text); font-size: 11px; line-height: 16px; }
+  &:hover strong { text-decoration: underline; }
 }
-.secondary { display: block; color: #968f84; font-size: 11px; line-height: 16px; }
-.received-date { font-size: 13px; }
+.estimated-amount, .received-date { font-size: 13px; }
+.received-date { white-space: nowrap; }
+.secondary { display: block; color: var(--erp-table-text); font-size: 11px; line-height: 16px; }
 .handling-cell { display: inline-flex; flex-direction: column; max-width: 100%; line-height: 16px; small { font-size: 11px; line-height: 14px; overflow: hidden; text-overflow: ellipsis; } }
-.missing-value { color: #968f84; } .unassigned, .sla-warning { color: #b8781e; } .sla-danger { color: #b53333; } .sla-success { color: #4f7d4b; }
-.row-more { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 5px; color: #6f6a61; background: transparent; cursor: pointer; &:hover { background: #f0eadf; } }
-.view-link { border: 0; background: transparent; color: #c84e28; cursor: pointer; }
-.table-footer { height: 52px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid #eae4da; font-size: 12px; color: #6f6a61; }
-.pagination { display: flex; align-items: center; gap: 10px; :deep(.el-select) { width: 136px; } :deep(.el-button) { width: 38px; padding: 0; font-size: 12px; } .active { background: #fcfbf7; border-color: #c84e28; color: #1f1d18; } }
+.missing-value, .unassigned { color: var(--erp-table-text); }
+.sla-warning { color: var(--erp-color-warning); } .sla-danger { color: var(--erp-color-danger); } .sla-success { color: var(--erp-color-success); }
+.row-more { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--erp-radius-control); color: var(--erp-table-text); background: transparent; cursor: pointer; &:hover { background: var(--erp-table-hover); } }
+.view-link { border: 0; background: transparent; color: var(--erp-table-text); cursor: pointer; }
 .table-empty { line-height: 24px; p { margin-bottom: 16px; } }
-.board { display: flex; gap: 16px; flex: 1; min-height: 0; overflow: auto; margin-top: 22px; .lane { flex: 1; min-width: 260px; padding: 16px; background: #f0eadf; border-radius: 6px; overflow-y: auto; } h2 { font-size: 14px; display: flex; justify-content: space-between; } }
-.board-card { display: block; width: 100%; margin-top: 12px; padding: 16px; text-align: left; border: 1px solid #ddd6c9; border-radius: 6px; background: #fcfbf7; font-family: inherit; cursor: pointer; small { display: block; color: #968f84; margin-top: 8px; } footer { display: flex; justify-content: space-between; align-items: center; } }
+.board { display: flex; gap: 16px; flex: 1; min-height: 0; overflow: auto; padding-bottom: 10px;
+  .lane { flex: 1; min-width: 260px; padding: 16px; background: var(--erp-glass-inner-background); border-radius: var(--erp-radius-control); overflow-y: auto; }
+  h2 { font-size: 14px; display: flex; justify-content: space-between; }
+}
+.board-card { display: block; width: 100%; margin-top: 12px; padding: 16px; text-align: left; border: 1px solid var(--erp-color-border); border-radius: var(--erp-radius-control); background: var(--erp-color-surface); font-family: inherit; cursor: pointer;
+  small { display: block; color: var(--erp-color-text-secondary); margin-top: 8px; }
+  footer { display: flex; justify-content: space-between; align-items: center; }
+}
 </style>
 
 <style lang="scss">
 .inquiry-list-popover, .inquiry-list-dialog {
-  --el-color-primary: #c84e28; --el-color-primary-light-9: #fff4e6; --el-fill-color-blank: #fcfbf7; --el-border-color: #ddd6c9; --el-border-radius-base: 5px;
-  font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; color: #4d4c48;
+  --el-color-primary: var(--erp-color-brand); --el-color-primary-light-9: var(--erp-color-selected); --el-fill-color-blank: var(--erp-color-surface); --el-border-color: var(--erp-color-border); --el-border-radius-base: var(--erp-radius-control);
+  font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; color: var(--erp-color-text-primary);
   .el-select, .el-date-editor { width: 100%; }
   .el-form-item { margin-bottom: 16px; }
   .popover-footer { display: flex; justify-content: flex-end; gap: 12px; }
@@ -422,17 +411,17 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
 .el-popover.inquiry-v4-popover {
-  --el-color-primary: #c96442; --el-border-color: #e8e6dc; --el-border-radius-base: 6px; --el-fill-color-blank: #fff;
-  padding: 16px 17px; border: 1px solid #e8e6dc; border-radius: 8px; background: #faf9f5; box-shadow: 0 6px 24px rgba(20,20,19,.08); color: #141413; font: 13px token.$crm-font-body;
+  --el-color-primary: var(--erp-color-brand); --el-border-color: var(--erp-color-border); --el-border-radius-base: var(--erp-radius-control); --el-fill-color-blank: var(--erp-color-surface);
+  padding: 16px 17px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-subtle); box-shadow: 0 6px 24px color-mix(in srgb, var(--erp-shadow-color) 8%, transparent); color: var(--erp-color-text-primary); font: 13px token.$crm-font-body;
   h2 { margin: 0 0 12px; font: 700 18px/31px token.$crm-font-display; }
-  .el-input__wrapper,.el-select__wrapper,.el-range-editor { min-height: 40px; background: #fff; box-shadow: 0 0 0 1px #e8e6dc inset; border-radius: 6px; }
-  .el-input__wrapper.is-focus,.el-select__wrapper.is-focused { box-shadow: 0 0 0 1px token.$crm-focus inset; }
+  .el-input__wrapper,.el-select__wrapper,.el-range-editor { height: 32px; min-height: 32px; background: var(--erp-input-background); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; border-radius: var(--erp-radius-control); }
+  .el-input__wrapper.is-focus,.el-select__wrapper.is-focused { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
   .el-select,.el-input,.el-date-editor { width: 100%; min-width: 0; }
   .el-form-item { min-width: 0; margin: 0; }
   .el-form-item__label { margin: 0; padding-bottom: 7px; font: 500 12px/20px token.$crm-font-body; }
   .el-input__inner,.el-select__placeholder,.el-range-input { font: 13px token.$crm-font-body; }
-  .el-button { min-width: 92px; height: 38px; padding: 0 18px; margin: 0; border-radius: 6px; font-size: 13px; background: #faf9f5; }
-  .el-button--primary { background: #c96442; color: #faf9f5; }
+  .el-button { min-width: 92px; height: 38px; padding: 0 18px; margin: 0; border-radius: 6px; font-size: 13px; background: var(--erp-color-subtle); }
+  .el-button--primary { background: var(--erp-button-primary-surface); color: var(--erp-button-primary-text); }
 }
 .inquiry-v4-filters { height: 392px;
   .inquiry-filter-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
@@ -445,5 +434,5 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
   .delete-impact { margin: 14px 0; font-size: 13px; line-height: 22px; font-weight: 600; }
   .delete-hint { margin-top: 14px; }
 }
-.inquiry-v4-select { --el-color-primary: #c96442; --el-fill-color-light: #f5e8e2; font-family: token.$crm-font-body; }
+.inquiry-v4-select { font-family: token.$crm-font-body; }
 </style>

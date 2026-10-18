@@ -106,4 +106,19 @@ describe('AppWindowDialog', () => {
     expect(dialog?.style.height).toBe('360px')
     wrapper.unmount()
   })
+
+  it('兼容抽屉迁移的 header 插槽，并支持无标题栏的详情窗口', async () => {
+    const wrapper = mount(AppWindowDialog, {
+      attachTo: document.body,
+      props: { modelValue: true, title: '迁移窗口', width: 520, height: 300 },
+      slots: { header: '<div class="legacy-header">任职历史</div>' },
+    })
+
+    expect(document.querySelector('.legacy-header')?.textContent).toBe('任职历史')
+    expect(document.querySelector('.app-window-dialog__header')).not.toBeNull()
+
+    await wrapper.setProps({ withHeader: false })
+    expect(document.querySelector('.app-window-dialog__header')).toBeNull()
+    wrapper.unmount()
+  })
 })

@@ -95,13 +95,13 @@ onBeforeUnmount(() => { loadRequest++ })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/crm/sample-controls' as sample;
-.director-page { @include sample.controls; display: flex; height: calc(100dvh - 92px); flex-direction: column; color: token.$crm-text-primary; background: token.$crm-color-page; }
-.director-content { flex: 1; min-height: 0; overflow-y: auto; }
-.director-heading { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.director-page { @include sample.controls; display: flex; min-width: 0; flex-direction: column; color: token.$crm-text-primary; background: transparent; }
+.director-content { min-width: 0; }
+.director-heading { display: flex; flex-wrap: wrap; min-height: 44px; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .director-heading > div { display: flex; align-items: center; gap: 16px; }
 .director-heading :deep(.sample-page-status) { min-width: 0; height: 24px !important; min-height: 24px !important; padding: 2px 10px; border-radius: 12px; font-size: 12px; line-height: 20px !important; }
 h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; line-height: 44px; }
-.director-decision { height: 168px; margin-top: 18px; padding: 12px 24px 8px; }
+.director-decision { min-height: 168px; margin-top: 14px; padding: 14px 16px; }
 .director-decision :deep(h2) { margin-bottom: 4px; }
 .director-decision p { margin: 0 0 4px; color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; }
 .director-decision label { display: block; margin-bottom: 4px; font-size: 13px; line-height: 22px; }
@@ -110,7 +110,7 @@ h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; line-heig
 .director-heading-actions { display: flex; flex: none; align-items: center; gap: 10px; }
 .director-heading .action-buttons { display: flex; gap: 10px; }
 .action-buttons :deep(.el-button) { width: auto; height: 32px; padding: 0 16px; border-radius: 5px; font-size: 13px; }
-.action-buttons :deep(.el-button--primary) { background: sample.$action-primary; border-color: sample.$action-primary; }
+.action-buttons :deep(.el-button--primary) { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
 .director-action-error, .director-error { color: token.$crm-danger; font-size: 13px; }
 .readonly-hint { color: token.$crm-text-secondary; font-size: 13px; }
 </style>

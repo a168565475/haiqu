@@ -652,7 +652,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 </script>
 
 <template>
-  <section ref="formPage" class="purchase-form-page" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
+  <section ref="formPage" class="purchase-form-page erp-glass-form" :class="{ 'is-sample-source': isSampleSource, 'is-detail-step': isDetailStep }" data-testid="purchase-order-form-page">
     <div v-if="!canAdd" class="state-page">
       <h1>无权新建采购订单</h1>
       <p>请联系管理员开通“采购订单新增”权限后重试。</p>
@@ -882,10 +882,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 
 <style scoped lang="scss">
 @use "@/styles/crm/tokens" as crm;
+@use '@/styles/theme/detail' as detail;
 .purchase-form-page {
-  box-sizing: border-box; width: 100%; min-width: 0; height: calc(100dvh - 92px);
-  display: flex; flex-direction: column; padding: 30px 28px 0; overflow: auto;
-  color: crm.$crm-text-primary; background: crm.$crm-color-page; font: 14px/1.5 crm.$crm-font-body;
+  box-sizing: border-box; width: 100%; min-width: 0; height: auto; min-height: 0;
+  display: flex; flex-direction: column; padding: 30px 28px 0; overflow: visible;
+  color: crm.$crm-text-primary; background: transparent; font: 14px/1.5 crm.$crm-font-body;
   --el-color-primary: #{crm.$crm-primary}; --el-color-primary-light-3: #{crm.$crm-primary-light-3};
   --el-color-primary-light-9: #{crm.$crm-color-selected}; --el-color-primary-dark-2: #{crm.$crm-primary-pressed};
   --el-text-color-primary: #{crm.$crm-text-primary}; --el-text-color-regular: #{crm.$crm-text-regular};
@@ -894,39 +895,38 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
   --el-fill-color-blank: #{crm.$crm-color-surface}; --el-fill-color-light: #{crm.$crm-color-subtle};
   --el-border-radius-base: 5px;
 }
-.purchase-form-page.is-detail-step { height: calc(100dvh - 84px); }
 .purchase-icon { width: 16px; height: 16px; flex: none; }
 .purchase-form-page :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 10px; }
 .purchase-form-page :deep(.el-button) { border-radius: 5px; }
-.page-heading { flex: 0 0 50px; display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 10px; }
-.page-heading > div:first-child { display: flex; align-items: center; gap: 26px; min-width: 0; }
+.page-heading { flex: none; min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.page-heading > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; min-width: 0; }
 .page-heading h1 { margin: 0; white-space: nowrap; font: 700 38px/50px crm.$crm-font-display; letter-spacing: -1px; }
 .page-heading p { margin: 8px 0 0; color: crm.$crm-text-secondary; font-size: 13px; white-space: nowrap; }
 .page-action-panel { display: flex; flex-direction: column; align-items: flex-end; position: relative; }
 .page-actions { display: flex; gap: 18px; }
 .page-actions :deep(.el-button) { width: 128px; height: 42px; margin: 0; }
-.page-actions :deep(.el-button--primary) { width: 164px; white-space: nowrap; background: crm.$crm-color-surface; color: crm.$crm-primary; border-color: crm.$crm-primary; }
+.page-actions :deep(.el-button--primary) { width: 164px; white-space: nowrap; background: var(--erp-button-primary-surface); color: crm.$crm-primary; border-color: var(--erp-button-primary-border); }
 .purchase-form-page > :deep(.el-alert) { flex: none; margin-bottom: 10px; }
-.task-card, .detail-card { border: 1px solid crm.$crm-border-default; border-radius: 5px; background: crm.$crm-color-surface; }
-.task-card { flex: 0 0 292px; min-height: 0; margin-bottom: 18px; padding: 10px 17px 12px; overflow: hidden; }
+.task-card, .detail-card { @include detail.surface; }
+.task-card { flex: 0 0 292px; min-height: 0; margin-bottom: 14px; padding: 10px 17px 12px; overflow: hidden; }
 .task-card > header { height: 33px; }
 .task-card h2, .detail-card h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 700; }
 .task-selector-row { display: flex; align-items: center; gap: 14px; }
 .task-selector-row > :deep(.el-select) { width: auto; }
 .task-selector-row > :deep(.source-type-filter) { flex: 0 0 140px; width: 140px; }
 .task-selector-row > :deep(.task-source-filter) { flex: 0 1 420px; width: 420px; min-width: 260px; }
-.task-selector-row :deep(.el-select__wrapper) { height: 38px; min-height: 38px; }
+.task-selector-row :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); }
 .task-selector-row > :deep(.el-button) { width: 110px; height: 42px; margin: 0; }
 .task-select-option { width: 100%; min-width: 0; display: grid; grid-template-columns: 170px 100px minmax(0,1fr) 64px; align-items: center; gap: 16px; }
 .task-select-option strong, .task-source-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-select-option small { color: crm.$crm-text-secondary; }
 .source-option-heading { color: crm.$crm-text-secondary; font-size: 12px; }
 :global(.purchase-source-popper) { width: min(988px, calc(100vw - 48px)); }
-.task-source-status.el-tag { box-sizing: border-box; width: 64px; min-width: 64px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; background: crm.$crm-info; font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; justify-self: end; }
-.task-source-status.el-tag--success { background: crm.$crm-success; }
-.task-source-status.el-tag--warning { background: crm.$crm-warning; }
-.purchase-source-tag.el-tag { box-sizing: border-box; width: 72px; min-width: 72px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; background: crm.$crm-info; font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
-.purchase-source-tag.el-tag.is-sample { background: #c96442; }
+.task-source-status.el-tag { box-sizing: border-box; width: 64px; min-width: 64px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-info-background); font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; justify-self: end; }
+.task-source-status.el-tag--success { background: var(--erp-tag-success-background); }
+.task-source-status.el-tag--warning { background: var(--erp-tag-warning-background); }
+.purchase-source-tag.el-tag { box-sizing: border-box; width: 72px; min-width: 72px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-info-background); font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
+.purchase-source-tag.el-tag.is-sample { background: var(--erp-tag-brand-background); }
 .is-sample-source .task-card { flex-basis: 236px; }
 .sample-source-summary { border-top: 1px solid crm.$crm-border-subtle; margin-top: 12px; padding-top: 18px; }
 .sample-source-summary strong { font-size: 16px; font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -946,19 +946,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .selected-product-row--heading { min-height: 42px; background: crm.$crm-color-subtle; color: crm.$crm-text-secondary; font-size: 13px; }
 .selected-product-row--heading > span:first-child { text-align: center; }
 .selected-product-row--option { border-top: 1px solid crm.$crm-border-subtle; cursor: pointer; }
-.selected-product-row--option.is-selected { background: #f7e5dc; }
+.selected-product-row--option.is-selected { background: var(--erp-color-selected); }
 .selected-product-row--option:hover { background: crm.$crm-color-row-hover; }
 .selected-product-row--option:focus-visible { outline: 2px solid crm.$crm-primary; outline-offset: -2px; }
 .selected-product-row--option.is-unavailable { cursor: not-allowed; color: crm.$crm-text-disabled; }
 .selected-product-row > .product-radio { position: relative; justify-self: center; width: 18px; height: 18px; padding: 0; border: 1px solid crm.$crm-text-muted; border-radius: 50%; background: crm.$crm-color-surface; }
 .selected-product-row.is-selected > .product-radio { border-color: crm.$crm-primary; }
 .selected-product-row.is-selected > .product-radio::after { content: ''; position: absolute; inset: 3px; border-radius: 50%; background: crm.$crm-primary; }
-.bom-status { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 24px; padding: 0 8px; border-radius: 999px; background: crm.$crm-info; color: #faf9f5; font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
-.bom-status.is-ready { color: #faf9f5; background: crm.$crm-success; }
+.bom-status { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 24px; padding: 0 8px; border-radius: 999px; background: crm.$crm-info; color: var(--erp-color-text-inverse); font: 500 12px/18px 'Noto Sans SC Variable', crm.$crm-font-body; }
+.bom-status.is-ready { color: var(--erp-color-text-inverse); background: crm.$crm-success; }
 .product-selection-caption { margin: 8px 0 0; color: crm.$crm-text-secondary; font-size: 13px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .product-selection-caption.is-blocked { color: crm.$crm-warning; }
 .task-selector-hint { display: grid; min-height: 150px; place-content: center; margin: 0; color: crm.$crm-text-muted; }
-.detail-card { flex: 1; min-height: 220px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 2px; border: 0; box-shadow: inset 0 0 0 1px crm.$crm-border-default; }
+.detail-card { flex: none; min-height: 220px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 14px; }
+.detail-card:not(.is-fullscreen) .purchase-lines { flex: none; }
 .detail-card.is-fullscreen { position: fixed; z-index: 1900; inset: 0; height: 100dvh; width: 100%; border-radius: 0; }
 .detail-card > header { display: flex; flex: 0 0 52px; align-items: center; justify-content: space-between; padding: 0 12px; gap: 10px; }
 .detail-card > header > div { display: flex; align-items: center; gap: 12px; }
@@ -974,24 +975,27 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .bulk-field { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 13px; }
 .bulk-field--supplier :deep(.el-select) { width: 218px; }
 .bulk-field--date :deep(.el-date-editor) { width: 220px; }
-.bulk-field :deep(.el-select__wrapper), .bulk-field :deep(.el-input__wrapper) { height: 36px; min-height: 36px; }
+.bulk-field :deep(.el-select__wrapper), .bulk-field :deep(.el-input__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); }
 .purchase-lines { flex: 1; width: 100%; min-height: 0; --el-table-border-color: #{crm.$crm-border-subtle}; --el-table-tr-bg-color: #{crm.$crm-color-surface}; --el-table-bg-color: #{crm.$crm-color-surface}; --el-table-header-bg-color: #{crm.$crm-color-subtle}; --el-table-row-hover-bg-color: #{crm.$crm-color-row-hover}; }
 .purchase-form-page .purchase-lines :deep(.el-table__header tr),
 .purchase-form-page .purchase-lines :deep(.el-table__header th.el-table__cell) { height: 40px !important; }
-.purchase-form-page .purchase-lines :deep(.el-table__header th.el-table__cell) { padding: 0 !important; color: crm.$crm-text-secondary; background: crm.$crm-color-subtle; border-right: 1px solid crm.$crm-border-subtle; font-size: 11px; font-weight: 400; }
+.purchase-form-page .purchase-lines :deep(.el-table__header th.el-table__cell) { padding: 0 !important; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); border-right: 1px solid var(--erp-table-grid); font-size: 11px; font-weight: 400; }
 .purchase-form-page .purchase-lines :deep(.el-table__body tr),
 .purchase-form-page .purchase-lines :deep(.el-table__body td.el-table__cell) { height: 40px !important; }
-.purchase-form-page .purchase-lines :deep(.el-table__body td.el-table__cell) { padding: 0 !important; border-right: 1px solid crm.$crm-border-subtle; color: crm.$crm-text-primary; }
+.purchase-form-page .purchase-lines :deep(.el-table__body td.el-table__cell) { padding: 0 !important; border-right: 1px solid var(--erp-table-grid); color: var(--erp-table-text); }
 .purchase-form-page .purchase-lines :deep(.el-table__header th:first-child),
-.purchase-form-page .purchase-lines :deep(.el-table__body td:first-child) { border-left: 1px solid crm.$crm-border-subtle; }
+.purchase-form-page .purchase-lines :deep(.el-table__body td:first-child) { border-left: 0; }
 .purchase-form-page .purchase-lines :deep(.cell) { padding: 0 16px; font-size: 12px; line-height: 18px; }
 .purchase-form-page .purchase-lines :deep(th:first-child .cell),
 .purchase-form-page .purchase-lines :deep(td:first-child .cell) { padding: 0 8px !important; }
 .purchase-form-page .purchase-lines :deep(th .cell) { font-size: 11px; line-height: 16px; white-space: nowrap; }
-.purchase-lines :deep(.el-table__inner-wrapper::before) { display: none; }
+.purchase-lines :deep(.el-table__inner-wrapper::before), .purchase-lines :deep(.el-table__inner-wrapper::after) { display: none; }
+.purchase-form-page .purchase-lines :deep(.el-table__header th.el-table__cell:last-child),
+.purchase-form-page .purchase-lines :deep(.el-table__body td.el-table__cell:last-child) { border-right: 0; }
+.purchase-lines :deep(.el-table__body tr:last-child td) { border-bottom: 0; }
 .line-field { display: flex; align-items: center; width: 100%; height: 39px; }
 .line-field :deep(.el-select), .line-field :deep(.el-input), .line-field :deep(.el-date-editor) { width: 100%; }
-.line-field :deep(.el-select__wrapper), .line-field :deep(.el-input__wrapper) { height: 32px; min-height: 32px; font-size: 12px; }
+.line-field :deep(.el-select__wrapper), .line-field :deep(.el-input__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); font-size: 12px; }
 .line-field :deep(.el-input__wrapper) { padding: 1px 13px; }
 .line-field :deep(.el-input__prefix) { margin-right: 4px; }
 .line-field--quantity :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; }
@@ -1004,7 +1008,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .material-detail { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: crm.$crm-text-secondary; font-size: 12px; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .quantity-cell { flex-direction: row; align-items: center; justify-content: flex-end; gap: 4px; white-space: nowrap; }
 .amount-preview { font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .detail-card > footer { flex: 0 0 48px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 18px; color: crm.$crm-text-secondary; font-size: 13px; border-top: 1px solid crm.$crm-border-subtle; }
@@ -1012,11 +1016,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .detail-empty > div { display: none; }
 .detail-empty strong { font-size: 18px; color: crm.$crm-text-primary; }
 .detail-empty p { max-width: 900px; line-height: 24px; }
-.summary-card { flex: 0 0 72px; display: flex; align-items: center; justify-content: space-between; gap: 24px; background: crm.$crm-color-surface; }
+.summary-card { @include detail.surface; flex: none; min-height: 72px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; }
 .summary-counts, .summary-actions { display: flex; align-items: center; }
 .summary-counts { gap: 14px; font-size: 16px; font-weight: 500; white-space: nowrap; }
 .summary-counts strong { color: crm.$crm-primary; margin: 0 6px; font-weight: 500; }
-.summary-actions { gap: 28px; }
+.summary-actions { flex-wrap: wrap; gap: 14px; }
 .mail-field { display: flex; align-items: center; gap: 26px; white-space: nowrap; }
 .mail-field :deep(.el-radio) { margin-right: 28px; }
 .mail-field :deep(.el-radio:last-child) { margin: 0; }

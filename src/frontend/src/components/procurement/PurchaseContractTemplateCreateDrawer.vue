@@ -4,6 +4,7 @@ import { Close, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { createPurchaseContractTemplate, fetchPurchaseContractTemplate, updatePurchaseContractTemplate } from '@/api/purchaseOrders'
 import { useAuthStore } from '@/stores/auth'
 import type { PurchaseContractTemplate } from '@/types/purchaseOrder'
@@ -210,8 +211,8 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
 </script>
 
 <template>
-  <ElDrawer :model-value="visible" class="purchase-template-create-drawer" :class="{ 'purchase-template-edit-drawer': isEditing }" modal-class="purchase-template-create-overlay" :title="drawerTitle"
-    size="1360px" direction="rtl" append-to-body :show-close="false" :close-on-click-modal="false" :close-on-press-escape="!saving"
+  <AppWindowDialog :model-value="visible" class="purchase-template-create-drawer" :class="{ 'purchase-template-edit-drawer': isEditing }" modal-class="purchase-template-create-overlay" :title="drawerTitle"
+    :width="1360" :show-close="false" :close-on-click-modal="false" :close-on-press-escape="!saving"
     :before-close="beforeClose" @update:model-value="emit('update:visible', $event)">
     <template #header>
       <div class="template-create-heading"><h2>{{ drawerTitle }}</h2><p v-if="isEditing">当前版本 {{ currentVersion === null ? '—' : `V${currentVersion}` }} · 最近更新：{{ record?.updated_by_name || '—' }} · {{ formatDateTime(record?.updated_at) }}</p><p v-else>设置模板信息和合同条款，创建后可在采购表中选用。</p></div>
@@ -247,21 +248,21 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
       <ElButton v-if="isEditing" class="template-save-current" :loading="saving && savingMode === 'CURRENT'" :disabled="saving || saveDisabled" @click="save('CURRENT')">保存当前模板</ElButton>
       <ElButton type="primary" :loading="saving && savingMode === 'NEW_VERSION'" :disabled="saving || saveDisabled" @click="save('NEW_VERSION')">{{ isEditing ? '保存为新版本' : '创建模板' }}</ElButton>
     </template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
-.purchase-template-create-overlay { background: rgb(0 0 0 / 46%); }
+.purchase-template-create-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 46%, transparent); }
 .purchase-template-create-drawer {
   top: 0 !important; height: 100% !important; max-width: 100vw; box-shadow: none; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 16px/24px 'Noto Sans SC Variable', token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary}; --el-text-color-placeholder: #{token.$crm-text-muted};
-  .el-drawer__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
+  .app-window-dialog__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
   .template-create-heading { display: flex; min-width: 0; align-items: baseline; gap: 16px; }
   .template-create-heading h2 { margin: 0; font: 600 22px/28px 'Noto Serif SC Variable', token.$crm-font-display; white-space: nowrap; }
   .template-create-heading p { margin: 0; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
   .template-create-close.el-button { width: 32px; height: 32px; padding: 0; font-size: 18px; color: token.$crm-text-secondary; }
-  .el-drawer__body { padding: 0 32px 16px; overflow-y: auto; }
+  .app-window-dialog__body { padding: 0 32px 16px; overflow-y: auto; }
   .template-create-form { display: grid; grid-template-columns: 408px minmax(0,1fr); gap: 32px; min-height: 784px; position: relative; }
   .template-create-form::after { content: ''; position: absolute; left: 424px; top: 0; bottom: 0; width: 1px; background: token.$crm-border-default; }
   section { min-width: 0; }
@@ -272,15 +273,15 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
   .el-form-item__label { height: 24px; margin-bottom: 4px; padding: 0; color: token.$crm-text-primary; font-size: 16px; line-height: 24px; }
   .el-form-item.is-required > .el-form-item__label::after { color: token.$crm-primary !important; }
   .el-input, .el-select { width: 100%; font-family: 'Noto Sans SC Variable', #{token.$crm-font-body}; }
-  .el-input__wrapper, .el-select__wrapper { height: 40px; min-height: 40px; padding: 0 14px; border-radius: 4px; box-shadow: 0 0 0 1px token.$crm-border-default inset; background: token.$crm-color-surface; font-size: 16px; }
-  .el-input__inner { height: 38px; font: inherit; }
-  .el-input__count-inner { background: token.$crm-color-surface; font-size: 14px; color: token.$crm-text-muted; }
-  .el-textarea__inner { padding: 10px 14px; border-radius: 4px; box-shadow: 0 0 0 1px token.$crm-border-default inset; background: token.$crm-color-surface; font: 16px/22px 'Noto Sans SC Variable', token.$crm-font-body; color: token.$crm-text-primary; }
+  .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px; padding: 0 14px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; background: var(--erp-input-surface); font-size: 16px; }
+  .el-input__inner { height: 30px; font: inherit; }
+  .el-input__count-inner { background: var(--erp-input-surface); font-size: 14px; color: token.$crm-text-muted; }
+  .el-textarea__inner { padding: 10px 14px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; background: var(--erp-input-surface); font: 16px/22px 'Noto Sans SC Variable', token.$crm-font-body; color: token.$crm-text-primary; }
   .template-basic-fields > .el-form-item { margin-bottom: 24px; }
   .field-help { width: 100%; margin: 8px 0 0; color: token.$crm-text-secondary; font-size: 14px; line-height: 24px; }
   .template-basic-fields > .template-category { margin-bottom: 26px; }
-  .template-category .el-tag { height: 30px; padding: 0 10px; font-size: 16px; color: token.$crm-text-secondary; background: token.$crm-color-subtle; border-color: transparent; }
-  .template-category .el-tag__close { width: 16px; height: 16px; font-size: 16px; color: token.$crm-text-secondary; }
+  .template-category .el-tag { height: 30px; padding: 0 10px; font-size: 16px; color: var(--erp-color-text-inverse); background: var(--erp-tag-brand-background); border-color: transparent; }
+  .template-category .el-tag__close { width: 16px; height: 16px; font-size: 16px; color: var(--erp-color-text-inverse); }
   .template-field-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; }
   .template-payment .el-form-item__label { width: 100%; display: flex; justify-content: space-between; align-items: center; height: 36px; margin-bottom: 8px; }
   .template-payment .el-button { height: 36px; padding: 0 20px; font: inherit; }
@@ -293,18 +294,19 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
   .template-terms-row .el-textarea__inner { height: 88px; }
   .template-last-terms .el-textarea__inner { height: 76px; padding-top: 5px; padding-bottom: 5px; }
   .template-change-summary { margin-top: 24px; }
-  .template-change-summary .el-input__wrapper { height: 42px; }
-  .el-drawer__footer { box-sizing: border-box; flex: 0 0 64px; padding: 0 24px; border-top: 1px solid token.$crm-border-default; display: flex; gap: 12px; align-items: center; text-align: left; }
+  .template-change-summary .el-input__wrapper { height: 32px; min-height: 32px; }
+  .app-window-dialog__footer { box-sizing: border-box; flex: 0 0 64px; padding: 0 24px; border-top: 1px solid token.$crm-border-default; display: flex; gap: 12px; align-items: center; text-align: left; }
   .template-create-notice { display: flex; min-width: 0; align-items: center; gap: 10px; flex: 1; margin: 0; color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
   .template-create-notice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .template-create-notice .el-icon { flex: none; font-size: 18px; color: token.$crm-text-muted; }
-  .el-drawer__footer .el-button { height: 32px; width: 92px; margin: 0; font: 500 13px 'Noto Sans SC Variable', token.$crm-font-body; }
-  .el-drawer__footer .el-button--primary { width: 148px; }
+  .app-window-dialog__footer .el-button { height: 32px; width: 92px; margin: 0; font: 500 13px 'Noto Sans SC Variable', token.$crm-font-body; }
+  .app-window-dialog__footer .el-button--primary { width: 148px; }
   .template-create-error { padding: 10px 14px; margin-bottom: 12px; color: token.$crm-primary; background: token.$crm-color-subtle; }
 }
 .purchase-template-edit-drawer {
-  .el-drawer__footer .el-button { width: 92px; }
-  .el-drawer__footer .template-save-current { width: 140px; }
-  .el-drawer__footer .el-button--primary { width: 148px; }
+  .app-window-dialog__footer .el-button { width: 92px; }
+  .app-window-dialog__footer .template-save-current { width: 140px; }
+  .app-window-dialog__footer .el-button--primary { width: 148px; }
 }
 </style>
+

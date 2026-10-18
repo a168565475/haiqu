@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -13,8 +13,8 @@ import {
 import CustomerActivityTag from '@/components/customers/CustomerActivityTag.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import CustomerOverviewV2 from '@/views/customers/CustomerOverviewV2.vue'
+import CustomerEditDialog from '@/views/customers/CustomerEditDialog.vue'
 import CustomerRelatedRecordsV2 from '@/components/customers/CustomerRelatedRecordsV2.vue'
-import ContactListView from '@/views/contacts/ContactListView.vue'
 import ComplaintListView from '@/views/complaints/ComplaintListView.vue'
 import TaskCenterView from '@/views/tasks/TaskCenterView.vue'
 import TaskCreateDialog from '@/components/tasks/TaskCreateDialog.vue'
@@ -116,11 +116,14 @@ const timelineLoading = ref(false)
 const timelineCursor = ref<string | null>(null)
 const timelineFilters = reactive({ keyword: '', eventType: '', occurredFrom: '', occurredTo: '' })
 const contacts = ref<ContactListItem[]>([])
+const contactsLoading = ref(false)
+const contactsError = ref('')
 const communicationContactsCustomerId = ref('')
 const customerTasks = ref<TaskSummary[]>([])
 const customerTasksLoading = ref(false)
 const customerTasksError = ref('')
 const taskCreateVisible = ref(false)
+const editDialogVisible = ref(false)
 const completingTaskId = ref('')
 const communicationSaving = ref(false)
 const communicationForm = reactive({
@@ -177,9 +180,8 @@ const sourceManagerNames = computed(() => {
   return [...new Set(names)].join('、')
 })
 
-const mode = computed<'overview' | 'edit' | 'contacts' | 'timeline' | 'tasks' | 'complaints' | 'inquiries' | 'quotations' | 'samples' | 'orders' | 'transfer'>(() => {
+const mode = computed<'overview' | 'edit' | 'timeline' | 'tasks' | 'complaints' | 'inquiries' | 'quotations' | 'samples' | 'orders' | 'transfer'>(() => {
   if (routeName.value === 'customer-edit') return 'edit'
-  if (routeName.value === 'customer-contacts') return 'contacts'
   if (routeName.value === 'customer-timeline') return 'timeline'
   if (routeName.value === 'customer-tasks') return 'tasks'
   if (routeName.value === 'customer-complaints') return 'complaints'
@@ -190,8 +192,8 @@ const mode = computed<'overview' | 'edit' | 'contacts' | 'timeline' | 'tasks' | 
   if (routeName.value === 'customer-transfer') return 'transfer'
   return 'overview'
 })
-const isV2DetailMode = computed(() => !['edit', 'transfer'].includes(mode.value))
-const usesCompactDetailControls = computed(() => ['overview', 'contacts', 'timeline', 'tasks', 'inquiries', 'quotations', 'samples', 'complaints'].includes(mode.value))
+const isV2DetailMode = computed(() => mode.value !== 'edit')
+const usesCompactDetailControls = computed(() => mode.value !== 'edit')
 const relatedRecordKind = computed<'inquiries' | 'quotations' | 'samples' | 'orders' | null>(() => (
   ['inquiries', 'quotations', 'samples', 'orders'].includes(mode.value)
     ? mode.value as 'inquiries' | 'quotations' | 'samples' | 'orders'
@@ -676,14 +678,30 @@ async function loadTimeline(reset = true) {
 async function loadCommunicationContacts(force = false) {
   if (!force && communicationContactsCustomerId.value === customerId.value) return
   const requestId = ++communicationContactsRequest
+  const requestedCustomerId = customerId.value
   contacts.value = []
+  contactsLoading.value = true
+  contactsError.value = ''
   try {
-    const result = await fetchCustomerContacts(customerId.value, { page: 1, page_size: 100 })
-    if (requestId !== communicationContactsRequest) return
-    contacts.value = result.data
-    communicationContactsCustomerId.value = customerId.value
-  } catch {
-    if (requestId === communicationContactsRequest) contacts.value = []
+    const items: ContactListItem[] = []
+    let page = 1
+    let totalPages = 1
+    do {
+      const result = await fetchCustomerContacts(requestedCustomerId, { page, page_size: 100 })
+      if (requestId !== communicationContactsRequest) return
+      items.push(...result.data)
+      totalPages = result.meta?.total_pages || 1
+      page += 1
+    } while (page <= totalPages)
+    contacts.value = items
+    communicationContactsCustomerId.value = requestedCustomerId
+  } catch (error) {
+    if (requestId === communicationContactsRequest) {
+      contactsError.value = apiError(error, '联系人加载失败，请重试。')
+      communicationContactsCustomerId.value = ''
+    }
+  } finally {
+    if (requestId === communicationContactsRequest) contactsLoading.value = false
   }
 }
 
@@ -836,7 +854,7 @@ async function decideTransfer(item: CustomerTransferRequest, action: 'approve' |
 
 function navigateTab(name: string) {
   const routeNames: Record<string, string> = {
-    overview: 'customer-detail', contacts: 'customer-contacts', timeline: 'customer-timeline',
+    overview: 'customer-detail', timeline: 'customer-timeline',
     tasks: 'customer-tasks', complaints: 'customer-complaints',
     inquiries: 'customer-inquiries', quotations: 'customer-quotations', samples: 'customer-samples',
     orders: 'customer-orders',
@@ -852,9 +870,22 @@ function openNewQuotation() {
   void router.push({ name: 'quotations', query: { customer_id: customerId.value, create: '1' } })
 }
 
+function openCustomerEdit() {
+  if (canChange.value) editDialogVisible.value = true
+}
+
+async function handleCustomerEdited(updatedCustomerId: string) {
+  if (updatedCustomerId !== customerId.value) return
+  // 保存前的慢请求不能代替保存后的刷新。
+  if (baseLoadRequest) await baseLoadRequest
+  if (disposed || updatedCustomerId !== customerId.value) return
+  await loadCustomerBase(true)
+  if (mode.value === 'overview' || mode.value === 'timeline') await loadTimeline(true)
+}
+
 function handleHeaderMore(command: string) {
   if (command === 'edit') {
-    void router.push({ name: 'customer-edit', params: { customerId: customerId.value } })
+    openCustomerEdit()
   } else if (command === 'transfer') {
     void router.push({ name: 'customer-transfer', params: { customerId: customerId.value } })
   }
@@ -972,6 +1003,11 @@ watch(() => editForm.primaryRegionId, () => {
   }
 })
 watch(() => route.fullPath, () => void initializeMode())
+watch(() => [route.hash, customer.value?.id, contactsLoading.value], async () => {
+  if (route.hash !== '#customer-contacts' || mode.value !== 'overview' || !customer.value || contactsLoading.value) return
+  await nextTick()
+  document.getElementById('customer-contacts')?.scrollIntoView({ block: 'nearest' })
+}, { flush: 'post' })
 onMounted(initializeMode)
 onBeforeUnmount(() => {
   disposed = true
@@ -1014,13 +1050,13 @@ onBeforeUnmount(() => {
             <strong class="profile-completeness-value">{{ profileCompleteness }}%</strong>
           </div>
           <div class="customer-overview-actions">
-            <ElButton type="primary" :disabled="!canCommunicate" @click="navigateTab('timeline')">记录沟通</ElButton>
-            <ElButton :disabled="!canCreateInquiry" @click="openNewInquiry">新建询盘</ElButton>
-            <ElButton :disabled="!canCreateQuotation" @click="openNewQuotation">新建报价</ElButton>
-            <ElButton :disabled="!canTask" @click="taskCreateVisible = true">新建任务</ElButton>
-            <ElButton :disabled="!canChange" @click="router.push({ name: 'customer-edit', params: { customerId } })">编辑客户</ElButton>
+            <ElButton class="erp-button-motion" type="primary" :disabled="!canCommunicate" @click="navigateTab('timeline')">记录沟通</ElButton>
+            <ElButton class="erp-button-motion" :disabled="!canCreateInquiry" @click="openNewInquiry">新建询盘</ElButton>
+            <ElButton class="erp-button-motion" :disabled="!canCreateQuotation" @click="openNewQuotation">新建报价</ElButton>
+            <ElButton class="erp-button-motion" :disabled="!canTask" @click="taskCreateVisible = true">新建任务</ElButton>
+            <ElButton class="erp-button-motion" :disabled="!canChange" @click="openCustomerEdit">编辑客户</ElButton>
             <ElDropdown trigger="click" @command="handleHeaderMore">
-              <ElButton class="customer-overview-more">更多&nbsp;⌄</ElButton>
+              <ElButton class="customer-overview-more erp-button-motion">更多&nbsp;⌄</ElButton>
               <template #dropdown>
                 <ElDropdownMenu>
                   <ElDropdownItem v-if="canChange" command="edit">编辑资料</ElDropdownItem>
@@ -1033,7 +1069,6 @@ onBeforeUnmount(() => {
 
         <nav class="customer-overview-tabs" aria-label="客户详情导航">
           <button :class="{ active: mode === 'overview' }" type="button" @click="navigateTab('overview')">概览</button>
-          <button :class="{ active: mode === 'contacts' }" type="button" @click="navigateTab('contacts')">联系人</button>
           <button :class="{ active: mode === 'timeline' }" type="button" @click="navigateTab('timeline')">时间轴</button>
           <button :class="{ active: mode === 'tasks' }" type="button" @click="navigateTab('tasks')">任务</button>
           <button :class="{ active: mode === 'inquiries' }" type="button" @click="navigateTab('inquiries')">询盘</button>
@@ -1075,7 +1110,6 @@ onBeforeUnmount(() => {
 
         <nav v-if="mode !== 'transfer'" class="detail-tabs">
           <button @click="navigateTab('overview')">概览</button>
-          <button @click="navigateTab('contacts')">联系人</button>
           <button :class="{ active: mode === 'timeline' }" @click="navigateTab('timeline')">时间轴</button>
           <button :class="{ active: mode === 'tasks' }" @click="navigateTab('tasks')">任务</button>
           <button :class="{ active: mode === 'inquiries' }" @click="navigateTab('inquiries')">询盘</button>
@@ -1091,6 +1125,8 @@ onBeforeUnmount(() => {
         :customer="customer"
         :summary="summary"
         :contacts="contacts"
+        :contacts-loading="contactsLoading"
+        :contacts-error="contactsError"
         :timeline="timeline"
         :timeline-loading="timelineLoading"
         :tasks="customerTasks"
@@ -1098,11 +1134,13 @@ onBeforeUnmount(() => {
         :tasks-error="customerTasksError"
         :can-view-tasks="canViewTasks"
         :can-create-task="canTask"
+        :can-edit-customer="canChange"
         :completing-task-id="completingTaskId"
         @complete-task="completeCustomerTask"
         @create-task="taskCreateVisible = true"
-        @edit-customer="router.push({ name: 'customer-edit', params: { customerId } })"
-        @open-contacts="navigateTab('contacts')"
+        @edit-customer="openCustomerEdit"
+        @retry-contacts="loadCommunicationContacts(true)"
+        @contacts-changed="refreshOverview"
         @refresh="refreshOverview"
         @retry-tasks="loadCustomerOpenTasks"
       />
@@ -1186,7 +1224,6 @@ onBeforeUnmount(() => {
         </footer>
       </main>
 
-      <main v-else-if="mode === 'contacts'" class="customer-contact-embed"><ContactListView /></main>
 
       <main v-else-if="mode === 'tasks'" class="customer-task-embed">
         <ElEmpty v-if="!canViewTasks" description="当前账号无权查看客户任务" />
@@ -1219,19 +1256,21 @@ onBeforeUnmount(() => {
         :sales-metrics="customer"
       />
 
-      <main v-else-if="mode === 'timeline'" class="customer-timeline-v2">
-        <section class="customer-timeline-v2__filters">
+      <main v-else-if="mode === 'timeline'" class="customer-timeline-v2 erp-glass-list">
+        <section class="customer-timeline-v2__filters erp-list-filter erp-list-filters">
           <ElInput v-model="timelineFilters.keyword" placeholder="搜索主题、内容、编号" clearable @keyup.enter="loadTimeline(true)" />
           <ElSelect v-model="timelineFilters.eventType" clearable placeholder="类型：全部"><ElOption label="沟通" value="COMMUNICATION" /><ElOption label="任务" value="TASK" /><ElOption label="客户资料" value="CUSTOMER" /></ElSelect>
           <ElDatePicker v-model="timelineFilters.occurredFrom" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="开始时间" />
           <ElDatePicker v-model="timelineFilters.occurredTo" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="结束时间" />
-          <ElButton type="primary" @click="loadTimeline(true)">查询</ElButton><ElButton @click="resetTimelineFilters">重置</ElButton>
-          <ElButton class="customer-timeline-v2__export" @click="exportTimeline">导出记录</ElButton>
+          <div class="erp-list-filter-actions">
+            <ElButton class="erp-button-motion" @click="resetTimelineFilters">重置</ElButton>
+            <ElButton class="erp-button-motion" type="primary" @click="loadTimeline(true)">应用筛选</ElButton>
+          </div>
         </section>
 
         <div class="customer-timeline-v2__workspace">
-          <section v-loading="timelineLoading" class="customer-timeline-v2__list-panel">
-            <header><div><h2>客户时间轴</h2><span>统一查看当前客户的真实业务事件</span></div><small>{{ timeline.length }} 条已加载</small></header>
+          <section v-loading="timelineLoading" class="customer-timeline-v2__list-panel erp-list-surface">
+            <header><div><h2>客户时间轴</h2><small>{{ timeline.length }} 条已加载</small></div><ElButton class="erp-button-motion" @click="exportTimeline">导出记录</ElButton></header>
             <div v-if="timeline.length" class="customer-timeline-v2__list">
               <article v-for="event in timeline" :key="event.id" class="customer-timeline-v2__event">
                 <time>{{ formatDate(event.occurred_at) }}</time>
@@ -1247,7 +1286,7 @@ onBeforeUnmount(() => {
             <ElEmpty v-else description="暂无符合条件的时间线记录" />
           </section>
 
-          <section class="customer-timeline-v2__composer">
+          <section class="customer-timeline-v2__composer erp-list-surface">
             <header><div><h2>记录沟通</h2><span>保存后写入客户时间轴</span></div></header>
             <ElForm label-position="top">
               <ElFormItem label="沟通方式" required><ElRadioGroup v-model="communicationForm.type"><ElRadioButton v-for="item in communicationTypeOptions" :key="item.id" :value="item.code">{{ item.label }}</ElRadioButton></ElRadioGroup></ElFormItem>
@@ -1269,8 +1308,8 @@ onBeforeUnmount(() => {
         </div>
       </main>
 
-      <main v-else class="transfer-page">
-        <header class="section-heading"><div><h2>客户转移申请</h2><p>转移客户归属，不修改历史订单和财务事实。</p></div><ElButton @click="router.push({ name: 'customer-detail', params: { customerId } })">取消</ElButton></header>
+      <main v-else class="transfer-page erp-glass-list">
+        <header class="section-heading erp-list-surface"><div><h2>客户转移申请</h2><p>转移客户归属，不修改历史订单和财务事实。</p></div><ElButton class="erp-button-motion" @click="router.push({ name: 'customer-detail', params: { customerId } })">取消</ElButton></header>
         <section class="transfer-grid">
           <ElCard shadow="never"><template #header><strong>转移设置</strong></template><ElAlert :title="`当前负责人：${customer.primary_owner?.display_name || '未分配'}`" type="info" :closable="false" /><ElForm label-position="top"><ElFormItem label="接收人" required><ElSelect v-model="transferForm.ownerId" filterable><ElOption v-for="owner in options?.owner_options.filter((item) => item.id !== customer?.primary_owner?.id)" :key="owner.id" :label="owner.display_name" :value="owner.id" /></ElSelect></ElFormItem><ElFormItem label="转移原因" required><ElInput v-model="transferForm.reason" type="textarea" :rows="4" maxlength="2000" /></ElFormItem><ElCheckbox checked disabled>通知原负责人和接收人</ElCheckbox></ElForm><ElButton type="primary" :loading="transferLoading" :disabled="!canTransfer" @click="submitTransfer">预览并提交</ElButton></ElCard>
           <ElCard shadow="never"><template #header><strong>关联对象影响</strong></template><ElDescriptions :column="1" border><ElDescriptionsItem label="联系人">{{ summary?.counts.contacts || 0 }} 个，保持归属客户不变</ElDescriptionsItem><ElDescriptionsItem label="进行中询价">{{ summary?.counts.open_inquiries || 0 }} 个，自动归属接收人可见范围</ElDescriptionsItem><ElDescriptionsItem label="有效报价">{{ summary?.counts.open_quotations || 0 }} 个，历史版本不改写</ElDescriptionsItem><ElDescriptionsItem label="样品跟进">{{ summary?.counts.active_samples || 0 }} 个，状态不变</ElDescriptionsItem><ElDescriptionsItem label="未完成任务">{{ summary?.counts.open_tasks || 0 }} 个，审批执行时按后端策略处理</ElDescriptionsItem></ElDescriptions></ElCard>
@@ -1279,9 +1318,11 @@ onBeforeUnmount(() => {
       </main>
     </template>
 
+    <CustomerEditDialog v-model="editDialogVisible" :customer-id="customerId" @saved="handleCustomerEdited" @cancelled="handleCustomerEdited(customerId)" />
+
     <TaskCreateDialog
       v-model="taskCreateVisible"
-      class="customer-detail-dialog"
+      embedded
       :scope="taskScope"
       :fixed-customer-id="customerId"
       :fixed-customer-name="customer?.account_name || ''"
@@ -1318,90 +1359,62 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: calc(100% + 48px);
   margin: -24px;
-  color: #23252a;
+  color: var(--erp-color-text-primary);
   background: var(--erp-page-background);
-  --el-color-primary: #18181b;
+  --el-color-primary: var(--erp-color-brand);
 }
 
 .customer-detail-page--overview-v2 {
   width: 100%;
-  height: calc(100vh - 92px);
-  height: calc(100dvh - 92px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
   margin: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: token.$crm-border-strong transparent;
-  scrollbar-width: thin;
   color: token.$crm-text-primary;
-  background: token.$crm-color-page;
+  background: transparent;
   font-family: token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary};
-}
-
-.customer-detail-page--overview-v2::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.customer-detail-page--overview-v2::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.customer-detail-page--overview-v2::-webkit-scrollbar-thumb {
-  min-height: 48px;
-  border: 2px solid transparent;
-  border-radius: token.$crm-radius-pill;
-  background: token.$crm-border-strong;
-  background-clip: padding-box;
-}
-
-.customer-detail-page--overview-v2::-webkit-scrollbar-thumb:hover {
-  background: token.$crm-text-muted;
-  background-clip: padding-box;
 }
 
 .customer-overview-hero {
   position: relative;
   width: 100%;
   min-width: 0;
-  height: 146px;
   box-sizing: border-box;
-  border-bottom: 1px solid token.$crm-border-default;
-  background: token.$crm-color-surface;
+  padding: 16px 16px 10px;
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  backdrop-filter: var(--erp-glass-backdrop);
 }
 
 .customer-overview-heading {
-  position: relative;
-  height: 98px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 20px;
 }
 
 .customer-overview-heading h1 {
-  position: absolute;
-  top: 18px;
-  left: 28px;
-  max-width: 760px;
-  overflow: hidden;
+  min-width: 0;
   margin: 0;
   color: token.$crm-text-primary;
-  font-family: token.$crm-font-display;
-  font-size: 30px;
+  font-family: token.$crm-font-body;
+  font-size: 36px !important;
   font-weight: 700;
-  line-height: 40px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 44px;
+  overflow-wrap: anywhere;
 }
 
 .customer-overview-meta {
-  position: absolute;
-  top: 60px;
-  left: 28px;
-  height: 24px;
+  grid-column: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   color: token.$crm-text-secondary;
   font-size: 12px;
   line-height: 18px;
@@ -1428,8 +1441,8 @@ onBeforeUnmount(() => {
 }
 
 .customer-overview-meta :deep(.customer-activity-tag.is-info) {
-  color: #4d7088;
-  background: #e6eef2;
+  color: var(--erp-tag-info-text);
+  background: var(--erp-tag-info-background);
 }
 
 .customer-overview-meta :deep(.customer-activity-tag.is-warning) {
@@ -1471,48 +1484,43 @@ onBeforeUnmount(() => {
 }
 
 .customer-overview-actions {
-  position: absolute;
-  top: 22px;
-  right: 108px;
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .customer-overview-actions :deep(.el-button) {
-  width: 98px;
   height: 32px;
   margin: 0;
   padding: 0 14px;
-  border-color: token.$crm-border-default;
+  border-color: var(--erp-button-secondary-border);
   border-radius: token.$crm-radius-2;
   color: token.$crm-text-primary;
-  background: token.$crm-color-surface;
+  background: var(--erp-button-secondary-surface);
   font-family: token.$crm-font-body;
   font-size: 13px;
   font-weight: 500;
 }
 
-.customer-overview-actions :deep(.customer-overview-more) {
-  width: 104px;
-}
-
 .customer-overview-actions :deep(.el-button:not(.is-disabled):hover) {
   border-color: token.$crm-border-strong;
   color: token.$crm-primary-hover;
-  background: token.$crm-color-row-hover;
+  background: var(--erp-button-secondary-hover-surface);
 }
 
 .customer-overview-actions :deep(.el-button--primary) {
-  border-color: token.$crm-primary;
+  border-color: var(--erp-button-primary-border);
   color: token.$crm-text-inverse;
-  background: token.$crm-primary;
+  background: var(--erp-button-primary-surface);
 }
 
 .customer-overview-actions :deep(.el-button--primary:not(.is-disabled):hover) {
-  border-color: token.$crm-primary-hover;
+  border-color: var(--erp-button-primary-border);
   color: token.$crm-text-inverse;
-  background: token.$crm-primary-hover;
+  background: var(--erp-button-primary-hover-surface);
 }
 
 .customer-overview-actions :deep(.el-button.is-disabled) {
@@ -1522,25 +1530,23 @@ onBeforeUnmount(() => {
 }
 
 .customer-overview-tabs {
-  position: absolute;
-  top: 98px;
-  left: 0;
-  height: 44px;
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 6px;
+  margin-top: 14px;
 }
 
 .customer-overview-tabs button {
   position: relative;
-  width: 72px;
-  height: 44px;
-  padding: 0;
+  height: 32px;
+  padding: 0 12px;
   border: 0;
   color: token.$crm-text-secondary;
   background: transparent;
   font-family: token.$crm-font-body;
   font-size: 13px;
+  line-height: 20px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -1550,17 +1556,18 @@ onBeforeUnmount(() => {
 }
 
 .customer-overview-tabs button.active {
-  color: token.$crm-text-primary;
-  font-weight: 700;
+  color: token.$crm-primary;
+  font-weight: 600;
 }
 
 .customer-overview-tabs button.active::after {
   position: absolute;
-  right: 4px;
+  right: 12px;
   bottom: 0;
-  left: 4px;
+  left: 12px;
   height: 3px;
-  background: token.$crm-primary;
+  border-radius: 4px 4px 1px 1px;
+  background: var(--erp-tab-active-indicator);
   content: '';
 }
 
@@ -1568,280 +1575,248 @@ onBeforeUnmount(() => {
   color: token.$crm-text-disabled;
   cursor: not-allowed;
 }
-.customer-timeline-v2 {
-  min-width: 0;
-  min-height: calc(100vh - 210px);
-  padding: 14px 28px 20px;
-  background: token.$crm-color-page;
-}
-.customer-timeline-v2__filters {
-  height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.customer-timeline-v2__filters :deep(.el-input) { width: 300px; }
+.customer-timeline-v2.erp-glass-list { height: auto; min-width: 0; padding: 0; font-size: 13px; line-height: 20px; }
+.customer-timeline-v2__filters { gap: 8px; }
+.customer-timeline-v2__filters :deep(.el-input) { width: 250px; max-width: 100%; }
 .customer-timeline-v2__filters :deep(.el-select) { width: 150px; }
-.customer-timeline-v2__filters :deep(.el-date-editor) { width: 190px; }
-.customer-timeline-v2__filters :deep(.el-input__wrapper),
-.customer-timeline-v2__filters :deep(.el-select__wrapper),
-.customer-timeline-v2__filters :deep(.el-date-editor),
-.customer-timeline-v2__filters :deep(.el-button) { height: 32px; min-height: 32px; border-radius: token.$crm-radius-2; }
-.customer-timeline-v2__filters :deep(.el-button) { width: 76px; margin: 0; }
-.customer-timeline-v2__filters :deep(.customer-timeline-v2__export) { width: 104px; margin-left: auto; }
-.customer-timeline-v2__workspace {
-  height: calc(100vh - 288px);
-  min-height: 640px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 600px;
-  gap: 12px;
-}
-.customer-timeline-v2__list-panel,
-.customer-timeline-v2__composer {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid token.$crm-border-default;
-  border-radius: token.$crm-radius-3;
-  background: token.$crm-color-surface;
-}
-.customer-timeline-v2__list-panel > header,
-.customer-timeline-v2__composer > header {
-  height: 54px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  border-bottom: 1px solid token.$crm-border-subtle;
-}
-.customer-timeline-v2__list-panel h2,
-.customer-timeline-v2__composer h2 { margin: 0; font-family: token.$crm-font-display; font-size: 18px; line-height: 24px; }
-.customer-timeline-v2__list-panel header span,
-.customer-timeline-v2__composer header span,
-.customer-timeline-v2__list-panel header small { color: token.$crm-text-secondary; font-size: 11px; }
-.customer-timeline-v2__list-panel header div,
-.customer-timeline-v2__composer header div { display: flex; flex-direction: column; gap: 1px; }
-.customer-timeline-v2__list { height: calc(100% - 54px); overflow-y: auto; padding: 0 16px 16px; }
-.customer-timeline-v2__event {
-  min-height: 82px;
-  display: grid;
-  grid-template-columns: 126px 12px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px 0;
-  border-bottom: 1px solid token.$crm-border-subtle;
-}
-.customer-timeline-v2__event time { color: token.$crm-text-muted; font-size: 11px; line-height: 20px; }
+.customer-timeline-v2__filters :deep(.el-date-editor) { width: 185px; max-width: 100%; }
+.customer-timeline-v2__filters :deep(.el-button) { margin: 0; }
+.customer-timeline-v2__workspace { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; gap: 14px; }
+.customer-timeline-v2__list-panel, .customer-timeline-v2__composer { min-width: 0; padding: 16px; }
+.customer-timeline-v2__list-panel > header, .customer-timeline-v2__composer > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.customer-timeline-v2__list-panel h2, .customer-timeline-v2__composer h2 { margin: 0; font-family: token.$crm-font-body; font-size: 16px; font-weight: 700; line-height: 24px; }
+.customer-timeline-v2__list-panel header span, .customer-timeline-v2__composer header span, .customer-timeline-v2__list-panel header small { color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
+.customer-timeline-v2__list-panel header div, .customer-timeline-v2__composer header div { display: flex; flex-direction: column; gap: 4px; }
+.customer-timeline-v2__list { min-width: 0; }
+.customer-timeline-v2__event { display: grid; grid-template-columns: 112px 12px minmax(0, 1fr); align-items: start; gap: 10px; padding: 14px 0; border-bottom: 1px solid token.$crm-border-subtle; }
+.customer-timeline-v2__event:last-of-type { border-bottom: 0; }
+.customer-timeline-v2__event time { color: token.$crm-text-muted; font-size: 12px; line-height: 20px; }
 .customer-timeline-v2__dot { width: 8px; height: 8px; margin-top: 7px; border: 2px solid token.$crm-color-surface; border-radius: 50%; background: token.$crm-primary; box-shadow: 0 0 0 1px token.$crm-primary; }
 .customer-timeline-v2__event > div { min-width: 0; }
-.customer-timeline-v2__event > div > div { display: flex; align-items: center; gap: 10px; }
-.customer-timeline-v2__event strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.customer-timeline-v2__event p { overflow: hidden; margin: 7px 0 4px; color: token.$crm-text-regular; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.customer-timeline-v2__event small { color: token.$crm-text-muted; font-size: 10px; }
-.customer-timeline-v2__event :deep(.customer-activity-tag) { min-width: 48px; height: 22px; color: #4d7088; background: #e6eef2; font-size: 11px; }
-.customer-timeline-v2__more { width: 100%; margin: 14px 0 0; }
-.customer-timeline-v2__composer { position: relative; padding-bottom: 58px; }
-.customer-timeline-v2__composer :deep(.el-form) { height: calc(100% - 54px); overflow-y: auto; padding: 12px 16px; }
-.customer-timeline-v2__composer :deep(.el-form-item) { margin-bottom: 10px; }
-.customer-timeline-v2__composer :deep(.el-form-item__label) { height: 20px; color: token.$crm-text-regular; font-size: 11px; line-height: 18px; }
-.customer-timeline-v2__composer :deep(.el-input__wrapper),
-.customer-timeline-v2__composer :deep(.el-select__wrapper),
-.customer-timeline-v2__composer :deep(.el-date-editor) { height: 32px; min-height: 32px; border-radius: token.$crm-radius-2; }
-.customer-timeline-v2__composer :deep(.el-select),
-.customer-timeline-v2__composer :deep(.el-date-editor) { width: 100%; }
+.customer-timeline-v2__event > div > div { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+.customer-timeline-v2__event strong { font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.customer-timeline-v2__event p { margin: 6px 0; color: token.$crm-text-regular; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.customer-timeline-v2__event small { color: token.$crm-text-muted; font-size: 12px; overflow-wrap: anywhere; }
+.customer-timeline-v2__more { width: 100%; margin: 12px 0 0; }
+.customer-timeline-v2__composer :deep(.el-form-item) { margin-bottom: 14px; }
+.customer-timeline-v2__composer :deep(.el-form-item__label) { height: auto; margin-bottom: 4px; color: token.$crm-text-regular; font-size: 12px; line-height: 20px; }
+.customer-timeline-v2__composer :deep(.el-select), .customer-timeline-v2__composer :deep(.el-date-editor) { width: 100%; min-width: 0; }
+.customer-timeline-v2__composer :deep(.el-input__wrapper), .customer-timeline-v2__composer :deep(.el-select__wrapper), .customer-timeline-v2__composer :deep(.el-textarea__inner) { border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.customer-timeline-v2__composer :deep(.el-input__wrapper:hover), .customer-timeline-v2__composer :deep(.el-select__wrapper:hover), .customer-timeline-v2__composer :deep(.el-textarea__inner:hover) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
+.customer-timeline-v2__composer :deep(.el-input__wrapper.is-focus), .customer-timeline-v2__composer :deep(.el-select__wrapper.is-focused), .customer-timeline-v2__composer :deep(.el-textarea__inner:focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+.customer-timeline-v2__composer :deep(.el-input__inner), .customer-timeline-v2__composer :deep(.el-select__selected-item), .customer-timeline-v2__composer :deep(.el-textarea__inner) { font-size: 13px; }
 .customer-timeline-v2__composer :deep(.el-radio-group) { display: flex; flex-wrap: wrap; gap: 6px; }
-.customer-timeline-v2__composer :deep(.el-radio-button__inner) { height: 32px; padding: 0 12px; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; line-height: 30px; box-shadow: none; }
-.customer-timeline-v2__form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.customer-timeline-v2__form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
-.customer-timeline-v2__attachment { height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; border: 1px dashed token.$crm-border-default; border-radius: token.$crm-radius-2; color: token.$crm-text-muted; background: token.$crm-color-subtle; font-size: 11px; }
-.customer-timeline-v2__attachment strong { color: token.$crm-text-secondary; font-size: 12px; }
-.customer-timeline-v2__followup { margin-top: 10px; padding: 10px; border: 1px solid token.$crm-border-subtle; border-radius: token.$crm-radius-2; }
-.customer-timeline-v2__composer > footer { position: absolute; right: 0; bottom: 0; left: 0; height: 52px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 16px; border-top: 1px solid token.$crm-border-subtle; background: token.$crm-color-surface; }
-.customer-timeline-v2__composer > footer :deep(.el-button) { width: 96px; height: 32px; margin: 0; border-radius: token.$crm-radius-2; }
+.customer-timeline-v2__composer :deep(.el-radio-button__inner) { height: 32px; padding: 0 12px; border: 1px solid token.$crm-border-default; border-radius: var(--erp-radius-control); font-size: 12px; line-height: 30px; box-shadow: none; }
+.customer-timeline-v2__form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.customer-timeline-v2__form-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+.customer-timeline-v2__form-grid--two { margin-top: 12px; }
+.customer-timeline-v2__attachment { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; border: 1px dashed token.$crm-border-default; border-radius: var(--erp-radius-control); color: token.$crm-text-muted; background: token.$crm-color-subtle; font-size: 12px; }
+.customer-timeline-v2__attachment strong { color: token.$crm-text-secondary; }
+.customer-timeline-v2__followup { margin-top: 12px; padding-top: 12px; border-top: 1px solid token.$crm-border-subtle; }
+.customer-timeline-v2__composer > footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid token.$crm-border-subtle; }
+.customer-timeline-v2__composer > footer :deep(.el-button) { margin: 0; }
 @media (max-width: 1599px) {
-  .customer-overview-heading h1 { max-width: calc(100% - 760px); }
-  .customer-overview-actions { right: 24px; }
-  .customer-timeline-v2 { padding-inline: 24px; }
-  .customer-timeline-v2__workspace { grid-template-columns: minmax(0, 1fr) 520px; }
-  .customer-timeline-v2__filters :deep(.el-input) { width: 250px; }
-  .customer-timeline-v2__filters :deep(.el-date-editor) { width: 165px; }
+  .customer-overview-heading { grid-template-columns: minmax(0, 1fr); }
+  .customer-overview-actions { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: 6px; }
+}
+@media (max-width: 980px) {
+  .customer-timeline-v2__workspace { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .customer-timeline-v2__event { grid-template-columns: 12px minmax(0, 1fr); }
+  .customer-timeline-v2__event time { grid-column: 1 / -1; }
+  .customer-timeline-v2__form-grid { grid-template-columns: minmax(0, 1fr); }
 }
 .customer-header, .customer-identity, .header-actions, .detail-tabs, .section-heading, .timeline-filters, .sticky-actions { display: flex; align-items: center; }
-.customer-hero { border-bottom: 1px solid #dedfe2; background: #fff; }
-.detail-meta-row { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 7px 24px 0; color: #666a73; font-size: 12px; }
+.customer-hero { border-bottom: 1px solid var(--erp-color-border); background: var(--erp-color-surface); }
+.detail-meta-row { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 7px 24px 0; color: var(--erp-color-text-regular); font-size: 12px; }
 .customer-header { min-height: 65px; justify-content: space-between; gap: 18px; padding: 2px 24px 12px; }
 .customer-identity { min-width: 0; gap: 12px; }
-.customer-identity h1 { max-width: 320px; flex: none; overflow: hidden; margin: 0; color: #18181b; font-size: 26px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.customer-identity p, .section-heading p { min-width: 0; overflow: hidden; margin: 0; color: #666a73; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.avatar { flex: none; display: grid; width: 40px; height: 40px; place-items: center; border-radius: 9px; color: #fff; background: #18191c; font-weight: 700; }
-.grade-tag { min-width: 72px; justify-content: center; border: 0; color: #5f636b; background: #f4f4f5; }
+.customer-identity h1 { max-width: 320px; flex: none; overflow: hidden; margin: 0; color: var(--erp-color-text-primary); font-size: 26px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.customer-identity p, .section-heading p { min-width: 0; overflow: hidden; margin: 0; color: var(--erp-color-text-regular); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.avatar { flex: none; display: grid; width: 40px; height: 40px; place-items: center; border-radius: 9px; color: var(--erp-color-text-inverse); background: var(--erp-color-brand); font-weight: 700; }
+.grade-tag { min-width: 72px; justify-content: center; border: 0; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); }
 .status-tag { min-width: 72px; justify-content: center; border: 0; }
 .header-actions { flex: none; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .header-actions :deep(.el-button) { min-width: 96px; height: 32px; margin: 0; padding: 0 18px; border-radius: 8px; }
-.header-actions :deep(.el-button--primary) { border-color: #18181b; background: #18181b; }
-.detail-tabs { height: 58px; gap: 0; padding: 0 24px; border-top: 1px solid #f1f1f2; }
-.detail-tabs button { height: 58px; flex: none; padding: 0 28px; border: 0; border-bottom: 2px solid transparent; color: #52565e; background: transparent; cursor: pointer; white-space: nowrap; }
-.detail-tabs button.active { border-bottom-color: #17181a; color: #17181a; font-weight: 700; }
-.detail-tabs button:disabled { color: #8b8f97; cursor: not-allowed; }
+.header-actions :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
+.detail-tabs { height: 58px; gap: 0; padding: 0 24px; border-top: 1px solid var(--erp-color-border); }
+.detail-tabs button { height: 58px; flex: none; padding: 0 28px; border: 0; border-bottom: 2px solid transparent; color: var(--erp-color-text-regular); background: transparent; cursor: pointer; white-space: nowrap; }
+.detail-tabs button.active { border-bottom-color: var(--erp-color-border); color: var(--erp-color-text-primary); font-weight: 700; }
+.detail-tabs button:disabled { color: var(--erp-color-text-disabled); cursor: not-allowed; }
 .overview-page { padding: 24px; background: var(--erp-page-background); }
-.customer-complaint-embed { min-height: 620px; background: var(--erp-page-background); }
-.snapshot-banner { min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid #bfdbfe; border-radius: 7px; color: #0b6bdc; background: #eff7ff; font-size: 12px; }
+.customer-complaint-embed { min-width: 0; }
+.snapshot-banner { min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border: 1px solid var(--erp-color-border-strong); border-radius: 7px; color: var(--erp-color-info); background: var(--erp-color-subtle); font-size: 12px; }
 .snapshot-banner span { flex: 1; }
-.snapshot-banner button { border: 0; color: #0874dc; background: transparent; font: inherit; font-weight: 600; cursor: pointer; }
+.snapshot-banner button { border: 0; color: var(--erp-color-info); background: transparent; font: inherit; font-weight: 600; cursor: pointer; }
 .metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin: 12px 0; }
-.metric-grid article { position: relative; min-width: 0; min-height: 116px; display: flex; flex-direction: column; padding: 18px 14px; border: 1px solid #dfe1e5; border-radius: 9px; background: #fff; }
-.metric-grid small { color: #52565e; font-size: 12px; }
-.metric-grid strong { overflow: hidden; margin-top: 14px; color: #18181b; font-size: 22px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
-.metric-grid span { margin-top: 8px; color: #70747c; font-size: 11px; }
-.metric-grid .is-positive { color: #16a34a; }
-.metric-grid .is-warning { color: #d97706; }
+.metric-grid article { position: relative; min-width: 0; min-height: 116px; display: flex; flex-direction: column; padding: 18px 14px; border: 1px solid var(--erp-color-border); border-radius: 9px; background: var(--erp-color-surface); }
+.metric-grid small { color: var(--erp-color-text-regular); font-size: 12px; }
+.metric-grid strong { overflow: hidden; margin-top: 14px; color: var(--erp-color-text-primary); font-size: 22px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.metric-grid span { margin-top: 8px; color: var(--erp-color-text-regular); font-size: 11px; }
+.metric-grid .is-positive { color: var(--erp-color-success); }
+.metric-grid .is-warning { color: var(--erp-color-warning); }
 .metric-secondary { position: absolute; right: 14px; bottom: 16px; }
-.metric-icon { position: absolute; top: 12px; right: 12px; box-sizing: content-box; padding: 8px; border-radius: 8px; color: #5f636b; background: #f4f4f5; }
+.metric-icon { position: absolute; top: 12px; right: 12px; box-sizing: content-box; padding: 8px; border-radius: 8px; color: var(--erp-color-text-regular); background: var(--erp-color-subtle); }
 .overview-grid { display: grid; grid-template-columns: 1.62fr 1fr 1fr; gap: 18px; }
-.legacy-source-card { margin-top: 12px; padding: 18px; border: 1px solid #dfe2e6; border-radius: 10px; background: #fff; }
-.legacy-source-card > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #edf0f4; }
-.legacy-source-card > header > div { display: flex; align-items: center; gap: 8px; color: #18181b; }
-.legacy-source-card > header span { color: #71717a; font-size: 11px; }
+.legacy-source-card { margin-top: 12px; padding: 18px; border: 1px solid var(--erp-color-border); border-radius: 10px; background: var(--erp-color-surface); }
+.legacy-source-card > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--erp-color-border); }
+.legacy-source-card > header > div { display: flex; align-items: center; gap: 8px; color: var(--erp-color-text-primary); }
+.legacy-source-card > header span { color: var(--erp-color-text-regular); font-size: 11px; }
 .legacy-source-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; }
-.legacy-source-card dl > div { min-width: 0; padding: 12px 10px; border-bottom: 1px solid #f0f1f3; }
-.legacy-source-card dt { margin-bottom: 4px; color: #71717a; font-size: 11px; }
-.legacy-source-card dd { overflow-wrap: anywhere; margin: 0; color: #27272a; font-size: 13px; }
-.overview-card { min-width: 0; min-height: 638px; overflow: hidden; border: 1px solid #dfe1e5; border-radius: 9px; background: #fff; }
-.panel-header { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #e3e4e7; }
+.legacy-source-card dl > div { min-width: 0; padding: 12px 10px; border-bottom: 1px solid var(--erp-color-border); }
+.legacy-source-card dt { margin-bottom: 4px; color: var(--erp-color-text-regular); font-size: 11px; }
+.legacy-source-card dd { overflow-wrap: anywhere; margin: 0; color: var(--erp-color-text-primary); font-size: 13px; }
+.overview-card { min-width: 0; min-height: 638px; overflow: hidden; border: 1px solid var(--erp-color-border); border-radius: 9px; background: var(--erp-color-surface); }
+.panel-header { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--erp-color-border); }
 .panel-header > div { display: flex; align-items: center; gap: 10px; }
-.panel-header strong { color: #202226; font-size: 15px; }
-.panel-header span { color: #777b83; font-size: 11px; }
-.panel-header button { border: 0; color: #27272a; background: transparent; font-weight: 600; cursor: pointer; }
+.panel-header strong { color: var(--erp-color-text-primary); font-size: 15px; }
+.panel-header span { color: var(--erp-color-text-regular); font-size: 11px; }
+.panel-header button { border: 0; color: var(--erp-color-text-primary); background: transparent; font-weight: 600; cursor: pointer; }
 .activity-list { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
-.activity-item { min-height: 96px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid #dfe1e5; border-radius: 7px; }
-.activity-item > .el-icon { box-sizing: content-box; padding: 8px; border-radius: 8px; color: #555962; background: #f5f5f6; }
+.activity-item { min-height: 96px; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 7px; }
+.activity-item > .el-icon { box-sizing: content-box; padding: 8px; border-radius: 8px; color: var(--erp-color-text-regular); background: var(--erp-color-subtle); }
 .activity-item div { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .activity-item strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.activity-item span, .activity-item time { color: #6f737c; font-size: 11px; }
+.activity-item span, .activity-item time { color: var(--erp-color-text-regular); font-size: 11px; }
 .activity-item time { white-space: nowrap; }
 .next-action-list { display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 8px; }
-.next-action-item { min-height: 106px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 16px 12px; border: 1px solid #dfe1e5; border-radius: 7px; }
+.next-action-item { min-height: 106px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 16px 12px; border: 1px solid var(--erp-color-border); border-radius: 7px; }
 .next-action-item { cursor: pointer; }
 .next-action-item div { min-width: 0; display: flex; flex-direction: column; gap: 13px; }
 .next-action-item strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.next-action-item span { color: #6f737c; font-size: 11px; white-space: nowrap; }
-.next-action-item em { min-width: 72px; padding: 5px 10px; border-radius: 7px; color: #d97706; background: #fff7e6; font-size: 11px; font-style: normal; text-align: center; }
-.create-task-button { min-width: 96px; height: 32px; margin: 12px 16px; border-color: #18181b; background: #18181b; }
+.next-action-item span { color: var(--erp-color-text-regular); font-size: 11px; white-space: nowrap; }
+.next-action-item em { min-width: 72px; padding: 5px 10px; border-radius: 7px; color: var(--erp-color-warning); background: var(--erp-color-subtle); font-size: 11px; font-style: normal; text-align: center; }
+.create-task-button { min-width: 96px; height: 32px; margin: 12px 16px; border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
 .risk-panel { padding-bottom: 18px; }
-.credit-usage { margin: 16px; padding: 18px 12px; border: 1px solid #dfe1e5; border-radius: 7px; }
-.credit-usage > div { display: flex; justify-content: space-between; color: #555962; font-size: 11px; }
+.credit-usage { margin: 16px; padding: 18px 12px; border: 1px solid var(--erp-color-border); border-radius: 7px; }
+.credit-usage > div { display: flex; justify-content: space-between; color: var(--erp-color-text-regular); font-size: 11px; }
 .credit-usage strong { display: block; margin: 18px 0 10px; font-size: 19px; }
-.credit-usage :deep(.el-progress-bar__inner) { background: #1677e8; }
+.credit-usage :deep(.el-progress-bar__inner) { background: var(--erp-color-info); }
 .risk-note { min-height: 104px; display: flex; flex-direction: column; gap: 8px; margin: 0 16px 10px; padding: 16px 12px; border: 1px solid; border-radius: 7px; }
 .risk-note strong { font-size: 12px; }
-.risk-note span { color: #646872; font-size: 10px; }
-.risk-note.warning { border-color: #f1d487; color: #d97706; background: #fffaf0; }
-.risk-note.danger { border-color: #f4b9bd; color: #dc2626; background: #fff1f2; }
-.risk-note.info { border-color: #b9daf5; color: #1671c5; background: #eef7ff; }
-.risk-panel > p { margin: 22px 16px 0; color: #6f737c; font-size: 10px; }
-.timeline-page, .transfer-page { margin: 24px; }
-.customer-contact-embed { margin: 0; }
-.customer-task-embed { min-height: 620px; background: var(--erp-page-background); }
+.risk-note span { color: var(--erp-color-text-regular); font-size: 10px; }
+.risk-note.warning { border-color: var(--erp-color-warning-border); color: var(--erp-color-warning); background: var(--erp-color-subtle); }
+.risk-note.danger { border-color: var(--erp-color-danger-border); color: var(--erp-color-danger); background: var(--erp-color-subtle); }
+.risk-note.info { border-color: var(--erp-color-border-strong); color: var(--erp-color-info); background: var(--erp-color-subtle); }
+.risk-panel > p { margin: 22px 16px 0; color: var(--erp-color-text-regular); font-size: 10px; }
+.timeline-page { margin: 24px; }
+.customer-task-embed { min-width: 0; }
 .related-module-page { min-width: 0; padding: 24px; }
 .related-module-heading { min-height: 48px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.related-module-heading h2 { margin: 0 0 4px; color: #18181b; font-size: 20px; line-height: 26px; }
-.related-module-heading p { margin: 0; color: #71717a; font-size: 12px; line-height: 18px; }
+.related-module-heading h2 { margin: 0 0 4px; color: var(--erp-color-text-primary); font-size: 20px; line-height: 26px; }
+.related-module-heading p { margin: 0; color: var(--erp-color-text-regular); font-size: 12px; line-height: 18px; }
 .related-module-heading :deep(.el-button) { height: 32px; margin: 0; border-radius: 8px; }
-.related-module-heading :deep(.el-button--primary) { border-color: #18181b; background: #18181b; }
-.related-table-card { overflow: hidden; border: 1px solid #e4e4e7; border-radius: 8px; background: #fff; box-shadow: 0 4px 12px rgba(0, 0, 0, .05); }
-.related-table-card :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; color: #18181b; background: #f7f7f8; font-size: 12px; font-weight: 600; }
-.related-table-card :deep(.el-table__body-wrapper td.el-table__cell) { height: 48px; color: #3f3f46; font-size: 12px; }
-.related-table-card :deep(.el-table__row:hover > td.el-table__cell) { background: #fafafa; }
-.related-table-card :deep(.el-tag) { min-width: 72px; height: 24px; justify-content: center; border: 0; border-radius: 6px; color: #52525b; background: #f4f4f5; font-size: 11px; }
+.related-module-heading :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
+.related-table-card { overflow: hidden; border: 1px solid var(--erp-table-border); border-radius: 8px; background: var(--erp-table-background); box-shadow: 0 4px 12px color-mix(in srgb, var(--erp-shadow-color) 5%, transparent); }
+.related-table-card :deep(.el-table__header-wrapper th.el-table__cell) { height: 44px; color: var(--erp-table-text); background: var(--erp-table-header-background); font-size: 12px; font-weight: 600; }
+.related-table-card :deep(.el-table__body-wrapper td.el-table__cell) { height: 48px; color: var(--erp-table-text); font-size: 12px; }
+.related-table-card :deep(.el-table__row:hover > td.el-table__cell) { background: var(--erp-table-background); }
+.related-table-card :deep(.el-tag) { min-width: 72px; height: 24px; justify-content: center; border: 0; border-radius: 6px; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); font-size: 11px; }
 .related-table-card :deep(.el-button) { height: 28px; margin: 0; border-radius: 6px; font-size: 12px; }
 .timeline-page :deep(.el-card__header) { display: flex; justify-content: space-between; }
 .section-heading { justify-content: space-between; margin-bottom: 14px; }
 .section-heading h2 { margin: 0; font-size: 24px; }
 .edit-page { width: min(1320px, calc(100% - 48px)); margin: 24px auto 0; padding-bottom: 24px; }
 .edit-page-header { height: 72px; }
-.edit-page-header > p { margin: 0 0 8px; color: #52525b; font-size: 12px; line-height: 14px; }
+.edit-page-header > p { margin: 0 0 8px; color: var(--erp-color-text-regular); font-size: 12px; line-height: 14px; }
 .edit-title-row, .edit-title-row > div { display: flex; align-items: center; }
 .edit-title-row { height: 44px; justify-content: space-between; }
 .edit-title-row > div { gap: 12px; }
-.edit-title-row h1 { margin: 0; color: #18181b; font-size: 26px; line-height: 32px; }
-.edit-title-row span, .edit-title-row small { color: #52525b; font-size: 13px; }
+.edit-title-row h1 { margin: 0; color: var(--erp-color-text-primary); font-size: 26px; line-height: 32px; }
+.edit-title-row span, .edit-title-row small { color: var(--erp-color-text-regular); font-size: 13px; }
 .edit-title-row :deep(.el-tag) { width: 72px; height: 24px; border: 0; border-radius: 6px; }
-.edit-title-row :deep(.el-button) { width: 96px; height: 32px; margin-left: 0; border-color: #d4d4d8; border-radius: 8px; }
+.edit-title-row :deep(.el-button) { width: 96px; height: 32px; margin-left: 0; border-color: var(--erp-color-border); border-radius: 8px; }
 .edit-duplicate-alert { margin-bottom: 8px; }
-.edit-workspace { height: 808px; display: grid; grid-template-columns: 196px minmax(0, 1fr); overflow: hidden; margin-top: 16px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; box-shadow: 0 8px 18px rgba(24,24,27,.10); }
-.edit-section-nav { padding: 24px 16px; border-right: 1px solid #e4e4e7; background: #f7f7f8; }
+.edit-workspace { height: 808px; display: grid; grid-template-columns: 196px minmax(0, 1fr); overflow: hidden; margin-top: 16px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); box-shadow: 0 8px 18px color-mix(in srgb, var(--erp-shadow-color) 10%, transparent); }
+.edit-section-nav { padding: 24px 16px; border-right: 1px solid var(--erp-color-border); background: var(--erp-color-surface); }
 .edit-progress { height: 46px; display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
-.edit-progress strong { color: #18181b; font-size: 14px; line-height: 17px; }
-.edit-progress span { color: #52525b; font-size: 11px; line-height: 13px; }
-.edit-progress :deep(.el-progress-bar__outer) { background: #e4e4e7; }
-.edit-progress :deep(.el-progress-bar__inner) { background: #18181b; }
-.edit-section-nav > button { width: 164px; height: 40px; display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 0 12px; border: 0; border-radius: 8px; color: #3f3f46; background: transparent; font-size: 13px; cursor: pointer; }
-.edit-section-nav > button:hover { background: #ededee; }
-.edit-section-nav > button.active { color: #18181b; background: #f1f1f2; font-weight: 600; }
+.edit-progress strong { color: var(--erp-color-text-primary); font-size: 14px; line-height: 17px; }
+.edit-progress span { color: var(--erp-color-text-regular); font-size: 11px; line-height: 13px; }
+.edit-progress :deep(.el-progress-bar__outer) { background: var(--erp-color-subtle); }
+.edit-progress :deep(.el-progress-bar__inner) { background: var(--erp-color-surface); }
+.edit-section-nav > button { width: 164px; height: 40px; display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 0 12px; border: 0; border-radius: 8px; color: var(--erp-color-text-primary); background: transparent; font-size: 13px; cursor: pointer; }
+.edit-section-nav > button:hover { background: var(--erp-color-hover); }
+.edit-section-nav > button.active { color: var(--erp-color-text-primary); background: var(--erp-color-selected); font-weight: 600; }
 .edit-section-nav > button :deep(.el-icon) { width: 20px; height: 20px; font-size: 20px; }
-.edit-nav-tip { height: 66px; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px; border: 1px solid #d4d4d8; border-radius: 7px; background: #fff; }
+.edit-nav-tip { height: 66px; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px; border: 1px solid var(--erp-color-border); border-radius: 7px; background: var(--erp-color-surface); }
 .edit-nav-tip strong { font-size: 11px; line-height: 14px; }
-.edit-nav-tip span { color: #71717a; font-size: 10px; }
+.edit-nav-tip span { color: var(--erp-color-text-regular); font-size: 10px; }
 .edit-form { height: 808px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding: 24px; scroll-behavior: smooth; }
-.edit-form-card { flex: none; box-sizing: border-box; padding: 12px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; scroll-margin-top: 24px; }
+.edit-form-card { flex: none; box-sizing: border-box; padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); scroll-margin-top: 24px; }
 .edit-form-card.profile-card { height: 182px; }
 .edit-form-card.address-card { min-height: 180px; }
 .edit-form-card.attributes-card { height: 170px; padding-top: 10px; }
 .edit-form-card.ownership-card { height: 192px; }
 .edit-form-card > header { height: 20px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .edit-form-card > header > div { display: flex; align-items: center; gap: 8px; }
-.edit-form-card > header strong { color: #18181b; font-size: 14px; line-height: 17px; }
-.edit-form-card > header span, .edit-form-card > header small { color: #71717a; font-size: 10px; }
-.edit-form-card > header :deep(.el-icon) { width: 20px; height: 20px; color: #52525b; font-size: 20px; }
-.edit-form-card > header :deep(.el-button) { height: 28px; padding: 0 12px; color: #18181b; font-size: 12px; }
+.edit-form-card > header strong { color: var(--erp-color-text-primary); font-size: 14px; line-height: 17px; }
+.edit-form-card > header span, .edit-form-card > header small { color: var(--erp-color-text-regular); font-size: 10px; }
+.edit-form-card > header :deep(.el-icon) { width: 20px; height: 20px; color: var(--erp-color-text-regular); font-size: 20px; }
+.edit-form-card > header :deep(.el-button) { height: 28px; padding: 0 12px; color: var(--erp-color-text-primary); font-size: 12px; }
 .address-actions { display: flex; align-items: center; gap: 6px; }
 .address-actions :deep(.el-select) { width: 172px; }
 .address-actions :deep(.el-select__wrapper) { min-height: 28px; }
-.appended-address-block { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d4d4d8; }
+.appended-address-block { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--erp-color-border); }
 .appended-address-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.appended-address-heading strong { color: #3f3f46; font-size: 12px; }
+.appended-address-heading strong { color: var(--erp-color-text-primary); font-size: 12px; }
 .appended-address-heading :deep(.el-button) { height: 28px; margin: 0; padding: 0 4px; font-size: 11px; }
 .figma-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; }
 .figma-form-grid :deep(.el-form-item) { height: 52px; margin: 0; }
-.figma-form-grid :deep(.el-form-item__label), .customer-tags-field :deep(.el-form-item__label) { height: 17px; margin: 0; padding: 0; color: #3f3f46; font-size: 11px; line-height: 13px; }
+.figma-form-grid :deep(.el-form-item__label), .customer-tags-field :deep(.el-form-item__label) { height: 17px; margin: 0; padding: 0; color: var(--erp-color-text-secondary); font-size: 11px; line-height: 13px; }
 .figma-form-grid :deep(.el-form-item__content) { height: 32px; line-height: 32px; }
 .figma-form-grid :deep(.el-select), .figma-form-grid :deep(.el-input) { width: 100%; }
-.figma-form-grid :deep(.el-input__wrapper), .figma-form-grid :deep(.el-select__wrapper), .customer-tags-field :deep(.el-select__wrapper) { min-height: 32px; padding: 0 12px; border-radius: 8px; box-shadow: 0 0 0 1px #d4d4d8 inset; }
-.figma-form-grid :deep(.el-input__inner), .figma-form-grid :deep(.el-select__placeholder), .figma-form-grid :deep(.el-select__selected-item), .customer-tags-field :deep(.el-select__selected-item) { color: #71717a; font-size: 13px; }
+.figma-form-grid :deep(.el-input__wrapper), .figma-form-grid :deep(.el-select__wrapper), .customer-tags-field :deep(.el-select__wrapper) { min-height: 32px; padding: 0 12px; border-radius: 8px; box-shadow: 0 0 0 1px var(--erp-color-border) inset; }
+.figma-form-grid :deep(.el-input__inner), .figma-form-grid :deep(.el-select__placeholder), .figma-form-grid :deep(.el-select__selected-item), .customer-tags-field :deep(.el-select__selected-item) { color: var(--erp-input-text); font-size: 13px; }
 .customer-tags-field { height: 52px; margin: 8px 0 0; }
 .customer-tags-field :deep(.el-form-item__content) { height: 32px; display: flex; flex-wrap: nowrap; gap: 8px; }
 .selected-tag-list { display: flex; align-items: center; gap: 8px; }
 .selected-tag-list :deep(.el-tag) { min-width: 72px; height: 24px; justify-content: center; border: 0; border-radius: 6px; font-size: 11px; }
-.customer-tags-field :deep(.el-button) { height: 28px; padding: 0 4px; color: #18181b; font-size: 12px; }
-.customer-tags-field > :deep(.el-form-item__content) > span { color: #71717a; font-size: 10px; white-space: nowrap; }
+.customer-tags-field :deep(.el-button) { height: 28px; padding: 0 4px; color: var(--erp-color-brand); font-size: 12px; }
+.customer-tags-field > :deep(.el-form-item__content) > span { color: var(--erp-color-text-secondary); font-size: 10px; white-space: nowrap; }
 .tag-create-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px 64px; align-items: center; gap: 10px; }
-.tag-create-tip { margin: 8px 0 18px; color: #71717a; font-size: 12px; }
+.tag-create-tip { margin: 8px 0 18px; color: var(--erp-color-text-secondary); font-size: 12px; }
 .tag-choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.edit-action-bar { height: 56px; display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 0 16px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; }
-.edit-action-bar > span { display: flex; align-items: center; gap: 8px; color: #52525b; font-size: 11px; }
-.edit-action-bar i { width: 8px; height: 8px; border-radius: 50%; background: #e6a23c; }
-.edit-action-bar i.saved { background: #67c23a; }
+.edit-action-bar { height: 56px; display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 0 16px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); }
+.edit-action-bar > span { display: flex; align-items: center; gap: 8px; color: var(--erp-color-text-regular); font-size: 11px; }
+.edit-action-bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--erp-color-warning); }
+.edit-action-bar i.saved { background: var(--erp-color-success); }
 .edit-action-bar > div { display: flex; gap: 8px; }
 .edit-action-bar :deep(.el-button) { width: 96px; height: 32px; margin: 0; border-radius: 8px; }
-.edit-action-bar :deep(.el-button--primary) { border-color: #18181b; background: #18181b; }
+.edit-action-bar :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
 .form-grid { display: grid; gap: 0 12px; }
 .form-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
 .form-grid :deep(.el-select), .form-grid :deep(.el-date-editor) { width: 100%; }
-.sticky-actions { position: sticky; z-index: 3; bottom: 0; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 14px 18px; border: 1px solid #dfe2e6; border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: 0 -5px 16px rgba(28,31,35,.06); }
-.sticky-actions span { color: #6f737b; font-size: 13px; }
-.timeline-filters { gap: 10px; margin-bottom: 12px; padding: 12px; border: 1px solid #dfe2e6; border-radius: 10px; background: #fff; }
+.sticky-actions { position: sticky; z-index: 3; bottom: 0; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 14px 18px; border: 1px solid var(--erp-color-border); border-radius: 10px; background: color-mix(in srgb, var(--erp-color-surface) 96%, transparent); box-shadow: 0 -5px 16px color-mix(in srgb, var(--erp-shadow-color) 6%, transparent); }
+.sticky-actions span { color: var(--erp-color-text-regular); font-size: 13px; }
+.timeline-filters { gap: 10px; margin-bottom: 12px; padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 10px; background: var(--erp-color-surface); }
 .timeline-layout { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; }
-.timeline-event { padding: 12px; border: 1px solid #e3e6ea; border-radius: 8px; }
+.timeline-event { padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 8px; }
 .timeline-event strong { margin-left: 10px; }
 .timeline-event p { margin: 10px 0; }
-.timeline-event small { color: #777b83; }
+.timeline-event small { color: var(--erp-color-text-regular); }
 .transfer-grid { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 12px; }
 .transfer-grid :deep(.el-select) { width: 100%; }
 .transfer-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.transfer-page.erp-glass-list { height: auto; margin: 0; font-size: 13px; line-height: 20px; }
+.transfer-page .section-heading { margin: 0; padding: 16px; gap: 12px; }
+.transfer-page .section-heading h2 { margin: 0 0 4px; font-size: 16px; line-height: 24px; }
+.transfer-page .section-heading p { white-space: normal; }
+.transfer-page .transfer-grid { min-width: 0; align-items: start; gap: 14px; }
+.transfer-grid :deep(.el-card) { min-width: 0; border: 1px solid var(--erp-glass-border); border-radius: var(--erp-glass-radius); background: var(--erp-glass-surface); box-shadow: var(--erp-glass-shadow); backdrop-filter: var(--erp-glass-backdrop); }
+.transfer-grid :deep(.el-card__header) { padding: 14px 16px; border-bottom: 1px solid var(--erp-color-border); font-size: 16px; }
+.transfer-grid :deep(.el-card__body) { padding: 16px; }
+.transfer-grid :deep(.el-form) { margin-top: 14px; }
+.transfer-grid :deep(.el-form-item__label) { font-size: 12px; line-height: 20px; }
+.transfer-grid :deep(.el-alert), .transfer-grid :deep(.el-timeline) { margin-bottom: 14px; }
+.transfer-grid :deep(.el-timeline) { padding-left: 12px; }
+.transfer-grid :deep(.el-descriptions__cell) { font-size: 13px; overflow-wrap: anywhere; }
 
 .customer-detail-page--compact-controls :deep(.el-button) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-radius-control) !important;
 }
 
 .customer-detail-page--compact-controls :deep(.el-input__wrapper),
@@ -1850,7 +1825,13 @@ onBeforeUnmount(() => {
 .customer-detail-page--compact-controls :deep(.el-input-number) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-radius-control) !important;
+}
+
+.customer-detail-page--compact-controls :deep(.el-pagination .el-select__wrapper),
+.customer-detail-page--compact-controls :deep(.el-pagination .el-input__wrapper) {
+  height: 28px !important;
+  min-height: 28px !important;
 }
 
 .customer-detail-page--contacts :deep(.contact-page--v2) {
@@ -1882,95 +1863,13 @@ onBeforeUnmount(() => {
   margin-top: 8px;
 }
 
-.customer-detail-page--tasks :deep(.task-center--embedded) {
-  padding: 14px 28px 20px;
-}
-
-.customer-detail-page--tasks :deep(.task-center--embedded .task-filters) {
-  height: 32px;
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.customer-detail-page--tasks :deep(.task-center--embedded .task-toolbar) {
-  height: 32px;
-  margin-top: 10px;
-}
-
-.customer-detail-page--tasks :deep(.task-center--embedded .task-table) {
-  margin-top: 10px;
-}
-
-.customer-detail-page--tasks :deep(.task-center--embedded .task-pagination) {
-  height: 52px;
-}
-
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell) {
-  padding: 14px 28px 20px;
-}
-
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__heading) {
-  height: 56px;
-}
-
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__filters),
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__toolbar) {
-  height: 40px;
-  min-height: 40px;
-}
-
-.customer-detail-page--contacts :deep(.contact-summary-strip),
-.customer-detail-page--contacts :deep(.filter-card),
-.customer-detail-page--contacts :deep(.contact-toolbar) {
+.customer-detail-page :deep(.customer-detail-list-shell__metrics),
+.customer-detail-page--complaints :deep(.complaint-page.embedded .metric-strip) {
   display: none;
-}
-
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__metrics),
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__heading),
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell__filters),
-.customer-detail-page--quotations :deep(.customer-detail-list-shell__metrics),
-.customer-detail-page--quotations :deep(.customer-detail-list-shell__heading),
-.customer-detail-page--quotations :deep(.customer-detail-list-shell__filters),
-.customer-detail-page--samples :deep(.customer-detail-list-shell__metrics),
-.customer-detail-page--samples :deep(.customer-detail-list-shell__heading),
-.customer-detail-page--samples :deep(.customer-detail-list-shell__filters),
-.customer-detail-page--orders :deep(.customer-detail-list-shell__metrics),
-.customer-detail-page--orders :deep(.customer-detail-list-shell__heading),
-.customer-detail-page--orders :deep(.customer-detail-list-shell__filters) {
-  display: none;
-}
-
-.customer-detail-page--inquiries :deep(.customer-detail-list-shell),
-.customer-detail-page--quotations :deep(.customer-detail-list-shell),
-.customer-detail-page--samples :deep(.customer-detail-list-shell),
-.customer-detail-page--orders :deep(.customer-detail-list-shell) {
-  padding-top: 10px;
-}
-
-.customer-detail-page--quotations :deep(.customer-detail-list-shell__toolbar),
-.customer-detail-page--samples :deep(.customer-detail-list-shell__toolbar) {
-  height: 42px;
-}
-
-.customer-detail-page--complaints :deep(.complaint-page.embedded) {
-  padding: 10px 28px 20px;
-}
-
-.customer-detail-page--complaints :deep(.complaint-page.embedded .metric-strip),
-.customer-detail-page--complaints :deep(.complaint-page.embedded .filter-panel) {
-  display: none;
-}
-
-.customer-detail-page--complaints :deep(.complaint-page.embedded .embedded-toolbar) {
-  min-height: 44px;
-}
-
-.customer-detail-page--complaints :deep(.complaint-page.embedded .table-toolbar) {
-  height: 48px;
 }
 
 :global(.customer-detail-dialog) {
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-glass-radius) !important;
   --el-color-primary: #{token.$crm-primary};
 }
 
@@ -1981,7 +1880,7 @@ onBeforeUnmount(() => {
 :global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-button) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-radius-control) !important;
 }
 
 :global(.customer-detail-dialog .el-input__wrapper),
@@ -1997,7 +1896,7 @@ onBeforeUnmount(() => {
 :global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-input__wrapper) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-radius-control) !important;
 }
 
 :global(.customer-detail-dialog .el-textarea__inner),
@@ -2005,7 +1904,7 @@ onBeforeUnmount(() => {
 :global(.customer-detail-drawer .el-textarea__inner),
 :global(body:has(.customer-detail-page--compact-controls) .el-dialog .el-textarea__inner),
 :global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-textarea__inner) {
-  border-radius: token.$crm-radius-2 !important;
+  border-radius: var(--erp-radius-control) !important;
 }
 
 :global(.customer-detail-dialog .el-form-item),

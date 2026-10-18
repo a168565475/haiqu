@@ -29,13 +29,13 @@ const planTitle = computed(() => String(route.meta.planTitle || '生产计划'))
   min-width: 1450px;
   min-height: calc(100vh - 56px);
   padding: 30px 36px 40px;
-  color: #172033;
+  color: var(--erp-color-text-primary);
   background: var(--erp-page-background);
 }
 
 .plan-page__heading p {
   margin: 0;
-  color: #409eff;
+  color: var(--erp-color-info);
   font-size: 13px;
 }
 
@@ -46,7 +46,7 @@ const planTitle = computed(() => String(route.meta.planTitle || '生产计划'))
 }
 
 .plan-page__heading > span {
-  color: #7b8495;
+  color: var(--erp-color-text-secondary);
   font-size: 14px;
 }
 
@@ -58,9 +58,9 @@ const planTitle = computed(() => String(route.meta.planTitle || '生产计划'))
   justify-content: center;
   margin-top: 22px;
   padding: 48px 56px;
-  border: 1px solid #e4e7ed;
+  border: 1px solid var(--erp-color-border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--erp-color-surface);
 }
 
 .plan-page__icon {
@@ -69,8 +69,8 @@ const planTitle = computed(() => String(route.meta.planTitle || '生产计划'))
   display: grid;
   margin-bottom: 20px;
   border-radius: 12px;
-  color: #337ecc;
-  background: #ecf5ff;
+  color: var(--erp-color-info);
+  background: var(--erp-color-subtle);
   place-content: center;
 }
 
@@ -87,7 +87,7 @@ const planTitle = computed(() => String(route.meta.planTitle || '生产计划'))
 .plan-page__empty p {
   max-width: 680px;
   margin: 0;
-  color: #606b7d;
+  color: var(--erp-color-text-secondary);
   font-size: 14px;
   line-height: 1.8;
 }

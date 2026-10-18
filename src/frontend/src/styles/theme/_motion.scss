@@ -1,0 +1,31 @@
+// 实体操作按钮显式启用；菜单、输入框和表内三点按钮不套此动效。
+.el-button.erp-button-motion, .erp-list-button.erp-button-motion {
+  transition: transform var(--erp-motion-feedback) var(--erp-motion-ease),
+    filter var(--erp-motion-feedback) ease-out,
+    box-shadow var(--erp-motion-feedback) ease-out,
+    border-color var(--erp-motion-feedback) ease-out;
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  :is(.el-button, .erp-list-button).erp-button-motion:not(:disabled, .is-disabled, .is-loading, .is-text, .is-link) {
+    &:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.06);
+    }
+    &:active {
+      transform: translateY(0) scale(.98);
+      filter: brightness(1);
+      transition-duration: var(--erp-motion-press);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce), print {
+  .el-button.erp-button-motion, .erp-list-button.erp-button-motion {
+    &, &:hover, &:active {
+      transform: none;
+      filter: none;
+      transition: none;
+    }
+  }
+}

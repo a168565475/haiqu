@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
+
 withDefaults(defineProps<{
   title: string
   subtitle?: string
@@ -16,7 +18,7 @@ defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <section class="workbench-section">
+  <section v-glass-spotlight.tilt class="workbench-section">
     <header class="workbench-section__header" :class="{ 'has-subtitle': subtitle }">
       <div class="workbench-section__title">
         <div class="workbench-section__title-line">
@@ -48,12 +50,11 @@ defineEmits<{ retry: [] }>()
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/workbench' as workbench;
+
 .workbench-section {
+  @include workbench.glass-card;
   min-width: 0;
-  overflow: hidden;
-  border: 1px solid #e4e4e7;
-  border-radius: 8px;
-  background: #fff;
 }
 
 .workbench-section__header {
@@ -63,7 +64,7 @@ defineEmits<{ retry: [] }>()
   justify-content: space-between;
   gap: 16px;
   padding: 0 16px;
-  border-bottom: 1px solid #f0f0f1;
+  border-bottom: 1px solid var(--erp-color-border-subtle);
 }
 
 .workbench-section__header.has-subtitle {
@@ -86,14 +87,14 @@ defineEmits<{ retry: [] }>()
 
 .workbench-section__title p {
   margin: 0;
-  color: #8b8f97;
+  color: var(--erp-color-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
 
 .workbench-section h2 {
   margin: 0;
-  color: #18181b;
+  color: var(--erp-color-text-primary);
   font-size: 15px;
   font-weight: 600;
   line-height: 22px;
@@ -102,14 +103,16 @@ defineEmits<{ retry: [] }>()
 .workbench-section__demo {
   padding: 1px 7px;
   border-radius: 999px;
-  color: #854d0e;
-  background: #fef9c3;
+  color: var(--erp-tag-extension-2-text);
+  background: var(--erp-tag-extension-2-background);
   font-size: 10px;
   line-height: 16px;
 }
 
 .workbench-section__body {
   height: calc(100% - 52px);
+  overflow: auto;
+  border-radius: 0 0 calc(var(--erp-glass-radius) - 1px) calc(var(--erp-glass-radius) - 1px);
 }
 
 .workbench-section__header.has-subtitle + .workbench-section__body,
@@ -125,26 +128,25 @@ defineEmits<{ retry: [] }>()
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #71717a;
+  color: var(--erp-color-text-secondary);
   font-size: 13px;
 }
 
-.workbench-section__state--error strong { color: #3f3f46; font-size: 14px; }
+.workbench-section__state--error strong { color: var(--erp-color-text-primary); font-size: 14px; }
 .workbench-section__state--error button {
+  @include workbench.secondary-button;
   height: 28px;
   padding: 0 10px;
-  border: 1px solid #d4d4d8;
-  border-radius: 6px;
-  color: #3f3f46;
-  background: #fff;
+  border-width: 1px;
+  border-style: solid;
   cursor: pointer;
 }
 
 .workbench-section__spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid #e4e4e7;
-  border-top-color: #18181b;
+  border: 2px solid var(--erp-color-border);
+  border-top-color: var(--erp-color-brand);
   border-radius: 50%;
   animation: section-loading .8s linear infinite;
 }
@@ -155,8 +157,12 @@ defineEmits<{ retry: [] }>()
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #f4f4f5;
+  background: var(--erp-color-subtle);
 }
 
 @keyframes section-loading { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce), print {
+  .workbench-section__spinner { animation: none; }
+}
 </style>

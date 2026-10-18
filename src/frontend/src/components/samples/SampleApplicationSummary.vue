@@ -55,12 +55,13 @@ const dimensionFields = computed(() => [
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-.application-summary { display: flex; flex-direction: column; gap: 18px; }
-.summary-basic { height: 230px; }
+@use '@/styles/theme/detail';
+.application-summary { display: flex; flex-direction: column; gap: 14px; }
+.summary-basic { min-width: 0; }
 .summary-basic :deep(h2), .summary-product :deep(h2) { margin-bottom: 12px; }
 .basic-fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 28px; }
-.summary-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 20px; }
-.summary-product { height: 382px; }
+.summary-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 14px; }
+.summary-product { min-width: 0; }
 .product-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); gap: 28px; }
 .product-image { display: grid; height: 238px; place-items: center; border: 1px solid token.$crm-border-subtle; border-radius: 4px; color: token.$crm-text-muted; background: token.$crm-color-page; font-size: 12px; }
 .product-fields { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
@@ -69,7 +70,7 @@ const dimensionFields = computed(() => [
 .product-selector :deep(.el-select__wrapper) { min-height: 32px; }
 .dimension-fields { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
 .requirements { font-size: 14px; line-height: 22px; }
-.requirements p { height: 52px; margin: 6px 0 0; padding: 8px; overflow: auto; border-radius: 4px; background: token.$crm-color-page; font-size: 13px; }
+.requirements p { @include detail.inset; min-height: 52px; margin: 6px 0 0; padding: 8px; font-size: 13px; overflow-wrap: anywhere; }
 .summary-aside { display: flex; flex-direction: column; gap: 14px; }
 .summary-reference { height: 234px; }
 .reference-image { display: block; width: 100%; height: 136px; object-fit: contain; }
@@ -79,7 +80,7 @@ const dimensionFields = computed(() => [
 .reference-empty span, .summary-quantity > span { color: token.$crm-text-muted; font-size: 12px; line-height: 22px; }
 .summary-quantity { height: 134px; padding: 16px 24px; }
 .summary-quantity :deep(h2) { margin-bottom: 4px; }
-.summary-quantity p { height: 32px; margin: 0 0 4px; padding: 5px 12px; background: token.$crm-color-page; font-size: 14px; line-height: 22px; }
+.summary-quantity p { @include detail.inset; min-height: 32px; margin: 0 0 4px; padding: 5px 12px; font-size: 14px; line-height: 22px; }
 @media (max-width: 1440px) { .basic-fields { gap: 12px 16px; } .product-body { grid-template-columns: 160px minmax(0, 1fr); gap: 20px; } .dimension-fields { gap: 8px; } }
 @media (max-width: 1200px) { .summary-basic, .summary-product { height: auto; } .basic-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); } .summary-columns { grid-template-columns: 1fr; } .summary-aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

@@ -171,8 +171,8 @@ watch(() => images.value.map(image => `${image.id}:${image.file_id}`).join('|'),
 .parameter-panel__header { display: flex; align-items: center; justify-content: space-between; gap: token.$crm-space-4; }
 h3 { margin: 0; color: token.$crm-text-primary; font: 600 16px/24px token.$crm-font-body; }
 p { margin: token.$crm-space-1 0 0; color: token.$crm-text-secondary; font: 400 13px/20px token.$crm-font-body; }
-.upload-button { display: inline-flex; align-items: center; justify-content: center; min-width: 88px; height: token.$crm-control-height; padding: 0 token.$crm-space-3; border-radius: token.$crm-radius-2; background: token.$crm-primary; color: token.$crm-text-inverse; cursor: pointer; font: 500 14px/20px token.$crm-font-body; }
-.upload-button:hover { background: token.$crm-primary-hover; }
+.upload-button { display: inline-flex; align-items: center; justify-content: center; min-width: 88px; height: token.$crm-control-height; padding: 0 token.$crm-space-3; border-radius: token.$crm-radius-2; background: var(--erp-button-primary-surface); color: token.$crm-text-inverse; cursor: pointer; font: 500 14px/20px token.$crm-font-body; }
+.upload-button:hover { background: var(--erp-button-primary-hover-surface); }
 .upload-button.disabled { background: token.$crm-color-disabled; color: token.$crm-text-disabled; cursor: not-allowed; }
 .upload-button input { display: none; }
 .parameter-upload-area { display: flex; align-items: center; gap: token.$crm-space-3; min-height: 76px; margin-top: token.$crm-space-4; padding: token.$crm-space-4; border: 1px dashed token.$crm-border-default; border-radius: token.$crm-radius-2; background: token.$crm-color-page; color: token.$crm-text-secondary; font: 400 13px/20px token.$crm-font-body; }

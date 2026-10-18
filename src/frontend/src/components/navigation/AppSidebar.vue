@@ -35,6 +35,9 @@ const menuItems: MenuItem[] = [
     children: [
       { key: 'manager-workbench', label: '主管工作台', to: { name: 'manager-workbench' }, workbenchMode: 'MANAGER' },
       { key: 'sales-workbench', label: '业务员工作台', to: { name: 'sales-workbench' }, workbenchMode: 'SALES' },
+      { key: 'production-workbench', label: '生产负责人工作台', to: { name: 'production-workbench' }, permission: 'production_tasks.view_productiontask' },
+      { key: 'production-overview', label: '生产总览', to: { name: 'production-overview' }, permission: 'production_tasks.view_productiontask' },
+      { key: 'workshop-workbench', label: '车间主管工作台', to: { name: 'workshop-workbench' }, anyPermissions: ['production_scheduling.view_productionschedule', 'workshop_reporting.view_workreport', 'inventory.view_finishedgoodsreceipt'] },
     ],
   },
   {
@@ -388,17 +391,17 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
 
 <style scoped lang="scss">
 .app-sidebar {
-  --sidebar-ink: #363832;
-  --sidebar-accent: #c84e28;
-  --sidebar-hover: #f2f2ee;
-  --sidebar-active: #fbece5;
-  --sidebar-icon-ink: #283133;
-  --sidebar-icon-accent: #c84e28;
-  --sidebar-icon-fill: #e18761;
-  --sidebar-icon-muted: #e7e9e4;
-  --icon-ink: #283133;
-  --icon-accent: #c84e28;
-  --icon-muted: #e7e9e4;
+  --sidebar-ink: var(--erp-menu-text);
+  --sidebar-accent: var(--erp-menu-accent);
+  --sidebar-hover: var(--erp-menu-hover-background);
+  --sidebar-active: var(--erp-menu-selected-background);
+  --sidebar-icon-ink: var(--erp-menu-icon-ink);
+  --sidebar-icon-accent: var(--erp-menu-accent);
+  --sidebar-icon-fill: var(--erp-menu-icon-fill);
+  --sidebar-icon-muted: var(--erp-menu-icon-muted);
+  --icon-ink: var(--erp-menu-icon-ink);
+  --icon-accent: var(--erp-menu-accent);
+  --icon-muted: var(--erp-menu-icon-muted);
   --sidebar-motion-ease: cubic-bezier(.2, .8, .2, 1);
   position: relative;
   box-sizing: border-box;
@@ -406,11 +409,29 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   display: flex;
   flex-direction: column;
   padding-top: 8px;
-  border-radius: 10px;
+  border-radius: var(--erp-glass-radius);
   color: var(--sidebar-ink);
-  background: #fafaf7;
+  background: transparent;
   font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
 }
+
+// 独立绘制外框，保留主栏内容宽度与浮层 left: 100% 的定位基准。
+.app-sidebar::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--erp-glass-border);
+  border-radius: inherit;
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  -webkit-backdrop-filter: var(--erp-glass-backdrop);
+  backdrop-filter: var(--erp-glass-backdrop);
+  pointer-events: none;
+}
+
+.app-sidebar :deep(.icon-cutout) { fill: var(--erp-color-surface); }
 
 .app-sidebar__scroll {
   flex: 1;
@@ -419,7 +440,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: #c8c8be transparent;
+  scrollbar-color: var(--erp-color-border-strong) transparent;
 }
 
 .app-sidebar__menu {
@@ -491,7 +512,8 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
 .app-sidebar__menu-item.is-active,
 .app-sidebar__footer-link.is-active {
   --sidebar-icon-ink: var(--sidebar-accent);
-  --sidebar-icon-muted: #f5d6c7;
+  --sidebar-icon-fill: var(--sidebar-accent);
+  --sidebar-icon-muted: var(--erp-menu-icon-selected-muted);
   color: var(--sidebar-accent);
   background: var(--sidebar-active);
   font-weight: 600;
@@ -508,14 +530,14 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   background: var(--sidebar-accent);
 }
 
-.app-sidebar__menu-item.is-active::before { left: -4px; }
+.app-sidebar__menu-item.is-active::before { left: -4px; width: 4px; border-radius: 4px; }
 .app-sidebar__footer-link.is-active::before { top: 10px; bottom: 10px; }
 
 .app-sidebar__footer {
   flex: none;
   margin: 8px 8px 0;
   padding: 8px 0;
-  border-top: 1px solid #e4e5dd;
+  border-top: 1px solid var(--erp-color-border);
 }
 
 .app-sidebar__footer-icon { display: block; flex: none; width: 20px; height: 20px; }
@@ -533,10 +555,12 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   width: 200px;
   height: 100%;
   color: var(--sidebar-ink);
-  background: #fafaf7;
-  border: 1px solid #e4e5dd;
-  border-radius: 8px;
-  box-shadow: 8px 0 20px -12px rgb(31 29 24 / 16%);
+  background: var(--erp-glass-surface);
+  border: 1px solid var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  box-shadow: var(--erp-glass-shadow);
+  -webkit-backdrop-filter: var(--erp-glass-backdrop);
+  backdrop-filter: var(--erp-glass-backdrop);
   transition: transform 180ms cubic-bezier(.2, .8, .2, 1), opacity 180ms ease;
 }
 
@@ -549,7 +573,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
 }
 
 .app-sidebar__flyout-heading h2 { margin: 0; color: var(--sidebar-ink); font-size: 20px; line-height: 26px; font-weight: 700; }
-.app-sidebar__flyout-heading p { margin: 4px 0 0; color: #8c8983; font-size: 12px; line-height: 18px; }
+.app-sidebar__flyout-heading p { margin: 4px 0 0; color: var(--erp-color-text-muted); font-size: 12px; line-height: 18px; }
 
 .app-sidebar__flyout-menu {
   position: relative;
@@ -560,7 +584,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   padding: 0 6px 16px;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: #b6afa3 transparent;
+  scrollbar-color: var(--erp-color-border-strong) transparent;
 }
 
 .app-sidebar__hover-plate {
@@ -598,13 +622,14 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
 .app-sidebar__flyout-link:not(.is-active):not(.is-disabled):hover .app-sidebar__flyout-label { transform: translateX(3px); }
 .app-sidebar__flyout-link.is-active {
   --icon-ink: var(--sidebar-accent);
-  --icon-muted: #f5d6c7;
+  --icon-selected-fill: var(--sidebar-accent);
+  --icon-muted: var(--erp-menu-icon-selected-muted);
   color: var(--sidebar-accent);
-  background: linear-gradient(90deg, #fbece580, transparent), #fafaf7;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--sidebar-active) 50%, transparent), transparent), var(--erp-menu-selected-surface);
   font-weight: 600;
 }
 .app-sidebar__flyout-link.is-active::before { top: 4px; bottom: 4px; }
-.app-sidebar__flyout-link.is-disabled { color: #8a8378; cursor: not-allowed; background: transparent; }
+.app-sidebar__flyout-link.is-disabled { color: var(--erp-color-text-muted); cursor: not-allowed; background: transparent; }
 .app-sidebar__flyout-link.is-disabled .app-sidebar__flyout-icon { opacity: .48; }
 
 .app-sidebar__flyout-menu.is-open .app-sidebar__flyout-link:not(.is-active) {
@@ -623,10 +648,25 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   to { opacity: 1; transform: translateX(0); }
 }
 
-.app-sidebar :is(a, button):focus-visible { outline: 2px solid #3898ec; outline-offset: -3px; }
+.app-sidebar :is(a, button):focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: -3px; }
 .sidebar-flyout-enter-from,
 .sidebar-flyout-leave-to { opacity: 0; transform: translateX(-10px); }
 .sidebar-flyout-leave-active { pointer-events: none; }
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-sidebar::before,
+  .app-sidebar__flyout { background: var(--erp-color-surface); }
+}
+
+@media print {
+  .app-sidebar::before,
+  .app-sidebar__flyout {
+    background: #fff;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .app-sidebar__flyout,

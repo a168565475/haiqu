@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ArrowLeft, InfoFilled, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { ElIcon, ElPagination } from 'element-plus'
@@ -134,38 +135,43 @@ onBeforeUnmount(() => { disposed = true; listRequest++; statsRequest++ })
 </script>
 
 <template>
-  <section class="template-page" data-testid="template-management-page">
+  <section class="template-page erp-glass-list" data-testid="template-management-page">
     <div v-if="!canManage" class="permission-state"><h1>无权查看采购合同模板</h1><p>请联系管理员开通采购查看权限后重试。</p><ElButton @click="back">返回</ElButton></div>
     <template v-else>
-    <header class="page-heading">
-      <h1>采购合同模板</h1><span class="total-count">共 {{ displayedTotal }} 套</span><span class="heading-space" />
-      <ElButton class="back-button" :icon="ArrowLeft" @click="back">返回</ElButton><ElButton v-if="canCreate" class="create-button" type="primary" :icon="Plus" :disabled="createVisible || historyVisible" @click="openCreate">新建模板</ElButton>
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="page-heading erp-list-heading">
+      <h1>采购合同模板</h1><span class="total-count">共 {{ displayedTotal }} 套</span>
+
     </header>
-    <div class="summary-strip" aria-label="模板统计" :aria-busy="statsLoading"><div v-for="(label, index) in ['模板总数', '已启用', '已停用']" :key="label" class="summary-item"><span>{{ label }}</span><strong :class="{ neutral: index === 1 }">{{ stats[index] ?? '—' }}</strong></div></div>
-    <form class="filters-row" aria-label="模板查询" @submit.prevent="search">
+    <div class="summary-strip erp-list-summary" aria-label="模板统计" :aria-busy="statsLoading"><div v-for="(label, index) in ['模板总数', '已启用', '已停用']" :key="label" class="summary-item erp-list-summary-item"><span>{{ label }}</span><strong :class="{ neutral: index === 1 }">{{ stats[index] ?? '—' }}</strong></div></div>
+    <form class="filters-row erp-list-filters" aria-label="模板查询" @submit.prevent="search">
       <ElInput v-model="keyword" clearable :prefix-icon="Search" aria-label="搜索模板名称" placeholder="搜索模板名称" />
       <ElSelect v-model="statusFilter" clearable aria-label="模板状态" placeholder="状态：全部"><ElOption label="启用" value="ACTIVE" /><ElOption label="停用" value="INACTIVE" /></ElSelect>
-      <ElButton type="primary" native-type="submit">查询</ElButton><ElButton @click="resetFilters">重置</ElButton>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" native-type="submit">应用筛选</ElButton></div>
     </form>
-    <div class="table-heading"><h2>模板列表</h2><ElButton :icon="Refresh" :loading="loading || statsLoading" @click="reloadAll">刷新</ElButton></div>
+    </section>
+
     <div v-if="loadError || statsError" class="load-error" role="alert">{{ loadError || statsError }}</div>
-    <div class="table-card">
-      <div v-loading="loading" class="template-table-scroll" :aria-busy="loading" tabindex="0" aria-label="采购合同模板表格">
-        <table class="template-table">
+    <div class="table-card erp-list-data">
+      <div class="table-heading erp-list-toolbar"><ElButton class="back-button erp-button-motion" :icon="ArrowLeft" @click="back">返回</ElButton><ElButton v-if="canCreate" class="create-button erp-button-motion" type="primary" :icon="Plus" :disabled="createVisible || historyVisible" @click="openCreate">新建模板</ElButton><h2>模板列表</h2><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading || statsLoading" @click="reloadAll">刷新</ElButton></div>
+      <div class="erp-list-table-frame">
+      <div v-loading="loading" class="template-table-scroll erp-list-table-scroll" :aria-busy="loading" tabindex="0" aria-label="采购合同模板表格">
+        <table class="template-table erp-list-native-table">
           <colgroup><col v-for="(width, index) in ['17.39%', '10.87%', '15.22%', '9.78%', '10.87%', '9.78%', '17.39%', '144px']" :key="index" :style="{ width }" /></colgroup>
-          <thead><tr><th v-for="label in ['模板名称', '适用类别', '当前版本', '状态', '版本记录', '修改人', '更新时间', '操作']" :key="label" scope="col">{{ label }}</th></tr></thead>
+          <thead><tr><th v-for="(label, index) in ['模板名称', '适用类别', '当前版本', '状态', '版本记录', '修改人', '更新时间', '操作']" :key="label" :class="{ 'erp-list-sticky-action': index === 7 }" scope="col">{{ label }}</th></tr></thead>
           <tbody>
             <tr v-for="row in rows" :key="row.id" class="template-row">
               <td :title="row.template_name || '—'"><strong>{{ row.template_name || '—' }}</strong></td><td :title="categoryLabel(row)">{{ categoryLabel(row) }}</td><td :title="row.current_version?.version_name || '未命名版本'">{{ row.current_version?.version_name || '未命名版本' }}</td>
-              <td class="status-cell"><span class="status-badge" :class="{ inactive: row.status !== 'ACTIVE' }">{{ row.status_display || (row.status === 'ACTIVE' ? '启用' : '停用') }}</span></td>
+              <td class="status-cell"><span class="status-badge erp-list-tag" :class="row.status === 'ACTIVE' ? 'erp-list-tag--success' : 'inactive erp-list-tag--neutral'">{{ row.status_display || (row.status === 'ACTIVE' ? '启用' : '停用') }}</span></td>
               <td>{{ row.versions?.length ?? 0 }} 个</td><td>{{ row.updated_by_name || '—' }}</td><td>{{ formatDateTime(row.updated_at) }}</td>
-              <td class="action-cell"><div><ElButton link :disabled="createVisible || historyVisible" @click="openHistory(row)">版本记录</ElButton><ElButton v-if="canEdit" link :disabled="createVisible || historyVisible" @click="openEdit(row)">编辑模板</ElButton></div></td>
+              <td class="action-cell erp-list-sticky-action"><div><ElButton link :disabled="createVisible || historyVisible" @click="openHistory(row)">版本记录</ElButton><ElButton v-if="canEdit" link :disabled="createVisible || historyVisible" @click="openEdit(row)">编辑模板</ElButton></div></td>
             </tr>
             <tr v-if="!rows.length"><td colspan="8" class="table-empty">{{ loadError ? '记录加载失败，请刷新重试' : loading ? '正在加载采购模板…' : '暂无符合条件的采购模板' }}</td></tr>
           </tbody>
         </table>
       </div>
-      <footer class="table-footer"><span>共 {{ displayedTotal }} 套模板</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :disabled="loading" layout="sizes, prev, pager, next" @current-change="load" @size-change="search" /></footer>
+      </div>
+      <footer class="table-footer erp-list-footer"><span>共 {{ displayedTotal }} 套模板</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :disabled="loading" layout="sizes, prev, pager, next" @current-change="load" @size-change="search" /></footer>
     </div>
     <div class="template-note"><ElIcon :size="24"><InfoFilled /></ElIcon><span>保存当前模板不增加版本号；保存新版本会新增版本。已生成采购表保留原模板内容。</span></div>
 
@@ -178,52 +184,22 @@ onBeforeUnmount(() => { disposed = true; listRequest++; statsRequest++ })
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-$font-body: 'Noto Sans SC Variable', token.$crm-font-body;
-$font-display: 'Noto Serif SC Variable', token.$crm-font-display;
-.template-page { box-sizing: border-box; min-width: 0; min-height: 0; height: calc(100dvh - 92px); display: flex; flex-direction: column; overflow: hidden; color: token.$crm-text-primary; background: token.$crm-color-page; font: 14px/20px $font-body; --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary}; --el-text-color-placeholder: #{token.$crm-text-muted}; }
-.template-page h1,.template-page h2 { margin: 0; }
-.template-page > :is(.page-heading, .summary-strip, .filters-row, .table-heading, .table-card, .template-note, .load-error) { min-width: 0; }
-
-.page-heading { flex: 0 0 46px; display: flex; align-items: center; gap: 24px; }
-.page-heading h1 { font: 700 34px/44px $font-display; letter-spacing: -1px; }
-.total-count { color: token.$crm-text-secondary; white-space: nowrap; } .heading-space { flex: 1; }
-.template-page :deep(.el-button) { margin: 0; height: 32px; border-radius: 5px; font: 500 13px $font-body; }
-.page-heading .el-button { height: 32px; } .back-button { width: 90px; } .create-button { width: 140px; }
-.summary-strip { flex: 0 0 46px; margin-top: 4px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border-radius: 5px; background: token.$crm-color-subtle; }
-.summary-item { display: flex; gap: 8px; align-items: center; justify-content: center; position: relative; color: token.$crm-text-secondary; font-size: 13px; }
-.summary-item + .summary-item::before { position: absolute; left: 0; top: 9px; width: 1px; height: 28px; background: token.$crm-border-default; content: ''; }
-.summary-item strong { color: token.$crm-primary; font-size: 12px; font-weight: 500; } .summary-item .neutral { color: token.$crm-text-primary; }
-.filters-row { flex: 0 0 32px; margin-top: 17px; display: grid; grid-template-columns: minmax(260px, 1fr) 160px 76px 76px; gap: 14px; height: 32px; }
-.filters-row > * { min-width: 0; width: 100%; } .filters-row .el-button { height: 32px; }
-.filters-row :deep(.el-input__wrapper),.filters-row :deep(.el-select__wrapper) { min-height: 32px; box-sizing: border-box; border-radius: 5px; padding: 0 12px; box-shadow: 0 0 0 1px token.$crm-border-default inset; font-size: 13px; }
-.filters-row :deep(.el-input__wrapper.is-focus),.filters-row :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px token.$crm-focus inset; }
-.filters-row :deep(.el-input__inner) { height: 30px; font-family: inherit; } .filters-row :deep(.el-input__prefix-inner) { margin-right: 8px; font-size: 16px; }
-.table-heading { flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
-.table-heading h2 { color: token.$crm-text-secondary; font-size: 14px; font-weight: 400; line-height: 20px; } .table-heading .el-button { width: 96px; height: 32px; }
-.load-error { margin: 0 0 8px; color: token.$crm-danger; }
-.table-card { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 14px; background: token.$crm-color-surface; border: 1px solid token.$crm-border-default; border-radius: 5px; overflow: hidden; }
-.template-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-.template-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
-.template-table th,.template-table td { box-sizing: border-box; padding: 0 16px; overflow: hidden; border-right: 1px solid token.$crm-border-subtle; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.template-table th { height: 44px; position: sticky; top: 0; z-index: 1; color: token.$crm-text-secondary; background: token.$crm-color-subtle; font-size: 11px; font-weight: 500; line-height: 16px; }
-.template-row td { height: 40px; border-bottom: 1px solid token.$crm-border-subtle; color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
-.template-table th:last-child,.template-table td:last-child { border-right: 0; }
-.template-page .template-table > thead > tr > th:last-child { right: 0; z-index: 3; }
-.template-page .template-table > tbody > tr.template-row > td.action-cell { position: sticky; right: 0; z-index: 2; background: token.$crm-color-surface; }
-.template-page .template-table > tbody > tr.template-row:hover > td.action-cell { background: token.$crm-color-row-hover; }
-.template-row strong { color: token.$crm-text-primary; font-size: 13px; font-weight: 600; } .template-row:hover { background: token.$crm-color-row-hover; }
-.template-row .status-cell,.template-row .action-cell { padding: 0 5px; overflow: visible; text-align: center; text-overflow: clip; }
-.status-badge { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; color: token.$crm-text-inverse; background: token.$crm-success; font-size: 12px; font-weight: 500; line-height: 18px; }
-.status-badge.inactive { background: var(--haiqu-warm-primitive-neutral-stone, #87867f); }
-.action-cell > div { display: flex; align-items: center; justify-content: center; gap: 12px; white-space: nowrap; } .action-cell .el-button { color: token.$crm-primary; } .action-cell .el-button.is-disabled { color: token.$crm-text-disabled; }
-.table-footer { flex: 0 0 48px; height: 48px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; font-size: 13px; }
-.table-footer :deep(.el-pagination) { gap: 10px; --el-pagination-button-bg-color: #{token.$crm-color-surface}; --el-pagination-button-disabled-bg-color: #{token.$crm-color-surface}; --el-pagination-button-height: 32px; --el-pagination-button-width: 38px; font-weight: 400; }
-.table-footer :deep(.el-pager li),.table-footer :deep(.btn-prev),.table-footer :deep(.btn-next) { margin-left: 0; border: 1px solid token.$crm-border-default; border-radius: 5px; }
-.table-footer :deep(.el-pager li.is-active) { color: token.$crm-primary; border-color: token.$crm-primary; background: token.$crm-color-surface; }
-.table-footer :deep(.el-select) { width: 136px; } .table-footer :deep(.el-select__wrapper) { min-height: 32px; font-size: 13px; }
-.table-empty { height: 384px; text-align: center !important; color: token.$crm-text-muted; }
-.template-note { flex: 0 0 40px; min-height: 40px; margin-top: 10px; padding: 0 16px; display: flex; gap: 10px; align-items: center; border-radius: 5px; background: token.$crm-color-subtle; color: token.$crm-text-secondary; font-size: 12px; }
-.template-note .el-icon { flex-shrink: 0; color: var(--haiqu-warm-primitive-neutral-stone, #87867f); }
-.permission-state { text-align: center; padding: 100px 0; } .permission-state h1 { font: 700 32px/44px $font-display; } .permission-state p { margin: 20px 0; }
+.page-heading { flex-wrap: wrap; }
+.total-count { color: var(--erp-color-text-secondary); white-space: nowrap; font-size: 12px; }
+.back-button { width: 90px; }
+.create-button { width: 140px; }
+.filters-row > .el-input { width: min(300px, 100%); flex: 1 1 250px; }
+.filters-row > .el-select { width: 160px; flex: 1 1 120px; }
+.table-heading h2 { margin: 0 auto 0 8px; color: var(--erp-color-text-secondary); font-size: 13px; font-weight: 400; }
+.load-error { color: var(--erp-color-danger); }
+.template-table th, .template-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-row strong { font-size: 13px; font-weight: 600; }
+.template-table .status-cell, .template-table .action-cell { padding: 0 5px; overflow: visible; text-align: center; text-overflow: clip; }
+.action-cell > div { display: flex; align-items: center; justify-content: center; gap: 12px; white-space: nowrap; }
+.action-cell .el-button { font-size: 12px; }
+.table-empty { height: 300px; text-align: center; color: var(--erp-color-text-secondary); }
+.template-note { display: flex; flex: none; align-items: center; gap: 10px; padding: 8px 16px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.template-note .el-icon { flex: none; }
+.state-page, .permission-state { padding: 100px 0; text-align: center; }
+.state-page p, .permission-state p { margin: 20px 0; }
 </style>

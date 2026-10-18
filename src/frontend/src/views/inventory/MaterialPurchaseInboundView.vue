@@ -211,7 +211,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
 </script>
 
 <template>
-  <section class="inventory-workflow" data-testid="material-purchase-inbound-page">
+  <section class="inventory-workflow erp-glass-form" data-testid="material-purchase-inbound-page">
     <div v-if="!canReceive" class="empty-state"><h1>无权进行采购入库</h1><p>请联系管理员开通采购入库权限。</p></div>
     <template v-else>
       <header class="page-title-row">
@@ -272,21 +272,22 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-.inventory-workflow { box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0; overflow-y: auto; padding: 28px 28px 14px; background: token.$crm-color-page; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+@use '@/styles/theme/detail' as detail;
+.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px 28px 14px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-text-color-placeholder: #{token.$crm-text-muted}; --el-border-color: #{token.$crm-border-default}; --el-border-color-light: #{token.$crm-border-subtle}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .page-title-row, .head-actions, .table-head, .bulk-row, .date-field, .bulk-controls, .submit-bar { display: flex; align-items: center; }
 h1, h2, p { margin: 0; } h2 { font-size: 16px; line-height: 22px; font-weight: 700; }
 .page-title-row { height: 54px; justify-content: space-between; margin-bottom: 10px; }
 h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .page-title-row p { color: token.$crm-text-secondary; line-height: 18px; }
-.surface { border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
+.surface { @include detail.surface; }
 .head-actions { gap: 10px; } .head-actions > .el-button { height: 32px; margin: 0; }
 .load-error { box-sizing: border-box; min-height: 40px; padding: 9px 16px; margin-bottom: 12px; border: 1px solid token.$crm-danger; border-radius: 5px; background: token.$crm-danger-soft; color: token.$crm-danger; }
-.bulk-card { box-sizing: border-box; height: 60px; padding: 13px 21px; margin-bottom: 12px; }
+.bulk-card { box-sizing: border-box; height: 60px; padding: 13px 21px; margin-bottom: 14px; }
 .bulk-row { height: 32px; gap: 20px; }
 .date-field { gap: 10px; } .date-field label { white-space: nowrap; color: token.$crm-text-secondary; }
 .date-field :deep(.el-date-editor) { width: 190px; height: 32px; }
@@ -303,8 +304,8 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-head > strong { margin-right: 16px; font-size: 13px; white-space: nowrap; }
 .receiving-table-scroll { flex: 1; min-height: 0; overflow: auto; }
 .receiving-table { width: 100%; min-width: 1684px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-.receiving-table th, .receiving-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid token.$crm-border-subtle; border-bottom: 1px solid token.$crm-border-subtle; text-align: center; overflow-wrap: anywhere; }
-.receiving-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: token.$crm-color-surface; font-size: 12px; font-weight: 500; color: token.$crm-text-secondary; }
+.receiving-table th, .receiving-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: center; overflow-wrap: anywhere; }
+.receiving-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
 .receiving-table td { height: 58px; } .receiving-table th:last-child, .receiving-table td:last-child { border-right: 0; }
 .receiving-table .purchase-quantity-cell { white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; }
 .receiving-table th:first-child, .receiving-table td:first-child { padding: 0; vertical-align: middle; }
@@ -312,7 +313,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .receiving-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }
 .receiving-table .specification-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .receiving-table .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.receiving-table .supplier-cell { font-size: 13px; color: token.$crm-text-secondary; white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .receiving-table .remark-cell { padding: 4px 16px; }
+.receiving-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .receiving-table .remark-cell { padding: 4px 16px; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }
 .table-card footer { box-sizing: border-box; flex: 0 0 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 21px; color: token.$crm-text-secondary; border-top: 1px solid token.$crm-border-subtle; }
 .table-card footer strong { font-weight: 400; color: token.$crm-warning; } .table-card footer .complete { color: token.$crm-success; }
@@ -321,13 +322,14 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .submit-bar { height: 32px; gap: 20px; } .submit-bar label { flex: 0 0 144px; white-space: nowrap; } .submit-bar > .el-input { flex: 1; min-width: 0; }
 .submit-bar > .el-button { width: 140px; height: 32px; margin: 0; } .submit-bar > .el-button--primary { width: 160px; }
 .inventory-workflow :deep(.el-button) { height: 32px; font-size: 13px; border-radius: 5px; font-family: inherit; }
-.inventory-workflow :deep(.el-input__wrapper), .inventory-workflow :deep(.el-select__wrapper) { box-sizing: border-box; border-radius: 3px; min-height: 32px; font-size: 13px; background: token.$crm-color-surface; color: token.$crm-text-secondary; }
+.inventory-workflow :deep(.el-input__wrapper), .inventory-workflow :deep(.el-select__wrapper) { box-sizing: border-box; height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); font-size: 13px; background: var(--erp-input-surface); color: token.$crm-text-secondary; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.inventory-workflow :deep(.el-input__wrapper.is-focus), .inventory-workflow :deep(.el-select__wrapper.is-focused) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 .inventory-workflow :deep(.el-input__inner) { color: token.$crm-text-secondary; font-family: inherit; height: 30px; }
 .inventory-workflow :deep(.el-select__selected-item) { color: token.$crm-text-secondary; }
 .submit-bar :deep(.el-input__wrapper) { min-height: 32px; }
 .inventory-workflow :deep(.el-tag) { height: 24px; min-width: 64px; padding: 0 10px; border: 0; font-size: 11px; font-family: inherit; }
-.inventory-workflow :deep(.el-tag--success) { background: token.$crm-success-soft; color: token.$crm-success; }
-.inventory-workflow :deep(.el-tag--warning) { background: token.$crm-warning-soft; color: token.$crm-warning; }
+.inventory-workflow :deep(.el-tag--success) { background: var(--erp-tag-success-background); color: var(--erp-color-text-inverse); }
+.inventory-workflow :deep(.el-tag--warning) { background: var(--erp-tag-warning-background); color: var(--erp-color-text-inverse); }
 .inventory-workflow :deep(.el-checkbox__inner) { width: 14px; height: 14px; border-radius: 2px; }
 .inventory-workflow :deep(.invalid-field .el-input__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }

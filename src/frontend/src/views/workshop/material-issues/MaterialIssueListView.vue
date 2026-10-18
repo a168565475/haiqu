@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
@@ -76,23 +77,26 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="material-issue-page material-issue-list" :class="{ 'has-plan-context': hasPlanContext }" data-testid="material-issue-list">
-    <header class="mi-page-head">
-      <div><h1>生产领料</h1><p>申请、仓库审核与实际出库使用同一条真实库存链路。</p></div>
+  <section class="material-issue-page material-issue-list erp-glass-list" :class="{ 'has-plan-context': hasPlanContext }" data-testid="material-issue-list">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="mi-page-head erp-list-heading">
+      <div><h1>生产领料</h1></div>
     </header>
-    <section v-if="!hasPlanContext" class="mi-filter-row">
+    <section v-if="!hasPlanContext" class="mi-filter-row erp-list-filters">
       <ElInput v-model="filters.search" clearable placeholder="搜索领料单号、订单或领料人" :prefix-icon="Search" @keyup.enter="apply" />
       <ElSelect v-model="filters.status" clearable placeholder="状态：全部" @change="apply"><ElOption v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="filters.workshop_id" clearable placeholder="车间：全部" @change="apply"><ElOption v-for="item in options.workshops" :key="item.id" :label="item.name" :value="item.id" /></ElSelect>
       <ElSelect v-model="filters.recipient_id" clearable filterable placeholder="领料人：全部" @change="apply"><ElOption v-for="item in recipients()" :key="item.id" :label="item.name" :value="item.id" /></ElSelect>
       <ElSelect v-model="filters.ordering" aria-label="排序" @change="apply"><ElOption label="最新创建" value="-created_at" /><ElOption label="最早创建" value="created_at" /><ElOption label="最近领料时间" value="-issue_at" /></ElSelect>
-      <ElButton type="primary" @click="apply">查询</ElButton><ElButton @click="reset">重置</ElButton>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="reset">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="apply">应用筛选</ElButton></div>
     </section>
-    <section class="mi-toolbar" aria-label="列表工具栏"><span>领料申请从金工、裁剪、车缝或装配作业计划发起。</span><ElButton :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></section>
-    <section class="mi-surface mi-table-panel">
+    </section>
+    <section class="erp-list-data">
+    <section class="mi-toolbar erp-list-toolbar" aria-label="列表工具栏"><span>领料申请从金工、裁剪、车缝或装配作业计划发起。</span><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton></section>
+    <section class="mi-table-panel erp-list-table-frame">
       <ElTable v-loading="loading" :data="rows" row-key="id" height="100%" empty-text="暂无生产领料单" @row-dblclick="open">
         <ElTableColumn prop="issue_number" label="领料单号" min-width="160" />
-        <ElTableColumn label="状态" width="116"><template #default="{ row }"><span class="mi-status-tag" :class="statusTone(row.status)">{{ row.status_display }}</span></template></ElTableColumn>
+        <ElTableColumn label="状态" width="116"><template #default="{ row }"><span class="mi-status-tag erp-list-tag" :class="statusTone(row.status).replace('is-', 'erp-list-tag--')">{{ row.status_display }}</span></template></ElTableColumn>
         <ElTableColumn label="生产订单" min-width="160"><template #default="{ row }">{{ row.production_task?.task_number || '—' }}</template></ElTableColumn>
         <ElTableColumn label="产品" min-width="180"><template #default="{ row }">{{ row.product?.product_name || '—' }}</template></ElTableColumn>
         <ElTableColumn label="规格" min-width="160"><template #default="{ row }">{{ (row.product?.specification_display ?? row.product?.specification) || '—' }}</template></ElTableColumn>
@@ -105,28 +109,14 @@ onMounted(async () => {
         <ElTableColumn label="操作" width="88" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click.stop="open(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
     </section>
-    <footer class="mi-pagination"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="filters.page" v-model:page-size="filters.page_size" background layout="sizes, prev, pager, next" :total="total" :page-sizes="[20, 50, 100]" @current-change="apply(false)" @size-change="filters.page = 1; apply(false)" /></footer>
+    <footer class="mi-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="filters.page" v-model:page-size="filters.page_size" background layout="sizes, prev, pager, next" :total="total" :page-sizes="[20, 50, 100]" @current-change="apply(false)" @size-change="filters.page = 1; apply(false)" /></footer>
+    </section>
   </section>
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/materialIssue';
-.material-issue-list { display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) 48px; }
-.material-issue-list.has-plan-context { grid-template-rows: auto auto minmax(0, 1fr) 48px; }
-.mi-page-head { margin-bottom: 14px; }
-.mi-page-head h1 { color: #1f1d18; font-family: 'Noto Serif SC', 'Songti SC', serif; font-size: 34px; font-weight: 500; line-height: 44px; }
-.mi-filter-row { display: grid; grid-template-columns: minmax(260px, 1fr) repeat(4, minmax(140px, 180px)) 80px 80px; gap: 14px; margin-bottom: 10px; }
-.mi-filter-row :deep(.el-input__wrapper), .mi-filter-row :deep(.el-select__wrapper) { border-radius: 5px; background: #fcfbf7; box-shadow: 0 0 0 1px #ddd6c9 inset; }
-.mi-filter-row :deep(.el-input__wrapper:hover), .mi-filter-row :deep(.el-select__wrapper:hover) { box-shadow: 0 0 0 1px #b9b1a5 inset; }
-.mi-filter-row :deep(.el-input__wrapper.is-focus), .mi-filter-row :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px #3898ec inset, 0 0 0 2px rgba(56, 152, 236, .18); }
-.mi-filter-row :deep(.el-input__inner), .mi-filter-row :deep(.el-select__placeholder), .mi-filter-row :deep(.el-select__selected-item) { color: #4d4c48; font-family: 'Noto Sans SC', 'Microsoft YaHei', sans-serif; font-size: 12px; line-height: 18px; }
-.mi-filter-row :deep(.el-button) { width: 80px; margin: 0; border-radius: 5px; font-size: 12px; }
-.mi-filter-row :deep(.el-button--primary) { border-color: #c84e28; background: #c84e28; color: #faf9f5; }
-.mi-toolbar { height: 32px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; color: #7a746b; font-size: 12px; }
-.mi-table-panel :deep(.cell) { padding: 0 16px; }
-.mi-table-panel :deep(th .cell) { font-size: 11px; line-height: 16px; }
-.mi-table-panel :deep(td .cell) { font-size: 12px; line-height: 18px; }
-.mi-status-tag { display: inline-flex; box-sizing: border-box; min-width: 56px; height: 24px; align-items: center; justify-content: center; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; font-family: 'Noto Sans SC', sans-serif; font-size: 12px; font-weight: 500; line-height: 18px; white-space: nowrap; }
-.mi-status-tag.is-info { background: #3898ec; }.mi-status-tag.is-success { background: #4f7d4b; }.mi-status-tag.is-danger { background: #b53333; }.mi-status-tag.is-neutral { background: #5e5d59; }
-@media (max-width: 1450px) { .mi-filter-row { grid-template-columns: minmax(220px, 1fr) repeat(4, 140px) 72px 72px; } }
+.mi-filter-row :deep(.el-input) { width: min(100%, 250px); }
+.mi-filter-row :deep(.el-select) { width: 180px; }
+.mi-toolbar { justify-content: space-between; }
+.mi-toolbar > span { font-size: 12px; color: var(--erp-color-text-secondary); }
 </style>

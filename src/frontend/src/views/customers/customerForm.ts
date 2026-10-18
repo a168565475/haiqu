@@ -125,10 +125,10 @@ export function validateCustomerCreateForm(form: CustomerFormModel): CustomerFor
   if (!form.sourceId) errors.sourceId = '请选择客户来源。'
   if (!isValidWebsite(form.website)) errors.website = '请输入有效的网站地址或域名。'
   if (form.contactMethod.trim() && !form.contactName.trim()) {
-    errors.contactName = '填写联系方式时必须同时填写联系人姓名。'
+    errors.contactName = '填写邮箱时必须同时填写联系人姓名。'
   }
-  if (!isValidContactMethod(form.contactMethod)) {
-    errors.contactMethod = '请输入有效的邮箱或电话号码。'
+  if (form.contactMethod.trim() && (resolveContactMethodType(form.contactMethod) !== 'EMAIL' || !isValidContactMethod(form.contactMethod))) {
+    errors.contactMethod = '请输入有效的邮箱地址。'
   }
   return errors
 }
@@ -178,7 +178,7 @@ export function buildCustomerCreatePayload(
     contact_name: form.contactName.trim() || undefined,
   }
   if (contactMethod) {
-    payload.contact_method_type = resolveContactMethodType(contactMethod)
+    payload.contact_method_type = 'EMAIL'
     payload.contact_method_value = contactMethod
   }
   return payload

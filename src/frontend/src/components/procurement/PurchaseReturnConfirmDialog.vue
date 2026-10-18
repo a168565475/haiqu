@@ -69,10 +69,10 @@ function time(value: string | null): string {
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
-.purchase-return-detail-backdrop { background: rgb(31 29 24 / 36%); }
+.purchase-return-detail-backdrop { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 36%, transparent); }
 .el-dialog.purchase-return-detail-confirm {
   box-sizing: border-box; height: min(720px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); padding: 0; margin: auto; border-radius: 7px; display: flex; flex-direction: column;
-  background: token.$crm-color-surface; color: token.$crm-text-primary; box-shadow: 0 8px 24px #00000029; font: 14px/20px token.$crm-font-body;
+  background: token.$crm-color-surface; color: token.$crm-text-primary; box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 16.078%, transparent); font: 14px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-color-primary-light-3: #{token.$crm-primary-light-3}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary};
   &[aria-busy=true] .el-dialog__headerbtn { cursor: wait; }
   .el-dialog__body { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 0; color: inherit; font: inherit; }
@@ -95,7 +95,7 @@ function time(value: string | null): string {
   .return-confirm-materials .specification-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .return-confirm-materials .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .material-attribute-tooltip > div { display: flex; gap: 8px; }
-  .material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
+  .material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
   .return-confirm-summary { box-sizing: border-box; flex: none; padding: 16px 18px 8px; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
   .return-confirm-summary > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid token.$crm-border-subtle; }
   .return-confirm-summary > header > div { min-width: 0; display: flex; align-items: baseline; gap: 14px; }
@@ -113,8 +113,8 @@ function time(value: string | null): string {
   .return-confirm-materials-title span { color: token.$crm-text-secondary; font-size: 12px; }
   .return-confirm-materials { box-sizing: border-box; min-height: 116px; flex: 1; overflow: auto; border: 1px solid token.$crm-border-default; border-radius: 5px; }
   .return-confirm-materials table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
-  .return-confirm-materials th, .return-confirm-materials td { box-sizing: border-box; padding: 0 12px; text-align: left; overflow-wrap: anywhere; border-right: 1px solid token.$crm-border-subtle; border-bottom: 1px solid token.$crm-border-subtle; }
-  .return-confirm-materials th { position: sticky; top: 0; z-index: 1; height: 34px; color: token.$crm-text-secondary; background: token.$crm-color-subtle; font-size: 12px; font-weight: 400; }
+  .return-confirm-materials th, .return-confirm-materials td { box-sizing: border-box; padding: 0 12px; text-align: left; overflow-wrap: anywhere; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); }
+  .return-confirm-materials th { position: sticky; top: 0; z-index: 1; height: 34px; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 12px; font-weight: 400; }
   .return-confirm-materials td { height: 40px; font-size: 13px; } .return-confirm-materials th:last-child,.return-confirm-materials td:last-child { border-right: 0; }
   .return-confirm-materials tbody tr:last-child td { border-bottom: 0; }
   .return-confirm-notice { min-height: 20px; flex: none; display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }

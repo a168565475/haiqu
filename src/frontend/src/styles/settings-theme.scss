@@ -11,7 +11,7 @@ $settings-surfaces: (
   '.table-card'
 );
 
-#app .system-settings-theme {
+#app .system-settings-theme:not(.erp-glass-list) {
   min-width: 0;
   color: token.$crm-text-primary;
   background: transparent;
@@ -165,7 +165,7 @@ $settings-surfaces: (
   .category-button.is-active .category-button__count,
   .category-panel button.active em {
     color: token.$crm-text-inverse;
-    background: rgb(250 248 242 / 18%);
+    background: color-mix(in srgb, var(--erp-color-text-inverse) 18%, transparent);
   }
 
   .provider-guide {
@@ -221,32 +221,22 @@ $settings-surfaces: (
     box-sizing: border-box;
     height: 32px !important;
     min-height: 32px !important;
-    border-color: token.$crm-border-default;
     border-radius: token.$crm-radius-2;
-    color: token.$crm-text-primary;
-    background: token.$crm-color-surface;
 
-    &:not(.is-disabled):not(.el-button--primary):not(.is-link):hover,
-    &:not(.is-disabled):not(.el-button--primary):not(.is-link):focus-visible {
-      border-color: token.$crm-border-strong;
-      color: token.$crm-text-primary;
-      background: token.$crm-color-subtle;
-    }
-
-    &--primary:not(.is-disabled) {
-      border-color: token.$crm-primary;
-      color: token.$crm-text-inverse;
-      background: token.$crm-primary;
+    &--primary:not(.is-disabled):not(.is-text):not(.is-link):not(.is-plain) {
+      border-color: var(--erp-button-primary-border);
+      color: var(--erp-button-primary-text);
+      background: var(--erp-button-primary-surface);
 
       &:hover,
       &:focus-visible {
-        border-color: token.$crm-primary-hover;
-        background: token.$crm-primary-hover;
+        border-color: var(--erp-button-primary-border);
+        background: var(--erp-button-primary-hover-surface);
       }
 
       &:active {
-        border-color: token.$crm-primary-pressed;
-        background: token.$crm-primary-pressed;
+        border-color: var(--erp-button-primary-border);
+        background: var(--erp-button-primary-pressed-background);
       }
     }
 
@@ -269,23 +259,26 @@ $settings-surfaces: (
   }
 
   .el-table {
-    --el-bg-color: #{token.$crm-color-surface};
-    --el-fill-color-lighter: #{token.$crm-color-row-hover};
-    --el-table-bg-color: #{token.$crm-color-surface};
-    --el-table-tr-bg-color: #{token.$crm-color-surface};
-    --el-table-header-bg-color: #{token.$crm-color-subtle};
-    --el-table-border-color: #{token.$crm-border-subtle};
-    --el-table-row-hover-bg-color: #{token.$crm-color-row-hover};
-    color: token.$crm-text-regular;
-    background: token.$crm-color-surface;
+    --el-bg-color: var(--erp-table-background);
+    --el-fill-color-lighter: var(--erp-table-hover);
+    --el-table-bg-color: var(--erp-table-background);
+    --el-table-tr-bg-color: var(--erp-table-background);
+    --el-table-header-bg-color: var(--erp-table-header-background);
+    --el-table-header-text-color: var(--erp-table-header-text);
+    --el-table-text-color: var(--erp-table-text);
+    --el-table-border-color: var(--erp-table-border);
+    --el-table-row-hover-bg-color: var(--erp-table-hover);
+    --el-table-current-row-bg-color: var(--erp-table-selected);
+    color: var(--erp-table-text);
+    background: var(--erp-table-background);
 
     th.el-table__cell {
       box-sizing: border-box;
       height: 44px !important;
       padding-top: 0 !important;
       padding-bottom: 0 !important;
-      color: token.$crm-text-secondary;
-      background: token.$crm-color-subtle;
+      color: var(--erp-table-header-text);
+      background: var(--erp-table-header-background);
       font-size: 11px;
       font-weight: 500;
     }
@@ -295,8 +288,8 @@ $settings-surfaces: (
       height: 40px !important;
       padding-top: 0 !important;
       padding-bottom: 0 !important;
-      color: token.$crm-text-regular;
-      background: token.$crm-color-surface;
+      color: var(--erp-table-text);
+      background: var(--erp-table-background);
       font-size: 12px;
       line-height: 18px;
     }
@@ -335,11 +328,11 @@ $settings-surfaces: (
     box-sizing: border-box;
     height: 32px !important;
     min-height: 32px;
-    border-color: token.$crm-border-default;
+    border-color: var(--erp-input-border);
     border-radius: token.$crm-radius-2;
-    color: token.$crm-text-primary;
-    background: token.$crm-color-surface;
-    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+    color: var(--erp-input-text);
+    background: var(--erp-input-background);
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset;
   }
 
   .el-input-number :is(.el-input, .el-input__wrapper) {
@@ -348,11 +341,11 @@ $settings-surfaces: (
   }
 
   .el-textarea__inner {
-    border-color: token.$crm-border-default;
+    border-color: var(--erp-input-border);
     border-radius: token.$crm-radius-2;
-    color: token.$crm-text-primary;
-    background: token.$crm-color-surface;
-    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+    color: var(--erp-input-text);
+    background: var(--erp-input-background);
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset;
   }
 
   .el-form-item {
@@ -436,14 +429,13 @@ $settings-surfaces: (
   }
 }
 
-$settings-tag-colors: (
-  'primary': #c96442,
-  'success': #4f7d4b,
-  'warning': #b8781e,
-  'danger': #b53333,
-  'info': #5e5d59
+$settings-tag-tones: (
+  'primary': 'brand',
+  'success': 'success',
+  'warning': 'warning',
+  'danger': 'danger',
+  'info': 'neutral'
 );
-$settings-tag-text: #faf9f5;
 
 .settings-tag.el-tag {
   min-width: 56px !important;
@@ -452,20 +444,20 @@ $settings-tag-text: #faf9f5;
   padding: 0 8px !important;
   border: 0 !important;
   border-radius: token.$crm-radius-pill !important;
-  color: $settings-tag-text !important;
+  color: var(--erp-tag-neutral-text) !important;
   font-family: token.$crm-font-body;
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
 
-  @each $type, $color in $settings-tag-colors {
+  @each $type, $tone in $settings-tag-tones {
     &.el-tag--#{$type} {
-      --el-tag-bg-color: #{$color};
-      --el-tag-border-color: transparent;
-      --el-tag-text-color: #{$settings-tag-text};
-      border-color: transparent !important;
-      color: $settings-tag-text !important;
-      background: $color !important;
+      --el-tag-bg-color: var(--erp-tag-#{$tone}-background);
+      --el-tag-border-color: var(--erp-tag-#{$tone}-border);
+      --el-tag-text-color: var(--erp-tag-#{$tone}-text);
+      border-color: var(--erp-tag-#{$tone}-border) !important;
+      color: var(--erp-tag-#{$tone}-text) !important;
+      background: var(--erp-tag-#{$tone}-background) !important;
     }
   }
 }
@@ -498,8 +490,8 @@ $settings-tag-text: #faf9f5;
   .el-select__wrapper,
   .el-textarea__inner {
     border-radius: token.$crm-radius-2;
-    background: token.$crm-color-surface;
-    box-shadow: 0 0 0 1px token.$crm-border-default inset;
+    background: var(--erp-input-background);
+    box-shadow: 0 0 0 1px var(--erp-input-border) inset;
   }
 
   .el-button,
@@ -515,31 +507,20 @@ $settings-tag-text: #faf9f5;
   }
 
   .el-button {
-    border-color: token.$crm-border-default;
-    color: token.$crm-text-primary;
-    background: token.$crm-color-surface;
-
-    &:not(.is-disabled):not(.el-button--primary):not(.is-link):hover,
-    &:not(.is-disabled):not(.el-button--primary):not(.is-link):focus-visible {
-      border-color: token.$crm-border-strong;
-      color: token.$crm-text-primary;
-      background: token.$crm-color-subtle;
-    }
-
-    &--primary:not(.is-disabled) {
-      border-color: token.$crm-primary;
-      color: token.$crm-text-inverse;
-      background: token.$crm-primary;
+    &--primary:not(.is-disabled):not(.is-text):not(.is-link):not(.is-plain) {
+      border-color: var(--erp-button-primary-border);
+      color: var(--erp-button-primary-text);
+      background: var(--erp-button-primary-surface);
 
       &:hover,
       &:focus-visible {
-        border-color: token.$crm-primary-hover;
-        background: token.$crm-primary-hover;
+        border-color: var(--erp-button-primary-border);
+        background: var(--erp-button-primary-hover-surface);
       }
 
       &:active {
-        border-color: token.$crm-primary-pressed;
-        background: token.$crm-primary-pressed;
+        border-color: var(--erp-button-primary-border);
+        background: var(--erp-button-primary-pressed-background);
       }
     }
 
@@ -576,8 +557,8 @@ $settings-tag-text: #faf9f5;
     height: 44px !important;
     padding-top: 0 !important;
     padding-bottom: 0 !important;
-    color: token.$crm-text-secondary;
-    background: token.$crm-color-subtle;
+    color: var(--erp-table-header-text);
+    background: var(--erp-table-header-background);
     font-size: 11px;
     font-weight: 500;
   }

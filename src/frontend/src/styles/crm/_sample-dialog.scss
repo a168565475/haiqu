@@ -12,10 +12,10 @@
   .el-dialog__body { color: token.$crm-text-regular; }
   .el-button { height: 34px; }
   .el-dialog__body .el-input .el-input__wrapper,
-  .el-dialog__body .el-select .el-select__wrapper { min-height: 34px; font-size: 12px; }
+  .el-dialog__body .el-select .el-select__wrapper { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); font-size: 12px; }
   .el-input__inner { height: 32px; font-size: 12px; }
   .el-form-item__label { margin-bottom: 6px; font-size: 12px; line-height: 20px; }
   .el-input, .el-select, .el-date-editor { width: 100%; }
-  .el-textarea__inner { border-radius: 4px; font-family: token.$crm-font-body; font-size: 12px; }
+  .el-textarea__inner { border-radius: var(--erp-radius-control); font-family: token.$crm-font-body; font-size: 12px; }
   .el-dialog__footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 16px; }
 }

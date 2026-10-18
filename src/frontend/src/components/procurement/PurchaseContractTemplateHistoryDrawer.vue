@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { ElButton, ElDrawer, ElIcon } from 'element-plus'
+import { ElButton, ElIcon } from 'element-plus'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { Close, InfoFilled } from '@element-plus/icons-vue'
 import { fetchPurchaseContractTemplate } from '@/api/purchaseOrders'
 import type { PurchaseContractTemplate } from '@/types/purchaseOrder'
@@ -85,7 +86,7 @@ onBeforeUnmount(() => { disposed = true; requestNumber++ })
 </script>
 
 <template>
-  <ElDrawer :model-value="visible" title="采购合同模板 · 版本记录" size="1268px" class="purchase-template-history-drawer" modal-class="purchase-template-history-overlay" :show-close="false" :close-on-click-modal="false" :before-close="beforeClose" append-to-body destroy-on-close @update:model-value="value => { if (!value) close() }">
+  <AppWindowDialog :model-value="visible" title="采购合同模板 · 版本记录" :width="1268" class="purchase-template-history-drawer" modal-class="purchase-template-history-overlay" :show-close="false" :close-on-click-modal="false" :before-close="beforeClose" destroy-on-close @update:model-value="value => { if (!value) close() }">
     <template #header>
       <div class="template-history-heading">
         <h2>采购合同模板 · 版本记录</h2>
@@ -116,41 +117,42 @@ onBeforeUnmount(() => { disposed = true; requestNumber++ })
       <p class="template-history-notice"><ElIcon><InfoFilled /></ElIcon><span>保存当前模板会更新当前记录；保存为新版本才会新增记录。<br>已生成采购表保留原内容。</span></p>
       <ElButton @click="close">关闭</ElButton>
     </template>
-  </ElDrawer>
+  </AppWindowDialog>
 </template>
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
-.purchase-template-history-overlay { background: rgb(0 0 0 / 46%); }
+.purchase-template-history-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 46%, transparent); }
 .purchase-template-history-drawer {
   top: 64px !important; height: calc(100% - 64px) !important; max-width: 100vw; box-shadow: none; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 18px/28px 'Noto Sans SC Variable', token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary};
-  .el-drawer__header { flex: 0 0 166px; box-sizing: border-box; padding: 30px 36px 0; margin: 0; align-items: flex-start; color: inherit; gap: 24px; }
+  .app-window-dialog__header { flex: 0 0 166px; box-sizing: border-box; padding: 30px 36px 0; margin: 0; align-items: flex-start; color: inherit; gap: 24px; }
   .template-history-heading { min-width: 0; flex: 1; }
   h2 { margin: 0; font: 700 36px/48px 'Noto Serif SC Variable', token.$crm-font-display; }
   .template-history-heading p { display: flex; margin: 8px 0 0; color: token.$crm-text-secondary; white-space: nowrap; }
   .template-history-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .template-history-heading p > span:last-child { flex-shrink: 0; white-space: pre; }
   .template-history-close.el-button { position: absolute; top: 30px; right: 24px; width: 30px; height: 32px; padding: 0; font-size: 26px; color: token.$crm-text-secondary; }
-  .el-drawer__body { padding: 0 36px 24px; overflow-y: auto; }
+  .app-window-dialog__body { padding: 0 36px 24px; overflow-y: auto; }
   .template-history-content { min-height: 330px; }
   .template-history-table-card { border: 1px solid token.$crm-border-default; border-radius: 4px; overflow: hidden; }
   .template-history-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
   th, td { box-sizing: border-box; padding: 16px 23px; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
-  th { height: 71px; background: token.$crm-color-subtle; font-weight: 400; }
-  th + th, td + td { border-left: 1px solid token.$crm-border-subtle; }
-  tbody tr { height: 80px; border-top: 1px solid token.$crm-border-subtle; }
-  tbody tr.is-current { height: 98px; background: #fff4e8; }
+  th { height: 71px; background: var(--erp-table-header-fill); font-weight: 400; }
+  th + th, td + td { border-left: 1px solid var(--erp-table-grid); }
+  tbody tr { height: 80px; border-top: 1px solid var(--erp-table-grid); }
+  tbody tr.is-current { height: 98px; background: var(--erp-color-selected); }
   strong { font-weight: 700; }
   .template-history-number { display: block; font-size: 22px; line-height: 28px; }
-  .template-history-current { display: block; width: 64px; height: 30px; margin-top: 4px; border-radius: 5px; background: #ffdccc; color: token.$crm-primary; text-align: center; font-size: 16px; line-height: 30px; }
+  .template-history-current { display: block; width: 64px; height: 30px; margin-top: 4px; border-radius: 5px; background: var(--erp-color-subtle); color: token.$crm-primary; text-align: center; font-size: 16px; line-height: 30px; }
   .template-history-summary { white-space: pre-wrap; }
   .template-history-count { margin: 24px 0 0; color: token.$crm-text-secondary; }
   .template-history-empty { height: 178px; text-align: center; color: token.$crm-text-secondary; }
   .template-history-error { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; margin-bottom: 16px; background: token.$crm-color-subtle; color: token.$crm-primary; }
-  .el-drawer__footer { box-sizing: border-box; flex: 0 0 116px; padding: 24px 36px; border-top: 1px solid token.$crm-border-default; display: flex; gap: 24px; align-items: center; text-align: left; }
+  .app-window-dialog__footer { box-sizing: border-box; flex: 0 0 116px; padding: 24px 36px; border-top: 1px solid token.$crm-border-default; display: flex; gap: 24px; align-items: center; text-align: left; }
   .template-history-notice { display: flex; align-items: center; gap: 20px; flex: 1; margin: 0; font-size: 16px; line-height: 24px; }
   .template-history-notice .el-icon { font-size: 24px; color: token.$crm-text-muted; }
-  .el-drawer__footer .el-button { height: 60px; width: 132px; margin: 0; font: 500 16px 'Noto Sans SC Variable', token.$crm-font-body; }
+  .app-window-dialog__footer .el-button { height: 60px; width: 132px; margin: 0; font: 500 16px 'Noto Sans SC Variable', token.$crm-font-body; }
 }
 </style>
+

@@ -230,6 +230,7 @@ export interface SalesOrderListItem {
   status: SalesOrderStatus
   status_display: string
   customer_code: string
+  customer_country_code: string
   customer_name: string
   customer_po_number: string
   contract_number: string

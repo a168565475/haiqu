@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
 import { Refresh, Search } from '@element-plus/icons-vue'
@@ -89,48 +90,37 @@ onMounted(() => { void load() })
 </script>
 
 <template>
-  <section class="schedule-page schedule-list" data-testid="production-scheduling-list">
-    <header class="schedule-heading"><div><h1>排产计划</h1><span>{{ total }} 条</span></div><RouterLink v-if="canCreate" class="schedule-create-link" to="/workshop/scheduling/new">＋ 新增排产</RouterLink></header>
-    <div class="schedule-filter-bar">
-      <ElInput v-model="search" :prefix-icon="Search" clearable placeholder="搜索排产单号、生产任务单号、产品" @keyup.enter="applyFilters" @clear="applyFilters" />
+  <section class="schedule-page schedule-list erp-glass-list" data-testid="production-scheduling-list">
+    <section v-glass-spotlight class="erp-list-filter">
+    <header class="schedule-heading erp-list-heading"><div class="erp-list-title-row"><h1>排产计划</h1></div></header>
+    <div class="schedule-filter-bar erp-list-filters">
+      <ElInput v-model="search" class="schedule-search" :prefix-icon="Search" clearable placeholder="搜索排产单号、生产任务单号、产品" @keyup.enter="applyFilters" @clear="applyFilters" />
       <div class="schedule-created-filter"><span>创建日期</span><ElDatePicker v-model="createdRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" @change="applyFilters" /></div>
-      <ElButton :icon="Refresh" :loading="loading" @click="load">刷新</ElButton>
+      <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" :icon="Refresh" :loading="loading" @click="load">刷新</ElButton><ElButton class="erp-button-motion" @click="search=''; createdRange=[]; applyFilters()">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</ElButton></div>
     </div>
-    <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
-    <div v-else class="schedule-table-card schedule-main-table">
-      <ElTable v-loading="loading" :data="rows" border row-key="id" empty-text="暂无排产计划">
+    </section>
+    <section class="erp-list-data">
+    <div class="erp-list-toolbar"><ElButton class="erp-button-motion" v-if="canCreate" type="primary" @click="router.push('/workshop/scheduling/new')">＋ 新增排产</ElButton></div>
+    <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton class="erp-button-motion" @click="load">重试</ElButton></ElAlert>
+    <div v-else class="schedule-table-card schedule-main-table erp-list-table-frame">
+      <ElTable height="100%" v-loading="loading" :data="rows" border row-key="id" empty-text="暂无排产计划">
         <ElTableColumn prop="schedule_number" label="排产单号" width="175" />
         <ElTableColumn label="生产任务单" width="190"><template #default="{ row }"><strong>{{ row.source.task_number }}</strong></template></ElTableColumn>
         <ElTableColumn label="产品概览" min-width="394"><template #default="{ row }"><div class="product-strip"><article v-for="product in row.products" :key="product.id" class="product-mini"><img :src="product.image_file_id ? imageUrl(row, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" /><div><strong>{{ product.product.product_name || '未命名产品' }}</strong><small>{{ product.product.item_number || product.product.product_number }} · {{ product.product.color_name || '—' }}</small><b>{{ product.planned_quantity }} {{ product.unit_name }}</b></div></article></div></template></ElTableColumn>
-        <ElTableColumn label="计划日期范围" width="282"><template #default="{ row }"><div class="date-stack"><p><i class="date-mark material">材料入库</i><span>{{ dateRange(row, 'material_inbound_date') }}</span></p><p><i class="date-mark metal">金工回货</i><span>{{ dateRange(row, 'metal_return_date') }}</span></p><p><i class="date-mark sewing">车缝回货</i><span>{{ dateRange(row, 'sewing_return_date') }}</span></p><p><i class="date-mark finished">成品入库</i><span>{{ dateRange(row, 'finished_inbound_date') }}</span></p></div></template></ElTableColumn>
+        <ElTableColumn label="计划日期范围" width="282"><template #default="{ row }"><div class="date-stack"><p><span class="date-mark material erp-list-tag erp-list-tag--warning">材料入库</span><span>{{ dateRange(row, 'material_inbound_date') }}</span></p><p><span class="date-mark metal erp-list-tag erp-list-tag--success">金工回货</span><span>{{ dateRange(row, 'metal_return_date') }}</span></p><p><span class="date-mark sewing erp-list-tag erp-list-tag--brand">车缝回货</span><span>{{ dateRange(row, 'sewing_return_date') }}</span></p><p><span class="date-mark finished erp-list-tag erp-list-tag--info">成品入库</span><span>{{ dateRange(row, 'finished_inbound_date') }}</span></p></div></template></ElTableColumn>
         <ElTableColumn label="进度" width="128"><template #default="{ row }"><div class="progress-stack"><p>{{ progressDisplay(row, 'MATERIAL') }}</p><p>{{ progressDisplay(row, 'METAL') }}</p><p>{{ progressDisplay(row, 'SEWING') }}</p><p>{{ progressDisplay(row, 'ASSEMBLY') }}</p></div></template></ElTableColumn>
         <ElTableColumn label="创建人" width="112"><template #default="{ row }">{{ row.created_by.name }}</template></ElTableColumn>
         <ElTableColumn prop="created_at" label="创建时间" width="175"><template #default="{ row }">{{ new Date(row.created_at).toLocaleString('zh-CN', { hour12: false }) }}</template></ElTableColumn>
         <ElTableColumn label="操作" width="122" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openDetail(row)">查看</ElButton></template></ElTableColumn>
       </ElTable>
     </div>
-    <footer class="schedule-pagination"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    <footer class="schedule-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
+    </section>
   </section>
 </template>
 
 <style lang="scss">@use '@/styles/productionScheduling.scss';</style>
 <style scoped lang="scss">
-.schedule-list {
-  height: calc(100dvh - 92px);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.schedule-list .schedule-table-card {
-  min-height: 0;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.schedule-list .schedule-table-card :deep(.el-table) {
-  min-height: 0;
-  flex: 1;
-}
-.progress-stack { height: 92px; display: flex; flex-direction: column; gap: 4px; justify-content: center; }
-.progress-stack p { height: 20px; margin: 0; display: flex; align-items: center; color: #34332f; font-size: 13px; white-space: nowrap; }
+.progress-stack { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+.progress-stack p { min-height: 24px; margin: 0; display: flex; align-items: center; color: var(--erp-table-text); font-size: 13px; white-space: nowrap; }
 </style>

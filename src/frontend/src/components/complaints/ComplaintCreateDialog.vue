@@ -13,6 +13,7 @@ import { complaintRequestMessage, validateComplaintImages } from '@/utils/compla
 
 const props = defineProps<{
   modelValue: boolean
+  embedded?: boolean
   options: ComplaintOptions | null
   complaintTypes: ComplaintDictionaryItem[]
   severities: ComplaintDictionaryItem[]
@@ -140,11 +141,11 @@ function close() {
 </script>
 
 <template>
-  <AppWindowDialog class="complaint-operation-dialog complaint-create-dialog" :model-value="modelValue" title="新建客诉" :width="1140" :height="850" destroy-on-close :close-on-click-modal="!submitting && !retrying" :close-on-press-escape="!submitting && !retrying" :show-close="!submitting && !retrying" @update:model-value="value => { if (!value) close() }">
-    <div class="create-body">
+  <AppWindowDialog :class="embedded ? 'complaint-create-dialog--embedded' : 'complaint-operation-dialog complaint-create-dialog'" :model-value="modelValue" title="新建客诉" :width="1140" :height="embedded ? 'auto' : 850" destroy-on-close :close-on-click-modal="!submitting && !retrying" :close-on-press-escape="!submitting && !retrying" :show-close="!submitting && !retrying" @update:model-value="value => { if (!value) close() }">
+    <div class="create-body" :class="{ 'create-body--embedded erp-glass-list': embedded }">
       <el-alert v-if="createdComplaint && failedFiles.length" class="upload-warning" type="warning" :closable="false" show-icon :title="`客诉 ${createdComplaint.complaint_code} 已创建，但有 ${failedFiles.length} 张图片上传失败。重试不会重复创建客诉。`" />
       <el-form label-position="top" :disabled="submitting || retrying || !!createdComplaint">
-        <section class="form-column">
+        <section class="form-column" :class="{ 'erp-list-surface': embedded }">
           <h3>基础信息</h3>
           <div class="two-columns">
             <el-form-item label="客户" required><el-select v-model="form.customer_id" filterable remote :remote-method="loadCustomers" :disabled="!!fixedCustomerId" placeholder="请选择客户" @change="loadContacts"><el-option v-if="fixedCustomerId" :label="fixedCustomerName" :value="fixedCustomerId" /><el-option v-for="item in customers" :key="item.id" :label="`${item.account_name}（${item.account_code}）`" :value="item.id" /></el-select></el-form-item>
@@ -155,7 +156,7 @@ function close() {
           <el-form-item label="客诉标题" required><el-input v-model="form.title" maxlength="250" show-word-limit /></el-form-item>
           <el-form-item label="问题描述" required><el-input v-model="form.issue_description" type="textarea" :rows="6" maxlength="5000" show-word-limit /></el-form-item>
         </section>
-        <section class="form-column form-column--right">
+        <section class="form-column form-column--right" :class="{ 'erp-list-surface': embedded }">
           <h3>责任与来源</h3>
           <div class="two-columns"><el-form-item label="负责人"><el-select v-model="form.owner_employee_id" clearable placeholder="默认当前员工"><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item><el-form-item label="协同人"><el-select v-model="form.collaborator_employee_ids" multiple collapse-tags><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item></div>
           <h3 class="subheading">关联订单 <small>订单模块未接入前手工填写</small></h3>
@@ -164,10 +165,60 @@ function close() {
         </section>
       </el-form>
     </div>
-    <template #footer><el-button :disabled="submitting || retrying" @click="close">{{ createdComplaint ? '稍后处理' : '取消' }}</el-button><el-button v-if="createdComplaint && failedFiles.length" type="primary" :loading="retrying" @click="retryFailedImages">重试失败图片</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!!createdComplaint" @click="submit">创建客诉</el-button></template>
+    <template #footer><el-button :class="{ 'erp-button-motion': embedded }" :disabled="submitting || retrying" @click="close">{{ createdComplaint ? '稍后处理' : '取消' }}</el-button><el-button :class="{ 'erp-button-motion': embedded }" v-if="createdComplaint && failedFiles.length" type="primary" :loading="retrying" @click="retryFailedImages">重试失败图片</el-button><el-button :class="{ 'erp-button-motion': embedded }" v-else type="primary" :loading="submitting" :disabled="!!createdComplaint" @click="submit">创建客诉</el-button></template>
   </AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
-.create-body { height: 698px; overflow: hidden; margin: -30px; background: #faf9f6; }.create-body > :deep(.el-form) { height: 100%; display: grid; grid-template-columns: 1fr 1fr; }.form-column { padding: 26px 30px; overflow-y: auto; }.form-column--right { border-left: 1px solid #e5dfd7; background: #f6f3ed; }.form-column h3 { margin: 0 0 20px; color: #282522; font-size: 19px; }.form-column h3.subheading { margin-top: 10px; padding-top: 20px; border-top: 1px solid #e1dbd3; }.form-column h3 small { margin-left: 8px; color: #8c857e; font-size: 12px; font-weight: 400; }.two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }.create-body :deep(.el-select), .create-body :deep(.el-date-editor) { width: 100%; }.create-body :deep(.el-textarea__inner), .create-body :deep(.el-input__wrapper), .create-body :deep(.el-select__wrapper) { background: #fffefb; box-shadow: 0 0 0 1px #ded8d0 inset; }.upload-box { min-height: 104px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; border: 1px dashed #bdb5ac; border-radius: 4px; color: #8f3b24; background: #fdfbf7; cursor: pointer; }.upload-box input { display: none; }.upload-box span { color: #8d867f; font-size: 12px; }.file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }.file-list span { padding: 5px 8px; border-radius: 3px; background: #ebe7df; font-size: 12px; }.file-list span.failed { color: #fff; background: #b53333; }.upload-warning { position: absolute; z-index: 2; top: 82px; right: 28px; left: 28px; }
+.create-body:not(.create-body--embedded) { height: 698px; overflow: hidden; margin: -30px; background: var(--erp-color-surface); }.create-body:not(.create-body--embedded) > :deep(.el-form) { height: 100%; display: grid; grid-template-columns: 1fr 1fr; }.create-body:not(.create-body--embedded) .form-column { padding: 26px 30px; overflow-y: auto; }.create-body:not(.create-body--embedded) .form-column--right { border-left: 1px solid var(--erp-color-border); background: var(--erp-color-subtle); }.create-body:not(.create-body--embedded) .form-column h3 { margin: 0 0 20px; color: var(--erp-color-text-primary); font-size: 19px; }.create-body:not(.create-body--embedded) .form-column h3.subheading { margin-top: 10px; padding-top: 20px; border-top: 1px solid var(--erp-color-border); }.create-body:not(.create-body--embedded) .form-column h3 small { margin-left: 8px; color: var(--erp-color-text-regular); font-size: 12px; font-weight: 400; }.create-body:not(.create-body--embedded) .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }.create-body:not(.create-body--embedded) :deep(.el-select), .create-body:not(.create-body--embedded) :deep(.el-date-editor) { width: 100%; }.create-body:not(.create-body--embedded) :deep(.el-textarea__inner), .create-body:not(.create-body--embedded) :deep(.el-input__wrapper), .create-body:not(.create-body--embedded) :deep(.el-select__wrapper) { background: var(--erp-input-background); box-shadow: 0 0 0 1px var(--erp-color-border) inset; }.create-body:not(.create-body--embedded) .upload-box { min-height: 104px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; border: 1px dashed var(--erp-color-border); border-radius: 4px; color: var(--erp-color-brand); background: var(--erp-color-surface); cursor: pointer; }.create-body:not(.create-body--embedded) .upload-box input { display: none; }.create-body:not(.create-body--embedded) .upload-box span { color: var(--erp-color-text-regular); font-size: 12px; }.create-body:not(.create-body--embedded) .file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }.create-body:not(.create-body--embedded) .file-list span { padding: 5px 8px; border-radius: 3px; background: var(--erp-color-subtle); font-size: 12px; }.create-body:not(.create-body--embedded) .file-list span.failed { color: var(--erp-color-text-inverse); background: var(--erp-color-danger); }.create-body:not(.create-body--embedded) .upload-warning { position: absolute; z-index: 2; top: 82px; right: 28px; left: 28px; }
+
+.create-body.create-body--embedded {
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  font-size: 13px;
+  line-height: 20px;
+
+  > :deep(.el-form) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .form-column { min-width: 0; padding: 16px; }
+  h3 { margin: 0 0 14px; font-size: 16px; line-height: 24px; }
+  h3.subheading { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--erp-color-border-subtle); }
+  h3 small { margin-left: 8px; color: var(--erp-color-text-secondary); font-size: 12px; font-weight: 400; }
+  .two-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+  :deep(.el-select), :deep(.el-date-editor) { width: 100%; }
+  :deep(.el-form-item__label) { color: var(--erp-color-text-primary); font-size: 13px; }
+  :deep(.el-input__wrapper), :deep(.el-select__wrapper), :deep(.el-textarea__inner) {
+    border-radius: var(--erp-radius-control);
+    background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
+    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
+    &.is-focus, &.is-focused, &:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  }
+  :deep(.el-input__inner), :deep(.el-select__placeholder), :deep(.el-textarea__inner) { font-size: 13px; }
+  :deep(.el-input.is-disabled .el-input__wrapper), :deep(.el-select__wrapper.is-disabled), :deep(.el-textarea.is-disabled .el-textarea__inner) { background: var(--erp-input-disabled-background); }
+  :deep(.el-form-item:last-child) { margin-bottom: 0; }
+  .upload-box { display: flex; min-height: 104px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; width: 100%; border: 1px dashed var(--erp-input-border); border-radius: var(--erp-radius-control); color: var(--erp-color-brand); background: var(--erp-glass-inner-background); cursor: pointer; }
+  .upload-box input { display: none; }
+  .upload-box span { color: var(--erp-color-text-secondary); font-size: 12px; }
+  .file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .file-list span { padding: 5px 8px; border-radius: var(--erp-radius-control); background: var(--erp-glass-inner-background); font-size: 12px; }
+  .file-list span.failed { color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); }
+}
+@container (max-width: 720px) { .create-body.create-body--embedded > :deep(.el-form) { grid-template-columns: 1fr; } }
+@container (max-width: 440px) { .create-body.create-body--embedded .two-columns { grid-template-columns: 1fr; } }
+</style>
+
+<style lang="scss">
+.complaint-create-dialog--embedded.app-window-dialog.el-dialog {
+  container-type: inline-size;
+  border-color: var(--erp-glass-border);
+  border-radius: var(--erp-glass-radius);
+  background: var(--erp-glass-surface);
+  box-shadow: var(--erp-glass-shadow);
+  backdrop-filter: var(--erp-glass-backdrop);
+
+  .app-window-dialog__body { padding: 16px; }
+  .app-window-dialog__footer { padding: 12px 16px; background: transparent; }
+  .app-window-dialog__footer .el-button { border-radius: var(--erp-radius-control); font-size: 13px; }
+}
 </style>

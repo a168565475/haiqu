@@ -40,10 +40,14 @@ class SampleInventoryLineSerializer(serializers.ModelSerializer):
 
 
 class SampleInventorySummarySerializer(serializers.Serializer):
+    month = serializers.CharField()
     current_available = serializers.IntegerField()
     borrowed = serializers.IntegerField()
     inbound_today = serializers.IntegerField()
     outbound_today = serializers.IntegerField()
+    inbound_this_month = serializers.IntegerField()
+    outbound_this_month = serializers.IntegerField()
+    loaned_this_month = serializers.IntegerField()
 
 
 class SampleInventoryOptionsSerializer(serializers.Serializer):

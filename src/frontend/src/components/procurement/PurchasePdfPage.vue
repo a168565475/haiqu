@@ -79,8 +79,8 @@ onBeforeUnmount(() => { observer?.disconnect(); release() })
 </template>
 
 <style lang="scss" scoped>
-.pdf-paper { position: relative; width: 830px; flex: none; background: white; box-shadow: 0 2px 10px #00000014; }
+.pdf-paper { position: relative; width: 830px; flex: none; background: white; box-shadow: 0 2px 10px color-mix(in srgb, var(--erp-shadow-color) 7.843%, transparent); }
 .pdf-page-canvas { display: block; width: 830px; }
-.pdf-page-loading { position: absolute; top: 35px; width: 100%; text-align: center; color: #6f6a61; font-size: 14px; }
+.pdf-page-loading { position: absolute; top: 35px; width: 100%; text-align: center; color: var(--erp-color-text-secondary); font-size: 14px; }
 .pdf-accessible-text { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

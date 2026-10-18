@@ -8,10 +8,10 @@ $data-table-roots: ':is(.sample-list-page, .sample-create-page, .sample-inventor
 
 $list-roots: ':is(.sample-list-page, .sample-inventory-page, .sample-outbound-page, .sample-loan-page, .product-page, .raw-page, .production-list-page, .bom-list-page)';
 
-$overlay-roots: ':is(.product-information-drawer, .raw-material-information-drawer, .product-task-dialog, .product-task-detail-dialog, .hardware-picker-dialog, .line-editor-drawer, .line-image-manager-dialog, .sample-batch-dialog, .sample-fulfillment-dialog, .sample-inventory-lookup, .sample-material-line-drawer, .sample-material-picker-dialog, .sample-production-dialog, .sample-requotation-dialog, .sample-workflow-dialog)';
+$overlay-roots: ':is(.product-information-dialog, .raw-material-information-dialog, .product-task-dialog, .product-task-detail-dialog, .hardware-picker-dialog, .line-editor-drawer, .line-image-manager-dialog, .sample-batch-dialog, .sample-fulfillment-dialog, .sample-inventory-lookup, .sample-material-line-dialog, .sample-material-picker-dialog, .sample-production-dialog, .sample-requotation-dialog, .sample-workflow-dialog)';
 
 /* 单行交互控件统一为 32px；多行输入继续按内容自适应。 */
-#{$management-roots} :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number),
+#{$management-roots}:not(.erp-glass-list) :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number),
 body:has(#{$management-roots}) .el-overlay :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number),
 body:has(#{$management-roots}) .el-drawer__container :is(.el-button, .el-input:not(.el-textarea) .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-date-editor.el-range-editor, .el-input-number) {
   box-sizing: border-box;
@@ -20,14 +20,14 @@ body:has(#{$management-roots}) .el-drawer__container :is(.el-button, .el-input:n
   border-radius: 5px;
 }
 
-#{$management-roots} .el-input-number :is(.el-input, .el-input__wrapper),
+#{$management-roots}:not(.erp-glass-list) .el-input-number :is(.el-input, .el-input__wrapper),
 body:has(#{$management-roots}) .el-overlay .el-input-number :is(.el-input, .el-input__wrapper),
 body:has(#{$management-roots}) .el-drawer__container .el-input-number :is(.el-input, .el-input__wrapper) {
   height: 32px !important;
   min-height: 32px !important;
 }
 
-#{$management-roots} :is(.el-tag, [class*='status-tag'], .sample-page-status),
+#{$management-roots}:not(.erp-glass-list) :is(.el-tag, [class*='status-tag'], .sample-page-status),
 body:has(#{$management-roots}) .el-overlay :is(.el-tag, [class*='status-tag']),
 body:has(#{$management-roots}) .el-drawer__container :is(.el-tag, [class*='status-tag']) {
   box-sizing: border-box;
@@ -37,13 +37,13 @@ body:has(#{$management-roots}) .el-drawer__container :is(.el-tag, [class*='statu
 }
 
 /* 表单随控件高度收紧，但保留校验文字与多行输入所需空间。 */
-#{$management-roots} .el-form-item,
+#{$management-roots}:not(.erp-glass-list) .el-form-item,
 body:has(#{$management-roots}) .el-overlay .el-form-item,
 body:has(#{$management-roots}) .el-drawer__container .el-form-item {
   margin-bottom: 12px;
 }
 
-#{$management-roots} .el-form-item__label,
+#{$management-roots}:not(.erp-glass-list) .el-form-item__label,
 body:has(#{$management-roots}) .el-overlay .el-form-item__label,
 body:has(#{$management-roots}) .el-drawer__container .el-form-item__label {
   padding-bottom: 4px;
@@ -51,51 +51,55 @@ body:has(#{$management-roots}) .el-drawer__container .el-form-item__label {
 }
 
 /* 普通业务数据表格统一采用超紧凑参数。 */
-#{$data-table-roots} .el-table,
+#{$data-table-roots}:not(.erp-glass-list) .el-table,
 body:has(#{$management-roots}) .el-overlay .el-table,
 body:has(#{$management-roots}) .el-drawer__container .el-table {
   width: 100%;
   overflow: hidden;
   border-radius: 5px;
-  --el-table-border-color: #ddd6c9;
-  --el-table-header-bg-color: #f0eadf;
-  --el-table-row-hover-bg-color: #fff6ea;
-  --el-table-current-row-bg-color: #fff4e6;
-  color: #4d4c48;
+  --el-table-border-color: var(--erp-table-border);
+  --el-table-bg-color: var(--erp-table-background);
+  --el-table-tr-bg-color: var(--erp-table-background);
+  --el-table-text-color: var(--erp-table-text);
+  --el-table-header-text-color: var(--erp-table-header-text);
+  --el-table-header-bg-color: var(--erp-table-header-background);
+  --el-table-row-hover-bg-color: var(--erp-table-hover);
+  --el-table-current-row-bg-color: var(--erp-table-selected);
+  color: var(--erp-table-text);
 }
 
-#{$data-table-roots} .el-table__header-wrapper th.el-table__cell,
+#{$data-table-roots}:not(.erp-glass-list) .el-table__header-wrapper th.el-table__cell,
 body:has(#{$management-roots}) .el-overlay .el-table__header-wrapper th.el-table__cell,
 body:has(#{$management-roots}) .el-drawer__container .el-table__header-wrapper th.el-table__cell {
   box-sizing: border-box;
   height: 44px !important;
   padding: 0 !important;
-  color: #6f6a61 !important;
-  background: #f0eadf !important;
+  color: var(--erp-table-header-text) !important;
+  background: var(--erp-table-header-background) !important;
   font-size: 11px !important;
   font-weight: 500 !important;
   line-height: 16px !important;
 }
 
-#{$data-table-roots} .el-table__body-wrapper td.el-table__cell,
+#{$data-table-roots}:not(.erp-glass-list) .el-table__body-wrapper td.el-table__cell,
 body:has(#{$management-roots}) .el-overlay .el-table__body-wrapper td.el-table__cell,
 body:has(#{$management-roots}) .el-drawer__container .el-table__body-wrapper td.el-table__cell {
   box-sizing: border-box;
   height: 40px !important;
   padding: 0 !important;
-  color: #4d4c48;
-  background: #fcfbf7;
+  color: var(--erp-table-text);
+  background: var(--erp-table-background);
   font-size: 12px !important;
   line-height: 18px !important;
 }
 
-#{$data-table-roots} .el-table__body tr,
+#{$data-table-roots}:not(.erp-glass-list) .el-table__body tr,
 body:has(#{$management-roots}) .el-overlay .el-table__body tr,
 body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
   height: 40px !important;
 }
 
-#{$data-table-roots} .el-table__cell > .cell,
+#{$data-table-roots}:not(.erp-glass-list) .el-table__cell > .cell,
 body:has(#{$management-roots}) .el-overlay .el-table__cell > .cell,
 body:has(#{$management-roots}) .el-drawer__container .el-table__cell > .cell {
   padding-right: 16px !important;
@@ -106,25 +110,25 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__cell > .cell {
   text-overflow: ellipsis;
 }
 
-#{$data-table-roots} .el-table__header-wrapper .cell {
+#{$data-table-roots}:not(.erp-glass-list) .el-table__header-wrapper .cell {
   white-space: normal;
 }
 
-#{$data-table-roots} .el-table__body-wrapper .cell {
+#{$data-table-roots}:not(.erp-glass-list) .el-table__body-wrapper .cell {
   white-space: nowrap;
 }
 
-#{$data-table-roots} .el-table .el-checkbox__inner,
+#{$data-table-roots}:not(.erp-glass-list) .el-table .el-checkbox__inner,
 body:has(#{$management-roots}) .el-overlay .el-table .el-checkbox__inner,
 body:has(#{$management-roots}) .el-drawer__container .el-table .el-checkbox__inner {
   width: 14px;
   height: 14px;
 }
 
-#{$data-table-roots} .el-table__body tr:hover > td.el-table__cell,
+#{$data-table-roots}:not(.erp-glass-list) .el-table__body tr:hover > td.el-table__cell,
 body:has(#{$management-roots}) .el-overlay .el-table__body tr:hover > td.el-table__cell,
 body:has(#{$management-roots}) .el-drawer__container .el-table__body tr:hover > td.el-table__cell {
-  background: #fff6ea !important;
+  background: var(--erp-table-hover) !important;
 }
 
 /* 图片、复合字段及行内编辑控件允许按内容增高，避免 40px 强制裁切。 */
@@ -145,11 +149,11 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
 }
 
 /* 列表工具区、表格和分页之间按已确认的垂直节奏收紧。 */
-#{$list-roots} :is(.filters, .filter-row, .filter-grid, .list-toolbar__filters) {
+#{$list-roots}:not(.erp-glass-list) :is(.filters, .filter-row, .filter-grid, .list-toolbar__filters) {
   min-height: 32px;
 }
 
-#{$list-roots} :is(.table-toolbar, .list-toolbar) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-toolbar, .list-toolbar) {
   height: 32px !important;
   min-height: 32px !important;
   margin-top: 10px !important;
@@ -158,11 +162,11 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
   padding-bottom: 0 !important;
 }
 
-#{$list-roots} :is(.table-card, .list-card, .list-surface) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-card, .list-card, .list-surface) {
   margin-top: 14px !important;
 }
 
-#{$list-roots} :is(.table-footer, .list-card__footer, .pagination-row) {
+#{$list-roots}:not(.erp-glass-list) :is(.table-footer, .list-card__footer, .pagination-row) {
   box-sizing: border-box;
   height: 48px !important;
   min-height: 48px !important;
@@ -170,17 +174,17 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
   padding-bottom: 0 !important;
 }
 
-#{$list-roots} .el-pagination {
+#{$list-roots}:not(.erp-glass-list) .el-pagination {
   gap: 10px;
   --el-pagination-button-width: 38px;
   --el-pagination-button-height: 32px;
 }
 
-#{$list-roots} .el-pagination .el-select {
+#{$list-roots}:not(.erp-glass-list) .el-pagination .el-select {
   width: 136px;
 }
 
-#{$list-roots} .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
+#{$list-roots}:not(.erp-glass-list) .el-pagination :is(.btn-prev, .btn-next, .el-pager li) {
   box-sizing: border-box;
   min-width: 38px !important;
   height: 32px !important;
@@ -190,41 +194,41 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
 }
 
 /* 列表统计区域：样品申请保留横向状态含义，其余卡片压缩为单行统计。 */
-.sample-list-page .quick-views,
-:is(.production-list-page, .bom-list-page) .status-tabs {
+.sample-list-page:not(.erp-glass-list) .quick-views,
+:is(.production-list-page, .bom-list-page):not(.erp-glass-list) .status-tabs {
   height: 46px !important;
   min-height: 46px !important;
 }
 
-:is(.production-list-page, .bom-list-page) .status-tab {
+:is(.production-list-page, .bom-list-page):not(.erp-glass-list) .status-tab {
   height: 46px !important;
 }
 
-:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stats-grid {
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page):not(.erp-glass-list) .stats-grid {
   gap: 12px;
   margin-bottom: 17px;
 }
 
-:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-card {
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page):not(.erp-glass-list) .stat-card {
   box-sizing: border-box;
   height: 46px !important;
   align-items: center;
   padding: 4px 14px;
 }
 
-:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-copy {
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page):not(.erp-glass-list) .stat-copy {
   display: grid;
   grid-template-columns: max-content auto;
   align-items: center;
   gap: 12px;
 }
 
-:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-copy strong {
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page):not(.erp-glass-list) .stat-copy strong {
   font-size: 20px;
   line-height: 28px;
 }
 
-:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page) .stat-icon {
+:is(.sample-inventory-page, .sample-outbound-page, .sample-loan-page):not(.erp-glass-list) .stat-icon {
   width: 28px;
   height: 28px;
   margin-top: 0;
@@ -234,7 +238,7 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
 :is(.task-detail-page, .warehouse-review-page, .material-request-page) table:not(.bom-table) {
   width: 100%;
   border-collapse: collapse;
-  color: #4d4c48;
+  color: var(--erp-table-text);
   font-size: 12px;
   line-height: 18px;
 }
@@ -243,8 +247,8 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
   box-sizing: border-box;
   height: 44px;
   padding: 0 16px !important;
-  color: #6f6a61;
-  background: #f0eadf;
+  color: var(--erp-table-header-text);
+  background: var(--erp-table-header-background);
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
@@ -292,8 +296,8 @@ body:has(#{$management-roots}) .el-drawer__container .el-table__body tr {
   box-sizing: border-box;
   height: 44px !important;
   padding: 0 !important;
-  color: #6f6a61 !important;
-  background: #f0eadf !important;
+  color: var(--erp-table-header-text) !important;
+  background: var(--erp-table-header-background) !important;
   font-size: 11px !important;
   font-weight: 500 !important;
   line-height: 16px !important;

@@ -57,6 +57,13 @@ describe('customerForm', () => {
     expect(isValidContactMethod('abc')).toBe(false)
   })
 
+  it('新建客户仅接受初始联系人邮箱，不改变通用电话识别', () => {
+    const form = createEmptyCustomerForm()
+    Object.assign(form, { accountName: '测试客户', primaryRegionId: 'europe', sourceId: 'source-ispo', contactName: 'Anna', contactMethod: '+49 40 8892 1870' })
+    expect(validateCustomerCreateForm(form).contactMethod).toBe('请输入有效的邮箱地址。')
+    expect(isValidContactMethod(form.contactMethod)).toBe(true)
+  })
+
   it('按二级地区生成真实国家代码与创建请求', () => {
     const form = createEmptyCustomerForm()
     Object.assign(form, {

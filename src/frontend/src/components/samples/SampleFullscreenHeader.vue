@@ -11,5 +11,5 @@ strong { width: 144px; flex: none; font-size: 32px; font-weight: 500; line-heigh
 h1 { margin: 0; font-family: token.$crm-font-display; font-size: 32px; line-height: 40px; }
 p { margin: 4px 0 0; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
 .fullscreen-actions { display: flex; flex: none !important; align-items: center; gap: 10px; }
-.fullscreen-header.fullscreen-header :deep(.el-button) { width: auto; min-width: 96px; height: 32px !important; min-height: 32px !important; padding: 0 16px; border-radius: 5px; background: #fff; font-size: 13px; }
+.fullscreen-header.fullscreen-header :deep(.el-button) { width: auto; min-width: 96px; height: 32px !important; min-height: 32px !important; padding: 0 16px; border-radius: 5px; background: var(--erp-color-surface); font-size: 13px; }
 </style>

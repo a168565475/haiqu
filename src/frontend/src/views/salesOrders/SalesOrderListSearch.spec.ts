@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -72,5 +72,24 @@ describe('销售订单列表搜索', () => {
     await flushPromises()
     expect(api.fetchSalesOrders).toHaveBeenCalledTimes(1)
     expect(api.fetchSalesOrders).toHaveBeenLastCalledWith(expect.objectContaining({ q: undefined, page: 1, status: 'CONFIRMED', source_type: 'QUOTATION' }))
+  })
+
+  it('来源、业务员、跟单员独立成列，客户和订单单元格不附带编号版本', async () => {
+    vi.mocked(api.fetchSalesOrders).mockResolvedValue({ data: [{ id: 'order-1', order_number: 'SO2026101701', version_number: 1, source_type: 'DIRECT', source_type_display: '无报价直接下单', customer_name: '客户甲', customer_code: 'KH-001', customer_country_code: 'DE', customer_po_number: 'PO-1', total_amount: '1200', currency_code: 'USD', line_count: 1, delivery_batch_count: 1, next_delivery_date: null, salesperson: { display_name: '业务甲' }, merchandiser: { display_name: '跟单乙' }, status: 'DRAFT', status_display: '草稿' }], meta: { total: 1, total_pages: 1, page: 1, page_size: 50 } } as never)
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
+    await router.push('/')
+    const wrapper = mount(SalesOrderListView, { global: { plugins: [ElementPlus, router] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    expect(headers).toEqual(expect.arrayContaining(['订单来源', '业务员', '跟单员']))
+    expect(headers).not.toContain('跟进人员')
+    const cells = wrapper.findAll('tbody tr')[0]!.findAll('td')
+    expect(cells[headers.indexOf('销售订单号')]!.text()).toBe('SO2026101701')
+    expect(cells[headers.indexOf('订单来源')]!.text()).toBe('无报价直接下单')
+    expect(cells[headers.indexOf('客户')]!.text()).toBe('客户甲')
+    expect(cells[headers.indexOf('客户')]!.get('img').attributes('src')).toBe('https://flagcdn.com/24x18/de.png')
+    expect(cells[headers.indexOf('业务员')]!.text()).toBe('业务甲')
+    expect(cells[headers.indexOf('跟单员')]!.text()).toBe('跟单乙')
   })
 })

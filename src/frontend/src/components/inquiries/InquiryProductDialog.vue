@@ -285,26 +285,26 @@ onBeforeUnmount(() => { ++requestNumber; replacePreview('') })
 .entry-summary { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid token.$crm-border-default; padding-bottom: 12px; strong { font-size: 13px; font-weight: 600; } p { margin: 4px 0 0; color: token.$crm-text-secondary; font-size: 11px; } }
 .entry-tag { height: 24px; min-width: 56px; justify-content: center; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 999px; color: token.$crm-text-inverse; background: token.$crm-warning; font-size: 12px; font-weight: 500; &.linked { background: token.$crm-success; } }
 .bom-color-notice { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px; background: token.$crm-warning-soft; border: 1px solid token.$crm-border-default; border-radius: 5px; span { flex: 1; } }
-.entry-columns { display: grid; grid-template-columns: minmax(0, 1fr) 284px; gap: 24px; margin-top: 16px; }
-.identity-zone { min-width: 0; padding-right: 24px; border-right: 1px solid token.$crm-border-default; }
+.entry-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(240px,.65fr); gap: 14px; margin-top: 14px; }
+.identity-zone { min-width: 0; padding-right: 14px; border-right: 1px solid token.$crm-border-default; }
 .mode-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; [role='tablist'] { display: flex; gap: 16px; } button { height: 32px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: token.$crm-text-secondary; padding: 0 4px; font: inherit; cursor: pointer; &.active { color: token.$crm-primary; border-bottom-color: token.$crm-primary; font-weight: 600; } &:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; } } }
 small { color: token.$crm-text-secondary; font-size: 11px; font-weight: 400; } i { color: token.$crm-danger; font-style: normal; }
-.identity-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.identity-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 label { position: relative; min-width: 0; display: block; > span { display: block; margin-bottom: 8px; font-size: 13px; line-height: 20px; } }
-label[data-error]:not([data-error='']) { :deep(.el-input__wrapper), :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; } &::after { content: attr(data-error); position: absolute; z-index: 3; left: 0; top: calc(100% + 4px); width: max-content; max-width: 280px; border: 1px solid token.$crm-danger; border-radius: 5px; padding: 8px 12px; color: token.$crm-danger; background: token.$crm-color-surface; box-shadow: 0 6px 16px rgb(31 29 24 / 10%); font-size: 12px; line-height: 18px; } }
+label[data-error]:not([data-error='']) { :deep(.el-input__wrapper), :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; } &::after { content: attr(data-error); position: absolute; z-index: 3; left: 0; top: calc(100% + 4px); width: max-content; max-width: 280px; border: 1px solid token.$crm-danger; border-radius: 5px; padding: 8px 12px; color: token.$crm-danger; background: token.$crm-color-surface; box-shadow: 0 6px 16px color-mix(in srgb, var(--erp-shadow-color) 10%, transparent); font-size: 12px; line-height: 18px; } }
 .identity-fields label:last-child[data-error]::after, .business-fields label:nth-child(even)[data-error]::after { left: auto; right: 0; }
-.product-entry :deep(.el-input__wrapper), .product-entry :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: 5px; box-sizing: border-box; font-size: 13px; }
+.product-entry :deep(.el-input__wrapper), .product-entry :deep(.el-select__wrapper) { height: 32px; min-height: 32px; border-radius: 8px; box-sizing: border-box; font-size: 13px; }
 .product-entry :deep(.el-input__inner) { height: 30px; font-size: 13px; }
 .product-entry :deep(.el-input__wrapper.is-focus), .product-entry :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px token.$crm-focus inset; }
 .product-entry :deep(.el-select) { width: 100%; }
 .product-entry :deep(.el-date-editor) { width: 100%; height: 32px; }
 .picker-heading { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 8px; strong { font-size: 13px; font-weight: 600; } }
-.candidate-table { max-height: 184px; overflow: auto; border: 1px solid token.$crm-border-default; border-radius: 5px; table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; } th { height: 44px; background: token.$crm-color-subtle; font-weight: 500; color: token.$crm-text-secondary; } td { height: 34px; color: token.$crm-text-regular; } th, td { padding: 0 16px; text-align: left; font-size: 12px; border-bottom: 1px solid token.$crm-border-default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } tr:last-child td { border-bottom: 0; } tbody tr { cursor: pointer; &:hover td { background: token.$crm-color-row-hover; } &.selected td { background: token.$crm-color-selected; } } input { accent-color: token.$crm-primary; } }
+.candidate-table { max-height: 184px; overflow: auto; border: 1px solid token.$crm-border-default; border-radius: 8px; table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; } th { height: 44px; background: token.$crm-color-subtle; font-weight: 500; color: token.$crm-text-secondary; } td { height: 34px; color: token.$crm-text-regular; } th, td { padding: 0 16px; text-align: left; font-size: 12px; border-bottom: 1px solid token.$crm-border-default; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } tr:last-child td { border-bottom: 0; } tbody tr { cursor: pointer; &:hover td { background: token.$crm-color-row-hover; } &.selected td { background: token.$crm-color-selected; } } input { accent-color: token.$crm-primary; } }
 .picked, .manual-note { margin: 12px 0 16px; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
 .picker-state { margin-top: 16px; padding: 24px 16px; border: 1px dashed token.$crm-border-default; border-radius: 5px; text-align: center; p { color: token.$crm-text-secondary; margin: 8px 0 12px; font-size: 12px; } }
 .business-zone { min-width: 0; h3 { font-size: 13px; font-weight: 600; margin: 0 0 16px; line-height: 20px; } }
-.business-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.quantity-control { display: flex; align-items: stretch; box-sizing: border-box; width: 100%; height: 32px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; :deep(.el-input) { flex: 1; min-width: 0; height: 30px; } :deep(.el-input:not(.el-textarea) .el-input__wrapper) { box-sizing: border-box; height: 30px !important; min-height: 30px !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: transparent !important; } :deep(.el-input__inner) { height: 30px; line-height: 30px; text-align: center; } button { width: 32px; height: 30px; flex: 0 0 32px; align-self: center; padding: 0; border: 0; background: transparent; color: token.$crm-text-primary; cursor: pointer; &:focus-visible { outline: 2px solid token.$crm-focus; } } }
+.business-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.quantity-control { display: flex; align-items: stretch; box-sizing: border-box; width: 100%; height: 32px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: 8px; background: token.$crm-color-surface; :deep(.el-input) { flex: 1; min-width: 0; height: 30px; } :deep(.el-input:not(.el-textarea) .el-input__wrapper) { box-sizing: border-box; height: 30px !important; min-height: 30px !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: transparent !important; } :deep(.el-input__inner) { height: 30px; line-height: 30px; text-align: center; } button { width: 32px; height: 30px; flex: 0 0 32px; align-self: center; padding: 0; border: 0; background: transparent; color: token.$crm-text-primary; cursor: pointer; &:focus-visible { outline: 2px solid token.$crm-focus; } } }
 .business-zone .image-heading { display: flex; justify-content: space-between; margin: 16px 0 12px; }
 .image-row { display: flex; gap: 12px; align-items: center; }
 .image-note { min-width: 0; strong { display: block; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } p { margin: 4px 0 8px; color: token.$crm-text-secondary; font-size: 11px; } :deep(.el-button) { margin: 0; } }
@@ -315,14 +315,16 @@ label[data-error]:not([data-error='']) { :deep(.el-input__wrapper), :deep(.el-se
 .entry-error > .el-button { margin-left: 12px; }
 .entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; > div { display: flex; gap: 8px; } :deep(.el-button) { margin: 0; } }
 @media (max-width: 1000px) { .entry-columns { grid-template-columns: 1fr; } .identity-zone { border-right: 0; padding-right: 0; } }
+@container (max-width:740px) { .entry-columns { grid-template-columns:minmax(0,1fr); } .identity-zone { border-right:0; padding-right:0; } }
+@container (max-width:500px) { .identity-fields { grid-template-columns:minmax(0,1fr); } }
 </style>
 
 <style lang="scss">
 @use '@/styles/crm/tokens' as token;
 // 窗口通过 Teleport 放到 body，外壳样式只限定当前弹窗的类名。
 .inquiry-product-window.app-window-dialog {
-  border-radius: 5px;
   .app-window-dialog__body { padding: 16px; }
   .app-window-dialog__footer { padding: 12px 24px; border-top: 1px solid token.$crm-border-default; }
+  container-type: inline-size
 }
 </style>

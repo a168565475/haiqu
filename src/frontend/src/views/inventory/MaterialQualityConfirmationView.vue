@@ -175,7 +175,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
 </script>
 
 <template>
-  <section class="inventory-workflow quality-page" data-testid="material-quality-confirmation-page">
+  <section class="inventory-workflow quality-page erp-glass-form" data-testid="material-quality-confirmation-page">
     <div v-if="!canConfirm" class="empty-state"><h1>无权进行品质确认</h1><p>请联系管理员开通材料品质确认权限。</p></div>
     <template v-else>
       <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></header>
@@ -216,8 +216,9 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
+@use '@/styles/theme/detail' as detail;
 
-.inventory-workflow { box-sizing: border-box; height: calc(100dvh - 92px); min-height: 0; overflow-y: auto; padding: 28px 28px 16px; background: token.$crm-color-page; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px 28px 16px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-text-color-placeholder: #{token.$crm-text-muted}; --el-border-color: #{token.$crm-border-default}; --el-border-color-light: #{token.$crm-border-subtle}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .page-title-row, .table-head, .bulk-row, .date-field, .bulk-controls, .submit-bar { display: flex; align-items: center; }
@@ -226,14 +227,14 @@ h1, h2, p { margin: 0; } h2 { font-size: 16px; line-height: 22px; font-weight: 7
 h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .page-title-row p { color: token.$crm-text-secondary; line-height: 18px; }
 .page-title-row > .el-button { width: 104px; height: 32px; }
-.surface { border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
+.surface { @include detail.surface; }
 .load-error { box-sizing: border-box; min-height: 40px; padding: 9px 16px; margin-bottom: 12px; border: 1px solid token.$crm-danger; border-radius: 5px; background: token.$crm-danger-soft; color: token.$crm-danger; }
-.bulk-card { box-sizing: border-box; height: 60px; padding: 13px 21px; margin-bottom: 12px; }
+.bulk-card { box-sizing: border-box; height: 60px; padding: 13px 21px; margin-bottom: 14px; }
 .bulk-row { height: 32px; gap: 20px; }
 .date-field { gap: 10px; margin-left: auto; }
 .date-field label, .bulk-controls label { color: token.$crm-text-secondary; white-space: nowrap; }
 .date-field > .el-input { width: 170px; }
-.date-field :deep(.el-input__wrapper) { background: token.$crm-color-subtle; }
+.date-field :deep(.el-input__wrapper) { background: var(--erp-input-surface); }
 .date-field :deep(.el-input__inner) { -webkit-text-fill-color: token.$crm-text-secondary; }
 .bulk-controls { height: 32px; gap: 10px; }
 .bulk-controls > .el-input:nth-child(2) { width: 120px; }
@@ -250,8 +251,8 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-head > strong { margin-right: 16px; font-size: 13px; white-space: nowrap; }
 .quality-table-scroll { flex: 1; min-height: 0; overflow: auto; }
 .quality-table { width: 100%; min-width: 1634px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-.quality-table th, .quality-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid token.$crm-border-subtle; border-bottom: 1px solid token.$crm-border-subtle; text-align: center; overflow-wrap: anywhere; }
-.quality-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: token.$crm-color-surface; font-size: 12px; font-weight: 500; color: token.$crm-text-secondary; }
+.quality-table th, .quality-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: center; overflow-wrap: anywhere; }
+.quality-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
 .quality-table td { height: 58px; } .quality-table th:last-child, .quality-table td:last-child { border-right: 0; }
 .quality-table .quantity-cell { white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; }
 .quality-table th:first-child, .quality-table td:first-child { padding: 0; vertical-align: middle; }
@@ -261,8 +262,8 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .quality-table .specification-cell > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
-.quality-table .supplier-cell { font-size: 13px; color: token.$crm-text-secondary; white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
+.quality-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
 .quality-table td:nth-child(7) { padding: 4px 11px; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }
@@ -275,21 +276,22 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .submit-bar > .el-button { width: 140px; height: 32px; margin: 0; }
 .submit-bar > .el-button--primary { width: 160px; }
 .inventory-workflow :deep(.el-button) { height: 32px; font-size: 13px; border-radius: 5px; font-family: inherit; }
-.inventory-workflow :deep(.el-input__wrapper), .inventory-workflow :deep(.el-select__wrapper) { box-sizing: border-box; border-radius: 3px; min-height: 32px; font-size: 13px; background: token.$crm-color-surface; color: token.$crm-text-secondary; }
+.inventory-workflow :deep(.el-input__wrapper), .inventory-workflow :deep(.el-select__wrapper) { box-sizing: border-box; height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); font-size: 13px; background: var(--erp-input-surface); color: token.$crm-text-secondary; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.inventory-workflow :deep(.el-input__wrapper.is-focus), .inventory-workflow :deep(.el-select__wrapper.is-focused) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 .inventory-workflow :deep(.el-input__inner) { color: token.$crm-text-secondary; font-family: inherit; height: 30px; }
 .inventory-workflow :deep(.el-select__selected-item) { color: token.$crm-text-secondary; }
 .inventory-workflow :deep(.el-tag) { height: 24px; min-width: 64px; padding: 0 10px; border: 0; font-size: 11px; font-family: inherit; }
-.inventory-workflow :deep(.el-tag--success) { background: token.$crm-success-soft; color: token.$crm-success; }
-.inventory-workflow :deep(.el-tag--warning) { background: token.$crm-warning-soft; color: token.$crm-warning; }
+.inventory-workflow :deep(.el-tag--success) { background: var(--erp-tag-success-background); color: var(--erp-color-text-inverse); }
+.inventory-workflow :deep(.el-tag--warning) { background: var(--erp-tag-warning-background); color: var(--erp-color-text-inverse); }
 .inventory-workflow :deep(.el-checkbox__inner) { width: 14px; height: 14px; border-radius: 2px; }
 .inventory-workflow :deep(.invalid-field .el-input__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; }
 .quality-table :deep(.el-tag) { width: 80px; }
-.quality-page :deep(.el-tag--danger) { color: token.$crm-danger; background: token.$crm-danger-soft; }
+.quality-page :deep(.el-tag--danger) { color: var(--erp-color-text-inverse); background: var(--erp-tag-danger-background); }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
 :global(.quality-confirm-dialog .el-message-box__btns) { gap: 12px; }
 :global(.quality-confirm-dialog .el-message-box__btns .el-button) { min-width: 80px; height: 32px; margin: 0; border-radius: 5px; font: 500 13px/20px token.$crm-font-body; }
-:global(.quality-confirm-dialog .quality-confirm-dialog__confirm) { border-color: token.$crm-primary !important; background: token.$crm-primary !important; color: token.$crm-text-inverse !important; }
-:global(.quality-confirm-dialog .quality-confirm-dialog__confirm:hover) { border-color: token.$crm-primary-hover !important; background: token.$crm-primary-hover !important; }
+:global(.quality-confirm-dialog .quality-confirm-dialog__confirm) { border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-surface) !important; color: token.$crm-text-inverse !important; }
+:global(.quality-confirm-dialog .quality-confirm-dialog__confirm:hover) { border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-hover-surface) !important; }
 
 @media (max-width: 1400px) {
   .bulk-row { gap: 12px; }

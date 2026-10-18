@@ -1,4 +1,5 @@
 @use '@/styles/crm/tokens' as crm;
+@use '@/styles/theme/detail' as detail;
 
 $page-bg: crm.$crm-color-page;
 $surface: crm.$crm-color-surface;
@@ -18,7 +19,7 @@ $inverse: crm.$crm-text-inverse;
   box-sizing: border-box;
 }
 
-.schedule-page {
+.schedule-page:not(.erp-glass-list):not(.erp-glass-detail):not(.erp-glass-form) {
   min-height: calc(100vh - 64px);
   padding: 26px 28px 18px;
   overflow-x: hidden;
@@ -27,15 +28,16 @@ $inverse: crm.$crm-text-inverse;
   font-family: 'Noto Sans SC Variable', 'Noto Sans SC', sans-serif;
 
   .el-button { @include control32; border-radius: 5px; }
-  .el-button--primary:not(.is-link) { --el-button-bg-color: #{$brand}; --el-button-border-color: #{$brand}; --el-button-hover-bg-color: #{crm.$crm-primary-hover}; --el-button-hover-border-color: #{crm.$crm-primary-hover}; color: $inverse; }
+  .el-button--primary:not(.is-link) { --el-button-bg-color: #{$brand}; --el-button-border-color: #{$brand}; --el-button-hover-bg-color: #{crm.$crm-primary-hover}; --el-button-hover-border-color: #{crm.$crm-primary-hover}; color: var(--erp-color-text-inverse); }
   .el-button--primary.is-link { --el-button-text-color: #{$link}; color: $link; }
   .el-input, .el-select, .el-date-editor, .el-input-number { --el-component-size: 32px; }
-  .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-input-number .el-input__wrapper { @include control32; min-height: 32px !important; border-radius: 5px; background: $surface; box-shadow: 0 0 0 1px $border inset; }
-  .el-tag { height: 24px; border: 0; color: $inverse; font-weight: 600; }
+  .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper, .el-input-number .el-input__wrapper { @include control32; min-height: 32px !important; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+  .el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-date-editor.el-input__wrapper:focus-within, .el-input-number .el-input__wrapper.is-focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  .el-tag { height: 24px; border: 0; color: var(--erp-color-text-inverse); font-weight: 600; }
   .el-alert { margin-bottom: 14px; }
 }
 
-.schedule-heading {
+.schedule-heading:not(.erp-list-heading) {
   min-height: 46px;
   display: flex;
   align-items: center;
@@ -46,9 +48,9 @@ $inverse: crm.$crm-text-inverse;
   h1 { margin: 0; font-family: 'Noto Serif SC Variable', 'Noto Serif SC', serif; font-size: 34px; font-weight: 500; line-height: 40px; }
   > div:first-child > span { color: $muted; font-size: 13px; }
 }
-.schedule-create-link { @include control32; display: inline-flex; align-items: center; padding: 0 16px; border-radius: 5px; color: $inverse; background: $brand; text-decoration: none; &:hover { background: #b74625; } }
+.schedule-create-link { @include control32; display: inline-flex; align-items: center; padding: 0 16px; border-radius: 5px; color: $inverse; background: $brand; text-decoration: none; &:hover { background: var(--erp-color-hover); } }
 
-.schedule-filter-bar {
+.schedule-filter-bar:not(.erp-list-filters) {
   height: 32px;
   display: grid;
   grid-template-columns: minmax(330px, 472px) 320px max-content;
@@ -58,19 +60,32 @@ $inverse: crm.$crm-text-inverse;
 }
 .schedule-created-filter { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 12px; color: $regular; font-size: 13px; }
 
-.schedule-table-card {
+.schedule-page.erp-glass-list .schedule-filter-bar {
+  > .schedule-search { flex: 0 1 250px; width: 250px; max-width: 100%; }
+  .schedule-created-filter, .plan-date-filter {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    grid-template-columns: max-content minmax(0, 1fr);
+    .el-date-editor { width: 100%; min-width: 0; }
+  }
+  .schedule-created-filter { width: 360px; }
+  .plan-date-filter { width: 480px; }
+}
+
+.schedule-table-card:not(.erp-list-table-frame) {
   max-width: 100%;
   overflow-x: auto;
   border-radius: 5px;
   background: $surface;
-  .el-table { --el-table-border-color: #{$subtle}; --el-table-header-bg-color: #eee8dc; --el-table-row-hover-bg-color: #f8f4ec; color: $primary; background: $surface; }
-  .el-table__header-wrapper th.el-table__cell { height: 44px !important; padding: 0 !important; color: $secondary; font-size: 13px; font-weight: 500; background: #eee8dc; }
+  .el-table { --el-table-border-color: var(--erp-table-grid); --el-table-header-bg-color: var(--erp-table-header-fill); --el-table-row-hover-bg-color: var(--erp-color-hover); color: var(--erp-table-text); background: var(--erp-table-body-fill); }
+  .el-table__header-wrapper th.el-table__cell { height: 44px !important; padding: 0 !important; color: var(--erp-table-header-text); font-size: 13px; font-weight: 500; background: var(--erp-table-header-fill); }
   .el-table__body-wrapper tr, .el-table__body-wrapper td.el-table__cell { height: 40px !important; }
   .el-table__body-wrapper td.el-table__cell { padding: 0 !important; font-size: 14px; }
   .el-table .cell { padding: 0 16px; line-height: 20px; }
 }
 
-.schedule-main-table {
+.schedule-main-table:not(.erp-list-table-frame) {
   .el-table { min-width: 1450px; }
   .el-table__header-wrapper th.el-table__cell { height: 60px !important; }
   .el-table__body-wrapper tr, .el-table__body-wrapper td.el-table__cell { height: 112px !important; }
@@ -79,16 +94,16 @@ $inverse: crm.$crm-text-inverse;
 .two-line { display: flex; flex-direction: column; justify-content: center; line-height: 20px; strong { font-size: 14px; font-weight: 500; } small { color: $secondary; font-size: 13px; } }
 .product-strip { width: 362px; height: 82px; display: flex; align-items: center; gap: 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .product-mini { min-width: 174px; height: 70px; display: flex; gap: 8px; align-items: center; img, > .image-empty { width: 62px; height: 70px; flex: 0 0 62px; border-radius: 4px; object-fit: cover; } div { min-width: 0; display: flex; flex-direction: column; line-height: 20px; } strong, small { max-width: 102px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-size: 14px; font-weight: 500; } small { color: $secondary; font-size: 13px; } b { font-size: 14px; font-weight: 400; } }
-.image-empty { display: grid; place-items: center; color: $muted; font-size: 12px; background: #eee8dc; }
-.product-mini img.is-placeholder, .detail-product-main img.is-placeholder, .plan-product img.is-placeholder { box-sizing: border-box; padding: 3px; border: 1px solid $subtle; object-fit: contain; background: #fff; }
-.date-stack { height: 92px; display: flex; flex-direction: column; gap: 4px; justify-content: center; p { height: 20px; display: flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; } span { font-size: 13px; } }
-.date-mark { width: 72px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 72px; border-radius: 3px; color: $inverse; font-size: 12px; font-style: normal; font-weight: 600; &.material { background: #b8781e; } &.metal { background: #4f7d4b; } &.sewing { background: #c96442; } &.finished { background: #3898ec; } }
-.schedule-link { padding: 0; border: 0; color: #3478af; background: transparent; cursor: pointer; font: inherit; }
-.schedule-pagination { height: 48px; display: flex; align-items: center; justify-content: space-between; margin-top: 0; padding: 0 16px; border-radius: 5px; color: $regular; background: $surface; .el-pagination button, .el-pager li { @include control32; min-width: 32px; } }
+.image-empty { display: grid; place-items: center; color: $muted; font-size: 12px; background: var(--erp-color-subtle); }
+.product-mini img.is-placeholder, .detail-product-main img.is-placeholder, .plan-product img.is-placeholder { box-sizing: border-box; padding: 3px; border: 1px solid $subtle; object-fit: contain; background: var(--erp-color-surface); }
+.date-stack { display: flex; flex-direction: column; gap: 4px; justify-content: center; p { min-height: 24px; display: flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; } span { font-size: 13px; } }
+.date-mark:not(.erp-list-tag) { width: 72px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 72px; border-radius: 3px; color: var(--erp-color-text-inverse); font-size: 12px; font-style: normal; font-weight: 600; &.material { background: var(--erp-tag-warning-background); } &.metal { background: var(--erp-tag-success-background); } &.sewing { background: var(--erp-tag-brand-background); } &.finished { background: var(--erp-tag-info-background); } }
+.schedule-link { padding: 0; border: 0; color: var(--erp-color-info); background: transparent; cursor: pointer; font: inherit; }
+.schedule-pagination:not(.erp-list-footer) { height: 48px; display: flex; align-items: center; justify-content: space-between; margin-top: 0; padding: 0 16px; border-radius: 5px; color: $regular; background: $surface; .el-pagination button, .el-pager li { @include control32; min-width: 32px; } }
 
 .schedule-section { margin-bottom: 16px; border: 1px solid $border; border-radius: 6px; background: $surface; > header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid $subtle; h2 { margin: 0; font-size: 16px; font-weight: 600; } > div { display: flex; align-items: center; gap: 10px; } span { color: $muted; font-size: 13px; } } }
-.basic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 26px; padding: 16px 18px 18px; label { min-width: 0; display: grid; grid-template-columns: 126px minmax(0, 1fr); align-items: center; gap: 14px; } label > span { color: $secondary; font-size: 13px; } strong { min-width: 0; height: 32px; display: flex; align-items: center; padding: 0 12px; overflow: hidden; border: 1px solid $border; border-radius: 5px; background: #f1ede4; font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; } }
-.source-picker { min-width: 0; height: 32px; display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; overflow: hidden; border: 1px solid $border; border-radius: 5px; background: #f1ede4; strong { height: 30px; border: 0; background: transparent; } .el-button { height: 30px; padding: 0 12px; border-left: 1px solid $border; border-radius: 0; } }
+.basic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 26px; padding: 16px 18px 18px; label { min-width: 0; display: grid; grid-template-columns: 126px minmax(0, 1fr); align-items: center; gap: 14px; } label > span { color: $secondary; font-size: 13px; } strong { min-width: 0; height: 32px; display: flex; align-items: center; padding: 0 12px; overflow: hidden; border: 1px solid $border; border-radius: 5px; background: var(--erp-color-subtle); font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; } }
+.source-picker { min-width: 0; height: 32px; display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; overflow: hidden; border: 1px solid $border; border-radius: 5px; background: var(--erp-color-subtle); strong { height: 30px; border: 0; background: transparent; } .el-button { height: 30px; padding: 0 12px; border-left: 1px solid var(--erp-control-border); border-radius: 0; } }
 .detail-section {
   min-height: 0;
   border: 0;
@@ -100,21 +115,20 @@ $inverse: crm.$crm-text-inverse;
 .schedule-entry-table {
   height: clamp(260px, calc(100dvh - 529px), 552px);
   min-height: clamp(260px, calc(100dvh - 529px), 552px);
-  overflow-x: auto;
-  overflow-y: hidden;
-  border: 1px solid $border;
+  overflow: auto;
+  border: 1px solid var(--erp-table-grid);
   border-radius: 6px;
-  background: $surface;
-  scrollbar-color: #b8afa1 #f1ede4;
+  background: var(--erp-table-body-fill);
+  scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle);
   scrollbar-width: thin;
 
   &::-webkit-scrollbar { height: 10px; }
-  &::-webkit-scrollbar-track { background: #f1ede4; }
-  &::-webkit-scrollbar-thumb { border: 2px solid #f1ede4; border-radius: 999px; background: #b8afa1; }
+  &::-webkit-scrollbar-track { background: var(--erp-table-body-fill); }
+  &::-webkit-scrollbar-thumb { border: 2px solid var(--erp-table-grid); border-radius: 999px; background: var(--erp-table-body-fill); }
 
   table { min-width: 1794px; width: 100%; table-layout: fixed; border-collapse: collapse; }
-  th { height: 44px; padding: 0 8px; border-right: 1px solid $subtle; border-bottom: 1px solid $subtle; color: $primary; background: #eee8dc; text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap; }
-  td { box-sizing: border-box; height: 39px; padding: 3px 8px 4px; border-right: 1px solid $subtle; border-bottom: 1px solid $subtle; vertical-align: middle; }
+  th { height: 44px; padding: 0 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); color: var(--erp-table-header-text); background: var(--erp-table-header-fill); text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  td { box-sizing: border-box; height: 39px; padding: 3px 8px 4px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); vertical-align: middle; }
   .sequence-col { width: 48px; }
   .product-col { width: 204px; }
   .source-quantity-col { width: 96px; }
@@ -150,130 +164,153 @@ $inverse: crm.$crm-text-inverse;
 .quantity-limit { display: none; }
 .schedule-form-actions { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-radius: 6px; background: $surface; p { margin: 0; color: $regular; font-size: 13px; } > div { display: flex; gap: 8px; } }
 
+.schedule-form {
+  .schedule-section { @include detail.surface; margin-bottom: 14px; }
+  .detail-section { padding: 0 16px 16px; }
+  .schedule-form-actions { @include detail.surface; flex-wrap: wrap; gap: 14px; padding: 14px 16px; }
+  .craft-select__summary { background: var(--erp-input-surface); }
+}
+
 .schedule-detail {
   width: 100%;
-  margin: 0 0 18px;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  container-type: inline-size;
+  color: $primary;
+  background: transparent;
+  font: 13px/20px crm.$crm-font-body;
 
-  > .detail-heading { margin-bottom: 17px; }
-  > .detail-heading > div:first-child { gap: 24px; }
-  > .detail-heading > div:last-child { gap: 10px; }
+  > .detail-heading { flex-wrap: wrap; gap: 14px; margin: 0; }
+  > .detail-heading > div { flex-wrap: wrap; gap: 10px; }
+  > .detail-heading h1 { font: 700 36px/44px crm.$crm-font-body; }
   > .detail-heading .el-button:first-child { width: 110px; }
   > .detail-heading .el-button--primary { width: 140px; }
-  > .detail-heading .el-button:not(.el-button--primary) { --el-button-text-color: #{$regular}; color: $regular; }
   > .detail-heading .el-button > span { color: inherit; font-size: inherit; }
-}
-.detail-basic {
-  min-height: 0;
+  .schedule-section { @include detail.surface; margin: 0; }
+  .schedule-section > header { padding: 12px 16px; min-height: 0; }
+  .schedule-section > header h2 { font-size: 16px; line-height: 24px; }
 
-  > header { min-height: 44px; padding: 0 16px; }
-  dl { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 14px 18px 16px; }
-  dl > div { min-width: 0; }
-  dt { margin-bottom: 4px; color: $secondary; font-size: 13px; line-height: 18px; }
-  dd { margin: 0; overflow: hidden; color: $primary; font-size: 14px; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+  .detail-basic {
+    dl { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 14px 16px 16px; }
+    dl > div { min-width: 0; }
+    dt { margin-bottom: 4px; color: $secondary; font-size: 13px; line-height: 18px; }
+    dd { margin: 0; color: $primary; line-height: 20px; overflow-wrap: anywhere; }
+  }
+  .detail-products { padding: 0 16px 16px; }
+  .detail-products > header { margin: 0 0 14px; padding-right: 0; padding-left: 0; }
+  .detail-products > header h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; }
+  .schedule-product-card {
+    @include detail.inset;
+    & + .schedule-product-card { margin-top: 14px; }
+  }
+  .schedule-product-card__body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, .9fr) minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+  .detail-product-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px;
+    img, > .image-empty { width: 150px; height: 184px; flex: 0 0 150px; border-radius: var(--erp-radius-control); object-fit: contain; }
+    dl { min-width: 0; display: grid; gap: 8px; margin: 0; }
+    dl > div { min-width: 0; }
+    dt { color: $secondary; font-size: 12px; line-height: 18px; }
+    dd { margin: 2px 0 0; color: $primary; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+  }
+  .detail-quantities {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    margin: 0;
+    padding: 16px;
+    gap: 14px;
+    border-left: 1px solid $subtle;
+    > div { min-width: 0; }
+    dt { color: $secondary; font-size: 13px; line-height: 18px; }
+    dd { margin: 7px 0 0; color: $primary; font-size: 21px; font-weight: 600; line-height: 30px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  }
+  .detail-dates {
+    min-width: 0;
+    padding: 16px;
+    border-left: 1px solid $subtle;
+    h3 { margin: 0 0 12px; font-size: 16px; font-weight: 500; line-height: 24px; }
+    dl { margin: 0; display: grid; gap: 8px; }
+    dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; }
+    dt { color: $secondary; font-size: 13px; overflow-wrap: anywhere; }
+    dd { margin: 0; color: $primary; font-size: 13px; font-variant-numeric: tabular-nums; }
+  }
+  .detail-crafts {
+    min-width: 0;
+    padding: 16px;
+    border-left: 1px solid $subtle;
+    h3 { margin: 0 0 12px; font-size: 16px; font-weight: 500; line-height: 24px; }
+    > div { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+    > div + div { margin-top: 14px; }
+    > div > span { color: $secondary; font-size: 13px; line-height: 20px; }
+    p { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0; min-width: 0; }
+    .el-tag { box-sizing: border-box; max-width: 100%; height: auto; min-height: 24px; padding: 2px 10px; border: 0; border-radius: 999px; color: var(--erp-color-text-inverse); font-size: 13px; font-weight: 500; white-space: normal; }
+    .el-tag__content { min-width: 0; overflow-wrap: anywhere; }
+    .el-tag.is-metal, .el-tag.is-assembly { background: var(--erp-tag-success-background); }
+    .el-tag.is-cutting { background: var(--erp-tag-info-background); }
+    .el-tag.is-sewing, .el-tag.is-external { background: var(--erp-tag-brand-background); }
+    em { color: $muted; font-style: normal; line-height: 24px; }
+  }
+  .related-plans {
+    min-height: 48px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 24px;
+    padding: 8px 16px;
+    border-top: 1px solid $subtle;
+    &::before { color: $regular; font-size: 13px; content: '相关计划'; }
+    button { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; color: $link; background: transparent; cursor: pointer; font-size: 13px; line-height: 24px; }
+    button:hover { color: var(--erp-color-brand-hover); }
+  }
 }
-.detail-products {
-  padding: 0 16px 32px;
+@container (max-width: 1400px) {
+  .schedule-detail .detail-basic dl { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .schedule-detail .schedule-product-card__body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .schedule-detail .detail-product-main img { width: 120px; height: 148px; flex-basis: 120px; }
+  .schedule-detail .detail-dates { border-left: 0; border-top: 1px solid $subtle; }
+  .schedule-detail .detail-crafts { border-top: 1px solid $subtle; }
+}
+@container (max-width: 700px) {
+  .schedule-detail .detail-basic dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .schedule-detail .schedule-product-card__body { grid-template-columns: minmax(0, 1fr); }
+  .schedule-detail .detail-quantities, .schedule-detail .detail-crafts { border-left: 0; border-top: 1px solid $subtle; }
+  .schedule-detail .detail-product-main img { width: 96px; height: 118px; flex-basis: 96px; }
+}
 
-  > header { margin: 0 -16px 13px; }
-  > header h2 { display: flex; align-items: baseline; gap: 14px; }
-}
-.schedule-product-card {
-  overflow: hidden;
-  border: 1px solid $subtle;
-  border-radius: 6px;
-
-  & + & { margin-top: 17px; }
-}
-.schedule-product-card__body {
-  min-height: 233px;
-  display: grid;
-  grid-template-columns: 420px 305px 370px minmax(0, 1fr);
-}
-.detail-product-main {
+.plan-filter-bar:not(.erp-list-filters) { grid-template-columns: minmax(360px, 1fr) 480px max-content; }
+.workshop-plan-list.erp-glass-list .internal-plan-tabs {
+  align-items: stretch;
+  width: 100%;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  padding: 22px 28px;
-
-  img, > .image-empty { width: 150px; height: 184px; flex: 0 0 150px; border-radius: 4px; object-fit: cover; }
-  dl { min-width: 0; display: grid; gap: 8px; margin: 0; }
-  dl > div { min-width: 0; }
-  dt { color: $secondary; font-size: 13px; line-height: 17px; }
-  dd { margin: 1px 0 0; overflow: hidden; color: $primary; font-size: 16px; line-height: 21px; text-overflow: ellipsis; white-space: nowrap; }
-}
-.detail-quantities {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: center;
-  margin: 0;
-  border-left: 1px solid $subtle;
-
-  > div { min-width: 0; padding: 18px 28px; }
-  > div + div { border-left: 1px solid $subtle; }
-  dt { color: $secondary; font-size: 13px; line-height: 18px; }
-  dd { margin: 7px 0 0; color: $primary; font-size: 21px; font-weight: 600; line-height: 30px; white-space: nowrap; }
-}
-.detail-dates {
-  min-width: 0;
-  padding: 20px 10px 16px 66px;
-  border-left: 1px solid $subtle;
-
-  h3 { margin: 0 0 12px; font-size: 16px; font-weight: 500; line-height: 22px; }
-  dl { margin: 0; }
-  dl > div { height: 36px; display: grid; grid-template-columns: 160px minmax(0, 1fr); align-items: center; padding: 0 10px; border: 1px solid $subtle; border-radius: 5px; }
-  dl > div + div { margin-top: 2px; }
-  dt { color: $secondary; font-size: 13px; }
-  dd { margin: 0; color: $primary; font-size: 14px; white-space: nowrap; }
-}
-.detail-crafts {
-  min-width: 0;
-  padding: 18px 28px;
-  border-left: 1px solid $subtle;
-
-  h3 { margin: 0 0 14px; font-size: 16px; font-weight: 500; line-height: 22px; }
-  > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: start; }
-  > div + div { margin-top: 16px; }
-  > div > span { color: $primary; font-size: 16px; line-height: 28px; }
-  p { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0; }
-  .el-tag { height: 28px; padding: 0 12px; border-radius: 999px; color: $inverse; font-size: 14px; font-weight: 500; }
-  .el-tag.is-metal, .el-tag.is-assembly { background: #4f7d4b; }
-  .el-tag.is-cutting { background: #3898ec; }
-  .el-tag.is-sewing, .el-tag.is-external { background: #c96442; }
-  em { color: $muted; font-style: normal; line-height: 28px; }
-}
-.related-plans {
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: 136px repeat(4, 180px);
-  align-items: center;
-  padding: 0 16px;
-  border-top: 1px solid $subtle;
-
-  &::before { color: $regular; font-size: 14px; content: '相关计划'; }
-  button { display: inline-flex; align-items: center; gap: 5px; justify-self: start; padding: 0; border: 0; color: $link; background: transparent; cursor: pointer; font-size: 14px; }
-  button:hover { color: #267fca; }
-}
-
-.plan-filter-bar { grid-template-columns: minmax(360px, 1fr) 480px max-content; }
-.internal-plan-tabs {
-  margin: -5px 0 18px;
-  .el-tabs__header { margin: 0; }
-  .el-tabs__nav-wrap::after { height: 1px; background: $subtle; }
-  .el-tabs__item { height: 42px; padding: 0 24px; color: $regular; font-size: 14px; }
+  margin: 0 0 var(--erp-toolbar-table-gap);
+  .el-tabs__header { min-width: 0; margin: 0; justify-content: flex-start; }
+  .el-tabs__nav-wrap { min-width: 0; margin-bottom: 0; }
+  .el-tabs__nav-wrap::after { display: none; }
+  .el-tabs__nav-next, .el-tabs__nav-prev { line-height: 32px; }
+  .el-tabs__item { height: 32px; padding: 0 12px; color: $regular; font-size: 13px; line-height: 20px; }
   .el-tabs__item:hover, .el-tabs__item.is-active { color: $brand; }
   .el-tabs__item.is-active { font-weight: 600; }
-  .el-tabs__active-bar { height: 2px; background: $brand; }
+  .el-tabs__active-bar { height: 3px; border-radius: 4px 4px 1px 1px; background: var(--erp-tab-active-indicator); }
   .el-tabs__content { display: none; }
 }
 .plan-context { margin-top: -4px; }
 .plan-date-filter { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 14px; color: $regular; font-size: 13px; .el-date-editor { width: 100%; } }
 .plan-product { height: 38px; display: flex; align-items: center; gap: 10px; img, > .image-empty { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 3px; object-fit: cover; } div { display: flex; min-width: 0; flex-direction: column; line-height: 17px; } strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-size: 13px; font-weight: 500; } small { color: $secondary; font-size: 12px; } }
-.workshop-plan-list .schedule-table-card .el-table td.el-table__cell { height: 40px; }
+.workshop-plan-list .schedule-table-card:not(.erp-list-table-frame) .el-table td.el-table__cell { height: 40px; }
 .workshop-plan-list .two-line { line-height: 17px; }
-.plan-craft-tag { &.is-metal { background: #4f7d4b; } &.is-cutting { background: #3898ec; } &.is-sewing { background: #c96442; } &.is-assembly { background: #b8781e; } }
-.plan-status-tag { min-width: 56px; height: 24px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; padding: 0 8px; border-radius: 999px; color: #faf9f5; background: #5e5d59; font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; &.status-info { background: #3898ec; } &.status-success { background: #4f7d4b; } &.status-warning { background: #b8781e; } &.status-danger { background: #b53333; } &.status-neutral { background: #5e5d59; } }
+.plan-craft-tag:not(.erp-list-tag) { &.is-metal { background: var(--erp-tag-success-background); } &.is-cutting { background: var(--erp-tag-info-background); } &.is-sewing { background: var(--erp-tag-brand-background); } &.is-assembly { background: var(--erp-tag-warning-background); } }
+.plan-status-tag:not(.erp-list-tag) { min-width: 56px; height: 24px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; padding: 0 8px; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-neutral-background); font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; &.status-info { background: var(--erp-tag-info-background); } &.status-success { background: var(--erp-tag-success-background); } &.status-warning { background: var(--erp-tag-warning-background); } &.status-danger { background: var(--erp-tag-danger-background); } &.status-neutral { background: var(--erp-tag-neutral-background); } }
 .plan-row-actions { display: flex; align-items: center; gap: 12px; .el-button + .el-button { margin-left: 0; } }
 
 .schedule-task-dialog, .schedule-batch-dialog, .schedule-task-filter-dialog, .schedule-confirm-dialog, .schedule-void-dialog {
@@ -281,14 +318,14 @@ $inverse: crm.$crm-text-inverse;
   > .app-window-dialog__body { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px; }
   > .app-window-dialog__footer { min-height: 60px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 22px; border-top: 1px solid $subtle; }
   .el-button, .el-input__wrapper, .el-select__wrapper, .el-date-editor.el-input__wrapper { @include control32; min-height: 32px !important; }
-  .el-button--primary:not(.is-link) { --el-button-bg-color: #{$brand}; --el-button-border-color: #{$brand}; --el-button-hover-bg-color: #{crm.$crm-primary-hover}; --el-button-hover-border-color: #{crm.$crm-primary-hover}; color: $inverse; }
+  .el-button--primary:not(.is-link) { --el-button-bg-color: #{$brand}; --el-button-border-color: #{$brand}; --el-button-hover-bg-color: #{crm.$crm-primary-hover}; --el-button-hover-border-color: #{crm.$crm-primary-hover}; color: var(--erp-color-text-inverse); }
 }
 .task-dialog-layout { height: 100%; display: grid; grid-template-columns: 223px minmax(0, 1fr); gap: 22px; }
-.task-dialog-summary { min-height: 0; padding: 16px; overflow-y: auto; border: 1px solid $border; border-radius: 5px; background: #f6f3ec; h3 { margin: 0 0 14px; font-size: 15px; } dl { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 0; dt { margin-top: 8px; color: $secondary; font-size: 12px; } dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; } } }
+.task-dialog-summary { min-height: 0; padding: 16px; overflow-y: auto; border: 1px solid $border; border-radius: 5px; background: var(--erp-color-subtle); h3 { margin: 0 0 14px; font-size: 15px; } dl { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 0; dt { margin-top: 8px; color: $secondary; font-size: 12px; } dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; } } }
 .task-dialog-summary__task { display: flex; flex-direction: column; gap: 3px; padding: 10px 0; border-top: 1px solid $subtle; line-height: 18px; strong { color: $primary; font-size: 13px; font-weight: 600; } small { color: $secondary; font-size: 12px; } }
 .task-dialog-summary__task-products { display: grid; gap: 8px; margin-top: 5px; > div { min-width: 0; } p { min-width: 0; display: flex; flex-direction: column; margin: 0; line-height: 15px; } b, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } b { color: $primary; font-size: 11px; font-weight: 600; } small { color: $secondary; font-size: 10px; } }
-.task-dialog-toolbar { display: grid; grid-template-columns: minmax(300px, 1fr) 188px 112px 92px; gap: 10px; margin-bottom: 12px; .el-button.is-filtered { color: $brand; border-color: $brand; background: #fff4e6; } }
-.task-dialog-results { min-width: 0; .el-table__header-wrapper th.el-table__cell { height: 44px; padding: 0; color: $primary; background: #eee8dc; font-weight: 600; } .el-table td.el-table__cell { height: 40px; min-height: 40px; padding: 0; } .el-table .cell { padding: 0 8px; line-height: 18px; } .el-table__row { cursor: pointer; } .el-table__row.is-task-selected > td.el-table__cell { background: #fff7f0; } .el-checkbox { height: 24px; margin-right: 0; } .el-checkbox__input.is-checked .el-checkbox__inner { border-color: $brand; background: $brand; } .el-checkbox__input.is-checked .el-checkbox__inner::after { border-color: #fff; } .el-tag { height: 24px; border: 0; font-weight: 600; } .el-pagination { height: 48px; justify-content: flex-end; margin-top: 0; } }
+.task-dialog-toolbar { display: grid; grid-template-columns: minmax(300px, 1fr) 188px 112px 92px; gap: 10px; margin-bottom: 12px; .el-button.is-filtered { color: $brand; border-color: var(--erp-control-border); background: var(--erp-button-secondary-surface); } }
+.task-dialog-results { min-width: 0; .el-table__header-wrapper th.el-table__cell { height: 44px; padding: 0; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-weight: 600; } .el-table td.el-table__cell { height: 40px; min-height: 40px; padding: 0; } .el-table .cell { padding: 0 8px; line-height: 18px; } .el-table__row { cursor: pointer; } .el-table__row.is-task-selected > td.el-table__cell { background: var(--erp-color-selected); } .el-checkbox { height: 24px; margin-right: 0; } .el-checkbox__input.is-checked .el-checkbox__inner { border-color: $brand; background: $brand; } .el-checkbox__input.is-checked .el-checkbox__inner::after { border-color: var(--erp-color-border); } .el-tag { height: 24px; border: 0; font-weight: 600; } .el-pagination { height: 48px; justify-content: flex-end; margin-top: 0; } }
 .task-product-values { min-width: 0; display: grid; gap: 2px; line-height: 18px; span, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } span { color: $primary; font-size: 12px; } small { color: $secondary; font-size: 11px; } }
 .task-filter-form { display: grid; gap: 16px; label { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 14px; } label > span { color: $secondary; font-size: 13px; } .el-select, .el-date-editor { width: 100%; } }
 .batch-grid { display: grid; grid-template-columns: 1fr; gap: 16px; label { display: grid; grid-template-columns: 145px 1fr; align-items: center; gap: 16px; } label > span { color: $secondary; font-size: 13px; } .el-date-editor, .el-select { width: 100%; } }
@@ -298,9 +335,7 @@ $inverse: crm.$crm-text-inverse;
 .schedule-craft-popper, .schedule-date-popper, .schedule-filter-popper { font-family: 'Noto Sans SC Variable', 'Noto Sans SC', sans-serif; }
 
 @media (max-width: 1440px) {
-  .schedule-page { padding-right: 24px; padding-left: 24px; }
-  .schedule-filter-bar { grid-template-columns: minmax(280px, 1fr) 280px max-content; }
+  .schedule-page:not(.erp-glass-list):not(.erp-glass-detail) { padding-right: 24px; padding-left: 24px; }
+  .schedule-filter-bar:not(.erp-list-filters) { grid-template-columns: minmax(280px, 1fr) 280px max-content; }
   .basic-grid { grid-template-columns: repeat(3, 1fr); }
-  .schedule-product-card { grid-template-columns: 280px 1fr; }
-  .detail-crafts { grid-column: 1 / -1; }
 }

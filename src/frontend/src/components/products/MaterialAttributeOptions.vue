@@ -60,17 +60,17 @@ async function remove(id: string) {
       <div class="option-line">
         <span v-for="option in options" :key="option.id" class="option-chip">
           <span class="option-label">{{ option.label }}</span>
-          <button v-if="!readonly" type="button" class="delete-option" data-action="delete" :aria-label="`删除${option.label}`"
+          <button v-if="!readonly" type="button" class="erp-list-button erp-button-motion delete-option" data-action="delete" :aria-label="`删除${option.label}`"
             :title="`删除${option.label}`" :disabled="disabled || saving || !!removing" @click="remove(option.id)"><Delete aria-hidden="true" /></button>
         </span>
         <form v-if="editing && !readonly" class="inline-editor" @submit.prevent="save">
           <MaterialCatalogSelect v-if="kind === 'unit'" ref="input" v-model="draft" class="inline-unit-select" :ariaLabel="`添加${label}`"
             :options="unitOptions" placeholder="选择单位" :invalid="!!error" :disabled="disabled || saving" />
-          <input v-else ref="input" v-model="draft" :aria-label="`添加${label}`" :placeholder="`输入${label}`" :aria-invalid="!!error" :disabled="disabled || saving" />
-          <button type="button" class="save-option" :class="{ processing: saving }" data-action="save" :aria-label="saving ? '正在保存' : '保存'" :aria-busy="saving" :disabled="disabled || saving" @click="save"><span>保存</span><Loading v-if="saving" class="saving-spinner" aria-hidden="true" /></button>
-          <button type="button" class="cancel-option" aria-label="取消添加" title="取消添加" :disabled="saving" @click="editing = false; error = ''"><Close aria-hidden="true" /></button>
+          <input class="erp-list-control" v-else ref="input" v-model="draft" :aria-label="`添加${label}`" :placeholder="`输入${label}`" :aria-invalid="!!error" :disabled="disabled || saving" />
+          <button type="button" class="erp-list-button erp-button-motion erp-list-button--primary save-option" :class="{ processing: saving }" data-action="save" :aria-label="saving ? '正在保存' : '保存'" :aria-busy="saving" :disabled="disabled || saving" @click="save"><span>保存</span><Loading v-if="saving" class="saving-spinner" aria-hidden="true" /></button>
+          <button type="button" class="erp-list-button erp-button-motion cancel-option" aria-label="取消添加" title="取消添加" :disabled="saving" @click="editing = false; error = ''"><Close aria-hidden="true" /></button>
         </form>
-        <button v-else-if="!readonly" type="button" class="add-option" data-action="add" :disabled="disabled || !!removing" @click="startAdding">＋ {{ kind === 'shape' ? '添加形状' : kind === 'dimension' ? '添加尺寸' : '添加' }}</button>
+        <button v-else-if="!readonly" type="button" class="erp-list-button erp-button-motion add-option" data-action="add" :disabled="disabled || !!removing" @click="startAdding">＋ {{ kind === 'shape' ? '添加形状' : kind === 'dimension' ? '添加尺寸' : '添加' }}</button>
         <span v-if="readonly && !options.length" class="empty-options">—</span>
       </div>
       <span v-if="error" class="field-error" role="alert">{{ error }}</span>
@@ -80,39 +80,26 @@ async function remove(id: string) {
 
 <style scoped>
 .attribute-row { display: flex; align-items: flex-start; gap: 12px; min-height: 40px; padding: 4px 0; box-sizing: border-box; }
-.attribute-label { display: flex; align-items: center; gap: 12px; width: 120px; flex-shrink: 0; min-height: 32px; line-height: 20px; color: #17191c; }
-.attribute-label::after { content: ''; flex: 1; min-width: 16px; border-top: 1px dashed #dadce0; }
+.attribute-label { display: flex; align-items: center; gap: 12px; width: 120px; flex-shrink: 0; min-height: 32px; line-height: 20px; color: var(--erp-color-text-primary); }
+.attribute-label::after { content: ''; flex: 1; min-width: 16px; border-top: 1px dashed var(--erp-color-border); }
 .attribute-content { flex: 1; min-width: 0; }
 .option-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 32px; }
-.option-chip { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 84px; min-height: 32px; box-sizing: border-box; padding: 3px 28px; border: 1px solid #dadce0; border-radius: 5px; background: #fff; color: #17191c; max-width: 100%; overflow-wrap: anywhere; text-align: center; }
-.option-chip:hover, .option-chip:focus-within { background: #f8f5f0; }
-button, input { font: inherit; }
-button { cursor: pointer; }
-button:disabled { cursor: not-allowed; }
-.delete-option { position: absolute; right: 0; top: calc(50% - 16px); display: inline-flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #55595e; }
+.option-chip { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 84px; min-height: 32px; box-sizing: border-box; padding: 3px 28px; border: 1px solid var(--erp-input-border); border-radius: var(--erp-radius-control); background: var(--erp-input-surface); color: var(--erp-input-text); max-width: 100%; overflow-wrap: anywhere; text-align: center; }
+.option-chip:hover, .option-chip:focus-within { background: var(--erp-table-hover); }
+.delete-option { position: absolute; right: 0; top: calc(50% - 16px); opacity: 0; pointer-events: none; width: 32px; padding: 0; }
 .delete-option svg, .cancel-option svg { width: 16px; height: 16px; }
-.option-chip:hover .delete-option, .option-chip:focus-within .delete-option { opacity: 1; pointer-events: auto; }
-.delete-option:focus-visible { opacity: 1; pointer-events: auto; }
-.add-option { height: 32px; min-width: 84px; border: 1px solid #ece5dc; border-radius: 5px; padding: 0 12px; background: #f8f5f0; color: #17191c; white-space: nowrap; }
-.add-option:hover:not(:disabled) { color: #f04b09; border-color: #ff510a; }
+.option-chip:hover .delete-option, .option-chip:focus-within .delete-option, .delete-option:focus-visible { opacity: 1; pointer-events: auto; }
+.add-option { min-width: 84px; white-space: nowrap; }
 .inline-editor { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
-.inline-editor input { box-sizing: border-box; width: 160px; min-width: 0; height: 32px; border: 1px solid #ddd6c9; border-radius: 5px; padding: 0 10px; background: #fcfbf7; color: #1f1d18; }
-.inline-unit-select { width: 160px; min-width: 0; }
-.inline-editor input::placeholder { color: #968f84; opacity: 1; }
-.save-option { position: relative; height: 32px; padding: 0 12px; border: 1px solid #ff510a; border-radius: 5px; background: #fff; color: #f04b09; white-space: nowrap; }
-.save-option:hover:not(:disabled) { background: #fff0e2; }
-.save-option:active:not(:disabled) { background: #ffe3cc; }
-.cancel-option { display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: none; width: 32px; height: 32px; padding: 0; color: #55595e; }
-.add-option:disabled, .save-option:disabled, .inline-editor input:disabled { opacity: 1; color: #6f6a61; border-color: #ddd6c9; background: #e8e1d5; }
-.delete-option:disabled, .cancel-option:disabled { color: #6f6a61; }
-.save-option.processing:disabled { color: #f04b09; background: #fff0e2; border-color: #ff510a; }
+.inline-editor input, .inline-unit-select { width: 160px; min-width: 0; }
+.save-option { position: relative; white-space: nowrap; }
+.cancel-option { width: 32px; padding: 0; }
 .processing > span { visibility: hidden; }
 .saving-spinner { position: absolute; left: calc(50% - 8px); top: calc(50% - 8px); width: 16px; height: 16px; animation: saving-spin 1s linear infinite; }
 @keyframes saving-spin { to { transform: rotate(360deg); } }
-.inline-editor input:focus { border-color: #3898ec; }
-.inline-editor [aria-invalid="true"], .inline-editor [aria-invalid="true"]:focus { border-color: #b53333; }
-.field-error { display: block; margin-top: 4px; color: #b42318; line-height: 20px; }
-.empty-options { color: #85888d; }
-button:focus-visible, input:focus-visible { outline: 2px solid #3898ec; outline-offset: 2px; }
+.inline-editor [aria-invalid="true"], .inline-editor [aria-invalid="true"]:focus { border-color: var(--erp-color-danger); }
+.field-error { display: block; margin-top: 4px; color: var(--erp-color-danger); line-height: 20px; }
+.empty-options { color: var(--erp-color-text-secondary); }
 @media (hover: none) { .delete-option { opacity: 1; pointer-events: auto; } }
+@media (prefers-reduced-motion: reduce) { .saving-spinner { animation: none; } }
 </style>

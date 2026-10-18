@@ -50,7 +50,7 @@ defineExpose({ focus })
 <template>
   <ElSelect
     ref="select"
-    class="material-catalog-select"
+    class="material-catalog-select erp-list-select"
     :class="{ 'is-invalid': invalid, 'is-empty': modelValue === '' }"
     :data-model-value="modelValue"
     :model-value="modelValue"
@@ -86,54 +86,22 @@ defineExpose({ focus })
 </template>
 
 <style scoped>
-.material-catalog-select { width: 100%; min-width: 0; font-size: 13px; }
-.material-catalog-select :deep(.el-select__wrapper) {
-  box-sizing: border-box; height: 32px; min-height: 32px; padding: 0 10px;
-  border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7;
-  color: #1f1d18; box-shadow: none; font-size: 13px; line-height: 20px;
-}
-.material-catalog-select :deep(.el-select__wrapper.is-hovering:not(.is-focused)) { box-shadow: none; }
-.material-catalog-select :deep(.el-select__wrapper.is-focused) { border-color: #3898ec; box-shadow: none; }
-.material-catalog-select :deep(.el-select__wrapper:has(.el-select__input:focus-visible)) { outline: 2px solid #3898ec; outline-offset: 2px; }
-.material-catalog-select.is-invalid :deep(.el-select__wrapper) { border-color: #b53333; }
-.material-catalog-select :deep(.el-select__placeholder) { color: #1f1d18; }
-.material-catalog-select.is-empty :deep(.el-select__wrapper:not(.is-disabled) .el-select__placeholder) { color: #968f84; }
-.material-catalog-select :deep(.el-select__caret) { color: #6f6a61; font-size: 16px; }
-.material-catalog-select :deep(.el-select__input) {
-  height: 20px; min-height: 0; padding: 0; border: 0; border-radius: 0;
-  color: #1f1d18; background: transparent; box-shadow: none; outline: none; font: inherit;
-}
-.material-catalog-select :deep(.el-select__wrapper.is-disabled),
-.material-catalog-select :deep(.el-select__wrapper.is-disabled:hover) {
-  border-color: #ddd6c9; background: #e8e1d5; color: #6f6a61; opacity: 1; box-shadow: none; outline: none;
-}
-.material-catalog-select :deep(.el-select__wrapper.is-disabled .el-select__selected-item) { color: #6f6a61; }
+.material-catalog-select { width: 100%; min-width: 0; }
+.material-catalog-select.is-invalid :deep(.el-select__wrapper) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-color-danger) inset; }
+.material-catalog-select.is-empty :deep(.el-select__wrapper:not(.is-disabled) .el-select__placeholder) { color: var(--erp-input-placeholder); }
+.material-catalog-select :deep(.el-select__caret) { color: var(--erp-input-text); font-size: 16px; }
+.material-catalog-select :deep(.el-select__input) { height: 20px; min-height: 0; padding: 0; border: 0; border-radius: 0; color: var(--erp-input-text); background: transparent; box-shadow: none; outline: none; font: inherit; }
 </style>
-
 <style>
-/* 弹层挂到 body；专用类将这些规范限定在原料管理的选择器。 */
-.material-catalog-select-popper.el-popper {
-  box-sizing: border-box; max-width: calc(100vw - 16px); padding: 0; overflow: hidden;
-  border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; box-shadow: none;
-  color: #1f1d18; font-family: inherit; font-size: 13px;
-}
-.material-catalog-select-popper .el-select-dropdown { border: 0; border-radius: 5px; background: transparent; box-shadow: none; }
+.material-catalog-select-popper.el-popper { box-sizing: border-box; max-width: calc(100vw - 16px); padding: 0; overflow: hidden; border: 1px solid var(--erp-dropdown-border); border-radius: var(--erp-radius-control); background: var(--erp-dropdown-background); box-shadow: var(--erp-overlay-shadow); color: var(--erp-dropdown-text); font-family: inherit; font-size: 13px; }
+.material-catalog-select-popper .el-select-dropdown { border: 0; border-radius: var(--erp-radius-control); background: transparent; box-shadow: none; }
 .material-catalog-select-popper .el-select-dropdown__wrap { max-height: var(--material-catalog-list-max-height, 240px); }
 .material-catalog-select-popper .el-select-dropdown__list { padding: 0; }
-.material-catalog-select-popper .el-select-dropdown__item {
-  display: flex; align-items: center; gap: 8px; box-sizing: border-box; height: 32px;
-  padding: 0 10px; border: 0; color: #1f1d18; background: #fcfbf7;
-  font-size: 13px; font-weight: 400; line-height: 20px;
-}
-.material-catalog-select-popper .el-select-dropdown__item:hover,
-.material-catalog-select-popper .el-select-dropdown__item.is-hovering { background: #fff6ea; }
-.material-catalog-select-popper .el-select-dropdown__item.is-selected,
-.material-catalog-select-popper .el-select-dropdown__item.is-selected:hover,
-.material-catalog-select-popper .el-select-dropdown__item.is-selected.is-hovering { background: #fff4e6; color: #c84e28; font-weight: 400; }
-.material-catalog-select-popper .el-select-dropdown__item.is-disabled,
-.material-catalog-select-popper .el-select-dropdown__item.is-disabled.is-hovering,
-.material-catalog-select-popper .el-select-dropdown__item.is-disabled:hover { color: #6f6a61; background: #fcfbf7; cursor: not-allowed; }
+.material-catalog-select-popper .el-select-dropdown__item { display: flex; align-items: center; gap: 8px; box-sizing: border-box; height: 32px; padding: 0 10px; border: 0; color: var(--erp-dropdown-text); background: var(--erp-dropdown-background); font-size: 13px; font-weight: 400; line-height: 20px; }
+.material-catalog-select-popper .el-select-dropdown__item:hover, .material-catalog-select-popper .el-select-dropdown__item.is-hovering { background: var(--erp-dropdown-hover-background); }
+.material-catalog-select-popper .el-select-dropdown__item.is-selected, .material-catalog-select-popper .el-select-dropdown__item.is-selected:hover, .material-catalog-select-popper .el-select-dropdown__item.is-selected.is-hovering { background: var(--erp-dropdown-selected-background); color: var(--erp-dropdown-selected-text); font-weight: 400; }
+.material-catalog-select-popper .el-select-dropdown__item.is-disabled, .material-catalog-select-popper .el-select-dropdown__item.is-disabled.is-hovering, .material-catalog-select-popper .el-select-dropdown__item.is-disabled:hover { color: var(--erp-input-disabled-text); background: var(--erp-input-disabled-background); cursor: not-allowed; }
 .material-catalog-select-popper .material-catalog-select-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .material-catalog-select-popper .material-catalog-select-check { flex: 0 0 16px; width: 16px; height: 16px; }
-.material-catalog-select-popper .el-select-dropdown__empty { color: #6f6a61; font-size: 13px; }
+.material-catalog-select-popper .el-select-dropdown__empty { color: var(--erp-color-text-secondary); font-size: 13px; }
 </style>

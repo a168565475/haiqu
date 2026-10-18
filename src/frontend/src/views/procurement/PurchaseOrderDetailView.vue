@@ -183,17 +183,17 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </script>
 
 <template>
-  <section class="purchase-detail-page" data-testid="purchase-order-detail" :aria-busy="loading">
+  <section class="purchase-detail-page erp-glass-detail" data-testid="purchase-order-detail" :aria-busy="loading">
     <header class="detail-heading">
       <div class="heading-identity"><h1>采购订单详情</h1><span v-if="order" class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span><span class="readonly-label">只读</span></div>
       <div class="heading-actions">
-        <button v-if="order && canReadSheets && order.status !== 'DRAFT'" class="detail-button" @click="openSheets">查看采购表</button>
-        <button class="detail-button brand-button" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : '采购订单' }}</button>
+        <button v-if="order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
+        <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : '采购订单' }}</button>
       </div>
     </header>
     <div v-if="!canRead" class="detail-state" role="status">无权查看采购明细，请联系管理员开通相应权限。</div>
     <div v-else-if="loading" class="detail-state" role="status">正在加载采购明细…</div>
-    <div v-else-if="errorMessage" class="detail-state error-state" role="alert"><p>{{ errorMessage }}</p><button class="detail-button" @click="load">重新加载</button></div>
+    <div v-else-if="errorMessage" class="detail-state error-state" role="alert"><p>{{ errorMessage }}</p><button class="detail-button erp-list-button erp-button-motion" @click="load">重新加载</button></div>
     <template v-else-if="order">
       <dl class="order-metadata">
         <div><dt>采购单号</dt><dd :title="order.order_number">{{ order.order_number }}</dd></div>
@@ -212,6 +212,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
         <div><dt>采购员</dt><dd :title="order.created_by_name">{{ order.created_by_name || '—' }}</dd></div>
         <div><dt>采购金额{{ order.currency_code && order.currency_code !== 'CNY' ? `（${order.currency_code}）` : '' }}</dt><dd class="order-amount">{{ order.total_amount === null ? '—' : `${order.currency_symbol || ''}${formatMoney(order.total_amount)}` }}</dd></div>
       </dl>
+      <section class="detail-content-card">
       <nav class="detail-tabs" role="tablist" aria-label="采购明细分类">
         <button v-for="(tab, index) in tabs" :id="`purchase-detail-tab-${tab.key}`" :key="tab.key" role="tab" :aria-selected="activeTab === tab.key" :aria-controls="`purchase-detail-panel-${tab.key}`" :tabindex="activeTab === tab.key ? 0 : -1" :class="{ selected: activeTab === tab.key }" @click="activeTab = tab.key" @keydown="switchTab($event, index)">{{ tab.label }}<span v-if="tab.count !== undefined">{{ tab.count }}</span></button>
       </nav>
@@ -230,68 +231,70 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
         </div>
       </div>
       <footer v-if="activeTab !== 'completion'" class="completion-note"><div><strong>完成备注：</strong><span>{{ order.completion_remark || '—' }}</span></div><div><strong>完成人：</strong><span>{{ order.completed_by_name || '—' }}</span><span>{{ formatTime(order.completed_at) }}</span></div></footer>
+      </section>
     </template>
   </section>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-.purchase-detail-page { color: token.$crm-text-primary; font-family: token.$crm-font-body; font-size: 12px; min-width: 0; }
-.detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 46px; margin-bottom: 14px; }
-.heading-identity, .heading-actions { display: flex; align-items: center; gap: 14px; }
-.detail-heading h1 { margin: 0; font: 600 34px/44px token.$crm-font-display; }
+@use '@/styles/theme/detail' as detail;
+.purchase-detail-page { color: token.$crm-text-primary; font-family: token.$crm-font-body; font-size: 13px; min-width: 0; container-type: inline-size; background: transparent; }
+.detail-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; min-height: 46px; margin-bottom: 14px; }
+.heading-identity, .heading-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.detail-heading h1 { margin: 0; font: 700 36px/44px token.$crm-font-body; }
 .readonly-label { color: token.$crm-text-secondary; }
-.detail-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; height: 32px; min-height: 32px; padding: 0 16px; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 500 12px/18px token.$crm-font-body; cursor: pointer; white-space: nowrap; }
+.detail-button { white-space: nowrap; }
 .detail-button svg { width: 16px; height: 16px; }
-.detail-button:hover { background: token.$crm-color-row-hover; }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
 .material-attribute-tooltip > div { display: flex; gap: 8px; }
-.material-attribute-tooltip span { color: #b9c0cc; min-width: 42px; }
-.brand-button { color: token.$crm-primary; border-color: token.$crm-primary; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .detail-button:focus-visible, .supplier-count:focus-visible, .detail-tabs button:focus-visible, .detail-table-scroll:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
-.detail-tag { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: #faf9f5; background: token.$crm-neutral; font: 500 12px/18px token.$crm-font-body; white-space: nowrap; }
-.detail-tag.success { background: token.$crm-success; } .detail-tag.warning { background: token.$crm-warning; } .detail-tag.info { background: token.$crm-info; }
-.order-metadata { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0 0 14px; padding: 8px 0; background: token.$crm-color-surface; border: 1px solid token.$crm-border-default; border-radius: 5px; }
-.order-metadata > div { min-width: 0; padding: 8px 16px; position: relative; }
-.order-metadata > div:not(:nth-child(5n))::after { content: ''; position: absolute; top: 10px; bottom: 10px; right: 0; width: 1px; background: token.$crm-border-default; }
-.order-metadata > div:nth-child(n + 6) { border-top: 1px solid token.$crm-border-default; }
-dt { color: token.$crm-text-secondary; font-size: 11px; line-height: 16px; }
-.order-metadata dd { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; }
+.detail-tag { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; color: var(--erp-color-text-inverse); background: var(--erp-tag-neutral-background); font: 500 12px/18px token.$crm-font-body; white-space: nowrap; }
+.detail-tag.success { background: var(--erp-tag-success-background); } .detail-tag.warning { background: var(--erp-tag-warning-background); } .detail-tag.info { background: var(--erp-tag-info-background); }
+.order-metadata { @include detail.surface; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin: 0 0 14px; padding: 16px; }
+.order-metadata > div { min-width: 0; }
+dt { color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
+.order-metadata dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; line-height: 20px; }
+.detail-content-card { @include detail.surface; padding: 14px 16px 16px; }
 .supplier-count { cursor: help; border-bottom: 1px dashed token.$crm-border-strong; }
 .order-metadata .order-amount { color: token.$crm-primary; font-weight: 600; }
-.detail-tabs { display: flex; gap: 20px; align-items: center; height: 46px; border-bottom: 1px solid token.$crm-border-default; margin-bottom: 14px; }
+.detail-tabs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 46px; border-bottom: 1px solid token.$crm-border-subtle; margin-bottom: 14px; }
 .detail-tabs button { position: relative; height: 32px; padding: 0 16px; border: 0; background: transparent; color: token.$crm-text-primary; font: 500 13px/18px token.$crm-font-body; cursor: pointer; }
 .detail-tabs button span { margin-left: 8px; font-size: 12px; }
 .detail-tabs button.selected { color: token.$crm-primary; }
-.detail-tabs button.selected::after { content: ''; position: absolute; height: 4px; background: token.$crm-primary; bottom: -7px; left: 0; right: 0; }
-.detail-table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid token.$crm-border-default; border-radius: 5px; background: token.$crm-color-surface; }
+.detail-tabs button.selected::after { content: ''; position: absolute; height: 2px; background: token.$crm-primary; bottom: 0; left: 16px; right: 16px; }
+.detail-table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--erp-table-grid); border-radius: var(--erp-radius-control); background: var(--erp-table-body-fill); }
 .detail-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-.detail-table th, .detail-table td { box-sizing: border-box; padding: 0 16px; text-align: left; border-right: 1px solid token.$crm-border-default; border-bottom: 1px solid token.$crm-border-default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-table th, .detail-table td { box-sizing: border-box; padding: 0 16px; text-align: left; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .detail-table th:last-child, .detail-table td:last-child { border-right: 0; }
 .detail-table thead tr, .detail-table th { height: 44px; }
-.detail-table th { color: token.$crm-text-secondary; background: token.$crm-color-subtle; font-size: 11px; font-weight: 500; line-height: 16px; }
+.detail-table th { color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; font-weight: 500; line-height: 16px; }
 .detail-table tbody tr, .detail-table tfoot tr, .detail-table td { height: 40px; }
-.detail-table td { color: token.$crm-text-regular; font-size: 12px; line-height: 18px; }
+.detail-table td { color: var(--erp-table-text); font-size: 12px; line-height: 18px; }
 .cell-text { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.detail-table td.material-name { font-size: 13px; line-height: 20px; font-weight: 500; color: token.$crm-text-primary; }
-.detail-table td.money-cell, .detail-table tfoot td { font-size: 13px; font-weight: 600; color: token.$crm-text-primary; }
-.detail-table tfoot td:nth-child(8) { color: token.$crm-primary; }
+.detail-table td.material-name { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--erp-table-text); }
+.detail-table td.money-cell, .detail-table tfoot td { font-size: 13px; font-weight: 600; color: var(--erp-table-text); }
+.detail-table tfoot td:nth-child(8) { color: var(--erp-table-text); }
 .detail-table .numeric { text-align: right; }
-.detail-table tbody tr:hover { background: token.$crm-color-row-hover; }
+.detail-table tbody tr:hover { background: var(--erp-color-hover); }
 .detail-table tfoot tr:last-child td, .detail-table:not(:has(tfoot)) tbody tr:last-child td { border-bottom: 0; }
 .detail-table .empty-record { text-align: center; color: token.$crm-text-muted; }
-.completion-note { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; min-height: 40px; box-sizing: border-box; padding: 10px 16px; margin-top: 14px; background: token.$crm-color-surface; line-height: 20px; }
+.completion-note { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 14px; min-height: 40px; box-sizing: border-box; padding-top: 14px; margin-top: 14px; border-top: 1px solid token.$crm-border-subtle; line-height: 20px; }
 .completion-note > div { display: flex; gap: 8px; min-width: 0; }
 .completion-note > div:first-child { flex: 1; overflow-wrap: anywhere; }
 .completion-note strong { flex-shrink: 0; font-weight: 500; }
-.completion-record { padding: 16px; background: token.$crm-color-surface; border: 1px solid token.$crm-border-default; border-radius: 5px; }
+.completion-record { @include detail.inset; padding: 16px; }
 .completion-record dl { display: grid; grid-template-columns: 1fr 1fr 2fr; margin: 0; gap: 16px; }
 .completion-record dd { margin: 8px 0 0; }
 .completion-record p:not(.empty-record) { display: flex; gap: 24px; margin: 16px 0 0; padding-top: 16px; border-top: 1px solid token.$crm-border-default; white-space: pre-wrap; overflow-wrap: anywhere; }
 .completion-record p > span { flex-shrink: 0; color: token.$crm-text-secondary; }
-.detail-state { padding: 32px; text-align: center; background: token.$crm-color-surface; color: token.$crm-text-secondary; }
+.detail-state { @include detail.surface; padding: 32px; text-align: center; color: token.$crm-text-secondary; }
 .error-state { color: token.$crm-danger; } .empty-record { text-align: center; color: token.$crm-text-secondary; }
 .supplier-tooltip-content { max-width: 460px; max-height: 320px; overflow: auto; font: 12px/22px token.$crm-font-body; color: token.$crm-text-primary; }
 .supplier-tooltip-content ul { margin: 6px 0 0; padding: 0 0 0 18px; } .supplier-tooltip-content li { overflow-wrap: anywhere; }
-:global(.purchase-detail-suppliers-tooltip.el-popper) { border: 1px solid #ddd6c9; border-radius: 5px; background: #fcfbf7; padding: 10px 14px; }
+:global(.purchase-detail-suppliers-tooltip.el-popper) { border: 1px solid var(--erp-color-border); border-radius: var(--erp-radius-control); background: var(--erp-color-surface); padding: 10px 14px; }
+@container (max-width: 1000px) { .order-metadata { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (max-width: 650px) { .order-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } .completion-record dl { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 420px) { .order-metadata { grid-template-columns: minmax(0, 1fr); } }
 </style>

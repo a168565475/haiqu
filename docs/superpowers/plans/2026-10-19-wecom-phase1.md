@@ -21,7 +21,7 @@
 
 认证：`GET /api/auth/wecom/start/`、`GET /api/auth/wecom/callback/`；成功回跳本站，待授权到 `/auth/waiting-role`，失败到 `/auth/wecom-error?reason=<公开错误码>`。不得在URL携带凭据或原始第三方错误。`/api/auth/me/` 用户增加 `waiting_for_role: boolean`；原有账号默认false。
 
-2026-10-19 用户更正主页要求：应用主页保留 `https://erp.cnhitree.com`。前端在会话查询成功确认匿名、企业微信环境且访问受保护页面时自动进入现有 start；普通浏览器保留密码登录。显式 `/login`、错误页与等待页不自动授权，已有会话不覆盖；匿名回跳用仅含布尔值的会话存储标记防循环，存储不可用则保留密码入口。后端 `login_url` 仍是 start，管理页工作台主页改展示 `erp_origin`；尚未发布及真实验收，见 `qa/wecom_home_entry_20261019/report.md`。
+2026-10-19 用户更正主页要求：应用主页保留 `https://erp.cnhitree.com`。前端在会话查询成功确认匿名、企业微信环境且访问受保护页面时自动进入现有 start；普通浏览器保留密码登录。显式 `/login`、错误页与等待页不自动授权，已有会话不覆盖；匿名回跳用仅含布尔值的会话存储标记防循环，存储不可用则保留密码入口。后端 `login_url` 仍是 start，管理页工作台主页改展示 `erp_origin`；已随 `20261019-122442` 发布，普通浏览器公网只读核验通过，真实企业客户端验收仍待进行。本机记录见 `qa/wecom_home_entry_20261019/report.md`，部署记录见 `docs/deployment/release_20261019_122442.md`。
 
 管理接口均要求 `IsAuthenticated + HasActiveEmployee + CanManageAccess`，沿用当前管理员边界。
 

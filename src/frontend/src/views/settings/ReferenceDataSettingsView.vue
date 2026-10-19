@@ -39,7 +39,6 @@ import {
   updateDictionaryType,
   updateSystemParameter,
 } from '@/api/referenceData'
-import ResizableDrawerHandle from '@/components/ResizableDrawerHandle.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useReferenceOptionsStore } from '@/stores/referenceOptions'
 import type {
@@ -727,8 +726,7 @@ onMounted(loadPage)
       <template #footer><el-button @click="typeDialogVisible = false">取消</el-button><el-button type="primary" :loading="typeSaving" @click="saveType">保存草稿</el-button></template>
     </el-dialog>
 
-    <el-drawer v-model="itemDrawerVisible" :title="`${managedType?.chinese_name ?? ''} · 字典项管理`" size="760px" class="system-settings-dialog">
-      <ResizableDrawerHandle />
+    <el-dialog v-model="itemDrawerVisible" :title="`${managedType?.chinese_name ?? ''} · 字典项管理`" width="760px" class="system-settings-dialog">
       <div class="drawer-toolbar">
         <span>停用项保留历史显示，新建业务不再可选。</span>
         <el-button v-if="can(permissions.addItem)" type="primary" :icon="Plus" @click="openCreateItem(managedType ?? undefined)">新增字典项</el-button>
@@ -746,7 +744,7 @@ onMounted(loadPage)
           </template>
         </el-table-column>
       </el-table>
-    </el-drawer>
+    </el-dialog>
 
     <el-dialog v-model="itemDialogVisible" :title="itemEditing ? '编辑字典项' : '新增字典项'" width="620px" class="system-settings-dialog" draggable destroy-on-close>
       <el-form ref="itemFormRef" :model="itemForm" :rules="itemRules" label-position="top">
@@ -769,15 +767,14 @@ onMounted(loadPage)
       <template #footer><el-button @click="itemDialogVisible = false">取消</el-button><el-button type="primary" :loading="itemSaving" @click="saveItem">保存草稿</el-button></template>
     </el-dialog>
 
-    <el-drawer v-model="parameterDrawerVisible" title="全部业务参数" size="680px" class="system-settings-dialog">
-      <ResizableDrawerHandle />
+    <el-dialog v-model="parameterDrawerVisible" title="全部业务参数" width="680px" class="system-settings-dialog">
       <el-table :data="systemParameters">
         <el-table-column prop="chinese_name" label="参数" min-width="170" />
         <el-table-column label="当前草稿值" min-width="130"><template #default="{ row }">{{ formatParameterValue(row) }}</template></el-table-column>
         <el-table-column prop="code" label="编码" min-width="200" show-overflow-tooltip />
         <el-table-column label="操作" width="76" fixed="right"><template #default="{ row }"><el-button v-if="can(permissions.changeParameter)" link type="primary" @click="openParameterEditor(row)">编辑</el-button></template></el-table-column>
       </el-table>
-    </el-drawer>
+    </el-dialog>
 
     <el-dialog v-model="parameterDialogVisible" title="编辑业务参数" width="500px" class="system-settings-dialog" draggable destroy-on-close>
       <template v-if="parameterEditor">

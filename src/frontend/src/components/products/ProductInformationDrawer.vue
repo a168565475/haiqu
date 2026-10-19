@@ -518,7 +518,7 @@ defineExpose({ hasUnsavedChanges: isDirty, confirmDiscard, canLeave })
 :global(.product-information-dialog .app-window-dialog__footer .el-button) { width: 108px; height: 36px; border-radius: token.$crm-radius-2; }
 :global(.product-information-dialog .app-window-dialog__footer .el-button--primary) { width: 132px; }
 .dialog-subtitle { margin: 14px 0 0; color: token.$crm-text-secondary; font: 12px/18px token.$crm-font-body; }
-.drawer-content { min-height: 100%; }
+.drawer-content { display: flow-root; }
 .drawer-content > .el-alert { margin: 12px 0; }
 .drawer-state { min-height: 360px; display: grid; place-content: center; justify-items: center; gap: 16px; color: token.$crm-text-secondary; }
 .product-form { padding: 4px 0 12px; }

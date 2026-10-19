@@ -158,7 +158,7 @@ onMounted(loadPage)
               <button v-for="tab in categoryTabs" :key="tab.key" type="button" :class="{ active: categoryFilter === tab.key }" @click="categoryFilter = tab.key">{{ tab.label }} {{ tab.count }}</button>
             </nav>
             <div class="issue-table-wrap">
-              <table class="issue-table">
+              <table class="erp-table-editor issue-table">
                 <thead><tr><th>材料分类</th><th>材料名称</th><th>规格</th><th>材质</th><th>颜色 / 色卡 / 色号</th><th>需求数量</th><th>仓库可供</th><th>需采购</th><th>已到货</th><th>实际领料</th><th>未领缺口</th><th>单位</th><th>状态</th></tr></thead>
                 <tbody>
                   <tr v-for="line in visibleLines" :key="line.id || line.lineKey">

@@ -133,6 +133,7 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         'sample-create-layout': route.name === 'sample-new',
         'sample-material-layout': route.name === 'sample-materials',
         'bom-create-layout': route.name === 'bom-create',
+        'bom-editor-layout': route.name === 'bom-edit',
         'viewport-table-layout': viewportTableRoute,
         'content-scroll-layout': contentScrollRoute,
       }"
@@ -176,6 +177,7 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .glass-detail-layout.viewport-table-layout :deep(#erp-main-content) { overflow: hidden; }
 .glass-detail-layout :deep(#erp-main-content .page-container) { padding: 14px; }
 .glass-form-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+.glass-form-layout.bom-editor-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .settings-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .settings-layout :deep(.page-container) { padding: 14px; }
 .production-scheduling-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }

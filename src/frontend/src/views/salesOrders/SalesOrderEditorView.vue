@@ -1085,7 +1085,7 @@ watch(() => form.currency_code, () => { if (trackingChanges.value) void loadExch
             <div class="product-image"><el-icon><Picture /></el-icon><span>产品主图</span></div>
             <div><strong>{{ lines.length ? `${lines.length} 个订单产品` : '尚未选择产品' }}</strong><p>订单金额 {{ form.currency_code }} {{ orderTotal.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }} · 支持多产品按不同交期分批</p></div>
           </div>
-          <el-table :data="lines" class="product-table scroll-actions-table" empty-text="请从报价添加产品或手工添加产品">
+          <el-table :data="lines" class="erp-table-editor product-table scroll-actions-table" empty-text="请从报价添加产品或手工添加产品">
             <el-table-column label="类别" width="104"><template #default="{ row }"><span class="flat-product-cell" :title="productCategoryDisplay(row)">{{ productCategoryDisplay(row) }}</span></template></el-table-column>
             <el-table-column label="品名" min-width="148"><template #default="{ row }"><span class="flat-product-cell" :title="productDisplayName(row)">{{ productDisplayName(row) }}</span></template></el-table-column>
             <el-table-column label="规格" min-width="142"><template #default="{ row }"><span class="flat-product-cell" :title="productSpecificationDisplay(row)">{{ productSpecificationDisplay(row) }}</span></template></el-table-column>

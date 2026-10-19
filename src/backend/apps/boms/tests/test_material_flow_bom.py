@@ -171,7 +171,7 @@ class MaterialFlowBomTests(TestCase):
         cutting_section = BomSection.objects.filter(bom=self.bom, title="裁剪明细").first()
         fabric = BomLine.objects.create(section=fabric_section, line_number=1, part_name="座布原料", unit="米", unit_consumption="2.5",
             raw_values={"source_inventory_material_id": str(self.fabric.pk)})
-        cutting = BomLine.objects.create(section=cutting_section, line_number=1, part_name="座布裁片", unit="套",
+        cutting = BomLine.objects.create(section=cutting_section, line_number=1, part_name="座布裁片", specification="400 × 600 mm", unit="套",
             fabric_source_line=fabric, fabric_meters_per_set="1.5")
         return fabric, cutting
 

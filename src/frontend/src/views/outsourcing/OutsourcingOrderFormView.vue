@@ -485,7 +485,7 @@ onMounted(() => { void loadOptions() })
 
         <section class="form-card processing-card">
           <div class="card-title-row"><h2>加工明细</h2><div class="card-title-actions"><ElButton v-if="canCreateFactory" :disabled="!craftId || bomLoading" @click="openFactoryDialog">＋ 添加加工厂</ElButton><ElButton :disabled="!selectedProduct || bomLoading" @click="openProcessingDialog">＋ 选择加工明细</ElButton></div></div>
-          <ElTable class="scroll-actions-table" :data="processingRows" :max-height="272" border empty-text="选择产品后，从对应 BOM 加工明细中选择" @cell-mouse-enter="showProcessingHint" @cell-mouse-leave="hideProcessingHint">
+          <ElTable class="erp-table-editor scroll-actions-table" :data="processingRows" :max-height="272" border empty-text="选择产品后，从对应 BOM 加工明细中选择" @cell-mouse-enter="showProcessingHint" @cell-mouse-leave="hideProcessingHint">
             <ElTableColumn type="index" label="#" width="45" />
             <ElTableColumn prop="part_name" label="部位" min-width="120" /><ElTableColumn prop="specification" label="规格" min-width="100" />
             <ElTableColumn label="订单需求" width="108"><template #default="{ row }">{{ quantityText(row.required_quantity) }} {{ row.unit }}</template></ElTableColumn>
@@ -501,7 +501,7 @@ onMounted(() => { void loadOptions() })
 
         <section class="form-card material-card">
           <div class="card-title-row"><h2>{{ materialCardTitle }}</h2><ElButton :disabled="!selectedProduct || bomLoading" @click="openMaterialDialog">＋ 添加五金 / 辅料</ElButton></div>
-          <ElTable class="scroll-actions-table" :data="materialRows" :max-height="272" border empty-text="选择加工明细后，再选择本次需要外发的 BOM 材料">
+          <ElTable class="erp-table-editor scroll-actions-table" :data="materialRows" :max-height="272" border empty-text="选择加工明细后，再选择本次需要外发的 BOM 材料">
             <ElTableColumn type="index" label="#" width="45" /><ElTableColumn prop="name" label="原材料" min-width="150" /><ElTableColumn prop="specification" label="规格" min-width="120" />
             <ElTableColumn label="加工厂 / 部位" min-width="230"><template #default="{ row }"><span v-if="materialPlan(row)">{{ availableFactories.find(item => item.id === row.factory_id)?.name || '待选择加工厂' }} / {{ processingRows.find(item => item.id === row.processing_bom_line_id)?.part_name }}</span><ElSelect v-else :model-value="materialAllocationKey(row)" @change="selectMaterialAllocation(row, $event)"><ElOption v-for="item in processingRows.filter(item => item.factory_id)" :key="item.row_key" :value="`${item.id}|${item.factory_id}`" :label="`${availableFactories.find(factory => factory.id === item.factory_id)?.name} / ${item.part_name}`" /></ElSelect></template></ElTableColumn>
             <ElTableColumn label="本次输入" width="180"><template #default="{ row }"><span v-if="materialPlan(row)">{{ row.planned_issue_quantity || '—' }} {{ row.unit }}</span><ElInput v-else v-model="row.planned_issue_quantity" /></template></ElTableColumn>

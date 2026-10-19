@@ -101,7 +101,7 @@ function remainder(row: MaterialRequirement) {
   <div class="issue-partitions">
     <section class="mi-surface partition" data-testid="raw-partition">
       <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根及米数扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
-      <ElTable class="scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
+      <ElTable class="erp-table-editor scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
          <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
@@ -124,7 +124,7 @@ function remainder(row: MaterialRequirement) {
     </section>
     <section class="mi-surface partition" data-testid="semi-partition">
       <header><div><h2>外发回库半成品领料</h2><span>管材按支、裁片按套领取，按部位分别计算</span></div><ElButton @click="open('SEMI')">＋ 添加半成品</ElButton></header>
-      <ElTable class="scroll-actions-table" :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
+      <ElTable class="erp-table-editor scroll-actions-table" :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
          <ElTableColumn label="半成品 / 部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>

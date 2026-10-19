@@ -94,11 +94,11 @@ describe('主题运行时', () => {
     expect(detailControls).not.toMatch(/\.el-overlay :is\(\.el-dialog, \.el-drawer\)[\s\S]*@include detail\.surface/)
   })
 
-  it('所有业务弹窗采用已确认的平面表单，保留表格和纸面例外', () => {
+  it('所有业务弹窗采用平面表单，表格仅保留紧凑尺寸，纸面保持例外', () => {
     const controls = readFileSync(resolve(__dirname, 'styles/theme/_controls.scss'), 'utf8')
     const popup = controls.slice(controls.indexOf('body .app-window-dialog'), controls.indexOf('\n.el-table {'))
 
-    expect(popup).toContain('body .app-window-dialog.el-dialog, body .el-message-box {')
+    expect(popup).toContain('body .app-window-dialog.el-dialog, body .el-message-box, body .erp-table-editor, body .erp-flat-form {')
     expect(popup).toContain('height: 32px !important')
     expect(popup).toContain('padding: 0 10px !important')
     expect(popup).toContain('border-radius: 5px !important')
@@ -108,7 +108,8 @@ describe('主题运行时', () => {
     expect(popup).not.toContain('var(--erp-input-surface)')
     expect(popup).not.toContain('.customer-create-dialog')
     expect(popup).toContain('var(--erp-dialog-input-focus-border)')
-    expect(popup).toContain('.el-table *')
+    expect(popup).not.toContain('.contract-sheet *, .el-table *')
+    expect(popup).toContain('&:not(:where(.el-table *, .erp-table-editor *))')
     expect(popup).toContain('.paper *')
     expect(controls).toContain('.el-input__wrapper, .el-select__wrapper { background: var(--erp-input-surface); }')
   })

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import { cuttingSpecificationError } from '@/utils/cuttingSpecification'
 
 import { createRawMaterial, fetchRawMaterialOptions } from '@/api/rawMaterials'
 import type {
@@ -28,6 +30,7 @@ const props = defineProps<{
   title?: string
   subjectLabel?: string
   testId?: string
+  requireCuttingSpecification?: boolean
   stageMaterial?: (payload: RawMaterialInput, display: Pick<RawMaterialInformation, 'category_name' | 'unit_name' | 'unit_code' | 'color_name'>) => void | Promise<void>
 }>()
 
@@ -88,7 +91,12 @@ const rules: FormRules<HardwareRawMaterialFormState> = {
   category: [{ required: true, message: '请选择类别', trigger: 'change' }],
   material_number: [{ validator: requiredText('请输入品号'), trigger: 'blur' }],
   material_name: [{ validator: requiredText('请输入品名'), trigger: 'blur' }],
-  specification: [{ validator: requiredText('请输入规格'), trigger: 'blur' }],
+  specification: [{ validator: (_rule, value, callback) => {
+    if (props.requireCuttingSpecification) {
+      const error = cuttingSpecificationError(value)
+      callback(error ? new Error(error) : undefined)
+    } else requiredText('请输入规格')(_rule, value, callback)
+  }, trigger: 'blur' }],
   unit: [{ required: true, message: '请选择单位', trigger: 'change' }],
   warehouse_number: [{ required: true, message: '请选择仓库', trigger: 'change' }],
 }
@@ -258,7 +266,7 @@ watch(
 </script>
 
 <template>
-  <el-dialog
+  <AppWindowDialog
     v-model="dialogVisible"
     :data-testid="testId || 'hardware-raw-material-create-dialog'"
     :title="title || `新增${subjectLabel || categoryName || '原料'}`"
@@ -333,6 +341,7 @@ watch(
         </el-form-item>
         <el-form-item label="规格" prop="specification" required>
           <el-input v-model="form.specification" :aria-label="`${subjectLabel || categoryName || '原料'}规格`" maxlength="300" placeholder="请输入规格" />
+          <small v-if="requireCuttingSpecification">规格必填，请填写实际尺寸或明确型号，不能用“/”等占位符。</small>
         </el-form-item>
         <el-form-item label="单位" prop="unit" required>
           <el-select v-model="form.unit" :aria-label="`${subjectLabel || categoryName || '原料'}单位`" filterable placeholder="请选择单位">
@@ -399,7 +408,7 @@ watch(
         {{ stageMaterial ? '暂存并选中' : '保存' }}
       </el-button>
     </template>
-  </el-dialog>
+  </AppWindowDialog>
 </template>
 
 <style lang="scss" scoped>
@@ -422,16 +431,4 @@ watch(
   width: 100%;
 }
 
-:global(.hardware-raw-material-create-dialog) {
-  max-height: calc(100vh - 32px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  margin-top: 16px !important;
-}
-
-:global(.hardware-raw-material-create-dialog .el-dialog__body) {
-  min-height: 0;
-  overflow-y: auto;
-}
 </style>

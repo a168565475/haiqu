@@ -142,10 +142,10 @@ function close() {
 
 <template>
   <AppWindowDialog :class="embedded ? 'complaint-create-dialog--embedded' : 'complaint-operation-dialog complaint-create-dialog'" :model-value="modelValue" title="新建客诉" :width="1140" :height="embedded ? 'auto' : 850" destroy-on-close :close-on-click-modal="!submitting && !retrying" :close-on-press-escape="!submitting && !retrying" :show-close="!submitting && !retrying" @update:model-value="value => { if (!value) close() }">
-    <div class="create-body" :class="{ 'create-body--embedded erp-glass-list': embedded }">
+    <div class="create-body" :class="{ 'create-body--embedded': embedded }">
       <el-alert v-if="createdComplaint && failedFiles.length" class="upload-warning" type="warning" :closable="false" show-icon :title="`客诉 ${createdComplaint.complaint_code} 已创建，但有 ${failedFiles.length} 张图片上传失败。重试不会重复创建客诉。`" />
       <el-form label-position="top" :disabled="submitting || retrying || !!createdComplaint">
-        <section class="form-column" :class="{ 'erp-list-surface': embedded }">
+        <section class="form-column">
           <h3>基础信息</h3>
           <div class="two-columns">
             <el-form-item label="客户" required><el-select v-model="form.customer_id" filterable remote :remote-method="loadCustomers" :disabled="!!fixedCustomerId" placeholder="请选择客户" @change="loadContacts"><el-option v-if="fixedCustomerId" :label="fixedCustomerName" :value="fixedCustomerId" /><el-option v-for="item in customers" :key="item.id" :label="`${item.account_name}（${item.account_code}）`" :value="item.id" /></el-select></el-form-item>
@@ -156,7 +156,7 @@ function close() {
           <el-form-item label="客诉标题" required><el-input v-model="form.title" maxlength="250" show-word-limit /></el-form-item>
           <el-form-item label="问题描述" required><el-input v-model="form.issue_description" type="textarea" :rows="6" maxlength="5000" show-word-limit /></el-form-item>
         </section>
-        <section class="form-column form-column--right" :class="{ 'erp-list-surface': embedded }">
+        <section class="form-column form-column--right">
           <h3>责任与来源</h3>
           <div class="two-columns"><el-form-item label="负责人"><el-select v-model="form.owner_employee_id" clearable placeholder="默认当前员工"><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item><el-form-item label="协同人"><el-select v-model="form.collaborator_employee_ids" multiple collapse-tags><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select></el-form-item></div>
           <h3 class="subheading">关联订单 <small>订单模块未接入前手工填写</small></h3>
@@ -180,28 +180,19 @@ function close() {
   line-height: 20px;
 
   > :deep(.el-form) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .form-column { min-width: 0; padding: 16px; }
+  .form-column { min-width: 0; padding: 16px; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-surface); }
   h3 { margin: 0 0 14px; font-size: 16px; line-height: 24px; }
   h3.subheading { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--erp-color-border-subtle); }
   h3 small { margin-left: 8px; color: var(--erp-color-text-secondary); font-size: 12px; font-weight: 400; }
   .two-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
   :deep(.el-select), :deep(.el-date-editor) { width: 100%; }
   :deep(.el-form-item__label) { color: var(--erp-color-text-primary); font-size: 13px; }
-  :deep(.el-input__wrapper), :deep(.el-select__wrapper), :deep(.el-textarea__inner) {
-    border-radius: var(--erp-radius-control);
-    background: var(--erp-input-surface);
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
-    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
-    &.is-focus, &.is-focused, &:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
-  }
-  :deep(.el-input__inner), :deep(.el-select__placeholder), :deep(.el-textarea__inner) { font-size: 13px; }
-  :deep(.el-input.is-disabled .el-input__wrapper), :deep(.el-select__wrapper.is-disabled), :deep(.el-textarea.is-disabled .el-textarea__inner) { background: var(--erp-input-disabled-background); }
   :deep(.el-form-item:last-child) { margin-bottom: 0; }
-  .upload-box { display: flex; min-height: 104px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; width: 100%; border: 1px dashed var(--erp-input-border); border-radius: var(--erp-radius-control); color: var(--erp-color-brand); background: var(--erp-glass-inner-background); cursor: pointer; }
+  .upload-box { display: flex; min-height: 104px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; width: 100%; border: 1px dashed var(--erp-input-border); border-radius: var(--erp-radius-control); color: var(--erp-color-brand); background: var(--erp-color-subtle); cursor: pointer; }
   .upload-box input { display: none; }
   .upload-box span { color: var(--erp-color-text-secondary); font-size: 12px; }
   .file-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .file-list span { padding: 5px 8px; border-radius: var(--erp-radius-control); background: var(--erp-glass-inner-background); font-size: 12px; }
+  .file-list span { padding: 5px 8px; border-radius: var(--erp-radius-control); background: var(--erp-color-subtle); font-size: 12px; }
   .file-list span.failed { color: var(--erp-tag-danger-text); background: var(--erp-tag-danger-background); }
 }
 @container (max-width: 720px) { .create-body.create-body--embedded > :deep(.el-form) { grid-template-columns: 1fr; } }
@@ -211,11 +202,6 @@ function close() {
 <style lang="scss">
 .complaint-create-dialog--embedded.app-window-dialog.el-dialog {
   container-type: inline-size;
-  border-color: var(--erp-glass-border);
-  border-radius: var(--erp-glass-radius);
-  background: var(--erp-glass-surface);
-  box-shadow: var(--erp-glass-shadow);
-  backdrop-filter: var(--erp-glass-backdrop);
 
   .app-window-dialog__body { padding: 16px; }
   .app-window-dialog__footer { padding: 12px 16px; background: transparent; }

@@ -87,10 +87,8 @@
 .wr-form-page .wr-wage-line-table .el-table__body td.el-table__cell { height: 40px; padding: 0; }
 .wr-wage-line-table th.el-table__cell .cell { font-weight: 400; }
 .wr-wage-line-table .wr-centered-control .el-input__inner { text-align: center; }
-.wr-status-select .el-select__wrapper { min-height: 24px; color: var(--erp-color-text-inverse); box-shadow: none; }
-.wr-status-select.is-active .el-select__wrapper { border: 1px solid var(--erp-tag-success-border); background: var(--erp-tag-success-background); }
-.wr-status-select.is-void .el-select__wrapper { border: 1px solid var(--erp-tag-danger-border); background: var(--erp-tag-danger-background); }
-.wr-status-select :where(.el-select__selected-item, .el-select__caret) { color: var(--erp-color-text-inverse); }
+.wr-status-select .el-select__wrapper { min-height: 24px; padding: 0 7px; }
+.wr-status-select :where(.el-select__selected-item, .el-select__caret) { color: var(--erp-input-text); }
 .wr-form-page .wr-delete-action.el-button.is-link { min-height: 32px; padding: 0; color: var(--erp-color-info); font-size: 12px; }
 .wr-form-page .wr-delete-action.el-button.is-link:hover { color: var(--erp-color-brand-hover); }
 .wr-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }

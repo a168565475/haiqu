@@ -1286,7 +1286,7 @@ onBeforeUnmount(() => {
             <ElEmpty v-else description="暂无符合条件的时间线记录" />
           </section>
 
-          <section class="customer-timeline-v2__composer erp-list-surface">
+          <section class="customer-timeline-v2__composer erp-list-surface erp-flat-form">
             <header><div><h2>记录沟通</h2><span>保存后写入客户时间轴</span></div></header>
             <ElForm label-position="top">
               <ElFormItem label="沟通方式" required><ElRadioGroup v-model="communicationForm.type"><ElRadioButton v-for="item in communicationTypeOptions" :key="item.id" :value="item.code">{{ item.label }}</ElRadioButton></ElRadioGroup></ElFormItem>
@@ -1601,10 +1601,6 @@ onBeforeUnmount(() => {
 .customer-timeline-v2__composer :deep(.el-form-item) { margin-bottom: 14px; }
 .customer-timeline-v2__composer :deep(.el-form-item__label) { height: auto; margin-bottom: 4px; color: token.$crm-text-regular; font-size: 12px; line-height: 20px; }
 .customer-timeline-v2__composer :deep(.el-select), .customer-timeline-v2__composer :deep(.el-date-editor) { width: 100%; min-width: 0; }
-.customer-timeline-v2__composer :deep(.el-input__wrapper), .customer-timeline-v2__composer :deep(.el-select__wrapper), .customer-timeline-v2__composer :deep(.el-textarea__inner) { border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
-.customer-timeline-v2__composer :deep(.el-input__wrapper:hover), .customer-timeline-v2__composer :deep(.el-select__wrapper:hover), .customer-timeline-v2__composer :deep(.el-textarea__inner:hover) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
-.customer-timeline-v2__composer :deep(.el-input__wrapper.is-focus), .customer-timeline-v2__composer :deep(.el-select__wrapper.is-focused), .customer-timeline-v2__composer :deep(.el-textarea__inner:focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
-.customer-timeline-v2__composer :deep(.el-input__inner), .customer-timeline-v2__composer :deep(.el-select__selected-item), .customer-timeline-v2__composer :deep(.el-textarea__inner) { font-size: 13px; }
 .customer-timeline-v2__composer :deep(.el-radio-group) { display: flex; flex-wrap: wrap; gap: 6px; }
 .customer-timeline-v2__composer :deep(.el-radio-button__inner) { height: 32px; padding: 0 12px; border: 1px solid token.$crm-border-default; border-radius: var(--erp-radius-control); font-size: 12px; line-height: 30px; box-shadow: none; }
 .customer-timeline-v2__form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
@@ -1869,7 +1865,6 @@ onBeforeUnmount(() => {
 }
 
 :global(.customer-detail-dialog) {
-  border-radius: var(--erp-glass-radius) !important;
   --el-color-primary: #{token.$crm-primary};
 }
 
@@ -1880,30 +1875,6 @@ onBeforeUnmount(() => {
 :global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-button) {
   height: 32px !important;
   min-height: 32px !important;
-  border-radius: var(--erp-radius-control) !important;
-}
-
-:global(.customer-detail-dialog .el-input__wrapper),
-:global(.customer-detail-dialog .el-select__wrapper),
-:global(.customer-detail-dialog .el-date-editor.el-input__wrapper),
-:global(.customer-detail-message-box .el-input__wrapper),
-:global(.customer-detail-drawer .el-input__wrapper),
-:global(.customer-detail-drawer .el-select__wrapper),
-:global(.customer-detail-drawer .el-date-editor.el-input__wrapper),
-:global(body:has(.customer-detail-page--compact-controls) .el-dialog .el-input__wrapper),
-:global(body:has(.customer-detail-page--compact-controls) .el-dialog .el-select__wrapper),
-:global(body:has(.customer-detail-page--compact-controls) .el-dialog .el-date-editor.el-input__wrapper),
-:global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-input__wrapper) {
-  height: 32px !important;
-  min-height: 32px !important;
-  border-radius: var(--erp-radius-control) !important;
-}
-
-:global(.customer-detail-dialog .el-textarea__inner),
-:global(.customer-detail-message-box .el-textarea__inner),
-:global(.customer-detail-drawer .el-textarea__inner),
-:global(body:has(.customer-detail-page--compact-controls) .el-dialog .el-textarea__inner),
-:global(body:has(.customer-detail-page--compact-controls) .el-message-box .el-textarea__inner) {
   border-radius: var(--erp-radius-control) !important;
 }
 

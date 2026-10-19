@@ -21,11 +21,13 @@
 
 认证：`GET /api/auth/wecom/start/`、`GET /api/auth/wecom/callback/`；成功回跳本站，待授权到 `/auth/waiting-role`，失败到 `/auth/wecom-error?reason=<公开错误码>`。不得在URL携带凭据或原始第三方错误。`/api/auth/me/` 用户增加 `waiting_for_role: boolean`；原有账号默认false。
 
+2026-10-19 用户更正主页要求：应用主页保留 `https://erp.cnhitree.com`。前端在会话查询成功确认匿名、企业微信环境且访问受保护页面时自动进入现有 start；普通浏览器保留密码登录。显式 `/login`、错误页与等待页不自动授权，已有会话不覆盖；匿名回跳用仅含布尔值的会话存储标记防循环，存储不可用则保留密码入口。后端 `login_url` 仍是 start，管理页工作台主页改展示 `erp_origin`；尚未发布及真实验收，见 `qa/wecom_home_entry_20261019/report.md`。
+
 管理接口均要求 `IsAuthenticated + HasActiveEmployee + CanManageAccess`，沿用当前管理员边界。
 
 - `GET/PATCH /api/v1/wecom/config/`：返回 `{data: config}` 和 `ETag`。首次未配置GET只返回默认值，不写库，ETag为 `"wecom-unconfigured"`。PATCH必须If-Match。
 - config字段：`corp_id, agent_id, erp_origin, enabled, has_secret, has_callback_token, has_callback_aes_key, encryption_ready, configuration_complete, last_check_status (NOT_CHECKED/SUCCESS/FAILED), last_check_message, last_checked_at, login_url, callback_url, trusted_domain`。默认CorpID与AgentID为用户确认值；ERP origin为 `https://erp.cnhitree.com`。`enabled`默认false。
-- PATCH写字段：`corp_id, agent_id, erp_origin, enabled, secret?, callback_token?, callback_aes_key?`。省略密钥代表保留，空串不覆盖；只返回配置布尔值，明文和密文不入响应/审计/日志。用户在界面输入新值后立即清空本地字段。
+- PATCH写字段：`corp_id, agent_id, erp_origin, enabled, secret?, callback_token?, callback_aes_key?`。省略密钥代表保留，空串不覆盖。2026-10-19 用户追加要求覆盖原“只返回状态、保存清空”的方案：ConfigResponse.data 增加 `secret, callback_token, callback_aes_key`（`string | null`），只对原管理员权限返回真实解密值；未保存为空字符串，解密失败字段为 `null`，`credential_read_errors` 列出对应字段名，页面明确提示重新填写。旧密文损坏不阻止关闭入口或替换新凭据；网页登录连接检查不依赖消息回调凭据。页面明文回填，保存/刷新保留；数据库仍加密，响应禁止缓存，审计/日志/浏览器持久化存储不含明文或密文。
 - `POST /api/v1/wecom/config/check/`：必须If-Match，检查服务器到官方应用连接并返回更新后的config及ETag；成功仍不能声称真实工作台登录验收通过。
 - `GET /api/v1/wecom/bindings/?search=&status=&page=1&page_size=20`：`{data: Binding[], count, page, page_size}`。status取 `waiting/active/inactive`，空值全部。Binding字段 `id, user_id, member_name, employee_id, employee_code, employee_name, username, role_status, source, created_at`。
 - `GET /api/v1/wecom/employees/?search=`：`{data: EmployeeOption[]}`，受限最多50条；字段 `id, employee_code, display_name, username, etag`，只显示有效员工，已绑定员工可由后端拒绝或排除。

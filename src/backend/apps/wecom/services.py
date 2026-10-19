@@ -18,9 +18,9 @@ from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.organizations.models import Employee
 from .client import WeComClient, WeComError
-from .credentials import CredentialError, encrypt_secret
+from .credentials import CredentialError, decrypt_secret, encrypt_secret
 from .models import OAuthState, WeComBinding, WeComConfig
-from .selectors import config_etag, config_payload, configuration_complete, get_config, waiting_for_role
+from .selectors import config_etag, config_snapshot, configuration_complete, get_config, waiting_for_role
 
 
 class OAuthFailure(Exception):
@@ -54,16 +54,26 @@ def update_config(request, data):
     actor = require_manager(request)
     config = WeComConfig.objects.select_for_update().first() or WeComConfig()
     require_etag(request.headers.get("If-Match"), config_etag(config))
-    before = config_payload(config)
+    before = config_snapshot(config)
     if data.get("corp_id", config.corp_id) != config.corp_id and WeComBinding.objects.exists():
         raise Conflict("已有成员绑定，不能直接更换企业 ID。")
-    login_changed = any(field in data and data[field] != getattr(config, field) for field in ("corp_id", "agent_id", "erp_origin")) or bool(data.get("secret"))
+    login_changed = any(field in data and data[field] != getattr(config, field) for field in ("corp_id", "agent_id", "erp_origin"))
     for field in ("corp_id", "agent_id", "erp_origin", "enabled"):
         if field in data:
             setattr(config, field, data[field])
     for field in ("secret", "callback_token", "callback_aes_key"):
-        if data.get(field):
+        if not data.get(field):
+            continue
+        ciphertext = getattr(config, field + "_ciphertext")
+        try:
+            current_value = decrypt_secret(ciphertext) if ciphertext else ""
+        except CredentialError:
+            # 已无法读取的旧凭据仍可被管理员提交的新值修复。
+            current_value = None
+        if data[field] != current_value:
             setattr(config, field + "_ciphertext", encrypt_secret(data[field]))
+            if field == "secret":
+                login_changed = True
     if config.enabled and not configuration_complete(config):
         raise ValidationError({"enabled": "请先完整保存网页登录配置并配置服务器加密密钥。"})
     if login_changed:
@@ -75,7 +85,7 @@ def update_config(request, data):
         if _constraint_name(exc) == "wecom_config_singleton_key":
             raise PreconditionFailed() from exc
         raise
-    audit(request, config, "CONFIG_UPDATE", actor=actor, before=before, after=config_payload(config), message="企业微信配置已更新。")
+    audit(request, config, "CONFIG_UPDATE", actor=actor, before=before, after=config_snapshot(config), message="企业微信配置已更新。")
     return config
 
 

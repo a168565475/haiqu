@@ -9,7 +9,7 @@ from apps.material_issues.models import MaterialIssue, MaterialIssueLine, Materi
 from apps.reference_data.models import ProductionUnit, ProductCategory
 from apps.products.models import RawMaterialInformation
 from apps.workshop_config.models import Craft
-from ..models import InternalSemiFinishedReceiptLine, PublicStockBalance
+from ..models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, PublicStockBalance, PublicStockMovement
 from ..public_stock_identity import build_semi_finished_identity
 from ..public_stock_services import credit_public_stock
 from .test_public_stock_services import PublicStockFixture
@@ -73,6 +73,33 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
         self.assertEqual(self.receive(100,100).status_code,201)
         self.assertEqual(sum(InternalSemiFinishedReceiptLine.objects.values_list('input_quantity',flat=True)),100)
         self.assertTrue(all(Decimal(row['can_receive'])==0 for row in self.preview()['lines']))
+
+    def test_missing_cutting_specification_names_part_and_preserves_error(self):
+        part=self.parts[0]
+        part.specification='/'
+        part.save(update_fields=['specification'])
+        balances=list(PublicStockBalance.objects.order_by('id').values_list('id','quantity'))
+        movements=PublicStockMovement.objects.count()
+        receipts=InternalSemiFinishedReceipt.objects.count()
+        receipt_lines=InternalSemiFinishedReceiptLine.objects.count()
+        query={'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING'}
+        payload={**query,'request_id':str(uuid.uuid4()),'zone_id':str(self.semi_zone.pk),
+            'receipt_date':str(timezone.localdate()),'lines':[{'bom_line_id':str(part.pk),'quantity':'1'}]}
+        for action in ('preview','confirm'):
+            with self.subTest(action=action):
+                response=(self.client.get(self.url+'preview/',query) if action=='preview'
+                    else self.client.post(self.url,payload,format='json',HTTP_IF_MATCH='"stale"'))
+                self.assertEqual(response.status_code,400,response.data)
+                error=response.data['error']
+                self.assertEqual(error['code'],'PUBLIC_STOCK_IDENTITY_INCOMPLETE')
+                self.assertEqual(error['meta'],{'field':'specification'})
+                self.assertEqual(error['field_errors']['specification'],'缺少确定的实物属性，空白和占位符不能合并库存。')
+                self.assertIn(part.part_name,error['message'])
+                self.assertIn('规格',error['message'])
+                self.assertEqual(list(PublicStockBalance.objects.order_by('id').values_list('id','quantity')),balances)
+                self.assertEqual(PublicStockMovement.objects.count(),movements)
+                self.assertEqual(InternalSemiFinishedReceipt.objects.count(),receipts)
+                self.assertEqual(InternalSemiFinishedReceiptLine.objects.count(),receipt_lines)
 
     def test_internal_and_external_same_piece_share_balance_and_total_cap(self):
         identity=build_semi_finished_identity(bom_line=self.parts[0],completed_craft=self.external_sewing,unit=self.set_unit)

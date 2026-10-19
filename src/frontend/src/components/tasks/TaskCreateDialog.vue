@@ -120,15 +120,15 @@ watch(() => props.modelValue, async value => {
 
 <template>
   <AppWindowDialog :model-value="modelValue" title="新建任务" :width="984" :height="embedded ? 'auto' : 660" :class="embedded ? 'task-create-dialog--embedded' : 'task-operation-dialog task-create-dialog'" destroy-on-close :close-on-click-modal="!submitting" :close-on-press-escape="!submitting" :show-close="!submitting" @update:model-value="value => { if (!value) close() }">
-    <ElForm v-loading="loadingOptions" label-position="top" :disabled="submitting" class="create-layout" :class="{ 'create-layout--embedded erp-glass-list': embedded }">
-      <section class="edit-column" :class="{ 'erp-list-surface': embedded }">
+    <ElForm v-loading="loadingOptions" label-position="top" :disabled="submitting" class="create-layout" :class="{ 'create-layout--embedded': embedded }">
+      <section class="edit-column">
         <h3>编辑任务</h3>
         <ElFormItem v-if="fixedInquiryId" label="关联询盘"><ElInput :model-value="fixedInquiryNumber || fixedInquiryId" disabled /></ElFormItem>
         <ElFormItem v-if="fixedCustomerId" label="关联客户"><ElInput :model-value="fixedCustomerName || fixedCustomerId" disabled /></ElFormItem>
         <ElFormItem label="任务标题" required><ElInput v-model="form.title" maxlength="250" /></ElFormItem>
         <ElFormItem label="说明"><ElInput v-model="form.description" type="textarea" :rows="7" maxlength="2000" show-word-limit /></ElFormItem>
       </section>
-      <section class="schedule-column" :class="{ 'erp-list-surface': embedded }">
+      <section class="schedule-column">
         <h3>安排任务</h3>
         <ElFormItem label="负责人" required><ElSelect v-model="form.assignee_employee_id" filterable><ElOption v-for="item in availableOptions?.assignees" :key="item.id" :label="`${item.name}（${item.code}）`" :value="item.id" /></ElSelect></ElFormItem>
         <ElFormItem label="任务类型"><ElSelect v-model="form.task_type"><ElOption v-for="item in availableOptions?.task_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></ElFormItem>
@@ -154,19 +154,10 @@ watch(() => props.modelValue, async value => {
   font-size: 13px;
   line-height: 20px;
 
-  > section { min-width: 0; padding: 16px; }
+  > section { min-width: 0; padding: 16px; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-surface); }
   h3 { margin: 0 0 14px; font-size: 16px; line-height: 24px; }
   :deep(.el-select), :deep(.el-date-editor) { width: 100%; }
   :deep(.el-form-item__label) { color: var(--erp-color-text-primary); font-size: 13px; }
-  :deep(.el-input__wrapper), :deep(.el-select__wrapper), :deep(.el-textarea__inner) {
-    border-radius: var(--erp-radius-control);
-    background: var(--erp-input-surface);
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
-    &:hover { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset; }
-    &.is-focus, &.is-focused, &:focus { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
-  }
-  :deep(.el-input__inner), :deep(.el-select__placeholder), :deep(.el-textarea__inner) { font-size: 13px; }
-  :deep(.el-input.is-disabled .el-input__wrapper), :deep(.el-select__wrapper.is-disabled), :deep(.el-textarea.is-disabled .el-textarea__inner) { background: var(--erp-input-disabled-background); }
   :deep(.el-form-item:last-child) { margin-bottom: 0; }
 }
 @container (max-width: 680px) { .create-layout.create-layout--embedded { grid-template-columns: 1fr; } }
@@ -175,11 +166,6 @@ watch(() => props.modelValue, async value => {
 <style lang="scss">
 .task-create-dialog--embedded.app-window-dialog.el-dialog {
   container-type: inline-size;
-  border-color: var(--erp-glass-border);
-  border-radius: var(--erp-glass-radius);
-  background: var(--erp-glass-surface);
-  box-shadow: var(--erp-glass-shadow);
-  backdrop-filter: var(--erp-glass-backdrop);
 
   .app-window-dialog__body { padding: 16px; }
   .app-window-dialog__footer { padding: 12px 16px; background: transparent; }

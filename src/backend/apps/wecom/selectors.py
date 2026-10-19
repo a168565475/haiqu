@@ -2,6 +2,7 @@ from urllib.parse import urlsplit
 
 from django.db.migrations.recorder import MigrationRecorder
 from django.db.models import Exists, OuterRef, Q
+from django.views.decorators.debug import sensitive_variables
 
 from apps.access_control.selectors import current_assignments
 from apps.audit.models import AuditLog
@@ -40,7 +41,8 @@ def configuration_complete(config):
         return False
 
 
-def config_payload(config):
+def config_snapshot(config):
+    """仅保存配置状态的审计快照，不包含明文或密文。"""
     return {
         "corp_id": config.corp_id, "agent_id": config.agent_id, "erp_origin": config.erp_origin,
         "enabled": config.enabled, "has_secret": bool(config.secret_ciphertext),
@@ -53,6 +55,20 @@ def config_payload(config):
         "callback_url": config.erp_origin + "/api/auth/wecom/callback/",
         "trusted_domain": urlsplit(config.erp_origin).netloc,
     }
+
+
+@sensitive_variables()
+def config_payload(config):
+    """仅供已通过管理员权限校验的配置响应使用。"""
+    payload = {**config_snapshot(config), "credential_read_errors": []}
+    for field in ("secret", "callback_token", "callback_aes_key"):
+        ciphertext = getattr(config, field + "_ciphertext")
+        try:
+            payload[field] = decrypt_secret(ciphertext) if ciphertext else ""
+        except CredentialError:
+            payload[field] = None
+            payload["credential_read_errors"].append(field)
+    return payload
 
 
 def bindings_queryset(search="", status=""):

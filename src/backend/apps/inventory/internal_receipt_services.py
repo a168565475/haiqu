@@ -30,6 +30,7 @@ from .public_stock_cutover import stock_write_transaction
 from .public_stock_identity import build_semi_finished_identity
 from .public_stock_services import credit_public_stock
 from .public_stock_mode import public_flow_enabled
+from .stock_services import InventoryStockValidationError
 
 
 def require_operator(request, *, write=False):
@@ -156,7 +157,18 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
             line.cutting_pieces_per_set, line.fabric_meters_per_piece)
         component_key = _key(product.pk, line.component_identity, category)
         source_key = f'{product.pk}:{requirement.pk}'
-        identity = build_semi_finished_identity(bom_line=line, completed_craft=stock_craft, unit=unit)
+        try:
+            identity = build_semi_finished_identity(bom_line=line, completed_craft=stock_craft, unit=unit)
+        except InventoryStockValidationError as error:
+            field = error.error_meta['field']
+            label = {'specification':'规格', 'material':'材质', 'category':'类别', 'part_name':'部位名称',
+                'fabric_source_line':'来源面料', 'fabric.material':'来源面料材质',
+                'fabric.specification':'来源面料规格', 'fabric.color':'来源面料颜色或色号',
+                'cutting_color':'裁片颜色', 'cutting_pieces_per_set':'每套裁片数',
+                'completed_craft':'完成工艺', 'unit':'单位'}.get(field, '库存属性')
+            raise InventoryStockValidationError(
+                {'detail':f'部位“{line.part_name}”的{label}：{error.detail[field]}', **error.detail},
+                code=error.api_error_code, meta=error.error_meta) from error
         demands.append(ComponentDemand(scope, component_key, source_key, input_unit, unit_name, required, input_per_output,
                                        external_received.get(line.component_identity, Decimal(0))))
         facts[component_key] = dict(line=line, requirement=requirement, identity=identity, usage=usage)

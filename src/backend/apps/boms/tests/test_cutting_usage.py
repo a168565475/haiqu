@@ -88,7 +88,7 @@ class CuttingUsageBomTests(TestCase):
             "source_inventory_material_id": str(source.pk), "source_cutting_material_id": str(source.pk),
             "cutting_color": "黑色"}
         self.cutting_line.material = "PVC"
-        self.cutting_line.specification = "/"
+        self.cutting_line.specification = "400 × 600 mm"
         self.cutting_line.save()
         return source
 
@@ -133,7 +133,7 @@ class CuttingUsageBomTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.cutting_line.refresh_from_db()
         self.assertEqual((self.cutting_line.material, self.cutting_line.specification, self.cutting_line.unit),
-                         ("PVC", "/", "套"))
+                         ("PVC", "400 × 600 mm", "套"))
         self.assertEqual(self.cutting_line.raw_values["source_inventory_material_id"], str(source.pk))
         before = BomLine.objects.filter(pk=self.cutting_line.pk).values().get()
         self.assertEqual(self.save_cutting(source_inventory_material_id=None).status_code, 400)
@@ -183,7 +183,7 @@ class CuttingUsageBomTests(TestCase):
         self.assertIsNotNone(source)
         sections = self.get().data["data"]["sections"]
         rows = next(section for section in sections if section["title"] == "裁剪明细")["lines"]
-        rows.append({"part_name": source.material_name, "source_cutting_material_id": str(source.pk), "fabric_source_line_id": str(self.fabric_line.pk),
+        rows.append({"part_name": source.material_name, "specification": "400 × 600 mm", "source_cutting_material_id": str(source.pk), "fabric_source_line_id": str(self.fabric_line.pk),
                      "cutting_pieces_per_set": 2})
         invalid = self.save(sections)
         self.assertEqual(invalid.status_code, 400, invalid.data)

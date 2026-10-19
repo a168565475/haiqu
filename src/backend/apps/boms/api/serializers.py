@@ -23,6 +23,7 @@ from apps.production_tasks.api.serializers import ProductionTaskProductInputSeri
 
 from ..maintenance import CONFIGURED_FIELD_LABELS
 from ..fabric_material_sync import FABRIC_REFERENCE_FIELDS
+from ..material_flow_bom import validate_cutting_specification
 from ..models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType
 from ..selectors import pipe_dimension_numbers
 from .image_serializers import BomLineImageSerializer
@@ -1624,6 +1625,10 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 )
                 if not valid:
                     raise serializers.ValidationError(f"“{title}”第 {line_number} 行的待新增原料类型或类别不匹配。")
+                cutting_values = {}
+                if title == "裁剪明细":
+                    validate_cutting_specification(source.specification, line_number)
+                    cutting_values = {field: line[field] for field in ("material", "specification", "unit") if field in line}
                 self._set_inventory_source_snapshot(line, source)
                 snapshot = {"五金件": self._set_hardware_source_snapshot,
                             "塑料件类": self._set_plastic_source_snapshot,
@@ -1631,6 +1636,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
                             "裁剪明细": self._set_cutting_source_snapshot}.get(title)
                 if snapshot:
                     snapshot(line, source)
+                line.update(cutting_values)
                 line["_pending_raw_source"] = source
                 direct_line_object_ids.add(id(line))
 
@@ -2074,8 +2080,11 @@ class BomUpdateInputSerializer(serializers.Serializer):
         for section in sections:
             if section["title"].strip() != "裁剪明细":
                 continue
-            for line in section["lines"]:
+            for line_number, line in enumerate(section["lines"], start=1):
                 existing_line = existing_lines.get(line.get("id"))
+                validate_cutting_specification(
+                    line.get("specification", existing_line.specification if existing_line else ""), line_number,
+                )
                 existing_values = existing_line.raw_values or {} if existing_line else {}
                 if "cutting_material_original" not in existing_values:
                     continue

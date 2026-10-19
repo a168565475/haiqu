@@ -58,7 +58,7 @@ onMounted(load)
     <el-alert title="新规则仅用于之后新开始的环节" description="正在计时和历史记录保留原规则、原截止时间；保存操作会记录修改前后内容。" type="info" :closable="false" show-icon />
     <div v-if="settings" class="settings-columns">
       <el-card shadow="never"><template #header><b>各环节处理时长</b><span class="unit-note">按工作分钟填写</span></template>
-        <el-table :data="stages.map((stage,index)=>({stage,note:notes[index]}))">
+        <el-table class="erp-table-editor" :data="stages.map((stage,index)=>({stage,note:notes[index]}))">
           <el-table-column label="环节" width="142"><template #default="{row}">{{ handlingStageLabel(row.stage) }}</template></el-table-column>
           <el-table-column label="工作分钟" width="180"><template #default="{row}"><el-input-number v-model="settings.stage_minutes[row.stage]" :aria-label="handlingStageLabel(row.stage)" :min="1" :max="527040" :precision="0" :disabled="!canEdit||saving"/><small>{{ handlingTargetLabel(settings.stage_minutes[row.stage] || 0) }}</small></template></el-table-column>
           <el-table-column prop="note" label="计时规则" min-width="180" />

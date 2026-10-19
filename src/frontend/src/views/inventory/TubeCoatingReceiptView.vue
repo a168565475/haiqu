@@ -337,7 +337,7 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1; candidateSequence
           <label class="form-field"><span>入库经办人</span><ElInput :model-value="actorName" readonly aria-label="入库经办人" /></label>
           <label class="form-field"><span>入库状态</span><ElInput model-value="已喷塑" readonly aria-label="入库状态" /></label>
         </div>
-        <TubeOutsourcingDetailTable :columns="columns" :rows="rows" class="d3-lines" empty="此外发单没有可办理的实发管材明细">
+        <TubeOutsourcingDetailTable :columns="columns" :rows="rows" class="erp-table-editor d3-lines" empty="此外发单没有可办理的实发管材明细">
           <template #cell-part_name="{ row }"><strong>{{ row.part_name }}</strong></template>
           <template #cell-dispatched_quantity="{ row }">{{ format(row.dispatched_quantity) }}</template>
           <template #cell-received="{ row }"><strong v-if="!canEdit" class="brand">{{ receivedValue(row) === null ? '—' : format(receivedValue(row)) }}</strong><ElInput v-else v-model="row.received" inputmode="numeric" :aria-label="`${row.part_name}实收支数`" placeholder="0或空白" @input="onReceivedChange(row)" @blur="validateQuantity(row)"><template #suffix>支</template></ElInput></template>

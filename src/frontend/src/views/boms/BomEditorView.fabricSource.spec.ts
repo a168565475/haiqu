@@ -189,7 +189,7 @@ describe('BOM 未保存面料来源', () => {
       await vm.addFabricLine()
       const source = fabric.lines[0]!
       source.part_name = '牛津布'
-      const line = { ...vm.blankLine('套'), part_name: '床面', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
+      const line = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
       vm.editingLineDraft = line
       vm.editingFabricSourceKey = source.client_key!
       expect(vm.editingLineDraft.fabric_source_client_key).toBe(source.client_key)
@@ -229,7 +229,7 @@ describe('BOM 未保存面料来源', () => {
     try {
       await vm.addFabricLine()
       fabric.lines[0]!.part_name = '牛津布'
-      vm.editingLineDraft = { ...vm.blankLine('套'), part_name: '床面', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
+      vm.editingLineDraft = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
       vm.editingFabricSourceKey = fabric.lines[0]!.client_key!
       cutting.lines.push(vm.editingLineDraft)
       vi.mocked(api.saveBomDraft).mockImplementationOnce(async (_id, sections) => {

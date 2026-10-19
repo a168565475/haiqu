@@ -273,7 +273,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
           <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" placeholder="请选择库区" :disabled="formLocked"><ElOption v-for="item in zones" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
           <label class="form-field"><span>加工状态</span><ElInput model-value="未喷塑" aria-label="加工状态" disabled /></label>
         </div>
-        <MetalReceiptTable :columns="columns" :rows="rows" class="d1-lines" empty="此金工计划暂无管材明细">
+        <MetalReceiptTable :columns="columns" :rows="rows" class="erp-table-editor d1-lines" empty="此金工计划暂无管材明细">
           <template #cell-part="{ row }"><strong>{{ row.part }}</strong></template>
           <template #cell-usage="{ row }">{{ format(row.usage) }}</template>
           <template #cell-required="{ row }">{{ format(row.required) }}</template>

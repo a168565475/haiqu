@@ -70,9 +70,8 @@ const sourceOptions = computed<PurchaseOrderProductionTaskOption[]>(() => [
   ...options.value.production_tasks.map(item => ({ ...item, source_type: 'PRODUCTION' as const, source_number: item.task_number })),
   ...(options.value.sample_requests || []).map(item => ({ ...item, source_id: item.id, id: `sample:${item.id}`, task_number: item.source_number, order_number: '' })),
 ].sort((left, right) => Number(right.can_create) - Number(left.can_create)))
-const visibleSourceOptions = computed(() => sourceTypeFilter.value === 'ALL'
-  ? sourceOptions.value
-  : sourceOptions.value.filter(item => item.source_type === sourceTypeFilter.value))
+const visibleSourceOptions = computed(() => sourceOptions.value.filter(item => item.can_create
+  && (sourceTypeFilter.value === 'ALL' || item.source_type === sourceTypeFilter.value)))
 const isDetailStep = computed(() => route.name === 'purchase-order-create-details')
 const isSampleSource = computed(() => selectedTask.value?.source_type === 'SAMPLE')
 const sourceTypeLabel = computed(() => isSampleSource.value ? '打样单' : '生产订单')
@@ -810,7 +809,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <ElButton plain data-testid="purchase-detail-fullscreen" @click="toggleDetailFullscreen"><img class="purchase-icon" :src="expandIcon" alt="" />{{ detailFullscreen ? '退出全屏' : '全屏' }}</ElButton>
           </div>
         </header>
-        <ElTable v-loading="sourceLoading" :data="lines" :row-key="purchaseLineKey" :height="detailTableHeight" class="purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
+        <ElTable v-loading="sourceLoading" :data="lines" :row-key="purchaseLineKey" :height="detailTableHeight" class="erp-table-editor purchase-lines" data-testid="purchase-lines" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
           <ElTableColumn prop="category" label="分类" width="106" show-overflow-tooltip />
           <ElTableColumn label="物料信息" width="208">
@@ -905,7 +904,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .page-action-panel { display: flex; flex-direction: column; align-items: flex-end; position: relative; }
 .page-actions { display: flex; gap: 18px; }
 .page-actions :deep(.el-button) { width: 128px; height: 42px; margin: 0; }
-.page-actions :deep(.el-button--primary) { width: 164px; white-space: nowrap; background: var(--erp-button-primary-surface); color: crm.$crm-primary; border-color: var(--erp-button-primary-border); }
+.page-actions :deep(.el-button--primary) { width: 164px; white-space: nowrap; }
 .purchase-form-page > :deep(.el-alert) { flex: none; margin-bottom: 10px; }
 .task-card, .detail-card { @include detail.surface; }
 .task-card { flex: 0 0 292px; min-height: 0; margin-bottom: 14px; padding: 10px 17px 12px; overflow: hidden; }

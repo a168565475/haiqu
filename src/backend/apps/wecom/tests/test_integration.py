@@ -70,15 +70,17 @@ class WeComIntegrationTests(TestCase):
         self.assertEqual(self.client.patch(url, {"enabled": False}, format="json").status_code, 428)
         self.assertEqual(self.client.patch(url, {}, format="json", HTTP_IF_MATCH='"stale"').status_code, 412)
 
-    def test_config_and_oauth_fail_closed_when_rotation_drops_required_old_key(self):
+    def test_config_reports_unreadable_secret_and_oauth_fails_closed_after_key_rotation(self):
         self.config()
         with override_settings(WECOM_FERNET_KEYS=[Fernet.generate_key().decode()]):
             response = self.client.get("/api/v1/wecom/config/")
-            self.assertTrue(response.data["data"]["encryption_ready"])
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(response.data["data"]["secret"])
+            self.assertEqual(response.data["data"]["credential_read_errors"], ["secret"])
             self.assertFalse(response.data["data"]["configuration_complete"])
             self.assertIn("reason=CONFIGURATION_ERROR", self.client.get("/api/auth/wecom/start/").url)
 
-    def test_config_credentials_are_encrypted_and_never_returned_or_audited(self):
+    def test_config_credentials_are_encrypted_and_only_revealed_to_admin_not_audit(self):
         response = self.client.patch("/api/v1/wecom/config/", {
             "secret": "secret-value", "callback_token": "callbackToken123", "callback_aes_key": "A" * 43,
         }, format="json", HTTP_IF_MATCH='"wecom-unconfigured"')
@@ -86,9 +88,12 @@ class WeComIntegrationTests(TestCase):
         config = WeComConfig.objects.get()
         self.assertEqual(decrypt_secret(config.secret_ciphertext), "secret-value")
         self.assertEqual(decrypt_secret(config.callback_token_ciphertext), "callbackToken123")
+        self.assertEqual(response.data["data"].get("secret"), "secret-value")
+        self.assertEqual(response.data["data"].get("callback_token"), "callbackToken123")
         for value in ("secret-value", "callbackToken123", config.secret_ciphertext, config.callback_token_ciphertext):
-            self.assertNotIn(value, str(response.data))
             self.assertNotIn(value, str(list(AuditLog.objects.filter(object_type="WECOM").values())))
+        for value in (config.secret_ciphertext, config.callback_token_ciphertext):
+            self.assertNotIn(value, str(response.data))
         old_ciphertext = config.secret_ciphertext
         updated = self.client.patch("/api/v1/wecom/config/", {"secret": ""}, format="json", HTTP_IF_MATCH=response["ETag"])
         self.assertEqual(updated.status_code, 200)

@@ -10,7 +10,7 @@ import '@/styles/internalReceipt.scss'
 const route = useRoute(), router = useRouter()
 const preview = ref<ReceiptPreview | null>(null), loading = ref(false), saving = ref(false), error = ref('')
 const zoneId = ref(''), receiptDate = ref(''), remark = ref('')
-const quantities = ref<Record<string,string>>({}), selected = ref<Record<string,boolean>>({})
+const quantities = ref<Record<string,string | number>>({}), selected = ref<Record<string,boolean>>({})
 const pending = ref<{payload:ReceiptPayload; etag:string} | null>(null)
 const pendingKey = `internal-receipt-pending:${String(route.query.schedule_product_id)}:${String(route.query.plan_category)}`
 const isSewing = computed(() => preview.value?.plan_category === 'SEWING')
@@ -44,7 +44,7 @@ async function submit() {
     if (!zoneId.value || !receiptDate.value) { error.value = '请选择库区和日期。'; return }
     if (isSewing.value) {
       for (const line of preview.value.lines) {
-        const raw = quantities.value[line.bom_line_id]?.trim() || ''
+        const raw = String(quantities.value[line.bom_line_id] ?? '').trim()
         if (!raw || Number(raw) === 0) continue
         const quantity = Number(raw)
         if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > Number(line.can_receive)) {
@@ -62,7 +62,7 @@ async function submit() {
     pending.value = { etag: preview.value.etag, payload: { request_id: crypto.randomUUID(),
       schedule_product_id: preview.value.schedule_product_id, plan_category: preview.value.plan_category,
       zone_id: zoneId.value, receipt_date: receiptDate.value, remark: remark.value.trim(),
-      lines: selection.value.map(line => ({bom_line_id:line.bom_line_id,quantity:quantities.value[line.bom_line_id]!})),
+      lines: selection.value.map(line => ({bom_line_id:line.bom_line_id,quantity:String(quantities.value[line.bom_line_id])})),
     } }
     sessionStorage.setItem(pendingKey,JSON.stringify(pending.value))
   }
@@ -108,7 +108,7 @@ onMounted(() => {
         <fieldset :disabled="saving || !!pending" class="receipt-fields"><label>收货日期<input v-model="receiptDate" type="date" aria-label="收货日期"></label><label>材料仓<select v-model="warehouse" aria-label="材料仓" @change="zoneId = zones[0]?.id || ''"><option v-for="name in warehouses" :key="name">{{ name }}</option></select></label><label>库区<select v-model="zoneId" aria-label="库区"><option v-for="zone in zones" :key="zone.id" :value="zone.id">{{ zone.name }}</option></select></label><label>入库人<input :value="preview.actor" disabled aria-label="入库人"></label></fieldset>
       </section>
       <section class="receipt-form-section"><div class="receipt-section-heading"><h2>本次入库明细</h2><span class="muted">按订单净需求和实际已领投入共同控制上限</span><ElButton :disabled="saving || !!pending" @click="load">刷新</ElButton></div>
-      <div class="receipt-table-scroll"><table class="receipt-table receipt-entry-table"><colgroup><col v-if="!isSewing" style="width:56px"><col style="width:150px"><col style="width:240px"><col style="width:110px"><col style="width:125px"><col style="width:70px"><col style="width:105px"><col style="width:120px"><col style="width:120px"><col style="width:125px"><col style="width:160px"></colgroup><thead><tr><th v-if="!isSewing">选择</th><th>部位</th><th>材质 / 规格</th><th>颜色</th><th>加工阶段</th><th>单位</th><th class="number">单个用量</th><th class="number">应入库</th><th class="number">已入库</th><th class="number">剩余可入</th><th class="number">本次入库</th></tr></thead><tbody>
+      <div class="receipt-table-scroll"><table class="erp-table-editor receipt-table receipt-entry-table"><colgroup><col v-if="!isSewing" style="width:56px"><col style="width:150px"><col style="width:240px"><col style="width:110px"><col style="width:125px"><col style="width:70px"><col style="width:105px"><col style="width:120px"><col style="width:120px"><col style="width:125px"><col style="width:160px"></colgroup><thead><tr><th v-if="!isSewing">选择</th><th>部位</th><th>材质 / 规格</th><th>颜色</th><th>加工阶段</th><th>单位</th><th class="number">单个用量</th><th class="number">应入库</th><th class="number">已入库</th><th class="number">剩余可入</th><th class="number">本次入库</th></tr></thead><tbody>
         <tr v-for="line in preview.lines" :key="line.bom_line_id"><td v-if="!isSewing"><input v-model="selected[line.bom_line_id]" type="checkbox" :aria-label="`选择${line.attributes.part_name}`" :disabled="Number(line.can_receive) <= 0 || saving || !!pending"></td><td class="primary-text">{{ line.attributes.part_name }}</td><td :title="`${line.attributes.material} / ${line.attributes.specification || line.attributes.tube_diameter}`">{{ line.attributes.material }} / {{ line.attributes.specification || `${line.attributes.tube_diameter}×${line.attributes.tube_thickness}×${line.attributes.cutting_length_mm}mm` }}</td><td>{{ line.attributes.color }}</td><td>{{ line.stage }}</td><td>{{ line.attributes.unit_name }}</td><td class="number">{{ number(line.usage) }}</td><td class="number">{{ number(line.required) }}</td><td class="number">{{ number(line.received) }}</td><td class="number" :title="`已领投入剩余 ${line.input_remaining}，支持产出 ${line.input_supported}`">{{ number(line.can_receive) }}</td><td><input v-model="quantities[line.bom_line_id]" class="quantity-input" type="number" :min="isSewing ? 0 : 1" step="1" :max="line.can_receive" :aria-label="`${line.attributes.part_name}本次入库`" :placeholder="Number(line.can_receive) ? '填写数量' : '暂无可入数量'" :disabled="Number(line.can_receive) <= 0 || (!isSewing && !selected[line.bom_line_id]) || saving || !!pending"></td></tr>
         <tr v-if="!preview.lines.length"><td :colspan="isSewing ? 10 : 11" class="empty">{{ preview.excluded.length ? '本计划管材需外发喷塑，请在原外发单登记回库。' : '暂无可入库部位' }}</td></tr>
       </tbody></table></div>

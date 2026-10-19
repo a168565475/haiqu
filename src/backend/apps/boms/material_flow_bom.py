@@ -19,6 +19,12 @@ def is_meter_fabric_section(section):
     return section.section_type == "FABRIC" and not any(word in title for word in ("裁剪", "裁片")) and any(word in title for word in ("面辅料", "面料", "布料"))
 
 
+def validate_cutting_specification(specification, line_number):
+    # 与公共库存身份保持同一占位口径，避免保存后才在入库时发现规格缺失。
+    if (specification or "").strip() in {"", "/", "—", "-", "--", "–", "N/A", "n/a", "NULL", "null"}:
+        raise ValidationError({"sections": f"“裁剪明细”第 {line_number} 行请填写实际规格，不能使用空白或“/”等占位内容。"})
+
+
 def apply_line_quantities(line, order_quantity, *, require_complete=False, tolerate_legacy=False):
     """旧展示字段只是新规则的投影；导入缺参留待补齐，不能猜每根切割支数。"""
     label = f"{line.section.title}第 {line.line_number} 行"
@@ -26,6 +32,8 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
         raise ValidationError({"sections": f"{label}请补齐材质、形状、截面、厚度及切割参数，保存后再确认 BOM。"})
     if require_complete and is_meter_fabric_section(line.section) and (line.raw_values or {}).get("fabric_source_sync_pending"):
         raise ValidationError({"sections": f"{label}请补齐材质、规格、门幅和颜色并保存，自动关联原料后再确认 BOM。"})
+    if require_complete and line.section.title.strip() == "裁剪明细":
+        validate_cutting_specification(line.specification, line.line_number)
     cutting_values = {field: getattr(line, field) for field in CUTTING_USAGE_FIELDS}
     if any(value is not None for value in cutting_values.values()) and line.section.title.strip() != "裁剪明细":
         raise ValidationError({"sections": f"{label}只有裁剪明细可以填写片数、每片耗米和每成品套数。"})

@@ -236,7 +236,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
           <strong>共 {{ rows.length }} 项</strong>
         </div>
         <div v-loading="loading" class="receiving-table-scroll">
-          <table class="receiving-table">
+          <table class="erp-table-editor receiving-table">
             <colgroup><col v-for="(width, index) in [56, 58, 230, 190, 234, 160, 106, 156, 182, 164, 214, 124]" :key="index" :style="{ width: width / 1874 * 100 + '%' }" /></colgroup>
             <thead><tr>
               <th><ElCheckbox v-model="allSelected" aria-label="全选物料" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked || !rows.length" /></th>

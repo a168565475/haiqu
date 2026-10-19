@@ -59,6 +59,7 @@ class ManagementView(APIView):
         return super().handle_exception(exc)
 
 
+@sensitive_variables()
 def config_response(config):
     payload = ConfigResponseSerializer({"data": selectors.config_payload(config)}).data
     return Response(payload, headers={"ETag": selectors.config_etag(config)})
@@ -66,6 +67,7 @@ def config_response(config):
 
 class ConfigView(ManagementView):
     @extend_schema(responses=ConfigResponseSerializer)
+    @sensitive_variables()
     def get(self, request):
         return config_response(selectors.get_config())
 
@@ -79,6 +81,7 @@ class ConfigView(ManagementView):
 
 class ConfigCheckView(ManagementView):
     @extend_schema(request=None, responses=ConfigResponseSerializer, parameters=[IF_MATCH])
+    @sensitive_variables()
     def post(self, request):
         return config_response(services.check_connection(request))
 

@@ -310,7 +310,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
           </div>
           <strong class="purchase-order-number">{{ order.order_number }}</strong>
         </header>
-        <ElTable :data="order.lines" row-key="id" height="100%" class="detail-table" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
+        <ElTable :data="order.lines" row-key="id" height="100%" class="erp-table-editor detail-table" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
           <ElTableColumn label="分类" prop="section_title" width="106" />
           <ElTableColumn label="物料信息" width="208">

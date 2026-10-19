@@ -1,16 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './request'
 import { AxiosError } from 'axios'
-import { bindWeComEmployee, saveWeComConfig, checkWeComConnection, wecomError } from './wecom'
+import { bindWeComEmployee, getWeComConfig, saveWeComConfig, checkWeComConnection, wecomError } from './wecom'
 
 afterEach(() => vi.restoreAllMocks())
 
 describe('企业微信管理请求契约', () => {
+  it('读取并保留服务端返回的三项凭据，不用配置状态替代真实值', async () => {
+    const saved = { has_secret: true, has_callback_token: true, has_callback_aes_key: true, secret: 'fixture-secret', callback_token: 'fixturetoken', callback_aes_key: 'a'.repeat(43), credential_read_errors: [] }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: saved }, headers: { etag: 'v1' } })
+    const result = await getWeComConfig()
+    expect(get).toHaveBeenCalledWith('/api/v1/wecom/config/', expect.any(Object))
+    expect(result.data).toEqual(saved)
+    expect(result.etag).toBe('v1')
+  })
   it('省略空密钥、携带版本并接收新版本', async () => {
-    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: { has_secret: true } }, headers: { etag: 'v2' } })
+    const saved = { has_secret: true, secret: 'fixture-secret', callback_token: '', callback_aes_key: '', credential_read_errors: [] }
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: saved }, headers: { etag: 'v2' } })
     const result = await saveWeComConfig({ corp_id: 'corp', agent_id: '1', erp_origin: 'https://erp.test', enabled: false, secret: '', callback_token: ' ', callback_aes_key: '' }, 'v1')
     expect(patch).toHaveBeenCalledWith('/api/v1/wecom/config/', { corp_id: 'corp', agent_id: '1', erp_origin: 'https://erp.test', enabled: false }, expect.objectContaining({ headers: { 'If-Match': 'v1' } }))
     expect(result.etag).toBe('v2')
+    expect(result.data).toEqual(saved)
   })
   it('绑定必须使用所选员工版本和显式身份确认', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data: { id: 'binding' } } })

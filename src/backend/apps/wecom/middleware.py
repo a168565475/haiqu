@@ -1,4 +1,5 @@
 from django.http import QueryDict
+from django.utils.cache import add_never_cache_headers
 from django.views.debug import SafeExceptionReporterFilter
 from django.views.decorators.debug import sensitive_variables
 
@@ -39,6 +40,13 @@ class WeComOAuthSensitiveMiddleware:
 
     @sensitive_variables()
     def __call__(self, request):
+        if request.path.rstrip("/") in {"/api/v1/wecom/config", "/api/v1/wecom/config/check"}:
+            request.exception_reporter_filter = WeComExceptionReporterFilter()
+            request.sensitive_post_parameters = ("secret", "callback_token", "callback_aes_key")
+            response = self.get_response(request)
+            # 此层早于认证和角色门禁，因此拒绝及错误响应同样禁止缓存。
+            add_never_cache_headers(response)
+            return response
         if request.path.rstrip("/") != "/api/auth/wecom/callback":
             return self.get_response(request)
         try:

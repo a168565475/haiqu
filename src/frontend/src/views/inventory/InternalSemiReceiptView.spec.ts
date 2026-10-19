@@ -43,9 +43,9 @@ describe('车缝半成品入库', () => {
     await flushPromises()
 
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
-    const vm = wrapper.vm as any
-    vm.quantities = { 'line-1': '', 'line-2': '0', 'line-3': '5' }
-    await vm.submit()
+    await wrapper.get('input[aria-label="靠背套本次入库"]').setValue('0')
+    await wrapper.get('input[aria-label="座套本次入库"]').setValue('5')
+    await (wrapper.vm as any).submit()
 
     expect(api.confirm).toHaveBeenCalledTimes(1)
     expect(api.confirm.mock.calls[0]![0].lines).toEqual([{ bom_line_id: 'line-3', quantity: '5' }])
@@ -56,11 +56,24 @@ describe('车缝半成品入库', () => {
     wrappers.push(wrapper)
     await flushPromises()
 
+    await wrapper.get('input[aria-label="靠背套本次入库"]').setValue('0')
     const vm = wrapper.vm as any
-    vm.quantities = { 'line-1': '', 'line-2': '0' }
     await vm.submit()
 
     expect(api.confirm).not.toHaveBeenCalled()
     expect(vm.error).toContain('至少填写一项大于 0')
+  })
+
+  it.each(['-1', '0.5', '101', '9007199254740992'])('实际输入 %s 时保留数量校验，不提交入库', async quantity => {
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue(quantity)
+    const vm = wrapper.vm as any
+    await vm.submit()
+
+    expect(api.confirm).not.toHaveBeenCalled()
+    expect(vm.error).toContain('本次入库须为非负整数，且不能超过剩余可入数量')
   })
 })

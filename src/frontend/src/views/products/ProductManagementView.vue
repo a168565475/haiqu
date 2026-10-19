@@ -298,7 +298,7 @@ onBeforeUnmount(() => { ++namesSequence; ++productsSequence; ++initializationSeq
           <div v-if="productsError" class="error-message" role="alert">{{ productsError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked || productsLoading" @click="loadProducts">重试</button></div>
           <div class="erp-list-table-frame">
           <div class="product-table-scroll erp-list-table-scroll" tabindex="0" aria-label="产品表格滚动区域">
-            <table class="product-table erp-list-native-table" aria-label="品名下的产品">
+            <table class="erp-table-editor product-table erp-list-native-table" aria-label="品名下的产品">
               <colgroup><col class="code-column" /><col class="item-column" /><col class="spec-column" /><col class="unit-column" /><col class="scale-column" /><col class="colors-column" /></colgroup>
               <thead><tr><th v-for="field in productCatalogFields" :key="field.key" scope="col">{{ field.label }}</th><th scope="col">颜色</th></tr></thead>
               <tbody>

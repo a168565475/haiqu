@@ -191,7 +191,7 @@ onMounted(load)
 
     <section class="wr-card wr-report-detail-card">
       <div class="wr-card-title"><h2>报工明细</h2></div>
-      <ElTable class="wr-work-report-table" :data="form.lines" border empty-text="请先选择范围并取得工价方案">
+      <ElTable class="erp-table-editor wr-work-report-table" :data="form.lines" border empty-text="请先选择范围并取得工价方案">
         <ElTableColumn type="index" label="#" width="48" />
         <ElTableColumn label="名称 / 部位" min-width="180"><template #default="{ row }">{{ schemeLine(row.scheme_line_id)?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn label="工序" min-width="140"><template #default="{ row }">{{ schemeLine(row.scheme_line_id)?.operation_name || '—' }}</template></ElTableColumn>

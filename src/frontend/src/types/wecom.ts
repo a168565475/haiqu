@@ -6,6 +6,10 @@ export interface WeComConfig {
   has_secret: boolean
   has_callback_token: boolean
   has_callback_aes_key: boolean
+  secret: string | null
+  callback_token: string | null
+  callback_aes_key: string | null
+  credential_read_errors: string[]
   encryption_ready: boolean
   configuration_complete: boolean
   last_check_status: 'NOT_CHECKED' | 'SUCCESS' | 'FAILED'

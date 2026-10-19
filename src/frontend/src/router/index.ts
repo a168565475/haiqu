@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { wecomRouteRedirect } from './wecomGuard'
+import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
 
 import { useAuthStore } from '@/stores/auth'
 import HomeView from '@/views/HomeView.vue'
@@ -1774,6 +1774,8 @@ router.beforeEach(async (to) => {
     }
     return true
   }
+
+  if (startWeComLoginIfNeeded(to.name, to.meta.requiresAuth === true, authStore.isAuthenticated)) return false
 
   const wecomRedirect = wecomRouteRedirect(to.name, authStore.isAuthenticated, authStore.waitingForRole)
   if (wecomRedirect) return wecomRedirect

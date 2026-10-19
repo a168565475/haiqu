@@ -41,6 +41,7 @@ class AuthUserSerializer(serializers.Serializer):
     effective_access = serializers.DictField(required=False)
     sales_access_enabled = serializers.BooleanField(required=False)
     module_access_enabled = serializers.BooleanField(required=False)
+    waiting_for_role = serializers.BooleanField()
 
 
 class AuthenticationStateSerializer(serializers.Serializer):

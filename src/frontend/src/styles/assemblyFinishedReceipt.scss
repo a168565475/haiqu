@@ -1,12 +1,15 @@
 @use './crm/tokens' as t;
+@use './theme/detail';
 
 // 成品入库已确认稿：顶部五列对齐，主操作区独立滚动。
 .assembly-receipt-page {
   gap: 14px;
   font-family: t.$crm-font-body;
   font-size: 12px;
-  .fg-form-footer { margin-top: 0; }
-  .ar-order-strip { flex-shrink: 0; overflow: hidden; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; }
+  .fg-heading h1 { font: 700 36px/44px var(--erp-font-body); }
+  .el-button { border-radius: var(--erp-radius-control); }
+  .fg-form-footer { @include detail.surface; margin-top: 0; }
+  .ar-order-strip { @include detail.surface; flex-shrink: 0; overflow: hidden; }
   .ar-info-grid { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); column-gap: 12px; padding-left: 16px; padding-right: 16px; }
   .ar-identities { padding-top: 14px; padding-bottom: 6px; }
   .ar-product { padding-top: 4px; padding-bottom: 14px; }
@@ -20,7 +23,7 @@
     .ar-emphasis b { color: t.$crm-primary; }
   }
   .ar-quota-rule { color: t.$crm-text-muted; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
-  .ar-workspace { flex: 1; min-height: 0; overflow: auto; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; padding: 20px 24px;
+  .ar-workspace { @include detail.surface; flex: 1; min-height: 0; overflow: auto; padding: 20px 24px;
     >.el-alert { margin-bottom: 16px; }
   }
   .ar-workspace-heading { display: flex; align-items: center; gap: 16px; padding-bottom: 22px;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { Close, InfoFilled } from '@element-plus/icons-vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
@@ -212,12 +212,10 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
 
 <template>
   <AppWindowDialog :model-value="visible" class="purchase-template-create-drawer" :class="{ 'purchase-template-edit-drawer': isEditing }" modal-class="purchase-template-create-overlay" :title="drawerTitle"
-    :width="1360" :show-close="false" :close-on-click-modal="false" :close-on-press-escape="!saving"
+    :width="1360" :close-on-click-modal="false" :close-on-press-escape="!saving"
     :before-close="beforeClose" @update:model-value="emit('update:visible', $event)">
-    <template #header>
-      <div class="template-create-heading"><h2>{{ drawerTitle }}</h2><p v-if="isEditing">当前版本 {{ currentVersion === null ? '—' : `V${currentVersion}` }} · 最近更新：{{ record?.updated_by_name || '—' }} · {{ formatDateTime(record?.updated_at) }}</p><p v-else>设置模板信息和合同条款，创建后可在采购表中选用。</p></div>
-      <ElButton text :icon="Close" :disabled="saving" :aria-label="`关闭${drawerTitle}`" class="template-create-close" @click="close" />
-    </template>
+    <p class="template-create-description" v-if="isEditing">当前版本 {{ currentVersion === null ? '—' : `V${currentVersion}` }} · 最近更新：{{ record?.updated_by_name || '—' }} · {{ formatDateTime(record?.updated_at) }}</p>
+    <p class="template-create-description" v-else>设置模板信息和合同条款，创建后可在采购表中选用。</p>
     <div v-if="loadError || saveError" class="template-create-error" role="alert">{{ loadError || saveError }}<ElButton v-if="loadError || versionConflict" link :disabled="loading || saving" @click="reloadDetail">重新加载</ElButton></div>
     <ElForm ref="formRef" v-loading="loading" :model="form" :rules="rules" :disabled="saving || saveDisabled" label-position="top" require-asterisk-position="right"
       class="template-create-form" :aria-busy="saving || loading" @submit.prevent="save()">
@@ -255,31 +253,25 @@ onBeforeUnmount(() => { disposed = true; ++loadSequence; window.removeEventListe
 @use '@/styles/crm/tokens' as token;
 .purchase-template-create-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 46%, transparent); }
 .purchase-template-create-drawer {
-  top: 0 !important; height: 100% !important; max-width: 100vw; box-shadow: none; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 16px/24px 'Noto Sans SC Variable', token.$crm-font-body;
+  color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary}; --el-text-color-placeholder: #{token.$crm-text-muted};
-  .app-window-dialog__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
-  .template-create-heading { display: flex; min-width: 0; align-items: baseline; gap: 16px; }
-  .template-create-heading h2 { margin: 0; font: 600 22px/28px 'Noto Serif SC Variable', token.$crm-font-display; white-space: nowrap; }
-  .template-create-heading p { margin: 0; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
-  .template-create-close.el-button { width: 32px; height: 32px; padding: 0; font-size: 18px; color: token.$crm-text-secondary; }
-  .app-window-dialog__body { padding: 0 32px 16px; overflow-y: auto; }
-  .template-create-form { display: grid; grid-template-columns: 408px minmax(0,1fr); gap: 32px; min-height: 784px; position: relative; }
-  .template-create-form::after { content: ''; position: absolute; left: 424px; top: 0; bottom: 0; width: 1px; background: token.$crm-border-default; }
+  .template-create-description { margin: 0 0 14px; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
+  .app-window-dialog__body { padding: 16px 24px; overflow-y: auto; }
+  .template-create-form { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(0,1.2fr); gap: 24px; }
+  .template-contract-terms { border-left: 1px solid token.$crm-border-subtle; padding-left: 24px; }
   section { min-width: 0; }
-  h3 { display: flex; align-items: center; height: 54px; padding: 0 22px; margin: 0; background: token.$crm-color-subtle; font-size: 20px; font-weight: 700; }
-  .template-basic-fields { padding: 24px 12px 0; }
-  .template-terms-fields { padding: 10px 12px 0; }
+  h3 { display: flex; align-items: center; min-height: 32px; padding: 0 0 10px; margin: 0 0 14px; border-bottom: 1px solid token.$crm-border-subtle; font-size: 16px; font-weight: 600; }
+  .template-basic-fields, .template-terms-fields { padding: 0; }
   .el-form-item { margin: 0; }
-  .el-form-item__label { height: 24px; margin-bottom: 4px; padding: 0; color: token.$crm-text-primary; font-size: 16px; line-height: 24px; }
+  .el-form-item__label { height: auto; margin-bottom: 4px; padding: 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 20px; }
   .el-form-item.is-required > .el-form-item__label::after { color: token.$crm-primary !important; }
   .el-input, .el-select { width: 100%; font-family: 'Noto Sans SC Variable', #{token.$crm-font-body}; }
   .el-input__wrapper, .el-select__wrapper { height: 32px; min-height: 32px; padding: 0 14px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; background: var(--erp-input-surface); font-size: 16px; }
   .el-input__inner { height: 30px; font: inherit; }
   .el-input__count-inner { background: var(--erp-input-surface); font-size: 14px; color: token.$crm-text-muted; }
   .el-textarea__inner { padding: 10px 14px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; background: var(--erp-input-surface); font: 16px/22px 'Noto Sans SC Variable', token.$crm-font-body; color: token.$crm-text-primary; }
-  .template-basic-fields > .el-form-item { margin-bottom: 24px; }
-  .field-help { width: 100%; margin: 8px 0 0; color: token.$crm-text-secondary; font-size: 14px; line-height: 24px; }
-  .template-basic-fields > .template-category { margin-bottom: 26px; }
+  .template-basic-fields > .el-form-item { margin-bottom: 14px; }
+  .field-help { width: 100%; margin: 6px 0 0; color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
   .template-category .el-tag { height: 30px; padding: 0 10px; font-size: 16px; color: var(--erp-color-text-inverse); background: var(--erp-tag-brand-background); border-color: transparent; }
   .template-category .el-tag__close { width: 16px; height: 16px; font-size: 16px; color: var(--erp-color-text-inverse); }
   .template-field-pair { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; }

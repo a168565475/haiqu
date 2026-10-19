@@ -63,9 +63,13 @@
 .el-input.is-disabled .el-input__wrapper { background: var(--erp-input-disabled-background); }
 .el-select__wrapper.is-disabled { background: var(--erp-input-disabled-background); }
 
-// 所有业务弹窗复用客户列表筛选框的实心控件规范。
+// 所有业务弹窗采用已确认的平面表单；页面筛选区保持原有材质。
 // AppWindowDialog 的内容由插槽注入，使用 body 前缀和 !important 覆盖旧弹窗局部尺寸，保留业务字段与校验逻辑。
-body .app-window-dialog {
+body .app-window-dialog.el-dialog, body .el-message-box {
+  --erp-dialog-input-border: var(--erp-color-border);
+  --erp-dialog-input-hover-border: var(--erp-color-border-strong);
+  --erp-dialog-input-focus-border: var(--erp-color-focus);
+
   :is(
     .el-input:not(.el-textarea) .el-input__wrapper,
     .el-select__wrapper,
@@ -78,10 +82,10 @@ body .app-window-dialog {
     box-sizing: border-box;
     height: 32px !important;
     min-height: 32px !important;
-    padding: 0 12px !important;
-    border-radius: var(--erp-radius-control) !important;
-    background: var(--erp-input-surface) !important;
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset !important;
+    &:not(:where(.el-input-number:not(.is-without-controls) *)) { padding: 0 10px !important; }
+    border-radius: 5px !important;
+    background: var(--erp-color-surface) !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important;
   }
 
   :is(
@@ -93,7 +97,7 @@ body .app-window-dialog {
     .el-cascader .el-input__wrapper:hover,
     .el-input-number .el-input__wrapper:hover
   ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-hover-border) inset !important;
   }
 
   :is(
@@ -105,16 +109,29 @@ body .app-window-dialog {
     .el-cascader.is-focus .el-input__wrapper,
     .el-input-number .el-input__wrapper.is-focus
   ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-focus-border) inset !important;
   }
 
-  :is(.el-input__inner, .el-select__placeholder, .el-select__selected-item, .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+  :is(.el-input__inner, .el-select__input, .el-select__placeholder, .el-select__selected-item, .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
     color: var(--erp-input-text) !important;
-    font-size: 12px !important;
+    font-size: 13px !important;
     line-height: 18px;
   }
 
   :is(.el-input__inner, .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *))::placeholder { color: var(--erp-input-placeholder) !important; }
+
+  // 错误态沿用同一边缘，不让统一表面遮住表单校验反馈。
+  .el-form-item.is-error:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)),
+  .el-message-box__input .invalid {
+    --erp-dialog-input-border: var(--erp-color-danger);
+    --erp-dialog-input-hover-border: var(--erp-color-danger);
+    --erp-dialog-input-focus-border: var(--erp-color-danger);
+  }
+
+  // 日期与级联选择器也会生成 readonly input，但仍可选择，不按只读字段处理。
+  .el-input:not(.el-date-editor, .is-disabled) .el-input__wrapper:has(> input[readonly]):not(:where(.el-cascader *, .el-select *, .paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    background: var(--erp-input-readonly-background) !important;
+  }
 
   :is(
     .el-input.is-disabled .el-input__wrapper,
@@ -123,35 +140,70 @@ body .app-window-dialog {
     .el-input-number.is-disabled .el-input__wrapper
   ):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
     background: var(--erp-input-disabled-background) !important;
-    box-shadow: 0 0 0 1px var(--erp-input-border) inset !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important;
   }
 
   :is(.el-input.is-disabled .el-input__inner, .el-select__wrapper.is-disabled .el-select__placeholder, .el-range-editor.is-disabled .el-range-input):not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
     color: var(--erp-input-disabled-text) !important;
   }
 
-  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
-    padding: 8px 12px !important;
+  textarea:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    padding-top: 8px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
     border: 0 !important;
-    border-radius: var(--erp-radius-control) !important;
-    background: var(--erp-input-surface) !important;
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset !important;
+    outline: none !important;
+    border-radius: 5px !important;
+    background: var(--erp-color-surface) !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important;
     color: var(--erp-input-text) !important;
-    font-size: 12px !important;
+    font-size: 13px !important;
   }
 
-  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):hover {
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset !important;
+  textarea:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):hover {
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-hover-border) inset !important;
   }
 
-  .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):focus {
-    box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset !important;
+  textarea:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)):focus {
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-focus-border) inset !important;
   }
 
-  .el-textarea.is-disabled .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+  .el-textarea:has(.el-input__count) .el-textarea__inner:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    padding-bottom: 22px !important;
+  }
+
+  textarea[readonly]:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    background: var(--erp-input-readonly-background) !important;
+  }
+
+  textarea:disabled:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
     background: var(--erp-input-disabled-background) !important;
-    box-shadow: 0 0 0 1px var(--erp-input-border) inset !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important;
     color: var(--erp-input-disabled-text) !important;
+  }
+
+  textarea[aria-invalid='true']:not(:where(.paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    box-shadow: 0 0 0 1px var(--erp-color-danger) inset !important;
+  }
+
+  // 权限等旧表单使用原生输入；不改文件上传、复选、单选或组件内部的输入节点。
+  :is(input:not([type='checkbox'], [type='radio'], [type='file'], [type='hidden'], [type='range'], [type='color'], [type='button'], [type='submit'], [type='reset'], [type='image']), select):not(:where(.el-input *, .el-select *, .el-date-editor *, .el-autocomplete *, .el-cascader *, .el-input-number *, .paper *, .quotation-document *, .a4-canvas *, .contract-sheet *, .el-table *)) {
+    box-sizing: border-box;
+    height: 32px !important;
+    min-height: 32px !important;
+    padding: 0 10px !important;
+    border: 0 !important;
+    border-radius: 5px !important;
+    background: var(--erp-color-surface) !important;
+    box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important;
+    color: var(--erp-input-text) !important;
+    font-size: 13px !important;
+    &::placeholder { color: var(--erp-input-placeholder) !important; }
+    &:hover { box-shadow: 0 0 0 1px var(--erp-dialog-input-hover-border) inset !important; }
+    &:focus { outline: none !important; box-shadow: 0 0 0 1px var(--erp-dialog-input-focus-border) inset !important; }
+    &[readonly] { background: var(--erp-input-readonly-background) !important; }
+    &:disabled { background: var(--erp-input-disabled-background) !important; color: var(--erp-input-disabled-text) !important; box-shadow: 0 0 0 1px var(--erp-dialog-input-border) inset !important; }
+    &[aria-invalid='true'] { box-shadow: 0 0 0 1px var(--erp-color-danger) inset !important; }
   }
 }
 

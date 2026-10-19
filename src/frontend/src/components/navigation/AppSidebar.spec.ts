@@ -37,7 +37,7 @@ const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
   'purchase-inbounds', 'purchase-returns', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
-  'material-inventory', 'access-management', 'reference-data-settings', 'theme-settings',
+  'material-inventory', 'access-management', 'reference-data-settings', 'theme-settings', 'wecom-settings', 'email-account-settings',
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
 
@@ -501,6 +501,18 @@ describe('全局悬停侧栏', () => {
     expect(panel().exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="access-management"]').exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="settings"]').exists()).toBe(false)
+  })
+
+  it('企业微信管理入口仅显示给在职admin超级管理员', async () => {
+    const { auth, router } = await setup()
+    expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
+    auth.user!.employee = { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }
+    await nextTick()
+    expect(wrapper.get('[data-menu-key="wecom-settings"]').attributes('href')).toBe('/wecom-settings')
+    await router.push('/wecom-settings'); await nextTick()
+    expect(wrapper.get('[data-menu-key="wecom-settings"]').attributes('aria-current')).toBe('page')
+    auth.user!.is_superuser = false; await nextTick()
+    expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
   })
 
   it('卸载时清除尚未触发的悬停计时器', async () => {

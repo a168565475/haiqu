@@ -1,0 +1,144 @@
+// 仅接管 ElMessage；不改消息调用、计时、位置、分组或 MessageBox/Alert。
+// 底座使用带透明度的蒙版，白色符号独立绘制，便于只让成功勾选逐步显现。
+$circle-base: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Ccircle cx='14' cy='14' r='13' fill='white' opacity='.14'/%3E%3Ccircle cx='14' cy='14' r='10.4' fill='white'/%3E%3C/svg%3E");
+$success-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='m8.7 14 3.5 3.6 7.1-7.4' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+$warning-base: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='M11.85 5.2a2.5 2.5 0 0 1 4.3 0L25 20.5a2.5 2.5 0 0 1-2.15 3.75H5.15A2.5 2.5 0 0 1 3 20.5Z' fill='white' stroke='white' stroke-width='4' stroke-linejoin='round' opacity='.14'/%3E%3Cpath d='M11.85 5.2a2.5 2.5 0 0 1 4.3 0L25 20.5a2.5 2.5 0 0 1-2.15 3.75H5.15A2.5 2.5 0 0 1 3 20.5Z' fill='white'/%3E%3C/svg%3E");
+$warning-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='M14 10v6' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='14' cy='20' r='1.35' fill='white'/%3E%3C/svg%3E");
+$error-base: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='m9 3 10 0 6 6v10l-6 6H9l-6-6V9Z' fill='white' stroke='white' stroke-width='4' stroke-linejoin='round' opacity='.14'/%3E%3Cpath d='m9.5 4 9 0 5.5 5.5v9L18.5 24h-9L4 18.5v-9Z' fill='white'/%3E%3C/svg%3E");
+$error-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Cpath d='m10.6 10.6 6.8 6.8m0-6.8-6.8 6.8' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E");
+$info-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Ccircle cx='14' cy='8.8' r='1.3' fill='white'/%3E%3Cpath d='M14 13v6.1' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+
+.el-message {
+  --el-message-padding: 13px 20px;
+  --el-message-text-color: color-mix(in srgb, var(--erp-message-tone) 80%, black);
+  --el-message-bg-color: color-mix(in srgb, var(--erp-message-soft) 84%, var(--erp-message-tone));
+  --el-message-border-color: color-mix(in srgb, var(--erp-message-soft) 74%, var(--erp-message-tone));
+  min-height: 56px;
+  min-width: min(340px, calc(100vw - 32px));
+  gap: 12px;
+  border-radius: 8px;
+
+  &--success {
+    --erp-message-tone: var(--erp-color-success);
+    --erp-message-soft: var(--erp-color-success-soft);
+    --erp-message-icon-base: #{$circle-base};
+    --erp-message-icon-mark: #{$success-mark};
+  }
+  &--warning {
+    --erp-message-tone: var(--erp-color-warning);
+    --erp-message-soft: var(--erp-color-warning-soft);
+    --erp-message-icon-base: #{$warning-base};
+    --erp-message-icon-mark: #{$warning-mark};
+  }
+  &--error {
+    --erp-message-tone: var(--erp-color-danger);
+    --erp-message-soft: var(--erp-color-danger-soft);
+    --erp-message-icon-base: #{$error-base};
+    --erp-message-icon-mark: #{$error-mark};
+  }
+  &--info, &--primary {
+    --erp-message-tone: var(--erp-color-info);
+    --erp-message-soft: var(--erp-color-info-soft);
+    --erp-message-icon-base: #{$circle-base};
+    --erp-message-icon-mark: #{$info-mark};
+  }
+  &--primary {
+    --erp-message-tone: var(--erp-color-brand);
+    --erp-message-soft: var(--erp-color-selected);
+  }
+
+  > .el-message__content {
+    min-width: 0;
+    font-size: 15px;
+    line-height: 22px;
+    overflow-wrap: anywhere;
+  }
+  > .el-message__icon {
+    position: relative;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    font-size: 28px;
+    transform-origin: center;
+  }
+  > .el-message__closeBtn { flex-shrink: 0; }
+}
+
+// 保留不支持蒙版的浏览器原图标；当前调用没有自定义 icon。
+// 后续如需单条自定义图标，应明确排除本规则，不能仅传入 icon 后期待覆盖全局视觉。
+@supports (mask-image: linear-gradient(black, black)) {
+  .el-message > .el-message__icon {
+    > svg { display: none; }
+    &::before, &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      mask-repeat: no-repeat;
+      mask-position: center;
+      mask-size: contain;
+    }
+    &::before {
+      background-color: currentColor;
+      mask-image: var(--erp-message-icon-base);
+    }
+    &::after {
+      background-color: white;
+      mask-image: var(--erp-message-icon-mark);
+    }
+  }
+}
+
+html[data-theme='warm'] .el-message:is(.el-message--warning, .el-message--info) {
+  --el-message-text-color: color-mix(in srgb, var(--erp-message-tone) 66%, black);
+}
+
+@media (max-width: 560px) {
+  .el-message { --el-message-padding: 13px 16px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .el-message--success > .el-message__icon {
+    animation: erp-message-success-pop 520ms cubic-bezier(.22, .75, .25, 1) 1;
+    &::after { animation: erp-message-check-draw 420ms ease-out 1; }
+  }
+  .el-message--warning > .el-message__icon { animation: erp-message-warning-sway 560ms ease-in-out 1; }
+  .el-message--error > .el-message__icon { animation: erp-message-error-shake 420ms ease-in-out 1; }
+  .el-message--info > .el-message__icon,
+  .el-message--primary > .el-message__icon { animation: erp-message-info-pulse 500ms cubic-bezier(.22, .75, .25, 1) 1; }
+}
+
+@keyframes erp-message-success-pop {
+  0% { transform: scale(.82); }
+  48% { transform: scale(1.09); }
+  76% { transform: scale(.98); }
+  100% { transform: scale(1); }
+}
+@keyframes erp-message-check-draw {
+  0%, 12% { clip-path: inset(0 72% 0 0); }
+  100% { clip-path: inset(0 26% 0 0); }
+}
+@keyframes erp-message-warning-sway {
+  0%, 100% { transform: rotate(0); }
+  24% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+  76% { transform: rotate(-2deg); }
+}
+@keyframes erp-message-error-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  42% { transform: translateX(2px); }
+  64% { transform: translateX(-1.5px); }
+  82% { transform: translateX(1px); }
+}
+@keyframes erp-message-info-pulse {
+  0%, 100% { transform: scale(1); }
+  42% { transform: scale(1.13); }
+  72% { transform: scale(.98); }
+}
+
+@media (prefers-reduced-motion: reduce), print {
+  .el-message { transition: none; }
+  .el-message > .el-message__icon,
+  .el-message > .el-message__icon::after { animation: none; }
+}

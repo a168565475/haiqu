@@ -16,6 +16,8 @@ from .serializers import AuthenticationStateSerializer, HealthResponseSerializer
 
 
 def user_payload(user):
+    from apps.wecom.selectors import waiting_for_role
+
     employee_payload = None
     try:
         employee = user.employee_profile
@@ -62,6 +64,10 @@ def user_payload(user):
         from types import SimpleNamespace
         request = SimpleNamespace(user=user, employee=employee)
         payload["permissions"] = sorted(set(payload["permissions"]) | {code for code in sales_policy.LEGACY_ACTION_PERMISSIONS if sales_policy.has_permission(request, code)})
+    payload["waiting_for_role"] = waiting_for_role(user)
+    if payload["waiting_for_role"]:
+        payload["permissions"] = []
+        payload["data_scope"] = "NONE"
     return payload
 
 

@@ -5,6 +5,7 @@ export const glassDetailRouteNames = [
   'quotation-versions',
   'quotation-preview',
   'quotation-packaging',
+  'quotation-price-history',
   'sales-order-detail',
   'bom-preview',
   'production-task-detail',

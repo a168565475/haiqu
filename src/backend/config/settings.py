@@ -64,9 +64,11 @@ INSTALLED_APPS = [
     "apps.imports",
     "apps.preferences",
     "apps.email_accounts",
+    "apps.wecom",
 ]
 
 MIDDLEWARE = [
+    "apps.wecom.middleware.WeComOAuthSensitiveMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "apps.core.middleware.RequestIdMiddleware",
     "apps.core.debug_timing.ProductionReadTimingMiddleware",
@@ -80,6 +82,24 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {"wecom_access": {"()": "apps.core.logging.WeComAccessLogFilter"}},
+    "formatters": {
+        "django.server": {
+            "()": "django.utils.log.ServerFormatter", "format": "[{server_time}] {message}", "style": "{",
+        },
+    },
+    "handlers": {
+        "django.server": {
+            "class": "logging.StreamHandler", "level": "INFO", "formatter": "django.server",
+            "filters": ["wecom_access"],
+        },
+    },
+    "loggers": {"django.server": {"handlers": ["django.server"], "level": "INFO", "propagate": False}},
+}
 
 ROOT_URLCONF = "config.urls"
 
@@ -110,6 +130,7 @@ DATABASES = {
         "HOST": os.getenv("POSTGRES_HOST", "postgres"),
         "PORT": os.getenv("POSTGRES_PORT", "5432"),
         "CONN_MAX_AGE": 60,
+        "TEST": {"NAME": os.getenv("POSTGRES_TEST_DB") or None},
     }
 }
 
@@ -219,6 +240,12 @@ CACHES = {
         "KEY_PREFIX": "haiqu:configuration:v1",
         "OPTIONS": {"socket_connect_timeout": 0.2, "socket_timeout": 0.2},
     },
+    "wecom": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": REDIS_URL,
+        "KEY_PREFIX": "haiqu:wecom:v1",
+        "OPTIONS": {"socket_connect_timeout": 2, "socket_timeout": 2},
+    },
 }
 
 CLAMAV_HOST = os.getenv("CLAMAV_HOST", "clamav")
@@ -232,6 +259,9 @@ BOM_IMPORT_MAX_BYTES = int(os.getenv("BOM_IMPORT_MAX_BYTES", str(100 * 1024 * 10
 
 # 账户级邮件 SMTP 授权码加密密钥。第一个用于写入，后续密钥用于轮换期解密。
 EMAIL_ACCOUNT_FERNET_KEYS = env_list("EMAIL_ACCOUNT_FERNET_KEYS")
+
+# 企业微信应用及消息回调凭据；与邮件账户密钥独立，首个写入、其余轮换解密。
+WECOM_FERNET_KEYS = env_list("WECOM_FERNET_KEYS")
 
 # 仅用于本机开发演示。生产环境即使误设环境变量，也会因 DEBUG=False 而保持关闭。
 DEV_AUTO_LOGIN_ENABLED = DEBUG and env_bool("DEV_AUTO_LOGIN_ENABLED", False)

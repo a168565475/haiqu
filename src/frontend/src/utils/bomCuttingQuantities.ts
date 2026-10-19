@@ -6,6 +6,24 @@ export interface CuttingParameters {
   cutting_sets_per_product?: string | number | null
 }
 
+/** 复用编辑页原有管材旧口径只读试算，不写回布料的新参数。 */
+export function legacyPipeCuttingValues(line: {
+  category: string; cutting_category: string; cut_piece_quantity: string; fabric_meters_per_set?: string | null
+} | null | undefined) {
+  if (!line || !`${line.category || ''} ${line.cutting_category || ''}`.includes('管材')) return null
+  const piecesUnits = decimalUnits(line.cut_piece_quantity)
+  const metersUnits = decimalUnits(line.fabric_meters_per_set)
+  if (piecesUnits === null || piecesUnits <= 0n || piecesUnits % 10000n !== 0n
+    || metersUnits === null || metersUnits <= 0n) return null
+  const pieces = piecesUnits / 10000n
+  const metersPerPieceUnits = (metersUnits + pieces / 2n) / pieces
+  return {
+    pieces: String(pieces),
+    metersPerPiece: `${metersPerPieceUnits / 10000n}.${String(metersPerPieceUnits % 10000n).padStart(4, '0')}`,
+    sets: '1',
+  }
+}
+
 export interface CuttingCalculation {
   mode: 'legacy' | 'incomplete' | 'invalid' | 'valid'
   error: string

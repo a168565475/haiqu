@@ -27,4 +27,4 @@ RUN groupadd --gid 10001 erp \
 USER 10001:10001
 EXPOSE 8000
 
-CMD ["sh", "-c", "python wait_for_services.py && python manage.py collectstatic --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "python wait_for_services.py && python manage.py collectstatic --noinput && exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120 --access-logfile - --access-logformat '%(h)s %(m)s %(U)s %(s)s %(L)s' --error-logfile -"]

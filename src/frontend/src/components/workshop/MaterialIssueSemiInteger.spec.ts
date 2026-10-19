@@ -29,6 +29,80 @@ const wrappers: ReturnType<typeof mount>[] = []
 const globalOptions = { plugins: [ElementPlus], stubs: { AppWindowDialog: true } }
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.clearAllMocks() })
 
+describe('领料候选整行选择', () => {
+  it.each([
+    { ...raw, requirement_id: 'fabric-1', material_name: '裁剪布料', unit: '米', conversion_snapshot: undefined },
+    raw,
+    requirement,
+  ])('点击 $material_name 的文字和单元格空白均切换选择，控件不会重复切换', async (row) => {
+    const selected: Record<string, string> = {}
+    const wrapper = mount(MaterialIssuePartitions, {
+      attachTo: document.body,
+      props: { requirements: [row], selected, allocations: {} },
+      global: {
+        plugins: [ElementPlus],
+        stubs: { AppWindowDialog: { template: '<div data-testid="picker"><slot /><slot name="footer" /></div>' } },
+      },
+    })
+    wrappers.push(wrapper)
+    const partition = row.line_type === 'RAW' ? 'raw-partition' : 'semi-partition'
+    await wrapper.get(`[data-testid="${partition}"] header button`).trigger('click')
+    await flushPromises()
+    const candidate = wrapper.get('.candidate-table tbody tr')
+    const textCell = candidate.findAll('td')[row.line_type === 'RAW' ? 1 : 0]!
+
+    await textCell.get('span').trigger('click')
+    expect(candidate.classes()).toContain('is-picked')
+    expect(selected).toEqual({})
+    await textCell.trigger('click')
+    expect(candidate.classes()).not.toContain('is-picked')
+
+    if (row.line_type === 'RAW') {
+      const checkbox = candidate.get('input[type="checkbox"]').element as HTMLInputElement
+      checkbox.click()
+      await flushPromises()
+      expect(candidate.classes()).toContain('is-picked')
+      checkbox.click()
+    } else {
+      await candidate.get('button').trigger('click')
+      expect(candidate.classes()).toContain('is-picked')
+      await candidate.get('button').trigger('click')
+    }
+    await flushPromises()
+    expect(candidate.classes()).not.toContain('is-picked')
+    await textCell.trigger('click')
+    await wrapper.get('[data-testid="picker"] > button').trigger('click')
+    expect(selected).toEqual({ [row.requirement_id]: '0' })
+  })
+
+  it('已有材料取消后重新选回，确认时保留原数量和库存分配', async () => {
+    const selected = { [raw.requirement_id]: '6' }
+    const batches = [{ inbound_line_id: 'inbound-1', inbound_number: '入库-1', zone_name: '原料库', requested_pieces: '6', available_quantity: '2', available_meters: '6.10' }]
+    const allocations = { [raw.requirement_id]: batches }
+    const wrapper = mount(MaterialIssuePartitions, {
+      props: { requirements: [raw], selected, allocations },
+      global: {
+        plugins: [ElementPlus],
+        stubs: { AppWindowDialog: { template: '<div data-testid="picker"><slot /><slot name="footer" /></div>' } },
+      },
+    })
+    wrappers.push(wrapper)
+    await wrapper.get('[data-testid="raw-partition"] header button').trigger('click')
+    await flushPromises()
+    const candidate = wrapper.get('.candidate-table tbody tr')
+
+    await candidate.trigger('click')
+    expect(candidate.classes()).not.toContain('is-picked')
+    expect(selected[raw.requirement_id]).toBe('6')
+    expect(allocations[raw.requirement_id]).toBe(batches)
+    await candidate.trigger('click')
+    expect(candidate.classes()).toContain('is-picked')
+    await wrapper.get('[data-testid="picker"] > button').trigger('click')
+    expect(selected[raw.requirement_id]).toBe('6')
+    expect(allocations[raw.requirement_id]).toBe(batches)
+  })
+})
+
 describe('半成品按整数支领用显示', () => {
   it('半成品选择弹窗拆分工艺和库区，选中后隐藏类型与已完成工艺并拆分规格颜色库区', async () => {
     const wrapper = mount(MaterialIssuePartitions, {

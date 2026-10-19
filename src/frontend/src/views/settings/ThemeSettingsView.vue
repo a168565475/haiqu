@@ -19,7 +19,7 @@ function selectTheme(theme: EnabledThemeId): void {
 </script>
 
 <template>
-  <section class="theme-settings system-settings-theme" data-testid="theme-settings-page">
+  <section class="theme-settings" data-testid="theme-settings-page">
     <header class="page-heading">
       <div>
         <h1>界面主题</h1>
@@ -68,6 +68,7 @@ function selectTheme(theme: EnabledThemeId): void {
 </template>
 
 <style scoped lang="scss">
+@use '@/styles/theme/detail';
 .theme-settings {
   min-width: 0;
   color: var(--erp-color-text-primary);
@@ -85,9 +86,9 @@ function selectTheme(theme: EnabledThemeId): void {
 .page-heading h1 {
   margin: 0;
   color: var(--erp-color-text-primary);
-  font-family: var(--erp-font-display);
-  font-size: 34px;
-  font-weight: 500;
+  font-family: var(--erp-font-body);
+  font-size: 36px;
+  font-weight: 700;
   line-height: 44px;
 }
 
@@ -99,11 +100,9 @@ function selectTheme(theme: EnabledThemeId): void {
 }
 
 .theme-settings__card {
+  @include detail.surface;
   max-width: 840px;
   padding: var(--erp-space-6);
-  border: 1px solid var(--erp-color-border);
-  border-radius: var(--erp-radius-card);
-  background: var(--erp-color-surface);
 }
 
 .theme-settings__intro h2 {
@@ -129,6 +128,7 @@ function selectTheme(theme: EnabledThemeId): void {
 }
 
 .theme-option {
+  @include detail.inset;
   position: relative;
   display: flex;
   align-items: center;
@@ -136,10 +136,7 @@ function selectTheme(theme: EnabledThemeId): void {
   width: 100%;
   min-height: 112px;
   padding: var(--erp-space-4);
-  border: 1px solid var(--erp-color-border);
-  border-radius: var(--erp-radius-control);
   color: var(--erp-color-text-primary);
-  background: var(--erp-color-surface);
   text-align: left;
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;

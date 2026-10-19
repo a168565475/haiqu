@@ -13,6 +13,7 @@ export interface AuthUser {
   employee: AuthEmployee | null
   permissions: string[]
   data_scope: string
+  waiting_for_role?: boolean
   sales_access_enabled?: boolean
   module_access_enabled?: boolean
   effective_access?: import('./access').EffectiveAccess

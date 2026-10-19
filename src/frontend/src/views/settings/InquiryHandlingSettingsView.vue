@@ -52,16 +52,16 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="inquiry-settings system-settings-theme" v-loading="loading">
+  <section class="inquiry-settings" v-loading="loading">
     <header><div><h1>询盘处理时限</h1></div><div><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></div></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-alert title="新规则仅用于之后新开始的环节" description="正在计时和历史记录保留原规则、原截止时间；保存操作会记录修改前后内容。" type="info" :closable="false" show-icon />
     <div v-if="settings" class="settings-columns">
       <el-card shadow="never"><template #header><b>各环节处理时长</b><span class="unit-note">按工作分钟填写</span></template>
         <el-table :data="stages.map((stage,index)=>({stage,note:notes[index]}))">
-          <el-table-column label="环节" width="162"><template #default="{row}">{{ handlingStageLabel(row.stage) }}</template></el-table-column>
-          <el-table-column label="工作分钟" width="215"><template #default="{row}"><el-input-number v-model="settings.stage_minutes[row.stage]" :aria-label="handlingStageLabel(row.stage)" :min="1" :max="527040" :precision="0" :disabled="!canEdit||saving"/><small>{{ handlingTargetLabel(settings.stage_minutes[row.stage] || 0) }}</small></template></el-table-column>
-          <el-table-column prop="note" label="计时规则" min-width="220" />
+          <el-table-column label="环节" width="142"><template #default="{row}">{{ handlingStageLabel(row.stage) }}</template></el-table-column>
+          <el-table-column label="工作分钟" width="180"><template #default="{row}"><el-input-number v-model="settings.stage_minutes[row.stage]" :aria-label="handlingStageLabel(row.stage)" :min="1" :max="527040" :precision="0" :disabled="!canEdit||saving"/><small>{{ handlingTargetLabel(settings.stage_minutes[row.stage] || 0) }}</small></template></el-table-column>
+          <el-table-column prop="note" label="计时规则" min-width="180" />
         </el-table>
       </el-card>
       <el-card shadow="never"><template #header><b>工作日历</b></template><el-form label-position="top" :disabled="!canEdit||saving">
@@ -78,5 +78,35 @@ onMounted(load)
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
-.inquiry-settings { color:token.$crm-text-primary; header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;} h1{margin:12px 0 6px;font-size:28px;} p{color:token.$crm-text-muted;line-height:1.7;} .el-alert{margin-bottom:16px;} .settings-columns{display:grid;grid-template-columns:minmax(690px,1.6fr) minmax(360px,1fr);gap:20px;} .unit-note{float:right;font-size:12px;color:token.$crm-text-muted;} small{display:block;font-size:12px;color:token.$crm-text-muted;margin-top:4px;} .time-range{display:flex;align-items:center;gap:12px;} input[type=time]{width:130px;padding:8px;border:1px solid token.$crm-border-default;border-radius:4px;color:inherit;background:token.$crm-color-surface;} }
+@use '@/styles/theme/detail';
+.inquiry-settings {
+  min-width: 0;
+  color: token.$crm-text-primary;
+  font-family: var(--erp-font-body);
+  header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+  h1 { margin: 0; font: 700 36px/44px var(--erp-font-body); }
+  p { color: token.$crm-text-muted; font-size: 13px; line-height: 1.7; }
+  > .el-alert { margin-bottom: 14px; @include detail.inset; }
+  .settings-columns { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 14px; align-items: start; }
+  .el-card { @include detail.surface; }
+  :deep(.el-card__header) { padding: 16px; border-bottom: 1px solid var(--erp-glass-border); }
+  :deep(.el-card__body) { padding: 16px; }
+  .unit-note { float: right; font-size: 12px; color: token.$crm-text-muted; }
+  small { display: block; font-size: 12px; line-height: 18px; color: token.$crm-text-muted; margin-top: 4px; }
+  .time-range { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; }
+  input[type=time] { box-sizing: border-box; min-width: 0; width: 0; flex: 1; height: 32px; padding: 0 12px; border: 1px solid var(--erp-input-border); border-radius: var(--erp-radius-control); color: inherit; background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow); font: 13px var(--erp-font-body); }
+  input[type=time]:focus-visible { outline: 2px solid var(--erp-input-focus-border); outline-offset: 1px; }
+  input[type=time]:disabled { background: var(--erp-input-disabled-background); color: var(--erp-input-placeholder); cursor: not-allowed; box-shadow: none; }
+  :deep(.el-date-editor.el-input) { width: 100%; }
+  :deep(.el-input__wrapper) { height: 32px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+  :deep(.el-date-editor .el-input__wrapper) { padding: 0 12px; }
+  :deep(.el-input__wrapper.is-focus) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+  :deep(.el-input.is-disabled .el-input__wrapper) { background: var(--erp-input-disabled-background); box-shadow: 0 0 0 1px var(--erp-input-border) inset; }
+  :deep(.el-table th.el-table__cell) { height: 44px; padding: 0; }
+  :deep(.el-table td.el-table__cell) { height: 40px; padding: 4px 0; }
+  :deep(.el-table .cell) { font-size: 12px; line-height: 18px; }
+}
+@media (max-width: 1050px) {
+  .inquiry-settings .settings-columns { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

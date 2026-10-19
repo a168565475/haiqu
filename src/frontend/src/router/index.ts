@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { wecomRouteRedirect } from './wecomGuard'
 
 import { useAuthStore } from '@/stores/auth'
 import HomeView from '@/views/HomeView.vue'
@@ -105,6 +106,23 @@ import OutsourcingReworkDetailView from '@/views/outsourcing/OutsourcingReworkDe
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/auth/waiting-role',
+      name: 'waiting-role',
+      component: () => import('@/views/auth/WaitingRoleView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/auth/wecom-error',
+      name: 'wecom-error',
+      component: () => import('@/views/auth/WeComErrorView.vue'),
+    },
+    {
+      path: '/settings/wecom',
+      name: 'wecom-settings',
+      component: () => import('@/views/settings/WeComSettingsView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 企业微信管理', breadcrumbs: [{ label: '系统配置', to: '/settings/reference-data' }, { label: '企业微信管理' }], pageWidth: 'fluid' },
+    },
     {
       path: '/boards/production-line',
       name: 'production-line-board',
@@ -1747,12 +1765,18 @@ router.beforeEach(async (to) => {
     if (to.meta.requiresAuth) await authStore.ensureFreshAuthentication()
     else await authStore.initialize()
   } catch {
+    if (authStore.isAuthenticated && authStore.waitingForRole) {
+      return to.name === 'waiting-role' || to.name === 'wecom-error' ? true : { name: 'waiting-role' }
+    }
     if (to.meta.requiresAuth) {
       authStore.clearAuthentication()
       return { name: 'login', query: { redirect: to.fullPath } }
     }
     return true
   }
+
+  const wecomRedirect = wecomRouteRedirect(to.name, authStore.isAuthenticated, authStore.waitingForRole)
+  if (wecomRedirect) return wecomRedirect
 
   if (to.name === 'login' && authStore.isAuthenticated) {
     return { name: 'home' }

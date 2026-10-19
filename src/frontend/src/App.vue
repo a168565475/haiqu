@@ -7,6 +7,7 @@ import AppSidebar from '@/components/navigation/AppSidebar.vue'
 import ErpLayout from '@/layouts/ErpLayout.vue'
 import PageContainer from '@/layouts/PageContainer.vue'
 import { useAuthStore } from '@/stores/auth'
+import { installWeComRoleGuard } from '@/api/wecomSession'
 import { usePageTabsStore } from '@/stores/pageTabs'
 import { useReferenceCacheSync } from '@/composables/useReferenceCacheSync'
 import { pageInstanceKey } from '@/utils/pageInstanceKey'
@@ -17,6 +18,7 @@ import { glassFormRouteNames } from '@/config/glassFormRoutes'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const removeWeComRoleGuard = installWeComRoleGuard(router, authStore)
 const pageTabs = usePageTabsStore()
 watch(() => [authStore.user?.id, JSON.stringify({
   permissions: [...(authStore.user?.permissions || [])].sort(),
@@ -26,6 +28,7 @@ watch(() => [authStore.user?.id, JSON.stringify({
   employee: authStore.user?.employee,
   dataScope: authStore.user?.data_scope,
   effectiveAccess: authStore.user?.effective_access,
+  waitingForRole: authStore.user?.waiting_for_role,
 })] as const, ([userId, permissionSignature]) => {
   const previousAccount = pageTabs.accountId
   const previousPermissions = pageTabs.permissionSignature
@@ -43,6 +46,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', invalidateAuthenticationCheck)
 })
 onBeforeUnmount(() => {
+  removeWeComRoleGuard()
   window.removeEventListener('focus', invalidateAuthenticationCheck)
   document.removeEventListener('visibilitychange', invalidateAuthenticationCheck)
 })
@@ -50,7 +54,7 @@ onBeforeUnmount(() => {
 const quotationRoutes = ['quotations', 'quotation-edit', 'quotation-preview', 'quotation-versions', 'quotation-packaging', 'quotation-price-history']
 const quotationRoute = computed(() => quotationRoutes.includes(String(route.name || '')))
 const wageSchemeRoute = computed(() => ['wage-schemes', 'wage-scheme-new', 'wage-scheme-change', 'wage-scheme-detail'].includes(String(route.name || '')))
-const settingsRoutes = ['access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
+const settingsRoutes = ['wecom-settings', 'access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
 const settingsRoute = computed(() => settingsRoutes.includes(String(route.name || '')))
 const fastReadLoadingRoute = computed(() => [
   'contacts', 'customer-duplicates',

@@ -6,6 +6,7 @@ import * as productsApi from '@/api/products'
 import BomEditorView from './BomEditorView.vue'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import BomPrintDocument from '@/components/boms/BomPrintDocument.vue'
 
 const auth = vi.hoisted(() => ({ editable: true }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { bomId: 'b1' } }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }))
@@ -38,6 +39,20 @@ beforeEach(() => {
 })
 
 describe('BOM 编辑页页签与核对集成', () => {
+  it('打印保留所有分区和当前未保存输入，不调用保存接口', async () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {})
+    const wrapper = open(); await flushPromises()
+    try {
+      const vm = wrapper.vm as unknown as { sections: Array<{ title: string; lines: Array<{ part_name: string }> }> }
+      vm.sections[0]!.lines[0]!.part_name = '本地未保存部件'
+      await wrapper.findAll('button').find(button => button.text() === '预览打印')!.trigger('click')
+      expect(print).toHaveBeenCalledOnce()
+      const document = wrapper.findComponent(BomPrintDocument)
+      expect(document.props('sections')).toHaveLength(7)
+      expect(document.props('sections')[0].lines[0].part_name).toBe('本地未保存部件')
+      expect(api.confirmBomProduct).not.toHaveBeenCalled()
+    } finally { wrapper.unmount(); print.mockRestore() }
+  })
   it('切换页签只切显示内容，保留用料编辑与数量说明且不自动保存', async () => {
     const wrapper = open(); await flushPromises()
     try {

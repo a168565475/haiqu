@@ -70,6 +70,16 @@ describe('路由登录状态刷新', () => {
     expect(requestDevelopmentAutoLogin).not.toHaveBeenCalled()
   })
 
+  it('待授权账号保持登录，并在强制刷新后解除等待状态', async () => {
+    const store = useAuthStore()
+    store.applyAuthResponse({ authenticated: true, user: { ...authenticated.user!, waiting_for_role: true } })
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.waitingForRole).toBe(true)
+    await store.initialize(true)
+    expect(store.isAuthenticated).toBe(true)
+    expect(store.waitingForRole).toBe(false)
+  })
+
   it('刷新失败不续期，下次导航重新校验', async () => {
     const store = useAuthStore()
     await store.ensureFreshAuthentication()

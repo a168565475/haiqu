@@ -1,4 +1,6 @@
 @use './crm/tokens' as t;
+@use './theme/detail';
+@use './workbench';
 .access-page {
   height: 100%; min-height: 0; display: flex; flex-direction: column; color: t.$crm-text-primary; font: 13px/1.5 t.$crm-font-body;
   .muted { color: t.$crm-text-secondary; }
@@ -22,17 +24,17 @@
   tbody tr:hover {background:t.$crm-color-row-hover;}
   .permission-cell {display:flex;align-items:center;gap:8px;&.has-resource-scope{gap:4px;}select{width:104px;padding:0 4px;font-size:12px;} select.restricted-select{width:74px;} .scope-configure{width:32px;padding:0;flex:none;} }
 }
-.access-title {display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex:none;p{color:t.$crm-text-secondary;}h1{margin:0;font:600 34px/44px t.$crm-font-display;}}
+.access-title {display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex:none;p{color:t.$crm-text-secondary;}h1{margin:0;font:700 36px/44px t.$crm-font-body;}}
 .access-title-line {display:flex;align-items:center;gap:14px;span{color:t.$crm-text-secondary;}}
 .access-tabs {display:flex;gap:28px;border-bottom:1px solid t.$crm-border-default;margin-bottom:14px;flex:none;button{border:0;border-radius:0;background:none;padding:0 2px;color:t.$crm-text-secondary;&.active{border-bottom:2px solid t.$crm-primary;color:t.$crm-primary;font-weight:600;}}}
 .access-role-layout, .access-team-layout {display:grid;grid-template-columns:236px minmax(0,1fr);gap:14px;flex:1;min-height:0;}
-.access-box {border:1px solid t.$crm-border-default;border-radius:5px;background:t.$crm-color-surface;min-width:0;overflow:hidden;}
+.access-box {@include detail.surface; overflow:hidden;}
 .access-role-list {display:flex;flex-direction:column;>input{margin:14px 14px 10px;width:calc(100% - 28px);flex:none;}footer{padding:12px 14px;border-top:1px solid t.$crm-border-default;font-size:11px;color:t.$crm-text-secondary;}}
 .access-boxhead {padding:14px;border-bottom:1px solid t.$crm-border-default;flex:none;}
 .access-role-scroll {padding:8px;flex:1;min-height:0;overflow:auto;scrollbar-width:thin;}
 .access-page .access-role {display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;border:0;background:none;padding:0 12px;margin-bottom:4px;text-align:left;small{color:t.$crm-text-muted;font-size:11px;}&.current{background:t.$crm-color-selected;color:t.$crm-primary;box-shadow:inset 3px 0 t.$crm-primary;font-weight:600;} }
 .access-editor, .access-widebox {display:flex;flex-direction:column;flex:1;min-height:0;}
-.access-editorhead {display:flex;justify-content:space-between;align-items:center;gap:14px;padding:16px;border-bottom:1px solid t.$crm-border-default;flex:none;h2{margin:0 0 6px;font:600 20px/28px t.$crm-font-display;.access-tag{margin-left:8px;}}}
+.access-editorhead {display:flex;justify-content:space-between;align-items:center;gap:14px;padding:16px;border-bottom:1px solid t.$crm-border-default;flex:none;h2{margin:0 0 6px;font:600 18px/26px t.$crm-font-body;.access-tag{margin-left:8px;}}}
 .access-actions {display:flex;align-items:center;gap:14px;}
 .access-notice {margin:14px 16px 0;padding:8px 12px;background:t.$crm-color-subtle;border-left:3px solid t.$crm-primary;color:t.$crm-text-regular;font-size:12px;flex:none;}
 .access-toolbar {padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex:none;}
@@ -44,7 +46,7 @@
 .access-editorfoot {height:60px;padding:14px 16px;border-top:1px solid t.$crm-border-default;display:flex;align-items:center;justify-content:space-between;flex:none;}
 .access-pagination {height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-top:1px solid t.$crm-border-default;color:t.$crm-text-secondary;font-size:12px;flex:none;}
 .access-state, .access-empty {padding:70px 20px;text-align:center;color:t.$crm-text-secondary;}
-.access-state {background:t.$crm-color-surface;border:1px solid t.$crm-border-default;border-radius:5px;}
+.access-state {@include detail.surface;}
 .access-warning {padding:10px 14px;background:t.$crm-warning-soft;color:t.$crm-warning;margin-bottom:14px;button{margin-left:14px;}}
 .access-dialog {font:13px/1.5 t.$crm-font-body;.muted{color:t.$crm-text-secondary;}p{margin:8px 0;} >label{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}textarea{font:13px t.$crm-font-body;color:t.$crm-text-primary;border:1px solid t.$crm-border-default;border-radius:5px;padding:8px;background:t.$crm-color-surface;resize:vertical;}.access-notice{margin:14px 0;}td{overflow-wrap:anywhere;} }
 .access-dialog-footer {justify-content:flex-end;}
@@ -53,3 +55,26 @@
 .access-special-row {display:flex;justify-content:space-between;align-items:center;gap:14px;min-height:44px;border-bottom:1px solid t.$crm-border-default;}
 .access-audit-columns {display:grid;grid-template-columns:1fr 1fr;gap:16px;pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 t.$crm-font-body;color:t.$crm-text-regular;background:t.$crm-color-subtle;padding:12px;border-radius:5px;} }
 .access-audit-value {white-space:pre-line;overflow-wrap:anywhere;border-bottom:1px solid t.$crm-border-default;padding:8px 0;color:t.$crm-text-regular;}
+
+.access-page {
+  input:not([type='checkbox']), select {
+    border-color: var(--erp-input-border);
+    border-radius: var(--erp-radius-control);
+    background: var(--erp-input-surface);
+    box-shadow: var(--erp-input-shadow);
+    &:hover { border-color: var(--erp-input-hover-border); }
+    &:disabled { background: var(--erp-input-disabled-background); box-shadow: none; }
+  }
+  button:not(.access-role, .text-button):not(:where(.access-tabs *)) {
+    @include workbench.secondary-button;
+    &.primary {
+      color: var(--erp-button-primary-text);
+      border-color: var(--erp-button-primary-border);
+      background: var(--erp-button-primary-surface);
+      box-shadow: var(--erp-button-primary-shadow);
+      &:hover:not(:disabled) { background: var(--erp-button-primary-hover-surface); }
+      &:disabled { color: var(--erp-button-disabled-text); background: var(--erp-button-disabled-background); box-shadow: none; }
+    }
+  }
+  .access-editorhead, .access-toolbar, .access-actions { flex-wrap: wrap; }
+}

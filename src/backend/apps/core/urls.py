@@ -10,10 +10,12 @@ urlpatterns = [
     path("auth/development-auto-login/", development_auto_login, name="development-auto-login"),
     path("auth/logout/", auth_logout, name="auth-logout"),
     path("auth/me/", current_user, name="auth-me"),
+    path("auth/wecom/", include("apps.wecom.auth_urls")),
     path("health/", health, name="health"),
     path("schema/", SpectacularAPIView.as_view(), name="api-schema"),
     path("v1/", include("apps.core.api.urls")),
     path("v1/access/", include("apps.access_control.api.urls")),
+    path("v1/wecom/", include("apps.wecom.urls")),
     path("v1/workshop-reporting/", include("apps.workshop_reporting.api.urls")),
 ]
 

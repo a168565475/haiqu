@@ -32,6 +32,7 @@ import { fetchAllProductionDataRecords } from '@/api/productionData'
 import AuxiliaryReferenceCreateDialog from '@/components/AuxiliaryReferenceCreateDialog.vue'
 import BomLineEditorDialog from '@/components/BomLineEditorDialog.vue'
 import BomLineImageSummary from '@/components/BomLineImageSummary.vue'
+import BomPrintDocument from '@/components/boms/BomPrintDocument.vue'
 import BomProductImage from '@/components/boms/BomProductImage.vue'
 import HardwareRawMaterialCreateDialog from '@/components/HardwareRawMaterialCreateDialog.vue'
 import ProductCreateDialog from '@/components/products/ProductCreateDialog.vue'
@@ -65,8 +66,7 @@ import type { ProductInformation, ProductInformationInput, ProductOptions } from
 import type { ProductColor } from '@/types/productionData'
 import { createProductionDataRecord } from '@/api/productionData'
 import { pipePlan } from '@/utils/materialFlow'
-import { cuttingCalculation, cuttingCompatibilityValues } from '@/utils/bomCuttingQuantities'
-import { decimalUnits } from '@/utils/outsourcingQuantities'
+import { cuttingCalculation, cuttingCompatibilityValues, legacyPipeCuttingValues } from '@/utils/bomCuttingQuantities'
 import { matchesPinyinSearch } from '@/utils/pinyinSearch'
 import type {
   TubeCoatingColor,
@@ -525,28 +525,6 @@ function cuttingQuantities(line: BomLineInput) {
 function isPipeCuttingLine(line: BomLineInput | null | undefined) {
   if (!line) return false
   return `${line.category || ''} ${line.cutting_category || ''}`.includes('管材')
-}
-
-/**
- * 管材半成品仍按根/支流转，不能把它写入布料的三项新字段。
- * 表格需要让已有旧值直接可见，因此这里只做开发数据的只读展示，不改提交数据。
- */
-function legacyPipeCuttingValues(line: BomLineInput | null | undefined) {
-  if (!line) return null
-  if (!isPipeCuttingLine(line)) return null
-  const piecesUnits = decimalUnits(line.cut_piece_quantity)
-  const metersUnits = decimalUnits(line.fabric_meters_per_set)
-  if (piecesUnits === null || piecesUnits <= 0n || piecesUnits % 10000n !== 0n
-    || metersUnits === null || metersUnits <= 0n) return null
-  const pieces = piecesUnits / 10000n
-  // 仅用于显示旧数据的试算值，按四位小数四舍五入；不写回布料字段。
-  const metersPerPieceUnits = (metersUnits + pieces / 2n) / pieces
-  const formatMeters = (value: bigint) => `${value / 10000n}.${String(value % 10000n).padStart(4, '0')}`
-  return {
-    pieces: String(pieces),
-    metersPerPiece: formatMeters(metersPerPieceUnits),
-    sets: '1',
-  }
 }
 
 function syncCuttingValues(line: BomLineInput) {
@@ -2848,6 +2826,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section v-loading="saving || verifying" class="bom-editor-page erp-glass-form" aria-label="BOM 编辑">
+    <BomPrintDocument v-if="bom && !loading && !errorMessage" :bom="bom" :sections="sections" />
     <div v-if="loading" class="page-state" v-loading="true" />
     <ElResult v-else-if="errorMessage" class="bom-error-state" role="alert" title="BOM 加载失败" :sub-title="errorMessage">
       <template #icon>
@@ -4089,16 +4068,6 @@ onBeforeUnmount(() => {
 .cutting-image-grid article > div strong, .cutting-image-grid article > div span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cutting-image-grid article > div strong { color: var(--erp-color-text-regular); font-size: 12px; }
 .cutting-image-grid article > div span { margin-top: 5px; color: var(--erp-color-text-muted); font-size: 11px; }
-@media print {
-  .heading-actions, .bom-editor-tabs, .material-actions, .table-fullscreen-button, .table-row-actions, .fullscreen-table-actions { display: none !important; }
-  #bom-product-panel, #bom-material-panel { display: block !important; }
-  #bom-material-panel { margin-top: 16px; }
-  .product-overview { display: block; }
-  .product-overview :deep(.bom-product-image) { display: none; }
-  .bom-editor-page { min-width: 0; padding: 0; background: #fff; }
-  .card { border-color: var(--erp-color-border); border-radius: 5px; background: #fff; box-shadow: none; backdrop-filter: none; }
-}
-
 /* BOM-V3-03：六类导航、行选择与下方物料明细编辑。 */
 .editor-heading { min-height: 88px; }
 .title-line { gap: 14px; }

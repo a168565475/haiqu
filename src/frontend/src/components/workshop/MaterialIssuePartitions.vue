@@ -155,7 +155,7 @@ function remainder(row: MaterialRequirement) {
           </ElSelect>
           <ElButton v-if="picker === 'SEMI'" type="primary">查询</ElButton>
         </div>
-      <ElTable :data="candidates" class="candidate-table" border max-height="540" row-key="requirement_id" empty-text="当前范围没有可领库存或材料" :row-class-name="({ row }: { row: MaterialRequirement }) => draftSelectedIds.has(row.requirement_id) ? 'is-picked' : ''">
+      <ElTable :data="candidates" class="candidate-table" border max-height="540" row-key="requirement_id" empty-text="当前范围没有可领库存或材料" :row-class-name="({ row }: { row: MaterialRequirement }) => draftSelectedIds.has(row.requirement_id) ? 'is-picked' : ''" @row-click="addCandidate">
         <template v-if="picker === 'SEMI'">
            <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
            <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
@@ -199,6 +199,7 @@ small { display: block; font-size: 12px; color: var(--erp-color-text-secondary);
 .partition :deep(.el-table th.el-table__cell), .selector-content :deep(.el-table th.el-table__cell) { background: var(--erp-table-header-fill); color: var(--erp-table-header-text); height: 44px; padding: 0; font-weight: 500; }
 .partition :deep(.el-table td.el-table__cell), .selector-content :deep(.candidate-table td.el-table__cell) { height: 40px; padding: 0; }
 .selector-content { display: grid; gap: 12px; }
+.selector-content :deep(.candidate-table .el-table__body tr) { cursor: pointer; }
 .selector-filters { display: flex; align-items: center; gap: 12px; }
 .selector-filters :deep(.el-input) { width: 370px; }
 .selector-filters :deep(.el-select) { width: 180px; }

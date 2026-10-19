@@ -73,8 +73,53 @@ onMounted(() => { void loadHistory() })
 </template>
 
 <style scoped lang="scss">
-.price-history-page{color:var(--erp-color-text-primary);--el-color-primary:var(--erp-color-brand)}.price-history-page header{display:flex;justify-content:space-between;align-items:end;margin-bottom:14px}.crumb{margin:0 0 6px;color:var(--erp-color-text-secondary);font-size:12px}.heading{display:flex;align-items:baseline;gap:12px}.heading h1{margin:0;font-size:26px;line-height:32px}.heading span{color:var(--erp-color-text-secondary);font-size:13px}.filter-card,.metric-row :deep(.el-card),.chart-card,.insight-card,.records-card{border:0;border-radius:10px;box-shadow:none}.filter-card :deep(.el-card__body){padding:10px 16px}.filters{display:grid;grid-template-columns:1.35fr 1.35fr .82fr .72fr 1fr auto;gap:12px;align-items:end}.filters label{display:grid;gap:5px;color:var(--erp-color-text-secondary);font-size:12px}.filters :deep(.el-input__wrapper){min-height:34px}.filter-actions{display:flex;gap:10px}.black-button{color:var(--erp-button-primary-text)!important;border-color:var(--erp-button-primary-border) !important;background:var(--erp-button-primary-surface)!important}.metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.metric-row :deep(.el-card__body){display:grid;gap:6px;padding:14px 16px}.metric-row small,.metric-row span{color:var(--erp-color-text-secondary);font-size:12px}.metric-row b{font-size:20px}.main-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(330px,1fr);gap:12px}.chart-card :deep(.el-card__header),.insight-card :deep(.el-card__header),.records-card :deep(.el-card__header){padding:14px 18px}.chart-card :deep(.el-card__header)>div{display:flex;justify-content:space-between;align-items:center}.chart-card small{display:block;margin-top:4px;color:var(--erp-color-text-secondary);font-size:12px}.legend{display:flex;gap:10px;font-size:11px}.chart{height:260px;padding:10px 14px}.chart svg{width:100%;height:100%}.chart-card :deep(.el-empty){height:260px}.insight-card :deep(.el-card__body){display:grid;gap:12px;padding:12px 18px 18px}.insight{display:grid;gap:5px;padding:11px 12px;border-radius:8px;font-size:12px}.insight b{font-size:13px}.success{background:var(--erp-color-subtle);color:var(--erp-color-success)}.warning{background:var(--erp-color-subtle);color:var(--erp-color-warning)}.info{background:var(--erp-color-subtle);color:var(--erp-color-info)}.insight span{color:var(--erp-color-text-primary)}.records-card{margin-top:12px}.records-head{display:flex;justify-content:space-between;align-items:center}.records-head span{color:var(--erp-color-text-secondary);font-size:12px}.records-card :deep(.el-card__body){padding:0 16px 14px}.records-card :deep(.el-table th.el-table__cell){background:var(--erp-table-header-background);color:var(--erp-table-text)}.records-card :deep(.el-table__row td){height:40px}@media(max-width:1100px){.filters{grid-template-columns:repeat(3,minmax(180px,1fr))}.metric-row{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.price-history-page header{align-items:flex-start;flex-direction:column;gap:12px}.heading{align-items:flex-start;flex-direction:column;gap:3px}.filters{grid-template-columns:minmax(600px,1fr);overflow-x:auto}.metric-row,.main-row{grid-template-columns:1fr}.records-card{overflow-x:auto;min-width:760px}}
-.price-history-page{width:100%;max-width:1600px}.filter-card{height:70px}.metric-row :deep(.el-card){height:102px}.chart-card,.insight-card{height:302px}.chart{height:192px}.chart-card :deep(.el-empty){height:192px}.records-card{height:206px}.calculation-warning{margin-top:12px}@media(min-width:1700px){.filter-card{height:84px}.metric-row :deep(.el-card){height:88px}.chart-card,.insight-card{height:364px}.chart{height:254px}.chart-card :deep(.el-empty){height:254px}.records-card{height:288px}}
-.metric-row{gap:21.333px}.main-row{grid-template-columns:minmax(0,2.109fr) minmax(330px,1fr);gap:16px}.records-card{margin-top:16px}@media(min-width:1700px){.main-row{grid-template-columns:1080px 504px}}
-@media(max-width:1100px){.main-row{grid-template-columns:1fr}}
+@use '@/styles/theme/detail';
+
+.price-history-page { min-width: 0; width: 100%; max-width: 1600px; color: var(--erp-color-text-primary); --el-color-primary: var(--erp-color-brand); }
+.price-history-page header { display: flex; justify-content: space-between; align-items: end; gap: 14px; margin-bottom: 14px; }
+.crumb { margin: 0 0 6px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+.heading h1 { margin: 0; font: 700 36px/44px var(--erp-font-body); }
+.heading span { color: var(--erp-color-text-secondary); font-size: 13px; }
+.filter-card, .metric-row :deep(.el-card), .chart-card, .insight-card, .records-card { @include detail.surface; }
+.filter-card :deep(.el-card__body) { padding: 14px 16px; }
+.filters { display: grid; grid-template-columns: 1.35fr 1.35fr .82fr .72fr 1fr auto; gap: 12px; align-items: end; }
+.filters label { display: grid; min-width: 0; gap: 5px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.filters :deep(.el-input__wrapper), .filters :deep(.el-select__wrapper) { height: 32px; min-height: 32px; padding: 0 12px; border-radius: var(--erp-radius-control); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
+.filters :deep(.el-select__wrapper.is-focused) { box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
+.filter-actions { display: flex; gap: 10px; }
+.filter-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.black-button { color: var(--erp-button-primary-text); border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); box-shadow: var(--erp-button-primary-shadow); }
+.black-button:hover { background: var(--erp-button-primary-hover-surface); }
+.metric-row { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 14px 0; }
+.metric-row :deep(.el-card__body) { display: grid; gap: 6px; padding: 14px 16px; }
+.metric-row small, .metric-row span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.metric-row b { font-size: 20px; }
+.main-row { display: grid; grid-template-columns: minmax(0,2fr) minmax(300px,1fr); gap: 14px; }
+.chart-card :deep(.el-card__header), .insight-card :deep(.el-card__header), .records-card :deep(.el-card__header) { padding: 14px 16px; border-bottom: 1px solid var(--erp-glass-border); }
+.chart-card :deep(.el-card__header) > div { display: flex; justify-content: space-between; align-items: center; }
+.chart-card :deep(.el-card__body) { padding: 14px; }
+.chart-card small { display: block; margin-top: 4px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; }
+.chart { height: 192px; }
+.chart svg { width: 100%; height: 100%; }
+.chart-card :deep(.el-empty) { min-height: 192px; }
+.insight-card :deep(.el-card__body) { display: grid; gap: 12px; padding: 12px 16px 16px; }
+.insight { @include detail.inset; display: grid; gap: 5px; padding: 11px 12px; font-size: 12px; }
+.insight b { font-size: 13px; }
+.success { color: var(--erp-color-success); }
+.warning { color: var(--erp-color-warning); }
+.info { color: var(--erp-color-info); }
+.insight span { color: var(--erp-color-text-primary); }
+.records-card { margin-top: 14px; }
+.records-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; }
+.records-head span { color: var(--erp-color-text-secondary); font-size: 12px; }
+.records-card :deep(.el-card__body) { padding: 0 16px 14px; }
+.records-card :deep(.el-table th.el-table__cell) { background: var(--erp-table-header-background); color: var(--erp-table-text); }
+.records-card :deep(.el-table__row td) { height: 40px; }
+.calculation-warning { margin-top: 14px; }
+@media (min-width: 1700px) { .chart { height: 254px; } }
+@media (max-width: 1240px) { .filters { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media (max-width: 900px) { .main-row { grid-template-columns: minmax(0,1fr); } .metric-row { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 640px) { .price-history-page header { align-items: flex-start; flex-direction: column; } .filters { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 </style>

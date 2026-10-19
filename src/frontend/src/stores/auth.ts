@@ -19,6 +19,7 @@ export const useAuthStore = defineStore('auth', {
   }),
   getters: {
     isAuthenticated: (state) => state.user !== null,
+    waitingForRole: (state) => state.user?.waiting_for_role === true,
     hasPermission: (state) => (permission: string) => {
       return state.user?.permissions.includes(permission) ?? false
     },

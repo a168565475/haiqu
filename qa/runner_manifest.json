@@ -1,6 +1,31 @@
 {
   "version": 1,
   "modules": {
+    "wecom": [
+      {
+        "id": "wecom-isolated-page",
+        "path": "qa/wecom_phase1_isolated.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_haiqu_wecom_page_20261019_01a1519b-only",
+        "browser_mode": "headless",
+        "account_required": false,
+        "required_env": [],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/wecom_phase1_20261019/page_checks.json", "qa/wecom_phase1_20261019/actual_*.png"],
+        "preconditions": [
+          "先按实施记录登记独占测试库与容器，启动WECOM_BROWSER_QA=1的LiveServerTestCase并生成ready.json",
+          "只允许本机18591隔离真实API，页面使用现有8080前端；不回退业务库，不调用真实企微",
+          "运行需--allow-db-write，测试Fixture与Mock外部客户端不能代替真实企业微信身份链路验收",
+          "浏览器finally关闭并清理专属profile，发送finished后Django销毁测试库；结束复查容器、数据库与控制文件"
+        ]
+      }
+    ],
     "workbench": [
       {
         "id": "workbench-navigation-readonly",

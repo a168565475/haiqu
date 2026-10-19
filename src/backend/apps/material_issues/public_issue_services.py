@@ -376,7 +376,7 @@ def replace_public_issue_lines(issue, inputs):
             )
             snapshot = pipe_line_snapshot(raw) if raw.measurement_kind == "PIPE" else {}
             snapshot["bom_attributes"] = bom_attributes
-            if snapshot:
+            if raw.measurement_kind == "PIPE":
                 allocation_plan(quantity, snapshot)
                 snapshot["public_identity"] = _json(build_pipe_stock_identity(
                     raw_material=material, raw_bar_length_m=raw.raw_bar_length_m, unit=material.unit,

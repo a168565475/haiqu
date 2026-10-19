@@ -290,7 +290,7 @@ const systemEntryRoute = computed(() => {
   if (canManageOwnEmailAccounts.value) return 'email-account-settings'
   return 'master-data-center'
 })
-const settingsActive = computed(() => activeMenu.value === 'settings' && route.name !== 'access-management' && route.name !== 'theme-settings')
+const settingsActive = computed(() => activeMenu.value === 'settings' && route.name !== 'access-management' && route.name !== 'theme-settings' && route.name !== 'wecom-settings')
 </script>
 <template>
   <nav ref="navigation" class="app-sidebar" aria-label="ERP 主导航"
@@ -340,6 +340,14 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
           <ConfirmedSidebarIcon name="settings" />
         </span>
         <span class="app-sidebar__menu-label">配置</span>
+      </RouterLink>
+      <RouterLink v-if="authStore.user?.username === 'admin' && authStore.user.is_superuser && authStore.user.employee?.status === 'ACTIVE'"
+        :to="{ name: 'wecom-settings' }" class="app-sidebar__footer-link"
+        :class="{ 'is-active': route.name === 'wecom-settings' }"
+        :aria-current="route.name === 'wecom-settings' ? 'page' : undefined"
+        data-menu-key="wecom-settings" title="系统配置 / 企业微信管理" @focus="closePanel">
+        <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true"><ConfirmedSidebarIcon name="settings" /></span>
+        <span class="app-sidebar__menu-label">企微</span>
       </RouterLink>
       <RouterLink v-if="canViewSystemSettings" :to="{ name: 'theme-settings' }" class="app-sidebar__footer-link"
         :class="{ 'is-active': route.name === 'theme-settings' }"

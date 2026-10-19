@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { pageInstanceKey } from './pageInstanceKey'
 
 describe('页面实例隔离', () => {
+  it('权限页员工定位参数变化保留页面实例，切换账号仍隔离', () => {
+    const access = { name: 'access-management', params: {}, path: '/settings/access', fullPath: '/settings/access?tab=employees&employee_id=first' }
+    const key = pageInstanceKey(access, 1)
+    expect(pageInstanceKey({ ...access, fullPath: '/settings/access?tab=employees' }, 1)).toBe(key)
+    expect(pageInstanceKey({ ...access, fullPath: '/settings/access?tab=employees&employee_id=second' }, 1)).toBe(key)
+    expect(pageInstanceKey(access, 2)).not.toBe(key)
+  })
   const route = (name = 'customer-detail', id = 'a') => ({ name, params: { customerId: id }, path: `/customers/${id}`, fullPath: `/customers/${id}/${name}` })
   it('同一客户只读页签复用，客户、身份及编辑模式隔离', () => {
     const key = pageInstanceKey(route(), 1)

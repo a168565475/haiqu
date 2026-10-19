@@ -121,6 +121,7 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         'quotation-layout': quotationRoute,
         'quotation-list-layout': route.name === 'quotations',
         'customer-list-layout': route.name === 'customers',
+        'customer-detail-layout': ['customer-detail', 'customer-timeline', 'customer-tasks', 'customer-inquiries', 'customer-quotations', 'customer-samples', 'customer-orders', 'customer-complaints'].includes(String(route.name)),
         'glass-list-layout': glassListRoute,
         'glass-detail-layout': glassDetailRoute,
         'glass-form-layout': glassFormRoute,
@@ -176,6 +177,10 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .glass-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .glass-detail-layout.viewport-table-layout :deep(#erp-main-content) { overflow: hidden; }
 .glass-detail-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+@media screen {
+  .glass-detail-layout :deep(#erp-main-content .page-container),
+  .customer-detail-layout :deep(#erp-main-content .page-container) { padding: 0; }
+}
 .glass-form-layout :deep(#erp-main-content .page-container) { padding: 14px; }
 .glass-form-layout.bom-editor-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .settings-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }

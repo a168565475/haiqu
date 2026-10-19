@@ -124,7 +124,7 @@ onBeforeUnmount(() => { disposed = true; requestNumber++ })
 @use '@/styles/crm/tokens' as token;
 .purchase-template-history-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 46%, transparent); }
 .purchase-template-history-drawer {
-  top: 64px !important; height: calc(100% - 64px) !important; max-width: 100vw; box-shadow: none; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 18px/28px 'Noto Sans SC Variable', token.$crm-font-body;
+  max-width: 100vw; box-shadow: none; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 18px/28px 'Noto Sans SC Variable', token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary};
   .app-window-dialog__header { flex: 0 0 166px; box-sizing: border-box; padding: 30px 36px 0; margin: 0; align-items: flex-start; color: inherit; gap: 24px; }
   .template-history-heading { min-width: 0; flex: 1; }

@@ -56,7 +56,7 @@ function close(): void {
 @use '@/styles/crm/tokens' as crm;
 .el-dialog.purchase-publish-dialog {
   box-sizing: border-box; padding: 0; margin-bottom: 0;
-  min-height: 672px; border-radius: 6px; background: crm.$crm-color-surface; color: crm.$crm-text-primary;
+  border-radius: 6px; background: crm.$crm-color-surface; color: crm.$crm-text-primary;
   box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 16.078%, transparent); font-family: crm.$crm-font-body;
   --el-color-primary: #{crm.$crm-primary}; --el-color-primary-light-3: #{crm.$crm-primary-light-3};
   --el-fill-color-blank: #{crm.$crm-color-surface}; --el-border-color: #{crm.$crm-border-default};

@@ -50,7 +50,7 @@ $primary: var(--erp-color-brand);
   .el-dialog__title { font: 600 16px/24px var(--erp-font-body); }
   .inquiry-dialog-subtitle { margin: 0 0 14px; color: var(--erp-color-text-regular); font-size: 12px; line-height: 20px; }
   .el-dialog__body { flex: 1; min-height: 0; padding: 18px 23px; overflow-y: auto; color: inherit; font: inherit; }
-  .inquiry-dialog-content { min-height: 100%; }
+  .inquiry-dialog-content { min-height: 0; }
   .el-dialog__footer { flex: 0 0 56px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 23px; border-top: 1px solid $border; }
   .el-button { min-width: 92px; height: 32px; margin: 0; padding: 0 18px; border-radius: 8px; border-color: $border; background: var(--erp-button-secondary-surface); color: var(--erp-color-text-primary); font: 500 13px/22px token.$crm-font-body; }
   .el-button--primary { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); color: var(--erp-button-primary-text); }

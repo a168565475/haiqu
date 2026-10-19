@@ -229,7 +229,7 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
 @use '@/styles/crm/tokens' as token;
 .supplier-create-overlay { background: color-mix(in srgb, var(--erp-overlay-scrim-color) 32%, transparent); }
 .supplier-create-drawer {
-  top: 0 !important; height: 100% !important; max-width: 100vw; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+  max-width: 100vw; background: token.$crm-color-surface; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-regular: #{token.$crm-text-primary}; --el-text-color-placeholder: #{token.$crm-text-muted};
   .app-window-dialog__header { flex: 0 0 52px; box-sizing: border-box; padding: 10px 24px; margin: 0; align-items: center; border-bottom: 1px solid token.$crm-border-default; color: inherit; }
   .supplier-drawer-heading { display: flex; min-width: 0; align-items: baseline; gap: 16px; }
@@ -238,7 +238,7 @@ onBeforeUnmount(() => { disposed = true; ++loadVersion; window.removeEventListen
   .supplier-drawer-heading p span { color: token.$crm-primary; }
   .supplier-drawer-close.el-button { width: 32px; height: 32px; padding: 0; font-size: 18px; color: token.$crm-text-secondary; }
   .app-window-dialog__body { padding: 16px 24px 20px; overflow-y: auto; }
-  .supplier-drawer-form { margin-top: 0; }
+  .supplier-drawer-form { display: flow-root; margin-top: 0; }
   .supplier-drawer-row { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
   .el-form-item { margin: 0; }
   .el-form-item__label { height: 20px; margin-bottom: 4px; padding: 0; color: token.$crm-text-primary; font-size: 13px; line-height: 20px; }

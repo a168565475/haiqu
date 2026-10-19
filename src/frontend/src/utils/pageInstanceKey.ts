@@ -12,5 +12,6 @@ export function pageInstanceKey(
   if (customerReadRoutes.has(name) && typeof customerId === 'string' && customerId) {
     return `${userId || ''}:customer-read:${customerId}`
   }
-  return `${userId || ''}:${name === 'inquiries' ? route.path : route.fullPath}`
+  // 权限页自行消费员工定位参数，清除参数时保留已定位的页码和分配窗口。
+  return `${userId || ''}:${name === 'inquiries' || name === 'access-management' ? route.path : route.fullPath}`
 }

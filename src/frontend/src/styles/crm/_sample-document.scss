@@ -12,8 +12,8 @@
   background: transparent;
   color: token.$crm-text-primary;
   .breadcrumb { height: 14px; color: token.$crm-text-muted; font-size: 12px; line-height: 14px; }
-  .detail-heading { display: flex; height: 36px; align-items: center; justify-content: space-between; margin: 10px 0 14px; }
-  .heading-title { display: flex; align-items: center; gap: 10px; }
+  .detail-heading { display: flex; height: auto; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 10px 0 14px; }
+  .heading-title { display: flex; min-width: 0; align-items: center; gap: 10px; flex-wrap: wrap; }
   .heading-title h1 { margin: 0; font-size: 28px; font-weight: 700; line-height: 36px; }
   .back-button { width: 98px; }
   .detail-card { @include detail.surface; position: relative; overflow: hidden; }
@@ -63,8 +63,6 @@
     .completed-tag { top: 60px; }
   }
   @media (max-width: 800px) {
-    .detail-heading { height: auto; min-height: 36px; gap: 12px; flex-wrap: wrap; }
-    .heading-title { min-width: 0; flex-wrap: wrap; }
     .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-right: 16px; }
     .completed-tag { position: static; margin: 0 16px 12px; }
     .operation-card { height: auto; min-height: 108px; }

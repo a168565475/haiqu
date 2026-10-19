@@ -141,6 +141,129 @@ async function checkHomeEntry(browser, fixture, userAgent) {
     check('会话查询网络失败不误判为可自动授权', failedMeCount() > 0 && new URL(entryPage.url()).pathname === '/login' && starts.length === 0);
   }, { failMe: true });
 }
+
+async function checkRoleEntry(browser, fixture) {
+  const target = fixture.role_entry;
+  assert.ok(target?.employee_id && target?.role_id, 'fixture 未提供明确的隔离员工与空权限角色');
+  const rolePath = '/api/v1/access/employees/' + target.employee_id + '/roles/';
+  const roleContexts = [], rejected = [], writes = [];
+  let adminPage;
+  async function login(account, allowRoleWrite = false) {
+    const roleContext = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+    roleContexts.push(roleContext);
+    await roleContext.route('**/*', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (![webOrigin, apiOrigin].includes(url.origin)) {
+        rejected.push(url.origin + url.pathname);
+        return route.abort('blockedbyclient');
+      }
+      if (!url.pathname.startsWith('/api/')) return route.continue();
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) {
+        const loginAction = request.method() === 'POST' && ['/api/auth/login/', '/api/auth/logout/'].includes(url.pathname);
+        const assignAction = allowRoleWrite && request.method() === 'PUT' && url.pathname === rolePath &&
+          JSON.stringify(request.postDataJSON()) === JSON.stringify({ role_ids: [target.role_id] });
+        if (!loginAction && !assignAction) {
+          rejected.push(request.method() + ' ' + url.pathname);
+          return route.abort('blockedbyclient');
+        }
+        if (assignAction) writes.push({ path: url.pathname, csrf: !!request.headers()['x-csrftoken'], etag: !!request.headers()['if-match'] });
+      }
+      return route.continue({ url: apiOrigin + url.pathname + url.search });
+    });
+    const rolePage = await roleContext.newPage();
+    rolePage.setDefaultTimeout(30000);
+    rolePage.on('pageerror', error => runtimeErrors.push('角色入口: ' + error.message));
+    await rolePage.goto(webOrigin + '/login', { waitUntil: 'domcontentloaded' });
+    await rolePage.locator('#login-username').fill(account.username);
+    await rolePage.locator('#login-password').fill(account.password);
+    await rolePage.getByRole('button', { name: '登录', exact: true }).click();
+    return { page: rolePage, context: roleContext };
+  }
+  async function jsonGet(roleContext, pathname) {
+    const response = await roleContext.request.get(apiOrigin + pathname);
+    assert.equal(response.status(), 200, '隔离 API 未成功：' + pathname);
+    return response.json();
+  }
+  try {
+    const admin = await login(fixture.accounts.admin, true);
+    adminPage = admin.page;
+    await adminPage.locator('[data-workbench-page]').waitFor();
+    const waiting = await login(fixture.accounts.waiting);
+    await waiting.page.getByRole('heading', { name: '等待管理员分配角色', exact: true }).waitFor();
+    const beforeMe = await jsonGet(waiting.context, '/api/auth/me/');
+    const employeesBefore = await jsonGet(admin.context, '/api/v1/access/employees/?page_size=100');
+    const bindingsBefore = await jsonGet(admin.context, '/api/v1/wecom/bindings/');
+    const roleBefore = await jsonGet(admin.context, '/api/v1/access/roles/' + target.role_id + '/');
+    check('角色流程开始时是同一待授权账号且无角色', beforeMe.authenticated && beforeMe.user.id === target.account_id && beforeMe.user.employee.id === target.employee_id && beforeMe.user.waiting_for_role && employeesBefore.data.find(employee => employee.id === target.employee_id)?.role_ids.length === 0);
+    check('隔离验收角色没有任何业务授权', roleBefore.id === target.role_id && roleBefore.display_name === target.role_name && roleBefore.grants.length === 0);
+    check('目标员工位于权限列表第二页以后', employeesBefore.data.findIndex(employee => employee.id === target.employee_id) >= 15);
+    await adminPage.goto(webOrigin + '/settings/wecom', { waitUntil: 'domcontentloaded' });
+    await adminPage.locator('#wecom-corp').waitFor();
+    await adminPage.getByRole('tab', { name: '员工绑定', exact: true }).click();
+    const bindingRow = adminPage.getByRole('table', { name: '员工绑定', exact: true }).locator('tbody tr').filter({ hasText: target.wecom_user_id });
+    await bindingRow.waitFor();
+    check('企微绑定行显示目标员工编号与原账号', (await bindingRow.innerText()).includes(target.employee_code) && (await bindingRow.innerText()).includes(fixture.accounts.waiting.username));
+    await bindingRow.getByRole('button', { name: '分配角色', exact: true }).click();
+    const dialog = adminPage.getByRole('dialog', { name: '分配员工角色', exact: true });
+    await dialog.waitFor();
+    const employeeTab = adminPage.locator('.access-tabs').getByRole('button', { name: '员工与账号', exact: true });
+    const employeeRow = adminPage.locator('.access-widebox tbody tr').filter({ hasText: target.employee_code });
+    await employeeRow.waitFor();
+    check('企微分配角色直达员工分区且筛选已清空', new URL(adminPage.url()).pathname === '/settings/access' && (await employeeTab.getAttribute('class') || '').includes('active') && await adminPage.getByRole('textbox', { name: '搜索员工', exact: true }).inputValue() === '' && await adminPage.getByRole('combobox', { name: '账号状态', exact: true }).inputValue() === 'all');
+    check('权限列表定位原员工且账号一致', await employeeRow.count() === 1 && (await employeeRow.innerText()).includes(fixture.accounts.waiting.username) && (await employeeRow.innerText()).includes(target.employee_name));
+    check('目标弹窗和分页均对应企微绑定员工', (await dialog.innerText()).includes('员工：' + target.employee_name) && (await adminPage.locator('.access-pagination').innerText()).includes('2 /'));
+    await screenshot(adminPage, 'role_entry_target_dialog_1440');
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await adminPage.locator('.access-tabs').getByRole('button', { name: '角色与权限', exact: true }).click();
+    await employeeTab.click();
+    check('关闭定位弹窗后切换分区不会自动重开', !await dialog.isVisible());
+    await employeeRow.getByRole('button', { name: '分配角色', exact: true }).click();
+    await dialog.getByRole('checkbox', { name: target.role_name, exact: true }).check();
+    const saved = adminPage.waitForResponse(response => new URL(response.url()).pathname === rolePath && response.request().method() === 'PUT');
+    await dialog.getByRole('button', { name: '确认保存', exact: true }).click();
+    const response = await saved, assigned = await response.json();
+    check('通过现有角色API和CSRF/ETag给同一员工分配', response.status() === 200 && assigned.id === target.employee_id && assigned.username === fixture.accounts.waiting.username && JSON.stringify(assigned.role_ids) === JSON.stringify([target.role_id]) && writes.length === 1 && writes[0].csrf && writes[0].etag);
+    await dialog.waitFor({ state: 'hidden' });
+    await employeeRow.getByText(target.role_name, { exact: true }).waitFor();
+    await adminPage.waitForLoadState('networkidle');
+    check('角色保存后的列表刷新不自动重开弹窗', !await dialog.isVisible() && writes.length === 1);
+    await screenshot(adminPage, 'role_entry_assigned_employee_1440');
+    await adminPage.reload({ waitUntil: 'domcontentloaded' });
+    await adminPage.getByRole('textbox', { name: '搜索员工', exact: true }).waitFor();
+    await adminPage.waitForLoadState('networkidle');
+    check('定位参数消费后刷新员工页不重复打开弹窗', !new URL(adminPage.url()).searchParams.has('employee_id') && !await dialog.isVisible() && writes.length === 1);
+    await waiting.page.getByRole('button', { name: '检查授权状态', exact: true }).click();
+    await waiting.page.locator('[data-workbench-page]').waitFor();
+    const afterMe = await jsonGet(waiting.context, '/api/auth/me/');
+    check('原待授权Session检查后解除等待且账号不变', afterMe.authenticated && !afterMe.user.waiting_for_role && afterMe.user.id === beforeMe.user.id && afterMe.user.employee.id === target.employee_id && new URL(waiting.page.url()).pathname === '/');
+    check('空权限角色不赋予管理员或额外业务权限', !afterMe.user.is_superuser && afterMe.user.permissions.length === 0);
+    await waiting.page.reload({ waitUntil: 'domcontentloaded' });
+    await waiting.page.locator('[data-workbench-page]').waitFor();
+    const refreshedMe = await jsonGet(waiting.context, '/api/auth/me/');
+    check('刷新复用原账号和员工且保持非待授权状态', refreshedMe.authenticated && !refreshedMe.user.waiting_for_role && refreshedMe.user.id === target.account_id && refreshedMe.user.employee.id === target.employee_id);
+    const employeesAfter = await jsonGet(admin.context, '/api/v1/access/employees/?page_size=100');
+    const bindingsAfter = await jsonGet(admin.context, '/api/v1/wecom/bindings/');
+    const originalBinding = bindingsAfter.data.find(binding => binding.id === target.binding_id);
+    check('分配和刷新不重复创建员工账号与绑定', employeesAfter.meta.total === employeesBefore.meta.total && employeesAfter.meta.total === target.initial_counts.employees && employeesAfter.data.filter(employee => employee.username).length === target.initial_counts.accounts && bindingsAfter.count === bindingsBefore.count && bindingsAfter.count === target.initial_counts.bindings && originalBinding?.employee_id === target.employee_id && originalBinding?.username === fixture.accounts.waiting.username && originalBinding?.role_status === 'active');
+    await adminPage.goto(webOrigin + '/settings/wecom', { waitUntil: 'domcontentloaded' });
+    await adminPage.locator('#wecom-corp').waitFor();
+    await adminPage.getByRole('tab', { name: '员工绑定', exact: true }).click();
+    await bindingRow.getByText('已授权', { exact: true }).waitFor();
+    check('企微绑定列表更新原绑定为已授权', await bindingRow.count() === 1 && (await bindingRow.innerText()).includes(target.employee_code));
+    await screenshot(adminPage, 'role_entry_binding_active_1440');
+    await adminPage.getByRole('button', { name: '前往权限管理', exact: true }).click();
+    await adminPage.getByRole('textbox', { name: '搜索员工', exact: true }).waitFor();
+    await adminPage.waitForLoadState('networkidle');
+    check('企微总入口打开员工分区且不指定员工弹窗', (await employeeTab.getAttribute('class') || '').includes('active') && !await dialog.isVisible() && !new URL(adminPage.url()).searchParams.has('employee_id'));
+    check('角色流程仅执行一次目标角色写入且未访问外部服务', writes.length === 1 && rejected.length === 0, { writes, rejected });
+  } catch (error) {
+    if (adminPage) await screenshot(adminPage, 'role_entry_failure');
+    throw error;
+  } finally {
+    await Promise.all(roleContexts.map(roleContext => roleContext.close()));
+  }
+}
 async function main() {
   if (!fs.existsSync(control)) throw new Error('隔离API服务尚未就绪；禁止回退到业务API。');
   const fixture = JSON.parse(fs.readFileSync(control, 'utf8'));
@@ -298,6 +421,7 @@ async function main() {
   check('错误页深链接显示固定安全文案', (await page.getByRole('alert').textContent()).includes('过期或已使用'));
   await screenshot(page, 'actual_oauth_error_390');
   await checkHomeEntry(context.browser(), fixture, await page.evaluate(() => navigator.userAgent));
+  await checkRoleEntry(context.browser(), fixture);
   check('全部页面未尝试访问真实外部服务', blockedRequests.length === 0, blockedRequests);
   check('页面无未处理JS异常', runtimeErrors.length === 0, runtimeErrors);
 }

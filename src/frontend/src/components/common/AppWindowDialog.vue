@@ -80,6 +80,7 @@ let autoContentObserver: ResizeObserver | null = null
 let autoRootObserver: MutationObserver | null = null
 let autoFitFrame: number | null = null
 let manuallyAdjusted = false
+let requestedHeight = 0
 
 const forwardedAttrs = computed(() => {
   const ignoredLegacyAttrs = new Set([
@@ -106,7 +107,7 @@ function viewportBounds() {
 function clampRect(value: WindowRect): WindowRect {
   const viewport = viewportBounds()
   const maxWidth = Math.max(props.minWidth, viewport.width - viewport.padding * 2)
-  const maxHeight = Math.max(props.minHeight, viewport.height - viewport.padding * 2)
+  const maxHeight = Math.max(0, Math.min(viewport.height - viewport.padding * 2, manuallyAdjusted ? Infinity : viewport.height * 0.8))
   const width = Math.min(Math.max(value.width, props.minWidth), maxWidth)
   const height = Math.min(Math.max(value.height, props.minHeight), maxHeight)
   return {
@@ -129,10 +130,10 @@ function naturalContentHeight(element: HTMLElement): number {
     const marginBottom = Number.parseFloat(window.getComputedStyle(childElement).marginBottom) || 0
     return Math.max(bottom, childElement.getBoundingClientRect().bottom - bodyTop + (body?.scrollTop || 0) + marginBottom)
   }, paddingTop) : 0
-  return (element.querySelector<HTMLElement>('.app-window-dialog__header')?.offsetHeight || 0)
+  return Math.ceil((element.querySelector<HTMLElement>('.app-window-dialog__header')?.getBoundingClientRect().height || 0)
     + contentBottom + paddingBottom
-    + (element.querySelector<HTMLElement>('.app-window-dialog__footer')?.offsetHeight || 0)
-    + element.offsetHeight - element.clientHeight
+    + (element.querySelector<HTMLElement>('.app-window-dialog__footer')?.getBoundingClientRect().height || 0)
+    + element.offsetHeight - element.clientHeight)
 }
 
 function stopAutoFit() {
@@ -148,30 +149,30 @@ function fitAutoHeight() {
   autoFitFrame = null
   const element = windowRef.value
   const current = rect.value
-  if (!element || !current || !props.modelValue || props.height !== 'auto' || state.value !== 'normal' || manuallyAdjusted) return
-  const height = naturalContentHeight(element)
+  if (!element || !current || !props.modelValue || state.value !== 'normal' || manuallyAdjusted) return
+  const height = Math.max(requestedHeight, naturalContentHeight(element))
   if (!height) return
-  const next = clampRect({ ...current, y: (viewportSize.value.height - height) / 2, height })
+  const next = clampRect({ ...current, height })
+  next.y = (viewportSize.value.height - next.height) / 2
   if (Math.abs(next.height - current.height) > 0.5 || Math.abs(next.y - current.y) > 0.5) rect.value = next
 }
 
 function queueAutoFit() {
-  if (props.height !== 'auto' || !props.modelValue || state.value !== 'normal' || manuallyAdjusted || autoFitFrame !== null || typeof window.requestAnimationFrame !== 'function') return
+  if (!props.modelValue || state.value !== 'normal' || manuallyAdjusted || autoFitFrame !== null || typeof window.requestAnimationFrame !== 'function') return
   autoFitFrame = window.requestAnimationFrame(fitAutoHeight)
 }
 
 function observeAutoContent() {
   stopAutoFit()
-  if (props.height !== 'auto' || typeof ResizeObserver === 'undefined') return
+  if (typeof ResizeObserver === 'undefined') return
   const element = windowRef.value
   const body = element?.querySelector<HTMLElement>('.app-window-dialog__body')
   if (!body) return
   autoContentObserver = new ResizeObserver(queueAutoFit)
-  const footer = element?.querySelector<HTMLElement>('.app-window-dialog__footer')
   const observeRoots = () => {
     autoContentObserver?.disconnect()
     Array.from(body.children).forEach(child => autoContentObserver?.observe(child))
-    if (footer) autoContentObserver?.observe(footer)
+    element?.querySelectorAll('.app-window-dialog__header, .app-window-dialog__footer').forEach(child => autoContentObserver?.observe(child))
   }
   observeRoots()
   autoRootObserver = new MutationObserver(() => {
@@ -179,6 +180,7 @@ function observeAutoContent() {
     queueAutoFit()
   })
   autoRootObserver.observe(body, { childList: true })
+  if (element) autoRootObserver.observe(element, { childList: true })
 }
 
 const windowStyle = computed(() => {
@@ -212,7 +214,7 @@ const windowStyle = computed(() => {
     width: cssSize(props.width),
     height: props.height === 'auto' ? 'auto' : cssSize(props.height),
     maxWidth: 'calc(100vw - 32px)',
-    maxHeight: 'calc(100vh - 32px)',
+    maxHeight: 'min(80vh, calc(100vh - 32px))',
   }
 })
 
@@ -244,15 +246,19 @@ async function initializeWindow() {
   const element = windowRef.value
   if (!props.modelValue || !element) return
   const viewport = viewportBounds()
+  const measured = element.getBoundingClientRect()
+  // 显式高度保留工作区下限；内容仍可自动增高，统一受普通窗口 80vh 上限约束。
+  requestedHeight = props.height === 'auto' ? 0 : pixelFallback(props.height, measured.height)
   if (props.fullscreen) {
     const width = Math.min(pixelFallback(props.width, 680), viewport.width - viewport.padding * 2)
-    const height = Math.min(props.height === 'auto' ? naturalContentHeight(element) : pixelFallback(props.height, 420), viewport.height - viewport.padding * 2)
+    const height = Math.max(requestedHeight, naturalContentHeight(element))
     const normalRect = clampRect({
       x: (viewport.width - width) / 2,
       y: (viewport.height - height) / 2,
       width,
       height,
     })
+    normalRect.y = (viewport.height - normalRect.height) / 2
     restoreRect.value = normalRect
     rect.value = normalRect
     observeAutoContent()
@@ -260,16 +266,14 @@ async function initializeWindow() {
     emit('opened')
     return
   }
-  const measured = element.getBoundingClientRect()
-  // 自动高度的内容区可能因 flex 收缩；用完整内容高度避免打开后被锁成短窗口。
-  const contentHeight = props.height === 'auto' ? naturalContentHeight(element) : 0
-  const targetHeight = Math.max(measured.height, contentHeight)
+  const targetHeight = Math.max(requestedHeight, naturalContentHeight(element))
   const initial = clampRect({
     x: (viewport.width - measured.width) / 2,
     y: (viewport.height - targetHeight) / 2,
     width: measured.width || Math.min(pixelFallback(props.width, 680), viewport.width - 32),
     height: targetHeight || Math.min(pixelFallback(props.height, 420), viewport.height - 32),
   })
+  initial.y = (viewport.height - initial.height) / 2
   rect.value = initial
   observeAutoContent()
   element.focus({ preventScroll: true })
@@ -337,7 +341,7 @@ function continueInteraction(event: PointerEvent) {
   if (!interaction) return
   const dx = event.clientX - interaction.startX
   const dy = event.clientY - interaction.startY
-  if (props.height === 'auto' && (dx !== 0 || dy !== 0)) {
+  if (dx !== 0 || dy !== 0) {
     manuallyAdjusted = true
     stopAutoFit()
   }
@@ -640,9 +644,19 @@ onBeforeUnmount(() => {
   }
 }
 
+.app-window-dialog.el-dialog {
+  min-height: 0 !important;
+}
+
+/* 窗口统一分配正文高度，避免调用页的旧限高留下空白或提前滚动。 */
+.app-window-dialog.el-dialog > .app-window-dialog__body {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  flex: 1 1 auto !important;
+}
+
 .app-window-dialog__body {
-  min-height: 0;
-  flex: 1 1 auto;
   overflow: auto;
   padding: 20px 24px;
 }
@@ -674,9 +688,16 @@ onBeforeUnmount(() => {
   }
 }
 
+.app-window-dialog.el-dialog > .app-window-dialog__footer {
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 0 0 auto !important;
+  padding-top: 6px !important;
+  padding-bottom: 8px !important;
+}
+
 .app-window-dialog__footer {
-  flex: none;
-  padding: 12px 24px 16px;
+  padding: 6px 24px 8px;
   border-top: 1px solid token.$crm-border-subtle;
 
   :deep(.el-button) {
@@ -710,6 +731,6 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .app-window-dialog.el-dialog > .app-window-dialog__header { padding-left: 12px; }
   .app-window-dialog__body { padding: 16px; }
-  .app-window-dialog__footer { padding: 10px 16px 14px; }
+  .app-window-dialog__footer { padding-inline: 16px; }
 }
 </style>

@@ -1094,7 +1094,7 @@ onBeforeUnmount(revokeAllProductPreviews)
 .product-task-requirements label > span i { color: var(--erp-color-danger); font-style: normal; }
 :global(.product-task-detail-dialog .el-dialog__header) { padding: 14px 16px 10px; }
 :global(.product-task-detail-dialog .el-dialog__title) { font-size: 16px; }
-:global(.product-task-detail-dialog .el-dialog__body) { max-height: calc(92vh - 114px); overflow-y: auto; padding: 8px 16px 12px; font-size: 12px; }
+:global(.product-task-detail-dialog .el-dialog__body) { overflow-y: auto; padding: 8px 16px 12px; font-size: 12px; }
 :global(.product-task-detail-dialog .el-dialog__footer) { padding: 8px 16px 12px; }
 .product-dialog-toolbar { width: 420px; margin-bottom: 14px; }
 .detail-table-wrap { overflow-x: auto; }

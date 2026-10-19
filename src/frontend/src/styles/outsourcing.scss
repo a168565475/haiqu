@@ -236,10 +236,8 @@ $brand-dark: var(--erp-color-brand-hover);
 
   &.outsourcing-order-detail-page {
     width: auto;
-    min-height: calc(100dvh - 118px);
-    margin: 24px 13px 0;
 
-    .detail-heading { min-height: 44px; align-items: flex-start; margin-bottom: 20px; }
+    .detail-heading { min-height: 44px; align-items: flex-start; }
     .detail-title h1 { margin-left: 0; font-weight: 500; line-height: 40px !important; }
     .heading-actions { gap: 18px; margin-top: 4px; }
     .heading-actions .el-button { min-width: 115px; margin-left: 0; border-color: var(--erp-control-border); color: $text-regular; background: var(--erp-button-secondary-surface); font-size: 14px; font-weight: 500; }

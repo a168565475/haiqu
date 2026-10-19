@@ -17,7 +17,7 @@
         "enabled": true,
         "order": 10,
         "result_protocol": "json-summary-v1",
-        "artifacts": ["qa/wecom_phase1_20261019/page_checks.json", "qa/wecom_phase1_20261019/actual_*.png", "qa/wecom_credentials_display_20261019/page_checks.json", "qa/wecom_credentials_display_20261019/actual_*.png", "qa/wecom_home_entry_20261019/page_checks.json", "qa/wecom_home_entry_20261019/actual_*.png", "qa/wecom_home_entry_20261019/home_entry_*.png"],
+        "artifacts": ["qa/wecom_phase1_20261019/page_checks.json", "qa/wecom_phase1_20261019/actual_*.png", "qa/wecom_credentials_display_20261019/page_checks.json", "qa/wecom_credentials_display_20261019/actual_*.png", "qa/wecom_home_entry_20261019/page_checks.json", "qa/wecom_home_entry_20261019/actual_*.png", "qa/wecom_home_entry_20261019/home_entry_*.png", "qa/wecom_role_entry_20261019/page_checks.json", "qa/wecom_role_entry_20261019/actual_*.png", "qa/wecom_role_entry_20261019/home_entry_*.png", "qa/wecom_role_entry_20261019/role_entry_*.png"],
         "preconditions": [
           "先按实施记录登记独占测试库与容器，启动WECOM_BROWSER_QA=1的LiveServerTestCase并生成ready.json",
           "只允许本机18591隔离真实API，页面使用现有8080前端；不回退业务库，不调用真实企微",

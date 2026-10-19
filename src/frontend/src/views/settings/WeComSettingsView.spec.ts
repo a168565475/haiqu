@@ -30,6 +30,20 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = '' })
 
 describe('企业微信管理页', () => {
+  it('成员行分配角色按员工ID进入权限管理员工页，总入口不携带员工目标', async () => {
+    const employeeId = '1f3ad143-9029-4be9-9aef-70a733d93964'
+    api.getWeComBindings.mockResolvedValueOnce({ data: [{
+      id: 'binding', user_id: 'Member.One', member_name: '同名成员', employee_id: employeeId,
+      employee_code: 'WECOM-ONE', employee_name: '同名成员', username: 'wecom_one',
+      role_status: 'waiting', source: 'AUTO', created_at: '2026-10-19T00:00:00Z',
+    }], count: 1, page: 1, page_size: 20 })
+    await render()
+    await button('员工绑定').trigger('click'); await flushPromises()
+    await button('分配角色').trigger('click')
+    expect(push).toHaveBeenLastCalledWith({ name: 'access-management', query: { tab: 'employees', employee_id: employeeId } })
+    await button('前往权限管理').trigger('click')
+    expect(push).toHaveBeenLastCalledWith({ name: 'access-management', query: { tab: 'employees' } })
+  })
   it('工作台应用主页展示并复制ERP根网址，授权回调仍保留专用路径', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { clipboard: { writeText } })

@@ -4131,7 +4131,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="scss">
-.bom-line-editor-dialog .el-dialog__body { max-height: 68vh; overflow-y: auto; }
+.bom-line-editor-dialog .el-dialog__body { overflow-y: auto; }
 .bom-line-editor-dialog .line-drawer-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px 16px; }
 .bom-line-editor-dialog .drawer-field--wide, .bom-line-editor-dialog .drawer-calculations { grid-column: 1 / -1; }
 .bom-line-editor-dialog .drawer-readonly-value { background: var(--erp-input-readonly-background); border-color: var(--erp-input-border); color: var(--erp-input-readonly-text); }

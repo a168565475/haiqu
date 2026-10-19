@@ -391,10 +391,10 @@ watch(lineId, (current, previous) => { if (current && current !== previous) { pr
   font-size: 13px;
 }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; min-height: 0; flex-wrap: wrap; margin-bottom: 14px; }
-.title-row { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.title-row { display: flex; align-items: center; gap: 16px; margin-top: 0; }
 .title-row h1 { margin: 0; color: var(--erp-color-text-primary); font-family: var(--erp-font-body); font-size: 36px; font-weight: 700; line-height: 44px; }
 .title-row :deep(.el-tag) { min-width: 64px; border: 0; border-radius: 999px; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); }
-.header-actions { display: flex; align-items: center; gap: 12px; padding-top: 18px; }
+.header-actions { display: flex; align-items: center; gap: 12px; padding-top: 0; }
 .header-actions :deep(.el-button) { width: 140px; height: 32px; margin: 0; }
 .black-button { color: var(--erp-button-primary-text) !important; border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-surface) !important; }
 .black-button:hover { border-color: var(--erp-button-primary-border) !important; background: var(--erp-button-primary-hover-surface) !important; }

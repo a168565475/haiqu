@@ -219,12 +219,13 @@ onMounted(load)
   min-height: 0;
   flex-direction: column;
   gap: 14px;
+
+  &.wr-page > .wr-heading.wr-approval-heading { margin-bottom: 0; }
 }
 
 .wr-approval-heading {
   min-height: 64px;
   align-items: center;
-  margin-bottom: 0;
 
   .el-button { min-width: 96px; margin-left: 0; font-size: 13px; font-weight: 400; }
   > div:last-child { gap: 14px; }

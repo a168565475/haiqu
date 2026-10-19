@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { computed, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { isAxiosError } from 'axios'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -12,6 +12,7 @@ import * as api from '@/api/access'
 import type { AccessAudit, AccessEmployee, AccessRole, AccessScope, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
 
 const auth = useAuthStore()
+const route = useRoute(), router = useRouter()
 const permitted = computed(() => auth.user?.username === 'admin' && auth.user.is_superuser && auth.user.employee?.status === 'ACTIVE')
 const tab = ref('roles')
 const tabs = [{id:'roles',name:'角色与权限'},{id:'employees',name:'员工与账号'},{id:'teams',name:'销售团队'},{id:'history',name:'授权记录'}]
@@ -113,19 +114,56 @@ function open(kind: string, employee?: AccessEmployee) {
 }
 function close() { if (!saving.value) {effectiveRequest++;dialog.value=''; form.password=''; dialogError.value=''} }
 function beforeClose(done: () => void) { if (!saving.value) {form.password='';dialogError.value='';done()} }
+let employeesLoaded = false, handledEmployeeRoute = '', loadRequest = 0
+function locateEmployeeFromRoute() {
+  if (!permitted.value || !employeesLoaded || loading.value || saving.value || error.value) return
+  const employeeId = route.query.employee_id
+  const routeKey = JSON.stringify([route.query.tab, employeeId])
+  if (routeKey === handledEmployeeRoute) return
+  handledEmployeeRoute = routeKey
+  if (route.query.tab !== 'employees' && employeeId === undefined) return
+  tab.value = 'employees'
+  if (employeeId === undefined) return
+  close()
+  employeeQuery.value = ''; employeeFilter.value = ''; accountFilter.value = 'all'; employeePage.value = 1
+  // 员工目标只消费一次，保存后的列表刷新和浏览器刷新都不重复打开分配弹窗。
+  const query: LocationQuery = { ...route.query, tab: 'employees' }
+  delete query.employee_id
+  void router.replace({ query })
+  if (typeof employeeId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(employeeId)) {
+    ElMessage.warning('员工定位参数无效，请从企业微信管理重新进入。'); return
+  }
+  const index = employees.value.findIndex(employee => employee.id === employeeId.toLowerCase())
+  const employee = employees.value[index]
+  if (!employee) { ElMessage.warning('未找到该员工，可能已归档或记录已变化，请核对员工与账号列表。'); return }
+  employeePage.value = Math.floor(index / 15) + 1
+  if (employee.status !== 'ACTIVE') { ElMessage.warning('该员工当前非在职状态，不能分配角色。'); return }
+  open('assign', employee)
+}
+watch(() => [route.query.tab, route.query.employee_id], () => {
+  if (route.query.employee_id !== undefined) {
+    if (dialog.value === 'assign') { close(); subject.value = undefined }
+    void load()
+  }
+  else locateEmployeeFromRoute()
+})
 async function load(refreshAuth = false) {
   if (!permitted.value) return
+  const request = ++loadRequest
   loading.value=true;error.value=''
   try {
     const [r,e,t,c]=await Promise.all([api.getRoles(),api.getEmployees(),api.getTeams(),api.getCatalog()])
-    scopeOptions.value=c.some(item=>item.scopes.some(s=>s==='WORKSHOP'||s==='CRAFT')) ? await api.getScopeOptions() : {enabled:false,workshops:[],crafts:[]}
-    roles.value=r;employees.value=e;teams.value=t;catalog.value=c
+    const options=c.some(item=>item.scopes.some(s=>s==='WORKSHOP'||s==='CRAFT')) ? await api.getScopeOptions() : {enabled:false,workshops:[],crafts:[]}
+    if (request !== loadRequest) return
+    scopeOptions.value=options
+    roles.value=r;employees.value=e;teams.value=t;catalog.value=c;employeesLoaded=true
     const id=r.some(x=>x.id===roleId.value)?roleId.value:r[0]?.id||''
     roleId.value=id;grants.value=copyGrants(role.value?.grants);stale.value=false
     if (!t.some(x=>x.id===teamId.value)) teamId.value=t[0]?.id||''
     if(tab.value==='history') await loadHistory()
     if(refreshAuth) await auth.initialize(true)
-  } catch(e) {error.value=api.accessError(e)} finally {loading.value=false}
+  } catch(e) {if(request===loadRequest)error.value=api.accessError(e)} finally {if(request===loadRequest)loading.value=false}
+  if(request===loadRequest) locateEmployeeFromRoute()
 }
 async function loadHistory(page=1) {
   const result=await api.getAudit(page);logs.value=result.data;auditPage.value=page;auditPages.value=Math.max(1,result.meta.total_pages)
@@ -185,8 +223,9 @@ function auditRows(data: Record<string,unknown>) {
 }
 function leaving(event: BeforeUnloadEvent) {if(dirty.value||saving.value){event.preventDefault();event.returnValue=''}}
 onBeforeRouteLeave(()=>{if(dirty.value||saving.value){ElMessage.warning('请先保存或撤销当前修改。');return false}return true})
+onBeforeRouteUpdate(()=>{if(dirty.value||saving.value){ElMessage.warning('请先保存或撤销当前修改。');return false}return true})
 onMounted(()=>{void load();window.addEventListener('beforeunload',leaving)})
-onBeforeUnmount(()=>window.removeEventListener('beforeunload',leaving))
+onBeforeUnmount(()=>{loadRequest++;window.removeEventListener('beforeunload',leaving)})
 </script>
 
 <template>

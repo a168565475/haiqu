@@ -69,6 +69,8 @@ export interface ProcurementInboundProductSummary {
 export interface ProcurementInboundOrder {
   id: string; order_number: string; source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string; sales_order_number: string
   supplier_names: string[]; line_count: number; remaining_line_count: number
+  supplier_summary: { supplier_id: string | null; supplier_name: string; total_amount: string | null }[]
+  currency_code: string
   product_summary: ProcurementInboundProductSummary[]
   pending_quality_count: number; confirmed_batch_count: number
   received_quantity: string; return_quantity: string

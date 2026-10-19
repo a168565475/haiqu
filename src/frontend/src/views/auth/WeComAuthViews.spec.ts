@@ -15,8 +15,30 @@ beforeEach(() => {
   setActivePinia(createPinia()); vi.clearAllMocks(); route.query.reason = 'STATE_INVALID'
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'wecom', display_name: '员工', is_superuser: false, employee: { id: 'e', employee_code: 'E1', display_name: '等待员工', status: 'ACTIVE' }, permissions: [], data_scope: 'NONE', waiting_for_role: true } })
 })
-afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals() })
 describe('企微独立认证页面', () => {
+  it('企业微信内等待页没有退出入口，但仍能检查授权', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 wxwork/4.1.0' })
+    const wrapper = mount(WaitingRoleView); wrappers.push(wrapper)
+    expect(wrapper.find('[data-action="logout"]').exists()).toBe(false)
+    expect(wrapper.get('[data-action="refresh-role"]').text()).toBe('检查授权状态')
+  })
+  it('企业微信身份冲突页不要求使用已隐藏的退出操作', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 WXWork/4.1.0' })
+    route.query.reason = 'IDENTITY_MISMATCH'
+    const wrapper = mount(WeComErrorView); wrappers.push(wrapper)
+    expect(wrapper.text()).not.toContain('退出')
+    expect(wrapper.text()).toContain('联系管理员')
+    expect(wrapper.text()).toContain('返回当前账号')
+    expect(logout).not.toHaveBeenCalled()
+  })
+  it('普通浏览器错误页提供重新扫码入口说明', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 Chrome/130' })
+    useAuthStore().clearAuthentication()
+    const wrapper = mount(WeComErrorView); wrappers.push(wrapper)
+    expect(wrapper.text()).toContain('重新扫码')
+    expect(wrapper.text()).not.toContain('从企业微信工作台')
+  })
   it('等待页刷新后进入首页，未授权时保留身份', async () => {
     const auth = useAuthStore()
     vi.mocked(fetchCurrentUser).mockResolvedValueOnce({ authenticated: true, user: { ...auth.user! } }).mockResolvedValueOnce({ authenticated: true, user: { ...auth.user!, waiting_for_role: false } })

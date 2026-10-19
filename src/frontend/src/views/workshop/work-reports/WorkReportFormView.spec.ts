@@ -89,6 +89,20 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('报工直接编辑', () => {
+  it.each([
+    ['task-1', { production_task_id: 'task-1', workshop_id: 'workshop-1' }],
+    ['other-task', { schedule_product_id: 'product-1', workshop_id: 'workshop-1', craft_id: 'craft-1' }],
+  ])('编辑保存时仅保留与当前报工一致的任务范围：%s', async (taskId, expectedQuery) => {
+    route.query = { production_task_id: taskId }
+    const wrapper = mount(WorkReportFormView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('保存修改'))!.trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledTimes(1)
+    expect(mocks.push).toHaveBeenCalledWith({ name: 'work-report-days', query: expectedQuery })
+  })
+
   it('回填原单并携带 ETag 保存修改', async () => {
     const wrapper = mount(WorkReportFormView, { global: { plugins: [ElementPlus] } })
     wrappers.push(wrapper)

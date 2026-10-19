@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -8,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.procurement.tests import test_loading_read_api as purchase_tests
-from apps.procurement.models import PurchaseOrderLine, PurchaseReturn, PurchaseReturnLine
+from apps.procurement.models import PurchaseOrderLine, PurchaseReturn, PurchaseReturnLine, Supplier
 from apps.inventory.models import Warehouse, WarehouseZone, MaterialInbound, MaterialInboundLine
 from apps.inventory.selectors import material_received_totals
 from apps.products.models import RawMaterialInformation
@@ -116,6 +117,30 @@ class InboundLoadingTests(APITestCase):
         hidden=self.get('eligible-purchase-orders',{'purchase_order_id':str(self.hidden.pk)})
         self.assertEqual(hidden.data['data'],[])
         self.assertEqual(self.client.get(self.root+'eligible-lines/',{'purchase_order_id':str(self.hidden.pk)},HTTP_HOST='localhost').status_code,404)
+
+    def test_supplier_summary_groups_by_id_and_preserves_unknown_amounts(self):
+        self.line.unit_price = Decimal('1.2345')
+        self.line.amount = Decimal('12.3450')
+        self.line.save()
+        PurchaseOrderLine.objects.create(
+            purchase_order=self.order, line_number=2, quantity_parse_status='READY',
+            supplier=self.supplier, supplier_name_snapshot=self.supplier.supplier_name,
+            supplier_number_snapshot=self.supplier.supplier_number,
+            actual_purchase_quantity=1, unit_price=Decimal('0.0056'), amount=Decimal('0.0056'),
+        )
+        same_name = Supplier.objects.create(supplier_number='GYS99994', supplier_name=self.supplier.supplier_name, supplier_type='MATERIAL')
+        PurchaseOrderLine.objects.create(
+            purchase_order=self.order, line_number=3, quantity_parse_status='READY',
+            supplier=same_name, supplier_name_snapshot=same_name.supplier_name,
+            supplier_number_snapshot=same_name.supplier_number, actual_purchase_quantity=1,
+        )
+        rows = self.get('procurement-inbound-orders').json()['data']
+        self.assertEqual(len(rows), 1)
+        groups = {row['supplier_id']: row for row in rows[0]['supplier_summary']}
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[str(self.supplier.pk)]['total_amount'], '12.3506')
+        self.assertIsNone(groups[str(same_name.pk)]['total_amount'])
+        self.assertEqual(rows[0]['currency_code'], self.order.currency_code_snapshot)
 
     def test_return_gates_and_completed_order_replenishment_are_preserved(self):
         inbound=self.batch(1,'CONFIRMED',[(10,2)])

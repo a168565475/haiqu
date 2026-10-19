@@ -5,7 +5,8 @@ import uuid
 from datetime import timedelta
 from urllib.parse import urlencode
 
-from django.contrib.auth import get_user_model, login as django_login
+from django.contrib.auth import SESSION_KEY, get_user_model, login as django_login
+from django.contrib.sessions.models import Session
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.views.decorators.debug import sensitive_variables
@@ -225,6 +226,35 @@ def create_oauth_state(request, config):
 
 
 @sensitive_variables()
+def create_qr_challenge(request, config, next_path):
+    state = create_oauth_state(request, config)
+    challenge = OAuthState.objects.get(state_digest=_digest(state))
+    now = timezone.now().timestamp()
+    # 回跳信息保存在发起方Session，并与挑战摘要关联；不向官方发送业务地址。
+    redirects = {key: value for key, value in request.session.get("wecom_qr_redirects", {}).items()
+                 if value["expires_at"] > now}
+    redirects[challenge.state_digest] = {"path": next_path, "expires_at": challenge.expires_at.timestamp()}
+    request.session["wecom_qr_redirects"] = redirects
+    return {"login_type": "CorpApp", "appid": config.corp_id, "agentid": config.agent_id,
+            "redirect_uri": config.erp_origin + "/api/auth/wecom/callback/", "state": state,
+            "expires_at": challenge.expires_at}
+
+
+@sensitive_variables()
+def cancel_oauth_state(request, state):
+    if not request.session.session_key:
+        return
+    digest = _digest(state)
+    # 与回调共用条件更新；重复取消、未知状态及其他会话均不泄露状态是否存在。
+    OAuthState.objects.filter(state_digest=digest, session_digest=_digest(request.session.session_key),
+                              consumed_at__isnull=True).update(consumed_at=timezone.now())
+    redirects = request.session.get("wecom_qr_redirects", {})
+    if digest in redirects:
+        del redirects[digest]
+        request.session["wecom_qr_redirects"] = redirects
+
+
+@sensitive_variables()
 def consume_oauth_state(request, state):
     if not isinstance(state, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", state) or not request.session.session_key:
         raise OAuthFailure("INVALID_STATE")
@@ -252,6 +282,8 @@ def oauth_url(request, config):
 @sensitive_variables()
 def oauth_login(request, state, code):
     challenge = consume_oauth_state(request, state)
+    redirects = request.session.get("wecom_qr_redirects", {})
+    return_path = redirects.get(challenge.state_digest, {}).get("path", "/")
     if not isinstance(code, str) or not code or len(code) > 512:
         raise OAuthFailure("INVALID_REQUEST")
     config = get_config()
@@ -288,10 +320,21 @@ def oauth_login(request, state, code):
         _assert_employee_active(employee, user)
         if request.user.is_authenticated and request.user.pk != user.pk:
             raise OAuthFailure("ACCOUNT_MISMATCH")
+        # 与密码登录/停用的user→session锁顺序保持一致。上游请求期间原会话
+        # 可能已被另一个标签页轮换或退出，不能凭请求里的旧缓存再建立登录。
+        login_session = Session.objects.select_for_update().filter(
+            session_key=request.session.session_key, expire_date__gt=timezone.now()).first()
+        expected_user_id = str(challenge.initiator_user_id) if challenge.initiator_user_id is not None else None
+        if login_session is None or login_session.get_decoded().get(SESSION_KEY) != expected_user_id:
+            raise OAuthFailure("ACCOUNT_MISMATCH")
+        # 验证成功前不修改Session，避免失败响应写回已删除的旧会话或覆盖新Cookie。
+        if challenge.state_digest in redirects:
+            del redirects[challenge.state_digest]
+            request.session["wecom_qr_redirects"] = redirects
         django_login(request, user, backend="apps.core.auth.ErpModelBackend")
         request.session.save()
         audit(request, binding, "OAUTH_LOGIN", user_id=binding.user_id, employee_name=employee.display_name, message="企业微信身份登录成功。")
-        return "/auth/waiting-role" if waiting_for_role(user) else "/"
+        return "/auth/waiting-role" if waiting_for_role(user) else return_path
 
 
 def audit_login_failure(request, code):

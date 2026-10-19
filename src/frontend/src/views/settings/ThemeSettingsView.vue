@@ -29,7 +29,7 @@ function selectTheme(theme: EnabledThemeId): void {
     <div class="theme-settings__card" aria-labelledby="theme-options-title">
       <div class="theme-settings__intro">
         <h2 id="theme-options-title">主题方案</h2>
-        <p>默认使用冷蓝银，也可选择暖色 ERP。选择会保存在当前浏览器；深色主题待配色确认后开放。</p>
+        <p>默认使用冷蓝银，也可选择暖色 ERP 或深海蓝。选择会保存在当前浏览器。</p>
       </div>
 
       <div class="theme-settings__options" role="list">

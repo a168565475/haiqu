@@ -80,13 +80,13 @@ const advancedFilters = reactive<AdvancedFilters>({
 
 const canDelete = computed(() => authStore.hasPermission('production_tasks.delete_productiontask'))
 const deletingId = ref('')
-const hoveredRowElement = ref<HTMLElement>()
+const hoveredProductElement = ref<HTMLElement>()
 const hoveredProductDetails = ref('')
 const rowTooltipVisible = ref(false)
 function showRowProducts(row: ProductionTask, _column: unknown, cell: HTMLElement) {
-  hoveredRowElement.value = cell.parentElement || cell
+  hoveredProductElement.value = cell.parentElement?.querySelector<HTMLElement>('.production-product-cell') || undefined
   hoveredProductDetails.value = productSpecifications(row.products)
-  rowTooltipVisible.value = row.products.length > 0
+  rowTooltipVisible.value = Boolean(hoveredProductElement.value) && row.products.length > 0
 }
 const canEdit = computed(() => authStore.hasPermission('production_tasks.change_productiontask'))
 const canCreate = computed(() => authStore.hasPermission('production_tasks.add_productiontask'))
@@ -414,7 +414,10 @@ onBeforeUnmount(() => {
           min-width="110"
         ><template #default="{ row }"><button class="link-button" type="button" @click="openTask(row)">{{ row.task_number }}</button></template></ElTableColumn>
         <ElTableColumn label="销售订单" min-width="128" show-overflow-tooltip><template #default="{ row }">{{ row.source_sales_order_number || '手动创建' }}</template></ElTableColumn>
-        <ElTableColumn label="产品" min-width="178"><template #default="{ row }"><ElTooltip trigger="focus" :content="productSpecifications(row.products)" placement="top" popper-class="production-product-tooltip"><div class="product-summary" tabindex="0"><div v-for="(label, index) in productLabels(row.products)" :key="index">{{ label }}</div><span v-if="!row.products.length">未添加产品</span></div></ElTooltip></template></ElTableColumn>
+        <ElTableColumn label="产品" class-name="production-product-cell" min-width="178"><template #default="{ row }"><ElTooltip trigger="focus" :content="productSpecifications(row.products)" placement="right" popper-class="production-product-tooltip"><div class="product-summary" tabindex="0"><div v-for="(label, index) in productLabels(row.products)" :key="index">{{ label }}</div><span v-if="!row.products.length">未添加产品</span></div></ElTooltip></template></ElTableColumn>
+        <ElTableColumn label="规格" min-width="150"><template #default="{ row }"><div class="product-summary"><div v-for="product in row.products" :key="product.id">{{ product.specification_display || product.customer_specification || product.specification || '—' }}</div><span v-if="!row.products.length">—</span></div></template></ElTableColumn>
+        <ElTableColumn label="材质" min-width="110"><template #default="{ row }"><div class="product-summary"><div v-for="product in row.products" :key="product.id">{{ product.material || '—' }}</div><span v-if="!row.products.length">—</span></div></template></ElTableColumn>
+        <ElTableColumn label="颜色" min-width="110"><template #default="{ row }"><div class="product-summary"><div v-for="product in row.products" :key="product.id">{{ product.customer_color || product.color_name || product.color_code || '—' }}</div><span v-if="!row.products.length">—</span></div></template></ElTableColumn>
         <ElTableColumn label="数量" min-width="88" show-overflow-tooltip align="right"><template #default="{ row }">{{ quantityWithUnits(row.products) }}</template></ElTableColumn>
         <ElTableColumn label="人民币金额合计" min-width="125" show-overflow-tooltip align="right"><template #default="{ row }">¥ {{ localAmountTotal(row.products) }}</template></ElTableColumn>
         <ElTableColumn prop="delivery_date" label="交期" min-width="102"><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
@@ -446,7 +449,7 @@ onBeforeUnmount(() => {
           </template>
         </ElTableColumn>
       </ElTable></div>
-      <ElTooltip virtual-triggering :virtual-ref="hoveredRowElement" :visible="rowTooltipVisible" :content="hoveredProductDetails" popper-class="production-product-tooltip" placement="top" />
+      <ElTooltip virtual-triggering :virtual-ref="hoveredProductElement" :visible="rowTooltipVisible" :content="hoveredProductDetails" popper-class="production-product-tooltip" placement="right" />
       <footer class="table-footer erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20, 50, 100]" :pager-count="5" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search" /></footer>
     </section>
 

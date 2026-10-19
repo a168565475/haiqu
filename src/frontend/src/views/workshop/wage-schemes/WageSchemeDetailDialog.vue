@@ -81,29 +81,6 @@ function schemeStatusClass(status: string) {
   } as Record<string, string>)[status] || 'is-neutral'
 }
 
-function eventStatusClass(action: string) {
-  return ({
-    APPROVED: 'is-success',
-    SUBMITTED: 'is-info',
-    RETURNED: 'is-danger',
-    CHANGE_CREATED: 'is-warning',
-  } as Record<string, string>)[action] || 'is-neutral'
-}
-
-function eventTimelineColor(action: string) {
-  return ({
-    APPROVED: 'var(--erp-color-success)',
-    SUBMITTED: 'var(--erp-color-info)',
-    RETURNED: 'var(--erp-color-danger)',
-    CHANGE_CREATED: 'var(--erp-color-warning)',
-  } as Record<string, string>)[action] || 'var(--erp-color-neutral)'
-}
-
-function formatDateTime(value: string) {
-  if (!value) return '—'
-  return value.replace('T', ' ').slice(0, 16)
-}
-
 function errorText(error: unknown) {
   return (error as { response?: { data?: { error?: { message?: string } } } })
     ?.response?.data?.error?.message || '工价详情加载失败。'
@@ -229,12 +206,19 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
             <ElTableColumn prop="display_name" label="名称 / 部位" min-width="150" show-overflow-tooltip />
             <ElTableColumn prop="operation_name" label="申报工序" min-width="100" show-overflow-tooltip />
             <ElTableColumn v-if="scheme.scope_craft?.plan_category === 'SEWING'" prop="counting_mode_display" label="计数方式" width="82" align="center" />
-            <ElTableColumn label="需完成次数" width="98" align="right"><template #default="{ row }">{{ row.required_quantity ?? '—' }}</template></ElTableColumn>
             <ElTableColumn prop="production_description" label="制作工序描述" min-width="170" show-overflow-tooltip>
               <template #default="{ row }">{{ row.production_description || '—' }}</template>
             </ElTableColumn>
             <ElTableColumn prop="declared_price" label="申报工价" width="88" align="center" class-name="is-money">
               <template #default="{ row }">{{ formatWageMoney(row.declared_price) }}</template>
+            </ElTableColumn>
+            <ElTableColumn prop="required_quantity" label="需完成次数" width="110" align="right"><template #default="{ row }">{{ row.required_quantity ?? '—' }}</template></ElTableColumn>
+            <ElTableColumn prop="completed_quantity" label="已完成次数" width="110" align="right"><template #default="{ row }">{{ row.completed_quantity ?? '—' }}</template></ElTableColumn>
+            <ElTableColumn prop="completed_amount" label="已完成金额" width="120" align="right" class-name="is-money">
+              <template #default="{ row }">{{ formatWageMoney(row.completed_amount) }}</template>
+            </ElTableColumn>
+            <ElTableColumn prop="estimated_amount" label="金额总计" width="120" align="right" class-name="is-money">
+              <template #default="{ row }">{{ formatWageMoney(row.estimated_amount) }}</template>
             </ElTableColumn>
             <ElTableColumn label="状态" width="72" align="center">
               <template #default="{ row }">
@@ -253,30 +237,6 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
               <template #default="{ row }">{{ row.note || '—' }}</template>
             </ElTableColumn>
           </ElTable>
-        </section>
-
-        <section class="wage-detail-dialog__section wage-detail-dialog__section--events">
-          <h3>审批记录</h3>
-          <ElTimeline v-if="scheme.events.length" class="wage-detail-dialog__approval-list">
-            <ElTimelineItem
-              v-for="event in scheme.events"
-              :key="event.id"
-              :color="eventTimelineColor(event.action)"
-              :timestamp="formatDateTime(event.created_at)"
-              placement="top"
-            >
-              <article class="wage-detail-dialog__event">
-                <header>
-                  <span class="wage-status-tag" :class="eventStatusClass(event.action)">
-                    {{ event.action_display }}
-                  </span>
-                  <strong>{{ event.actor || '—' }}</strong>
-                </header>
-                <p>{{ event.comment || '—' }}</p>
-              </article>
-            </ElTimelineItem>
-          </ElTimeline>
-          <ElEmpty v-else class="wage-detail-dialog__events-empty" :image-size="72" description="暂无审批记录" />
         </section>
       </template>
     </div>
@@ -336,6 +296,10 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
     height: 36px !important;
   }
 
+  .el-table__header-wrapper .cell {
+    white-space: nowrap;
+  }
+
   .el-table__body-wrapper td.el-table__cell {
     box-sizing: border-box;
     height: 36px !important;
@@ -388,8 +352,7 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .wage-detail-dialog__section {
@@ -424,67 +387,6 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
   .el-table {
     min-height: 0;
   }
-}
-
-.wage-detail-dialog__section--events {
-  padding-left: 14px;
-}
-
-.wage-detail-dialog__approval-list {
-  min-height: 0;
-  margin: 0;
-  padding: 6px 4px 0 8px;
-  overflow-y: auto;
-
-  .el-timeline-item {
-    padding-bottom: 24px;
-  }
-
-  .el-timeline-item__timestamp {
-    margin-bottom: 8px;
-    color: var(--erp-color-text-muted);
-    font-size: 11px;
-    line-height: 16px;
-  }
-
-  .el-timeline-item__tail {
-    border-left-color: var(--erp-color-border);
-  }
-}
-
-.wage-detail-dialog__event {
-  @include detail.inset;
-  padding: 14px 16px;
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-
-    strong {
-      min-width: 0;
-      overflow: hidden;
-      color: var(--erp-color-text-primary);
-      font-size: 13px;
-      font-weight: 600;
-      line-height: 20px;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
-  p {
-    margin: 10px 0 0;
-    color: var(--erp-color-text-regular);
-    font-size: 12px;
-    line-height: 20px;
-    overflow-wrap: anywhere;
-  }
-}
-
-.wage-detail-dialog__events-empty {
-  min-height: 0;
-  flex: 1;
 }
 
 .wage-detail-dialog__table {
@@ -538,15 +440,6 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
 @media (max-width: 1280px) {
   .app-window-dialog.wage-detail-dialog {
     .app-window-dialog__body { padding: 16px; }
-  }
-
-  .wage-detail-dialog__content {
-    grid-template-columns: minmax(0, 1fr) 280px;
-    gap: 14px;
-  }
-
-  .wage-detail-dialog__section--events {
-    padding-left: 14px;
   }
 }
 </style>

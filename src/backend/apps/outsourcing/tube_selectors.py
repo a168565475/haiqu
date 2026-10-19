@@ -1,6 +1,9 @@
 """D2来源和保存结果；只使用外发操作本身的数据权限。"""
+from types import SimpleNamespace
+
 from django.conf import settings
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.access_control.resource_scopes import filter_crafts, require_craft
@@ -9,6 +12,8 @@ from apps.core.api.exceptions import Conflict
 from apps.inventory.models import WarehouseZone
 from apps.inventory.public_stock_mode import public_flow_enabled
 from apps.production_scheduling.models import ProductionScheduleProduct, ProductionScheduleProductCraft
+from apps.production_tasks.selectors import production_task_product_image
+from apps.sales_orders.presentation import specification_display
 from apps.workshop_config.models import Craft
 
 from .models import OutsourcingFactory, TubeSourceKind
@@ -42,7 +47,10 @@ def visible_products(request, permission=VIEW_PERMISSION):
     schedules = outsourcing_source_schedules(request, permission=permission).filter(record_status='ACTIVE')
     return ProductionScheduleProduct.objects.filter(schedule__in=schedules, removed_at__isnull=True,
         pk__in=links.values('schedule_product_id'), product_line__production_task__archived_at__isnull=True
-    ).select_related('schedule__production_task', 'product_line__unit', 'unit').order_by('schedule_id', 'line_number', 'pk')
+    ).select_related('schedule__production_task', 'product_line__unit', 'unit',
+        'product_line__production_task', 'product_line__image_file',
+        'product_line__sales_order_delivery_batch_line__sales_order_line__product_image'
+    ).prefetch_related('product_line__images__image_file').order_by('schedule_id', 'line_number', 'pk')
 
 
 def source_product(request, schedule_product_id, permission=VIEW_PERMISSION):
@@ -93,6 +101,22 @@ def product_summary(product):
         'quantity': str(line.quantity), 'unit': line.unit.unit_name, 'color': line.color_name_snapshot}
 
 
+def product_display(product):
+    line = product.product_line
+    image = production_task_product_image(line)
+    if image is not None and not image.content_type.startswith('image/'):
+        image = None
+    return {'specification': line.specification_snapshot,
+        'specification_display': specification_display(SimpleNamespace(
+            specification_snapshot=line.specification_snapshot,
+            customer_specification_snapshot=line.customer_specification_snapshot,
+            color_snapshot=line.color_name_snapshot, customer_color_snapshot=line.customer_color_snapshot,
+            material_snapshot=line.material_snapshot)),
+        'material': line.material_snapshot, 'image_file_id': str(image.pk) if image else None,
+        'image_url': reverse('tube-outsourcing-order-product-image', kwargs={
+            'schedule_product_id': product.pk, 'file_id': image.pk}) if image else ''}
+
+
 def tube_options(request):
     tasks = {}
     seen_products = set()
@@ -107,7 +131,7 @@ def tube_options(request):
                                                 'order_number': row['order_number'], 'products': []})
         task['products'].append({'id': row['product_line_id'], **{key: row[key] for key in (
             'schedule_product_id', 'schedule_number', 'product_number', 'item_number', 'product_name',
-            'quantity', 'unit', 'color')}})
+            'quantity', 'unit', 'color')}, **product_display(product)})
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
         warehouse__warehouse_type__in=['MATERIAL', 'SEMI_FINISHED']).select_related('warehouse').order_by('warehouse_id', 'zone_name', 'pk')
     return {'tasks': list(tasks.values()), 'factories': [{'id': str(factory.pk), 'name': factory.name}

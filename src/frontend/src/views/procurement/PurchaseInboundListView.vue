@@ -6,6 +6,7 @@ import { MoreFilled, Search } from '@element-plus/icons-vue'
 import { fetchProcurementInboundOrders } from '@/api/inventory'
 import { router } from '@/router'
 import { useAuthStore } from '@/stores/auth'
+import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
 import type { ProcurementInboundOrder, ProcurementInboundProductSummary } from '@/types/inventory'
 
 const auth = useAuthStore()
@@ -147,7 +148,10 @@ onMounted(() => { if (canView.value) void loadRows() })
           <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'specification') }}</template></ElTableColumn>
           <ElTableColumn label="颜色" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'color_name') }}</template></ElTableColumn>
           <ElTableColumn label="材质" min-width="100" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'material') }}</template></ElTableColumn>
-          <ElTableColumn label="供应商" min-width="210"><template #default="{ row }">{{ row.supplier_names.join('、') || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="供应商" min-width="210"><template #default="{ row }">
+            <SupplierAmountPopover v-if="row.supplier_summary?.length" :suppliers="row.supplier_summary" :currency="row.currency_code" />
+            <span v-else>{{ row.supplier_names.length > 1 ? `共 ${row.supplier_names.length} 家供应商` : row.supplier_names[0] || '—' }}</span>
+          </template></ElTableColumn>
           <ElTableColumn label="采购明细" width="100" align="center"><template #default="{ row }">{{ row.line_count }} 项</template></ElTableColumn>
           <ElTableColumn label="待入库" width="92" align="center"><template #default="{ row }">{{ row.remaining_line_count }} 项</template></ElTableColumn>
           <ElTableColumn label="累计到货" width="116" align="right"><template #default="{ row }">{{ formatQuantity(row.received_quantity) }}</template></ElTableColumn>

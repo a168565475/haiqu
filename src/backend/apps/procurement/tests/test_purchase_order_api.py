@@ -565,8 +565,9 @@ class PurchaseOrderApiTests(APITestCase):
         product_line.color_card_snapshot = "志龙"
         product_line.color_name_snapshot = "橙色"
         product_line.color_code_snapshot = "ORANGE-01"
+        product_line.material_snapshot = "PE"
         product_line.save(
-            update_fields=["color_card_snapshot", "color_name_snapshot", "color_code_snapshot"]
+            update_fields=["color_card_snapshot", "color_name_snapshot", "color_code_snapshot", "material_snapshot"]
         )
         self.make_bom(product_line, section_type=BomSectionType.ACCESSORY, budget_quantity="5")
         source_data = self.get_source(task).data["data"]
@@ -619,6 +620,7 @@ class PurchaseOrderApiTests(APITestCase):
                     "product_line_id": str(product_line.pk),
                     "product_name": product_line.product_name_snapshot,
                     "specification": product_line.specification_snapshot,
+                    "material": product_line.material_snapshot,
                     "color_card": "志龙",
                     "color_name": "橙色",
                     "color_code": "ORANGE-01",

@@ -1,7 +1,7 @@
 import { isAxiosError } from 'axios'
 
 import { apiClient } from './request'
-import type { AuthResponse, LoginCredentials } from '@/types/auth'
+import type { AuthResponse, LoginCredentials, WeComQrSession } from '@/types/auth'
 
 export async function fetchCurrentUser(): Promise<AuthResponse> {
   const { data } = await apiClient.get<AuthResponse>('/api/auth/me/')
@@ -21,6 +21,24 @@ export async function requestDevelopmentAutoLogin(): Promise<AuthResponse> {
 export async function logout(): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>('/api/auth/logout/')
   return data
+}
+
+export class ExistingAuthSessionError extends Error {
+  constructor(public readonly response: AuthResponse) {
+    super('当前浏览器已有登录会话')
+  }
+}
+
+export async function createWeComQrSession(next: string): Promise<WeComQrSession> {
+  // 匿名会话也先获取 CSRF Cookie；已登录时继续原会话，避免扫码切换身份。
+  const response = await fetchCurrentUser()
+  if (response.authenticated) throw new ExistingAuthSessionError(response)
+  const { data } = await apiClient.post<WeComQrSession>('/api/auth/wecom/qr/', { next })
+  return data
+}
+
+export async function cancelWeComQrSession(state: string): Promise<void> {
+  await apiClient.delete('/api/auth/wecom/qr/', { data: { state } })
 }
 
 function firstFieldError(responseData: unknown): string | null {

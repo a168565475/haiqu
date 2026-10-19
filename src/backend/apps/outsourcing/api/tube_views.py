@@ -1,3 +1,7 @@
+from pathlib import Path
+
+from django.conf import settings
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -8,11 +12,12 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 from apps.access_control import module_policy
 from apps.core.api.permissions import HasActiveEmployee
+from apps.production_tasks.selectors import production_task_product_image
 
 from ..models import TubeOutsourcingAction, TubeOutsourcingOrder
 from ..tube_selectors import (CANCEL_PERMISSION, CREATE_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION, VIEW_PERMISSION,
-    product_summary, require_saved_order_access, require_tube_feature, saved_order_data, source_factories,
-    source_product, source_zone, tube_options, tube_order_queryset)
+    product_display, product_summary, require_saved_order_access, require_tube_feature, saved_order_data, source_factories,
+    source_product, source_zone, tube_options, tube_order_queryset, visible_products)
 from ..tube_services import create_tube_order
 from ..tube_action_services import confirm_tube_action
 from ..tube_receipt_services import confirm_tube_final_receipt
@@ -35,7 +40,7 @@ class TubeActionPermission(BasePermission):
 
 class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, TubeActionPermission]
-    action_permission_map = {'options': VIEW_PERMISSION, 'source_context': VIEW_PERMISSION,
+    action_permission_map = {'options': VIEW_PERMISSION, 'source_context': VIEW_PERMISSION, 'product_image': VIEW_PERMISSION,
                              'create': CREATE_PERMISSION, 'by_request': VIEW_PERMISSION,
                              'retrieve': VIEW_PERMISSION, 'confirm_dispatch': DISPATCH_PERMISSION,
                              'cancel': CANCEL_PERMISSION, 'action_by_request': VIEW_PERMISSION,
@@ -51,6 +56,33 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def options(self, request):
         return Response({'data': tube_options(request)})
 
+    @extend_schema(parameters=[
+        OpenApiParameter('schedule_product_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH),
+        OpenApiParameter('file_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)],
+        responses={(200, 'application/octet-stream'): OpenApiTypes.BINARY})
+    @action(detail=False, methods=['get'],
+        url_path=r'product-images/(?P<schedule_product_id>[^/.]+)/(?P<file_id>[^/.]+)')
+    def product_image(self, request, schedule_product_id=None, file_id=None):
+        schedule_product_id = serializers.UUIDField().run_validation(schedule_product_id)
+        file_id = serializers.UUIDField().run_validation(file_id)
+        product = get_object_or_404(visible_products(request), pk=schedule_product_id)
+        # 图片读取只继承当前外发产品的可见范围，不能转为整张任务或通用文件权限。
+        image = production_task_product_image(product.product_line)
+        if image is None or image.pk != file_id or not image.content_type.startswith('image/'):
+            raise Http404('产品图片不存在。')
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        storage_path = (media_root / image.storage_key).resolve()
+        try:
+            storage_path.relative_to(media_root)
+        except ValueError as exc:
+            raise Http404('图片路径无效。') from exc
+        if not storage_path.is_file():
+            raise Http404('图片不存在。')
+        response = FileResponse(storage_path.open('rb'), content_type=image.content_type, filename=image.original_name)
+        response['X-Content-Type-Options'] = 'nosniff'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     @action(detail=False, methods=['get'], url_path='source-context')
     def source_context(self, request):
         serializer = TubeSourceQuerySerializer(data=request.query_params)
@@ -61,7 +93,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         from apps.inventory.tube_outsourcing_limits import tube_source_context
         context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
         options = tube_options(request)
-        context = {**context, **product_summary(product), **options, 'craft_name': craft.name,
+        context = {**context, **product_summary(product), **product_display(product), **options, 'craft_name': craft.name,
                    'source_kind': data['source_kind'], 'zone_id': str(zone.pk) if zone else None,
                    'factories': [{'id': str(factory.pk), 'name': factory.name} for factory in source_factories(request, craft)]}
         # 库存身份和冻结凭证仅供保存服务使用，页面按可显示字段读取。

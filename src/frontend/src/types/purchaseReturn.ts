@@ -12,6 +12,7 @@ export interface PurchaseReturn {
   id: string; return_number: string; purchase_order_id: string; order_number: string
   production_task_number: string; inbound_id: string; inbound_number: string
   supplier_id: string; supplier_number: string; supplier_name: string
+  return_amount: string | null; currency_code: string
   status: ReturnOrderStatus; status_display: string; generated_by_name: string
   confirmed_by_name: string; completed_by_name: string; created_at: string
   confirmed_at: string | null; completed_at: string | null; updated_at: string

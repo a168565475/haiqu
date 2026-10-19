@@ -3,6 +3,29 @@
   "modules": {
     "wecom": [
       {
+        "id": "wecom-login-readonly",
+        "path": "qa/wecom_login_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "development-api-GET-only",
+        "browser_mode": "headless",
+        "account_required": false,
+        "required_env": [],
+        "timeout_seconds": 120,
+        "enabled": true,
+        "order": 5,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/wecom_qr_20261019/readonly-page-checks.json", "qa/wecom_qr_20261019/login-password-*.png", "qa/wecom_qr_20261019/wecom-error-browser.png"],
+        "preconditions": [
+          "本机8080正式应用源码服务及/api/auth/me/可用；仅访问本机应用，不访问设计预览file页面",
+          "拦截非GET/HEAD与外部请求，不提交密码或QR初始化，不生成账号、不修改业务数据",
+          "验证登录布局、插画顺序动效与减少动态效果；不代替真实扫码验收",
+          "runtime已在qa/wecom_qr_20261019/report.md登记，finally关闭浏览器并清理"
+        ]
+      },
+      {
         "id": "wecom-isolated-page",
         "path": "qa/wecom_phase1_isolated.cjs",
         "runtime": "node",

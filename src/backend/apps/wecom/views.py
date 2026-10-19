@@ -1,11 +1,12 @@
 from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
+from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from django.views.decorators.http import require_GET
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.exceptions import APIException
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -20,6 +21,7 @@ from .serializers import (
     AuditListSerializer, BindingListSerializer, BindingQuerySerializer, BindingResponseSerializer,
     BindingWriteSerializer, ConfigResponseSerializer, ConfigWriteSerializer,
     EmployeeListSerializer, EmployeeQuerySerializer, PageQuerySerializer,
+    QRCancelSerializer, QRChallengeSerializer, QRStartSerializer,
 )
 
 
@@ -37,6 +39,57 @@ class WeComUpstreamFailure(APIException):
     status_code = 502
     default_detail = "企业微信接口暂不可用，请检查配置或稍后重试。"
     api_error_code = "WECOM_UPSTREAM_ERROR"
+
+
+class WeComQRUnavailable(APIException):
+    status_code = 503
+    default_detail = "企业微信网页登录配置尚未就绪，请联系管理员检查应用配置。"
+    default_code = "wecom_qr_unavailable"
+
+
+@method_decorator(never_cache, name="dispatch")
+@method_decorator(csrf_protect, name="dispatch")
+class QRLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(request=QRStartSerializer, responses={
+        200: QRChallengeSerializer, 400: OpenApiResponse(description="回跳地址或请求字段无效"),
+        403: OpenApiResponse(description="CSRF校验失败"), 503: OpenApiResponse(description="企业微信配置未就绪"),
+    })
+    @sensitive_variables()
+    def post(self, request):
+        serializer = QRStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if not selectors.schema_is_ready():
+            raise WeComUnavailable()
+        config = selectors.get_config()
+        if config._state.adding or not config.enabled or not selectors.configuration_complete(config):
+            raise WeComQRUnavailable()
+        payload = services.create_qr_challenge(request, config, serializer.validated_data["next"])
+        return Response(QRChallengeSerializer(payload).data)
+
+    # spectacular默认忽略DELETE请求体；显式保留本接口已验证的JSON契约。
+    @extend_schema(operation={
+        "operationId": "auth_wecom_qr_destroy", "tags": ["auth"], "security": [{"sessionCookie": []}, {}],
+        "description": "需携带发起浏览器的Session与CSRF；仅取消该会话拥有的状态，重复取消返回204。",
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {
+            "type": "object", "required": ["state"], "additionalProperties": False,
+            "properties": {"state": {"type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$"}},
+        }}}},
+        "responses": {
+            "204": {"description": "当前会话中的扫码状态已取消或已失效"},
+            "400": {"description": "登录状态格式无效"}, "403": {"description": "CSRF校验失败"},
+            "503": {"description": "企业微信模块未就绪"},
+        },
+    })
+    @sensitive_variables()
+    def delete(self, request):
+        serializer = QRCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if not selectors.schema_is_ready():
+            raise WeComUnavailable()
+        services.cancel_oauth_state(request, serializer.validated_data["state"])
+        return Response(status=204)
 
 
 @method_decorator(sensitive_post_parameters("secret", "callback_token", "callback_aes_key"), name="dispatch")

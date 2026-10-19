@@ -76,6 +76,9 @@ export interface WageSchemeLine {
   counting_mode_display: string
   order_quantity: string | number | null
   required_quantity: string | null
+  completed_quantity?: string | null
+  completed_amount?: string | null
+  estimated_amount?: string | null
   production_description: string
   unit_name: string
   previous_price: string | null
@@ -167,6 +170,12 @@ export interface WorkReport {
 export interface WorkReportDay {
   production_date: string; report_count: number; order_count: number; product_count: number
   employee_count: number; line_count: number; total_amount: string; last_saved_at: string
+}
+export interface WorkReportTask {
+  id: string
+  task_number: string
+  order_number: string
+  workshops: ReportingOption[]
 }
 
 export interface Paginated<T> { data: T[]; meta: PageMeta }

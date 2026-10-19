@@ -227,16 +227,21 @@ export interface PurchaseOrderInput {
   lines: PurchaseOrderLineInput[]
 }
 
-export interface PurchaseOrderSupplierSummary {
+export interface SupplierAmountItem {
+  supplier_name: string
+  total_amount: string | null
+}
+
+export interface PurchaseOrderSupplierSummary extends SupplierAmountItem {
   id: string
   supplier_number: string
-  supplier_name: string
 }
 
 export interface PurchaseOrderProductSummary {
   product_line_id: string
   product_name: string
   specification: string
+  material: string
   color_card: string
   color_name: string
   color_code: string

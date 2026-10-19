@@ -2,10 +2,10 @@
 export const THEME_STORAGE_KEY = 'haiqu:theme:v2'
 export const DEFAULT_THEME = 'blue-gray' as const
 
-// 深色保留扩展标识，取得配色确认前不加入可用主题。
+// 三种已确认主题供用户选择，保留现有默认主题与浏览器选择。
 export const THEME_IDS = ['warm', 'blue-gray', 'dark'] as const
 export type ThemeId = (typeof THEME_IDS)[number]
-const ENABLED_THEME_IDS = ['blue-gray', 'warm'] as const
+const ENABLED_THEME_IDS = ['blue-gray', 'warm', 'dark'] as const
 export type EnabledThemeId = (typeof ENABLED_THEME_IDS)[number]
 
 export interface ThemeDefinition {
@@ -24,6 +24,11 @@ export const AVAILABLE_THEMES: readonly ThemeDefinition[] = [
     id: 'warm',
     label: '暖色 ERP',
     description: '米白底色、暖灰边框与橙色强调色。',
+  },
+  {
+    id: 'dark',
+    label: '深海蓝',
+    description: '深蓝灰底色、柔和边线与浅蓝强调色。',
   },
 ]
 

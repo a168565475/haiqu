@@ -38,6 +38,8 @@ const scheme = {
     id: 'line-1', line_number: 1, operation_name: '下料', operation_number: 'GX-001',
     display_name: '桌腿', production_description: '按定位线精准下料', unit_name: '件',
     previous_price: '2.0000', revised_price: '2.2000', declared_price: '2.2000',
+    required_quantity: '10.0000', completed_quantity: '3.0000',
+    completed_amount: '5.5000', estimated_amount: '22.0000',
     status: 'ACTIVE', note: '首件确认后批量制作',
   }],
   events: [{
@@ -79,8 +81,9 @@ describe('工价详情弹窗', () => {
     expect(source).toContain('prop="operation_name" label="申报工序" min-width="100"')
     expect(source).toContain('prop="production_description" label="制作工序描述" min-width="170"')
     expect(source).toContain('prop="note" label="备注" min-width="120"')
-    expect(source).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) 320px;/)
-    expect(source).toMatch(/@media \(max-width: 1280px\)[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 280px;/)
+    expect(source).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\);/)
+    expect(source).not.toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) \d+px;/)
+    expect(source).toMatch(/\.el-table__header-wrapper \.cell\s*\{\s*white-space:\s*nowrap;/)
   })
 
   it('按统一窗口展示规范表格，并为可变更方案提供变更入口', async () => {
@@ -95,7 +98,7 @@ describe('工价详情弹窗', () => {
     expect(api.detail).toHaveBeenCalledWith('scheme-1')
     expect(dialog?.textContent).toContain('工价详情')
     expect(dialog?.textContent).toContain('工价明细')
-    expect(dialog?.textContent).toContain('审批记录')
+    expect(dialog?.textContent).not.toContain('审批记录')
     expect(dialog?.textContent).not.toContain('基本信息')
     expect(dialog?.textContent).not.toContain('内容版本')
     expect(dialog?.textContent).not.toContain('单位')
@@ -109,17 +112,21 @@ describe('工价详情弹窗', () => {
     expect(dialog?.textContent).toContain('变更')
     expect(dialog?.classList.contains('app-window-dialog')).toBe(true)
     expect(dialog?.querySelectorAll('.wage-detail-dialog__table')).toHaveLength(1)
-    expect(dialog?.querySelector('.wage-detail-dialog__approval-list')).not.toBeNull()
-    expect(dialog?.querySelector('.wage-detail-dialog__event')?.textContent).toContain('同意执行')
+    expect(dialog?.querySelector('.wage-detail-dialog__section--events')).toBeNull()
+    expect(dialog?.textContent).not.toContain('同意执行')
     expect(dialog?.querySelector('.wage-status-tag.is-success')).not.toBeNull()
 
     const headers = Array.from(dialog?.querySelectorAll('.wage-detail-dialog__table th') || [])
       .map(cell => cell.textContent?.trim())
       .filter(Boolean)
     expect(headers).toEqual([
-      '名称 / 部位', '申报工序', '需完成次数', '制作工序描述', '申报工价', '状态',
+      '名称 / 部位', '申报工序', '制作工序描述', '申报工价',
+      '需完成次数', '已完成次数', '已完成金额', '金额总计', '状态',
       '以往工价', '修改工价', '备注',
     ])
+    const rowCells = Array.from(dialog?.querySelectorAll('.el-table__body tbody tr:first-child td') || [])
+      .map(cell => cell.textContent?.trim())
+    expect(rowCells.slice(4, 8)).toEqual(['10.0000', '3.0000', '¥5.5', '¥22'])
     expect(dialog?.textContent).toContain('¥2.2')
     expect(dialog?.textContent).not.toContain('¥2.2000')
 
@@ -172,7 +179,34 @@ describe('工价详情弹窗', () => {
     unauthorizedWrapper.unmount()
   })
 
-  it('明细和审批记录为空时显示各自空态', async () => {
+  it.each([null, undefined])('统计值为 %s 时保留缺失提示，不显示为零', async (missing) => {
+    api.detail.mockResolvedValueOnce({
+      data: {
+        ...scheme,
+        lines: [
+          { ...scheme.lines[0], completed_quantity: missing, completed_amount: missing, estimated_amount: missing },
+          { ...scheme.lines[0], id: 'line-2', completed_quantity: '0.0000', completed_amount: '0.0000', estimated_amount: '0.0000' },
+        ],
+      },
+      etag: '"4"',
+    })
+    const wrapper = mount(WageSchemeDetailDialog, {
+      attachTo: document.body,
+      props: { modelValue: true, schemeId: 'scheme-1' },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    const rows = document.body.querySelectorAll('.wage-detail-dialog__table .el-table__body tbody tr')
+    expect(Array.from(rows[0]!.querySelectorAll('td')).slice(5, 8).map(cell => cell.textContent?.trim()))
+      .toEqual(['—', '—', '—'])
+    expect(Array.from(rows[1]!.querySelectorAll('td')).slice(5, 8).map(cell => cell.textContent?.trim()))
+      .toEqual(['0.0000', '¥0', '¥0'])
+
+    wrapper.unmount()
+  })
+
+  it('明细为空时显示表格空态，不再显示审批记录区域', async () => {
     api.detail.mockResolvedValueOnce({
       data: { ...scheme, lines: [], events: [] },
       etag: '"4"',
@@ -186,7 +220,29 @@ describe('工价详情弹窗', () => {
 
     const dialog = document.body.querySelector('[data-testid="wage-scheme-detail-dialog"]')
     expect(dialog?.textContent).toContain('暂无工价明细')
-    expect(dialog?.textContent).toContain('暂无审批记录')
+    expect(dialog?.textContent).not.toContain('审批记录')
+    expect(dialog?.querySelector('.wage-detail-dialog__section--events')).toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('加载失败时显示错误和重试入口，重试后展示接口返回的统计字段', async () => {
+    api.detail.mockRejectedValueOnce({ response: { data: { error: { message: '暂时无法读取工价。' } } } })
+    const wrapper = mount(WageSchemeDetailDialog, {
+      attachTo: document.body,
+      props: { modelValue: true, schemeId: 'scheme-1' },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+
+    const dialog = document.body.querySelector('[data-testid="wage-scheme-detail-dialog"]')
+    expect(dialog?.textContent).toContain('暂时无法读取工价。')
+    expect(dialog?.querySelector('.wage-detail-dialog__table')).toBeNull()
+    dialog?.querySelector<HTMLButtonElement>('.el-alert button')?.click()
+    await flushPromises()
+    expect(api.detail).toHaveBeenCalledTimes(2)
+    expect(dialog?.textContent).toContain('¥5.5')
+    expect(dialog?.querySelector('.el-alert')).toBeNull()
 
     wrapper.unmount()
   })

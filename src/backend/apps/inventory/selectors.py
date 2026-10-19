@@ -288,6 +288,28 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False):
     ]
 
 
+def procurement_inbound_supplier_summaries(lines):
+    """按供应商汇总本单采购金额；未核价的明细不冒充零金额。"""
+    grouped = {}
+    for line in lines:
+        if not line.supplier_id and not line.supplier_name_snapshot:
+            continue
+        key = line.supplier_id or line.supplier_name_snapshot
+        grouped.setdefault(key, []).append(line)
+    summaries = []
+    for supplier_lines in sorted(grouped.values(), key=lambda rows: rows[0].supplier_number_snapshot):
+        first = supplier_lines[0]
+        amount = None if any(line.amount is None for line in supplier_lines) else sum(
+            (line.amount for line in supplier_lines), Decimal("0")
+        )
+        summaries.append({
+            "supplier_id": str(first.supplier_id) if first.supplier_id else None,
+            "supplier_name": first.supplier_name_snapshot,
+            "total_amount": format(amount, ".4f") if amount is not None else None,
+        })
+    return summaries
+
+
 def procurement_inbound_product_summaries(orders):
     """按采购行保留产品顺序；打样材料无逐产品绑定，展示来源打样明细。"""
     lines_by_order = {

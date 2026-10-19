@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -84,6 +85,28 @@ class PurchaseOrderLoadingReadTests(APITestCase):
             result = PurchaseOrderDetailSerializer(purchase_orders_with_context(PurchaseOrder.objects.filter(pk=self.order.pk), read_optimized=True).get()).data
         self.assertEqual(len(queries), original_count)
         self.assertEqual(result['line_count'], 11)
+
+    def test_supplier_summary_amounts_are_grouped_and_missing_price_is_unknown(self):
+        line = self.order.lines.get()
+        line.actual_purchase_quantity = 10
+        line.unit_price = Decimal('1.25')
+        line.amount = Decimal('12.5')
+        line.save()
+        extra = PurchaseOrderLine.objects.create(
+            purchase_order=self.order, line_number=2, quantity_parse_status='READY',
+            supplier=self.supplier, supplier_name_snapshot=self.supplier.supplier_name,
+            actual_purchase_quantity=1, unit_price=Decimal('2.0006'), amount=Decimal('2.0006'),
+        )
+        response = self.client.get('/api/v1/purchase-orders/', HTTP_HOST='localhost')
+        self.assertEqual(response.status_code, 200)
+        groups = response.data['data'][0]['supplier_summary']
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]['total_amount'], '14.5006')
+        extra.unit_price = None
+        extra.amount = None
+        extra.save()
+        response = self.client.get('/api/v1/purchase-orders/', HTTP_HOST='localhost')
+        self.assertIsNone(response.data['data'][0]['supplier_summary'][0]['total_amount'])
 
     def test_list_detail_and_filter_options_keep_data_scope_and_etag(self):
         response = self.client.get('/api/v1/purchase-orders/', HTTP_HOST='localhost')

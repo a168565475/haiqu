@@ -4,6 +4,7 @@
 @use './theme/components' as components;
 @use './theme/blue-gray' as cool;
 @use './theme/warm' as warm;
+@use './theme/dark' as dark;
 @use './theme/controls';
 @use './theme/motion';
 @use './theme/spotlight';
@@ -14,9 +15,13 @@
 // 编译时阻止色槽缺失，避免新主题悄悄继承上一主题的颜色。
 @each $role, $value in cool.$palette {
   @if not map.has-key(warm.$palette, $role) { @error '暖色主题缺少配色：#{$role}'; }
+  @if not map.has-key(dark.$palette, $role) { @error '深色主题缺少配色：#{$role}'; }
 }
 @each $role, $value in warm.$palette {
   @if not map.has-key(cool.$palette, $role) { @error '蓝灰主题缺少配色：#{$role}'; }
+}
+@each $role, $value in dark.$palette {
+  @if not map.has-key(cool.$palette, $role) { @error '深色主题存在未定义配色：#{$role}'; }
 }
 
 @mixin theme($palette) {
@@ -32,6 +37,9 @@ html[data-theme='blue-gray'],
 
 html[data-theme='warm'],
 [data-theme-preview='warm'] { @include theme(warm.$palette); }
+
+html[data-theme='dark'],
+[data-theme-preview='dark'] { @include theme(dark.$palette); }
 
 html, body {
   background: var(--erp-color-page);

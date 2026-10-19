@@ -40,9 +40,9 @@ class WeComOAuthSensitiveMiddleware:
 
     @sensitive_variables()
     def __call__(self, request):
-        if request.path.rstrip("/") in {"/api/v1/wecom/config", "/api/v1/wecom/config/check"}:
+        if request.path.rstrip("/") in {"/api/v1/wecom/config", "/api/v1/wecom/config/check", "/api/auth/wecom/qr"}:
             request.exception_reporter_filter = WeComExceptionReporterFilter()
-            request.sensitive_post_parameters = ("secret", "callback_token", "callback_aes_key")
+            request.sensitive_post_parameters = ("secret", "callback_token", "callback_aes_key", "state")
             response = self.get_response(request)
             # 此层早于认证和角色门禁，因此拒绝及错误响应同样禁止缓存。
             add_never_cache_headers(response)

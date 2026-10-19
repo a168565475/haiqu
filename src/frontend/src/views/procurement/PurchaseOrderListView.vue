@@ -15,6 +15,7 @@ import {
 } from '@/api/purchaseOrders'
 import { useAuthStore } from '@/stores/auth'
 import PurchaseOrderCompleteDialog from '@/components/procurement/PurchaseOrderCompleteDialog.vue'
+import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
 import type {
   PurchaseOrderListItem,
   PurchaseOrderFilterOptions,
@@ -125,11 +126,8 @@ function supplierProgress(row: PurchaseOrderListItem): string {
   return `${row.supplier_assigned_line_count ?? '—'}/${row.line_count} 行 · ${row.supplier_count}家`
 }
 
-function supplierNames(row: PurchaseOrderListItem): string {
-  const suppliers = row.supplier_summary || []
-  if (!suppliers.length) return '尚未选择供应商'
-  if (suppliers.length === 1) return suppliers[0]?.supplier_name || '—'
-  return `${suppliers[0]?.supplier_name || '供应商'} 等 ${suppliers.length} 家`
+function productField(row: PurchaseOrderListItem, field: 'specification' | 'color_name' | 'material'): string {
+  return row.product_summary.map(product => product[field]?.trim() || '—').join('、') || '—'
 }
 
 function productColor(product: PurchaseOrderListItem['product_summary'][number]): string {
@@ -142,7 +140,7 @@ function productColor(product: PurchaseOrderListItem['product_summary'][number])
 
 function productDetails(row: PurchaseOrderListItem): string {
   return row.product_summary.map((product) =>
-    `${product.product_name || '—'}\n规格：${product.specification || '—'}\n颜色：${productColor(product)}`,
+    `${product.product_name || '—'}\n规格：${product.specification || '—'}\n颜色：${productColor(product)}\n材质：${product.material || '—'}`,
   ).join('\n\n')
 }
 
@@ -468,8 +466,11 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
               <span v-else class="muted">—</span>
             </template>
           </ElTableColumn>
+          <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ productField(row, 'specification') }}</template></ElTableColumn>
+          <ElTableColumn label="颜色" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ productField(row, 'color_name') }}</template></ElTableColumn>
+          <ElTableColumn label="材质" min-width="100" show-overflow-tooltip><template #default="{ row }">{{ productField(row, 'material') }}</template></ElTableColumn>
           <ElTableColumn label="供应商进度" width="144">
-            <template #default="{ row }"><span :title="supplierNames(row)">{{ supplierProgress(row) }}</span></template>
+            <template #default="{ row }"><SupplierAmountPopover :suppliers="row.supplier_summary || []" :currency="row.currency_code" :label="supplierProgress(row)" /></template>
           </ElTableColumn>
           <ElTableColumn label="采购金额" width="146" show-overflow-tooltip>
             <template #default="{ row }"><span class="amount" :class="{ 'amount--pending erp-list-tag erp-list-tag--neutral': !row.currency_code || row.total_amount === null }">{{ row.currency_code && row.total_amount !== null ? `${row.currency_code} ${formatMoney(row.total_amount)}` : '待计算' }}</span></template>
@@ -486,8 +487,8 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
           <ElTableColumn label="入库情况" width="198">
             <template #default="{ row }"><span class="inbound-summary" :class="[row.completion?.inbound_status ? `inbound-${row.completion.inbound_status}` : 'muted', { 'erp-list-tag': row.completion?.inbound_status && row.completion.inbound_status !== 'NOT_STARTED', 'erp-list-tag--brand': ['PENDING_RECEIPT', 'PARTIAL_RECEIVED'].includes(row.completion?.inbound_status || ''), 'erp-list-tag--warning': row.completion?.inbound_status === 'PENDING_QUALITY', 'erp-list-tag--danger': ['PENDING_PROCUREMENT_CONFIRMATION', 'RETURN_RECORD_MISSING'].includes(row.completion?.inbound_status || ''), 'erp-list-tag--info': row.completion?.inbound_status === 'PENDING_RETURN', 'erp-list-tag--success': ['CONFIRMED', 'COMPLETED'].includes(row.completion?.inbound_status || '') }]" data-testid="purchase-inbound-status">{{ row.completion?.inbound_status_display || '—' }}</span></template>
           </ElTableColumn>
-          <ElTableColumn label="更新信息" width="161">
-            <template #default="{ row }"><div class="cell-stack update-info"><span :title="row.updated_by_name ? '更新人' : '创建人'">{{ row.updated_by_name || row.created_by_name || '—' }}</span><small>{{ formatDateTime(row.updated_at || row.created_at) }}</small></div></template>
+          <ElTableColumn label="更新时间" width="161">
+            <template #default="{ row }">{{ formatDateTime(row.updated_at || row.created_at) }}</template>
           </ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center">
             <template #default="{ row }">

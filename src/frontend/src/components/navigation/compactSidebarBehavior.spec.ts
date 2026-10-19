@@ -1,9 +1,12 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 import AppHeader from './AppHeader.vue'
 import ErpLayout from '@/layouts/ErpLayout.vue'
+
+beforeEach(() => setActivePinia(createPinia()))
 
 const routeMock = vi.hoisted(() => ({
   name: 'tasks',
@@ -58,7 +61,7 @@ describe('常驻主栏的页面外壳', () => {
       global: { plugins: [ElementPlus], stubs: { GlobalPageTabs: true } },
     })
     try {
-      const menu = wrapper.getComponent({ name: 'ElDropdown' })
+      const menu = wrapper.findAllComponents({ name: 'ElDropdown' }).find(item => item.classes().includes('app-header__user-menu'))!
       menu.vm.$emit('command', 'logout')
       menu.vm.$emit('command', 'logout')
       await flushPromises()

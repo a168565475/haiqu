@@ -298,11 +298,6 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         <label class="form-field required"><span>产品</span><ElSelect :model-value="productId" @update:model-value="requestChange('product', $event)" :disabled="!taskId || locked || !canCreate" filterable clearable aria-label="产品" placeholder="再选择一个产品"><ElOption v-for="item in products" :key="item.id" :label="`${item.product_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
         <label class="form-field required"><span>材料来源</span><ElSelect :model-value="source" :disabled="locked || !canCreate" @update:model-value="requestChange('source', $event)" aria-label="材料来源"><ElOption v-for="item in options?.source_kinds || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
         <label class="form-field"><span>关联排产</span><ElInput :model-value="product ? product.schedule_number || '暂无可用排产' : '选择产品后自动关联'" readonly /></label>
-      </div>
-      <div class="dispatch-context info-grid"><div class="info-cell"><span>订单号</span><b>{{ context?.order_number || task?.order_number || '—' }}</b></div><div class="info-cell"><span>品号</span><b>{{ product?.product_number || '—' }}</b></div><div class="info-cell"><span>货号</span><b>{{ product?.item_number || '—' }}</b></div><div class="info-cell"><span>订单量</span><b>{{ product ? `${number(product.quantity)} ${product.unit}` : '—' }}</b></div><div class="info-cell"><span>外发工艺</span><b>{{ context?.craft_name || '喷塑' }}</b></div></div>
-    </section>
-    <section class="panel workspace" v-loading="sourceLoading">
-      <div class="field-grid">
         <label class="form-field required"><span>计划发出日期</span><ElDatePicker v-model="sendDate" :disabled="locked || !canCreate" aria-label="计划发出日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择日期" /></label>
         <label class="form-field required"><span>预计回货日期</span><ElDatePicker v-model="returnDate" :disabled="locked || !canCreate" aria-label="预计回货日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择日期" /></label>
         <template v-if="source !== 'METAL'">
@@ -311,6 +306,9 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         </template>
         <template v-else><label class="form-field"><span>金工来源计划</span><ElInput :model-value="product?.schedule_number || '—'" readonly /></label><label class="form-field"><span>数量单位</span><ElInput model-value="已加工短管 · 支" disabled /></label></template>
       </div>
+      <div class="dispatch-context info-grid"><div class="info-cell"><span>订单号</span><b>{{ context?.order_number || task?.order_number || '—' }}</b></div><div class="info-cell"><span>品号</span><b>{{ product?.product_number || '—' }}</b></div><div class="info-cell"><span>货号</span><b>{{ product?.item_number || '—' }}</b></div><div class="info-cell"><span>订单量</span><b>{{ product ? `${number(product.quantity)} ${product.unit}` : '—' }}</b></div><div class="info-cell"><span>外发工艺</span><b>{{ context?.craft_name || '喷塑' }}</b></div></div>
+    </section>
+    <section class="panel workspace" v-loading="sourceLoading">
       <div class="section-heading"><div><h2>外发管材</h2><span class="muted">按产品BOM带出部位，填写数量并选择一家加工厂；空白或0不外发</span></div><ElButton :icon="Refresh" :disabled="locked || !product" @click="loadSource(true)">刷新额度</ElButton></div>
       <div v-if="context?.blockers.length" class="notice warning">{{ context.blockers.join('；') }}</div>
       <div v-if="sourceHint" class="notice warning">{{ sourceHint }}</div>

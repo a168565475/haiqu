@@ -103,7 +103,7 @@ const menuItems: MenuItem[] = [
       { key: 'workshop-outsourcing', label: '委外加工', to: { name: 'workshop-outsourcing' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource'] },
       { key: 'material-issues', label: '生产领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
       { key: 'wage-schemes', label: '工价方案', to: { name: 'wage-schemes' }, permission: 'workshop_reporting.view_wagescheme' },
-      { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport', 'production_scheduling.view_productionschedule'] },
+      { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport'] },
       { key: 'workshop-configuration', label: '生产配置', to: { name: 'workshop-configuration' }, permission: 'workshop_config.view_workshop' },
     ],
   },
@@ -348,15 +348,6 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
         data-menu-key="wecom-settings" title="系统配置 / 企业微信管理" @focus="closePanel">
         <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true"><ConfirmedSidebarIcon name="settings" /></span>
         <span class="app-sidebar__menu-label">企微</span>
-      </RouterLink>
-      <RouterLink v-if="canViewSystemSettings" :to="{ name: 'theme-settings' }" class="app-sidebar__footer-link"
-        :class="{ 'is-active': route.name === 'theme-settings' }"
-        :aria-current="route.name === 'theme-settings' ? 'page' : undefined"
-        data-menu-key="theme-settings" title="界面主题" @focus="closePanel">
-        <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true">
-          <ConfirmedSidebarIcon name="theme-settings" />
-        </span>
-        <span class="app-sidebar__menu-label">主题</span>
       </RouterLink>
     </div>
 

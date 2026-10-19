@@ -13,6 +13,7 @@ from apps.production_tasks.selectors import accessible_production_tasks
 
 from ..completion_services import advance_purchase_return
 from ..source_access import purchase_order_access
+from ..selectors import purchase_return_amount
 from ..models import PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus
 
 
@@ -40,6 +41,8 @@ class PurchaseReturnLineSerializer(serializers.ModelSerializer):
 
 
 class PurchaseReturnSerializer(serializers.ModelSerializer):
+    return_amount = serializers.SerializerMethodField()
+    currency_code = serializers.CharField(source="purchase_order.currency_code_snapshot", read_only=True)
     order_number = serializers.CharField(source="purchase_order.order_number", read_only=True)
     production_task_number = serializers.CharField(source="purchase_order.production_task_number_snapshot", read_only=True)
     inbound_number = serializers.CharField(source="inbound.inbound_number", read_only=True)
@@ -53,8 +56,11 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PurchaseReturn
-        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
+        fields = ["id", "return_number", "purchase_order_id", "order_number", "production_task_number", "inbound_id", "inbound_number", "supplier_id", "supplier_number", "supplier_name", "return_amount", "currency_code", "status", "status_display", "generated_by_name", "confirmed_by_name", "completed_by_name", "created_at", "confirmed_at", "completed_at", "updated_at", "lines"]
         read_only_fields = fields
+
+    def get_return_amount(self, instance) -> str | None:
+        return purchase_return_amount(instance)
 
 
 class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):

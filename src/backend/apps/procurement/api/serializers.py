@@ -1,8 +1,10 @@
 import re
 from decimal import Decimal
+from types import SimpleNamespace
 
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from apps.sales_orders.presentation import specification_display
 
 from ..models import (
     PurchaseContractTemplate,
@@ -395,16 +397,22 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
 
     def get_supplier_summary(self, instance):
         result = []
-        seen = set()
+        grouped = {}
         for line in self._lines(instance):
-            if not line.supplier_id or line.supplier_id in seen:
+            if not line.supplier_id:
                 continue
-            seen.add(line.supplier_id)
+            grouped.setdefault(line.supplier_id, []).append(line)
+        for supplier_lines in grouped.values():
+            line = supplier_lines[0]
+            amount = None if any(item.amount is None for item in supplier_lines) else sum(
+                (item.amount for item in supplier_lines), Decimal("0")
+            )
             result.append(
                 {
                     "id": str(line.supplier_id),
                     "supplier_number": line.supplier_number_snapshot,
                     "supplier_name": line.supplier_name_snapshot,
+                    "total_amount": format(amount, ".4f") if amount is not None else None,
                 }
             )
         return result
@@ -429,7 +437,12 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
                 {
                     "product_line_id": str(product_line_id),
                     "product_name": line.product_name_snapshot,
-                    "specification": line.product_specification_snapshot,
+                    "specification": specification_display(SimpleNamespace(
+                        specification_snapshot=line.product_specification_snapshot,
+                        color_snapshot=product.color_name_snapshot if product else "",
+                        material_snapshot=product.material_snapshot if product else "",
+                    )),
+                    "material": product.material_snapshot if product else "",
                     "color_card": product.color_card_snapshot if product else "",
                     "color_name": product.color_name_snapshot if product else "",
                     "color_code": product.color_code_snapshot if product else "",

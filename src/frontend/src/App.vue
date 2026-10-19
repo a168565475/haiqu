@@ -182,7 +182,8 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
   .customer-detail-layout :deep(#erp-main-content .page-container) { padding: 0; }
 }
 .glass-form-layout :deep(#erp-main-content .page-container) { padding: 14px; }
-.glass-form-layout.bom-editor-layout :deep(#erp-main-content .page-container) { padding: 0; }
+.glass-form-layout.bom-editor-layout :deep(#erp-main-content .page-container),
+.glass-form-layout.wage-scheme-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .settings-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .settings-layout :deep(.page-container) { padding: 14px; }
 .production-scheduling-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }

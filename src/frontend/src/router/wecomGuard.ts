@@ -1,3 +1,5 @@
+import { isWeComBrowser } from '@/utils/wecom'
+
 const autoLoginAttemptKey = 'wecom:auto-login-attempted'
 
 export function startWeComLoginIfNeeded(name: unknown, requiresAuth: boolean, authenticated: boolean): boolean {
@@ -7,7 +9,7 @@ export function startWeComLoginIfNeeded(name: unknown, requiresAuth: boolean, au
     return false
   }
   // UA 只选择登录入口；成员身份及权限仍由后端 OAuth 校验。
-  if (!requiresAuth || name === 'waiting-role' || !/\bwxwork\//i.test(navigator.userAgent)) return false
+  if (!requiresAuth || name === 'waiting-role' || !isWeComBrowser()) return false
   try {
     // 回跳后 Cookie 异常仍匿名时只尝试一次，防止整页授权循环；不保存身份或凭据。
     if (window.sessionStorage.getItem(autoLoginAttemptKey)) return false

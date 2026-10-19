@@ -1,3 +1,5 @@
+from decimal import Decimal, ROUND_HALF_UP
+
 from django.db.models import Exists, F, OuterRef, Prefetch, Q
 
 from apps.boms.models import Bom
@@ -32,6 +34,20 @@ def search_suppliers(queryset, search_text):
 
 def active_purchase_orders():
     return PurchaseOrder.objects.filter(archived_at__isnull=True)
+
+
+def purchase_return_amount(record):
+    """按本次退货数量和原采购单价汇总，沿用采购金额四位小数规则。"""
+    lines = list(record.lines.all())
+    if not lines:
+        return None
+    total = Decimal("0")
+    for line in lines:
+        purchase_line = line.inbound_line.purchase_order_line
+        if not purchase_line or purchase_line.unit_price is None:
+            return None
+        total += (line.quantity * purchase_line.unit_price).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return format(total, ".4f")
 
 
 def filter_purchase_return_status(queryset, status):
@@ -77,6 +93,7 @@ def purchase_orders_with_context(queryset=None, *, read_optimized=False):
         "color_card_snapshot",
         "color_name_snapshot",
         "color_code_snapshot",
+        "material_snapshot",
     ).order_by("line_number", "id")
     relations = (
         "production_task",

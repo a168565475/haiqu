@@ -33,7 +33,7 @@ class RequestIdMiddleware:
 class ErpSessionAccessMiddleware:
     session_endpoints = {
         "/api/auth/me/", "/api/auth/login/", "/api/auth/logout/", "/api/health/",
-        "/api/auth/wecom/start/", "/api/auth/wecom/callback/",
+        "/api/auth/wecom/start/", "/api/auth/wecom/callback/", "/api/auth/wecom/qr/",
     }
 
     def __init__(self, get_response):

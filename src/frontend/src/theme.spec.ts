@@ -31,7 +31,7 @@ describe('主题运行时', () => {
     expect(localStorage.getItem('haiqu:theme:v2')).toBe('warm')
   })
 
-  it.each(['warm', 'blue-gray'] as const)('应用并持久化已确认的 %s 主题', (theme) => {
+  it.each(['warm', 'blue-gray', 'dark'] as const)('应用并持久化可用的 %s 主题', (theme) => {
     expect(setTheme(theme)).toBe(theme)
     expect(document.documentElement.dataset.theme).toBe(theme)
     expect(document.documentElement.dataset.themeReady).toBe('true')
@@ -40,7 +40,7 @@ describe('主题运行时', () => {
     expect(initializeTheme()).toBe(theme)
   })
 
-  it.each(['dark', 'unknown-theme', '{broken-json'])('存储中的 %s 未开放或无效时回退冷蓝银并修正新版存储', (value) => {
+  it.each(['unknown-theme', '{broken-json'])('存储中的 %s 无效时回退冷蓝银并修正新版存储', (value) => {
     localStorage.setItem(THEME_STORAGE_KEY, value)
     expect(readStoredTheme()).toBe('blue-gray')
     expect(initializeTheme()).toBe('blue-gray')
@@ -48,11 +48,11 @@ describe('主题运行时', () => {
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('blue-gray')
   })
 
-  it('调用尚未开放的深色主题时保持回退规则', () => {
+  it('深色主题可从暖色切换并保留选择', () => {
     setTheme('warm')
-    expect(setTheme('dark')).toBe('blue-gray')
-    expect(document.documentElement.dataset.theme).toBe('blue-gray')
-    expect(readStoredTheme()).toBe('blue-gray')
+    expect(setTheme('dark')).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(readStoredTheme()).toBe('dark')
   })
 
   it('浏览器禁止读取存储时仍应用默认主题', () => {

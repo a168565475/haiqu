@@ -18,7 +18,7 @@ const boardEntries = [
 const sidebarIconKeys = [
   'workbench', 'customer-management', 'sample-management', 'product-management',
   'production-management', 'procurement-management', 'workshop-management', 'warehouse-management',
-  'boards', 'access-management', 'settings', 'theme-settings',
+  'boards', 'access-management', 'settings',
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
@@ -76,7 +76,7 @@ afterEach(() => {
 })
 
 describe('全局悬停侧栏', () => {
-  it('十二个真实一级菜单分别渲染对应的确认图标', async () => {
+  it('主题移到顶栏后，其余一级菜单仍渲染对应的确认图标', async () => {
     await setup()
     expect(wrapper.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(sidebarIconKeys.length)
     for (const key of sidebarIconKeys) {
@@ -99,7 +99,6 @@ describe('全局悬停侧栏', () => {
     for (const [route, key] of [
       ['access-management', 'access-management'],
       ['reference-data-settings', 'settings'],
-      ['theme-settings', 'theme-settings'],
     ]) {
       await router.push(`/${route}`)
       const entry = wrapper.get(`[data-menu-key="${key}"]`)
@@ -433,7 +432,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     expect(panel().exists()).toBe(false)
     expect(wrapper.findAll('.app-sidebar__menu-label').map(item => item.text())).toEqual(
-      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '看板', '权限', '配置', '主题'],
+      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '看板', '权限', '配置'],
     )
     expect(group('workshop').classes()).toContain('is-active')
   })

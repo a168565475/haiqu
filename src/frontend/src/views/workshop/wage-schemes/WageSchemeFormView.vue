@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Plus } from '@element-plus/icons-vue'
+import { Delete, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -279,7 +279,7 @@ onMounted(load)
         <ElTableColumn label="以往工价" width="106" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.previous_price" inputmode="decimal" /></template></ElTableColumn>
         <ElTableColumn label="修改工价" width="106" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.revised_price" inputmode="decimal" /></template></ElTableColumn>
         <ElTableColumn label="备注" min-width="145" align="center" class-name="wr-centered-control"><template #default="{ row }"><ElInput v-model="row.note" data-testid="wage-line-note-input" maxlength="500" /></template></ElTableColumn>
-        <ElTableColumn label="操作" width="56" align="center" fixed="right"><template #default="{ $index }"><ElButton class="wr-delete-action" link type="primary" @click="form.lines.splice($index, 1)">删除</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="80" align="center" fixed="right" class-name="wr-wage-actions"><template #default="{ $index }"><ElButton class="wr-delete-action" link type="primary" :icon="Delete" aria-label="删除明细" title="删除明细" @click="form.lines.splice($index, 1)" /></template></ElTableColumn>
       </ElTable><footer class="wr-total">工价合计：<strong>¥{{ moneyTotal }}</strong></footer>
     </section></div>
     <footer class="wr-form-actions"><ElButton @click="router.push({ name: 'wage-schemes' })">返回</ElButton><ElButton v-if="canSubmit" type="primary" :loading="saving" @click="submitForApproval">提交厂长审批</ElButton></footer>
@@ -290,7 +290,10 @@ onMounted(load)
 <style lang="scss">
 @use '@/styles/workshopReporting.scss';
 
+.wr-form-page[data-testid='wage-scheme-form'] > .wr-form-heading { min-height: 44px; align-items: center; margin-bottom: 14px; }
 .wr-form-page--change .wr-form-actions { margin-top: 14px; }
+.wr-wage-line-table .wr-wage-actions .cell { white-space: nowrap; }
+.wr-form-page .wr-wage-line-table .wr-delete-action.el-button.is-link { width: 32px; font-size: 16px; }
 @media (max-width: 1440px) {
   [data-testid='wage-scheme-form'] > .wr-form-grid { grid-template-columns: 280px minmax(0, 1fr); overflow-x: visible; }
 }

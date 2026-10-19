@@ -237,7 +237,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
         </div>
         <div v-loading="loading" class="receiving-table-scroll">
           <table class="erp-table-editor receiving-table">
-            <colgroup><col v-for="(width, index) in [56, 58, 230, 190, 234, 160, 106, 156, 182, 164, 214, 124]" :key="index" :style="{ width: width / 1874 * 100 + '%' }" /></colgroup>
+            <colgroup><col v-for="(width, index) in [56, 58, 230, 190, 234, 160, 106, 200, 182, 164, 214, 124]" :key="index" :style="{ width: width / 1918 * 100 + '%' }" /></colgroup>
             <thead><tr>
               <th><ElCheckbox v-model="allSelected" aria-label="全选物料" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked || !rows.length" /></th>
               <th v-for="title in ['序号', '物料信息', '规格', '供应商', '采购数量', '累计已收', '本次到货数量', '材料仓', '库区', '差异说明', '状态']" :key="title" scope="col">{{ title }}</th>
@@ -250,7 +250,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
                 <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name || '—' }}</td>
               </ElTooltip>
               <td class="purchase-quantity-cell" :title="purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ formatQuantity(Number(row.line.purchased_quantity) - Number(row.line.remaining_quantity)) }}</td>
-              <td><ElInput v-model="row.receivedQuantity" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template v-if="row.line.raw_bar_length_m" #append>根</template></ElInput></td>
+              <td><ElInput v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ row.line.raw_bar_length_m ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
               <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="'第 ' + (index + 1) + ' 项库区'" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
               <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="'第 ' + (index + 1) + ' 项差异说明'" :maxlength="3000" :disabled="locked" /></td>
@@ -308,6 +308,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .receiving-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
 .receiving-table td { height: 58px; } .receiving-table th:last-child, .receiving-table td:last-child { border-right: 0; }
 .receiving-table .purchase-quantity-cell { white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; }
+.quantity-input :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; white-space: nowrap; }
 .receiving-table th:first-child, .receiving-table td:first-child { padding: 0; vertical-align: middle; }
 .receiving-table th:first-child :deep(.el-checkbox), .receiving-table td:first-child :deep(.el-checkbox) { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; margin: 0; }
 .receiving-table .material-cell { text-align: left; padding: 4px 18px; } .material-cell strong, .material-cell small { display: block; font-weight: 400; } .material-cell small { font-size: 13px; color: token.$crm-text-secondary; }

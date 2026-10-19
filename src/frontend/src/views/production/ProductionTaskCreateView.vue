@@ -520,6 +520,13 @@ watch(() => plan.includesTax, value => { if (!value) plan.taxRate = null })
 </template>
 <style scoped lang="scss">
 @use '@/styles/theme/detail' as detail;
+// 只隐藏本页主内容区的滚动条，保留滚轮、触控和键盘滚动。
+:global(#erp-main-content:has(.production-create-page)) {
+  scrollbar-width: none;
+}
+:global(#erp-main-content:has(.production-create-page)::-webkit-scrollbar) {
+  display: none;
+}
 .production-create-page { box-sizing:border-box; padding:14px; min-width:0; color:var(--erp-color-text-primary); background:transparent; font-family:"Microsoft YaHei","Noto Sans SC",sans-serif; font-size:13px; --el-color-primary:var(--erp-color-brand); }
 .page-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
 .page-heading h1 { margin:0; font:700 34px/44px "Noto Serif SC","Songti SC",serif; }

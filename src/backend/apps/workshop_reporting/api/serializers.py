@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 from django.utils import timezone
 from rest_framework import serializers
@@ -93,7 +93,19 @@ class WorkReportDeleteSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=1000, allow_blank=False, trim_whitespace=True)
 
 
-def wage_scheme_data(scheme, *, detail=True):
+def _estimated_line_amount(line):
+    if line.status != WageSchemeLineStatus.ACTIVE or line.required_quantity_snapshot is None:
+        return None
+    # 数量和单价的合法位数相乘可能超过 Decimal 默认的 28 位精度。
+    with localcontext() as context:
+        context.prec = 48
+        return str((line.required_quantity_snapshot * line.declared_price).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        ))
+
+
+def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
+    line_metrics = line_metrics or {}
     lines = []
     events = []
     if detail:
@@ -121,6 +133,9 @@ def wage_scheme_data(scheme, *, detail=True):
                     str(line.required_quantity_snapshot)
                     if line.required_quantity_snapshot is not None else None
                 ),
+                "completed_quantity": line_metrics.get(line.work_item_id, {}).get("completed_quantity"),
+                "completed_amount": line_metrics.get(line.work_item_id, {}).get("completed_amount"),
+                "estimated_amount": _estimated_line_amount(line),
                 "previous_price": str(line.previous_price) if line.previous_price is not None else None,
                 "revised_price": str(line.revised_price) if line.revised_price is not None else None,
                 "declared_price": str(line.declared_price),

@@ -1,6 +1,45 @@
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from rest_framework import serializers
+
+
+class QRStartSerializer(serializers.Serializer):
+    next = serializers.CharField(max_length=2048, default="/", trim_whitespace=False)
+
+    def validate_next(self, value):
+        # 回跳只接纳本站业务路径，避免外站跳转及登录/API循环。
+        decoded = unquote(value)
+        if (not decoded.startswith("/") or decoded.startswith("//") or "\\" in decoded
+                or any(ord(character) <= 32 or ord(character) == 127 for character in decoded)):
+            raise serializers.ValidationError("回跳地址必须是本站业务页面。")
+        path = urlsplit(decoded).path.lower()
+        if (any(part in {".", ".."} for part in path.split("/"))
+                or any(path == prefix or path.startswith(prefix + "/") for prefix in ("/login", "/auth", "/api", "/admin"))):
+            raise serializers.ValidationError("不能回跳到登录、认证或接口地址。")
+        return value
+
+    def validate(self, attrs):
+        if set(self.initial_data) - {"next"}:
+            raise serializers.ValidationError("扫码初始化只接收本站回跳地址。")
+        return attrs
+
+
+class QRChallengeSerializer(serializers.Serializer):
+    login_type = serializers.ChoiceField(choices=["CorpApp"])
+    appid = serializers.CharField()
+    agentid = serializers.CharField()
+    redirect_uri = serializers.URLField()
+    state = serializers.CharField()
+    expires_at = serializers.DateTimeField()
+
+
+class QRCancelSerializer(serializers.Serializer):
+    state = serializers.RegexField(r"^[A-Za-z0-9_-]{43}$", min_length=43, max_length=43, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if set(self.initial_data) - {"state"}:
+            raise serializers.ValidationError("取消扫码只接收当前登录状态。")
+        return attrs
 
 
 class ConfigWriteSerializer(serializers.Serializer):

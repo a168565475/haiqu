@@ -2,10 +2,13 @@ from ..selectors import reporting_source_products
 from apps.access_control.resource_scopes import has_resource_grant
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from uuid import UUID
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Max, Prefetch, Sum
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
@@ -17,10 +20,11 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.inventory.assembly_receipts import assembly_progress_for_plans
 from apps.production_scheduling.selectors import accessible_production_schedules
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft, ScheduleStatus
-from apps.production_tasks.selectors import accessible_production_tasks
+from apps.production_tasks.selectors import accessible_production_tasks, production_task_product_image
 from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
 
 from ..models import (
@@ -29,7 +33,9 @@ from ..models import (
 )
 from ..selectors import (
     accessible_wage_schemes, accessible_work_reports, allowed_workshop_ids, search_wage_schemes,
-    wage_schemes_with_context, work_reports_with_context,
+    wage_scheme_line_metrics, wage_schemes_with_context, work_report_cumulative_quantities,
+    work_report_selection_sources, work_report_task_cards, work_report_task_products, work_report_tasks,
+    work_reports_with_context,
 )
 from ..services import (
     approve_scheme, create_change_scheme, create_scheme, create_work_report, price_scheme_for, return_scheme, submit_scheme, update_scheme,
@@ -568,7 +574,9 @@ class WageSchemeViewSet(viewsets.GenericViewSet):
 
     def retrieve(self, request, pk=None):
         scheme = get_object_or_404(self.get_queryset(), pk=pk)
-        response = Response({"data": wage_scheme_data(scheme)})
+        response = Response({"data": wage_scheme_data(
+            scheme, line_metrics=wage_scheme_line_metrics(request, scheme),
+        )})
         response["ETag"] = etag_for_instance(scheme)
         return response
 
@@ -671,6 +679,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, BusinessActionPermission]
     serializer_class = WorkReportWriteSerializer
     action_permission_map = {
+        "list": "workshop_reporting.view_workreport",
         "create": "workshop_reporting.add_workreport", "retrieve": "workshop_reporting.view_workreport",
         "partial_update": "workshop_reporting.change_workreport",
         "destroy": "workshop_reporting.delete_workreport",
@@ -681,6 +690,30 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         if getattr(self, "swagger_fake_view", False):
             return WorkReport.objects.none()
         return work_reports_with_context(accessible_work_reports(self.request))
+
+    @extend_schema(operation_id="workshop_reporting_work_report_list", responses=OpenApiTypes.OBJECT)
+    def list(self, request):
+        queryset = self.get_queryset()
+        production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
+        schedule_product_id = _uuid(request.query_params.get("schedule_product_id"), "schedule_product_id")
+        workshop_id = _uuid(request.query_params.get("workshop_id"), "workshop_id")
+        craft_id = _uuid(request.query_params.get("craft_id"), "craft_id")
+        if production_task_id: queryset = queryset.filter(product_line__production_task_id=production_task_id)
+        if schedule_product_id: queryset = queryset.filter(schedule_product_id=schedule_product_id)
+        if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
+        if craft_id: queryset = queryset.filter(scheme__scope_craft_id=craft_id)
+        page = list(self.paginate_queryset(queryset.order_by("-production_date", "-created_at", "-id")))
+        cumulative = work_report_cumulative_quantities(queryset)
+        payload = []
+        for report in page:
+            line_metrics = {
+                line.pk: {"cumulative_quantity": str(cumulative.get(
+                    (report.schedule_product_id, report.workshop_id, line.work_item_id), 0,
+                ))}
+                for line in report.lines.all()
+            }
+            payload.append(work_report_data(report, line_metrics=line_metrics, request=request))
+        return self.get_paginated_response(payload)
 
     @transaction.atomic
     def create(self, request):
@@ -772,19 +805,73 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         return Response({"data": data})
 
 
+class WorkReportTaskListView(generics.GenericAPIView):
+    permission_classes = [HasActiveEmployee]
+
+    @extend_schema(operation_id="workshop_reporting_work_report_task_list", responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        from apps.access_control.module_policy import has_permission
+
+        if not has_permission(request, "workshop_reporting.view_workreport"):
+            raise PermissionDenied("当前账号没有查看报工记录的权限。")
+        reports, crafts = work_report_selection_sources(request)
+        tasks = work_report_tasks(reports, crafts, request.query_params.get("q", "").strip())
+        production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
+        if production_task_id:
+            tasks = tasks.filter(pk=production_task_id)
+        page = list(self.paginate_queryset(tasks))
+        return self.get_paginated_response(work_report_task_cards(page, reports, crafts))
+
+
+class WorkReportTaskProductImageView(generics.GenericAPIView):
+    permission_classes = [HasActiveEmployee]
+
+    @extend_schema(
+        operation_id="workshop_reporting_work_report_task_product_image",
+        responses={(200, "application/octet-stream"): OpenApiTypes.BINARY},
+    )
+    def get(self, request, task_id, product_line_id):
+        from apps.access_control.module_policy import has_permission
+
+        if not has_permission(request, "workshop_reporting.view_workreport"):
+            raise PermissionDenied("当前账号没有查看报工记录的权限。")
+        reports, crafts = work_report_selection_sources(request)
+        product = get_object_or_404(
+            work_report_task_products(reports, crafts),
+            pk=_uuid(product_line_id, "product_line_id"),
+            production_task_id=_uuid(task_id, "production_task_id"),
+        )
+        image = production_task_product_image(product)
+        if image is None or image.scan_status not in USABLE_FILE_SCAN_STATUSES or not image.content_type.startswith("image/"):
+            raise Http404("产品图片不可用。")
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        storage_path = (media_root / image.storage_key).resolve()
+        try:
+            storage_path.relative_to(media_root)
+        except ValueError as exc:
+            raise Http404("文件路径无效。") from exc
+        if not storage_path.is_file():
+            raise Http404("文件不存在。")
+        return FileResponse(storage_path.open("rb"), content_type=image.content_type, filename=image.original_name)
+
+
 class WorkReportDayListView(generics.GenericAPIView):
     permission_classes = [HasActiveEmployee]
 
     @extend_schema(operation_id="workshop_reporting_work_report_day_list", responses=OpenApiTypes.OBJECT)
     def get(self, request):
-        if not request.user.has_perm("workshop_reporting.view_workreport"):
+        from apps.access_control.module_policy import has_permission
+
+        if not has_permission(request, "workshop_reporting.view_workreport"):
             raise PermissionDenied("当前账号没有查看报工记录的权限。")
-        queryset = accessible_work_reports(request)
+        queryset = accessible_work_reports(request, permission="workshop_reporting.view_workreport")
+        production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
         schedule_product_id = _uuid(request.query_params.get("schedule_product_id"), "schedule_product_id")
         workshop_id = _uuid(request.query_params.get("workshop_id"), "workshop_id")
         craft_id = _uuid(request.query_params.get("craft_id"), "craft_id")
         date_from = _date(request.query_params.get("date_from"), "date_from")
         date_to = _date(request.query_params.get("date_to"), "date_to")
+        if production_task_id: queryset = queryset.filter(product_line__production_task_id=production_task_id)
         if schedule_product_id: queryset = queryset.filter(schedule_product_id=schedule_product_id)
         if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
         if craft_id: queryset = queryset.filter(scheme__scope_craft_id=craft_id)
@@ -804,31 +891,33 @@ class WorkReportDayDetailView(generics.GenericAPIView):
 
     @extend_schema(operation_id="workshop_reporting_work_report_day_detail", responses=OpenApiTypes.OBJECT)
     def get(self, request, production_date):
-        if not request.user.has_perm("workshop_reporting.view_workreport"):
+        from apps.access_control.module_policy import has_permission
+
+        if not has_permission(request, "workshop_reporting.view_workreport"):
             raise PermissionDenied("当前账号没有查看报工记录的权限。")
         day = _date(production_date, "production_date")
-        queryset = self.filter_queryset(work_reports_with_context(accessible_work_reports(request).filter(production_date=day)))
+        visible_reports = accessible_work_reports(request, permission="workshop_reporting.view_workreport")
+        queryset = self.filter_queryset(work_reports_with_context(visible_reports.filter(production_date=day)))
+        production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
         schedule_product_id = _uuid(request.query_params.get("schedule_product_id"), "schedule_product_id")
         workshop_id = _uuid(request.query_params.get("workshop_id"), "workshop_id")
         craft_id = _uuid(request.query_params.get("craft_id"), "craft_id")
+        if production_task_id: queryset = queryset.filter(product_line__production_task_id=production_task_id)
         if schedule_product_id: queryset = queryset.filter(schedule_product_id=schedule_product_id)
         if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
         if craft_id: queryset = queryset.filter(scheme__scope_craft_id=craft_id)
         page = list(self.paginate_queryset(queryset.order_by("created_at", "id")))
 
-        cumulative_queryset = WorkReportLine.objects.filter(report__in=accessible_work_reports(request))
+        cumulative_reports = visible_reports
+        if production_task_id:
+            cumulative_reports = cumulative_reports.filter(product_line__production_task_id=production_task_id)
         if schedule_product_id:
-            cumulative_queryset = cumulative_queryset.filter(report__schedule_product_id=schedule_product_id)
+            cumulative_reports = cumulative_reports.filter(schedule_product_id=schedule_product_id)
         if workshop_id:
-            cumulative_queryset = cumulative_queryset.filter(report__workshop_id=workshop_id)
+            cumulative_reports = cumulative_reports.filter(workshop_id=workshop_id)
         if craft_id:
-            cumulative_queryset = cumulative_queryset.filter(report__scheme__scope_craft_id=craft_id)
-        cumulative_by_scope = {
-            (row["report__schedule_product_id"], row["report__workshop_id"], row["work_item_id"]): row["quantity"]
-            for row in cumulative_queryset.values(
-                "report__schedule_product_id", "report__workshop_id", "work_item_id"
-            ).annotate(quantity=Sum("quantity"))
-        }
+            cumulative_reports = cumulative_reports.filter(scheme__scope_craft_id=craft_id)
+        cumulative_by_scope = work_report_cumulative_quantities(cumulative_reports)
 
         payload = []
         for report in page:

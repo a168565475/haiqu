@@ -310,6 +310,12 @@ class ProcurementInboundProductSerializer(serializers.Serializer):
     material = serializers.CharField(allow_blank=True)
 
 
+class ProcurementInboundSupplierSerializer(serializers.Serializer):
+    supplier_id = serializers.UUIDField(allow_null=True)
+    supplier_name = serializers.CharField(allow_blank=True)
+    total_amount = serializers.CharField(allow_null=True)
+
+
 class ProcurementInboundOrderSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     order_number = serializers.CharField()
@@ -317,6 +323,8 @@ class ProcurementInboundOrderSerializer(serializers.Serializer):
     source_number = serializers.CharField(allow_blank=True)
     sales_order_number = serializers.CharField(allow_blank=True)
     product_summary = ProcurementInboundProductSerializer(many=True)
+    supplier_summary = ProcurementInboundSupplierSerializer(many=True)
+    currency_code = serializers.CharField(allow_blank=True)
     supplier_names = serializers.ListField(child=serializers.CharField())
     line_count = serializers.IntegerField()
     remaining_line_count = serializers.IntegerField()

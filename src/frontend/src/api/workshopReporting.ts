@@ -3,7 +3,7 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
-  Paginated, PlanWageStatus, ReportingContext, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput, WorkReport, WorkReportDay,
+  Paginated, PlanWageStatus, ReportingContext, ScheduleProgressStatus, Versioned, WageScheme, WageSchemeInput, WorkReport, WorkReportDay, WorkReportTask,
 } from '@/types/workshopReporting'
 
 const basePath = '/api/v1/workshop-reporting/'
@@ -76,6 +76,10 @@ export async function createWorkReport(payload: Record<string, unknown>): Promis
 export async function fetchWorkReport(id: string): Promise<Versioned<WorkReport>> {
   return versioned(await apiClient.get<DataResponse<WorkReport>>(`${basePath}work-reports/${encodeURIComponent(id)}/`))
 }
+export async function fetchWorkReports(params: { page?: number; page_size?: number; production_task_id?: string; schedule_product_id?: string; workshop_id?: string; craft_id?: string } = {}): Promise<Paginated<WorkReport>> {
+  const { data } = await apiClient.get<Paginated<WorkReport>>(`${basePath}work-reports/`, { params })
+  return data
+}
 export async function deleteWorkReport(id: string, reason: string, etag: string): Promise<void> {
   await apiClient.delete(`${basePath}work-reports/${encodeURIComponent(id)}/`, {
     data: { reason }, headers: { 'If-Match': etag }, timeout: 30000,
@@ -88,6 +92,10 @@ export async function updateWorkReport(id: string, payload: Record<string, unkno
 }
 export async function fetchWorkReportDays(params: Record<string, unknown> = {}): Promise<Paginated<WorkReportDay>> {
   const { data } = await apiClient.get<Paginated<WorkReportDay>>(`${basePath}work-report-days/`, { params })
+  return data
+}
+export async function fetchWorkReportTasks(params: { q?: string; page?: number; page_size?: number; production_task_id?: string } = {}): Promise<Paginated<WorkReportTask>> {
+  const { data } = await apiClient.get<Paginated<WorkReportTask>>(`${basePath}work-report-tasks/`, { params })
   return data
 }
 export async function fetchWorkReportDay(day: string, params: Record<string, unknown> = {}): Promise<Paginated<WorkReport>> {

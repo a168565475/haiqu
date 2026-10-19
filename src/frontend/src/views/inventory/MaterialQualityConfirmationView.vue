@@ -181,12 +181,12 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
       <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
       <section class="surface bulk-card">
-        <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量" /><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
+        <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>按行单位</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
       </section>
       <section class="surface table-card">
         <div class="table-head"><div><h2>品质确认明细</h2><div class="table-order-meta"><template v-if="batch"><span>入库单号 <strong>{{ batch.inbound_number }}</strong></span><span>采购单号 <strong>{{ batch.purchase_order_number || '—' }}</strong></span><span>生产单号 <strong>{{ batch.lines[0]?.production_task_number_snapshot || '—' }}</strong></span><span>状态 <ElTag type="warning" round>待质检</ElTag></span></template><span class="batch-selector"><label>批次</label><ElSelect v-model="selectedBatchId" aria-label="选择待质检批次" filterable :disabled="locked" :loading="loading" placeholder="入库单号 / 采购单号 / 供应商" @change="selectBatch()"><ElOption v-for="item in batches" :key="item.id" :value="item.id" :label="`${item.inbound_number} · ${item.purchase_order_number || '—'} · ${item.lines[0]?.supplier_name_snapshot || '—'}`" /></ElSelect></span></div></div><strong>共 {{ rows.length }} 项</strong></div>
         <div v-loading="loading" class="quality-table-scroll">
-          <table class="erp-table-editor quality-table"><colgroup><col v-for="(width, index) in [56,56,232,190,200,160,144,170,150,126,220,120]" :key="index" :style="{ width: width / 1824 * 100 + '%' }" /></colgroup>
+          <table class="erp-table-editor quality-table"><colgroup><col v-for="(width, index) in [56,56,232,190,200,160,200,170,150,126,220,120]" :key="index" :style="{ width: width / 1880 * 100 + '%' }" /></colgroup>
             <thead><tr><th><ElCheckbox v-model="allSelected" aria-label="全选明细" :disabled="locked" :indeterminate="selectedRows.length > 0 && !allSelected" /></th><th>序号</th><th>物料信息</th><th>规格</th><th>供应商</th><th>到货数量</th><th>退货数量</th><th>合格入库数量</th><th>材料仓</th><th>库区</th><th>退货/质检说明</th><th>状态</th></tr></thead>
             <tbody>
               <tr v-for="(row, index) in rows" :key="row.line.id" @mouseenter="hoveredRowId = row.line.id" @mouseleave="hoveredRowId = ''">
@@ -197,7 +197,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
                   <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name_snapshot || '—' }}</td>
                 </ElTooltip>
                 <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
-                <td><ElInput v-model="row.returnQuantity" :aria-label="`第 ${index + 1} 项退货${row.line.measurement_kind === 'PIPE' ? '根数' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" :maxlength="row.line.measurement_kind === 'PIPE' ? 14 : 19" :inputmode="row.line.measurement_kind === 'PIPE' ? 'numeric' : 'decimal'"><template v-if="row.line.measurement_kind === 'PIPE'" #append>根</template></ElInput></td>
+                <td><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${index + 1} 项退货${row.line.measurement_kind === 'PIPE' ? '根数' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" :maxlength="row.line.measurement_kind === 'PIPE' ? 14 : 19" :inputmode="row.line.measurement_kind === 'PIPE' ? 'numeric' : 'decimal'"><template #append>{{ row.line.measurement_kind === 'PIPE' ? '根' : row.line.source_unit_text_snapshot || '单位未识别' }}</template></ElInput></td>
                 <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
                 <td class="muted">{{ row.line.warehouse_number }} · {{ row.line.warehouse_name }}</td><td class="muted">{{ row.line.zone_name }}</td>
                 <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${index + 1} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="质检说明（可选）" /></td>
@@ -237,7 +237,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .date-field :deep(.el-input__wrapper) { background: var(--erp-input-surface); }
 .date-field :deep(.el-input__inner) { -webkit-text-fill-color: token.$crm-text-secondary; }
 .bulk-controls { height: 32px; gap: 10px; }
-.bulk-controls > .el-input:nth-child(2) { width: 120px; }
+.bulk-controls > .el-input:nth-child(2) { width: 184px; }
 .bulk-controls > .el-input:nth-child(3) { width: 280px; }
 .bulk-controls > .el-button { width: 140px; }
 .table-card { box-sizing: border-box; height: calc(100dvh - 306px); min-height: 370px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 12px; }
@@ -265,6 +265,7 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .quality-table .supplier-cell { font-size: 13px; color: var(--erp-table-text); white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; } .muted { color: token.$crm-text-secondary; } .quality-table .remark-cell { padding: 4px 13px; }
 .quality-table td:nth-child(7) { padding: 4px 11px; }
+.quantity-input :deep(.el-input-group__append) { box-sizing: border-box; flex: 0 0 64px; width: 64px; padding: 0; font-size: 12px; white-space: nowrap; }
 .success-text { color: token.$crm-success; }
 .table-empty { height: 230px !important; color: token.$crm-text-secondary; }
 .table-card footer { box-sizing: border-box; flex: 0 0 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 21px; color: token.$crm-text-secondary; border-top: 1px solid token.$crm-border-subtle; }

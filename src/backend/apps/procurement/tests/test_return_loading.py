@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -69,6 +71,23 @@ class ReturnLoadingTests(APITestCase):
         self.assertEqual(self.get('stats/', {'purchase_order_id': str(self.hidden.pk)}).data['data']['total'], 0)
         self.assertEqual(self.get('', {'q': 'NO-MATCH'}).data['data'], [])
         self.assertEqual(self.get('stats/', {'supplier_id': str(self.supplier.pk)}).data['data']['total'], 2)
+
+    def test_return_amount_uses_only_this_return_quantity_and_purchase_price(self):
+        self.line.unit_price = Decimal('1.2345')
+        self.line.amount = Decimal('12.3450')
+        self.line.save()
+        data = self.get(str(self.first.pk) + '/').data['data']
+        self.assertEqual(data['return_amount'], '2.4690')
+        self.assertNotEqual(data['return_amount'], str(self.line.amount))
+        self.assertEqual(data['currency_code'], self.order.currency_code_snapshot)
+        self.line.unit_price = Decimal('0')
+        self.line.amount = Decimal('0')
+        self.line.save()
+        self.assertEqual(self.get(str(self.first.pk) + '/').data['data']['return_amount'], '0.0000')
+        self.line.unit_price = None
+        self.line.amount = None
+        self.line.save()
+        self.assertIsNone(self.get(str(self.first.pk) + '/').data['data']['return_amount'])
 
     def test_invalid_parameters_and_permissions(self):
         for suffix in ['', 'stats/']:

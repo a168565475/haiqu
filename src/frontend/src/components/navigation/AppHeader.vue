@@ -1,18 +1,29 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { SwitchButton } from '@element-plus/icons-vue'
+import { Check, SwitchButton } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import { getLogoutErrorMessage } from '@/api/auth'
 import chevronDownIcon from '@/assets/crm-v2/chevron-down.svg'
 import headerLogo from '@/assets/navigation/hitree-header-logo.png'
 import GlobalPageTabs from '@/components/navigation/GlobalPageTabs.vue'
+import ConfirmedSidebarIcon from '@/components/navigation/ConfirmedSidebarIcon.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
+import { isEnabledTheme } from '@/theme'
+import { isWeComBrowser } from '@/utils/wecom'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const logoutLoading = ref(false)
+const inWeCom = isWeComBrowser()
+
+const currentThemeLabel = computed(() => themeStore.availableThemes.find(theme => theme.id === themeStore.current)?.label)
+function handleThemeCommand(command: string | number | object) {
+  if (isEnabledTheme(command)) themeStore.select(command)
+}
 
 const visibleName = computed(() => {
   const user = authStore.user
@@ -21,7 +32,7 @@ const visibleName = computed(() => {
 })
 
 async function handleUserCommand(command: string | number | object) {
-  if (command !== 'logout' || logoutLoading.value) {
+  if (inWeCom || command !== 'logout' || logoutLoading.value) {
     return
   }
 
@@ -48,7 +59,35 @@ async function handleUserCommand(command: string | number | object) {
     </div>
 
     <div class="app-header__actions">
+      <ElDropdown class="app-header__theme-menu" trigger="click" placement="bottom-end" @command="handleThemeCommand">
+        <button
+          type="button"
+          class="app-header__theme"
+          data-theme-toggle
+          :title="`选择主题，当前：${currentThemeLabel}`"
+          aria-label="选择界面主题"
+        >
+          <ConfirmedSidebarIcon name="theme-settings" aria-hidden="true" />
+        </button>
+        <template #dropdown>
+          <ElDropdownMenu>
+            <ElDropdownItem
+              v-for="theme in themeStore.availableThemes"
+              :key="theme.id"
+              :command="theme.id"
+              :data-theme-choice="theme.id"
+              :aria-current="themeStore.current === theme.id ? 'true' : undefined"
+            >
+              <span class="app-header__theme-check" aria-hidden="true"><ElIcon v-if="themeStore.current === theme.id"><Check /></ElIcon></span>
+              <span>{{ theme.label }}</span>
+            </ElDropdownItem>
+          </ElDropdownMenu>
+        </template>
+      </ElDropdown>
+      <span v-if="inWeCom" class="app-header__user-name" data-current-user>{{ visibleName }}</span>
       <ElDropdown
+        v-else
+        class="app-header__user-menu"
         trigger="click"
         placement="bottom-end"
         :disabled="logoutLoading"
@@ -139,8 +178,31 @@ async function handleUserCommand(command: string | number | object) {
   flex: none;
   display: flex;
   align-items: center;
+  gap: 8px;
   margin-left: auto;
 }
+.app-header__theme {
+  --sidebar-icon-ink: var(--erp-menu-icon-ink);
+  --sidebar-icon-accent: var(--erp-menu-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--erp-radius-control);
+  background: transparent;
+  color: var(--erp-header-user-color);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.app-header__theme :deep(svg) { width: 20px; height: 20px; }
+.app-header__theme:hover { background: var(--erp-menu-hover-background); }
+.app-header__theme:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.app-header__theme-check { display: inline-flex; align-items: center; width: 18px; margin-right: 6px; color: var(--erp-color-brand); }
 .app-header__user {
   min-width: 0;
   height: 32px;

@@ -28,3 +28,12 @@ export interface LoginCredentials {
   username: string
   password: string
 }
+
+export interface WeComQrSession {
+  login_type: 'CorpApp'
+  appid: string
+  agentid: string
+  redirect_uri: string
+  state: string
+  expires_at: string
+}

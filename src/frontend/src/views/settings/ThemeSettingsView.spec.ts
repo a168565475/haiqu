@@ -12,7 +12,7 @@ describe('ThemeSettingsView', () => {
     document.documentElement.removeAttribute('data-theme')
   })
 
-  it('只开放暖色和冷蓝银，未开放深色回退冷蓝银并提供各自预览', async () => {
+  it('提供三种主题并恢复用户选择的深色主题', async () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'dark')
     const wrapper = mount(ThemeSettingsView, {
       global: { plugins: [createPinia(), ElementPlus] },
@@ -20,12 +20,13 @@ describe('ThemeSettingsView', () => {
     await flushPromises()
 
     expect(wrapper.findAll('[data-theme-option]').map(option => option.attributes('data-theme-option')))
-      .toEqual(['blue-gray', 'warm'])
-    expect(wrapper.get('[data-theme-option="blue-gray"]').attributes('aria-pressed')).toBe('true')
+      .toEqual(['blue-gray', 'warm', 'dark'])
+    expect(wrapper.get('[data-theme-option="blue-gray"]').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.get('[data-theme-option="dark"]').attributes('aria-pressed')).toBe('true')
     expect(wrapper.get('[data-theme-option="warm"]').attributes('aria-pressed')).toBe('false')
     expect(wrapper.get('[data-theme-option="blue-gray"] [data-theme-preview]').attributes('data-theme-preview')).toBe('blue-gray')
     expect(wrapper.get('[data-theme-option="warm"] [data-theme-preview]').attributes('data-theme-preview')).toBe('warm')
-    expect(document.documentElement.dataset.theme).toBe('blue-gray')
+    expect(document.documentElement.dataset.theme).toBe('dark')
     wrapper.unmount()
   })
 

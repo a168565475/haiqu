@@ -30,5 +30,6 @@ export function localAmountTotal(products: ProductionTaskProduct[]) {
   }
   const negative = amount < 0n
   const absolute = negative ? -amount : amount
-  return `${negative ? '-' : ''}${(absolute / 10000n).toLocaleString('zh-CN')}.${String(absolute % 10000n).padStart(4, '0')}`
+  const fraction = absolute % 10000n
+  return `${negative ? '-' : ''}${(absolute / 10000n).toLocaleString('zh-CN')}${fraction === 0n ? '' : `.${String(fraction).padStart(4, '0')}`}`
 }

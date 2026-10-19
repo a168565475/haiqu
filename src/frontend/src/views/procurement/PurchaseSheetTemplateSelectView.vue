@@ -91,7 +91,7 @@ onMounted(() => void load())
 </script>
 
 <template>
-  <section v-loading="loading" class="template-select-page" data-testid="purchase-template-page">
+  <section v-loading="loading" class="template-select-page erp-glass-form erp-flat-form" data-testid="purchase-template-page">
     <header class="page-heading">
       <div><h1>选择采购合同模板</h1><p>为每家供应商选择模板，生成独立采购表。</p></div>
       <ElButton class="back-button" :disabled="generating" @click="backToConfirm"><img :src="backIcon" alt="" class="purchase-icon" />返回确认</ElButton>
@@ -139,52 +139,50 @@ onMounted(() => void load())
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as crm;
-.template-select-page { height: calc(100dvh - 92px); min-width: 0; min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; color: crm.$crm-text-primary; background: crm.$crm-color-page; font-family: crm.$crm-font-body; font-size: 13px; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 5px; }
+@use '@/styles/theme/detail' as detail;
+.template-select-page { height: 100%; min-width: 0; min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; overflow: hidden; color: var(--erp-color-text-primary); background: transparent; font-family: var(--erp-font-body); font-size: 13px; }
 .purchase-icon { width: 16px; height: 16px; flex: none; }
-.template-select-page :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 10px; }
-.page-heading { flex: 0 0 46px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.page-heading > div { display: flex; align-items: center; gap: 20px; }
-.page-heading h1 { margin: 0; font: 700 34px/44px crm.$crm-font-display; letter-spacing: -1px; }
-.page-heading p { margin: 0; color: crm.$crm-text-secondary; font-size: 13px; }
-.back-button { width: 110px; height: 32px; border-color: crm.$crm-primary; }
-.order-bar { flex: 0 0 76px; display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr) minmax(0,.7fr) minmax(0,1fr); box-shadow: inset 0 0 0 1px crm.$crm-border-default; border-radius: 5px; background: crm.$crm-color-surface; margin-bottom: 20px; }
-.order-bar > div { display: flex; flex-direction: column; justify-content: flex-start; gap: 4px; margin: 12px 0; padding: 0 18px; border-right: 1px solid crm.$crm-border-subtle; min-width: 0; }
+.template-select-page :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 8px; }
+.page-heading { @include detail.surface; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
+.page-heading > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; min-width: 0; }
+.page-heading h1 { margin: 0; font: 700 34px/44px var(--erp-font-body); }
+.page-heading p { margin: 0; color: var(--erp-color-text-secondary); font-size: 13px; }
+.back-button { flex: none; height: 32px; }
+.order-bar { @include detail.surface; flex: none; display: grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr) minmax(0,.7fr) minmax(0,1fr); }
+.order-bar > div { display: flex; flex-direction: column; justify-content: flex-start; gap: 4px; margin: 12px 0; padding: 0 16px; border-right: 1px solid var(--erp-color-border-subtle); min-width: 0; }
 .order-bar > div:last-child { border: 0; }
-.order-bar > div > span { color: crm.$crm-text-secondary; line-height: 22px; }
+.order-bar > div > span { color: var(--erp-color-text-secondary); line-height: 22px; }
 .order-bar strong { font-size: 16px; font-weight: 500; line-height: 26px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.order-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.order-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .order-identity strong { min-width: 0; }
-.order-identity :deep(.el-tag) { flex: none; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; font: 500 12px/18px crm.$crm-font-body; background: var(--erp-tag-info-background); color: var(--erp-color-text-inverse); }
+.order-identity :deep(.el-tag) { flex: none; min-width: 56px; height: 24px; padding: 0 8px; border: 0; border-radius: 999px; font: 500 12px/18px var(--erp-font-body); background: var(--erp-tag-info-background); color: var(--erp-color-text-inverse); }
 .order-identity :deep(.el-tag.is-completed) { background: var(--erp-tag-success-background); }
-.order-total strong { color: crm.$crm-primary; font-size: 22px; }
-.supplier-section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.supplier-section > header { display: flex; align-items: center; justify-content: space-between; flex: 0 0 28px; margin-bottom: 12px; }
-.supplier-section h2 { margin: 0; font-size: 18px; line-height: 28px; }
-.supplier-section > header > span { padding-right: 0; color: crm.$crm-text-secondary; font-size: 14px; }
-.supplier-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
+.order-total strong { color: var(--erp-color-brand); font-size: 22px; }
+.supplier-section { @include detail.surface; flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 14px; }
+.supplier-section > header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 12px; margin-bottom: 12px; }
+.supplier-section h2 { margin: 0; font-size: 16px; line-height: 24px; }
+.supplier-section > header > span { color: var(--erp-color-text-secondary); font-size: 13px; }
+.supplier-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.supplier-scroll::-webkit-scrollbar { display: none; }
 .supplier-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
-.supplier-card { height: 124px; box-sizing: border-box; padding: 12px 16px; background: crm.$crm-color-surface; border-radius: 5px; box-shadow: inset 0 0 0 1px crm.$crm-border-default; }
-.supplier-card > header { display: flex; justify-content: space-between; height: 48px; box-sizing: border-box; border-bottom: 1px solid crm.$crm-border-default; gap: 16px; }
-.supplier-card header > div { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.supplier-card { @include detail.inset; padding: 12px 14px; }
+.supplier-card > header { display: flex; justify-content: space-between; min-height: 48px; padding-bottom: 8px; border-bottom: 1px solid var(--erp-color-border-subtle); gap: 12px; }
+.supplier-card header > div { display: flex; flex-direction: column; min-width: 0; }
 .supplier-identity { flex: 1; }
-.supplier-identity strong { font-size: 16px; line-height: 24px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-.supplier-card header span { color: crm.$crm-text-secondary; font-size: 12px; line-height: 18px; }
-.supplier-total { flex: 0 0 auto; max-width: 40%; text-align: right; }
-.supplier-total strong { font-size: 20px; font-weight: 500; line-height: 24px; color: crm.$crm-primary; white-space: nowrap; }
+.supplier-identity strong { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.supplier-card header span { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 18px; }
+.supplier-total { flex: 0 0 auto; text-align: right; }
+.supplier-total strong { font-size: 18px; font-weight: 600; line-height: 24px; color: var(--erp-color-brand); white-space: nowrap; }
 .template-field { display: flex; align-items: center; gap: 12px; padding-top: 12px; }
-.template-field label { flex: 0 0 84px; font-size: 14px; color: crm.$crm-text-secondary; line-height: 22px; }
+.template-field label { flex: 0 0 78px; font-size: 13px; color: var(--erp-color-text-secondary); line-height: 22px; }
 .template-field :deep(.el-select) { flex: 1; min-width: 0; }
-.template-field :deep(.el-select__wrapper) { height: 32px; min-height: 32px; padding: 0 12px; background: var(--erp-input-surface); font-size: 13px; }
-.template-field :deep(.el-select__wrapper.is-disabled) { background: var(--erp-color-disabled); box-shadow: 0 0 0 1px var(--erp-control-border) inset; }
-.action-bar { flex: 0 0 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 0 -28px; padding: 0 28px; background: crm.$crm-color-surface; }
-.selection-summary { display: flex; align-items: center; gap: 10px; font-size: 14px; white-space: nowrap; }
-.selection-summary strong { color: crm.$crm-primary; font-weight: 500; min-width: 48px; }
-.footer-actions { display: flex; align-items: center; gap: 18px; }
+.action-bar { @include detail.surface; flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; padding: 12px 16px; }
+.selection-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.selection-summary strong { color: var(--erp-color-brand); font-weight: 600; }
+.footer-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .footer-actions :deep(.el-button) { height: 32px; margin: 0; font-size: 13px; }
-.manage-button { width: 116px; color: crm.$crm-primary; border-color: crm.$crm-primary; }
-.generate-button { width: 176px; }
-.permission-hint, .action-error { color: crm.$crm-danger; font-size: 14px; }
+.permission-hint, .action-error { color: var(--erp-color-danger); font-size: 13px; }
 .state-alert { margin-bottom: 12px; padding: 8px 12px; }
-.load-error { display: flex; align-items: center; gap: 20px; padding: 24px; background: crm.$crm-color-surface; }
+.load-error { @include detail.surface; display: flex; align-items: center; gap: 20px; padding: 24px; }
+@media (max-width: 900px) { .supplier-grid { grid-template-columns: minmax(0,1fr); } .order-bar { grid-template-columns: repeat(2,minmax(0,1fr)); } .order-bar > div:nth-child(2) { border-right: 0; } }
 </style>

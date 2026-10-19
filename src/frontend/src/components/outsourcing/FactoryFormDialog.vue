@@ -87,7 +87,7 @@ async function submit(): Promise<void> {
   <AppWindowDialog
     :model-value="modelValue"
     :title="title"
-    :width="1080"
+    :width="920"
     :height="412"
     destroy-on-close
     class="outsourcing-factory-dialog"

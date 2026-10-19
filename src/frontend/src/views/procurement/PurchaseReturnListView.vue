@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import { advancePurchaseReturn, fetchPurchaseReturn, fetchPurchaseReturns, fetchReturnOptions } from '@/api/purchaseReturns'
 import { useAuthStore } from '@/stores/auth'
 import PurchaseReturnConfirmDialog from '@/components/procurement/PurchaseReturnConfirmDialog.vue'
+import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
 import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery } from '@/types/purchaseReturn'
 
 const auth = useAuthStore()
@@ -47,6 +48,9 @@ function time(value: string | null): string {
   if (!value) return '—'
   const date = new Date(value)
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date) : '—'
+}
+function materialField(row: PurchaseReturn, field: 'specification' | 'color' | 'material'): string {
+  return row.lines.map(line => line[field]?.trim() || '—').join('、') || '—'
 }
 async function loadRows() {
   if (!canView.value || disposed) return
@@ -166,12 +170,15 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
           <ElTableColumn label="采购单号" width="160" prop="order_number" show-overflow-tooltip><template #default="{ row }">{{ row.order_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="入库单号" width="160" prop="inbound_number" show-overflow-tooltip><template #default="{ row }">{{ row.inbound_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="生产任务单号" width="160" prop="production_task_number" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="供应商" min-width="210" prop="supplier_name" show-overflow-tooltip><template #default="{ row }">{{ row.supplier_name || '—' }}</template></ElTableColumn>
+          <ElTableColumn label="规格" min-width="148" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'specification') }}</template></ElTableColumn>
+          <ElTableColumn label="颜色" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'color') }}</template></ElTableColumn>
+          <ElTableColumn label="材质" min-width="100" show-overflow-tooltip><template #default="{ row }">{{ materialField(row, 'material') }}</template></ElTableColumn>
+          <ElTableColumn label="供应商" min-width="210"><template #default="{ row }"><SupplierAmountPopover :suppliers="[{ supplier_name: row.supplier_name || '—', total_amount: row.return_amount }]" :currency="row.currency_code" amount-title="本次退货金额" /></template></ElTableColumn>
           <ElTableColumn label="明细项数" width="90" align="center"><template #default="{ row }"><span class="secondary">{{ row.lines.length }} 项</span></template></ElTableColumn>
           <ElTableColumn label="退货状态" width="128"><template #default="{ row }"><div class="status-cell"><span class="status-badge erp-list-tag" :class="[row.status, row.status === 'COMPLETED' ? 'erp-list-tag--success' : row.status === 'QUALITY_GENERATED' ? 'erp-list-tag--info' : row.status === 'PROCUREMENT_CONFIRMED' ? 'erp-list-tag--brand' : 'erp-list-tag--neutral']">{{ statusLabel(row) }}</span></div></template></ElTableColumn>
           <ElTableColumn label="采购确认时间" width="145" show-overflow-tooltip><template #default="{ row }"><span class="secondary">{{ time(row.confirmed_at) }}</span></template></ElTableColumn>
           <ElTableColumn label="完成时间" width="145" show-overflow-tooltip><template #default="{ row }"><span class="secondary">{{ time(row.completed_at) }}</span></template></ElTableColumn>
-          <ElTableColumn label="生成信息" width="140"><template #default="{ row }"><div class="stack secondary"><span>{{ row.generated_by_name || '—' }}</span><small>{{ time(row.created_at) }}</small></div></template></ElTableColumn>
+          <ElTableColumn label="生成时间" width="160" show-overflow-tooltip><template #default="{ row }">{{ time(row.created_at) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center" class-name="operation-column" label-class-name="operation-column">
             <template #default="{ row }"><ElButton v-if="row.status === 'COMPLETED'" @click="viewDetails(row)">查看</ElButton><ElButton v-else :disabled="!canAdvance(row) || !!busyId || loading || !['QUALITY_GENERATED', 'PROCUREMENT_CONFIRMED'].includes(row.status)" :loading="busyId === row.id" :title="canAdvance(row) ? '' : '没有此退货操作权限'" @click="advance(row)">{{ row.status === 'QUALITY_GENERATED' ? '确认' : '完成' }}</ElButton></template>
           </ElTableColumn>

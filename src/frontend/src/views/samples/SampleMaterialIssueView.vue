@@ -16,6 +16,7 @@ import type { SampleDetail } from '@/types/sample'
 import type { SampleMaterialIssueLine, SampleMaterialIssueResult } from '@/types/sampleMaterialIssue'
 import { sampleMaterialCategories, type SampleMaterialCategory } from '@/types/sampleMaterial'
 import { sampleProductFieldLabel, sampleProductsLabel, sampleQuantityLabel } from '@/utils/samplePresentation'
+import { createClientUuid } from '@/utils/clientUuid'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,7 +28,7 @@ const saving = ref(false)
 const errorMessage = ref('')
 const actionError = ref('')
 const note = ref('')
-const issued = ref<Record<string, string>>({})
+const confirmationRequestId = createClientUuid()
 const categoryFilter = ref<'all' | SampleMaterialCategory>('all')
 
 const confirmMode = computed(() => route.name === 'sample-material-issue-confirm')
@@ -59,7 +60,8 @@ const applicationFields = computed(() => [
   { label: '打样数量', value: sample.value ? sampleQuantityLabel(sample.value) : '—' },
   { label: '申请日期', value: sample.value?.requested_at?.slice(0, 10) || '—' },
 ])
-const canSubmit = computed(() => Boolean(result.value?.available && (confirmMode.value ? result.value.canConfirm : result.value.canInitiate) && !saving.value))
+const canSubmit = computed(() => Boolean(result.value?.available && etag.value && !loading.value
+  && (confirmMode.value ? result.value.canConfirm && !result.value.blockers?.length : result.value.canInitiate) && !saving.value))
 
 function messageFromError(error: unknown) {
   if (!(error instanceof AxiosError)) return '请求失败，请稍后重试。'
@@ -74,11 +76,6 @@ function applyIssue(value: SampleMaterialIssueResult, version: string) {
   result.value = value
   if (categoryFilter.value !== 'all' && !value.lines?.some((line) => line.category === categoryFilter.value)) categoryFilter.value = 'all'
   etag.value = version || value.etag || ''
-  if (value.lines) {
-    const next: Record<string, string> = {}
-    value.lines.forEach((line) => { next[line.id || line.lineKey] = line.issuedQuantity ?? line.availableQuantity })
-    issued.value = next
-  }
 }
 
 async function loadPage() {
@@ -95,7 +92,7 @@ async function loadPage() {
 
 async function initiate() {
   if (!sample.value || !canSubmit.value) return
-  try { await ElMessageBox.confirm('确认发起整张样品领料？仓库会按实际可发数量确认，不足部分不补料。', '发起样品领料', { confirmButtonText: '确认发起', cancelButtonText: '返回' }) }
+  try { await ElMessageBox.confirm('确认发起整张样品领料？仓库将全部领走本次核库可供和采购已到货的材料。', '发起样品领料', { confirmButtonText: '确认发起', cancelButtonText: '返回' }) }
   catch { return }
   saving.value = true; actionError.value = ''
   try {
@@ -106,30 +103,27 @@ async function initiate() {
   finally { saving.value = false }
 }
 
-function quantityFor(line: SampleMaterialIssueLine) { return issued.value[line.id || line.lineKey] ?? '' }
+function issueQuantity(line: SampleMaterialIssueLine) {
+  const quantity = line.issuedQuantity ?? line.availableQuantity
+  if (line.category !== 'tube') return quantity
+  const bars = line.barCount != null && (line.pipeBatches?.length || Number(quantity) === 0) ? line.barCount : '—'
+  const meters = quantity.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')
+  return `${bars} 根 / ${meters} 米`
+}
 
-function procurementShortage(line: SampleMaterialIssueLine) {
-  const need = Number(line.requestedQuantity || 0)
-  const warehouse = Number(line.warehouseQuantity || 0)
-  const arrived = Number(line.arrivedQuantity || 0)
-  if (![need, warehouse, arrived].every(Number.isFinite)) return '—'
-  return String(Math.max(0, need - warehouse - arrived))
+function pipeBatchDescription(line: SampleMaterialIssueLine) {
+  return line.pipeBatches?.map(batch => `${batch.warehouseName} / ${batch.zoneName}：${batch.barCount} 根 × ${batch.rawBarLengthM} 米 = ${batch.meterQuantity} 米`).join('；') || ''
 }
 
 async function confirmIssue() {
   if (!sample.value || !canSubmit.value) return
-  const payload = lines.value.filter((line) => Boolean(line.id)).map((line) => ({ line_id: line.id as string, issued_quantity: quantityFor(line) || '0' }))
-  if (payload.every((line) => Number(line.issued_quantity) <= 0)) { actionError.value = '至少确认一项大于 0 的实际领料数量。'; return }
-  if (payload.some((line) => Number(line.issued_quantity) < 0 || Number(line.issued_quantity) > Number(lines.value.find((item) => item.id === line.line_id)?.availableQuantity || 0))) {
-    actionError.value = '实际领料数量不能超过可供数量。'; return
-  }
-  try { await ElMessageBox.confirm('确认仓库已按填写数量完成发料？提交后将扣减库存，且不补料。', '确认实际领料', { confirmButtonText: '确认领料', cancelButtonText: '返回' }) }
-  catch { return }
   saving.value = true; actionError.value = ''
+  try { await ElMessageBox.confirm('确认已全部领走本次核库可供和采购已到货的材料？提交后按页面数量扣减库存。', '全部领料', { confirmButtonText: '确认全部领料', cancelButtonText: '返回' }) }
+  catch { saving.value = false; return }
   try {
-    const response = await confirmSampleMaterialIssue(sample.value.id, etag.value, payload)
+    const response = await confirmSampleMaterialIssue(sample.value.id, etag.value, confirmationRequestId)
     applyIssue(response.data, response.etag)
-    ElMessage.success('实际领料已确认，样品可以进入参数和生产阶段。')
+    ElMessage.success('本次可供材料已全部领走，样品可以进入参数和生产阶段。')
   } catch (error) { actionError.value = messageFromError(error) }
   finally { saving.value = false }
 }
@@ -153,7 +147,8 @@ onMounted(loadPage)
           </section>
           <SampleSection title="材料领料明细" class="issue-card">
             <template #actions><SampleStatusTag :status="issueTagStatus" :label="result.statusLabel || '待发起领料'" /></template>
-            <p class="issue-intro">领料按材料需求整单处理；仓库填写实际可以发出的数量，少领部分不补料。</p>
+            <p class="issue-intro">本次核库可供和采购已到货的材料全部领走，无需填写数量；未领缺口见明细。</p>
+            <div v-if="result.blockers?.length" role="alert" class="issue-error">{{ result.blockers.join('；') }}</div>
             <nav v-if="categoryTabs.length > 1" class="issue-tabs" aria-label="材料分类">
               <button v-for="tab in categoryTabs" :key="tab.key" type="button" :class="{ active: categoryFilter === tab.key }" @click="categoryFilter = tab.key">{{ tab.label }} {{ tab.count }}</button>
             </nav>
@@ -163,8 +158,8 @@ onMounted(loadPage)
                 <tbody>
                   <tr v-for="line in visibleLines" :key="line.id || line.lineKey">
                     <td>{{ sampleMaterialCategories.find((category) => category.key === line.category)?.label || line.category || '—' }}</td><td class="primary-text">{{ line.name || '—' }}</td><td class="specification">{{ line.specification || '—' }}</td><td>{{ line.material || '—' }}</td><td>{{ line.color || '—' }}</td>
-                    <td>{{ line.requestedQuantity }}</td><td>{{ line.availableQuantity }}</td><td>{{ procurementShortage(line) }}</td><td>{{ line.arrivedQuantity }}</td>
-                    <td><ElInput v-if="confirmMode && result.status === 'PENDING_CONFIRMATION'" :model-value="quantityFor(line)" inputmode="decimal" size="small" @update:model-value="issued[line.id || line.lineKey] = $event" /><span v-else>{{ line.issuedQuantity ?? '—' }}</span></td><td>{{ line.shortageQuantity || '0' }}</td><td>{{ line.unitLabel || '—' }}</td><td><SampleStatusTag :status="issueTagStatus" :label="result.statusLabel || '待发起领料'" /></td>
+                    <td>{{ line.requestedQuantity }}</td><td>{{ line.warehouseQuantity }}</td><td>{{ line.procurementQuantity ?? '—' }}</td><td>{{ line.arrivedQuantity }}</td>
+                    <td :title="pipeBatchDescription(line)"><span data-testid="readonly-issued-quantity">{{ issueQuantity(line) }}</span></td><td>{{ line.shortageQuantity || '0' }}</td><td>{{ line.unitLabel || '—' }}</td><td><SampleStatusTag :status="issueTagStatus" :label="result.statusLabel || '待发起领料'" /></td>
                   </tr>
                 </tbody>
               </table>
@@ -174,7 +169,7 @@ onMounted(loadPage)
         </template>
         <ElEmpty v-else-if="!loading" description="当前没有可操作的样品领料内容" />
       </main>
-      <footer class="issue-actions"><ElButton @click="router.push({ name: 'sample-detail', params: { sampleId: sample?.id } })">返回详情</ElButton><span v-if="actionError" role="alert" class="action-error">{{ actionError }}</span><ElButton v-if="!confirmMode && result?.status === 'NOT_STARTED'" type="primary" :loading="saving" :disabled="!canSubmit" @click="initiate">发起领料</ElButton><ElButton v-if="confirmMode && result?.status === 'PENDING_CONFIRMATION'" type="primary" :loading="saving" :disabled="!canSubmit" @click="confirmIssue">确认实际领料</ElButton></footer>
+      <footer class="issue-actions"><ElButton @click="router.push({ name: 'sample-detail', params: { sampleId: sample?.id } })">返回详情</ElButton><span v-if="actionError" role="alert" class="action-error">{{ actionError }}</span><ElButton v-if="!confirmMode && result?.status === 'NOT_STARTED'" type="primary" :loading="saving" :disabled="!canSubmit" @click="initiate">发起领料</ElButton><ElButton v-if="confirmMode && result?.status === 'PENDING_CONFIRMATION'" type="primary" :loading="saving" :disabled="!canSubmit" @click="confirmIssue">全部领料</ElButton></footer>
   </section>
 </template>
 

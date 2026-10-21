@@ -1,6 +1,10 @@
 // 深海蓝：仅更换用途色，布局、控件尺寸和打印纸面保持既有约定。
 $palette: (
   'color-scheme': 'dark',
+  'scrollbar-track': '#182a3a',
+  'scrollbar-thumb': '#60809a',
+  'scrollbar-thumb-hover': '#7b9bb4',
+  'scrollbar-thumb-active': '#94b2c8',
   'shadow-color': '#040d16',
   'overlay-scrim-color': '#040a10',
   'login-background': 'linear-gradient(125deg, #1c344b, #101d2a 65%, #0b1621)',

@@ -7,6 +7,7 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils.dateparse import parse_date
+from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -33,6 +34,11 @@ from .serializers import (
     ScheduleBatchCreateSerializer, ScheduleCreateSerializer, ScheduleItemReadSerializer, ScheduleReadSerializer,
     ScheduleUpdateSerializer, ScheduleVoidSerializer,
 )
+from .detail_serializers import ScheduleDetailSummaryResponseSerializer
+from .completion_serializers import (
+    ScheduleCompleteSerializer, ScheduleCompleteResponseSerializer, ScheduleCompletionPreviewResponseSerializer,
+)
+from .permissions import ScheduleCompletePermission
 
 
 def _uuid(value, field):
@@ -77,6 +83,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
     action_permission_map = {
         "list": "production_scheduling.view_productionschedule",
         "retrieve": "production_scheduling.view_productionschedule",
+        "detail_summary": "production_scheduling.view_productionschedule",
         "task_candidates": "production_scheduling.view_productionschedule",
         "task_candidate_detail": "production_scheduling.view_productionschedule",
         "task_file": "production_scheduling.view_productionschedule",
@@ -85,10 +92,11 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         "batch_create": "production_scheduling.add_productionschedule",
         "partial_update": "production_scheduling.change_productionschedule",
         "void": "production_scheduling.void_productionschedule",
+        "complete": "production_tasks.change_productiontask",
     }
 
     def get_queryset(self):
-        return schedules_with_context(accessible_production_schedules(self.request))
+        return schedules_with_context(accessible_production_schedules(self.request), request=self.request)
 
     def _filtered(self):
         queryset = self.get_queryset()
@@ -130,9 +138,24 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
 
     def retrieve(self, request, pk=None):
         schedule = get_object_or_404(self.get_queryset(), pk=pk)
-        response = Response({"data": ScheduleReadSerializer(schedule).data})
+        from apps.access_control.resource_scopes import resource_ids
+        code = 'production_scheduling.view_productionschedule'
+        unrestricted = resource_ids(request, code, 'WORKSHOP', include_legacy=False) is None
+        from apps.access_control.resource_scopes import has_legacy_permission
+        from apps.production_tasks.selectors import legacy_accessible_production_tasks
+        unrestricted = unrestricted or request.user.has_perm('production_scheduling.view_all_productionschedule') or (
+            has_legacy_permission(request, code) and legacy_accessible_production_tasks(request).filter(pk=schedule.production_task_id).exists())
+        response = Response({"data": ScheduleReadSerializer(schedule, context={'include_audit': unrestricted}).data})
         response["ETag"] = etag_for_instance(schedule)
         return response
+
+    @extend_schema(responses=ScheduleDetailSummaryResponseSerializer)
+    @action(detail=True, methods=["get"], url_path="detail-summary")
+    def detail_summary(self, request, pk=None):
+        from ..detail_summary import schedule_detail_summary
+
+        schedule = self.get_object()
+        return Response({"data": schedule_detail_summary(request, schedule)})
 
     def create(self, request):
         serializer = ScheduleCreateSerializer(data=request.data)
@@ -192,6 +215,27 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         response = Response({"data": ScheduleReadSerializer(schedule).data})
         response["ETag"] = etag_for_instance(schedule)
         return response
+
+    @extend_schema(request=ScheduleCompleteSerializer, responses=ScheduleCompleteResponseSerializer)
+    @action(detail=True, methods=["post"], permission_classes=[HasActiveEmployee, ScheduleCompletePermission])
+    def complete(self, request, pk=None):
+        from ..completion import complete_schedule
+
+        serializer = ScheduleCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        schedule, result = complete_schedule(schedule_id=_uuid(pk, "id"), validated_data=serializer.validated_data, request=request)
+        return Response({"data": result}, headers={"ETag": etag_for_instance(schedule)})
+
+    @extend_schema(responses=ScheduleCompletionPreviewResponseSerializer)
+    @action(
+        detail=True, methods=["get"], url_path="completion-preview",
+        permission_classes=[HasActiveEmployee, ScheduleCompletePermission],
+    )
+    def completion_preview(self, request, pk=None):
+        from ..completion import schedule_completion_preview
+
+        schedule, result = schedule_completion_preview(schedule_id=_uuid(pk, "id"), request=request)
+        return Response({"data": result}, headers={"ETag": etag_for_instance(schedule)})
 
     @action(detail=False, methods=["get"], url_path="task-candidates")
     def task_candidates(self, request):
@@ -262,6 +306,9 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             ), pk=task_id,
         )
         existing = ProductionSchedule.objects.filter(production_task=task, record_status=ScheduleStatus.ACTIVE).first()
+        from apps.access_control.workshop_scopes import filter_task_products
+        products = filter_task_products(task.products.all(), request, 'production_scheduling.view_productionschedule')
+        task._prefetched_objects_cache['products'] = products
         return Response({"data": self._task_payload(task, existing.pk if existing else None, include_products=True)})
 
     @action(
@@ -271,12 +318,14 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
     )
     def task_file(self, request, task_id=None, file_id=None):
         task = get_object_or_404(accessible_production_tasks(request), pk=task_id)
+        from apps.access_control.workshop_scopes import filter_task_products
+        products = filter_task_products(task.products.all(), request, 'production_scheduling.view_productionschedule')
         business_file = get_object_or_404(
             BusinessFile.objects.filter(
-                Q(production_task_product_images__product_line__production_task=task)
-                | Q(production_task_products__production_task=task)
-                | Q(production_task_details__product_line__production_task=task)
-                | Q(pk__in=schedule_source_image_ids(task)),
+                Q(production_task_product_images__product_line__in=products)
+                | Q(production_task_products__in=products)
+                | Q(production_task_details__product_line__in=products)
+                | Q(pk__in=schedule_source_image_ids(task, product_ids=products.values('id'))),
                 pk=file_id,
                 archived_at__isnull=True,
             ).distinct()
@@ -433,6 +482,16 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["get"])
     def options(self, request):
         crafts = Craft.objects.filter(status=RecordStatus.ACTIVE).select_related("workshop").order_by("craft_type", "name", "id")
+        from apps.access_control.resource_scopes import current_permission, resource_ids, has_legacy_permission
+        from apps.production_tasks.selectors import legacy_accessible_production_tasks
+        code = current_permission(request, 'production_scheduling.view_productionschedule')
+        ids = resource_ids(request, code, 'WORKSHOP', include_legacy=False)
+        if request.user.has_perm('production_scheduling.view_all_productionschedule') or (
+            has_legacy_permission(request, code) and legacy_accessible_production_tasks(request).exists()
+        ):
+            ids = None
+        if ids is not None:
+            crafts = crafts.filter(workshop_id__in=ids)
         return Response({"data": {
             "crafts": [
                 {"id": str(item.pk), "name": item.name, "craft_type": item.craft_type,

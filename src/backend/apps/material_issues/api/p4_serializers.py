@@ -43,6 +43,12 @@ class P4ExternalOrderWriteSerializer(P4WriteSerializer):
     factory_id = serializers.UUIDField()
     craft_id = serializers.UUIDField()
     allocated_pieces = P4WholePiecesField(min_value=1)
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
+
+    def validate_unit_price(self, value):
+        if value != value.quantize(Decimal("0.01")):
+            raise serializers.ValidationError("加工单价最多保留两位小数。")
+        return value.quantize(Decimal("0.01"))
 
 
 class P4AllocationWriteSerializer(P4WriteSerializer):

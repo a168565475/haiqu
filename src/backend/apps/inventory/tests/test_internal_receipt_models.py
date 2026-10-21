@@ -86,6 +86,22 @@ class InternalReceiptModelTests(PublicStockFixture, TestCase):
         row=self.row(input_unit_name='米',input_per_output=Decimal('0.325'),input_quantity=Decimal('3.25'))
         self.assertEqual(row.input_quantity,Decimal('3.25'))
 
+    def test_new_sewing_receipt_can_leave_both_meter_fields_unmeasured(self):
+        row=self.row(receipt=self.header(plan_category='SEWING'),input_unit_name='米',
+                     input_per_output=None,input_quantity=None)
+        row.refresh_from_db()
+        self.assertIsNone(row.input_per_output)
+        self.assertIsNone(row.input_quantity)
+
+    def test_unmeasured_input_is_not_allowed_for_metal_or_partial_null_values(self):
+        for changes in (
+            {'input_unit_name':'支','input_per_output':None,'input_quantity':None},
+            {'input_unit_name':'米','input_per_output':None},
+            {'input_unit_name':'米','input_quantity':None},
+        ):
+            with self.subTest(changes=changes),self.assertRaises(IntegrityError),transaction.atomic():
+                self.row(**changes)
+
     def test_same_component_cannot_appear_twice_on_one_receipt(self):
         row=self.row()
         with self.assertRaises(IntegrityError),transaction.atomic():self.row(receipt=row.receipt)
@@ -122,4 +138,3 @@ class InternalReceiptModelTests(PublicStockFixture, TestCase):
     def test_empty_header_cannot_be_batch_deleted(self):
         receipt=self.header()
         with self.assertRaises(ValidationError):InternalSemiFinishedReceipt.objects.filter(pk=receipt.pk).delete()
-

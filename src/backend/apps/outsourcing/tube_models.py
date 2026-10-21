@@ -10,6 +10,8 @@ class TubeSourceKind(models.TextChoices):
     RAW_PIPE = 'RAW_PIPE', '公共原管材'
     PUBLIC_SEMI = 'PUBLIC_SEMI', '公共未喷塑半成品'
     METAL = 'METAL', '厂内已加工件'
+    PUBLIC_CUTTING = 'PUBLIC_CUTTING', '已入库裁片半成品'
+    SEWING = 'SEWING', '未入库车缝完成件'
 
 
 class TubeOutsourcingOrder(TimeStampedModel):
@@ -48,8 +50,8 @@ class TubeOutsourcingOrder(TimeStampedModel):
             models.CheckConstraint(condition=Q(status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED', 'CANCELLED']),
                                    name='tube_order_saved_status'),
             models.CheckConstraint(condition=Q(version__gt=0), name='tube_order_version_positive'),
-            models.CheckConstraint(condition=(Q(source_kind='METAL', zone__isnull=True)
-                | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI'], zone__isnull=False)), name='tube_order_zone_shape'),
+            models.CheckConstraint(condition=(Q(source_kind__in=['METAL', 'SEWING'], zone__isnull=True)
+                | Q(source_kind__in=['RAW_PIPE', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'], zone__isnull=False)), name='tube_order_zone_shape'),
         ]
         indexes = [models.Index(fields=['product_line', 'source_kind', 'status'], name='tube_order_quota_idx')]
 
@@ -64,6 +66,7 @@ class TubeOutsourcingLine(TimeStampedModel):
     factory = models.ForeignKey('outsourcing.OutsourcingFactory', on_delete=models.PROTECT,
                                 related_name='tube_outsourcing_lines')
     quantity = models.PositiveBigIntegerField()
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     stock_quantity = models.PositiveBigIntegerField(null=True, blank=True)
     input_identity = models.JSONField(default=dict, blank=True)
     snapshot = models.JSONField(default=dict)
@@ -77,6 +80,8 @@ class TubeOutsourcingLine(TimeStampedModel):
             models.CheckConstraint(condition=Q(quantity__gt=0, quantity__lte=99999999999999), name='tube_line_quantity_valid'),
             models.CheckConstraint(condition=Q(stock_quantity__isnull=True) | Q(stock_quantity__gt=0),
                                    name='tube_line_stock_positive'),
+            models.CheckConstraint(condition=Q(unit_price__isnull=True) | Q(unit_price__gte=0),
+                                   name='tube_line_price_nonnegative'),
         ]
         indexes = [models.Index(fields=['component_identity', 'order'], name='tube_line_component_idx')]
 
@@ -108,6 +113,41 @@ class TubeOutsourcingAction(TimeStampedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('管材外发操作凭证须保留，不支持直接删除。')
+
+
+class TubeOutsourcingMaterial(TimeStampedModel):
+    """同单直接分配给加工厂的五金；旧部位关联仅保留历史依据。"""
+    order = models.ForeignKey(TubeOutsourcingOrder, on_delete=models.PROTECT, related_name='materials')
+    order_line = models.ForeignKey(TubeOutsourcingLine, null=True, blank=True, on_delete=models.PROTECT,
+                                  related_name='materials')
+    factory = models.ForeignKey('outsourcing.OutsourcingFactory', on_delete=models.PROTECT,
+                                related_name='tube_outsourcing_materials')
+    bom_line = models.ForeignKey('boms.BomLine', on_delete=models.PROTECT, related_name='tube_outsourcing_materials')
+    requirement = models.ForeignKey('material_issues.OrderMaterialRequirement', on_delete=models.PROTECT,
+                                    related_name='tube_outsourcing_materials')
+    raw_material = models.ForeignKey('products.RawMaterialInformation', on_delete=models.PROTECT,
+                                     related_name='tube_outsourcing_materials')
+    unit = models.ForeignKey('reference_data.ProductionUnit', on_delete=models.PROTECT,
+                             related_name='tube_outsourcing_materials')
+    zone = models.ForeignKey('inventory.WarehouseZone', on_delete=models.PROTECT,
+                             related_name='tube_outsourcing_materials')
+    quantity = models.DecimalField(max_digits=18, decimal_places=4)
+    snapshot = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'tube_outsourcing_material'
+        default_permissions = ()
+        ordering = ['order', 'created_at', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['order_line', 'bom_line', 'zone'], name='tube_material_binding_unique'),
+            models.UniqueConstraint(fields=['order', 'bom_line', 'factory', 'zone'],
+                                    condition=Q(order_line__isnull=True), name='tube_material_factory_unique'),
+            models.CheckConstraint(condition=Q(quantity__gt=0), name='tube_material_qty_positive'),
+        ]
+        indexes = [models.Index(fields=['raw_material', 'unit', 'zone'], name='tube_material_stock_idx')]
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('已保存附带五金须保留，不支持直接删除。')
 
 
 class TubeOutsourcingReceipt(TimeStampedModel):

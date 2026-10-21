@@ -115,11 +115,25 @@ class UnifiedTubeOrdersTests(UnifiedTubeFixture, APITestCase):
             row = self.row(order)
             for keyword in (*self.product_snapshot.values(), self.task.task_number, self.schedule.schedule_number, order["order_number"]):
                 self.assertEqual(self.rows(search=keyword)["meta"]["total"], 1, keyword)
-        self.assertEqual(row["product"], self.product_snapshot)
+        self.assertEqual(row["product"], {**self.product_snapshot, "material": self.product_line.material_snapshot})
         self.assertEqual(row["product_count"], 1)
         self.assertEqual(self.rows(search="当前已改名")["meta"]["total"], 0)
         self.assertEqual(self.rows(production_task_id=str(self.task.pk), product_line_id=str(self.product_line.pk))["meta"]["total"], 1)
         self.assertEqual(self.rows(issue_id=str(self.issue_line.issue_id))["meta"]["total"], 0)
+
+    def test_product_material_uses_snapshot_and_only_falls_back_when_key_is_missing(self):
+        order = self.saved_order("METAL")
+        self.product_line.material_snapshot = "当前产品材质"
+        self.product_line.save(update_fields=["material_snapshot"])
+        for snapshot, expected in ((self.product_snapshot, "当前产品材质"),
+            ({**self.product_snapshot, "material": "冻结产品材质"}, "冻结产品材质"),
+            ({**self.product_snapshot, "material": ""}, "")):
+            with self.subTest(snapshot=snapshot):
+                self.schedule_product.product_snapshot = snapshot
+                self.schedule_product.save(update_fields=["product_snapshot"])
+                self.assertEqual(self.row(order)["product"]["material"], expected)
+                self.schedule_product.refresh_from_db()
+                self.assertEqual(self.schedule_product.product_snapshot, snapshot)
 
     def test_inactive_factory_and_craft_keep_history_names(self):
         order = self.dispatched("METAL")
@@ -166,15 +180,39 @@ class UnifiedTubeOrdersTests(UnifiedTubeFixture, APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         options = response.data["data"]
         self.assertEqual({row["value"] for row in options["source_groups"]},
-            {"RAW", "TUBE_PUBLIC", "TUBE_METAL", "OLD_METAL", "REWORK", "UNSELECTED"})
+            {"RAW", "TUBE_PUBLIC", "TUBE_METAL", "CUTTING_PUBLIC", "SEWING", "OLD_METAL", "REWORK", "UNSELECTED"})
         self.assertTrue({"RAW", "METAL", "REWORK", "UNSELECTED"}.issubset({row["value"] for row in options["source_kinds"]}))
         self.assertEqual(self.client.get(URL, {"source_group": "METAL"}).status_code, 400)
+
+    def test_options_include_all_supported_crafts_without_factory_and_keep_metal_scope(self):
+        for code, name in (("EMBROIDERY", "刺绣"), ("SCREEN_PRINTING", "丝印"),
+                           ("CUTTING", "裁剪"), ("SEWING", "车缝")):
+            Craft.objects.get_or_create(outsourcing_code=code,
+                defaults={"name": f"筛选测试{name}", "craft_type": "EXTERNAL", "status": "ACTIVE"})
+        self.assertFalse(OutsourcingFactory.objects.filter(craft_links__craft__outsourcing_code="EMBROIDERY").exists())
+        self.only_permissions("outsourcing.view_outsourcingorder")
+        response = self.client.get(URL + "options/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row["outsourcing_code"] for row in response.data["data"]["crafts"]},
+                         {"POWDER_COATING", "SCREEN_PRINTING", "EMBROIDERY", "CUTTING", "SEWING"})
+        self.only_permissions("material_issues.view_metalprocessingsource")
+        response = self.client.get(URL + "options/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row["outsourcing_code"] for row in response.data["data"]["crafts"]}, {"POWDER_COATING"})
 
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True,
     ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True, SALES_ACCESS_ENABLED=True,
     ACCESS_RESOURCE_SCOPES_ENABLED=True)
 class UnifiedTubeScopedPermissionsTests(ScopedActorMixin, UnifiedTubeFixture, APITestCase):
+    def test_options_keep_embroidery_craft_resource_scope(self):
+        embroidery = Craft.objects.create(name="筛选权限刺绣", craft_type="EXTERNAL", outsourcing_code="EMBROIDERY")
+        self.scoped_actor()
+        self.grant("outsourcing.view_outsourcingorder", "CRAFT", [embroidery])
+        response = self.client.get(URL + "options/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row["id"] for row in response.data["data"]["crafts"]}, {str(embroidery.pk)})
+
     def test_frozen_order_craft_scope_survives_removed_plan_without_task_view(self):
         order = self.dispatched("METAL")
         self.scoped_actor()

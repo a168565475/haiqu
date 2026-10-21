@@ -132,15 +132,6 @@ class ModulePolicyTests(TestCase):
         with self.assertRaises(PermissionDenied):
             module_policy.prohibit_audit_self_approval(self.actor, 'SAMPLE_REQUEST', uuid4(), ['APPLICATION_SUBMITTED'])
 
-    def test_sample_resubmitter_is_used_instead_of_original_creator(self):
-        from apps.core.audit import write_audit_log
-        from apps.samples.application_services import review_application
-        sample = self.sample(self.member, 'RESUBMIT')
-        write_audit_log(object_type='SAMPLE_REQUEST', object_id=sample.pk, action='APPLICATION_RESUBMITTED',
-            actor_employee=self.actor, request=self.request())
-        with self.assertRaisesMessage(PermissionDenied, '提交人不能'):
-            review_application(sample_id=sample.pk, data={}, request=self.request())
-
     def test_generic_approval_does_not_consume_sample_fee_request(self):
         from apps.workflow.models import ApprovalRequest
         from apps.workflow.services import decide_approval

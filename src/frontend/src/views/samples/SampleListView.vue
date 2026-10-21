@@ -122,7 +122,7 @@ function openCreate() {
 
 function openDetail(sampleId: string) {
   const row = rows.value.find(item => item.id === sampleId)
-  const name = row?.application_actions?.is_application && !['METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'].includes(row.status) ? row.status === 'MATERIALS_PENDING' ? 'sample-materials' : ['WAREHOUSE_PENDING', 'PROCUREMENT_PENDING', 'MATERIALS_READY'].includes(row.status) ? 'sample-warehouse-review' : 'sample-director-review' : 'sample-detail'
+  const name = row?.application_actions?.is_application && !['PENDING_COMPLETION', 'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'].includes(row.status) ? row.status === 'MATERIALS_PENDING' ? 'sample-materials' : ['WAREHOUSE_PENDING', 'PROCUREMENT_PENDING', 'MATERIALS_READY'].includes(row.status) ? 'sample-warehouse-review' : 'sample-director-review' : 'sample-detail'
   void router.push({ name, params: { sampleId } })
 }
 
@@ -133,13 +133,14 @@ function openEdit(sampleId: string) {
     void router.push({ path: '/samples/new', query: { editApplication: sampleId } })
     return
   }
-  void router.push({ name: 'sample-edit', params: { sampleId } })
+  void router.push({ name: 'sample-detail', params: { sampleId } })
 }
 
 function canEditRow(row: SampleListItem) {
-  if (row.application_actions?.is_application) return row.application_actions.can_resubmit
+  if (row.application_actions?.can_resubmit) return true
+  if (row.edit_capabilities?.mode === 'COMPLETE') return authStore.moduleCan('samples.complete_sample_requirements', undefined, row)
+  if (row.application_actions?.is_application) return false
   if (row.edit_capabilities?.mode === 'REPORT_ONLY') return ['productionreport_sample','metalreport_sample','cuttingreport_sample'].some(code=>authStore.moduleCan('access_control.'+code,'samples.change_samplerequest',row))
-  if (row.status === 'PENDING_COMPLETION') return authStore.moduleCan('samples.complete_sample_requirements', undefined, row)
   return authStore.moduleCan('samples.change_samplerequest', undefined, row) && !['FINISHED', 'CONFIRMED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(row.status)
 }
 

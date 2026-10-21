@@ -1,4 +1,5 @@
 import type { PageMeta } from './referenceData'
+import type { ScheduleProgressStatus } from './workshopReporting'
 
 export type ScheduleStatus = 'ACTIVE' | 'VOID'
 export type CraftType = 'INTERNAL' | 'EXTERNAL'
@@ -146,6 +147,53 @@ export interface ScheduleBatchCreateInput {
 export interface ScheduleUpdateInput {
   source_revision_hash: string
   items: ScheduleWriteItem[]
+}
+
+export interface ScheduleCompletionPreview {
+  schedule_id: string
+  schedule_number: string
+  schedule_etag: string
+  task: { id: string; task_number: string; status: string; status_display: string; etag: string }
+  progress: ScheduleProgressStatus['progress']
+  products: Array<{
+    schedule_product_id: string
+    product_name: string
+    specification: string
+    color: string
+    material: string
+    required_quantity: number
+    received_quantity: number
+    unit_name: string
+  }>
+  sales_order: {
+    id: string | null
+    order_number: string | null
+    status: string | null
+    status_display: string | null
+    etag: string | null
+    can_sync: boolean
+    reason: string
+  }
+}
+
+export interface CompleteScheduleInput {
+  task_etag: string
+  reason: string
+  sales_order_etag?: string
+}
+
+export interface CompleteScheduleResult {
+  schedule_id: string
+  production_task_id: string
+  production_task_status: string
+  production_sync: { before_status: string; after_status: string }
+  progress: Record<string, { status: string; percentage: number | null; display: string }>
+  sales_sync: {
+    status: 'COMPLETED' | 'SKIPPED' | 'NOT_APPLICABLE' | 'ALREADY_COMPLETED'
+    reason: string
+    before_status: string | null
+    after_status: string | null
+  }
 }
 
 export interface ScheduleItem {

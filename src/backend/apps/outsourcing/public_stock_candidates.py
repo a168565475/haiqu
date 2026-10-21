@@ -24,6 +24,8 @@ def enrich_public_candidates(data, line_map, product):
         row.update(candidates=[], zones=[], batch_selection=False)
         if related is None:
             continue
+        if related.get("quantity_basis") == "OUTPUT_SETS":
+            related = {**related, "input_unit": related["raw_input_unit"]}
         item = SimpleNamespace(pk=line.pk, bom_material_line_id=line.pk, conversion_snapshot=related,
             allocation=allocation, planned_piece_count=Decimal(related.get("allowance_pieces", 0)),
             planned_issue_quantity=Decimal(0))
@@ -52,5 +54,6 @@ def enrich_public_candidates(data, line_map, product):
         if is_pipe:
             row.update(default_issue_quantity=values["max_issue_quantity"], reference_required_quantity=values["order_remaining"])
         for processing in data["processing_items"]:
-            if (processing.get("conversion_snapshot") or {}).get("material_line_id") == str(item.pk):
+            snapshot = processing.get("conversion_snapshot") or {}
+            if snapshot.get("material_line_id") == str(item.pk) and snapshot.get("quantity_basis") != "OUTPUT_SETS":
                 processing["available_quantity"] = values["order_remaining"]

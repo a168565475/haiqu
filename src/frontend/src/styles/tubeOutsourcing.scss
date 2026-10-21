@@ -37,7 +37,7 @@
   .info-cell > b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .notice { background: var(--erp-color-page); padding: 12px 16px; color: var(--erp-color-text-secondary); border-radius: 5px; line-height: 20px; }
   .notice.warning { background: var(--erp-color-warning-soft); color: var(--erp-color-warning); }
-  .tube-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle); }
+  .tube-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
   .tube-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 12px; }
   .tube-table thead { position: sticky; top: 0; z-index: 2; }
   .tube-table th { height: 44px; padding: 0 16px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }
@@ -67,15 +67,32 @@
   height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px;
   .page-heading { min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
   .panel { border: 1px solid var(--erp-color-border); background: var(--erp-color-surface); border-radius: 5px; padding: 16px; min-width: 0; flex-shrink: 0; }
-  .dispatch-context { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--erp-color-border-subtle); }
   .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; background: var(--erp-tag-brand-background); color: var(--erp-color-text-inverse); white-space: nowrap; }
   .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--erp-color-text-secondary); }
   .form-field > span { font-size: 12px; }
   .form-field.required > span::before { content: '* '; color: var(--erp-color-danger); }
   .field-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 24px; }
   .field-grid .el-date-editor, .field-grid .el-input, .field-grid .el-select { width: 100%; }
+  .dispatch-layout { display: grid; grid-template-columns: minmax(0, 912px) minmax(240px, 1fr); gap: 24px; align-items: start; }
+  .dispatch-layout > .field-grid { grid-template-columns: repeat(4, minmax(0, 210px)); }
+  .dispatch-layout--cutting { grid-template-columns: minmax(0, 1146px) minmax(240px, 1fr); }
+  .dispatch-layout--cutting > .field-grid { grid-template-columns: repeat(5, minmax(0, 210px)); }
+  .dispatch-layout--cutting .schedule-field { grid-column: 1; }
+  .product-overview { display: flex; align-items: start; gap: 16px; width: 100%; max-width: 560px; margin-left: auto; min-width: 0; }
+  .product-overview__image { width: 72px; height: 72px; flex-shrink: 0; }
+  .product-overview .product-image.large { width: 72px; height: 72px; }
+  .product-overview .product-image.large img { width: 100%; height: 100%; }
+  .product-overview__empty { display: grid; place-items: center; height: 100%; padding: 4px; border: 1px solid var(--erp-color-border-subtle); border-radius: 5px; color: var(--erp-color-text-muted); text-align: center; }
+  .product-overview__details { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 2px 8px; min-width: 0; margin: 0; }
+  .product-overview__details dt { color: var(--erp-color-text-secondary); }
+  .product-overview__details dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--erp-color-text-primary); }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 32px; }
   .section-heading > div { display: flex; align-items: center; gap: 14px; }
+  .tube-material-tabs { display: flex; align-items: center; gap: 12px; }
+  .tube-material-tabs button { padding: 6px 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--erp-color-text-secondary); font: inherit; cursor: pointer; white-space: nowrap; }
+  .tube-material-tabs button[aria-selected='true'] { border-bottom-color: var(--erp-color-brand); color: var(--erp-color-brand); font-weight: 600; }
+  .tube-material-tabs button:disabled { opacity: .5; cursor: not-allowed; }
+  .hardware-table { min-width: 1130px; }
   .workspace { display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; overflow: auto; }
   .workspace > * { flex-shrink: 0; }
   .workspace .tube-table th, .workspace .tube-table td { padding-left: 8px; padding-right: 8px; }
@@ -84,6 +101,35 @@
   .footer-bar strong { font-size: 18px; color: crm.$crm-primary; margin: 0 5px; }
   .footer-bar small { display: block; color: var(--erp-color-text-muted); margin-top: 4px; font-size: 11px; }
   > .el-alert { flex-shrink: 0; }
+}
+
+@media (max-width: 1400px) {
+  .tube-outsourcing-page {
+    .dispatch-layout { grid-template-columns: minmax(0, 678px) minmax(190px, 1fr); }
+    .dispatch-layout > .field-grid { grid-template-columns: repeat(3, minmax(0, 210px)); }
+    .dispatch-layout--cutting .schedule-field { grid-column: auto; }
+    .product-overview { gap: 12px; }
+    .product-overview__image, .product-overview .product-image.large { width: 64px; height: 64px; }
+  }
+}
+@media (max-width: 1050px) {
+  .tube-outsourcing-page {
+    .dispatch-layout { grid-template-columns: minmax(0, 444px) minmax(190px, 1fr); }
+    .dispatch-layout > .field-grid { grid-template-columns: repeat(2, minmax(0, 210px)); }
+  }
+}
+@media (max-width: 760px) {
+  .tube-outsourcing-page {
+    .dispatch-layout { grid-template-columns: minmax(0, 1fr); }
+    .product-overview { flex-direction: row; max-width: none; margin-left: 0; }
+  }
+}
+
+.tube-outsourcing-form {
+  .workspace > .tube-table-wrap { flex: 1 1 160px; min-height: 160px; }
+  .workspace > .tube-table-wrap.is-empty > .tube-table { height: 100%; }
+  .workspace .tube-table td.empty-cell { height: auto; }
+  .dispatch-remark { margin-top: auto; }
 }
 
 .tube-outsourcing-page.erp-glass-form {

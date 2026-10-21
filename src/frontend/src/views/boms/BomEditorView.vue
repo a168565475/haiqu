@@ -53,7 +53,6 @@ import type {
   BomLineImage,
   BomLineInput,
   BomMaterialSaveOptions,
-  BomMaterialSavePreview,
   BomPackagingMaterial,
   BomPlasticMaterial,
   BomProductColorOption,
@@ -65,7 +64,7 @@ import type {
 import type { ProductInformation, ProductInformationInput, ProductOptions } from '@/types/product'
 import type { ProductColor } from '@/types/productionData'
 import { createProductionDataRecord } from '@/api/productionData'
-import { pipePlan } from '@/utils/materialFlow'
+import { pipePlan, pipePlanForBomLine } from '@/utils/materialFlow'
 import { cuttingCalculation, cuttingCompatibilityValues, legacyPipeCuttingValues } from '@/utils/bomCuttingQuantities'
 import { cuttingSpecificationError } from '@/utils/cuttingSpecification'
 import { matchesPinyinSearch } from '@/utils/pinyinSearch'
@@ -119,10 +118,6 @@ interface PendingBomSave {
   showMessage: boolean
   deletedCount: number
 }
-const pendingMaterialSave = ref<PendingBomSave | null>(null)
-const materialSavePreview = ref<BomMaterialSavePreview | null>(null)
-const materialSaveError = ref('')
-const materialSaveRequiresRecheck = ref(false)
 const errorMessage = ref('')
 const tubeOptionsLoading = ref(false)
 const tubeShapes = ref<TubeShape[]>([])
@@ -163,17 +158,17 @@ const editingFabricSourceKey = computed({
     const source = fabricSourceLines.value.find((line) => (line.id || line.client_key) === key)
     draft.fabric_source_line_id = source?.id || null
     draft.fabric_source_client_key = source && !source.id ? source.client_key || null : null
+    syncCuttingSourceAttributes(draft)
   },
 })
 
-function cuttingMaterial(line: BomLineInput) {
-  const ownMaterial = line.material.trim()
-  if (ownMaterial && ownMaterial !== '/') return line.material
+function syncCuttingSourceAttributes(line: BomLineInput) {
+  if (isPipeCuttingLine(line)) return
   const source = fabricSourceLines.value.find((item) => line.fabric_source_line_id
     ? item.id === line.fabric_source_line_id
     : Boolean(line.fabric_source_client_key && !item.id && item.client_key === line.fabric_source_client_key))
-  const sourceMaterial = source?.material.trim()
-  return sourceMaterial && sourceMaterial !== '/' ? source!.material : line.material
+  line.material = source?.material || ''
+  line.cutting_color = source?.fabric_color_name || source?.fabric_color_code || ''
 }
 
 const editingLineIndex = ref(-1)
@@ -408,7 +403,7 @@ const materialReferenceHint = computed(() => (
           : isPackagingSection.value
             ? '品号、品名、材质、颜色、规格和单位引用“原料信息 / 包材”'
             : isCuttingSection.value
-              ? '规格必填，不能使用“/”等占位符；按片填写单个用量，按套流转；补齐裁片量、单个用量和每成品套数后自动计算'
+              ? '规格必填，不能使用“/”等占位符；填写每套裁片数和每成品套数，自动计算订单套数与片数'
               : '材质、规格以来源原材料为准；切割长度、单耗和每根切割支数填写整数'
 ))
 
@@ -533,7 +528,6 @@ function syncCuttingValues(line: BomLineInput) {
   if (values) Object.assign(line, values)
   else if (cuttingQuantities(line).mode === 'legacy') {
     line.cutting_pieces_per_set = null
-    line.fabric_meters_per_piece = null
     line.cutting_sets_per_product = null
   }
 }
@@ -567,7 +561,7 @@ function editableLine(line: BomLine): BomLineInput {
   return {
     id: line.id,
     category: line.category,
-    material: line.cutting_material_original ?? line.material,
+    material: line.material,
     part_name: line.part_name,
     specification: line.specification,
     raw_material: line.raw_material,
@@ -1542,7 +1536,7 @@ function confirmCuttingSelection() {
   }
   targetSection.lines.push(...newLines)
   cuttingPickerVisible.value = false
-  // 新增裁剪行立即打开编辑窗口，先补齐来源面料和三项用量，避免新增行停留在不可保存的半成品状态。
+  // 新增裁剪行立即打开编辑窗口，先补齐来源面料、每套片数和每成品套数。
   openLineDrawer(targetSection.lines.length - newLines.length)
   const skippedCount = chosen.length - newLines.length
   ElMessage.success(`已添加 ${newLines.length} 条裁剪数据，请补齐参数后保存 BOM${skippedCount ? `；跳过 ${skippedCount} 条重复数据` : ''}。`)
@@ -2314,11 +2308,9 @@ function lineFieldError(section: BomSectionInput, line: BomLineInput, lineIndex:
     const calculation = cuttingQuantities(line)
     if (calculation.error) return `${prefix}${calculation.error}`
     if (calculation.mode === 'legacy') {
-      if (!line.id) return `${prefix}请填写裁片量（片/套）、单个用量（米/片）和每成品套数。`
+      if (!line.id) return `${prefix}请填写裁片量（片/套）和每成品套数。`
       const savedLine = bom.value?.sections.flatMap(item => item.lines).find(item => item.id === line.id)
       if (savedLine && cuttingCalculation(savedLine, bom.value?.order_quantity).mode !== 'legacy') return `${prefix}已采用片/套用量，不能清空全部新参数退回旧口径。`
-      const value = String(line.fabric_meters_per_set || '').trim()
-      if (!/^\d{1,14}(?:\.\d{1,4})?$/.test(value) || Number(value) <= 0) return `${prefix}请保留有效的原每套耗米，或补齐三项新参数。`
     }
   }
   const configuredError = configuredLineError(section, line, lineIndex)
@@ -2392,7 +2384,10 @@ async function commitLineDrawer() {
     }
   }
   if (targetSection.title === '面料类') editingLineDraft.value.unit = '米'
-  if (targetSection.title === '裁剪明细') syncCuttingValues(editingLineDraft.value)
+  if (targetSection.title === '裁剪明细') {
+    syncCuttingValues(editingLineDraft.value)
+    syncCuttingSourceAttributes(editingLineDraft.value)
+  }
   if (targetSection.section_type === 'PROFILE') normalizeTubeCutPieceCount(editingLineDraft.value)
   if (editingLineIsNew.value) {
     if (editingLineIndex.value < 0 || editingLineIndex.value > targetSection.lines.length) {
@@ -2569,7 +2564,10 @@ function validateLines() {
         return false
       }
       if (section.title === '面料类') line.unit = '米'
-      if (section.title === '裁剪明细') syncCuttingValues(line)
+      if (section.title === '裁剪明细') {
+        syncCuttingValues(line)
+        syncCuttingSourceAttributes(line)
+      }
     }
   }
   return true
@@ -2585,46 +2583,24 @@ function materialSaveSnapshotMatches(pending: PendingBomSave) {
     && (pending.options.intent !== 'verify' || quantityReason.value.trim() === pending.options.quantity_confirmation_reason)
 }
 
-function materialLocationGroups(item: BomMaterialSavePreview['new_materials'][number]) {
-  const groups = new Map<string, number[]>()
-  for (const location of item.locations) {
-    const rows = groups.get(location.section_title) || []
-    if (!rows.includes(location.line_number)) rows.push(location.line_number)
-    groups.set(location.section_title, rows)
-  }
-  return Array.from(groups, ([section, rows]) => ({ section, rows: rows.join('、') }))
-}
-
-function cancelMaterialSave() {
-  if (saving.value || verifying.value) return
-  pendingMaterialSave.value = null
-  materialSavePreview.value = null
-  materialSaveError.value = ''
-  materialSaveRequiresRecheck.value = false
-}
-
 async function writeMaterialSave(pending: PendingBomSave, confirmationToken?: string) {
   try {
     const options = { ...pending.options, ...(confirmationToken ? { confirmation_token: confirmationToken } : {}) }
     const result = await saveBomDraft(pending.bomId, pending.sections, pending.etag, options)
     applyVersioned(result)
     pendingRawMaterials.value = {}
-    pendingMaterialSave.value = null
-    materialSavePreview.value = null
     if (pending.showMessage) ElMessage.success(pending.options.intent === 'verify'
       ? 'BOM 已提交。'
       : pending.deletedCount ? `BOM 草稿已保存，已删除 ${pending.deletedCount} 条旧明细。` : 'BOM 草稿已保存。')
     return true
   } catch (error) {
-    materialSaveError.value = apiError(error)
-    if ((error as { response?: { status?: number } })?.response?.status === 409) materialSaveRequiresRecheck.value = true
-    ElMessage.error(materialSaveError.value)
+    ElMessage.error(apiError(error))
     return false
   }
 }
 
 async function startMaterialSave(intent: 'draft' | 'verify', showMessage = true) {
-  if (!bom.value || saving.value || verifying.value || pendingMaterialSave.value) return false
+  if (!bom.value || saving.value || verifying.value) return false
   if (intent === 'draft' ? !canEdit.value : !canVerify.value) return false
   for (const section of sections.value) {
     if (section.section_type === 'PROFILE') section.lines.forEach(normalizeTubeCutPieceCount)
@@ -2640,8 +2616,6 @@ async function startMaterialSave(intent: 'draft' | 'verify', showMessage = true)
     deletedCount: pendingDeletedLineIds.value.size,
     options: { intent, ...(intent === 'verify' ? { quantity_confirmation_reason: quantityReason.value.trim() } : {}) },
   }
-  materialSaveError.value = ''
-  materialSaveRequiresRecheck.value = false
   if (intent === 'draft') saving.value = true
   else verifying.value = true
   try {
@@ -2652,34 +2626,12 @@ async function startMaterialSave(intent: 'draft' | 'verify', showMessage = true)
     }
     if (preview.new_materials.length) {
       if (!preview.confirmation_token) throw new Error('原料新增清单缺少确认凭据，请重新检查。')
-      materialSavePreview.value = preview
-      pendingMaterialSave.value = pending
-      return false
+      return await writeMaterialSave(pending, preview.confirmation_token)
     }
     return await writeMaterialSave(pending)
   } catch (error) {
     ElMessage.error(apiError(error))
     return false
-  } finally {
-    saving.value = false
-    verifying.value = false
-  }
-}
-
-async function confirmMaterialSave() {
-  const pending = pendingMaterialSave.value
-  const token = materialSavePreview.value?.confirmation_token
-  if (!pending || !token || saving.value || verifying.value || materialSaveRequiresRecheck.value) return false
-  if (!materialSaveSnapshotMatches(pending)) {
-    materialSaveError.value = '页面内容已变化，请返回修改后重新检查新增清单。'
-    materialSaveRequiresRecheck.value = true
-    return false
-  }
-  if (pending.options.intent === 'draft') saving.value = true
-  else verifying.value = true
-  materialSaveError.value = ''
-  try {
-    return await writeMaterialSave(pending, token)
   } finally {
     saving.value = false
     verifying.value = false
@@ -2692,7 +2644,7 @@ async function submitVerification() {
     openProductConfirmDialog()
     return
   }
-  if (!bom.value || !canVerify.value || saving.value || verifying.value || pendingMaterialSave.value) return
+  if (!bom.value || !canVerify.value || saving.value || verifying.value) return
   if (!sections.value.some((section) => section.lines.length)) {
     ElMessage.warning('至少添加一条用料明细后才能提交。')
     return
@@ -2799,7 +2751,8 @@ function calculationText(value: number | null, fractionDigits = 4, keepTrailingZ
 }
 
 function tubeCalculations(line: BomLineInput): Record<TubeCalculationKey, string> {
-  const plan = pipePlan(line.length_value, line.unit_consumption, line.tube_cut_piece_count, String(bom.value?.order_quantity || ''))
+  const savedLine = line.id ? bom.value?.sections.flatMap(section => section.lines).find(saved => saved.id === line.id) : undefined
+  const plan = pipePlanForBomLine(line, String(bom.value?.order_quantity || ''), savedLine)
   const length = plan ? Number(plan.tube_cut_length_m) : null
   const unitWeight = plan ? Number(line.length_value) * Number(line.unit_consumption) * 0.464 / 1000 : null
   return {
@@ -2912,8 +2865,8 @@ onBeforeUnmount(() => {
         </div>
         <div class="heading-actions">
           <ElButton @click="printPage">预览打印</ElButton>
-          <ElButton v-if="canEdit" :loading="saving" :disabled="verifying || Boolean(pendingMaterialSave)" @click="persistDraft()">保存草稿</ElButton>
-          <ElButton v-if="canVerify" type="primary" :loading="verifying" :disabled="saving || Boolean(pendingMaterialSave)" @click="submitVerification">确认BOM</ElButton>
+          <ElButton v-if="canEdit" :loading="saving" :disabled="verifying" @click="persistDraft()">保存草稿</ElButton>
+          <ElButton v-if="canVerify" type="primary" :loading="verifying" :disabled="saving" @click="submitVerification">确认BOM</ElButton>
         </div>
       </header>
 
@@ -3176,12 +3129,10 @@ onBeforeUnmount(() => {
               </ElTableColumn>
               <ElTableColumn label="裁剪名称" min-width="125"><template #default="scope"><template v-if="cuttingQuantities(scope.row).mode !== 'legacy' && cuttingQuantities(scope.row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(scope.row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ scope.row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="*规格" min-width="140"><template #default="scope"><ElInput v-model="scope.row.specification" :disabled="!canEdit" maxlength="500" placeholder="必填，不能填 /" aria-label="裁剪规格" aria-required="true" /></template></ElTableColumn>
-              <ElTableColumn label="材质" min-width="130"><template #default="scope"><ElInput :model-value="cuttingMaterial(scope.row)" :disabled="!canEdit" maxlength="200" placeholder="填写材质" @update:model-value="scope.row.material = $event" /></template></ElTableColumn>
-              <ElTableColumn label="颜色" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.cutting_color) }}</span></template></ElTableColumn>
               <ElTableColumn label="裁片量（片/套）" width="125"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径，按根/支流转；此处为开发试算展示'">{{ legacyPipeCuttingValues(scope.row)?.pieces }}</span><ElInput v-else v-model="scope.row.cutting_pieces_per_set" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="裁片量（片/套）" /></template></ElTableColumn>
-              <ElTableColumn label="单个用量（米/片）" width="140"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'由旧每套耗米÷旧裁片量推算，仅用于开发试算展示'">{{ legacyPipeCuttingValues(scope.row)?.metersPerPiece }}</span><ElInput v-else v-model="scope.row.fabric_meters_per_piece" inputmode="decimal" :disabled="!canEdit" placeholder="待填写" aria-label="单个用量（米/片）" /></template></ElTableColumn>
               <ElTableColumn label="每成品套数（套/成品）" width="155"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径没有该布料字段，开发试算按 1 套展示'">{{ legacyPipeCuttingValues(scope.row)?.sets }}</span><ElInput v-else v-model="scope.row.cutting_sets_per_product" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="每成品套数（套/成品）" /></template></ElTableColumn>
-              <ElTableColumn label="每套耗米（米/套）" width="160"><template #default="scope"><template v-if="cuttingQuantities(scope.row).mode === 'legacy'"><ElInput v-model="scope.row.fabric_meters_per_set" inputmode="decimal" :disabled="!canEdit" aria-label="原每套耗米（米/套）" /></template><span v-else>{{ cuttingQuantities(scope.row).metersPerSet || '—' }}</span></template></ElTableColumn>
+              <ElTableColumn label="订单裁剪套数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderSets || '—' }}</template></ElTableColumn>
+              <ElTableColumn label="订单裁剪片数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderPieces || '—' }}</template></ElTableColumn>
               <ElTableColumn label="流转单位" width="100"><template #default="scope"><ElInput v-if="cuttingQuantities(scope.row).mode === 'legacy'" v-model="scope.row.unit" :disabled="!canEdit" maxlength="50" placeholder="填写单位" /><span v-else>套</span></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="260"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
@@ -3418,22 +3369,17 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else-if="editingSection?.title === '裁剪明细'">
-            <label class="drawer-field drawer-field--wide"><span>来源面料</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKey" filterable placeholder="选择本 BOM 的面料" aria-label="来源面料" no-data-text="请先在面料分类添加并选择面料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name || '面料'} · ${line.fabric_color_name || line.material} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small>已添加的面料可直接选择，保存 BOM 时一并保存关联。</small></template></label>
+            <label class="drawer-field drawer-field--wide"><span>来源面料</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKey" filterable placeholder="选择本 BOM 的面料" aria-label="来源面料" no-data-text="请先在面料分类添加并选择面料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name || '面料'} · ${line.fabric_color_name || line.material} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small>材质和颜色自动使用来源面料，保存 BOM 时一并保存关联。</small></template></label>
             <label class="drawer-field"><span>裁片量（片/套）</span><template v-if="legacyPipeCuttingValues(editingLineDraft)"><strong class="drawer-readonly-value cutting-legacy-value">{{ legacyPipeCuttingValues(editingLineDraft)?.pieces }}</strong></template><ElInput v-else v-model="editingLineDraft.cutting_pieces_per_set" inputmode="numeric" placeholder="每套有多少片" aria-label="裁片量（片/套）" /></label>
-            <label class="drawer-field"><span>单个用量（米/片）</span><template v-if="legacyPipeCuttingValues(editingLineDraft)"><strong class="drawer-readonly-value cutting-legacy-value">{{ legacyPipeCuttingValues(editingLineDraft)?.metersPerPiece }}</strong></template><ElInput v-else v-model="editingLineDraft.fabric_meters_per_piece" inputmode="decimal" placeholder="正数，最多四位小数" aria-label="单个用量（米/片）" /></label>
             <label class="drawer-field"><span>每成品套数（套/成品）</span><template v-if="legacyPipeCuttingValues(editingLineDraft)"><strong class="drawer-readonly-value cutting-legacy-value">{{ legacyPipeCuttingValues(editingLineDraft)?.sets }}</strong></template><ElInput v-else v-model="editingLineDraft.cutting_sets_per_product" inputmode="numeric" placeholder="每个成品需要多少套" aria-label="每成品套数（套/成品）" /></label>
-            <label class="drawer-field"><span>{{ editingCuttingCalculation?.mode === 'legacy' ? '原每套耗米（米/套）' : '每套耗米（米/套）' }}</span><ElInput v-if="editingCuttingCalculation?.mode === 'legacy'" v-model="editingLineDraft.fabric_meters_per_set" inputmode="decimal" aria-label="原每套耗米（米/套）" /><ElInput v-else :model-value="editingCuttingCalculation?.metersPerSet || ''" readonly placeholder="补齐后自动计算" aria-label="每套耗米（米/套）" /><small v-if="editingCuttingCalculation?.mode !== 'legacy'">裁片量 × 单个用量</small></label>
             <ElAlert v-if="editingCuttingCalculation?.error" data-testid="cutting-calculation-error" class="drawer-field--wide" type="warning" :closable="false" show-icon :title="editingCuttingCalculation.error" />
             <div class="cutting-order-calculations drawer-field--wide">
               <label class="drawer-field"><span>订单裁剪套数</span><strong data-testid="cutting-order-sets">{{ editingCuttingCalculation?.orderSets ? `${editingCuttingCalculation.orderSets} 套` : '待补充' }}</strong><small>BOM 订单 {{ number(bom?.order_quantity) }} × 每成品套数</small></label>
               <label class="drawer-field"><span>订单裁剪片数</span><strong data-testid="cutting-order-pieces">{{ editingCuttingCalculation?.orderPieces ? `${editingCuttingCalculation.orderPieces} 片` : '待补充' }}</strong><small>订单套数 × 裁片量</small></label>
-              <label class="drawer-field"><span>订单耗米</span><strong data-testid="cutting-total-meters">{{ editingCuttingCalculation?.totalMeters ? `${editingCuttingCalculation.totalMeters} 米` : '待补充' }}</strong><small>订单套数 × 每套耗米</small></label>
             </div>
             <label class="drawer-field"><span>裁剪名称</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
             <label class="drawer-field"><span>*规格</span><ElInput v-model="editingLineDraft.specification" maxlength="500" placeholder="填写实际尺寸或明确型号" aria-label="规格" aria-required="true" /><small>规格必填，不能用“/”等占位符；原资料未填写时请在这里补齐。</small></label>
             <label class="drawer-field"><span>流转单位</span><ElInput v-if="editingCuttingCalculation?.mode === 'legacy'" v-model="editingLineDraft.unit" maxlength="50" placeholder="填写单位" aria-label="单位" /><strong v-else class="drawer-readonly-value">套</strong></label>
-            <label class="drawer-field"><span>材质</span><ElInput :model-value="cuttingMaterial(editingLineDraft)" maxlength="200" placeholder="填写材质" aria-label="材质" @update:model-value="editingLineDraft.material = $event" /></label>
-            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ formatHardwareColor(editingLineDraft.cutting_color) }}</strong></label>
             <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="3" maxlength="500" show-word-limit aria-label="备注" /></label>
           </template>
 
@@ -3783,7 +3729,7 @@ onBeforeUnmount(() => {
           <ElSelect v-model="cuttingPickerMaterialName" clearable filterable :value-on-clear="''" :loading="cuttingGroupLoading" placeholder="全部品名分组" aria-label="裁剪品名分组" :filter-method="filterCuttingGroups" @change="searchCuttingCandidates" @visible-change="clearCuttingGroupFilter">
             <ElOption v-for="group in visibleCuttingGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
           </ElSelect>
-          <ElInput v-model="cuttingPickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名、材质、颜色或规格" @keyup.enter="searchCuttingCandidates" @clear="searchCuttingCandidates" />
+          <ElInput v-model="cuttingPickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名或规格" @keyup.enter="searchCuttingCandidates" @clear="searchCuttingCandidates" />
           <ElButton type="primary" @click="searchCuttingCandidates">查询</ElButton>
           <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('cutting')">新增裁片</ElButton>
         </div>
@@ -3797,8 +3743,6 @@ onBeforeUnmount(() => {
           <ElTableColumn prop="material_number" label="品号" width="135" show-overflow-tooltip />
           <ElTableColumn prop="material_name" label="裁剪名称" min-width="175" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="category_name" label="类别" width="120" show-overflow-tooltip />
-          <ElTableColumn prop="material" label="材质" width="105" show-overflow-tooltip />
-          <ElTableColumn label="颜色" min-width="125" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />
           <ElTableColumn prop="unit_name" label="单位" width="80" />
         </ElTable>
@@ -3828,6 +3772,7 @@ onBeforeUnmount(() => {
         title="新增裁片"
         subject-label="裁片"
         require-cutting-specification
+        inherit-fabric-attributes
         test-id="cutting-raw-material-create-dialog"
         :stage-material="(payload, display) => stageRawMaterial('cutting', payload, display)"
       />
@@ -3835,30 +3780,6 @@ onBeforeUnmount(() => {
         v-model="auxiliaryCreateVisible"
         @created="handleAuxiliaryCreated"
       />
-      <AppWindowDialog v-if="pendingMaterialSave && materialSavePreview" :model-value="true" title="确认新增原料"
-        width="min(980px, calc(100vw - 32px))" append-to-body :close-on-click-modal="false"
-        :close-on-press-escape="!saving && !verifying" :show-close="!saving && !verifying"
-        data-testid="bom-material-save-preview" class="bom-material-save-dialog"
-        @update:model-value="(visible: boolean) => { if (!visible) cancelMaterialSave() }">
-        <p class="material-save-summary">以下 {{ materialSavePreview.new_materials.length }} 项资料将在确认后新增，并与本次 BOM 一起保存。已有原料将直接复用。</p>
-        <p v-if="materialSaveError" role="alert" class="material-save-error">{{ materialSaveError }}</p>
-        <div class="material-save-table-scroll">
-          <table class="material-save-table">
-            <colgroup><col style="width: 11%"><col style="width: 7%"><col style="width: 16%"><col style="width: 21%"><col style="width: 12%"><col style="width: 13%"><col style="width: 7%"><col style="width: 13%"></colgroup>
-            <thead><tr><th>分区</th><th>行号</th><th>品名</th><th>规格</th><th>颜色</th><th>材质</th><th>单位</th><th>仓库</th></tr></thead>
-            <tbody><tr v-for="item in materialSavePreview.new_materials" :key="item.key" data-testid="bom-material-save-preview-row">
-              <td><div v-for="location in materialLocationGroups(item)" :key="location.section">{{ location.section }}</div></td>
-              <td><div v-for="location in materialLocationGroups(item)" :key="location.section">{{ location.rows }}</div></td>
-              <td>{{ item.material_name || '—' }}<small v-if="item.item_type === 'SEMI_FINISHED'" class="material-save-kind">半成品</small></td>
-              <td>{{ item.specification || '—' }}<small v-if="item.width" class="material-save-kind">门幅 {{ item.width }}</small></td><td>{{ item.color_label || item.color_name || '—' }}</td><td>{{ item.material || '—' }}</td><td>{{ item.unit_name || '—' }}</td><td>{{ item.warehouse_name || '—' }}</td>
-            </tr></tbody>
-          </table>
-        </div>
-        <template #footer>
-          <ElButton data-testid="bom-material-save-cancel" :disabled="saving || verifying" @click="cancelMaterialSave">返回修改</ElButton>
-          <ElButton data-testid="bom-material-save-confirm" type="primary" :loading="saving || verifying" :disabled="materialSaveRequiresRecheck" @click="confirmMaterialSave">{{ pendingMaterialSave.options.intent === 'verify' ? '确认新增并确认BOM' : '确认新增并保存草稿' }}</ElButton>
-        </template>
-      </AppWindowDialog>
     </template>
   </section>
 </template>
@@ -3866,13 +3787,6 @@ onBeforeUnmount(() => {
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
-.material-save-summary { margin: 0 0 16px; color: token.$crm-text-regular; line-height: 22px; }
-.material-save-error { color: token.$crm-danger; margin: 0 0 12px; }
-.material-save-table-scroll { max-height: min(480px, calc(100vh - 300px)); overflow: auto; }
-.material-save-table { width: 100%; table-layout: fixed; border-collapse: collapse; color: token.$crm-text-primary; font-size: 13px; }
-.material-save-table th, .material-save-table td { border: 1px solid token.$crm-border-default; padding: 10px 8px; line-height: 20px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-.material-save-table th { background: token.$crm-color-subtle; color: token.$crm-text-secondary; font-weight: 500; }
-.material-save-kind { display: block; color: token.$crm-text-secondary; }
 .pending-material-label { margin-right: 6px; color: token.$crm-warning; font-size: 12px; }
 .bom-review-context { font-size: 13px; color: token.$crm-text-regular; h3 { margin: 20px 0 12px; font-size: 13px; line-height: 20px; color: token.$crm-text-primary; &:first-child { margin-top: 0; } } p { margin: 0; line-height: 20px; } dl { margin: 0; } dl > div { margin: 0 0 12px; } dt { color: token.$crm-text-secondary; margin-bottom: 4px; } dd { margin: 0; overflow-wrap: anywhere; } }
 .bom-review-context__fields { display: grid; gap: 12px; label > span { display: block; margin-bottom: 8px; color: token.$crm-text-secondary; } :deep(.el-input__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; background: token.$crm-color-subtle; } }

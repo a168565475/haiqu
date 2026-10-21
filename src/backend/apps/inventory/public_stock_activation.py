@@ -18,7 +18,7 @@ from django.utils.dateparse import parse_datetime
 
 from apps.audit.models import AuditLog
 from apps.boms.models import Bom, BomLine
-from apps.boms.material_flow_calculations import cutting_usage_plan, pipe_plan
+from apps.boms.material_flow_calculations import cutting_quantity_plan, pipe_plan_for_line
 from apps.material_issues.models import (MaterialIssue, MaterialIssueLine, MetalProcessingSource,
     MetalProcessingOriginalHandoff, MetalProcessingExternalOrder, OrderMaterialRequirement,
     OrderSemiFinishedRequirement)
@@ -346,8 +346,7 @@ def _active_boms(blockers):
                             or raw.category.status != "ACTIVE" or raw.category.archived_at is not None):
                         _fail("PIPE_MATERIAL_INVALID", "有效管材部位须关联根制管材原料。")
                     value = pipe_source_snapshot(line, raw)
-                    recomputed = pipe_plan(cutting_length_mm=line.cutting_length_mm, pieces_per_product=line.pieces_per_product,
-                        pieces_per_bar=line.pieces_per_bar, order_quantity=bom.order_quantity)
+                    recomputed = pipe_plan_for_line(line)
                     if line.raw_bar_length_m != Decimal(recomputed["raw_bar_length_m"]):
                         _fail("PIPE_LENGTH_CONFLICT", "管材保存的原料长度与切割参数计算不符。")
                     pipe_limits[(task.pk, product.pk, line.component_identity)] = {"limit": Decimal(recomputed["allowance_pieces"]),
@@ -366,19 +365,17 @@ def _active_boms(blockers):
                             or raw.unit.status != "ACTIVE" or raw.unit.archived_at is not None
                             or raw.category.status != "ACTIVE" or raw.category.archived_at is not None):
                         _fail("CUTTING_MATERIAL_INVALID", "裁片来源须明确映射有效的米制面料原料档案。")
-                    value = cutting_usage_plan(cutting_pieces_per_set=line.cutting_pieces_per_set,
-                        fabric_meters_per_piece=line.fabric_meters_per_piece, cutting_sets_per_product=line.cutting_sets_per_product,
+                    value = cutting_quantity_plan(cutting_pieces_per_set=line.cutting_pieces_per_set,
+                        cutting_sets_per_product=line.cutting_sets_per_product,
                         order_quantity=bom.order_quantity)
                     if value is None:
-                        _fail("CUTTING_USAGE_REQUIRED", "有效裁片须填写每套片数、每片米数、每成品套数。")
-                    if line.fabric_meters_per_set != Decimal(value["fabric_meters_per_set"]):
-                        _fail("CUTTING_USAGE_CONFLICT", "裁片每套耗米与新用量字段不一致。")
+                        _fail("CUTTING_USAGE_REQUIRED", "有效裁片须填写每套片数和每成品套数。")
                     value["resolved_fabric_material"] = {"id": str(raw.pk), "unit_id": str(raw.unit_id),
                         "category_id": str(raw.category_id), "source_bom_line_id": str(line.fabric_source_line_id)}
                     return value
                 entry["usage"] = _capture(blockers, check_cutting, bom_line_id=line.pk)
                 matching = [craft for craft in crafts if (craft.outsourcing_code if craft.craft_type == "EXTERNAL" else craft.plan_category)
-                            in {"CUTTING", "SEWING", "SCREEN_PRINTING"}]
+                            in {"CUTTING", "SEWING", "SCREEN_PRINTING", "EMBROIDERY"}]
                 unit = units.get("套")
             elif kind == "HARDWARE":
                 selected = set(OutsourcingProcessingItem.objects.filter(bom_line=line)

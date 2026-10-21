@@ -124,6 +124,24 @@ it('本次可领为零的空行不进入确认发料请求', async () => {
   expect(requiredVm.error).toContain('required')
 })
 
+it('按套加工的车缝单发料仍接受小数米数，不从米数推算产出套数', async () => {
+  api.context.mockResolvedValue({ materials: [{ material_item_id: 'fabric-1', factory_name: '车缝厂', material_name: '牛津布',
+    unit: '米', procurement_unit: '米', planned_issue_quantity: '20', max_issue_quantity: '20', internal_issued_quantity: '0',
+    outsourcing_issued_quantity: '0', order_remaining: '20', available_stock: '20', quota_error: '',
+    conversion_snapshot: { schema_version: 2, kind: 'FABRIC', quantity_basis: 'OUTPUT_SETS', raw_material_id: 'fabric-1', raw_input_unit: '米' },
+    zones: [{ zone_id: 'zone-1', warehouse_name: '材料仓', zone_name: '一区', available_quantity: '20', available_input_quantity: '20', available_meters: null }],
+  }] })
+  api.dispatch.mockResolvedValue({})
+  const wrapper = createView()
+  const vm = wrapper.vm as any
+  await vm.open('dispatch')
+  await flushPromises()
+  await wrapper.get('input[aria-label="牛津布本次发料数量"]').setValue('12.5')
+  await vm.submit()
+  expect(api.dispatch).toHaveBeenCalledTimes(1)
+  expect(api.dispatch.mock.calls[0]![1].lines).toEqual([{ material_item_id: 'fabric-1', zone_id: 'zone-1', requested_quantity: '12.5' }])
+})
+
 describe('公共回货仅接收合格半成品', () => {
   it.each(['PUBLIC_V2', 'LEGACY'] as const)('%s 的回货界面与提交保持对应口径', async stockMode => {
     api.reconciliation.mockResolvedValue({

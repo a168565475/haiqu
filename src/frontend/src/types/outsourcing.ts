@@ -6,7 +6,7 @@ export type OutsourcingOrderStatus = 'PENDING_DISPATCH' | 'PROCESSING' | 'PARTIA
 export interface OutsourcingCraftOption {
   id: string
   name: string
-  outsourcing_code?: 'SEWING' | 'CUTTING' | 'POWDER_COATING' | 'SCREEN_PRINTING'
+  outsourcing_code?: 'SEWING' | 'CUTTING' | 'POWDER_COATING' | 'EMBROIDERY' | 'SCREEN_PRINTING'
 }
 
 export interface OutsourcingFactory {
@@ -290,7 +290,7 @@ export interface OutsourcingOrderCreateInput {
       allocations: Array<{
         factory_id: string
         allocated_quantity: string
-        input_quantity: string
+        input_quantity: string | null
         unit_price: string
         remark: string
       }>
@@ -477,6 +477,8 @@ export interface VersionedOutsourcingOrder {
 export interface OutsourcingConversion {
   schema_version: number
   kind: 'PIPE' | 'FABRIC' | 'OTHER'
+  quantity_basis?: 'OUTPUT_SETS'
+  raw_input_unit?: string
   pieces_per_bar?: number
   raw_bar_length_m?: string
   cutting_length_mm?: number

@@ -48,6 +48,14 @@ def _fingerprint(data, uploaded_file):
     return hashlib.sha256(json.dumps(normalized, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _factory_creator(request, actor):
+    from apps.access_control.selectors import current_assignments
+    from apps.core.auth import active_employee_for
+    return bool(actor and active_employee_for(request.user) == actor
+                and request.user.has_perm('samples.review_sample_application')
+                and current_assignments(actor).filter(role_profile__role_code='FACTORY_MANAGER').exists())
+
+
 @transaction.atomic
 def submit_application(*, data, uploaded_file, request, sample_id=None):
     actor = getattr(request, 'employee', None)
@@ -161,7 +169,9 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
     quantity = data.pop('quantity')
     product_fields = {field: data.pop(field) for field in ['product_name', 'specification', 'length_cm', 'armrest_width_cm', 'seat_width_cm', 'back_height_cm', 'seat_height_cm']}
     data.update({field: relations.get(field) for field in ['transaction_entity', 'source_inquiry', 'source_quotation_version']})
-    data.update(status=SampleRequestStatus.DIRECTOR_REVIEW, submitted_on=timezone.localdate(), requested_due_at=_legacy_datetime(data['sample_due_date']) if data['sample_due_date'] else None)
+    directly_effective = sample_id is None and _factory_creator(request, actor)
+    data.update(status=SampleRequestStatus.PENDING_COMPLETION if directly_effective else SampleRequestStatus.DIRECTOR_REVIEW,
+                submitted_on=timezone.localdate(), requested_due_at=_legacy_datetime(data['sample_due_date']) if data['sample_due_date'] else None)
     saved_image = None
     try:
         if uploaded_file:
@@ -178,6 +188,12 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 sample.reference_image = saved_image or inherited_image
             sample.save()
             product = sample.products.get(line_number=1)
+            if not source_type and selected_product is None and product.product_id is not None:
+                # 正式产品改为自定义产品后，旧档案关联及派生快照不再适用。
+                source_product_values = {
+                    'product': None, 'product_number_snapshot': '', 'product_code_snapshot': '',
+                    'item_number_snapshot': '', 'material_snapshot': '', 'product_image': None,
+                }
             for field, value in {**product_fields, **source_product_values, **product_source}.items():
                 setattr(product, field, value)
             product.save()
@@ -185,7 +201,10 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             for field, value in {**product_source, 'product_description_snapshot': product.product_name, 'specification_snapshot': product.specification, 'requested_quantity': quantity, 'sample_quantity': quantity}.items():
                 setattr(item, field, value)
             item.save()
-        _write_sample_records(sample_request=sample, action='APPLICATION_RESUBMITTED' if sample_id else 'APPLICATION_SUBMITTED', actor_employee=actor, request=request, before_data=before, note='提交厂长确认。')
+        _write_sample_records(sample_request=sample,
+            action='APPLICATION_EFFECTIVE' if directly_effective else 'APPLICATION_RESUBMITTED' if sample_id else 'APPLICATION_SUBMITTED',
+            actor_employee=actor, request=request, before_data=before,
+            note='有效FACTORY_MANAGER本人创建直接生效，进入待工厂完善；创建人与生效人为同一真实员工。' if directly_effective else '提交厂长确认。')
         from apps.inquiries.handling_time import sample_submitted
         sample_submitted(sample)
         return sample, False
@@ -202,8 +221,6 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
 @transaction.atomic
 def review_application(*, sample_id, data, request):
     sample = SampleRequest.objects.select_for_update().get(pk=sample_id)
-    from apps.access_control.module_policy import prohibit_audit_self_approval
-    prohibit_audit_self_approval(getattr(request, 'employee', None), 'SAMPLE_REQUEST', sample.pk, ['APPLICATION_SUBMITTED', 'APPLICATION_RESUBMITTED'])
     actor = getattr(request, 'employee', None)
     if not actor or not request.user.has_perm('samples.review_sample_application'):
         raise PermissionDenied('当前账号没有厂长审核权限。')
@@ -211,7 +228,7 @@ def review_application(*, sample_id, data, request):
     if not application_actions(sample, request)['can_director_review']:
         raise Conflict('该申请当前不在待厂长确认阶段，请刷新查看。')
     before = model_snapshot(sample, SAMPLE_FIELDS)
-    sample.status = SampleRequestStatus.MATERIALS_PENDING if data['decision'] == 'approve' else SampleRequestStatus.APPLICATION_RETURNED
+    sample.status = SampleRequestStatus.PENDING_COMPLETION if data['decision'] == 'approve' else SampleRequestStatus.APPLICATION_RETURNED
     sample.director_note = data['note'].strip()
     sample.save(update_fields=['status', 'director_note', 'updated_at'])
     _write_sample_records(sample_request=sample, action='DIRECTOR_APPROVED' if data['decision'] == 'approve' else 'DIRECTOR_RETURNED', actor_employee=actor, request=request, before_data=before, note=sample.director_note)

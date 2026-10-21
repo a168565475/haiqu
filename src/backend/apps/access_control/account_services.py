@@ -14,7 +14,7 @@ from .services import audit, require_manager
 
 
 def checked_employee(request, pk):
-    require_manager(request)
+    require_manager(request, 'access_control.manage_accounts')
     employee = get_object_or_404(Employee.objects.select_for_update(no_key=True), pk=pk)
     require_matching_etag(request, employee)
     if employee.archived_at or employee.status != "ACTIVE":

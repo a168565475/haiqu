@@ -74,6 +74,7 @@ class TubeD1ReceiptTests(D1Fixture, APITestCase):
         raw_out_before = PublicStockMovement.objects.filter(direction='OUT').count()
         self.d1_post()
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.assertRegex(receipt.receipt_number, rf'^BNRK{timezone.localdate():%y%m%d}[0-9]{{3,}}$')
         line = InternalSemiFinishedReceiptLine.objects.get()
         self.assertEqual(receipt.source_snapshot['quantity_basis'], 'WORK_REPORT_MINIMUM')
         self.assertEqual((line.quantity, line.input_quantity, line.received_after), (7, 7, 7))

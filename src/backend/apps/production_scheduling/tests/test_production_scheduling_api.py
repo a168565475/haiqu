@@ -320,7 +320,7 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertEqual(invalid_date.status_code, 400, invalid_date.data)
         created = self.create_schedule()
         detail = created.data["data"]
-        self.assertRegex(detail["schedule_number"], r"^PC-\d{8}-\d{3,}$")
+        self.assertRegex(detail["schedule_number"], rf"^PC{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
         self.assertEqual(detail["products"][0]["planned_quantity"], 80)
         self.assertEqual(len(detail["products"][0]["crafts"]), 2)
         self.assertTrue(created.has_header("ETag"))

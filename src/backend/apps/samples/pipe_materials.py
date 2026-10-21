@@ -60,7 +60,8 @@ def sample_pipe_plan(row, quantity=None):
     try:
         return pipe_plan(cutting_length_mm=row.get('cuttingLengthMm'), pieces_per_product=1,
                          pieces_per_bar=row.get('piecesPerBar'),
-                         order_quantity=row.get('quantity') if quantity is None else quantity)
+                         order_quantity=row.get('quantity') if quantity is None else quantity,
+                         calculation_version=2)
     except MaterialFlowValueError as error:
         raise ValidationError({error.field: str(error)}) from error
 

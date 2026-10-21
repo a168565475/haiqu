@@ -41,12 +41,13 @@ onMounted(async () => {
 .page-container {
   width: 100%;
   min-height: 100%;
-  padding: 14px;
+  /* 页面外缘由 ErpLayout 统一留白，正文容器不再叠加内边距。 */
+  padding: 0;
   background: transparent;
 }
 
 .page-container--flush {
-  padding: 14px;
+  padding: 0;
 }
 
 .page-container--fit-viewport {
@@ -86,7 +87,7 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .page-container {
-    padding: 14px;
+    padding: 0;
   }
 }
 

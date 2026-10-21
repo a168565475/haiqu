@@ -122,6 +122,12 @@ class PurchaseRequestFlowApiTests(APITestCase):
             "/api/v1/production-tasks/create-from-sales-order/",
             {
                 "task_number": "HT26199-1",
+                "follower_ids": [str(self.employee.pk)],
+                "delivery_date": today,
+                "includes_tax": False,
+                "order_tolerance_percent": "0",
+                "is_repeat_order": False,
+                "delivery_method": "SINGLE",
                 "delivery_batch_line_id": batch_line_id,
                 "quantity": 10,
                 "planned_start_date": today,

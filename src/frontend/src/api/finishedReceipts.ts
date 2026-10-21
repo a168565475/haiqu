@@ -8,6 +8,6 @@ export async function fetchAssemblyCandidates(params:Record<string,unknown>) { r
 export async function fetchFinishedRecords(params:Record<string,unknown>) { return (await apiClient.get<{data:{items:FinishedRecord[];total:number}}>(root+'finished-goods-records/',{params,timeout:15000})).data.data }
 export async function fetchFinishedRecord(id:string) { return (await apiClient.get<{data:FinishedRecord}>(root+`finished-goods-records/${id}/`,{timeout:15000})).data.data }
 export async function fetchFinishedLocations(row:FinishedGoodsInventoryRow) {
- const params={product_id:row.product_id||undefined,unit_id:row.unit_id,zone_id:row.zone_id,product_number:row.product_number,product_code:row.product_code,product_name:row.product_name,item_number:row.item_number,category:row.category,specification:row.specification,actual_color:row.actual_color}
+ const params={exclude_sample:true,task_number:row.task_number,product_id:row.product_id||undefined,unit_id:row.unit_id,zone_id:row.zone_id,product_number:row.product_number,product_code:row.product_code,product_name:row.product_name,item_number:row.item_number,category:row.category,specification:row.specification,actual_color:row.actual_color}
  return (await apiClient.get<{data:{items:FinishedLocation[]}}>(root+'finished-goods-records/locations/',{params,timeout:15000})).data.data.items
 }

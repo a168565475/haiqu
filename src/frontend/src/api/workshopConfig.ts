@@ -11,6 +11,7 @@ import type {
   WorkshopConfigQuery,
   WorkshopConfigRecord,
   WorkshopConfigSummary,
+  WorkshopEmployeeOptions,
 } from '@/types/workshopConfig'
 
 const basePath = '/api/v1/workshop-config/'
@@ -42,6 +43,13 @@ export async function fetchWorkshopConfigDetail<T extends WorkshopConfigRecord>(
 ): Promise<VersionedWorkshopConfig<T>> {
   const response = await apiClient.get<DataResponse<T>>(`${resourcePath(kind)}${encodeURIComponent(id)}/`)
   return versioned(response)
+}
+
+export async function fetchWorkshopEmployeeOptions(
+  query: WorkshopConfigQuery,
+): Promise<WorkshopEmployeeOptions> {
+  const { data } = await apiClient.get<WorkshopEmployeeOptions>(`${basePath}employees/employee-options/`, { params: query })
+  return data
 }
 
 export async function fetchWorkshopConfigSummary(

@@ -11,6 +11,8 @@ from apps.inventory.models import PublicStockMovement, WarehouseZone
 from apps.inventory.public_stock_identity import validate_public_identity
 
 from .models import TubeOutsourcingAction, TubeOutsourcingReceipt
+from .tube_prices import line_price_data, planned_amount
+from .tube_kinds import CUTTING_SOURCES, CUTTING_CRAFT_CODES, CUTTING_FIELDS, DIRECT_SOURCES, output_unit, source_category
 from .tube_selectors import (RETURN_PERMISSION, SOURCE_LABELS, VIEW_PERMISSION, product_summary,
     require_saved_order_access, saved_order_data, saved_orders_for_permission, tube_order_queryset)
 
@@ -25,7 +27,7 @@ def require_receipt_read_access(request, order):
             return
         except APIException:
             continue
-    raise PermissionDenied('当前账号没有查看该管材最终回货凭证的工艺权限。')
+    raise PermissionDenied('当前账号没有查看该外发单最终回货凭证的工艺权限。')
 
 
 def dispatch_evidence_blockers(order):
@@ -36,16 +38,22 @@ def dispatch_evidence_blockers(order):
     if not lines or dispatch is None or actions.get('CANCEL') is not None:
         return ['原单缺少有效的整单实际发出凭证，不能登记回货。']
     if not isinstance(dispatch.snapshot, dict) or dispatch.snapshot.get('quantity') != sum(line.quantity for line in lines):
-        return ['原单实际发出支数与保存明细不一致，请核对原凭证。']
+        return ['原单实际发出数量与保存明细不一致，请核对原凭证。']
+    from .tube_materials import material_dispatch_blockers
+    material_blockers = material_dispatch_blockers(order, dispatch)
+    if material_blockers:
+        return material_blockers
     for line in lines:
         try:
             identity = validate_public_identity(line.snapshot.get('public_output_identity') if isinstance(line.snapshot, dict) else None)
-            if (identity['stock_kind'] != 'SEMI' or identity['identity_snapshot']['unit_name'] != '支'
-                    or identity['identity_snapshot']['completed_craft']['code'] != 'POWDER_COATING'):
-                raise ValueError('不是喷塑支数身份')
+            codes = CUTTING_CRAFT_CODES if order.source_kind in CUTTING_SOURCES else {'POWDER_COATING'}
+            if (identity['stock_kind'] != 'SEMI' or identity['identity_snapshot']['unit_name'] != output_unit(order.source_kind)
+                    or identity['identity_snapshot']['completed_craft']['code'] not in codes
+                    or identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id)):
+                raise ValueError('加工身份不匹配')
         except (ValueError, TypeError, KeyError, APIException):
-            return ['原单缺少完整的冻结喷塑半成品身份，请核对原凭证。']
-    if order.source_kind == 'METAL':
+            return ['原单缺少完整的冻结加工半成品身份，请核对原凭证。']
+    if order.source_kind in DIRECT_SOURCES:
         return [] if not dispatch.snapshot.get('movements') else ['未入库半成品原单存在异常扣库凭证。']
     movements = list(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_DISPATCH',
         source_id=order.pk, direction='OUT').select_related('balance'))
@@ -85,6 +93,8 @@ def receipt_data(receipt, *, created=False):
     for row in sorted(receipt.lines.all(), key=lambda value: str(value.order_line_id)):
         saved = row.snapshot
         rows.append({'id': str(row.pk), 'order_line_id': str(row.order_line_id),
+            **line_price_data(row.order_line),
+            **{key: saved.get(key) for key in CUTTING_FIELDS},
             'component_identity': str(row.order_line.component_identity),
             **{key: saved.get(key) for key in ('part_name', 'material', 'specification', 'thickness',
                                               'cutting_length_mm', 'raw_color', 'spray_color', 'factory_name')},
@@ -96,6 +106,8 @@ def receipt_data(receipt, *, created=False):
     return {'id': str(receipt.pk), 'receipt_number': receipt.receipt_number, 'order_id': str(receipt.order_id),
         'order_number': header.get('order_number', receipt.order.order_number), 'status': 'COMPLETED',
         'source_kind': receipt.order.source_kind, 'source_label': SOURCE_LABELS[receipt.order.source_kind],
+        'category': source_category(receipt.order.source_kind), 'output_unit': output_unit(receipt.order.source_kind),
+        'craft_id': str(receipt.order.craft_id), 'craft_name': receipt.order.craft.name,
         'client_request_id': str(receipt.client_request_id), 'receipt_date': str(receipt.receipt_date),
         'warehouse_id': str(receipt.warehouse_id) if receipt.warehouse_id else None,
         'warehouse_name': header.get('warehouse_name', ''), 'confirmed_at': receipt.created_at.isoformat(),
@@ -103,6 +115,7 @@ def receipt_data(receipt, *, created=False):
         'total_dispatched_quantity': str(sum(row.dispatched_quantity for row in receipt.lines.all())),
         'total_received_quantity': str(sum(row.received_quantity for row in receipt.lines.all())),
         'total_shortage_quantity': str(sum(row.shortage_quantity for row in receipt.lines.all())),
+        'planned_amount': planned_amount(row.order_line for row in receipt.lines.all()),
         'etag': etag_for_instance(receipt.order), 'created': created, 'lines': rows}
 
 
@@ -138,6 +151,10 @@ def receipt_candidates(request, data):
         has_cancel=Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='CANCEL')),
         has_receipt=Exists(TubeOutsourcingReceipt.objects.filter(order_id=OuterRef('pk'))),
     ).filter(has_dispatch=True, has_cancel=False, has_receipt=False)
+    if data.get('category', 'tube') == 'cutting':
+        eligible = eligible.filter(source_kind__in=CUTTING_SOURCES)
+    else:
+        eligible = eligible.exclude(source_kind__in=CUTTING_SOURCES)
     if data.get('source_kind'):
         eligible = eligible.filter(source_kind=data['source_kind'])
     search = data.get('search', '').strip()
@@ -147,6 +164,7 @@ def receipt_candidates(request, data):
             | Q(product_line__item_number_snapshot__icontains=search)
             | Q(product_line__product_name_snapshot__icontains=search)
             | Q(lines__snapshot__factory_name__icontains=search)
+            | Q(materials__snapshot__factory_name__icontains=search)
             | Q(schedule_product__schedule__production_task__task_number__icontains=search)
             | Q(schedule_product__schedule__production_task__order_number__icontains=search)).distinct()
     total = eligible.count()
@@ -161,8 +179,11 @@ def receipt_candidates(request, data):
             'task_order_number': summary['order_number'], **{key: summary[key] for key in (
                 'task_number', 'product_number', 'item_number', 'product_name', 'color')},
             'source_kind': order.source_kind, 'source_label': SOURCE_LABELS[order.source_kind],
+            'category': source_category(order.source_kind), 'output_unit': output_unit(order.source_kind),
+            'craft_id': str(order.craft_id), 'craft_name': order.craft.name,
             'actual_dispatch_date': str(dispatch.actual_dispatch_date),
             'expected_return_date': str(order.expected_return_date),
             'total_quantity': str(sum(line.quantity for line in order.lines.all())),
-            'factory_names': sorted({line.snapshot.get('factory_name', '') for line in order.lines.all()})})
+            'factory_names': sorted({line.snapshot.get('factory_name', '')
+                                     for line in [*order.lines.all(), *order.materials.all()]})})
     return {'items': rows, 'total': total, 'page': data['page'], 'page_size': data['page_size']}

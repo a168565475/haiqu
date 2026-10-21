@@ -1,5 +1,5 @@
 import { apiClient } from './request'
-import type { SampleMaterialDraft, SampleMaterialLoadResult, SampleMaterialUnit } from '@/types/sampleMaterial'
+import type { SampleMaterialDraft, SampleMaterialLoadResult, SampleMaterialUnit, SampleProcurementMaterialContext } from '@/types/sampleMaterial'
 import type { SampleMaterialReferences, SampleMaterialCandidate, SampleMaterialCategory } from '@/types/sampleMaterial'
 
 export async function fetchSampleMaterialReferences(): Promise<SampleMaterialReferences> {
@@ -17,6 +17,11 @@ export async function fetchSampleMaterialUnits(): Promise<SampleMaterialUnit[]> 
 export async function fetchSampleMaterials(sampleId: string): Promise<SampleMaterialLoadResult> {
   if (!sampleId) throw new Error('缺少申请编号。')
   return (await apiClient.get<{ data: SampleMaterialLoadResult }>(`/api/v1/sample-requests/${sampleId}/materials/`)).data.data
+}
+
+export async function fetchSampleProcurementMaterialContext(sampleId: string): Promise<SampleProcurementMaterialContext> {
+  if (!sampleId) throw new Error('缺少申请编号。')
+  return (await apiClient.get<{ data: SampleProcurementMaterialContext }>(`/api/v1/sample-requests/${sampleId}/procurement-material-context/`)).data.data
 }
 
 export async function saveSampleMaterials(input: { sampleId: string; etag: string; draft: SampleMaterialDraft; submit: boolean }): Promise<SampleMaterialLoadResult> {

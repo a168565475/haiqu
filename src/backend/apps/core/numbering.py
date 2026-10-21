@@ -42,6 +42,11 @@ def _registered_number_rule(number_type):
 
 
 def next_business_number(number_type, business_date=None):
+    from .daily_numbering import DAILY_NUMBER_RULES, next_daily_business_number
+
+    if number_type in DAILY_NUMBER_RULES:
+        return next_daily_business_number(number_type, business_date)
+
     if number_type in {"PRODUCTION_ORDER", "PRODUCTION_TASK"}:
         # 两条历史入口现在共用一套生产任务年度流水，避免继续产生 MO 与旧 HT 格式。
         from apps.production_tasks.numbering import next_production_task_number

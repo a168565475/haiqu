@@ -51,7 +51,7 @@ class ErpSessionAccessMiddleware:
             # 保留已验证的会话，让员工能查询授权状态或退出；业务访问仍由后端拦截。
             return JsonResponse({"error": {
                 "code": "WECOM_ROLE_REQUIRED",
-                "message": "等待管理员分配角色",
+                "message": "等待管理员分配访问权限",
                 "field_errors": {},
                 "request_id": getattr(request, "request_id", None),
             }}, status=403)

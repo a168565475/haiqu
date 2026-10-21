@@ -11,6 +11,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
 from apps.core.api.exceptions import Conflict
+from apps.core.numbering import next_business_number
 from apps.material_issues.models import OrderMaterialRequirement
 from apps.material_issues.processing_selectors import digest
 from apps.production_scheduling.selectors import schedule_items_for_category, accessible_production_schedules
@@ -254,7 +255,7 @@ def confirm_tube_receipt(request, data):
     zone = get_object_or_404(WarehouseZone, pk=data['zone_id'], status='ACTIVE',
         warehouse__status='ACTIVE', warehouse__warehouse_type='SEMI_FINISHED')
     header = InternalSemiFinishedReceipt.objects.create(
-        receipt_number='BNRK' + timezone.localtime().strftime('%Y%m%d%H%M%S') + uuid.uuid4().hex[:10].upper(),
+        receipt_number=next_business_number('INTERNAL_SEMI_RECEIPT'),
         request_id=data['request_id'], request_payload_hash=payload_hash, schedule_product=context['plan'],
         completed_craft=context['craft'], plan_category='METAL', receipt_date=data['receipt_date'], zone=zone,
         actor_employee=actor, source_revision_hash=context['revision'], remark=data.get('remark', ''),

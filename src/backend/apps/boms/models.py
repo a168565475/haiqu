@@ -269,12 +269,12 @@ class BomLine(TimeStampedModel):
             ),
             models.CheckConstraint(condition=Q(fabric_meters_per_set__isnull=True) | Q(fabric_meters_per_set__gt=0), name="bom_fabric_consumption_positive"),
             models.CheckConstraint(
-                condition=(Q(cutting_pieces_per_set__isnull=True, fabric_meters_per_piece__isnull=True,
+                condition=((Q(cutting_pieces_per_set__isnull=True,
                              cutting_sets_per_product__isnull=True)
                     | Q(cutting_pieces_per_set__isnull=False, cutting_pieces_per_set__gt=0,
-                        cutting_pieces_per_set__lt=100000000000000, fabric_meters_per_piece__isnull=False,
-                        fabric_meters_per_piece__gt=0, cutting_sets_per_product__isnull=False,
-                        cutting_sets_per_product__gt=0, cutting_sets_per_product__lt=100000000000000)),
+                        cutting_pieces_per_set__lt=100000000000000, cutting_sets_per_product__isnull=False,
+                        cutting_sets_per_product__gt=0, cutting_sets_per_product__lt=100000000000000))
+                    & (Q(fabric_meters_per_piece__isnull=True) | Q(fabric_meters_per_piece__gt=0))),
                 name="bom_cutting_usage_complete",
             ),
         ]

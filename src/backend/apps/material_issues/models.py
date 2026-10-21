@@ -614,6 +614,7 @@ class MetalProcessingExternalOrder(TimeStampedModel):
     factory = models.ForeignKey("outsourcing.OutsourcingFactory", on_delete=models.PROTECT, related_name="metal_processing_external_orders")
     craft = models.ForeignKey("workshop_config.Craft", on_delete=models.PROTECT, related_name="metal_processing_external_orders")
     allocated_pieces = models.PositiveBigIntegerField()
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     handoff_pieces = models.PositiveBigIntegerField(default=0)
     returned_good_pieces = models.PositiveBigIntegerField(default=0)
     status = models.CharField(max_length=20, choices=MetalProcessingExternalOrderStatus.choices, default=MetalProcessingExternalOrderStatus.PENDING_HANDOFF)
@@ -636,6 +637,7 @@ class MetalProcessingExternalOrder(TimeStampedModel):
         ]
         constraints = [
             models.CheckConstraint(condition=Q(allocated_pieces__gt=0), name="metal_p4_order_allocated_positive"),
+            models.CheckConstraint(condition=Q(unit_price__isnull=True) | Q(unit_price__gte=0), name="metal_p4_order_price_nonnegative"),
             models.CheckConstraint(condition=Q(handoff_pieces__gte=0) & Q(handoff_pieces__lte=F("allocated_pieces")), name="metal_p4_order_handoff_limit"),
             models.CheckConstraint(condition=Q(returned_good_pieces__gte=0) & Q(returned_good_pieces__lte=F("handoff_pieces")), name="metal_p4_order_return_limit"),
             models.CheckConstraint(condition=Q(version__gt=0), name="metal_p4_order_version_positive"),

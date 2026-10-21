@@ -4,12 +4,13 @@ from urllib.parse import parse_qs, urlparse
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.db import IntegrityError, transaction
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from apps.access_control.models import RoleActionGrant
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import etag_for_instance
 from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
@@ -187,7 +188,7 @@ class WeComIntegrationTests(TestCase):
         self.assertTrue(employee.user.check_password("old-password"))
         self.assertTrue(employee.user.groups.filter(pk=group.pk).exists())
         self.assertFalse(WeComBinding.objects.get().created_account)
-        self.assertFalse(waiting_for_role(employee.user))
+        self.assertTrue(waiting_for_role(employee.user))
 
     @patch("apps.wecom.services.WeComClient")
     def test_manual_binding_employee_without_account_creates_unusable_password(self, client_class):
@@ -233,6 +234,10 @@ class WeComIntegrationTests(TestCase):
         role = RoleProfile.objects.create(auth_group=Group.objects.create(name="WeCom role"), role_code="WECOM_TEST", display_name="测试角色")
         assignment = EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role,
                                                             effective_from=timezone.now() - timedelta(days=1))
+        self.assertTrue(waiting_for_role(employee.user))
+        permission = Permission.objects.get(content_type__app_label="reference_data", codename="view_country")
+        RoleActionGrant.objects.create(role=role, permission=permission, scope="MODULE")
+        role.auth_group.permissions.add(permission)
         self.assertFalse(waiting_for_role(employee.user))
         assignment.effective_to = timezone.now()
         assignment.save()
@@ -254,6 +259,10 @@ class WeComIntegrationTests(TestCase):
         role = RoleProfile.objects.create(auth_group=Group.objects.create(name="Gate role"), role_code="WECOM_GATE", display_name="门禁角色")
         assignment = EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role,
                                                             effective_from=timezone.now() - timedelta(hours=1))
+        self.assertEqual(browser.get("/api/v1/").status_code, 403)
+        permission = Permission.objects.get(content_type__app_label="reference_data", codename="view_country")
+        RoleActionGrant.objects.create(role=role, permission=permission, scope="MODULE")
+        role.auth_group.permissions.add(permission)
         self.assertEqual(browser.get("/api/v1/").status_code, 200)
         self.assertFalse(browser.get("/api/auth/me/").data["user"]["waiting_for_role"])
         assignment.effective_to = timezone.now()
@@ -324,21 +333,20 @@ class WeComIntegrationTests(TestCase):
         client_class.assert_not_called()
 
     @patch("apps.wecom.services.WeComClient")
-    def test_first_oauth_login_creates_once_and_never_matches_by_name(self, client_class):
+    def test_first_oauth_login_requires_manual_binding_for_existing_name(self, client_class):
         self.config()
         self.mock_member(client_class, name="真实员工")
         existing = self.employee()
         anonymous = APIClient()
+        counts = (Employee.objects.count(), get_user_model().objects.count())
         response = self.callback(self.start(anonymous), anonymous)
-        self.assertEqual(response.url, "/auth/waiting-role")
-        binding = WeComBinding.objects.get()
-        self.assertNotEqual(binding.employee_id, existing.pk)
-        self.assertFalse(binding.employee.user.has_usable_password())
-        self.assertFalse(binding.employee.user.is_staff)
-        self.assertFalse(binding.employee.user.is_superuser)
-        self.assertEqual(self.callback(self.start(anonymous), anonymous).url, "/auth/waiting-role")
-        self.assertEqual(WeComBinding.objects.count(), 1)
-        self.assertEqual(AuditLog.objects.filter(object_type="WECOM", action="AUTO_CREATE").count(), 1)
+        self.assertIn("reason=BINDING_REQUIRED", response.url)
+        self.assertIn("reason=BINDING_REQUIRED", self.callback(self.start(anonymous), anonymous).url)
+        self.assertFalse(WeComBinding.objects.exists())
+        self.assertEqual((Employee.objects.count(), get_user_model().objects.count()), counts)
+        self.assertTrue(existing.user.check_password("old-password"))
+        self.assertNotIn("_auth_user_id", anonymous.session)
+        self.assertFalse(AuditLog.objects.filter(object_type="WECOM", action="AUTO_CREATE").exists())
 
     @patch("apps.wecom.services.WeComClient")
     def test_logged_in_a_returning_b_is_rejected_before_creating_records(self, client_class):
@@ -377,7 +385,7 @@ class WeComIntegrationTests(TestCase):
         employee.status = "INACTIVE"
         employee.save()
         anonymous = APIClient()
-        self.assertIn("reason=LOGIN_FAILED", self.callback(self.start(anonymous), anonymous).url)
+        self.assertIn("reason=ACCOUNT_INACTIVE", self.callback(self.start(anonymous), anonymous).url)
         employee.refresh_from_db()
         self.assertEqual(employee.status, "INACTIVE")
         self.assertNotIn("_auth_user_id", anonymous.session)

@@ -656,6 +656,7 @@ onMounted(loadPage)
           <el-button v-if="authStore.hasPermission('workflow.view_slapolicy')" class="page-heading__link erp-button-motion" tag="a" href="/settings/inquiry-handling-time">询盘处理时限</el-button>
           <el-button v-if="canViewMasterData" class="page-heading__link erp-button-motion" tag="a" href="/settings/master-data">基础资料中心</el-button>
           <el-button v-if="authStore.user?.is_superuser || authStore.hasPermission('reference_data.view_numberrule')" class="page-heading__link erp-button-motion" tag="a" href="/settings/number-rules">编号规则</el-button>
+          <el-button v-if="authStore.managementCan('access_control.manage_notifications')" class="page-heading__link erp-button-motion" tag="a" href="/settings/notifications">通知规则</el-button>
           <el-button class="page-heading__link erp-button-motion" tag="a" href="/settings/theme">界面主题</el-button>
           <el-button v-if="can(permissions.viewParameter)" class="page-heading__link erp-button-motion" data-testid="open-parameters" @click="parameterDrawerVisible = true">业务参数</el-button>
           <el-button class="erp-button-motion" :icon="Download" @click="exportConfiguration">导出配置</el-button>

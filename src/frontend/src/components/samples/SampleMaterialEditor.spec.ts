@@ -25,6 +25,28 @@ beforeEach(() => { vi.clearAllMocks(); api.references.mockResolvedValue(referenc
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('用料需求复用 BOM 编辑交互', () => {
+  it('仅sidebar模式采用左分类右明细，切换保留全部行并复用行编辑删除全屏', async () => {
+    const fabric = { ...line(), key: 'fabric-1', category: 'fabric' as const, name: '面料' }
+    const wrapper = await editor([line(), fabric])
+    await wrapper.setProps({ layout: 'sidebar' })
+    expect(wrapper.find('.material-tabs').exists()).toBe(false)
+    expect(wrapper.findAll('.section-sidebar .section-tabs button')).toHaveLength(6)
+    expect(wrapper.find('.material-main .material-table').exists()).toBe(true)
+    await wrapper.findAll('.section-sidebar button').find(button => button.text().startsWith('面料类'))!.trigger('click')
+    expect(wrapper.findAll('tbody tr[data-line-key]').map(row => row.attributes('data-line-key'))).toEqual(['fabric-1'])
+    await wrapper.get('[aria-label="放大编辑当前行"]').trigger('click')
+    expect(wrapper.findComponent(Drawer).props('line').key).toBe('fabric-1')
+    expect(wrapper.findAll('.section-sidebar button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
+    wrapper.findComponent(Drawer).vm.$emit('update:modelValue', false); await flushPromises()
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
+    await wrapper.get('[aria-label="删除当前行"]').trigger('click'); await flushPromises()
+    expect(wrapper.props('modelValue').map(item => item.key)).toEqual(['a'])
+    await wrapper.get('.fullscreen-toggle').trigger('click')
+    expect(wrapper.emitted('toggle-fullscreen')).toHaveLength(1)
+    await wrapper.setProps({ layout: undefined })
+    expect(wrapper.find('.section-sidebar').exists()).toBe(false)
+    expect(wrapper.find('.material-tabs').exists()).toBe(true)
+  })
   it('四种选材分区不提供手动添加入口，管材字段使用配置选择', async () => {
     const wrapper = await editor()
     const fields = wrapper.findAllComponents(Field)

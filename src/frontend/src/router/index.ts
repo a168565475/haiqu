@@ -17,7 +17,6 @@ import InquiryEditorView from '@/views/inquiries/InquiryEditorView.vue'
 import InquiryDetailView from '@/views/inquiries/InquiryDetailView.vue'
 import SampleListView from '@/views/samples/SampleListView.vue'
 import SampleDetailView from '@/views/samples/SampleDetailView.vue'
-import SampleFormView from '@/views/samples/SampleFormView.vue'
 import SampleApplicationCreateView from '@/views/samples/SampleApplicationCreateView.vue'
 import SampleDirectorReviewView from '@/views/samples/SampleDirectorReviewView.vue'
 import SampleMaterialRequestView from '@/views/samples/SampleMaterialRequestView.vue'
@@ -75,6 +74,9 @@ import SupplierPurchaseSheetListView from '@/views/procurement/SupplierPurchaseS
 import SupplierPurchaseSheetEditorView from '@/views/procurement/SupplierPurchaseSheetEditorView.vue'
 import PurchaseContractTemplateListView from '@/views/procurement/PurchaseContractTemplateListView.vue'
 import FinishedGoodsInventoryView from '@/views/inventory/FinishedGoodsInventoryView.vue'
+import FinishedGoodsOutboundFormView from '@/views/inventory/FinishedGoodsOutboundFormView.vue'
+import FinishedGoodsOutboundListView from '@/views/inventory/FinishedGoodsOutboundListView.vue'
+import FinishedGoodsOutboundDetailView from '@/views/inventory/FinishedGoodsOutboundDetailView.vue'
 import MaterialInventoryView from '@/views/inventory/MaterialInventoryView.vue'
 import MaterialInventoryDetailView from '@/views/inventory/MaterialInventoryDetailView.vue'
 import MaterialPurchaseInboundView from '@/views/inventory/MaterialPurchaseInboundView.vue'
@@ -124,6 +126,24 @@ export const router = createRouter({
       meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 企业微信管理', breadcrumbs: [{ label: '系统配置', to: '/settings/reference-data' }, { label: '企业微信管理' }], pageWidth: 'fluid' },
     },
     {
+      path: '/settings/notifications',
+      name: 'notification-rules',
+      component: () => import('@/views/settings/NotificationRulesView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 通知规则', breadcrumbs: [{ label: '系统配置', to: '/settings/reference-data' }, { label: '通知规则' }], pageWidth: 'fluid' },
+    },
+    {
+      path: '/employees',
+      name: 'employee-list',
+      component: () => import('@/views/employees/EmployeeListView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'employee-list', headerTitle: '行政 / 员工管理', breadcrumbs: [{ label: '行政' }, { label: '员工管理' }], pageWidth: 'fluid' },
+    },
+    {
+      path: '/attendance/wecom',
+      name: 'wecom-attendance',
+      component: () => import('@/views/attendance/WeComAttendanceView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'attendance', headerTitle: '行政 / 考勤管理', breadcrumbs: [{ label: '行政' }, { label: '考勤管理' }], pageWidth: 'fluid' },
+    },
+    {
       path: '/boards/production-line',
       name: 'production-line-board',
       component: () => import('@/views/boards/ProductionLineBoardView.vue'),
@@ -156,6 +176,11 @@ export const router = createRouter({
       path: '/inventory/semi-finished/receive', name: 'internal-semi-receipt',
       component: () => import('@/views/inventory/InternalSemiReceiptEntryView.vue'),
       meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '生产车间 / 内部计划 / 半成品入库', breadcrumbs: [{label:'生产车间'},{label:'内部计划',to:'/workshop/plans/metalworking'},{label:'半成品入库'}], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/inventory/semi-finished/outbounds', name: 'semi-outbound-records',
+      component: () => import('@/views/inventory/SemiReceiptRecordsView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '仓库管理 / 半成品出库记录', breadcrumbs: [{label:'仓库管理'},{label:'半成品出库记录'}], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/semi-finished/receipts', name: 'semi-receipt-records',
@@ -865,15 +890,11 @@ export const router = createRouter({
     {
       path: '/samples/:sampleId/edit',
       name: 'sample-edit',
-      component: SampleFormView,
+      component: () => import('@/views/samples/SampleEditorView.vue'),
       meta: {
-        requiresAuth: true,
-        layout: 'erp',
-        activeMenu: 'samples',
-        headerTitle: '样品管理',
-        breadcrumbs: [{ label: '样品跟进', to: '/samples' }, { label: '编辑打样申请' }],
-        pageWidth: 'fluid',
-        flushPage: true,
+        requiresAuth: true, layout: 'erp', activeMenu: 'samples', headerTitle: '样品跟进 / 编辑打样需求',
+        breadcrumbs: [{ label: '样品跟进', to: '/samples' }, { label: '编辑打样需求' }],
+        pageWidth: 'fluid', flushPage: true,
       },
     },
     {
@@ -1210,6 +1231,24 @@ export const router = createRouter({
       },
     },
     {
+      path: '/inventory/finished-goods/outbound/new',
+      name: 'finished-goods-outbound-new',
+      component: FinishedGoodsOutboundFormView,
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 新建出库', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '新建出库' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/inventory/finished-goods/outbounds',
+      name: 'finished-goods-outbounds',
+      component: FinishedGoodsOutboundListView,
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 出库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '出库记录' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
+      path: '/inventory/finished-goods/outbounds/:outboundId',
+      name: 'finished-goods-outbound-detail',
+      component: FinishedGoodsOutboundDetailView,
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 出货单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '出货单详情' }], pageWidth: 'fluid', flushPage: true },
+    },
+    {
       path: '/inventory/materials',
       name: 'material-inventory',
       component: MaterialInventoryView,
@@ -1267,8 +1306,8 @@ export const router = createRouter({
       component: () => import('@/views/outsourcing/TubeOutsourcingFormView.vue'),
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing',
-        headerTitle: '生产车间 / 委外加工 / 新建管材外发单',
-        breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '新建管材外发单' }],
+        headerTitle: '生产车间 / 委外加工 / 新建外发单',
+        breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '新建外发单' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1278,15 +1317,15 @@ export const router = createRouter({
       component: () => import('@/views/outsourcing/TubeOutsourcingDetailView.vue'),
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing',
-        headerTitle: '生产车间 / 委外加工 / 管材外发单',
-        breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '管材外发单' }],
+        headerTitle: '生产车间 / 委外加工 / 外发单',
+        breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '外发单' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
     {
       path: '/workshop/outsourcing/tube/:id/return', name: 'workshop-outsourcing-tube-return',
       component: () => import('@/views/inventory/TubeCoatingReceiptView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 喷塑入库', breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '喷塑入库' }], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 外发回货入库', breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '外发回货入库' }], pageWidth: 'fluid', flushPage: true },
     },    {
       path: '/workshop/outsourcing/new',
       name: 'workshop-outsourcing-new',

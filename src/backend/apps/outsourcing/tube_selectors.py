@@ -18,6 +18,8 @@ from apps.workshop_config.models import Craft
 
 from .models import OutsourcingFactory, TubeSourceKind
 from .selectors import outsourcing_source_schedules
+from .tube_prices import line_price_data, planned_amount
+from .tube_kinds import CUTTING_SOURCES, CUTTING_CRAFT_CODES, CUTTING_FIELDS, DIRECT_SOURCES, output_unit, source_category, display_operations
 
 
 VIEW_PERMISSION = 'outsourcing.view_outsourcingorder'
@@ -25,52 +27,68 @@ CREATE_PERMISSION = 'outsourcing.add_outsourcingorder'
 DISPATCH_PERMISSION = 'outsourcing.confirm_dispatch_outsourcingorder'
 CANCEL_PERMISSION = 'outsourcing.cancel_outsourcingorder'
 RETURN_PERMISSION = 'outsourcing.confirm_return_outsourcingorder'
-SOURCE_LABELS = {'RAW_PIPE': '原材料', 'PUBLIC_SEMI': '未喷塑半成品', 'METAL': '未入库半成品'}
+SOURCE_LABELS = {'RAW_PIPE': '原材料', 'PUBLIC_SEMI': '未喷塑半成品', 'METAL': '未入库半成品',
+                 'PUBLIC_CUTTING': '已入库裁片半成品', 'SEWING': '未入库车缝完成件'}
 
 
 def require_tube_feature():
     if not getattr(settings, 'TUBE_OUTSOURCING_ENABLED', False):
-        raise NotFound('管材外发保存入口尚未启用。')
+        raise NotFound('外发单保存入口尚未启用。')
     if not public_flow_enabled():
-        raise Conflict('管材外发保存须使用已启用的公共库存模式。')
+        raise Conflict('外发单保存须使用已启用的公共库存模式。')
 
 
-def powder_crafts(request, permission=VIEW_PERMISSION):
+def powder_crafts(request, permission=VIEW_PERMISSION, *, category='tube'):
+    codes = CUTTING_CRAFT_CODES if category == 'cutting' else {'POWDER_COATING'}
+    if category == 'all':
+        codes = codes | CUTTING_CRAFT_CODES
     return filter_crafts(Craft.objects.filter(craft_type='EXTERNAL', status='ACTIVE',
-        outsourcing_code='POWDER_COATING'), request, permission, 'pk')
+        outsourcing_code__in=codes), request, permission, 'pk')
 
 
-def visible_products(request, permission=VIEW_PERMISSION):
-    crafts = powder_crafts(request, permission)
+def visible_products(request, permission=VIEW_PERMISSION, *, category='tube'):
+    crafts = powder_crafts(request, permission, category=category)
     links = ProductionScheduleProductCraft.objects.filter(craft__in=crafts, craft_type_snapshot='EXTERNAL',
                                                           removed_at__isnull=True)
     schedules = outsourcing_source_schedules(request, permission=permission).filter(record_status='ACTIVE')
-    return ProductionScheduleProduct.objects.filter(schedule__in=schedules, removed_at__isnull=True,
+    queryset = ProductionScheduleProduct.objects.filter(schedule__in=schedules, removed_at__isnull=True,
         pk__in=links.values('schedule_product_id'), product_line__production_task__archived_at__isnull=True
     ).select_related('schedule__production_task', 'product_line__unit', 'unit',
         'product_line__production_task', 'product_line__image_file',
         'product_line__sales_order_delivery_batch_line__sales_order_line__product_image'
     ).prefetch_related('product_line__images__image_file').order_by('schedule_id', 'line_number', 'pk')
+    from .source_access import filter_source_products
+    return filter_source_products(queryset, request, permission)
 
 
-def source_product(request, schedule_product_id, permission=VIEW_PERMISSION):
-    product = get_object_or_404(visible_products(request, permission), pk=schedule_product_id)
+def source_product(request, schedule_product_id, permission=VIEW_PERMISSION, *, source_kind='RAW_PIPE', craft_id=None):
+    from .source_access import require_source
+    require_source(request, permission, source_kind)
+    category = source_category(source_kind)
+    product = get_object_or_404(visible_products(request, permission, category=category), pk=schedule_product_id)
+    from .source_access import require_source_product
+    require_source_product(request, permission, source_kind, product)
     active_count = ProductionScheduleProduct.objects.filter(product_line_id=product.product_line_id,
         removed_at__isnull=True, schedule__record_status='ACTIVE').count()
     if active_count != 1:
         raise ValidationError({'schedule_product_id': '同一产品存在多个有效排产，请先整理为唯一有效计划。'})
     if product.schedule.production_task.status not in {'READY', 'IN_PRODUCTION'}:
         raise ValidationError({'schedule_product_id': '当前生产任务状态不能新建外发单。'})
-    links = list(product.crafts.filter(removed_at__isnull=True, craft_type_snapshot='EXTERNAL',
-        craft__in=powder_crafts(request, permission)).select_related('craft'))
+    links_query = product.crafts.filter(removed_at__isnull=True, craft_type_snapshot='EXTERNAL',
+        craft__in=powder_crafts(request, permission, category=category))
+    if category == 'cutting' and not craft_id:
+        raise ValidationError({'craft_id': '裁片外发请选择刺绣、丝印、裁剪或车缝工艺。'})
+    if craft_id:
+        links_query = links_query.filter(craft_id=craft_id)
+    links = list(links_query.select_related('craft'))
     if len(links) != 1:
-        raise ValidationError({'schedule_product_id': '未找到唯一有效喷塑工艺，请先完善计划。'})
+        raise ValidationError({'schedule_product_id': '未找到所选有效外发工艺，请先完善计划。'})
     require_craft(request, permission, links[0].craft_id)
     return product, links[0].craft
 
 
 def source_zone(source_kind, zone_id):
-    if source_kind == TubeSourceKind.METAL:
+    if source_kind in DIRECT_SOURCES:
         if zone_id:
             raise ValidationError({'zone_id': '未入库半成品不从仓库库存选择库区。'})
         return None
@@ -84,8 +102,10 @@ def source_zone(source_kind, zone_id):
     return zone
 
 
-def source_factories(request, craft=None, permission=VIEW_PERMISSION):
-    crafts = powder_crafts(request, permission)
+def source_factories(request, craft=None, permission=VIEW_PERMISSION, *, category='tube'):
+    if craft is not None and craft.outsourcing_code in CUTTING_CRAFT_CODES:
+        category = 'cutting'
+    crafts = powder_crafts(request, permission, category=category)
     if craft is not None:
         crafts = crafts.filter(pk=craft.pk)
     return OutsourcingFactory.objects.filter(status='ACTIVE', craft_links__craft__in=crafts).distinct().order_by('name', 'pk')
@@ -117,10 +137,13 @@ def product_display(product):
             'schedule_product_id': product.pk, 'file_id': image.pk}) if image else ''}
 
 
-def tube_options(request):
+def tube_options(request, *, category='tube'):
+    if category not in {'tube', 'cutting'}:
+        raise ValidationError({'category': '外发类别只能是管材或裁片。'})
     tasks = {}
     seen_products = set()
-    for product in visible_products(request):
+    crafts = powder_crafts(request, category=category)
+    for product in visible_products(request, category=category):
         if product.schedule.production_task.status not in {'READY', 'IN_PRODUCTION'}:
             continue
         if product.product_line_id in seen_products:
@@ -131,18 +154,22 @@ def tube_options(request):
                                                 'order_number': row['order_number'], 'products': []})
         task['products'].append({'id': row['product_line_id'], **{key: row[key] for key in (
             'schedule_product_id', 'schedule_number', 'product_number', 'item_number', 'product_name',
-            'quantity', 'unit', 'color')}, **product_display(product)})
+            'quantity', 'unit', 'color')}, **product_display(product),
+            'craft_ids': [str(value) for value in product.crafts.filter(removed_at__isnull=True,
+                craft_type_snapshot='EXTERNAL', craft__in=crafts).values_list('craft_id', flat=True)]})
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
         warehouse__warehouse_type__in=['MATERIAL', 'SEMI_FINISHED']).select_related('warehouse').order_by('warehouse_id', 'zone_name', 'pk')
-    return {'tasks': list(tasks.values()), 'factories': [{'id': str(factory.pk), 'name': factory.name}
-        for factory in source_factories(request)], 'zones': [{'id': str(zone.pk), 'name': zone.zone_name,
+    kinds = ([TubeSourceKind.PUBLIC_CUTTING, TubeSourceKind.SEWING] if category == 'cutting' else
+             [TubeSourceKind.RAW_PIPE, TubeSourceKind.PUBLIC_SEMI, TubeSourceKind.METAL])
+    from .source_access import allowed_source_kinds
+    kinds = [kind for kind in kinds if kind in allowed_source_kinds(request, VIEW_PERMISSION)]
+    return {'category': category, 'crafts': [{'id': str(craft.pk), 'name': craft.name,
+        'outsourcing_code': craft.outsourcing_code} for craft in crafts],
+        'tasks': list(tasks.values()), 'factories': [{'id': str(factory.pk), 'name': factory.name}
+        for factory in source_factories(request, category=category)], 'zones': [{'id': str(zone.pk), 'name': zone.zone_name,
         'warehouse_id': str(zone.warehouse_id), 'warehouse_name': zone.warehouse.warehouse_name,
         'warehouse_type': zone.warehouse.warehouse_type} for zone in zones],
-        'source_kinds': [{'value': value, 'label': label} for value, label in (
-            (TubeSourceKind.RAW_PIPE, '原材料'),
-            (TubeSourceKind.PUBLIC_SEMI, '未喷塑半成品'),
-            (TubeSourceKind.METAL, '未入库半成品'),
-        )]}
+        'source_kinds': [{'value': value, 'label': SOURCE_LABELS[value]} for value in kinds]}
 
 
 def saved_orders_for_permission(request, permission=VIEW_PERMISSION):
@@ -153,6 +180,10 @@ def saved_orders_for_permission(request, permission=VIEW_PERMISSION):
     # 与既有外发单相同：新工艺范围只授权对应原单，旧权限仍受旧任务可见范围约束。
     queryset = TubeOutsourcingOrder.objects.all()
     legacy = queryset.filter(schedule_product__schedule_id__in=accessible_production_schedules(request).values('id'))
+    from apps.access_control.resource_scopes import enforcing
+    from .source_access import scoped_tube_orders
+    if enforcing(request, permission):
+        return scoped_tube_orders(queryset, request, permission, legacy)
     return (craft_access_union(queryset, legacy, request, permission)
                if has_resource_grant(request, permission, 'CRAFT') else filter_crafts(legacy, request, permission))
 
@@ -168,6 +199,9 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
     from rest_framework.exceptions import APIException
     from apps.inventory.tube_processing_services import metal_component_limits
     basis = metal_component_limits(order.product_line) if order.source_kind == 'METAL' and include_metal_basis and order.status != 'COMPLETED' else None
+    if order.source_kind == 'SEWING' and include_metal_basis and order.status != 'COMPLETED':
+        from apps.inventory.sewing_processing_services import sewing_component_limits
+        basis = sewing_component_limits(order.product_line)
     actions = {row.kind: row for row in order.actions.all()}
     dispatch, cancel = actions.get('DISPATCH'), actions.get('CANCEL')
     permissions = {'can_dispatch': False, 'can_cancel': False}
@@ -185,6 +219,8 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         meters = snapshot.get('meters')
         component = basis['components'].get(str(line.component_identity)) if basis else None
         lines.append({'id': str(line.pk), 'component_identity': str(line.component_identity),
+            **line_price_data(line),
+            **{key: snapshot.get(key) for key in CUTTING_FIELDS},
             'part_name': snapshot.get('part_name', ''), 'factory_id': str(line.factory_id),
             'factory_name': snapshot.get('factory_name', ''), 'quantity': str(line.quantity),
             'stock_quantity': str(line.stock_quantity) if line.stock_quantity is not None else None,
@@ -194,7 +230,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
             'current_reported_minimum': str(component['allowance']['reported_minimum'])
                 if component and component['basis_ready'] else None,
             'report_as_of': basis['as_of'] if basis else None,
-            'operations': component['operations'] if component else [],
+            'operations': display_operations(order.source_kind, component['operations']) if component else [],
             'basis_blockers': component['blockers'] if component else (['当前BOM已不包含该部位。'] if basis else [])})
         total_quantity += line.quantity
         total_stock += line.stock_quantity or 0
@@ -206,6 +242,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
             pass  # 只读详情保留原值；动作门禁会阻断不完整换算凭证。
     summary = product_summary(order.schedule_product)
     task_order_number = summary.pop('order_number')
+    from .tube_materials import material_data
     result = {**summary, 'task_order_number': task_order_number,
         'id': str(order.pk), 'order_number': order.order_number, 'status': order.status,
         'version': order.version, 'etag': etag_for_instance(order), 'created': created,
@@ -213,7 +250,9 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'source_label': SOURCE_LABELS[order.source_kind], 'zone_id': str(order.zone_id) if order.zone_id else None,
         'zone_name': order.zone.zone_name if order.zone_id else '',
         'warehouse_name': order.zone.warehouse.warehouse_name if order.zone_id else '',
-        'craft_name': order.craft.name, 'remark': order.remark,
+        'craft_name': order.craft.name, 'craft_id': str(order.craft_id), 'remark': order.remark,
+        'category': source_category(order.source_kind), 'output_unit': output_unit(order.source_kind),
+        'material_category': '辅料' if order.source_kind in CUTTING_SOURCES else '五金',
         'created_at': order.created_at.isoformat(), 'created_by_name': order.created_by_employee.display_name,
         'actual_dispatch_date': str(dispatch.actual_dispatch_date) if dispatch else None,
         'dispatched_at': dispatch.created_at.isoformat() if dispatch else None,
@@ -223,8 +262,10 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'cancel_remark': cancel.remark if cancel else '', 'permissions': permissions,
         'schedule_product_id': str(order.schedule_product_id), 'product_line_id': str(order.product_line_id),
         'planned_dispatch_date': str(order.planned_dispatch_date), 'expected_return_date': str(order.expected_return_date),
-        'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind == 'METAL' else str(total_stock),
-        'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines}
+        'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind in DIRECT_SOURCES else str(total_stock),
+        'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines,
+        'planned_amount': planned_amount(order.lines.all()),
+        'materials': [material_data(value) for value in order.materials.all()]}
     if action_record:
         result['action'] = {'id': str(action_record.pk), 'kind': action_record.kind,
             'client_request_id': str(action_record.client_request_id),
@@ -238,4 +279,5 @@ def tube_order_queryset():
     from .models import TubeOutsourcingAction
     return TubeOutsourcingOrder.objects.select_related('schedule_product__schedule__production_task',
         'schedule_product__product_line__unit', 'product_line', 'craft', 'zone__warehouse', 'created_by_employee')\
-        .prefetch_related('lines', Prefetch('actions', queryset=TubeOutsourcingAction.objects.select_related('actor_employee')))
+        .prefetch_related('lines', 'materials__order_line',
+            Prefetch('actions', queryset=TubeOutsourcingAction.objects.select_related('actor_employee')))

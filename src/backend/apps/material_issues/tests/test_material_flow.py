@@ -124,6 +124,23 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(OrderMaterialRequirement.objects.get(measurement_kind='PIPE').internal_issued_quantity, 12)
         self.assertEqual(MaterialStockMovement.objects.filter(source_type='MATERIAL_ISSUE').count(), 1)
 
+    def test_new_pipe_rule_flows_into_requirement_and_actual_issue(self):
+        from apps.boms.material_flow_calculations import pipe_plan
+        line = self.f.profile
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=4, pieces_per_bar=6, order_quantity=100)
+        line.raw_values['pipe_plan_version'] = 3
+        line.suggested_bar_count = plan['suggested_bar_count']
+        line.suggested_purchase_meters = plan['suggested_purchase_meters']
+        line.save()
+        row = next(item for item in self.requirements() if item.get('conversion_snapshot', {}).get('kind') == 'PIPE')
+        self.assertEqual(Decimal(row['required_quantity']), 402)
+        key = self.pending(self.issue_payload('402'))
+        self.action(key, 'confirm-issue', {'request_id': str(uuid.uuid4())})
+        requirement = OrderMaterialRequirement.objects.get(measurement_kind='PIPE')
+        self.assertEqual((requirement.required_quantity, requirement.internal_issued_quantity), (402, 402))
+        self.pipe_balance.refresh_from_db()
+        self.assertEqual(self.pipe_balance.quantity, 33)
+
     def test_pipe_issue_does_not_require_user_selected_batch(self):
         payload = self.issue_payload()
         payload['lines'][0].pop('batch_allocations')
@@ -222,7 +239,19 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         self.return_goods(order, source, returned_quantity if returned_quantity is not None else (10 if kind == 'PIPE' else 6),
             raw_inputs=[self.entry(source, 'RAW_INPUT', 2 if kind == 'PIPE' else 9)])
         balance = SemiFinishedStockBalance.objects.get(quality='AVAILABLE')
-        payload = self.issue_payload(); payload['lines'] = [{'requirement_id': str(balance.pk), 'requested_quantity': quantity}]
+        # 半成品在装配计划领用；金工计划只允许管材和五金原料。
+        assembly, _ = Workshop.objects.get_or_create(name='装配车间', defaults={'status': 'ACTIVE'})
+        recipient = WorkshopEmployee.objects.create(workshop=assembly, name='S7 装配领料员',
+            position='领料员', is_supervisor=False, status='ACTIVE')
+        craft = Craft.objects.create(craft_type='INTERNAL', name='S7 装配', workshop=assembly,
+            plan_category='ASSEMBLY', status='ACTIVE', created_by_employee=self.f.employee,
+            updated_by_employee=self.f.employee)
+        ProductionScheduleProductCraft.objects.create(schedule_product=self.f.schedule_product, craft=craft,
+            craft_type_snapshot='INTERNAL', craft_name_snapshot=craft.name, plan_category='ASSEMBLY')
+        payload = self.issue_payload()
+        payload.update(plan_category='ASSEMBLY', workshop_id=str(assembly.pk),
+            recipient_workshop_employee_id=str(recipient.pk),
+            lines=[{'requirement_id': str(balance.pk), 'requested_quantity': quantity}])
         return payload, balance
 
     def test_semi_pipe_five_pieces_no_whole_bar_or_second_raw_debit(self):
@@ -422,8 +451,14 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(MaterialStockMovement.objects.filter(source_type='MATERIAL_ISSUE').count(), 2)
 
     def test_mixed_issue_semi_shortage_rolls_back_pipe_and_quota(self):
-        semi, balance = self.semi_payload()
-        payload = self.issue_payload(); payload['lines'].extend(semi['lines'])
+        # 装配范围会校验全部辅料来源；建立包边带档案，不绕过来源完整性检查。
+        category, _ = ProductCategory.objects.get_or_create(category_name='辅料', defaults={'item_type': 'MATERIAL'})
+        auxiliary = RawMaterialInformation.objects.create(material_number='S7-AUXILIARY', item_type='MATERIAL',
+            category=category, material_name='包边带', specification='25mm', unit=self.f.material_unit)
+        self.f.auxiliary.raw_values = {**self.f.auxiliary.raw_values, 'source_inventory_material_id': str(auxiliary.pk)}
+        self.f.auxiliary.save(update_fields=['raw_values', 'updated_at'])
+        payload, balance = self.semi_payload()
+        payload['lines'] = self.issue_payload()['lines'] + payload['lines']
         key = self.pending(payload)
         balance.quantity = 0; balance.save()
         self.action(key, 'confirm-issue', {'request_id': str(uuid.uuid4())}, expected=400)
@@ -439,10 +474,9 @@ from rest_framework.test import APITransactionTestCase, APIClient
 
 
 class MaterialIssueFlowConcurrencyTests(APITransactionTestCase):
-    serialized_rollback = True
-
     def setUp(self):
         with transaction.atomic():
+            # 共用夹具显式建立单位、车间、材料及排产，不恢复迁移种子的全库快照。
             self.h = MaterialIssueFlowTests(methodName='test_pipe_actual_three_quantities_and_idempotent_confirmation')
             self.h.setUp()
 

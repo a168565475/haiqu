@@ -171,11 +171,23 @@ export interface WorkReportDay {
   production_date: string; report_count: number; order_count: number; product_count: number
   employee_count: number; line_count: number; total_amount: string; last_saved_at: string
 }
+export interface WorkReportTaskProgress {
+  status: 'READY' | 'NOT_CONFIGURED' | 'UNAVAILABLE'
+  percentage: number | null
+}
+export interface WorkReportTaskWorkshop extends ReportingOption {
+  reported_amount?: string
+  progress?: WorkReportTaskProgress
+}
 export interface WorkReportTask {
   id: string
   task_number: string
   order_number: string
-  workshops: ReportingOption[]
+  product?: { id: string; name: string; number: string; image_url: string | null } | null
+  product_count?: number
+  reported_amount?: string
+  progress?: WorkReportTaskProgress
+  workshops: WorkReportTaskWorkshop[]
 }
 
 export interface Paginated<T> { data: T[]; meta: PageMeta }

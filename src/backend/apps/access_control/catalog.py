@@ -5,11 +5,24 @@ from .catalog_codes import PERMISSION_CODES as BASE_PERMISSION_CODES
 from .catalog_extras import EXTRA_OPERATIONS
 from .presentation import presentation
 
-PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | {'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet',
+# 已有全局读取码供全权限角色使用；普通车间角色继续使用资源范围。
+FULL_DATA_CODES = (
+    'boms.view_all_bom', 'customers.view_all_customer',
+    'production_tasks.view_all_productiontask', 'production_scheduling.view_all_productionschedule',
+    'material_issues.view_all_materialissue', 'outsourcing.view_all_outsourcingfactory',
+    'outsourcing.view_all_outsourcingorder', 'samples.view_all_samplerequest',
+    'workshop_reporting.view_all_wagescheme', 'workshop_reporting.view_all_workreport',
+    'workshop_config.view_workshop', 'samples.view_sample_procurement', 'customers.manage_customer_access',
+)
+
+PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet',
     'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
 
 SALES_APPS = {"customers", "inquiries", "quotations", "sales_orders", "crm"}
 MODULE_NAMES = {
+    "access_control": "账号与授权管理",
+    "organizations": "部门与组织",
+    "attendance": "考勤管理",
     "customers": "客户与联系人", "inquiries": "询盘", "quotations": "报价",
     "sales_orders": "销售订单", "crm": "沟通与客户动态", "samples": "样品",
     "products": "产品与原料", "boms": "BOM", "production_tasks": "生产订单",
@@ -35,6 +48,8 @@ def module_for(code):
 def scopes_for(code):
     from .resource_scopes import configured, scope_kind
     if configured() and scope_kind(code):
+        if code.startswith('outsourcing.') and 'outsourcingorder' in code:
+            return ('MODULE', 'CRAFT', 'WORKSHOP', 'STOCK')
         return ('MODULE', scope_kind(code))
     if module_for(code) == 'preferences':
         return ('OWN',)

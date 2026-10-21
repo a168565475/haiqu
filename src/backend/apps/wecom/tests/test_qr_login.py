@@ -4,12 +4,14 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
-from apps.organizations.models import Employee
+from apps.access_control.models import RoleActionGrant
+from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.models import OAuthState, WeComBinding, WeComConfig
 
@@ -148,6 +150,12 @@ class WeComQRLoginTests(TestCase):
     def test_existing_member_reuses_account_and_returns_to_validated_business_path(self, client_class):
         self.mock_member(client_class)
         employee = self.existing_employee()
+        role = RoleProfile.objects.create(auth_group=Group.objects.create(name="QR login role"),
+                                          role_code="QR_LOGIN_ROLE", display_name="扫码业务角色")
+        permission = Permission.objects.get(content_type__app_label="reference_data", codename="view_country")
+        RoleActionGrant.objects.create(role=role, permission=permission, scope="MODULE")
+        role.auth_group.permissions.add(permission)
+        EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role, effective_from=timezone.now())
         state = self.start(next_path="/customers?tab=mine")["state"]
         self.assertEqual(self.callback(state).url, "/customers?tab=mine")
         self.assertEqual(Employee.objects.count(), 1)
@@ -238,7 +246,7 @@ class WeComQRLoginTests(TestCase):
     def test_inactive_bound_account_cannot_be_reenabled_by_scan(self, client_class):
         self.mock_member(client_class)
         employee = self.existing_employee(active=False)
-        self.assertIn("reason=LOGIN_FAILED", self.callback(self.start()["state"]).url)
+        self.assertIn("reason=ACCOUNT_INACTIVE", self.callback(self.start()["state"]).url)
         employee.user.refresh_from_db()
         self.assertFalse(employee.user.is_active)
         self.assertNotIn("_auth_user_id", self.client.session)

@@ -113,7 +113,7 @@ export async function createP4Rework(
 
 export async function createP4ExternalOrder(
   reworkId: string,
-  payload: { request_id: string; factory_id: string; craft_id: string; allocated_pieces: number },
+  payload: { request_id: string; factory_id: string; craft_id: string; allocated_pieces: number; unit_price?: string },
 ): Promise<P4ExternalOrder> {
   return data(await apiClient.post<DataResponse<P4ExternalOrder>>(`${reworkPath}${encodeURIComponent(reworkId)}/orders/`, payload))
 }

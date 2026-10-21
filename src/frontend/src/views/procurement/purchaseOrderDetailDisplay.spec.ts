@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatMoney, formatQuantity, formatUnitPrice, quantityTotal } from './purchaseOrderDetailDisplay'
+import { formatMoney, formatQuantity, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
 
 describe('采购详情数量口径', () => {
+  it('管材直接显示快照根数，缺根数时不把米数冒充根数', () => {
+    expect(purchaseQuantityText('2706.8000', '米', '3.35', 808)).toBe('808 根')
+    expect(purchaseQuantityText('0.0000', '米', '3.35', 0)).toBe('0 根')
+    expect(purchaseQuantityText('2706.8000', '米', '3.35', null)).toBe('根数未记录')
+    expect(purchaseQuantityText('10.5000', '米', null, null)).toBe('10.5 米')
+  })
   it('小数合计保持精度，不同单位不相加', () => {
     expect(quantityTotal([{ source_unit_text: '米' }, { source_unit_text: '米' }], ['0.1', '0.2'])).toBe('0.3 米')
     expect(quantityTotal([{ source_unit_text: '米' }, { source_unit_text: '支' }], ['2', '3'])).toBe('—')

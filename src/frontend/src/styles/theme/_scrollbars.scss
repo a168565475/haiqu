@@ -1,0 +1,38 @@
+// 只统一配色；滚动条尺寸、显示时机和隐藏规则仍由原容器负责。
+:root,
+[data-theme-preview] {
+  scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track);
+}
+
+// 兼容未支持 scrollbar-color 的浏览器。
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background-color: var(--erp-scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--erp-scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--erp-scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--erp-scrollbar-thumb-active);
+}
+
+.el-scrollbar {
+  --el-scrollbar-bg-color: var(--erp-scrollbar-thumb);
+  --el-scrollbar-hover-bg-color: var(--erp-scrollbar-thumb-hover);
+  --el-scrollbar-opacity: 1;
+  --el-scrollbar-hover-opacity: 1;
+}
+
+.el-scrollbar__bar {
+  background-color: var(--erp-scrollbar-track);
+}
+
+.el-scrollbar__thumb:active {
+  background-color: var(--erp-scrollbar-thumb-active);
+}

@@ -13,6 +13,7 @@ from rest_framework.test import APIClient
 from apps.access_control.models import RoleActionGrant
 from apps.access_control.selectors import current_assignments
 from apps.audit.models import AuditLog
+from apps.core.api.concurrency import etag_for_instance
 from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.models import WeComBinding, WeComConfig
@@ -98,10 +99,20 @@ class WeComAccessAssignmentTests(TestCase):
 
         after = self.member_client.get("/api/auth/me/").json()
         self.assertTrue(after["authenticated"])
-        self.assertFalse(after["user"]["waiting_for_role"])
+        self.assertTrue(after["user"]["waiting_for_role"])
         self.assertEqual(after["user"]["id"], user.pk)
         self.assertEqual(after["user"]["permissions"], [])
         self.assertEqual(after["user"]["effective_access"]["actions"], {})
+        self.assertEqual(self.member_client.session.session_key, session_key)
+        self.assertEqual(self.member_client.get("/api/v1/").status_code, 403)
+        granted = self.admin_client.put(f"/api/v1/access/roles/{self.role.pk}/grants/", {
+            "grants": [{"permission": "reference_data.view_country", "scope": "MODULE"}],
+        }, format="json", HTTP_IF_MATCH=etag_for_instance(self.role), HTTP_X_CSRFTOKEN=self.csrf_token())
+        self.assertEqual(granted.status_code, 200, granted.data)
+        authorized = self.member_client.get("/api/auth/me/").json()
+        self.assertFalse(authorized["user"]["waiting_for_role"])
+        self.assertIn("reference_data.view_country", authorized["user"]["permissions"])
+        self.assertIn("reference_data.view_country", authorized["user"]["effective_access"]["actions"])
         self.assertEqual(self.member_client.session.session_key, session_key)
         self.assertEqual(self.oauth_login("repeat-test-code").url, "/")
         binding.refresh_from_db()
@@ -115,8 +126,8 @@ class WeComAccessAssignmentTests(TestCase):
         self.assertFalse(user.has_usable_password())
         self.assertFalse(user.is_staff)
         self.assertFalse(user.is_superuser)
-        self.assertEqual(user.get_all_permissions(), set())
-        self.assertFalse(RoleActionGrant.objects.filter(role=self.role).exists())
+        self.assertEqual(user.get_all_permissions(), {"reference_data.view_country"})
+        self.assertEqual(RoleActionGrant.objects.filter(role=self.role).count(), 1)
         self.assertEqual(self.upstream.get_identity.call_count, 2)
         self.assertEqual(self.upstream.get_member.call_count, 2)
         self.assertEqual(AuditLog.objects.filter(object_type="WECOM", action="AUTO_CREATE").count(), 1)

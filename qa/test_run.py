@@ -15,6 +15,23 @@ SPEC.loader.exec_module(qa_runner)
 
 
 class RunnerContractTests(unittest.TestCase):
+    def test_organizations_preflight_requires_session_without_expanding_all(self):
+        manifest = qa_runner.load_manifest()
+        entry = qa_runner.select_entries(manifest, "organizations")[0]
+        self.assertEqual(entry["risk"], "read-only")
+        self.assertEqual(entry["browser_mode"], "headless")
+        self.assertEqual(entry["required_env"], [])
+        self.assertEqual(entry["account_env"], [])
+        self.assertNotIn("organizations", {item["module"] for item in qa_runner.select_entries(manifest, "all")})
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            qa_runner, "preflight_entry", return_value=("missing-normal-session", None)
+        ), patch.object(qa_runner.subprocess, "run") as execute:
+            exit_code = qa_runner.main(["organizations", "--read-only", "--report-dir", temp_dir])
+            report = json.loads((Path(temp_dir) / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 3)
+            self.assertEqual(report["cases"][0]["status"], "BLOCKED")
+            execute.assert_not_called()
+
     def run_structured_result(self, payload, returncode=0, *, structured=True):
         entry = dict(qa_runner.select_entries(qa_runner.load_manifest(), "material_catalog")[0])
         if structured:
@@ -77,6 +94,35 @@ class RunnerContractTests(unittest.TestCase):
         for invalid in ["unknown", []]:
             with self.subTest(invalid=invalid), self.assertRaises(qa_runner.ManifestError):
                 qa_runner.validate_entry({**entry, "result_protocol": invalid})
+
+    def test_attendance_readonly_contract_does_not_expand_all(self):
+        manifest = qa_runner.load_manifest()
+        entries = qa_runner.select_entries(manifest, "attendance")
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["id"], "wecom-attendance-readonly")
+        self.assertEqual(entry["risk"], "read-only")
+        self.assertEqual(entry["browser_mode"], "headless")
+        self.assertEqual(entry["result_protocol"], "json-summary-v1")
+        self.assertEqual(entry["account_env"], ["ATTENDANCE_QA_STORAGE_STATE"])
+        without_attendance = {
+            **manifest,
+            "modules": {name: items for name, items in manifest["modules"].items() if name != "attendance"},
+        }
+        selected = qa_runner.select_entries(manifest, "all")
+        self.assertEqual(selected, qa_runner.select_entries(without_attendance, "all"))
+        self.assertEqual({item["module"] for item in selected}, {"production", "quotation", "inquiry"})
+
+    def test_attendance_cli_reaches_registered_readonly_preflight(self):
+        with tempfile.TemporaryDirectory(prefix=".tmp-attendance-contract-") as temp_dir, patch.object(
+            qa_runner, "preflight_entry", return_value=("contract-test-no-account", None)
+        ), patch.object(qa_runner.subprocess, "run") as execute:
+            exit_code = qa_runner.main(["attendance", "--read-only", "--report-dir", temp_dir])
+            report = json.loads((Path(temp_dir) / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(exit_code, 3)
+            self.assertEqual(report["cases"][0]["id"], "wecom-attendance-readonly")
+            self.assertEqual(report["cases"][0]["status"], "BLOCKED")
+            execute.assert_not_called()
 
     def test_workbench_cli_reaches_registered_readonly_preflight(self):
         with tempfile.TemporaryDirectory(prefix=".tmp-workbench-contract-", dir=Path(__file__).parent) as temp_dir, patch.object(

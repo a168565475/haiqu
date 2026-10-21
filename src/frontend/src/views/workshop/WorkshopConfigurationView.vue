@@ -14,8 +14,8 @@ const cardDefinitions = [
   {
     kind: 'employees' as const,
     title: '车间员工',
-    description: '维护车间、岗位、姓名、是否为主管及在职状态。',
-    source: '工作簿来源 81 人（在职 74、离职 7）',
+    description: '从统一员工分配车间、岗位与主管，维护车间任职状态。',
+    source: '员工来源：统一员工资料',
     icon: UserFilled,
     tone: 'green',
   },
@@ -69,7 +69,7 @@ function closeManager(): void {
     </header>
 
     <ElAlert
-      title="车间为系统固定选项，不提供新增、编辑或停用；员工导入仍需明确主管名单。"
+      title="车间为系统固定选项，不提供新增、编辑或停用；员工从统一员工资料中选择，主管需手动设置。"
       type="info"
       :closable="false"
       show-icon

@@ -154,7 +154,7 @@ def _craft(craft):
         "craft_type": kind,
         "code": _text(code, "completed_craft.code"),
     }
-    valid_codes = {"POWDER_COATING", "SCREEN_PRINTING", "CUTTING", "SEWING"} if kind == "EXTERNAL" else {"METAL", "CUTTING", "SEWING", "ASSEMBLY"}
+    valid_codes = {"POWDER_COATING", "SCREEN_PRINTING", "EMBROIDERY", "CUTTING", "SEWING"} if kind == "EXTERNAL" else {"METAL", "CUTTING", "SEWING", "ASSEMBLY"}
     if result["code"] not in valid_codes:
         _invalid("completed_craft.code", "工艺编码与实际工艺类型不一致。")
     return result
@@ -268,8 +268,8 @@ def build_semi_finished_identity(*, bom_line, completed_craft, unit, material_ca
         properties = _pipe_properties(line, values, craft, material_cache=material_cache)
     elif section_type == "FABRIC" and title == "裁剪明细":
         semi_kind, required_unit = "CUTTING", "套"
-        if craft["code"] not in {"CUTTING", "SEWING", "SCREEN_PRINTING"}:
-            _invalid("completed_craft", "裁片完成工艺必须是既有裁剪、车缝或丝印工艺。")
+        if craft["code"] not in {"CUTTING", "SEWING", "SCREEN_PRINTING", "EMBROIDERY"}:
+            _invalid("completed_craft", "裁片完成工艺必须是既有裁剪、车缝、刺绣或丝印工艺。")
         properties = _cutting_properties(line, values)
     elif section_type == "ACCESSORY" and title == "五金件":
         semi_kind = "HARDWARE"
@@ -357,7 +357,7 @@ def validate_public_identity(identity):
             _invalid("completed_craft", "工艺类型不正确。")
         if _text(craft["code"], "completed_craft.code") != craft["code"]:
             _invalid("completed_craft", "工艺编码未经规范化。")
-        valid_codes = {"POWDER_COATING", "SCREEN_PRINTING", "CUTTING", "SEWING"} if craft["craft_type"] == "EXTERNAL" else {"METAL", "CUTTING", "SEWING", "ASSEMBLY"}
+        valid_codes = {"POWDER_COATING", "SCREEN_PRINTING", "EMBROIDERY", "CUTTING", "SEWING"} if craft["craft_type"] == "EXTERNAL" else {"METAL", "CUTTING", "SEWING", "ASSEMBLY"}
         if craft["code"] not in valid_codes:
             _invalid("completed_craft.code", "工艺编码与实际工艺类型不一致。")
         if semi_kind == "PIPE":
@@ -375,7 +375,7 @@ def validate_public_identity(identity):
             if _text(snapshot.get("hardness"), "hardness", required=False) != snapshot.get("hardness"):
                 _invalid("hardness", "硬度文字未经规范化。")
         elif semi_kind == "CUTTING":
-            if unit_name != "套" or craft["code"] not in {"CUTTING", "SEWING", "SCREEN_PRINTING"}:
+            if unit_name != "套" or craft["code"] not in {"CUTTING", "SEWING", "SCREEN_PRINTING", "EMBROIDERY"}:
                 _invalid("identity_snapshot", "裁片半成品工艺或套单位不正确。")
             if _specification(snapshot.get("specification"), "specification") != snapshot.get("specification"):
                 _invalid("specification", "裁片规格未经规范化。")

@@ -639,6 +639,8 @@ export interface SampleWorkflowActions {
   can_pmc_approve: boolean
   can_upload_metalwork: boolean
   can_upload_cutting: boolean
+  can_delete_metalwork?: boolean
+  can_delete_cutting?: boolean
 }
 
 export interface SampleListQuery {

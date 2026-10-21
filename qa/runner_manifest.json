@@ -1,7 +1,243 @@
 {
   "version": 1,
   "modules": {
+    "employee-menu": [
+      {
+        "id": "employee-menu-unit6-20261021",
+        "path": "qa/employee_menu_unit6.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_haiqu_employee_menu_u6_20261021_a15c89",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 900,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/employee-menu-unit6-20261021/page_checks.json"],
+        "preconditions": [
+          "单元六独占 PostgreSQL LiveServer 在18598，18599同源Vite仅代理本任务服务。",
+          "精确资源已登记；只使用隔离普通账号，只写本次夹具员工的一条部门归属。",
+          "不调用企业微信、不模拟页面API响应；真实通讯录同步另列未覆盖。",
+          "脚本finally关闭浏览器并清理自身目录，外层测试销毁数据库、容器及控制文件并复查。"
+        ]
+      }
+    ],
+    "workshop-employee-identity": [
+      {
+        "id": "workshop-employee-identity-unit5-20261021",
+        "path": "qa/workshop_employee_identity_unit5.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_haiqu_employee_workshop_u5_20261021_a15c89",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 600,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/employee-workshop-unit5-20261021/page_checks.json"],
+        "preconditions": [
+          "单元五独占库 LiveServer 运行在18596，18597同源Vite只代理该服务；仅使用夹具身份。",
+          "临时资源已登记；脚本只修改本次夹具限定的车间员工关联，不写真实业务库。",
+          "脚本关闭浏览器并清理自身目录；外层测试销毁数据库、容器、控制文件后复查。",
+          "主库迁移、真实人员分配和正式环境未验收，成功结果保留PASS_WITH_GAPS。"
+        ]
+      }
+    ],
+    "wecom-employee-login": [
+      {
+        "id": "wecom-employee-login-unit4-20261021",
+        "path": "qa/wecom_employee_login_unit4.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_haiqu_employee_login_u4_20261021_a15c89",
+        "browser_mode": "headless",
+        "account_required": false,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 600,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/wecom-login-unit4-20261021/page_checks.json"],
+        "preconditions": [
+          "单元四独占库 LiveServer fixture 已在18594启动，18595同源Vite只代理该服务；无真实企微配置。",
+          ".tmp/wecom-login-unit4-a15c89资源已登记；只使用fixture生成的隔离身份和三次精确授权写入。",
+          "脚本关闭浏览器并清理自身目录；外层测试销毁数据库、容器、控制文件及Vite进程后复查。",
+          "真实企业微信身份和正式库验收未覆盖，成功结果保留PASS_WITH_GAPS。"
+        ]
+      }
+    ],
+    "finished-outbound-list": [
+      {
+        "id": "finished-outbound-list-detail-20261021",
+        "path": "qa/finished_outbound_list_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "local-Compose-haiqu_erp-GET-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["FG_QA_USERNAME", "FG_QA_PASSWORD"],
+        "required_env": ["FG_QA_USERNAME", "FG_QA_PASSWORD"],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finished_outbound_list_20261021/browser.json"],
+        "preconditions": [
+          "本机 localhost:8080 正常 Session 登录，业务只读，不保存凭据或会话。",
+          "用户标注的出货单9ff1aa74-056e-452c-aff3-b1e2e542242b和既有采购详情必须存在；不创建替代业务数据。",
+          "专属 .tmp/finished-outbound-list-20261021 已在任务README登记；finally注销、关闭浏览器并精确清理。",
+          "多明细与长表CSS边界仅使用明确标注的临时DOM探针，不作为真实多单业务验收。"
+        ]
+      }
+    ],
+    "finished-outbound": [
+      {
+        "id": "finished-outbound-readonly-20261021",
+        "path": "qa/finished_outbound_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "read-only",
+        "database_target": "local-Compose-haiqu_erp-GET-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["FG_QA_USERNAME", "FG_QA_PASSWORD"],
+        "required_env": ["FG_QA_USERNAME", "FG_QA_PASSWORD"],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/qa/finished_outbound_20261021/readonly.json"],
+        "preconditions": [
+          "只访问本机 localhost:8080，使用进程内正常账号，不保存密码或 Session。",
+          "业务只读，页面拦截写请求；不提交出库，不上传或扣减库存。",
+          "专属 .tmp/fg-outbound-c8e2 在创建前登记，finally 注销、关闭后台浏览器并精确清理。"
+        ]
+      }
+    ],
+    "permissions": [
+      {
+        "id": "unit03-permissions-readonly",
+        "path": "qa/unit03_permissions_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "local-Compose-haiqu_erp-GET-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["docs/plans/production_access_notifications_20261020/reports/unit03_readonly.json"],
+        "preconditions": [
+          "UNIT03_QA_IDENTITIES为进程内正常登录身份数组，或UNIT03_QA_USERNAME及UNIT03_QA_PASSWORD；不保存凭据/会话文件。",
+          "仅本机正常认证登录/注销，业务API和页面只读；禁止外部服务型GET及业务写请求。",
+          ".tmp/unit03-1592b在创建前登记，finally注销本次Session、关闭浏览器、精确清理。",
+          "UNIT03_QA_EXPECT_APPLIED=true仅在本机实际赋权后使用；仅admin不算普通角色验收，始终报告真实写流程缺口。"
+        ]
+      }
+    ],
+    "organizations": [
+      {
+        "id": "unit02-organizations-readonly",
+        "path": "qa/unit02_organizations_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "local-Compose-haiqu_erp-GET-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": [
+          "docs/plans/production_access_notifications_20261020/reports/unit02_readonly.json",
+          "docs/plans/production_access_notifications_20261020/reports/unit02_*.png"
+        ],
+        "preconditions": [
+          "凭据二选一：UNIT02_QA_STORAGE_STATE，或UNIT02_QA_USERNAME与UNIT02_QA_PASSWORD正常登录；仅本机localhost或127.0.0.1目标，结构迁移及12部门/20角色关联已完成。",
+          "禁止页面POST/PUT/PATCH/DELETE和外部请求；脚本仅允许普通认证登录/注销，不生成账号、不伪造会话，不保存员工、部门、角色或权限。",
+          "临时.tmp/unit02-readonly-时间戳-PID路径在JSON报告先登记，finally关闭浏览器并核对范围清理；输入会话文件不删除。",
+          "1920x1080、1440x900、760x900检查三栏、表格四边、行高和滚动；打开部门/员工历史弹窗及原四页签。",
+          "通过qa/run.py organizations --read-only显式运行；缺正常会话BLOCKED；真实员工写入和并发仅隔离API测试，PASS_WITH_GAPS不计完整验收。"
+        ]
+      }
+    ],
+    "attendance": [
+      {
+        "id": "wecom-attendance-readonly",
+        "path": "qa/wecom_attendance_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "explicit-target-existing-attendance-snapshot-read-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": ["ATTENDANCE_QA_STORAGE_STATE"],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 10,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/wecom-attendance-20261020/readonly-*.json", "output/playwright/wecom-attendance-20261020/*.png"],
+        "preconditions": [
+          "先完成本模块后端业务和API测试；目标已授权迁移并有真实成功考勤快照。脚本不迁移、不调用同步、不创建账号或样例。",
+          "ATTENDANCE_QA_STORAGE_STATE 指向正常登录的有效会话，至少具备 attendance.view_attendance；默认地址 http://localhost:8080，可通过 ATTENDANCE_QA_BASE_URL 指定本地HTTP或HTTPS源；ATTENDANCE_QA_MONTH 默认北京时间上月。",
+          "全部请求只允许同源GET/HEAD；禁止任何写请求、外部源及 rules 接口，不点击读取当前规则、同步、保存；缺少前置明确BLOCKED，不Mock API。",
+          "真实月报、日报、原始明细、个人月历和ERP安排读取；1920x1080、1440x900、390x844检查DOM、边框、尺寸和滚动，实际缺失状态保留验收缺口。",
+          "临时浏览器目录 .tmp/wecom-attendance-readonly/browser-时间戳-PID 在JSON报告先登记后创建；finally关闭、核对边界、删除并复查，输入会话文件只读保留。",
+          "通过 qa/run.py attendance --read-only 显式运行，all不包含本模块；PASS_WITH_GAPS不能代替完整真实同步或写入验收。"
+        ]
+      }
+    ],
     "wecom": [
+      {
+        "id": "wecom-message-isolated-page",
+        "path": "qa/wecom_message_isolated.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "page",
+        "risk": "isolated-write",
+        "database_target": "test_haiqu_wecom_messages_page_20261019_01a1519b-only",
+        "browser_mode": "headless",
+        "account_required": false,
+        "required_env": ["WECOM_MESSAGE_QA_PASSWORD"],
+        "timeout_seconds": 240,
+        "enabled": true,
+        "order": 20,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["qa/wecom_message_20261019/page_checks.json", "qa/wecom_message_20261019/messages_*.png"],
+        "preconditions": [
+          "已登记专属测试库、容器与runtime，后端/API检查通过后启动WECOM_MESSAGE_BROWSER_QA=1的LiveServer夹具",
+          "仅使用本机18592真实隔离API和8080前端，不回退业务库，不连接线上或真实企业微信；外部发送为明确夹具模拟",
+          "fixture和浏览器继承相同临时WECOM_MESSAGE_QA_PASSWORD，凭据仅在进程内使用，不保存Cookie/密码或配置页截图",
+          "单项运行需--allow-db-write；finally清理浏览器profile并发送结束信号，fixture清理控制文件并销毁测试库，结束复查"
+        ]
+      },
       {
         "id": "wecom-login-readonly",
         "path": "qa/wecom_login_readonly.cjs",
@@ -76,6 +312,32 @@
       }
     ],
     "production": [
+      {
+        "id": "schedule-detail-readonly",
+        "path": "qa/schedule_detail_readonly.cjs",
+        "runtime": "node",
+        "args": [],
+        "category": "visual",
+        "risk": "read-only",
+        "database_target": "local-Compose-haiqu_erp-GET-only",
+        "browser_mode": "headless",
+        "account_required": true,
+        "account_env": [],
+        "required_env": [],
+        "timeout_seconds": 300,
+        "enabled": true,
+        "order": 30,
+        "result_protocol": "json-summary-v1",
+        "artifacts": ["output/playwright/schedule-detail-20261020/*.json", "output/playwright/schedule-detail-20261020/*.png"],
+        "preconditions": [
+          "先通过本任务后端业务/API测试。目标是当前本机真实排产详情；不得创建账号、工价、报工、外发、领料或其他业务记录。",
+          "SCHEDULE_DETAIL_QA_STORAGE_STATE为已有有效会话路径；或SCHEDULE_DETAIL_QA_CREDENTIALS_FILE为现有账号的JSON凭据文件路径，通过正常Session+CSRF登录。缺失或过期返回BLOCKED，不伪造身份。",
+          "仅同源GET/HEAD及本脚本正常认证login/logout；页面所有业务写与外部请求均拦截并失败。输入会话与凭据文件仅读取、永不删除。",
+          "1920x1080、1440x900、1102x884检查独立规格/颜色/材质、真实API金额及行数；外发按order_kind和order_id一单一行，本产品可见明细去重后合计，不按物料拆行。核对单行表格、38px表头/44px行/24px规范Tag、四边与网格、局部滚动及末行末列。数据缺口单独记录。",
+          "临时目录.tmp/schedule-detail-01a1591e-<PID>在报告先登记再创建，finally关闭并核验完整路径及本次归属标记后精确清理复查；只注销本次正常登录创建的Session。",
+          "通过 qa/run.py production --read-only 纳入生产模块；单条可运行 node qa/schedule_detail_readonly.cjs。PASS_WITH_GAPS不等于完整功能及所有角色验收。"
+        ]
+      },
       {
         "id": "boards-preview-readonly",
         "path": "qa/boards_preview_readonly.cjs",

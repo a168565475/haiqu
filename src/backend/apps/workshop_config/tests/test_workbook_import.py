@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from openpyxl import Workbook
 
@@ -106,7 +107,7 @@ class WorkshopWorkbookImportTests(TestCase):
         self.assertIn("员工 dry-run 完成：未写入数据库", output.getvalue())
         self.assertEqual(WorkshopEmployee.objects.count(), 0)
 
-    def test_employee_only_apply_requires_explicit_supervisor_list(self):
+    def test_employee_only_apply_cannot_create_unlinked_identity(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             paths = self._paths(directory)
@@ -137,27 +138,32 @@ class WorkshopWorkbookImportTests(TestCase):
                 ),
                 encoding="utf-8",
             )
-            call_command(
-                "import_workshop_employees",
-                employees=str(paths[0]),
-                expect_employees=1,
-                apply=True,
-                supervisor_file=str(supervisor_file),
-                additional_employees_file=str(additional_file),
-                expect_additional_employees=1,
-                expect_existing_employees=0,
-                stdout=io.StringIO(),
-            )
-        self.assertEqual(WorkshopEmployee.objects.count(), 2)
-        self.assertEqual(WorkshopEmployee.objects.filter(is_supervisor=True).count(), 2)
-        self.assertTrue(
-            WorkshopEmployee.objects.filter(
-                workshop__name="金工车间",
-                position="车间主管",
-                name="员工乙",
-                status="ACTIVE",
-            ).exists()
-        )
+            with self.assertRaisesRegex(CommandError, "统一员工主档"):
+                call_command(
+                    "import_workshop_employees",
+                    employees=str(paths[0]),
+                    expect_employees=1,
+                    apply=True,
+                    supervisor_file=str(supervisor_file),
+                    additional_employees_file=str(additional_file),
+                    expect_additional_employees=1,
+                    expect_existing_employees=0,
+                    stdout=io.StringIO(),
+                )
+        self.assertEqual(WorkshopEmployee.objects.count(), 0)
+
+    def test_combined_apply_cannot_create_unlinked_identity_or_partial_crafts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = self._paths(Path(temp_dir))
+            with self.assertRaisesRegex(CommandError, "统一员工主档"):
+                call_command(
+                    "import_workshop_workbooks", employees=str(paths[0]), crafts=str(paths[1]),
+                    operations=str(paths[2]), expect_employees=1, expect_crafts=1, expect_operations=1,
+                    apply=True, stdout=io.StringIO(),
+                )
+        self.assertEqual(WorkshopEmployee.objects.count(), 0)
+        self.assertEqual(Craft.objects.count(), 0)
+        self.assertEqual(Operation.objects.count(), 0)
 
     def test_craft_only_dry_run_excludes_exact_confirmed_row(self):
         with tempfile.TemporaryDirectory() as temp_dir:

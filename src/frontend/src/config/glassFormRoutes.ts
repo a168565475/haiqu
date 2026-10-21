@@ -8,11 +8,12 @@ export const glassFormRouteNames = [
   'supplier-purchase-sheet-editor',
   'manual-material-inbound', 'material-purchase-inbound', 'material-quality-confirmation',
   'internal-semi-receipt', 'assembly-finished-receipt', 'inventory-tube-return',
+  'finished-goods-outbound-new',
   'access-management', 'theme-settings', 'inquiry-handling-settings',
   'material-issue-new', 'material-issue-edit',
   'workshop-scheduling-new', 'workshop-scheduling-edit',
   'wage-scheme-new', 'wage-scheme-change', 'work-report-new', 'work-report-edit',
   'workshop-outsourcing-new', 'workshop-outsourcing-tube-new',
-  'sample-new', 'sample-edit', 'sample-director-review', 'sample-materials',
+  'sample-new', 'sample-director-review', 'sample-materials',
   'sample-warehouse-review', 'sample-material-issue', 'sample-material-issue-confirm',
 ] as const

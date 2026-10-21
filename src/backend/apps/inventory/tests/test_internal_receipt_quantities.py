@@ -43,6 +43,47 @@ class InternalReceiptQuantityTests(unittest.TestCase):
     def test_two_pieces_half_meter_each_make_one_meter_per_set(self):
         self.assertEqual(fabric_input_per_set(2, '0.5'), 1)
 
+    def test_sewing_actual_sets_need_no_material_pool_and_do_not_report_meter_use(self):
+        demands = [replace(row, input_per_output=None) for row in (self.seat, self.back)]
+        result = validate_receipt(scope_key='order-a', demands=demands, inputs=[], check_inputs=False,
+                                  requested={row.component_key: 1000 for row in demands})
+        self.assertEqual(dict(result.input_remaining_after), {})
+        for row in result.components.values():
+            self.assertEqual((row.can_receive, row.received_after, row.demand_remaining_after), (1000, 1000, 0))
+            self.assertEqual((row.input_remaining, row.input_supported, row.consumes_input), (None, None, None))
+
+    def test_sewing_counts_legacy_and_new_receipts_without_recalculating_old_meter_use(self):
+        demand = replace(self.seat, input_per_output=None, completed_elsewhere=D('100'))
+        legacy = self.receipt(self.seat, 200)
+        current = replace(legacy, quantity=D('300'), input_quantity=None)
+        args = dict(scope_key='order-a', demands=[demand], inputs=[], check_inputs=False, history=[legacy, current])
+        row = calculate_receipt(**args).components[demand.component_key]
+        self.assertEqual((row.received, row.can_receive), (600, 400))
+        self.assertEqual(legacy.input_quantity, 120)
+        self.assert_code('DEMAND_EXCEEDED', lambda: validate_receipt(**args, requested={demand.component_key:401}))
+        self.assertTrue(validate_receipt(**args, requested={demand.component_key:400}).components[demand.component_key].complete_after)
+
+    def test_sewing_order_mode_does_not_relax_scope_source_or_integer_checks(self):
+        demand = replace(self.seat, input_per_output=None)
+        args = dict(scope_key='order-a', demands=[demand], inputs=[], check_inputs=False)
+        self.assert_code('WHOLE_QUANTITY_REQUIRED', lambda: validate_receipt(**args, requested={demand.component_key:D('1.5')}))
+        self.assert_code('SCOPE_MISMATCH', lambda: calculate_receipt(**args, history=[replace(self.receipt(self.seat, 1), scope_key='other-order')]))
+        self.assert_code('SOURCE_CHANGED', lambda: calculate_receipt(**args, history=[replace(self.receipt(self.seat, 1), source_key='other-fabric')]))
+        self.assert_code('DEMAND_HISTORY_CONFLICT', lambda: calculate_receipt(**{**args, 'demands':[replace(demand, completed_elsewhere=D('1001'))]}))
+
+    def test_sewing_direct_commitment_reduces_allowance_without_becoming_receipt_history(self):
+        demand = replace(self.seat, input_per_output=None, completed_elsewhere=D('100'), directly_committed=D('300'))
+        args = dict(scope_key='order-a', demands=[demand], inputs=[], check_inputs=False)
+        row = validate_receipt(**args, requested={demand.component_key:600}).components[demand.component_key]
+        self.assertEqual((row.received, row.directly_committed, row.can_receive, row.received_after), (100, 300, 600, 700))
+        self.assert_code('DEMAND_EXCEEDED', lambda: validate_receipt(**args, requested={demand.component_key:601}))
+        self.assert_code('DEMAND_HISTORY_CONFLICT', lambda: calculate_receipt(
+            **{**args, 'demands':[replace(demand, directly_committed=901)]}))
+
+    def test_metal_cannot_opt_out_of_actual_input_checks(self):
+        self.assert_code('UNIT_MISMATCH', lambda: calculate_receipt(scope_key='order-a',
+                         demands=[replace(self.pipe, input_per_output=None)], inputs=[], check_inputs=False))
+
     def test_database_decimal_trailing_zeroes_are_not_extra_precision(self):
         self.assertEqual(fabric_input_per_set(D('2.0000'), D('0.5000')), 1)
         self.assertEqual(net_component_demand(D('1000.0000'), D('4.0000')), 4000)

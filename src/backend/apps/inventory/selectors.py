@@ -18,6 +18,8 @@ from apps.sales_orders.presentation import specification_display
 from apps.samples.models import SampleItem
 
 from .models import (
+    FinishedGoodsOutbound,
+    FinishedGoodsOutboundLine,
     FinishedGoodsReceipt,
     MaterialInbound,
     MaterialInboundLine,
@@ -30,6 +32,36 @@ from .models import (
     WarehouseLocation,
     WarehouseZone,
 )
+
+
+def finished_goods_outbounds(*, keyword="", warehouse_id=None, production_task_id=None, product_line_id=None):
+    lines = FinishedGoodsOutboundLine.objects.select_related(
+        "receipt__unit", "receipt__production_task_product", "receipt__location__zone__warehouse",
+    )
+    queryset = FinishedGoodsOutbound.objects.select_related(
+        "outbound_by_employee", "responsible_employee",
+    ).prefetch_related(Prefetch("lines", queryset=lines), "attachments__business_file")
+    if keyword or warehouse_id or production_task_id or product_line_id:
+        # 所有条件必须命中同一条出库明细；命中后仍返回整张单据的全部明细。
+        matching_lines = FinishedGoodsOutboundLine.objects.filter(outbound_id=OuterRef("pk"))
+        if keyword:
+            matching_lines = matching_lines.filter(
+                Q(outbound__outbound_number__icontains=keyword)
+                | Q(receipt__task_number_snapshot__icontains=keyword)
+                | Q(receipt__product_code_snapshot__icontains=keyword)
+                | Q(receipt__product_name_snapshot__icontains=keyword)
+                | Q(receipt__item_number_snapshot__icontains=keyword)
+                | Q(receipt__specification_snapshot__icontains=keyword)
+                | Q(receipt__actual_color__icontains=keyword)
+            )
+        if warehouse_id:
+            matching_lines = matching_lines.filter(receipt__location__zone__warehouse_id=warehouse_id)
+        if production_task_id:
+            matching_lines = matching_lines.filter(receipt__production_task_product__production_task_id=production_task_id)
+        if product_line_id:
+            matching_lines = matching_lines.filter(receipt__production_task_product_id=product_line_id)
+        queryset = queryset.filter(Exists(matching_lines))
+    return queryset
 
 
 def warehouses_with_usage(queryset=None):
@@ -79,13 +111,18 @@ def locations_with_usage(queryset=None):
     )
 
 
-def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", category=""):
+def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", category="", production_task_id="", exclude_sample=False):
     queryset = FinishedGoodsReceipt.objects.filter(remaining_quantity__gt=0)
+    if exclude_sample:
+        queryset = queryset.exclude(source_type="SAMPLE_INVENTORY")
+    if production_task_id:
+        queryset = queryset.filter(production_task_product__production_task_id=production_task_id)
     if keyword:
         queryset = queryset.filter(
             Q(product_number_snapshot__icontains=keyword)
             | Q(product_code_snapshot__icontains=keyword)
             | Q(product_name_snapshot__icontains=keyword)
+            | Q(task_number_snapshot__icontains=keyword)
             | Q(product_name_pinyin_search__icontains=keyword)
             | Q(item_number_snapshot__icontains=keyword)
             | Q(actual_color__icontains=keyword)
@@ -100,6 +137,7 @@ def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", ca
     return (
         queryset.values(
             "production_task_product__product_id",
+            "task_number_snapshot",
             "category_snapshot",
             "product_number_snapshot",
             "product_code_snapshot",

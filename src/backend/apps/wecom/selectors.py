@@ -1,15 +1,15 @@
 from urllib.parse import urlsplit
 
 from django.db.migrations.recorder import MigrationRecorder
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Q
 from django.views.decorators.debug import sensitive_variables
 
-from apps.access_control.selectors import current_assignments
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import etag_for_instance
 from apps.organizations.models import Employee
 from .credentials import CredentialError, decrypt_secret, encryption_ready
-from .models import WeComBinding, WeComConfig
+from .login_selectors import ACTIVE_BINDING, bindings_with_login_permission
+from .models import WeComConfig
 
 
 def schema_is_ready():
@@ -20,8 +20,9 @@ def schema_is_ready():
 def waiting_for_role(user):
     if not user or not user.is_authenticated or not schema_is_ready():
         return False
-    employee = Employee.objects.filter(user_id=user.pk, wecom_binding__created_account=True).first()
-    return bool(employee and not current_assignments(employee).exists())
+    return bindings_with_login_permission().filter(
+        ACTIVE_BINDING, employee__user_id=user.pk, has_login_permission=False,
+    ).exists()
 
 
 def get_config():
@@ -72,10 +73,9 @@ def config_payload(config):
 
 
 def bindings_queryset(search="", status=""):
-    roles = current_assignments(OuterRef("employee_id"))
-    queryset = WeComBinding.objects.select_related("employee__user").annotate(has_role=Exists(roles))
-    active = Q(employee__status="ACTIVE", employee__archived_at__isnull=True, employee__user__is_active=True)
-    waiting = Q(created_account=True, has_role=False)
+    queryset = bindings_with_login_permission()
+    active = ACTIVE_BINDING
+    waiting = Q(has_login_permission=False)
     if status == "inactive":
         queryset = queryset.exclude(active)
     elif status == "waiting":
@@ -91,8 +91,10 @@ def bindings_queryset(search="", status=""):
 def binding_payload(binding):
     employee, user = binding.employee, binding.employee.user
     inactive = employee.status != "ACTIVE" or employee.archived_at is not None or user is None or not user.is_active
-    has_role = binding.has_role if hasattr(binding, "has_role") else current_assignments(employee).exists()
-    role_status = "inactive" if inactive else "waiting" if binding.created_account and not has_role else "active"
+    has_permission = getattr(binding, "has_login_permission", None)
+    if not inactive and has_permission is None:
+        has_permission = bindings_with_login_permission().filter(pk=binding.pk, has_login_permission=True).exists()
+    role_status = "inactive" if inactive else "active" if has_permission else "waiting"
     return {
         "id": binding.pk, "user_id": binding.user_id, "member_name": binding.member_name,
         "employee_id": employee.pk, "employee_code": employee.employee_code, "employee_name": employee.display_name,

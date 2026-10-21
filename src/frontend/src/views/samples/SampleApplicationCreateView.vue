@@ -276,8 +276,9 @@ async function submit() {
   try {
     const result = await submitSampleApplication({ ...form }, { key: submissionKey, sampleId: editingId.value || undefined, etag: editingEtag.value })
     submitted = true
-    ElMessage.success('打样申请已提交厂长确认。')
-    await router.replace({ name: 'sample-director-review', params: { sampleId: result.id } })
+    const effective = result.status === 'PENDING_COMPLETION'
+    ElMessage.success(effective ? '打样申请已直接生效，待工厂完善需求。' : '打样申请已提交厂长确认。')
+    await router.replace({ name: effective ? 'sample-detail' : 'sample-director-review', params: { sampleId: result.id } })
   } catch (error) { submitError.value = apiError(error) }
   finally { submitting.value = false }
 }
@@ -295,12 +296,12 @@ onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++
         <div class="application-heading-actions">
           <p v-if="submitError" class="submit-error" role="alert">{{ submitError }}</p>
           <ElButton class="cancel-button" :disabled="submitting" @click="router.push({ name: 'samples' })">取消</ElButton>
-          <ElButton class="submit-button" type="primary" :loading="submitting" :disabled="loading || Boolean(errorMessage) || !canCreate" @click="submit">提交厂长确认</ElButton>
+          <ElButton class="submit-button" type="primary" :loading="submitting" :disabled="loading || Boolean(errorMessage) || !canCreate" @click="submit">提交确认</ElButton>
         </div>
       </header>
       <div v-if="returnedNote" class="returned-note" role="note">退回意见：{{ returnedNote }}</div>
       <div v-if="errorMessage" class="application-error" role="alert"><p>{{ errorMessage }}</p><ElButton @click="loadPage">重新加载</ElButton></div>
-      <ElForm v-else :disabled="submitting" label-position="top" class="application-form" @submit.prevent="submit">
+      <ElForm v-else :disabled="submitting" label-position="top" class="application-form erp-flat-form" @submit.prevent="submit">
         <SampleSection title="基础信息" class="basic-section">
           <div class="basic-grid">
             <ElFormItem :label="sourceLabel"><ElInput class="readonly-field" :model-value="context?.source_number || '无来源询盘'" disabled /></ElFormItem>

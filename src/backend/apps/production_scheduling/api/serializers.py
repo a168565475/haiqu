@@ -55,7 +55,15 @@ class ScheduleVoidSerializer(serializers.Serializer):
 
 class ScheduleProductReadSerializer(serializers.Serializer):
     def to_representation(self, instance):
-        product = instance.product_snapshot or {}
+        product = dict(instance.product_snapshot or {})
+        product.setdefault("material", instance.product_line.material_snapshot or "")
+        product["specification_display"] = specification_display(SimpleNamespace(
+            specification_snapshot=product.get("specification") or "",
+            customer_specification_snapshot="",
+            customer_color_snapshot="",
+            color_snapshot=product.get("color_name") or "",
+            material_snapshot=product.get("material") or "",
+        ))
         crafts = getattr(instance, "active_crafts", None)
         if crafts is None:
             crafts = instance.crafts.filter(removed_at__isnull=True).select_related("craft")

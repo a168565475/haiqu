@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "apps.preferences",
     "apps.email_accounts",
     "apps.wecom",
+    "apps.attendance",
 ]
 
 MIDDLEWARE = [

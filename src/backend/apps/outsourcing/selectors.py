@@ -32,6 +32,10 @@ def accessible_outsourcing_orders(request, permission=None):
     permission = permission or current_permission(request, 'outsourcing.view_outsourcingorder')
     queryset = OutsourcingOrder.objects.all()
     legacy_queryset = queryset.filter(schedule_id__in=accessible_production_schedules(request).values('id'))
+    from .source_access import scoped_regular_orders
+    from apps.access_control.resource_scopes import enforcing
+    if enforcing(request, permission):
+        return scoped_regular_orders(queryset, request, permission, legacy_queryset)
     if has_resource_grant(request, permission, 'CRAFT'):
         return craft_access_union(queryset, legacy_queryset, request, permission)
     return filter_crafts(legacy_queryset, request, permission)
@@ -42,6 +46,16 @@ def outsourcing_source_schedules(request, permission=None, craft_id=None):
     from apps.access_control.resource_scopes import current_permission, filter_crafts, has_resource_grant, has_legacy_permission
     from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProductCraft
     permission = permission or current_permission(request, 'outsourcing.view_outsourcingorder')
+    from .source_access import source_grants
+    from apps.access_control.resource_scopes import enabled
+    if enabled() and any(source.get('scope') in {'MODULE', 'STOCK', 'WORKSHOP'}
+                         for source in source_grants(request, permission)):
+        sources = source_grants(request, permission)
+        if any(source.get('scope') in {'MODULE', 'STOCK'} for source in sources):
+            return ProductionSchedule.objects.all()
+        ids = {pk for source in sources if source.get('scope') == 'WORKSHOP' for pk in source.get('resource_ids', [])}
+        return ProductionSchedule.objects.filter(products__removed_at__isnull=True,
+            products__crafts__removed_at__isnull=True, products__crafts__craft__workshop_id__in=ids).distinct()
     if not has_resource_grant(request, permission, 'CRAFT'):
         return accessible_production_schedules(request)
     links = filter_crafts(ProductionScheduleProductCraft.objects.filter(
@@ -50,7 +64,7 @@ def outsourcing_source_schedules(request, permission=None, craft_id=None):
         links = links.filter(craft_id=craft_id)
     queryset = ProductionSchedule.objects.filter(pk__in=links.values('schedule_product__schedule_id'))
     if has_legacy_permission(request, permission):
-        queryset = queryset | accessible_production_schedules(request)
+        queryset = queryset.distinct() | accessible_production_schedules(request).distinct()
     return queryset.distinct()
 
 

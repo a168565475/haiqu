@@ -7,6 +7,7 @@ import { useThemeStore } from '@/stores/theme'
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace: vi.fn() }) }))
 vi.mock('./GlobalPageTabs.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('./HeaderMessages.vue', () => ({ default: { template: '<button data-message-toggle>消息</button>' } }))
 const menuStubs = { ElIcon: true, ElDropdownItem: true, ElDropdownMenu: true }
 
 beforeEach(() => {

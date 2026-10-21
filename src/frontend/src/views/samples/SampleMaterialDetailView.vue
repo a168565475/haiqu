@@ -4,12 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 
 import { fetchSample } from '@/api/samples'
-import { fetchSampleMaterials } from '@/api/sampleMaterials'
+import { fetchSampleMaterials, fetchSampleProcurementMaterialContext } from '@/api/sampleMaterials'
 import SampleSection from '@/components/samples/SampleSection.vue'
 import SampleStatusTag from '@/components/samples/SampleStatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { SampleDetail } from '@/types/sample'
-import type { SampleMaterialCategory, SampleMaterialLoadResult, SampleMaterialProgress } from '@/types/sampleMaterial'
+import type { SampleMaterialCategory, SampleMaterialLoadResult, SampleMaterialProgress, SampleProcurementMaterialContext } from '@/types/sampleMaterial'
 import { sampleMaterialCategories } from '@/types/sampleMaterial'
 import { sampleProductFieldLabel, sampleProductsLabel, sampleQuantityLabel } from '@/utils/samplePresentation'
 
@@ -17,6 +17,8 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const sample = ref<SampleDetail | null>(null)
+const procurementSample = ref<SampleProcurementMaterialContext['sample'] | null>(null)
+const headingSample = computed(() => sample.value || procurementSample.value)
 const progress = ref<SampleMaterialProgress | null>(null)
 const materialResult = ref<Extract<SampleMaterialLoadResult, { available: true }> | null>(null)
 const loading = ref(true)
@@ -51,7 +53,14 @@ const colorLabel = computed(() => {
     .filter(Boolean)
   return colors.join('；') || '—'
 })
-const contextFields = computed(() => [
+const contextFields = computed(() => procurementSample.value ? [
+  { label: '客户', value: procurementSample.value.customer_name || '—' },
+  { label: '产品名称', value: procurementSample.value.product_name || '—' },
+  { label: '规格', value: procurementSample.value.specification || '—' },
+  { label: '颜色', value: procurementSample.value.color || '—' },
+  { label: '打样数量', value: procurementSample.value.quantity_label || '—' },
+  { label: '申请日期', value: procurementSample.value.requested_at?.slice(0, 10) || '—' },
+] : [
   { label: '客户', value: sample.value?.customer_name || '—' },
   { label: '产品名称', value: sample.value ? sampleProductsLabel(sample.value) : '—' },
   { label: '规格', value: sample.value ? sampleProductFieldLabel(sample.value, 'specification') : '—' },
@@ -77,11 +86,18 @@ async function loadPage() {
   errorMessage.value = ''
   try {
     if (!sampleId.value) throw new Error('缺少申请编号。')
-    const [sampleResponse, materialResponse] = await Promise.all([
-      fetchSample(sampleId.value),
-      fetchSampleMaterials(sampleId.value),
-    ])
-    sample.value = sampleResponse.data
+    let materialResponse: SampleMaterialLoadResult
+    if (!authStore.hasPermission('samples.view_samplerequest') && authStore.hasPermission('samples.view_sample_procurement')) {
+      const context = await fetchSampleProcurementMaterialContext(sampleId.value)
+      procurementSample.value = context.sample
+      sample.value = null
+      materialResponse = context.materials
+    } else {
+      const [sampleResponse, materials] = await Promise.all([fetchSample(sampleId.value), fetchSampleMaterials(sampleId.value)])
+      sample.value = sampleResponse.data
+      procurementSample.value = null
+      materialResponse = materials
+    }
     if (!materialResponse.available) {
       errorMessage.value = materialResponse.reason
       return
@@ -117,8 +133,8 @@ onMounted(loadPage)
   <section v-loading="loading" class="sample-material-detail-page" aria-label="样品用料需求详情">
     <header class="material-detail-heading">
       <div class="heading-copy">
-        <div class="heading-main"><h1>样品用料需求详情</h1><SampleStatusTag v-if="sample" :status="sample.status" :label="sample.status_display" /></div>
-        <p>申请编号 {{ sample?.request_number || '—' }}</p>
+        <div class="heading-main"><h1>样品用料需求详情</h1><SampleStatusTag v-if="headingSample" :status="headingSample.status" :label="headingSample.status_display" /></div>
+        <p>申请编号 {{ headingSample?.request_number || '—' }}</p>
       </div>
       <div class="material-detail-heading-actions">
         <ElButton @click="router.push({ name: 'samples' })">返回列表</ElButton>
@@ -129,7 +145,7 @@ onMounted(loadPage)
 
     <div v-if="errorMessage" role="alert" class="material-detail-error"><span>{{ errorMessage }}</span><ElButton @click="loadPage">重新加载</ElButton></div>
 
-    <template v-else-if="sample">
+    <template v-else-if="headingSample">
       <section class="material-detail-context" aria-label="申请与样品信息">
         <div v-for="field in contextFields" :key="field.label" class="context-field">
           <label>{{ field.label }}</label><strong :title="field.value">{{ field.value }}</strong>
@@ -150,7 +166,7 @@ onMounted(loadPage)
               <tr v-for="line in visibleLines" :key="line.key">
                 <td>{{ sampleMaterialCategories.find((category) => category.key === line.category)?.label || line.category || '—' }}</td>
                 <td class="primary-text">{{ line.name || '—' }}</td><td class="specification">{{ line.specification || '—' }}</td><td>{{ line.material || '—' }}</td><td>{{ line.color || '—' }}</td>
-                <td>{{ line.quantity }}</td><td>{{ line.supplyQuantity }}</td><td>{{ line.remainingQuantity }}</td><td>{{ line.arrivedQuantity }}</td><td>{{ line.issuedQuantity ?? '—' }}</td><td>{{ line.shortageQuantity ?? '—' }}</td><td>{{ line.unitLabel || '—' }}</td>
+                <td>{{ line.quantity }}</td><td>{{ line.supplyQuantity }}</td><td>{{ line.procurementQuantity ?? '—' }}</td><td>{{ line.arrivedQuantity }}</td><td>{{ line.issuedQuantity ?? '—' }}</td><td>{{ line.shortageQuantity ?? '—' }}</td><td>{{ line.unitLabel || '—' }}</td>
                 <td><SampleStatusTag :status="tagStatus" :label="progress?.label || '—'" /></td>
               </tr>
             </tbody>

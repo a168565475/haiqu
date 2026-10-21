@@ -370,7 +370,7 @@ class BomLineSerializer(serializers.ModelSerializer):
     def get_cutting_material_original(self, obj) -> str | None:
         if not self._is_cutting_line(obj):
             return None
-        return (obj.raw_values or {}).get("cutting_material_original", obj.material)
+        return obj.material
 
     class Meta:
         model = BomLine
@@ -969,9 +969,9 @@ class BomLineWriteSerializer(serializers.Serializer):
     purchase_unit_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     fabric_source_line_id = serializers.UUIDField(required=False, allow_null=True)
     fabric_source_client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
-    fabric_meters_per_set = serializers.DecimalField(required=False, allow_null=True, max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    fabric_meters_per_set = serializers.DecimalField(read_only=True, allow_null=True, max_digits=18, decimal_places=4)
     cutting_pieces_per_set = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
-    fabric_meters_per_piece = serializers.DecimalField(required=False, allow_null=True, max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    fabric_meters_per_piece = serializers.DecimalField(read_only=True, allow_null=True, max_digits=18, decimal_places=4)
     cutting_sets_per_product = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
     tube_cut_piece_count = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     source_inventory_material_id = serializers.UUIDField(required=False, allow_null=True)
@@ -1459,12 +1459,6 @@ class BomUpdateInputSerializer(serializers.Serializer):
     def validate_sections(self, sections):
         bom = self.context.get("bom")
         sections = self._validate_fixed_sections(sections, bom)
-        submitted_lines = {
-            serializers.UUIDField().to_internal_value(line["id"]): line
-            for section in self.initial_data.get("sections", [])
-            for line in section["lines"]
-            if line.get("id") is not None
-        }
         section_ids = [item["id"] for item in sections if item.get("id")]
         if len(section_ids) != len(set(section_ids)):
             raise serializers.ValidationError("用料分区不能重复提交。")
@@ -2085,20 +2079,6 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 validate_cutting_specification(
                     line.get("specification", existing_line.specification if existing_line else ""), line_number,
                 )
-                existing_values = existing_line.raw_values or {} if existing_line else {}
-                if "cutting_material_original" not in existing_values:
-                    continue
-                source_id = line.get("source_inventory_material_id") or line.get("source_cutting_material_id")
-                existing_source_id = existing_values.get("source_inventory_material_id") or existing_values.get("source_cutting_material_id")
-                submitted_line = submitted_lines.get(existing_line.pk, {})
-                material_omitted = "material" not in submitted_line
-                unchanged_response = (
-                    "cutting_material_original" in submitted_line
-                    and line.get("material", existing_line.material) == existing_line.material
-                )
-                if str(source_id or "") == str(existing_source_id or "") and (material_omitted or unchanged_response):
-                    # 完整响应回传或省略材质时，旧的面料补充值不应变成裁片自己的材质。
-                    line["material"] = existing_values["cutting_material_original"]
         return sections
 
 

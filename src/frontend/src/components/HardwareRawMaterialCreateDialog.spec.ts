@@ -38,6 +38,18 @@ describe('原料新增窗暂存模式', () => {
       expect(wrapper.emitted('created')).toEqual([[{ id: 'saved-1' }]])
     } finally { wrapper.unmount() }
   })
+  it('裁片继承来源模式隐藏材质颜色并忽略旧输入，留给 BOM 来源面料决定', async () => {
+    const stage = vi.fn()
+    const { wrapper, vm } = await open(stage)
+    try {
+      await wrapper.setProps({ inheritFabricAttributes: true })
+      expect(wrapper.find('[aria-label="五金颜色"]').exists()).toBe(false)
+      expect(wrapper.find('[aria-label="五金材质"]').exists()).toBe(false)
+      await vm.submit()
+      expect(stage).toHaveBeenCalledWith(expect.objectContaining({ color: null, material: '' }), expect.objectContaining({ color_name: '' }))
+      expect(api.createRawMaterial).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
   it('暂存回调失败保留输入且不关闭', async () => {
     const { wrapper, vm } = await open(vi.fn().mockRejectedValue(new Error('失败')))
     try {

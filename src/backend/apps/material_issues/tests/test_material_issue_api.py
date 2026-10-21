@@ -400,6 +400,8 @@ class MaterialIssueApiTests(APITestCase):
         self.assertEqual(second.status_code, 201, second.data)
         self.assertEqual(first.data["data"]["id"], second.data["data"]["id"])
         issue = MaterialIssue.objects.get(pk=first.data["data"]["id"])
+        self.assertRegex(issue.issue_number, rf"^LL{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
+        self.assertEqual(first.data["data"]["issue_number"], second.data["data"]["issue_number"])
         created_event = issue.audit_events.get(action=MaterialIssueAction.CREATED)
         self.assertEqual(created_event.snapshot["plan_source"]["schedule_product_id"], str(self.schedule_product.pk))
         self.assertEqual(created_event.snapshot["plan_source"]["plan_category"], PlanCategory.METAL)

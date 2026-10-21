@@ -58,13 +58,17 @@ function formatScaled(value: bigint): string {
 function formatQuantity(value: string): string { const number = scaled(value); return number === null ? '—' : formatScaled(number) }
 function accepted(row: QualityRow): string { return validRow(row) ? formatScaled(scaled(receivedInput(row))! - scaled(row.returnQuantity)!) : '—' }
 function receivedQuantityText(line: MaterialInboundLine): string {
-  return `${line.measurement_kind === 'PIPE' ? `${line.received_bar_count ?? '—'} 根 / ` : ''}${formatQuantity(line.received_quantity)} ${line.source_unit_text_snapshot}`
+  if (line.measurement_kind === 'PIPE') return line.received_bar_count == null ? '根数未记录' : `${formatQuantity(String(line.received_bar_count))} 根`
+  return `${formatQuantity(line.received_quantity)} ${line.source_unit_text_snapshot}`
 }
 function acceptedQuantityText(row: QualityRow): string {
   const quantity = accepted(row)
-  if (row.line.measurement_kind !== 'PIPE') return quantity
+  return quantity === '—' ? quantity : `${quantity} ${row.line.measurement_kind === 'PIPE' ? '根' : row.line.source_unit_text_snapshot || ''}`.trim()
+}
+function acceptedQuantityTitle(row: QualityRow): string {
+  if (row.line.measurement_kind !== 'PIPE') return acceptedQuantityText(row)
   const meters = validRow(row) ? pipeMeters(String(Number(row.line.received_bar_count) - Number(row.returnQuantity)), row.line.raw_bar_length_m) : ''
-  return `${quantity} 根 / ${meters || '—'} 米`
+  return meters ? `${meters} 米 · ${row.line.raw_bar_length_m} 米/根` : acceptedQuantityText(row)
 }
 function status(row: QualityRow): string {
   if (!validRow(row)) return '待完善'
@@ -196,9 +200,9 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
                 <ElTooltip :content="row.line.supplier_name_snapshot" placement="top" :show-after="150" :disabled="!row.line.supplier_name_snapshot" :teleported="true">
                   <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name_snapshot || '—' }}</td>
                 </ElTooltip>
-                <td class="quantity-cell" :title="receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
+                <td class="quantity-cell" :title="row.line.measurement_kind === 'PIPE' ? `${formatQuantity(row.line.received_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : receivedQuantityText(row.line)">{{ receivedQuantityText(row.line) }}</td>
                 <td><ElInput v-model="row.returnQuantity" class="quantity-input" :aria-label="`第 ${index + 1} 项退货${row.line.measurement_kind === 'PIPE' ? '根数' : '数量'}`" :aria-invalid="!validRow(row)" :class="{ 'invalid-field': !validRow(row) }" :disabled="locked" :maxlength="row.line.measurement_kind === 'PIPE' ? 14 : 19" :inputmode="row.line.measurement_kind === 'PIPE' ? 'numeric' : 'decimal'"><template #append>{{ row.line.measurement_kind === 'PIPE' ? '根' : row.line.source_unit_text_snapshot || '单位未识别' }}</template></ElInput></td>
-                <td class="quantity-cell success-text" :title="acceptedQuantityText(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
+                <td class="quantity-cell success-text" :title="acceptedQuantityTitle(row)"><b>{{ acceptedQuantityText(row) }}</b></td>
                 <td class="muted">{{ row.line.warehouse_number }} · {{ row.line.warehouse_name }}</td><td class="muted">{{ row.line.zone_name }}</td>
                 <td class="remark-cell"><ElInput v-model="row.qualityRemark" :aria-label="`第 ${index + 1} 项质检说明`" :disabled="locked" maxlength="3000" placeholder="质检说明（可选）" /></td>
                 <td><ElTag :type="!validRow(row) ? 'warning' : status(row) === '合格' ? 'success' : 'danger'" round>{{ status(row) }}</ElTag></td>
@@ -218,7 +222,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
 
-.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px 28px 16px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 0; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-text-color-placeholder: #{token.$crm-text-muted}; --el-border-color: #{token.$crm-border-default}; --el-border-color-light: #{token.$crm-border-subtle}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .page-title-row, .table-head, .bulk-row, .date-field, .bulk-controls, .submit-bar { display: flex; align-items: center; }

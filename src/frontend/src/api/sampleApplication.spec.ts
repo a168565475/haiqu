@@ -14,12 +14,16 @@ describe('申请提交和厂长审核接口', () => {
   beforeEach(() => { post.mockReset() })
   it('提交全部原型字段、参考图片和稳定的提交标识，使用真实返回编号', async () => {
     const image = new File(['png'], 'reference.png', { type: 'image/png' })
-    post.mockResolvedValue({ data: { data: { id: 'created', etag: 'v1' } }, headers: { etag: 'v1' } })
-    expect(await submitSampleApplication({ ...draft, referenceImage: image }, { key: 'stable-key' })).toEqual({ id: 'created', etag: 'v1' })
+    post.mockResolvedValue({ data: { data: { id: 'created', etag: 'v1', status: 'DIRECTOR_REVIEW' } }, headers: { etag: 'v1' } })
+    expect(await submitSampleApplication({ ...draft, referenceImage: image }, { key: 'stable-key' })).toEqual({ id: 'created', etag: 'v1', status: 'DIRECTOR_REVIEW' })
     const [url, body] = post.mock.calls[0]!
     expect(url).toBe('/api/v1/sample-requests/applications/')
     expect(body.get('reference_image')).toBe(image)
     expect(JSON.parse(body.get('payload'))).toMatchObject({ idempotency_key: 'stable-key', quantity: 2, product_id: 'product-id', length_cm: '50', sample_due_date: null, purpose: '包装要求' })
+  })
+  it('返回服务端真实生效状态，供创建页决定后续入口', async () => {
+    post.mockResolvedValue({ data: { data: { id: 'factory-created', etag: 'v1', status: 'PENDING_COMPLETION' } }, headers: {} })
+    expect((await submitSampleApplication(draft, { key: 'factory-key' })).status).toBe('PENDING_COMPLETION')
   })
   it('审核及退回重提都携带 If-Match，服务失败不会返回假成功', async () => {
     post.mockRejectedValue(new Error('断网'))

@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { decimalUnits, outsourcingPlan } from './outsourcingQuantities'
+import { decimalUnits, outsourcingDispatchPlan, outsourcingPlan } from './outsourcingQuantities'
 import type { OutsourcingConversion } from '@/types/outsourcing'
 
 const pipe: OutsourcingConversion = { schema_version: 2, kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' }
 const fabric: OutsourcingConversion = { schema_version: 2, kind: 'FABRIC', fabric_meters_per_set: '1.5' }
 
 describe('外发数量与库存计量', () => {
+  it('新车缝直接填写整数套数，实际发料小数米数独立校验', () => {
+    const basis: OutsourcingConversion = { schema_version: 2, kind: 'FABRIC', quantity_basis: 'OUTPUT_SETS', raw_input_unit: '米' }
+    expect(outsourcingPlan('80', basis)).toEqual({ error: '', output: '80', raw: '', meters: '', remainder: '' })
+    expect(outsourcingPlan('12.5', basis).error).toContain('正整数')
+    expect(outsourcingDispatchPlan('12.5', basis)).toEqual({ error: '', output: '', raw: '12.5000', meters: '12.5000', remainder: '' })
+    expect(outsourcingDispatchPlan('0', basis).error).not.toBe('')
+  })
   it('402 支精确扣除 67 根与 204.35 米', () => {
     expect(outsourcingPlan('402', pipe)).toMatchObject({ error: '', output: '402', raw: '67', meters: '204.35' })
   })

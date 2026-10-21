@@ -16,7 +16,21 @@ defineProps<{ name: string }>()
     stroke-linejoin="round"
     style="stroke:var(--icon-ink,#283133);fill:none"
   >
-    <g v-if="name === 'manager-workbench'">
+    <g v-if="name === 'employee-list'">
+      <title>员工管理</title>
+      <circle cx="9" cy="7" r="3" style="fill:var(--icon-muted,#e7e9e4)" />
+      <path d="M3 20v-3a6 6 0 0 1 12 0v3" />
+      <path class="accent part" d="M17 6h4m-4 5h4m-4 5h4" style="stroke:var(--icon-accent,#c84e28)" />
+    </g>
+
+    <g v-else-if="name === 'attendance'">
+      <title>考勤管理</title>
+      <rect x="3" y="5" width="18" height="16" rx="2" style="fill:var(--icon-muted,#e7e9e4)" />
+      <path d="M7 3v4m10-4v4M3 10h18" />
+      <path class="accent part" d="m8 15 3 3 5-5" style="stroke:var(--icon-accent,#c84e28)" />
+    </g>
+
+    <g v-else-if="name === 'manager-workbench'">
       <title>主管工作台</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><circle cx="12" cy="5" r="2.5"/><path d="M7.5 11c0-2.5 2-3.5 4.5-3.5s4.5 1 4.5 3.5Z"/></g>
       <path d="M12 11v4H5v2m7-2h7v2"/>

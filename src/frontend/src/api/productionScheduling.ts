@@ -2,7 +2,7 @@ import type { AxiosResponse } from 'axios'
 
 import { apiClient } from './request'
 import type {
-  BatchCreatedSchedules, Paginated, ProductionSchedule, ScheduleBatchCreateInput, ScheduleCreateInput, ScheduleItem, ScheduleOptions,
+  BatchCreatedSchedules, CompleteScheduleInput, CompleteScheduleResult, Paginated, ProductionSchedule, ScheduleBatchCreateInput, ScheduleCompletionPreview, ScheduleCreateInput, ScheduleItem, ScheduleOptions,
   ScheduleTaskCandidate, ScheduleUpdateInput, VersionedSchedule,
 } from '@/types/productionScheduling'
 import type { DataResponse } from '@/types/referenceData'
@@ -41,6 +41,24 @@ export async function voidSchedule(id: string, reason: string, etag: string): Pr
   return versioned(await apiClient.post<DataResponse<ProductionSchedule>>(
     `${basePath}${encodeURIComponent(id)}/void/`, { reason }, { headers: { 'If-Match': etag } },
   ))
+}
+
+export async function completeSchedule(
+  id: string,
+  payload: CompleteScheduleInput,
+  etag: string,
+): Promise<CompleteScheduleResult> {
+  const { data } = await apiClient.post<DataResponse<CompleteScheduleResult>>(
+    `${basePath}${encodeURIComponent(id)}/complete/`, payload, { headers: { 'If-Match': etag } },
+  )
+  return data.data
+}
+
+export async function fetchScheduleCompletionPreview(id: string): Promise<ScheduleCompletionPreview> {
+  const { data } = await apiClient.get<DataResponse<ScheduleCompletionPreview>>(
+    `${basePath}${encodeURIComponent(id)}/completion-preview/`,
+  )
+  return data.data
 }
 
 export async function fetchScheduleOptions(): Promise<ScheduleOptions> {

@@ -10,12 +10,62 @@ class AccessManagementUnavailable(APIException):
 
 
 class CanManageAccess(BasePermission):
-    message = "当前仅 admin 超级管理员可以管理授权。"
+    message = "需要角色与授权管理权限。"
+    code = 'access_control.manage_access'
 
     def has_permission(self, request, view):
-        # Identity is checked before the rollout switch or any new-table reads.
-        if not (request.user.is_active and request.user.is_superuser and request.user.get_username() == "admin"):
+        from .management_permissions import can_manage
+        if not can_manage(request.user, self.code):
             return False
+        if not settings.ACCESS_MANAGEMENT_ENABLED:
+            raise AccessManagementUnavailable()
+        return True
+
+
+class CanManageAccounts(CanManageAccess):
+    message = "需要员工账号管理权限。"
+    code = 'access_control.manage_accounts'
+
+
+class CanManageWeCom(CanManageAccess):
+    message = "需要企业微信管理权限。"
+    code = 'access_control.manage_wecom'
+
+
+class CanManageNotifications(CanManageAccess):
+    message = "需要业务通知规则管理权限。"
+    code = 'access_control.manage_notifications'
+
+
+class CanReadAccessDirectory(CanManageAccess):
+    message = "需要组织、账号、授权或企业微信管理权限。"
+
+    def has_permission(self, request, view):
+        from .management_permissions import can_manage
+        if not any(can_manage(request.user, code) for code in (
+            'organizations.manage_organization', 'access_control.manage_access',
+            'access_control.manage_accounts', 'access_control.manage_wecom',
+        )):
+            return False
+        if not settings.ACCESS_MANAGEMENT_ENABLED:
+            raise AccessManagementUnavailable()
+        return True
+
+
+class CanManageOrganization(BasePermission):
+    message = "需要部门与组织管理权限。"
+
+    def has_permission(self, request, view):
+        from apps.core.auth import active_employee_for
+        from .selectors import effective_access
+        if active_employee_for(request.user) is None:
+            return False
+        admin = request.user.is_superuser and request.user.get_username() == "admin"
+        if not admin:
+            access = effective_access(request.user)
+            sources = access["actions"].get("organizations.manage_organization", {}).get("sources", [])
+            if not any(s["type"] == "ROLE" and s.get("scope") == "MODULE" for s in sources):
+                return False
         if not settings.ACCESS_MANAGEMENT_ENABLED:
             raise AccessManagementUnavailable()
         return True

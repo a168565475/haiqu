@@ -23,9 +23,21 @@ export function outsourcingPlan(value: unknown, basis?: OutsourcingConversion | 
     return { error: '', output: String(input / 10000n), raw: String(roots), meters: pipeMeters(String(roots), basis.raw_bar_length_m), remainder: '0' }
   }
   if (basis.kind === 'FABRIC') {
+    if (basis.quantity_basis === 'OUTPUT_SETS') {
+      if (input % 10000n) return { ...invalid, error: '加工套数必须为正整数。' }
+      return { error: '', output: String(input / 10000n), raw: '', meters: '', remainder: '' }
+    }
     const usage = decimalUnits(basis.fabric_meters_per_set)
     if (usage === null || usage <= 0n) return { ...invalid, error: '缺少每套耗米。' }
     return { error: '', output: String(input / usage), raw: decimalText(input), meters: decimalText(input), remainder: decimalText(input % usage) }
   }
   return { error: '', output: decimalText(input), raw: decimalText(input), meters: '', remainder: '' }
+}
+
+/** 发料始终按原料单位校验；按套加工不把实际发料米数换成套数。 */
+export function outsourcingDispatchPlan(value: unknown, basis?: OutsourcingConversion | null) {
+  if (basis?.kind !== 'FABRIC' || basis.quantity_basis !== 'OUTPUT_SETS') return outsourcingPlan(value, basis)
+  const input = decimalUnits(value)
+  if (input === null || input <= 0n) return { error: '请输入有效的正数，最多四位小数。', output: '', raw: '', meters: '', remainder: '' }
+  return { error: '', output: '', raw: decimalText(input), meters: decimalText(input), remainder: '' }
 }

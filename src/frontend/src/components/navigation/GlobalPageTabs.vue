@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, House } from '@element-plus/icons-vue'
+import { Close } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
+import ConfirmedSidebarIcon from '@/components/navigation/ConfirmedSidebarIcon.vue'
 import { usePageTabsStore } from '@/stores/pageTabs'
 import { createPageTab, type PageTab } from '@/utils/pageTabs'
 
@@ -81,7 +82,7 @@ async function closeTab(tab: PageTab) {
           @keydown.space.self.prevent="openTab(tab)"
         >
           <button type="button" class="global-page-tab__open" data-tab-open :title="tab.title" :disabled="store.navigating" @click="openTab(tab)">
-            <House v-if="tab.pinned" aria-hidden="true" />
+            <ConfirmedSidebarIcon v-if="tab.pinned" name="workbench" />
             <span class="global-page-tab__label">{{ tab.title }}</span>
           </button>
           <button v-if="!tab.pinned" type="button" class="global-page-tab__close" data-tab-close :aria-label="`关闭${tab.title}`" :disabled="store.navigating" @click="closeTab(tab)">
@@ -119,8 +120,8 @@ async function closeTab(tab: PageTab) {
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 4px;
+  gap: 6px;
+  padding: 0 2px;
 }
 .global-page-tab {
   box-sizing: border-box;
@@ -128,24 +129,28 @@ async function closeTab(tab: PageTab) {
   flex: none;
   display: flex;
   align-items: center;
-  height: 44px;
-  border-radius: 5px;
+  height: 32px;
+  border-radius: 8px;
   color: var(--erp-color-text-secondary);
   font-size: 13px;
   line-height: 20px;
   white-space: nowrap;
 }
 .global-page-tab:hover { background: var(--erp-menu-hover-background); }
-.global-page-tab[aria-selected='true'] { color: var(--erp-menu-accent); font-weight: 600; }
-.global-page-tab[aria-selected='true'] .global-page-tab__open::after {
-  content: '';
-  position: absolute;
-  right: 4px;
-  bottom: -6px;
-  left: 4px;
-  height: 3px;
-  border-radius: 4px 4px 1px 1px;
-  background: var(--erp-tab-active-indicator);
+.global-page-tab[aria-selected='true'] {
+  color: var(--erp-menu-accent);
+  font-weight: 600;
+  background: var(--erp-menu-selected-background);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--erp-color-surface) 60%, transparent);
+}
+.global-page-tab--home {
+  --sidebar-icon-ink: var(--erp-menu-icon-ink);
+  --sidebar-icon-accent: var(--erp-menu-accent);
+  --sidebar-icon-muted: var(--erp-menu-icon-muted);
+}
+.global-page-tab--home[aria-selected='true'] {
+  --sidebar-icon-ink: var(--erp-menu-accent);
+  --sidebar-icon-muted: var(--erp-menu-icon-selected-muted);
 }
 .global-page-tab__open {
   position: relative;
@@ -155,10 +160,10 @@ async function closeTab(tab: PageTab) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 7px;
   padding: 0 12px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: 13px/20px 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
@@ -182,6 +187,7 @@ async function closeTab(tab: PageTab) {
 }
 .global-page-tab__close:hover:not(:disabled) { color: var(--erp-color-text-secondary); background: var(--erp-menu-hover-background); }
 .global-page-tabs svg { width: 16px; height: 16px; flex: none; }
+.global-page-tab--home .confirmed-sidebar-icon { width: 18px; height: 18px; }
 .global-page-tab__close svg { width: 12px; height: 12px; }
 .global-page-tabs button:disabled { cursor: wait; }
 .global-page-tabs button:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }

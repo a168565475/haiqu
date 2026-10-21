@@ -2,6 +2,7 @@ import uuid
 from copy import deepcopy
 from unittest.mock import patch
 from django.contrib.auth.models import Permission
+from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 from apps.reference_data.models import ProductionUnit
 from apps.audit.models import AuditLog
@@ -22,8 +23,12 @@ class SampleMaterialApiTests(APITestCase):
         approved = self.review(self.submit())
         self.assertEqual(approved.status_code, 200, approved.data)
         self.root = f"/api/v1/sample-requests/{approved.data['data']['id']}/"
+        completed = self.client.patch(self.root + 'form/',
+            {'payload': application_tests.SampleApplicationApiTests.completion_payload(self, approved)},
+            format='json', HTTP_IF_MATCH=approved['ETag'])
+        self.assertEqual(completed.status_code, 200, completed.data)
         self.unit = ProductionUnit.objects.create(unit_code='QA_MATERIAL', unit_name='验收米')
-        return approved
+        return completed
 
     def draft(self, quantities=('12', '6', '4')):
         # 通用交接用例保留小数单位和明确原料身份；管材由独立根米专项覆盖。
@@ -205,3 +210,38 @@ class SampleMaterialApiTests(APITestCase):
             client = APIClient()
             client.force_authenticate(user=type(self.other_user).objects.get(pk=self.other_user.pk))
             self.assertEqual(client.get(self.root + 'materials/').status_code, 404)
+
+    @override_settings(MODULE_ACCESS_ENABLED=True)
+    def test_material_submitter_with_warehouse_permission_can_confirm_and_is_audited(self):
+        with self.settings(MODULE_ACCESS_ENABLED=False):
+            self.prepare()
+        state = self.client.get(self.root + 'materials/')
+        submitted = self.put('materials', self.draft(), True, state['ETag'])
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        warehouse = self.client.get(self.root + 'warehouse-review/')
+        confirmed = self.put('warehouse-review', self.supplies(warehouse), True, warehouse['ETag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        record = SampleMaterialRequest.objects.get()
+        self.assertEqual(record.submitted_by_id, self.employee.pk)
+        self.assertEqual(record.reviewed_by_id, self.employee.pk)
+        self.assertIsNotNone(record.reviewed_at)
+        for action in ('MATERIALS_SUBMITTED', 'WAREHOUSE_CONFIRMED'):
+            self.assertTrue(AuditLog.objects.filter(
+                object_id=record.sample_request_id, action=action, actor_employee=self.employee,
+            ).exists())
+        self.assertEqual(self.put('warehouse-review', self.supplies(warehouse), True, warehouse['ETag']).status_code, 412)
+        self.assertEqual(self.put('warehouse-review', self.supplies(warehouse), True, confirmed['ETag']).status_code, 409)
+
+    @override_settings(MODULE_ACCESS_ENABLED=True)
+    def test_material_submitter_without_warehouse_permission_cannot_confirm(self):
+        with self.settings(MODULE_ACCESS_ENABLED=False):
+            state = self.to_warehouse()
+        self.user.user_permissions.remove(Permission.objects.get(content_type__app_label='samples', codename='review_sample_materials'))
+        self.client.force_authenticate(user=type(self.user).objects.get(pk=self.user.pk))
+        denied = self.put('warehouse-review', self.supplies(state), True, state['ETag'])
+        self.assertEqual(denied.status_code, 403, denied.data)
+        record = SampleMaterialRequest.objects.get()
+        self.assertIsNone(record.reviewed_by_id)
+        self.assertIsNone(record.reviewed_at)
+        self.assertEqual(record.sample_request.status, 'WAREHOUSE_PENDING')
+        self.assertFalse(AuditLog.objects.filter(action='WAREHOUSE_CONFIRMED').exists())

@@ -6,6 +6,6 @@ export const glassListRouteNames = [
   'suppliers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns', 'supplier-purchase-sheets', 'purchase-contract-templates',
   'workshop-outsourcing', 'workshop-outsourcing-factories',
   'production-tasks', 'workshop-scheduling', 'workshop-metalworking-plan', 'workshop-cutting-plan', 'workshop-sewing-plan', 'workshop-assembly-plan',
-  'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory', 'material-inventory', 'material-inbound-details', 'semi-receipt-records',
-  'email-account-settings', 'number-rules', 'master-data-center', 'reference-data-settings', 'production-data',
+  'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory', 'finished-goods-outbounds', 'material-inventory', 'material-inbound-details', 'semi-receipt-records',
+  'email-account-settings', 'number-rules', 'master-data-center', 'reference-data-settings', 'production-data', 'employee-list', 'wecom-attendance',
 ] as const

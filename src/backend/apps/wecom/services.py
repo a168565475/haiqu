@@ -13,13 +13,14 @@ from django.views.decorators.debug import sensitive_variables
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import get_object_or_404
 
-from apps.access_control.services import require_manager
+from apps.access_control.management_permissions import require_wecom_manager as require_manager
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.organizations.models import Employee
 from .client import WeComClient, WeComError
 from .credentials import CredentialError, decrypt_secret, encrypt_secret
+from .directory_selectors import normalized_name
 from .models import OAuthState, WeComBinding, WeComConfig
 from .selectors import config_etag, config_snapshot, configuration_complete, get_config, waiting_for_role
 
@@ -304,6 +305,11 @@ def oauth_login(request, state, code):
         if request.user.is_authenticated and (binding is None or binding.employee.user_id != request.user.pk):
             raise OAuthFailure("ACCOUNT_MISMATCH")
         if binding is None:
+            # 姓名只用于提示人工核对；历史、停用员工也可能是同一人，不能另建或自动合并。
+            member_name = normalized_name(member["name"])
+            if any(normalized_name(name) == member_name
+                   for name in Employee.objects.values_list("display_name", flat=True).iterator()):
+                raise OAuthFailure("BINDING_REQUIRED")
             try:
                 with transaction.atomic():
                     user = _new_user(member["name"])

@@ -3,9 +3,9 @@ import ElementPlus, { ElMessage, ElSelect, ElUpload } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SampleApplicationCreateView from './SampleApplicationCreateView.vue'
 
-const api = vi.hoisted(() => ({ options: vi.fn(), context: vi.fn(), customers: vi.fn(), customer: vi.fn(), contacts: vi.fn(), products: vi.fn(), query: {} as Record<string, string> }))
+const api = vi.hoisted(() => ({ options: vi.fn(), context: vi.fn(), customers: vi.fn(), customer: vi.fn(), contacts: vi.fn(), products: vi.fn(), submit: vi.fn(), replace: vi.fn(), query: {} as Record<string, string> }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: api.query }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => ({ query: api.query }), useRouter: () => ({ push: vi.fn(), replace: api.replace }),
   onBeforeRouteLeave: vi.fn(), onBeforeRouteUpdate: vi.fn(),
 }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
@@ -13,7 +13,7 @@ vi.mock('@/api/samples', () => ({ fetchSampleFormOptions: api.options, fetchSamp
 vi.mock('@/api/customers', () => ({ fetchCustomers: api.customers, fetchCustomer: api.customer }))
 vi.mock('@/api/contacts', () => ({ fetchCustomerContacts: api.contacts }))
 vi.mock('@/api/products', () => ({ fetchProducts: api.products }))
-vi.mock('@/api/sampleApplication', () => ({ submitSampleApplication: vi.fn() }))
+vi.mock('@/api/sampleApplication', () => ({ submitSampleApplication: api.submit }))
 const wrappers: ReturnType<typeof mount>[] = []
 const customer = (id: string) => ({ id, account_code: id, account_name: `客户${id}` })
 
@@ -39,6 +39,16 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('创建打样申请客户查询', () => {
+  it.each([['PENDING_COMPLETION', 'sample-detail'], ['DIRECTOR_REVIEW', 'sample-director-review']])('以服务端%s状态进入真实下一阶段', async (status, name) => {
+    vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: vi.fn() }))
+    api.submit.mockResolvedValue({ id: 'created-sample', etag: 'v1', status })
+    const wrapper = await render()
+    const form = (wrapper.vm as unknown as { form: Record<string, unknown> }).form
+    Object.assign(form, { customerId: 'first', ownerId: 'owner', sampleType: 'PRE_SALES', shippingMethod: 'MAIL', deliveryBatch: 'SINGLE', repeatOrder: false, productName: '折叠椅', quantity: 3 })
+    await wrapper.findAll('button').find(button => button.text() === '提交确认')!.trigger('click')
+    await flushPromises()
+    expect(api.replace).toHaveBeenCalledWith({ name, params: { sampleId: 'created-sample' } })
+  })
   it('客户详情入口回填初始列表之外的客户并加载联系人', async () => {
     api.query = { customer_id: '501' }
     const wrapper = await render()

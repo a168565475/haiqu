@@ -17,6 +17,7 @@ def material_progress(sample):
     if record.no_materials:
         return {'label': '无需用料', 'status': 'MATERIALS_READY', 'lines': []}
     procurement = getattr(record, 'procurement_request', None)
+    procurement_quantities = {str(row['key']): row['shortageQuantity'] for row in procurement.lines} if procurement else {}
     arrivals = list(procurement.arrivals.all()) if procurement else []
     received = {}
     for arrival in arrivals:
@@ -29,6 +30,7 @@ def material_progress(sample):
         supplied = supply.get(row['key'], Decimal('0'))
         arrived = received.get(row['key'], Decimal('0'))
         lines.append({**row, 'supplyQuantity': str(supplied), 'arrivedQuantity': str(arrived),
+                      'procurementQuantity': str(procurement_quantities.get(str(row['key']), '0')) if record.reviewed_at else None,
                       'remainingQuantity': str(max(Decimal('0'), need - supplied - arrived))})
     issue = getattr(record, 'issue', None)
     if issue:
@@ -64,16 +66,17 @@ def material_progress(sample):
 
 
 @transaction.atomic
-def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_id, request):
+def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_id, request, direct_receipt=False):
     """内部调用方必须先建立采购来源对应关系；数量直接读取真实入库行。
 
     当前约定一个入库行仅分配一个缺料行；拆单、多样品合并采购须在采购阶段拆分来源。
     """
     if not request or not getattr(request, 'employee', None) or not (
         request.user.has_perm('samples.review_sample_materials') or request.user.has_perm('inventory.quality_confirm_material')
+        or (direct_receipt and request.user.has_perm('inventory.receive_material'))
     ):
         from rest_framework.exceptions import PermissionDenied
-        raise PermissionDenied('到货衔接需要有效员工及材料核对或品质确认权限。')
+        raise PermissionDenied('到货衔接需要有效员工及对应的材料核对、收货或品质确认权限。')
     procurement = SampleMaterialProcurementRequest.objects.select_related('material_request').get(pk=procurement_request_id)
     sample = SampleRequest.objects.select_for_update().get(pk=procurement.material_request.sample_request_id)
     inbound_id = MaterialInboundLine.objects.values_list('inbound_id', flat=True).get(pk=inbound_line_id)
@@ -101,20 +104,14 @@ def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_i
                 or existing.accepted_quantity != accepted_quantity):
             raise Conflict('该入库行已关联其他缺料或入库数量发生变化，需要核对来源。')
         return sample
-    already_ready = sample.status in {'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'} and all(
-        Decimal(row['remainingQuantity']) == 0 for row in material_progress(sample)['lines']
-    )
-    # 仅已登记材料账重置的样品可重新接续到货，保持已进入的生产/完成阶段。
-    if not already_ready and sample.status in {'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'}:
-        from apps.audit.models import AuditLog
-        already_ready = AuditLog.objects.filter(object_type='MATERIAL_FLOW_RESET', action='RESET_COMPLETED',
-            after_data__sample_ids__contains=[str(sample.pk)]).exists()
+    # 已按现有材料领料的样品仍可完成原采购入库，不回退生产，也不自动补发。
+    keep_production_stage = sample.status in {'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'}
     if not sample.application_payload_hash or (
         sample.status not in {
             SampleRequestStatus.PROCUREMENT_PENDING,
             SampleRequestStatus.MATERIAL_ISSUE_PENDING,
             SampleRequestStatus.MATERIAL_ISSUE_REVIEW,
-        } and not already_ready
+        } and not keep_production_stage
     ) or sample.archived_at or sample.customer_account.archived_at:
         raise Conflict('当前样品不在等待采购到货阶段。')
     before = model_snapshot(sample, SAMPLE_FIELDS)
@@ -127,7 +124,7 @@ def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_i
         Decimal(row['supplyQuantity']) + Decimal(row['arrivedQuantity']) > 0
         for row in progress_after['lines']
     )
-    if not already_ready and issue is None and has_available:
+    if not keep_production_stage and issue is None and has_available:
         sample.status = SampleRequestStatus.MATERIAL_ISSUE_PENDING
         sample.save(update_fields=['status', 'updated_at'])
     else:

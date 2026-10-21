@@ -19,15 +19,21 @@ const key = 'tube-outsourcing-action:v1:7:order-1'
 const base: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-real', status: 'PENDING_DISPATCH', version: 1, etag: '"order-1:v1"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: '原材料', schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', total_stock_quantity: '2', total_meters: '13.10',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
   task_order_number: 'DD-real', task_number: 'SC-real', schedule_number: 'PC-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '真实测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'zone-1', zone_name: 'A区', warehouse_name: '原料管材仓', craft_name: '喷塑', remark: '原单备注', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: true, can_cancel: true },
-  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', stock_quantity: '2', meters: '13.10',
+  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
     material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [] }],
 }
 const httpError = (status: number) => Object.assign(new AxiosError('接口错误'), { response: { status, data: { error: { message: `状态 ${status}` } } } })
+const hardwareMaterials = [{
+  id: 'material-1', bom_line_id: 'bom-hardware-1', component_identity: 'component-1', order_line_id: 'line-1',
+  part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '12.3456', unit: '个',
+  material_number: 'WJ-001', name: '固定螺母', specification: 'M6', material: '碳钢', color: '本色',
+  zone_id: 'hardware-zone', zone_name: '五金A区', warehouse_id: 'hardware-warehouse', warehouse_name: '五金仓',
+}]
 function result(kind: 'DISPATCH' | 'CANCEL', requestId: string): TubeOrderDetail {
   return { ...structuredClone(base), version: 2, etag: '"order-1:v2"', status: kind === 'DISPATCH' ? 'PROCESSING' : 'CANCELLED', action: { id: 'action-1', kind, client_request_id: requestId, confirmed_at: '2026-09-30T10:00:00+08:00', actor_name: '真实经办人' } }
 }
@@ -54,6 +60,74 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('管材外发详情与整单动作', () => {
+  it('裁片直发复用原详情和发出确认，按套展示报工与辅料', async () => {
+    const current = structuredClone(base)
+    current.source_kind = 'SEWING'; current.craft_id = 'embroidery'; current.craft_name = '刺绣'
+    current.materials = [{ ...hardwareMaterials[0]!, name: '织唛' }]
+    Object.assign(current.lines[0]!, { fabric_material: '涤纶', specification: '420×380', fabric_specification: '600D', fabric_color: '蓝色', pieces_per_set: '2', completed_craft_name: '车缝完成', current_reported_minimum: '60' })
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(current)
+    const { wrapper, vm } = await mountPage()
+    expect(wrapper.get('h1').text()).toBe('裁片外发单')
+    expect(wrapper.get('.d4-lines').text()).toContain('当前最低报工（套）')
+    expect(wrapper.get('.d4-lines').text()).toContain('涤纶')
+    expect(wrapper.get('.d4-lines').text()).not.toContain('切割长度')
+    expect(wrapper.text()).toContain('附带辅料')
+    vm.dialog = 'dispatch'; await flushPromises()
+    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('发出套数（套）')
+    expect(wrapper.text()).toContain('计入车缝已直发数量')
+    expect(api.dispatchTubeOrder).not.toHaveBeenCalled()
+    vm.dialog = ''; vm.detail!.status = 'CANCELLED'; await flushPromises(); vm.recreate()
+    expect(routing.push).toHaveBeenCalledWith(expect.objectContaining({ name: 'workshop-outsourcing-tube-new', query: expect.objectContaining({ category: 'cutting', craft_id: 'embroidery', source_kind: 'SEWING' }) }))
+  })
+  it('详情与发出确认显示原单价格，历史缺价保留未录入', async () => {
+    const { wrapper, vm } = await mountPage()
+    expect(wrapper.get('.d4-lines').text()).toContain('0.25')
+    expect(wrapper.get('.d4-footer').text()).toContain('计划加工金额 5 元')
+    vm.dialog = 'dispatch'; await flushPromises()
+    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('加工单价（元/支）')
+    expect(wrapper.get('.d4-dispatch-lines').text()).toContain('0.25')
+    const missing = structuredClone(base); missing.planned_amount = null
+    missing.lines[0]!.unit_price = null; missing.lines[0]!.planned_amount = null
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(missing)
+    vm.dialog = ''; await vm.loadDetail(); await flushPromises()
+    expect(wrapper.get('.d4-lines').text()).toContain('未录入')
+    expect(wrapper.get('.d4-footer').text()).toContain('计划加工金额 未录入 元')
+  })
+  it('附带五金按原单展示加工厂与来源库区，不显示旧绑定部位，发出确认只读且保持四位数量精度', async () => {
+    const data = { ...structuredClone(base), materials: structuredClone(hardwareMaterials) }
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
+    const { wrapper, vm } = await mountPage()
+    const table = wrapper.get('.d4-material-lines')
+    expect(table.findAll('th').map(cell => cell.text())).toEqual(['材料名称', '规格', '材质', '颜色', '加工厂', '外发数量', '单位', '来源仓库', '来源库区'])
+    expect(table.findAll('tbody td').map(cell => cell.text())).toEqual(['固定螺母', 'M6', '碳钢', '本色', '加工厂甲', '12.3456', '个', '五金仓', '五金A区'])
+    expect(wrapper.get('.d4-footer').text()).toContain('20 支')
+    vm.dialog = 'dispatch'; await flushPromises()
+    const confirmation = wrapper.get('.d4-dispatch-material-lines')
+    expect(confirmation.text()).toContain('12.3456')
+    expect(confirmation.text()).toContain('五金A区')
+    expect(confirmation.find('input').exists()).toBe(false)
+    expect(wrapper.get('.d4-dispatch').text()).toContain('按所选加工厂随本单一起发出，不单独回货')
+    await vm.submit('DISPATCH')
+    expect(api.dispatchTubeOrder).toHaveBeenCalledWith('order-1', { client_request_id: expect.any(String), actual_dispatch_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }, '"order-1:v1"')
+  })
+  it('附带五金发出被后端拒绝时保留真实明细，不提前显示发出成功', async () => {
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue({ ...structuredClone(base), materials: structuredClone(hardwareMaterials) })
+    vi.mocked(api.dispatchTubeOrder).mockRejectedValueOnce(httpError(400))
+    const { wrapper, vm } = await mountPage()
+    await vm.submit('DISPATCH')
+    expect(vm.detail?.status).toBe('PENDING_DISPATCH')
+    expect(wrapper.get('.d4-material-lines').text()).toContain('12.3456')
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(vm.recheckError).toBe('状态 400')
+  })
+  it('已结束原单仍能查看附带五金，不把五金作为独立回货项目', async () => {
+    const completed = { ...structuredClone(base), status: 'COMPLETED', materials: structuredClone(hardwareMaterials) }
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue({ order: completed, etag: completed.etag, can_receive: false, blockers: [], actor_name: '', today: '2026-09-30', warehouses: [], zones: [], receipt: null })
+    const { wrapper } = await mountPage()
+    expect(wrapper.get('.d4-material-lines').text()).toContain('固定螺母')
+    expect(wrapper.get('.d4-material-panel').text()).toContain('按所选加工厂随本单一起发出，不单独回货')
+    expect(wrapper.findAll('button').some(button => button.text() === '确认实际发出')).toBe(false)
+  })
   it('加工中喷塑入库接到D3，无回货权限则沿原按钮禁用', async () => {
     vi.mocked(api.fetchTubeOrder).mockResolvedValue({ ...structuredClone(base), status: 'PROCESSING' })
     const { wrapper } = await mountPage(); const button = wrapper.findAll('button').find(item => item.text() === '喷塑入库')!
@@ -72,11 +146,13 @@ describe('管材外发详情与整单动作', () => {
   })
   it('原材料支根米在同一只读表，独立规格颜色厚度且不含勾选', async () => {
     const { wrapper, vm } = await mountPage()
+    expect(wrapper.find('.d4-material-panel').exists()).toBe(false)
     expect(wrapper.findAll('.d4-context .info-cell')).toHaveLength(12)
-    expect(wrapper.findAll('.d4-lines th').map(cell => cell.text())).toEqual(['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '切割支数 支/根', '原材料长度 m/根', '待发支数（支）', '待扣（根）', '待扣（米）'])
+    expect(wrapper.findAll('.d4-lines th').map(cell => cell.text())).toEqual(['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '切割支数 支/根', '原材料长度 m/根', '待发支数（支）', '待扣（根）', '待扣（米）', '加工单价（元/支）', '计划金额（元）'])
     expect(wrapper.find('.d4-lines input').exists()).toBe(false)
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
     vm.dialog = 'dispatch'; await flushPromises()
+    expect(wrapper.find('.d4-dispatch-material-lines').exists()).toBe(false)
     expect(wrapper.find('.d4-dispatch-lines input').exists()).toBe(false)
     expect(wrapper.get('[aria-label="发出经办人"]').attributes('readonly')).toBeDefined()
     await vm.submit('DISPATCH')

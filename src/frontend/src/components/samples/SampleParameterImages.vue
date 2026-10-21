@@ -28,6 +28,9 @@ const imagesFor = (type: 'METALWORK' | 'CUTTING') => images.value.filter(image =
 const canUpload = (type: 'METALWORK' | 'CUTTING') => type === 'METALWORK'
   ? Boolean(props.sample.workflow_actions?.can_upload_metalwork)
   : Boolean(props.sample.workflow_actions?.can_upload_cutting)
+const canDelete = (type: 'METALWORK' | 'CUTTING') => type === 'METALWORK'
+  ? props.sample.workflow_actions?.can_delete_metalwork === true
+  : props.sample.workflow_actions?.can_delete_cutting === true
 
 function messageForError(error: unknown) {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> } } } }).response
@@ -50,10 +53,12 @@ async function uploadFiles(type: 'METALWORK' | 'CUTTING', files: File[]) {
   }
   uploading.value = type
   let currentEtag = props.etag
+  let uploadedCount = 0
+  const failureReasons: string[] = []
   try {
     for (const file of files) {
       if (!/^image\/(jpeg|png|gif|webp)$/i.test(file.type) || file.size <= 0 || file.size > 5 * 1024 * 1024) {
-        ElMessage.warning(`${file.name} 不是有效图片，需为 JPG、PNG、GIF 或 WebP，且不超过 5MB。`)
+        failureReasons.push(`${file.name} 不是有效图片，需为 JPG、PNG、GIF 或 WebP，且不超过 5MB。`)
         continue
       }
       const result = await uploadSampleParameterImage(
@@ -63,18 +68,22 @@ async function uploadFiles(type: 'METALWORK' | 'CUTTING', files: File[]) {
         currentEtag,
       )
       currentEtag = result.etag
+      uploadedCount += 1
       emit('saved', result.data, result.etag)
     }
-    ElMessage.success(`${type === 'METALWORK' ? '金工' : '裁剪'}参数图片已上传。`)
   } catch (error) {
-    ElMessage.error(messageForError(error))
+    failureReasons.push(messageForError(error))
   } finally {
     uploading.value = null
   }
+  const uploadedMessage = `${type === 'METALWORK' ? '金工' : '裁剪'}参数图片已上传 ${uploadedCount} 张。`
+  if (!uploadedCount) ElMessage.error(failureReasons.join('；'))
+  else if (failureReasons.length) ElMessage.warning(`${uploadedMessage}其余图片未上传：${failureReasons.join('；')}`)
+  else ElMessage.success(uploadedMessage)
 }
 
 async function removeImage(image: SampleParameterImage) {
-  if (props.disabled || !props.etag) return
+  if (props.disabled || !props.etag || !canDelete(image.parameter_type)) return
   uploading.value = image.parameter_type
   try {
     const result = await deleteSampleParameterImage(props.sample.id, image.id, props.etag)
@@ -152,7 +161,7 @@ watch(() => images.value.map(image => `${image.id}:${image.file_id}`).join('|'),
             <span v-else class="thumbnail-placeholder">图片</span>
           </button>
           <figcaption :title="image.file_name">{{ image.file_name }}</figcaption>
-          <button type="button" class="thumbnail-delete" :disabled="disabled || uploading !== null" @click="removeImage(image)">删除</button>
+          <button type="button" class="thumbnail-delete" :disabled="disabled || uploading !== null || !canDelete(image.parameter_type)" @click="removeImage(image)">删除</button>
         </figure>
       </div>
     </article>

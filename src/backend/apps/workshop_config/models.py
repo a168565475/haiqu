@@ -25,6 +25,7 @@ class CraftType(models.TextChoices):
 class OutsourcingCode(models.TextChoices):
     POWDER_COATING = "POWDER_COATING", "喷塑"
     SCREEN_PRINTING = "SCREEN_PRINTING", "丝印"
+    EMBROIDERY = "EMBROIDERY", "刺绣"
     CUTTING = "CUTTING", "裁剪"
     SEWING = "SEWING", "车缝"
 
@@ -78,6 +79,10 @@ class Workshop(NoPhysicalDeleteModel):
 
 class WorkshopEmployee(NoPhysicalDeleteModel):
     workshop = models.ForeignKey(Workshop, on_delete=models.PROTECT, related_name="employees")
+    employee = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="workshop_assignments",
+    )
     position = models.CharField(max_length=100)
     name = models.CharField(max_length=100)
     is_supervisor = models.BooleanField()
@@ -105,7 +110,14 @@ class WorkshopEmployee(NoPhysicalDeleteModel):
         db_table = "workshop_config_employee"
         ordering = ["workshop__name", "position", "name", "id"]
         constraints = [
-            models.UniqueConstraint(fields=["workshop", "position", "name"], name="workshop_employee_business_unique"),
+            models.UniqueConstraint(
+                fields=["workshop", "position", "name"], condition=Q(employee__isnull=True),
+                name="workshop_emp_unlinked_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["workshop", "position", "employee"], condition=Q(employee__isnull=False),
+                name="workshop_emp_linked_unique",
+            ),
             models.CheckConstraint(
                 condition=Q(status__in=WorkshopEmployeeStatus.values),
                 name="workshop_employee_status_valid",

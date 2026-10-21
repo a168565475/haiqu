@@ -3,7 +3,7 @@ import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
-import { Document, Download, EditPen, Refresh, UploadFilled } from '@element-plus/icons-vue'
+import { Document, Download, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
@@ -44,20 +44,6 @@ let imageRequest = 0
 let loadRequest = 0
 
 const sampleId = computed(() => String(route.params.sampleId || ''))
-const canChange = computed(() => authStore.moduleCan('samples.change_samplerequest', undefined, sample.value))
-const canComplete = computed(() => authStore.moduleCan('samples.complete_sample_requirements', undefined, sample.value))
-const canEdit = computed(() => Boolean(
-  sample.value
-  && sample.value.edit_capabilities
-  && sample.value.edit_capabilities.mode !== 'READ_ONLY'
-  && (sample.value.status === 'PENDING_COMPLETION' ? canComplete.value : sample.value.edit_capabilities.mode === 'REPORT_ONLY' ? ['productionreport_sample','metalreport_sample','cuttingreport_sample'].some(code=>authStore.moduleCan('access_control.'+code,'samples.change_samplerequest',sample.value)) : canChange.value),
-))
-const canReport = computed(() => Boolean(
-  sample.value
-  && ['PMC_REVIEW', 'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING'].includes(sample.value.status)
-  && sample.value.edit_capabilities?.can_report_edit
-  && ['productionreport_sample','metalreport_sample','cuttingreport_sample'].some(code=>authStore.moduleCan('access_control.'+code,'samples.change_samplerequest',sample.value)),
-))
 const canInitiateMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.edit_sample_materials', undefined, sample.value)))
 const canConfirmMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.review_sample_materials', undefined, sample.value)))
 
@@ -96,7 +82,7 @@ const statusSteps = computed(() => isApplication.value ? [
 
 const activeStepIndex = computed(() => {
   const status = sample.value?.status
-  if (isApplication.value) return ({ DIRECTOR_REVIEW: 1, APPLICATION_RETURNED: 0, MATERIALS_PENDING: 2, WAREHOUSE_PENDING: 2, PROCUREMENT_PENDING: 2, MATERIALS_READY: 2, MATERIAL_ISSUE_PENDING: 3, MATERIAL_ISSUE_REVIEW: 3, METALWORK_PENDING: 4, CUTTING_PENDING: 5, PRODUCTION_PENDING: 6, FINISHED: 7 } as Record<string, number>)[status || ''] ?? -1
+  if (isApplication.value) return ({ DIRECTOR_REVIEW: 1, APPLICATION_RETURNED: 0, PENDING_COMPLETION: 2, MATERIALS_PENDING: 2, WAREHOUSE_PENDING: 2, PROCUREMENT_PENDING: 2, MATERIALS_READY: 2, MATERIAL_ISSUE_PENDING: 3, MATERIAL_ISSUE_REVIEW: 3, METALWORK_PENDING: 4, CUTTING_PENDING: 5, PRODUCTION_PENDING: 6, FINISHED: 7 } as Record<string, number>)[status || ''] ?? -1
   const indexByStatus: Record<string, number> = {
     DRAFT: 0,
     PENDING_COMPLETION: 1,
@@ -129,7 +115,7 @@ const nextAction = computed(() => {
   if (!sample.value) return null
   const actions = sample.value.workflow_actions
   if (sample.value.status === 'PENDING_COMPLETION') {
-    return { type: 'complete' as const, title: '完善样品需求', description: '补齐完整基础信息、产品资料、任务单和样品明细后提交。', button: '完善需求', enabled: canComplete.value }
+    return { type: 'complete' as const, title: '查看样品需求', description: '当前申请等待完善，现阶段仅支持查看详情。', button: '', enabled: false }
   }
   if (sample.value.status === 'MATERIAL_ISSUE_PENDING') {
     return { type: 'material-issue-start' as const, title: '发起样品领料', description: '材料已有可供数量，请由打样部发起整单领料。', button: '发起领料', enabled: canInitiateMaterialIssue.value }
@@ -267,11 +253,6 @@ async function loadSample() {
 
 function goBack() { void router.push('/samples') }
 
-function openEdit() {
-  if (!sample.value || !canEdit.value) return
-  void router.push({ name: 'sample-edit', params: { sampleId: sample.value.id } })
-}
-
 function openWorkflowDialog(type: WorkflowDialog) {
   workflowDialog.value = type
   workflowNote.value = ''
@@ -296,10 +277,6 @@ async function handleNextAction() {
   }
   if (nextAction.value.type === 'parameters') {
     document.querySelector('.sample-parameter-images')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    return
-  }
-  if (nextAction.value.type === 'complete') {
-    openEdit()
     return
   }
   if (!etag.value) { ElMessage.error('缺少数据版本，请重新加载后重试。'); return }
@@ -394,7 +371,7 @@ onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
             <p>{{ sample.customer_name }}<span v-if="sample.customer_contact_name"> · {{ sample.customer_contact_name }}</span><span v-if="sample.owner"> · 业务员：{{ sample.owner.display_name }}</span><span v-if="sample.source_inquiry_number"> · 来源询盘 {{ sample.source_inquiry_number }}</span></p>
           </div>
         </div>
-        <div class="detail-actions"><ElButton v-if="isApplication" :disabled="saving" @click="router.push({ name: 'sample-material-detail', params: { sampleId: sample.id } })">查看用料需求</ElButton><ElButton v-if="canReportProduction" :disabled="saving || loading || Boolean(errorMessage)" @click="reportVisible = true">生产报工</ElButton><ElButton :disabled="saving" @click="goBack">返回列表</ElButton><ElButton v-if="canOpenFees" :disabled="saving || loading || Boolean(errorMessage)" @click="router.push(`/samples/${sample.id}/fees`)">费用处理</ElButton><ElButton v-if="canOpenFulfillment" :disabled="saving || loading || Boolean(errorMessage)" @click="router.push(`/samples/${sample.id}/fulfillment`)">物流与反馈</ElButton><ElButton v-if="canEdit" type="primary" :disabled="saving || loading || Boolean(errorMessage)" :icon="EditPen" @click="openEdit">{{ sample.status === 'PENDING_COMPLETION' ? '完善需求' : canReport ? '报工' : '编辑需求' }}</ElButton><ElButton v-if="sample.status === 'PENDING_COMPLETION' && sample.edit_capabilities?.can_cancel" :disabled="saving || loading || Boolean(errorMessage)" @click="cancelIntake">取消需求</ElButton></div>
+        <div class="detail-actions"><ElButton v-if="isApplication" :disabled="saving" @click="router.push({ name: 'sample-material-detail', params: { sampleId: sample.id } })">查看用料需求</ElButton><ElButton v-if="canReportProduction" :disabled="saving || loading || Boolean(errorMessage)" @click="reportVisible = true">生产报工</ElButton><ElButton :disabled="saving" @click="goBack">返回列表</ElButton><ElButton v-if="canOpenFees" :disabled="saving || loading || Boolean(errorMessage)" @click="router.push(`/samples/${sample.id}/fees`)">费用处理</ElButton><ElButton v-if="canOpenFulfillment" :disabled="saving || loading || Boolean(errorMessage)" @click="router.push(`/samples/${sample.id}/fulfillment`)">物流与反馈</ElButton><ElButton v-if="sample.status === 'PENDING_COMPLETION' && sample.edit_capabilities?.can_cancel" :disabled="saving || loading || Boolean(errorMessage)" @click="cancelIntake">取消需求</ElButton></div>
       </header>
 
       <ElAlert v-if="errorMessage" class="refresh-error" :title="errorMessage" type="error" :closable="false" show-icon />
@@ -404,7 +381,7 @@ onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
         <main class="main-column">
           <SampleMaterialApplicationInfo v-if="isApplication" :sample="sample" />
           <SampleMaterialProgress v-if="isApplication" :sample-id="sample.id" :version="etag" />
-          <SampleSection v-if="!isApplication" class="detail-card" title="基本信息"><template #actions><ElButton v-if="canEdit" link @click="openEdit">{{ sample.status === 'PENDING_COMPLETION' ? '完善' : '编辑' }}</ElButton></template>
+          <SampleSection v-if="!isApplication" class="detail-card" title="基本信息">
             <div class="basic-grid">
               <div><label>需求编号</label><b>{{ sample.intake_number || '—' }}</b></div><div><label>手写打样单号</label><b>{{ sample.manual_request_number || '待工厂填写' }}</b></div><div><label>生成打样单号</label><b>{{ sample.manual_request_number ? sample.request_number : '待完善后生成' }}</b></div><div><label>客户</label><b>{{ sample.customer_name }}</b></div><div><label>业务员</label><b>{{ sample.owner?.display_name || '—' }}</b></div>
               <div><label>寄送方式</label><b>{{ shippingMethodLabel(sample.shipping_method) }}</b></div><div><label>下单日期</label><b>{{ formatDate(sample.order_date) }}</b></div><div><label>样品交期</label><b>{{ formatDate(sample.sample_due_date) }}</b></div><div><label>交货批次</label><b>{{ deliveryBatchLabel(sample.delivery_batch) }}</b></div><div><label>样品类型</label><b>{{ sample.sample_type_display }}</b></div>
@@ -458,7 +435,7 @@ onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
         </main>
 
         <aside class="side-column">
-          <SampleSection class="detail-card next-card" :title="sample.status === 'FINISHED' ? '流程结果' : '下一步行动'"><template #actions><small>{{ sample.status_display }}</small></template><div v-if="nextAction" class="next-action"><p>{{ nextAction.description }}</p><ElButton v-if="nextAction.button" type="primary" class="primary-button" :loading="saving" :disabled="!nextAction.enabled || loading || Boolean(errorMessage)" @click="handleNextAction">{{ nextAction.button }}</ElButton><p v-if="nextAction.button && !nextAction.enabled" class="action-hint">当前账号没有此环节的处理权限。</p><p v-if="nextAction.type === 'parameters'" class="action-hint">图片上传区域位于左侧内容区。</p><SampleStatusTag v-if="!nextAction.button && nextAction.type !== 'parameters'" status="FINISHED" label="主流程已完成" /></div><ElEmpty v-else :image-size="44" description="历史状态暂无新主流程操作" /></SampleSection>
+          <SampleSection class="detail-card next-card" :title="sample.status === 'FINISHED' ? '流程结果' : '下一步行动'"><template #actions><small>{{ sample.status_display }}</small></template><div v-if="nextAction" class="next-action"><p>{{ nextAction.description }}</p><ElButton v-if="nextAction.button" type="primary" class="primary-button" :loading="saving" :disabled="!nextAction.enabled || loading || Boolean(errorMessage)" @click="handleNextAction">{{ nextAction.button }}</ElButton><p v-if="nextAction.button && !nextAction.enabled" class="action-hint">当前账号没有此环节的处理权限。</p><p v-if="nextAction.type === 'parameters'" class="action-hint">图片上传区域位于左侧内容区。</p><SampleStatusTag v-if="nextAction.type === 'finished'" status="FINISHED" label="主流程已完成" /></div><ElEmpty v-else :image-size="44" description="历史状态暂无新主流程操作" /></SampleSection>
 
           <SampleSection class="detail-card task-card" title="需求任务单图片"><template #actions><small>{{ (sample.products || []).filter(item => item.task_sheet_file_id).length }} 张</small></template><div v-if="(sample.products || []).some((item) => item.task_sheet_file_id)" class="task-sheet-list"><article v-for="product in (sample.products || []).filter((item) => item.task_sheet_file_id)" :key="product.id"><button class="task-preview" type="button" :aria-label="`查看${product.product_name}任务单`" @click="openBusinessFile(product.task_sheet_file_id!, product.task_sheet_file_name)"><img v-if="taskImageUrls[product.task_sheet_file_id!]" :src="taskImageUrls[product.task_sheet_file_id!]" :alt="`${product.product_name}任务单`"><ElIcon v-else><Document /></ElIcon></button><div class="task-copy"><b>{{ product.task_sheet_file_name }}</b><p>产品 {{ product.line_number }} · {{ product.product_name }}</p><small>{{ product.task_sheet_content_type }} · {{ formatBytes(product.task_sheet_size_bytes) }}</small><div class="task-actions"><ElButton @click="openBusinessFile(product.task_sheet_file_id!, product.task_sheet_file_name)">查看原图</ElButton><ElButton :icon="Download" :aria-label="`下载${product.task_sheet_file_name}`" @click="openBusinessFile(product.task_sheet_file_id!, product.task_sheet_file_name, true)" /></div></div></article></div><ElEmpty v-else :image-size="44" description="暂无任务单图片" /></SampleSection>
 

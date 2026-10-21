@@ -73,3 +73,42 @@ export interface WeComConfigResponse {
   data: WeComConfig
   etag: string
 }
+
+export interface WeComMessageTemplateWrite {
+  name: string
+  body: string
+}
+
+export interface WeComMessageTemplate extends WeComMessageTemplateWrite {
+  is_saved: boolean
+  updated_at: string | null
+}
+
+export interface WeComMessageTemplateResponse {
+  data: WeComMessageTemplate
+  etag: string
+}
+
+export interface WeComMessageTestWrite {
+  binding_id: string
+  message_content: string
+  idempotency_key: string
+}
+
+export interface WeComMessageAttempt {
+  id: string
+  idempotency_key: string
+  template_name: string
+  recipient_name: string
+  user_id: string
+  status: 'PROCESSING' | 'ACCEPTED' | 'FAILED' | 'UNCERTAIN'
+  message: string
+  created_at: string
+  finished_at: string | null
+}
+
+export interface WeComMessageAttemptQuery {
+  page: number
+  page_size: number
+  idempotency_key?: string
+}

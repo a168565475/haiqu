@@ -7,6 +7,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.db import connection
+from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -21,6 +22,8 @@ from ..models import OutsourcingDispatchLine, OutsourcingFactoryCraft, Outsourci
 URL = "/api/v1/unified-outsourcing-orders/"
 
 
+# 本类使用旧库存批次夹具，验证普通及旧金工外发的统一列表投影。
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class UnifiedOutsourcingOrderApiTests(MetalProcessingP4Fixture, APITestCase):
     def rows(self, **filters):
         response = self.client.get(URL, filters)
@@ -36,7 +39,7 @@ class UnifiedOutsourcingOrderApiTests(MetalProcessingP4Fixture, APITestCase):
         self.client.force_authenticate(get_user_model().objects.get(pk=user.pk))
 
     def raw_fabric(self, *, returned=False):
-        response = self.f.create_order(self.payload("FABRIC", "150"))
+        response = self.f.create_order(self.payload("FABRIC", "150", output_sets="100"))
         self.assertEqual(response.status_code, 201, response.data)
         order_id = response.data["data"]["id"]
         material = OutsourcingMaterialItem.objects.get(allocation__processing_item__order_product__order_id=order_id)
@@ -91,6 +94,24 @@ class UnifiedOutsourcingOrderApiTests(MetalProcessingP4Fixture, APITestCase):
             self.assertEqual(self.rows()["meta"]["total"], 1)
             for keyword in ("委外测试椅", "OBM-PRODUCT-001", "OBM-ITEM"):
                 self.assertEqual(self.rows(search=keyword)["meta"]["total"], 0, keyword)
+
+    def test_product_material_uses_snapshot_and_only_falls_back_when_key_is_missing(self):
+        product = OutsourcingOrder.objects.get(pk=self.original_order).products.select_related("schedule_product__product_line").get()
+        line = product.schedule_product.product_line
+        line.material_snapshot = "当前产品材质"
+        line.save(update_fields=["material_snapshot"])
+        original = dict(product.product_snapshot)
+        original.pop("material", None)
+        for snapshot, expected in ((original, "当前产品材质"),
+            ({**original, "material": "冻结产品材质"}, "冻结产品材质"),
+            ({**original, "material": ""}, "")):
+            with self.subTest(snapshot=snapshot):
+                product.product_snapshot = snapshot
+                product.save(update_fields=["product_snapshot"])
+                row = next(row for row in self.rows()["data"] if row["id"] == self.original_order)
+                self.assertEqual(row["product"]["material"], expected)
+                product.refresh_from_db()
+                self.assertEqual(product.product_snapshot, snapshot)
 
     def test_fabric_dispatch_and_return_keep_separate_units(self):
         order_id = self.raw_fabric(returned=True)
@@ -159,6 +180,7 @@ class UnifiedOutsourcingOrderApiTests(MetalProcessingP4Fixture, APITestCase):
         rows = self.rows()["data"]
         self.assertEqual({row["id"] for row in rows}, {self.original_order, str(order.pk)})
         original = next(row for row in rows if row["record_type"] == "ORIGINAL")
+        self.assertEqual(next(row for row in rows if row["record_type"] == "REWORK")["product"], {})
         self.assertEqual(original["detail_access"], "METAL")
         self.assertEqual(original["source_issue_line_id"], str(self.line.pk))
         self.assertEqual(original["dispatched_quantities"], [{"quantity": "8", "unit": "支"}])

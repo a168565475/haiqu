@@ -13,6 +13,12 @@ const api = vi.hoisted(() => ({
   submit: vi.fn(),
 }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
+const auth = vi.hoisted(() => ({
+  user: { is_superuser: true, employee: { id: 'employee-1' }, effective_access: {
+    actions: {} as Record<string, { scopes: string[] }>,
+  } },
+  hasPermission: () => true,
+}))
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { schemeId: 'scheme-1' } }),
@@ -20,10 +26,7 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({
-    user: { is_superuser: true, employee: { id: 'employee-1' } },
-    hasPermission: () => true,
-  }),
+  useAuthStore: () => auth,
 }))
 
 vi.mock('@/api/workshopReporting', () => ({
@@ -77,6 +80,9 @@ const scheme = {
 }
 
 beforeEach(() => {
+  auth.user.is_superuser = true
+  auth.user.employee.id = 'employee-1'
+  auth.user.effective_access.actions = {}
   api.detail.mockResolvedValue({ data: scheme, etag: '"2"' })
   api.approve.mockResolvedValue({
     data: { ...scheme, status: 'APPROVED', status_display: '已批准', effective_from: '2026-09-28' },
@@ -90,6 +96,21 @@ afterEach(() => {
 })
 
 describe('工价方案审批确认', () => {
+  it('有全模块修改授权的普通管理者可代办，车间授权不扩大为他人草稿', async () => {
+    auth.user.is_superuser = false
+    auth.user.employee.id = 'manager'
+    auth.user.effective_access.actions['workshop_reporting.change_wagescheme'] = { scopes: ['MODULE'] }
+    api.detail.mockResolvedValue({ data: { ...scheme, status: 'DRAFT' }, etag: '"1"' })
+    const manager = mount(WageSchemeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(manager.findAll('button').some(button => button.text().trim() === '编辑')).toBe(true)
+    manager.unmount()
+    auth.user.effective_access.actions['workshop_reporting.change_wagescheme'] = { scopes: ['WORKSHOP'] }
+    const director = mount(WageSchemeDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(director.findAll('button').some(button => button.text().trim() === '编辑')).toBe(false)
+    director.unmount()
+  })
   it('确认弹窗按钮使用车间模块设计规范', () => {
     const styles = readFileSync(resolve(process.cwd(), 'src/styles/workshopReporting.scss'), 'utf8')
     expect(styles).toMatch(/\.wr-confirm-message-box \.el-message-box__btns \.el-button \{[^}]*height:\s*32px;[^}]*border-radius:\s*5px;/)

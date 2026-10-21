@@ -22,8 +22,9 @@ from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, 
 from apps.workshop_config.constants import METAL_WORKSHOP_NAME
 from apps.workshop_config.models import (
     Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee,
-    WorkshopEmployeeStatus,
 )
+
+from apps.workshop_config.selectors import locked_active_employees
 
 from .models import (
     WageScheme, WageSchemeAction, WageSchemeCraft, WageSchemeEvent, WageSchemeLine,
@@ -128,6 +129,23 @@ def _lock_tube_report_scope(schedule_product_id, scheme):
     if source['product_line_id'] != scheme.product_line_id:
         raise ValidationError({'scheme_id': '工价方案不属于当前排产产品。'})
     return _lock_tube_scheme_scope(scheme)
+
+
+def _lock_sewing_scheme_scope(scheme):
+    from apps.inventory.sewing_processing_services import is_sewing_craft_scope, lock_sewing_product_scope
+    if not scheme or not is_sewing_craft_scope(scheme.product_line_id, scheme.scope_craft_id):
+        return False
+    lock_sewing_product_scope(scheme.product_line_id)
+    return True
+
+
+def _lock_sewing_report_scope(schedule_product_id, scheme):
+    if not scheme:
+        return False
+    source = ProductionScheduleProduct.objects.filter(pk=schedule_product_id).values('product_line_id').first()
+    if source and source['product_line_id'] != scheme.product_line_id:
+        raise ValidationError({'scheme_id': '工价方案不属于当前排产产品。'})
+    return _lock_sewing_scheme_scope(scheme) if source else False
 
 
 def payload_hash(value):
@@ -422,6 +440,9 @@ def create_scheme(*, data, actor, parent_scheme=None, request=None):
     if is_tube_craft_scope(product_line.pk, crafts[0].pk):
         from apps.inventory.tube_processing_services import lock_tube_product_scope
         lock_tube_product_scope(product_line.pk)
+    from apps.inventory.sewing_processing_services import is_sewing_craft_scope, lock_sewing_product_scope
+    if is_sewing_craft_scope(product_line.pk, crafts[0].pk):
+        lock_sewing_product_scope(product_line.pk)
     ProductionTaskProduct.objects.select_for_update().only("pk").get(pk=product_line.pk)
     scope_craft = crafts[0]
     if parent_scheme is None and WageScheme.objects.filter(
@@ -460,14 +481,18 @@ def create_scheme(*, data, actor, parent_scheme=None, request=None):
 
 @transaction.atomic
 def update_scheme(*, scheme_id, data, actor, request):
-    _lock_tube_scheme_scope(WageScheme.objects.get(pk=scheme_id))
+    scheme_scope = WageScheme.objects.get(pk=scheme_id)
+    _lock_tube_scheme_scope(scheme_scope)
+    _lock_sewing_scheme_scope(scheme_scope)
     scheme = WageScheme.objects.select_for_update().get(pk=scheme_id)
     require_workshop(request, "workshop_reporting.change_wagescheme", scheme.workshop_id)
     require_workshop(request, "workshop_reporting.change_wagescheme", data.get("workshop_id", scheme.workshop_id))
     require_matching_etag(request, scheme)
     if scheme.status not in EDITABLE_SCHEME_STATUSES:
         raise Conflict("当前状态不允许修改工价方案。")
-    if scheme.created_by_employee_id != actor.pk and not request.user.is_superuser:
+    from apps.access_control.sales_policy import access_for
+    edit_scopes = access_for(request)["actions"].get("workshop_reporting.change_wagescheme", {}).get("scopes", [])
+    if scheme.created_by_employee_id != actor.pk and not request.user.is_superuser and not set(edit_scopes) & {"MODULE", "ALL"}:
         raise PermissionDenied("只有创建人可以修改该工价方案。")
     craft_ids = data.pop("craft_ids", None)
     lines = data.pop("lines", None)
@@ -507,6 +532,7 @@ def update_scheme(*, scheme_id, data, actor, request):
 def create_change_scheme(*, source_scheme_id, data, actor, request):
     source_scope = WageScheme.objects.only("product_line_id", "scope_craft_id").get(pk=source_scheme_id)
     _lock_tube_scheme_scope(source_scope)
+    _lock_sewing_scheme_scope(source_scope)
     ProductionTaskProduct.objects.select_for_update().only("pk").get(pk=source_scope.product_line_id)
     source = WageScheme.objects.select_for_update().get(pk=source_scheme_id)
     require_workshop(request, "workshop_reporting.change_wagescheme", source.workshop_id)
@@ -545,7 +571,9 @@ def create_change_scheme(*, source_scheme_id, data, actor, request):
 
 @transaction.atomic
 def submit_scheme(*, scheme_id, actor, request, comment=""):
-    _lock_tube_scheme_scope(WageScheme.objects.get(pk=scheme_id))
+    scheme_scope = WageScheme.objects.get(pk=scheme_id)
+    _lock_tube_scheme_scope(scheme_scope)
+    _lock_sewing_scheme_scope(scheme_scope)
     scheme = WageScheme.objects.select_for_update().get(pk=scheme_id)
     require_workshop(request, "workshop_reporting.submit_wagescheme", scheme.workshop_id)
     require_matching_etag(request, scheme)
@@ -563,6 +591,8 @@ def submit_scheme(*, scheme_id, actor, request, comment=""):
     scheme.updated_by_employee = actor
     scheme.save()
     _event(scheme, WageSchemeAction.SUBMITTED, actor, comment)
+    from apps.wecom.workshop_notifications import scheme_changed
+    scheme_changed(scheme, actor, submitted=True)
     return scheme
 
 
@@ -570,6 +600,7 @@ def submit_scheme(*, scheme_id, actor, request, comment=""):
 def approve_scheme(*, scheme_id, actor, request, effective_from=None, effective_to=None, comment=""):
     scheme_scope = WageScheme.objects.only("product_line_id", "scope_craft_id").get(pk=scheme_id)
     tube_scope = _lock_tube_scheme_scope(scheme_scope)
+    sewing_scope = _lock_sewing_scheme_scope(scheme_scope)
     # 同一生产任务产品是工价版本审批的稳定锁范围，避免两个方案同时通过重叠校验。
     ProductionTaskProduct.objects.select_for_update().only("pk").get(pk=scheme_scope.product_line_id)
     scheme = WageScheme.objects.select_for_update().select_related("product_line").get(pk=scheme_id)
@@ -628,12 +659,19 @@ def approve_scheme(*, scheme_id, actor, request, effective_from=None, effective_
         from .tube_plan_services import reopen_tube_plans_for_scheme
         assert_tube_reports_cover_usage(scheme.product_line_id)
         reopen_tube_plans_for_scheme(scheme, actor)
+    if sewing_scope:
+        from apps.inventory.sewing_processing_services import assert_sewing_reports_cover_usage
+        assert_sewing_reports_cover_usage(scheme.product_line_id)
+    from apps.wecom.workshop_notifications import scheme_changed
+    scheme_changed(scheme, actor)
     return scheme
 
 
 @transaction.atomic
 def return_scheme(*, scheme_id, actor, request, comment=""):
-    _lock_tube_scheme_scope(WageScheme.objects.get(pk=scheme_id))
+    scheme_scope = WageScheme.objects.get(pk=scheme_id)
+    _lock_tube_scheme_scope(scheme_scope)
+    _lock_sewing_scheme_scope(scheme_scope)
     scheme = WageScheme.objects.select_for_update().get(pk=scheme_id)
     require_workshop(request, "workshop_reporting.approve_wagescheme", scheme.workshop_id)
     from apps.access_control.module_policy import prohibit_self_approval, enabled
@@ -648,6 +686,8 @@ def return_scheme(*, scheme_id, actor, request, comment=""):
     scheme.updated_by_employee = actor
     scheme.save()
     _event(scheme, WageSchemeAction.RETURNED, actor, comment)
+    from apps.wecom.workshop_notifications import scheme_changed
+    scheme_changed(scheme, actor)
     return scheme
 
 
@@ -718,10 +758,9 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
         item.pk: item for item in scheme.lines.select_for_update().select_related("work_item")
         .filter(status=WageSchemeLineStatus.ACTIVE)
     }
-    employees = {item.pk: item for item in WorkshopEmployee.objects.filter(
+    employees = {item.pk: item for item in locked_active_employees(WorkshopEmployee.objects.filter(
         pk__in=[row["workshop_employee_id"] for row in data["lines"]], workshop=scheme.workshop,
-        status=WorkshopEmployeeStatus.ACTIVE,
-    )}
+    ))}
     if len(employees) != len(set(row["workshop_employee_id"] for row in data["lines"])):
         raise ValidationError({"lines": "存在非本车间或无效员工。"})
     is_assembly = scheme.workshop.name == "装配车间"
@@ -859,6 +898,7 @@ def create_work_report(*, data, actor, request=None):
     request_hash = payload_hash(data)
     requested_scope = WageScheme.objects.filter(pk=data['scheme_id']).first()
     _lock_tube_report_scope(data['schedule_product_id'], requested_scope)
+    _lock_sewing_report_scope(data['schedule_product_id'], requested_scope)
     # Serialize replay, edit and deletion with the existing schedule/product lock order.
     schedule_product = _locked_schedule_product(data["schedule_product_id"]) if history_enabled() else None
     existing = existing_submission(request_id, request_hash)
@@ -899,6 +939,8 @@ def create_work_report(*, data, actor, request=None):
                 schedule_product=schedule_product, scheme=scheme,
                 completed=plan_will_complete, actor=actor,
             )
+            from apps.wecom.workshop_notifications import report_saved
+            report_saved(report, actor)
         return report
     except IntegrityError as exc:
         existing = existing_submission(request_id, request_hash)
@@ -913,9 +955,12 @@ def update_work_report(*, report_id, data, actor, request):
     if not current:
         raise Http404('报工记录不存在或已删除。')
     tube_scope = _lock_tube_report_scope(current.schedule_product_id, current.scheme)
+    sewing_scope = _lock_sewing_report_scope(current.schedule_product_id, current.scheme)
     requested_scope = WageScheme.objects.filter(pk=data['scheme_id']).first()
     if requested_scope and not tube_scope:
         tube_scope = _lock_tube_report_scope(current.schedule_product_id, requested_scope)
+    if requested_scope and not sewing_scope:
+        sewing_scope = _lock_sewing_report_scope(current.schedule_product_id, requested_scope)
     schedule_product = _locked_schedule_product(current.schedule_product_id)
     if not schedule_product or schedule_product.removed_at is not None or schedule_product.schedule.record_status != ScheduleStatus.ACTIVE:
         raise ValidationError({"schedule_product_id": "原排产产品不存在或已失效，不能直接编辑。"})
@@ -936,6 +981,8 @@ def update_work_report(*, report_id, data, actor, request):
     )
     if scheme.workshop_id != report.workshop_id:
         raise ValidationError({"scheme_id": "编辑报工不能更换原车间。"})
+    from .deletion_services import _snapshot
+    before_snapshot = _snapshot(report)
     from apps.inventory.assembly_reporting_limits import is_assembly_report, assert_reports_cover_receipts
     was_assembly = is_assembly_report(report)
     report.lines.all().delete()
@@ -958,9 +1005,17 @@ def update_work_report(*, report_id, data, actor, request):
     if tube_scope:
         from apps.inventory.tube_processing_services import assert_tube_reports_cover_usage
         assert_tube_reports_cover_usage(schedule_product.product_line_id)
+    if sewing_scope:
+        from apps.inventory.sewing_processing_services import assert_sewing_reports_cover_usage
+        assert_sewing_reports_cover_usage(schedule_product.product_line_id)
     remember_report(report)
     _update_plan_execution(
         schedule_product=schedule_product, scheme=scheme,
         completed=plan_will_complete, actor=actor,
     )
+    from apps.core.audit import write_audit_log
+    write_audit_log(object_type="WORK_REPORT", object_id=report.pk, action="UPDATE", actor_employee=actor,
+        before_data=before_snapshot, after_data=_snapshot(report), request=request)
+    from apps.wecom.workshop_change_notifications import report_corrected
+    report_corrected(report, actor)
     return report

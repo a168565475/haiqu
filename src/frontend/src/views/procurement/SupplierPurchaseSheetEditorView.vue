@@ -506,7 +506,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
                     <span v-if="isPublished" class="readonly-value">{{ line.specification || '—' }}</span><ElInput v-else v-model="line.specification" type="textarea" autosize :disabled="!editable || busy" aria-label="产品规格" />
                   </td>
                   <td><span v-if="isPublished" class="readonly-value">{{ line.material || '—' }}{{ content.order.source_type === 'SAMPLE' && line.remark ? '；' + line.remark : '' }}</span><template v-else><ElInput v-model="line.material" type="textarea" autosize :disabled="!editable || busy" :aria-label="content.order.source_type === 'SAMPLE' ? '样品材质要求' : '颜色和要求'" /><ElInput v-if="content.order.source_type === 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="样品颜色" placeholder="颜色" /></template></td>
-                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.quantity }} {{ line.unit }}<small v-if="line.measurement_kind === 'PIPE'" style="display:block">{{ line.actual_bar_count }} 根 × {{ line.raw_bar_length_m }} 米/根</small></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
+                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell"><template v-if="line.measurement_kind === 'PIPE'">{{ line.actual_bar_count == null ? '根数未记录' : `${line.actual_bar_count} 根` }}<small style="display:block">{{ line.quantity }} 米 · {{ line.raw_bar_length_m }} 米/根</small></template><template v-else>{{ line.quantity }} {{ line.unit }}</template></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.unit_price ? money(line.unit_price).replace('¥', '') : '—' }}{{ line.measurement_kind === 'PIPE' ? ' 元/米' : '' }}</span><ElInput v-else v-model="line.unit_price" :disabled="!editable || busy" aria-label="含税单价" @input="syncCalculatedAmounts" /></td>
                   <td class="amount-cell">{{ content.settlement_mode === 'ACTUAL_WEIGHT' ? '待结算' : money(line.amount).replace('¥', '') }}</td>
                 </tr>
@@ -554,7 +554,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
 @use '@/styles/theme/detail' as detail;
-.editor-page { box-sizing: border-box; height: 100%; min-width: 0; min-height: 0; overflow: hidden; padding: 14px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font: 16px/24px crm.$crm-font-body; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 4px; }
+.editor-page { box-sizing: border-box; height: 100%; min-width: 0; min-height: 0; overflow: hidden; padding: 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font: 16px/24px crm.$crm-font-body; --el-color-primary: #{crm.$crm-primary}; --el-border-color: #{crm.$crm-border-default}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-text-color-regular: #{crm.$crm-text-primary}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-radius-base: 4px; }
 .editor-page > :is(.editor-layout, .load-error) { min-width: 0; }
 
 .load-error { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px; background: crm.$crm-danger-soft; color: crm.$crm-danger; }
@@ -562,8 +562,12 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .property-panel,.canvas-area { @include detail.surface; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .panel-nav { box-sizing: border-box; height: 48px; padding: 8px 23px; border-bottom: 1px solid crm.$crm-border-subtle; }
 .panel-back-button { width: 32px; height: 32px; min-height: 32px; padding: 0; margin: 0; color: crm.$crm-text-secondary; }
+// 保留原12px尺寸，颜色交由全局WebKit伪元素规则提供。
+@supports selector(::-webkit-scrollbar) {
+  .property-panel,.canvas-area { scrollbar-color: auto; }
+}
 .property-panel::-webkit-scrollbar,.canvas-area::-webkit-scrollbar { width: 12px; height: 12px; }
-.property-panel::-webkit-scrollbar-thumb,.canvas-area::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 6px; background: crm.$crm-border-default; background-clip: padding-box; }
+.property-panel::-webkit-scrollbar-thumb,.canvas-area::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 6px; background-clip: padding-box; }
 .property-panel section { box-sizing: border-box; padding: 20px 11px 20px 23px; border-bottom: 1px solid crm.$crm-border-subtle; }
 .property-panel section:last-child { border-bottom: none; }
 .property-panel h2 { margin: 0 0 16px; font-size: 20px; line-height: 28px; font-weight: 700; }
@@ -650,7 +654,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .published-notice img { width: 22px; height: 24px; flex: none; }
 .published-notice strong { font-size: 20px; color: crm.$crm-success; }
 .is-published .editor-layout { grid-template-columns: 422px minmax(0,1fr); gap: 11px; }
-.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 20px 23px; display: flex; flex-direction: column; gap: 16px; @include detail.surface; font-size: 18px; line-height: 28px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: crm.$crm-border-default transparent; }
+.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 20px 23px; display: flex; flex-direction: column; gap: 16px; @include detail.surface; font-size: 18px; line-height: 28px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
 .published-info > * { flex: none; }
 .published-info > .panel-back-button { align-self: flex-start; }
 .published-info h2 { margin: 0; font-size: 22px; line-height: 32px; }

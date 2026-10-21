@@ -901,11 +901,17 @@ class SampleRequestDetailSerializer(SampleRequestListSerializer):
                 "can_pmc_approve": False,
                 "can_upload_metalwork": False,
                 "can_upload_cutting": False,
+                "can_delete_metalwork": False,
+                "can_delete_cutting": False,
             }
         ready = not instance.application_payload_hash or (instance.archived_at is None and instance.customer_account.archived_at is None and production_ready(instance))
         from apps.access_control.module_policy import can_report_sample
         return {
             "can_report_production": can_report_production(instance, request),
+            "can_delete_metalwork": instance.status not in {SampleRequestStatus.FINISHED, SampleRequestStatus.CANCELLED, SampleRequestStatus.REJECTED}
+                and can_sample(request, instance, 'access_control.metalwork_sample', 'samples.change_samplerequest'),
+            "can_delete_cutting": instance.status not in {SampleRequestStatus.FINISHED, SampleRequestStatus.CANCELLED, SampleRequestStatus.REJECTED}
+                and can_sample(request, instance, 'access_control.cutting_sample', 'samples.change_samplerequest'),
             "can_report_metalwork": can_report_production(instance, request) and can_report_sample(request, instance, 'metalwork'),
             "can_report_cutting": can_report_production(instance, request) and can_report_sample(request, instance, 'cutting'),
             "can_finance_confirm": bool(

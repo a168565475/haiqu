@@ -1,0 +1,54 @@
+.schedule-detail {
+  .erp-list-tag { max-width: 100%; overflow: hidden; white-space: nowrap; font-weight: 500; }
+  .schedule-amount-summary {
+    padding: 12px 16px 16px;
+    > header { padding: 0 0 12px; }
+    dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+    dl > div { min-width: 0; padding: 0 24px; border-left: 1px solid var(--erp-table-border); }
+    dl > div:first-child { padding-left: 0; border-left: 0; }
+    dt { color: var(--erp-color-text-secondary); font-size: 13px; line-height: 20px; }
+    dd { margin: 6px 0 0; color: var(--erp-color-text-primary); font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .schedule-amount-summary__reason, .schedule-amount-summary__scope { margin: 8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
+  }
+  .schedule-execution { min-width: 0; display: grid; gap: 20px; padding: 16px; border-top: 1px solid var(--erp-table-border); }
+}
+
+.schedule-execution {
+  &__section { min-width: 0; }
+  &__heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 10px; }
+  &__heading h3 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; line-height: 24px; font-weight: 600; }
+  &__heading > span { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
+  &__record-links { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin-left: auto; }
+  &__all { margin-left: auto; }
+  &__scroll { box-sizing: border-box; width: 100%; min-width: 0; overflow-x: auto; border: 1px solid var(--erp-table-frame-border); border-radius: var(--erp-radius-control); }
+  &__scroll:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+  &__table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--erp-table-text); background: var(--erp-table-background); font-size: 13px; line-height: 20px; }
+  &__table--internal { min-width: 1420px; }
+  &__table--outsourcing { min-width: 1432px; }
+  &__table--materials { min-width: 1090px; }
+  &__table th, &__table td { box-sizing: border-box; overflow: hidden; padding: 0 12px; border-right: 1px solid var(--erp-table-border); border-bottom: 1px solid var(--erp-table-border); white-space: nowrap; text-overflow: ellipsis; text-align: left; vertical-align: middle; }
+  &__table th { height: 38px; color: var(--erp-table-header-text); background: var(--erp-table-header-background); font-size: 12px; line-height: 18px; font-weight: 500; }
+  &__table td { height: 44px; background: var(--erp-table-background); }
+  &__table th:last-child, &__table td:last-child { border-right: 0; }
+  &__table tr:last-child td { border-bottom: 0; }
+  &__table tbody tr:hover td { background: var(--erp-table-hover); }
+  &__table .is-money { text-align: right; font-variant-numeric: tabular-nums; }
+  &__table td.is-money { font-weight: 600; }
+  &__table .is-date { font-variant-numeric: tabular-nums; }
+  .erp-list-tag { max-width: 100%; overflow: hidden; white-space: nowrap; font-weight: 500; }
+  &__link { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 3px; color: var(--erp-color-brand); background: transparent; font: inherit; white-space: nowrap; cursor: pointer; }
+  &__link:hover:not(:disabled) { text-decoration: underline; }
+  &__link:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+  &__link:disabled { color: var(--erp-color-text-muted); cursor: not-allowed; }
+  &__progress { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  &__track { flex: 1; min-width: 28px; height: 6px; border-radius: 999px; overflow: hidden; background: var(--erp-color-border); }
+  &__track i { display: block; height: 100%; border-radius: inherit; background: var(--erp-color-brand); }
+  &__track i.is-complete { background: var(--erp-tag-success-background); }
+  &__state { margin: 0; padding: 16px; color: var(--erp-color-text-secondary); background: var(--erp-glass-inner-background); border-radius: var(--erp-radius-control); font-size: 13px; line-height: 20px; }
+  &__note { margin: 8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
+}
+
+@container (max-width: 700px) {
+  .schedule-detail .schedule-amount-summary dl { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .schedule-detail .schedule-amount-summary dl > div { padding: 0; border-left: 0; }
+}

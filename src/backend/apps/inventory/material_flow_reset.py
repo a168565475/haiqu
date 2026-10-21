@@ -127,7 +127,8 @@ def pipe_reset_values(line):
                 plan = pipe_plan(cutting_length_mm=bom_line.cutting_length_mm or bom_line.length_value,
                     pieces_per_product=bom_line.pieces_per_product or bom_line.unit_consumption,
                     pieces_per_bar=bom_line.pieces_per_bar or (bom_line.raw_values or {}).get('tube_cut_piece_count'),
-                    order_quantity=bom_line.section.bom.order_quantity)
+                    order_quantity=bom_line.section.bom.order_quantity,
+                    calculation_version=(bom_line.raw_values or {}).get('pipe_plan_version', 2))
                 plan = {**plan, 'bom_id': str(bom_line.section.bom_id), 'bom_line_id': str(bom_line.pk),
                         'component_identity': str(bom_line.component_identity), 'requires_source_confirmation': True}
                 warning = f'已按明确旧参数计算建议，须补齐并重新确认 BOM 后刷新采购来源：{error}'

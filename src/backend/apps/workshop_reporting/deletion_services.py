@@ -18,7 +18,7 @@ from .models import (
     WorkshopPlanExecution, WorkshopPlanStatus, WorkReportHistory,
 )
 from .report_history import can_delete_report, remember_report
-from .services import _locked_schedule_product, _lock_tube_report_scope
+from .services import _locked_schedule_product, _lock_tube_report_scope, _lock_sewing_report_scope
 
 
 def _snapshot(report):
@@ -111,6 +111,7 @@ def delete_work_report(*, report_id, reason, actor, request):
     if not can_delete_report(request, current) or actor.pk != request.employee.pk:
         raise PermissionDenied('当前账号不能删除该车间的报工。')
     tube_scope = _lock_tube_report_scope(current.schedule_product_id, current.scheme)
+    sewing_scope = _lock_sewing_report_scope(current.schedule_product_id, current.scheme)
     _locked_schedule_product(current.schedule_product_id)
     report = WorkReport.objects.select_for_update().filter(pk=report_id).first()
     if report is None:
@@ -127,6 +128,9 @@ def delete_work_report(*, report_id, reason, actor, request):
     if tube_scope:
         from apps.inventory.tube_processing_services import assert_tube_reports_cover_usage
         assert_tube_reports_cover_usage(report.product_line_id)
+    if sewing_scope:
+        from apps.inventory.sewing_processing_services import assert_sewing_reports_cover_usage
+        assert_sewing_reports_cover_usage(report.product_line_id)
     changes = _reopen_incomplete_plans(report)
     history.deleted_at = timezone.now()
     history.deleted_by_employee_id = actor.pk
@@ -144,3 +148,5 @@ def delete_work_report(*, report_id, reason, actor, request):
     )
     # Keep model-level direct deletion blocked; only this audited transaction removes the row.
     WorkReport.objects.filter(pk=report.pk).delete()
+    from apps.wecom.workshop_change_notifications import report_deleted
+    report_deleted(history, actor)

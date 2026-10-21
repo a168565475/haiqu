@@ -208,7 +208,7 @@ class OutsourcingFactoryViewSet(viewsets.GenericViewSet):
         crafts = Craft.objects.filter(
             craft_type=CraftType.EXTERNAL,
             status=RecordStatus.ACTIVE,
-            outsourcing_code__in=SUPPORTED_OUTSOURCING_CRAFT_CODES,
+            outsourcing_code__in=OutsourcingCode.values,
         ).order_by("name", "id")
         processing_types = list(
             OutsourcingFactory.objects.exclude(processing_type="")

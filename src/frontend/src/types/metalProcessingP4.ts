@@ -189,6 +189,8 @@ export interface P4Rework {
 }
 
 export interface P4ExternalOrder {
+  unit_price?: string | null
+  planned_amount?: string | null
   id: string
   order_number: string
   source_id: string

@@ -1,21 +1,19 @@
-"""D3整单一次回货：只将实收支数入已喷塑公共库存，不返还已发生占用。"""
+"""D3整单一次回货：实收数量入对应加工半成品库存，不返还已发生占用。"""
 import hashlib
-import uuid
 
 from django.db import connection
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionRequired, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
+from apps.core.numbering import next_business_number
 from apps.inventory.models import PublicStockBalance
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from apps.inventory.public_stock_identity import validate_public_identity
 from apps.inventory.public_stock_services import _lock_source, credit_public_stock, lock_public_stock_locations
-from apps.inventory.tube_processing_services import lock_tube_product_scope
 from apps.reference_data.models import ProductionUnit
 
 from .material_flow import lock_request
@@ -24,6 +22,7 @@ from .services import _json_hash
 from .tube_receipt_selectors import dispatch_evidence_blockers
 from .tube_selectors import RETURN_PERMISSION, require_saved_order_access, require_tube_feature
 from .tube_services import _json
+from .tube_kinds import CUTTING_SOURCES, lock_source_product, output_unit
 
 
 MOVEMENT_SOURCE = 'TUBE_OUTSOURCING_RETURN'
@@ -73,7 +72,7 @@ def confirm_tube_final_receipt(*, order_id, data, request):
         return existing, False
     initial = get_object_or_404(TubeOutsourcingOrder.objects.select_related('schedule_product'), pk=order_id)
     require_saved_order_access(request, initial, RETURN_PERMISSION)
-    lock_tube_product_scope(initial.product_line_id)
+    lock_source_product(initial.product_line_id, initial.source_kind)
     order = TubeOutsourcingOrder.objects.select_for_update(of=('self',)).select_related(
         'schedule_product__schedule__production_task').get(pk=order_id)
     require_saved_order_access(request, order, RETURN_PERMISSION)
@@ -86,26 +85,27 @@ def confirm_tube_final_receipt(*, order_id, data, request):
         _fail('；'.join(blockers))
     entered_by_id = {row['order_line_id']: row for row in data['lines']}
     if len(entered_by_id) != len(data['lines']) or set(entered_by_id) != {line.pk for line in lines}:
-        _fail('必须完整且唯一地提交原单全部管材明细，包括实收0的部位。')
+        _fail('必须完整且唯一地提交原单全部加工明细，包括实收0的部位。')
     pending = []
     for line in lines:
         entered = entered_by_id[line.pk]
         quantity = entered['received_quantity']
         if quantity < 0 or quantity > line.quantity:
-            _fail(f'“{line.snapshot.get("part_name", "管材")}”实收须为0至实发{line.quantity}的整数支数。')
+            _fail(f'“{line.snapshot.get("part_name", "部位")}”实收须为0至实发{line.quantity}{output_unit(order.source_kind)}的整数。')
         reason = entered.get('shortage_reason', '').strip()
         if quantity < line.quantity and not reason:
-            _fail(f'“{line.snapshot.get("part_name", "管材")}”少回{line.quantity - quantity}支，必须填写差额原因。')
+            _fail(f'“{line.snapshot.get("part_name", "部位")}”少回{line.quantity - quantity}{output_unit(order.source_kind)}，必须填写差额原因。')
         row = TubeOutsourcingReceiptLine(order_line=line, dispatched_quantity=line.quantity,
             received_quantity=quantity, shortage_quantity=line.quantity - quantity,
-            shortage_reason=reason, snapshot=_json(line.snapshot))
+            shortage_reason=reason, snapshot=_json({**line.snapshot,
+                'unit_price': str(line.unit_price) if line.unit_price is not None else None}))
         identity = validate_public_identity(line.snapshot['public_output_identity'])
         if (identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id)
-                or identity['identity_snapshot'].get('semi_kind') != 'PIPE'):
-            _fail('原单喷塑完成身份不属于该管材工艺，不能登记回货。')
+                or identity['identity_snapshot'].get('semi_kind') != ('CUTTING' if order.source_kind in CUTTING_SOURCES else 'PIPE')):
+            _fail('原单完成身份不属于该加工工艺，不能登记回货。')
         pending.append((row, entered, identity))
     positive = [item for item in pending if item[0].received_quantity > 0]
-    # 回货使用保存时的实物、工艺、喷塑色，不依赖当前BOM/报工或备料换算参数。
+    # 回货使用保存时的实物与工艺，不依赖当前BOM/报工或备料换算参数。
     list(Bom.objects.filter(pk=order.bom_id).order_by('pk').select_for_update(of=('self',)))
     list(BomLine.objects.filter(pk__in=[line.bom_line_id for line in lines]).order_by('pk').select_for_update(of=('self',)))
     if positive:
@@ -123,7 +123,7 @@ def confirm_tube_final_receipt(*, order_id, data, request):
         row.snapshot['zone_name'] = zone.zone_name
     before = {'status': order.status, 'version': order.version}
     header = TubeOutsourcingReceipt.objects.create(order=order,
-        receipt_number='WFHK' + timezone.localtime().strftime('%Y%m%d%H%M%S') + uuid.uuid4().hex[:10].upper(),
+        receipt_number=next_business_number('TUBE_OUTSOURCING_RECEIPT'),
         client_request_id=data['client_request_id'], request_payload_hash=payload_hash,
         receipt_date=data['receipt_date'], warehouse=warehouse, actor_employee=request.employee,
         remark=data.get('remark', ''), snapshot={'order_number': order.order_number,
@@ -145,7 +145,7 @@ def confirm_tube_final_receipt(*, order_id, data, request):
                     'shortage_reason': row.shortage_reason, 'public_identity': identity, 'remark': header.remark,
                     'factory_id': str(row.order_line.factory_id), 'factory_name': row.snapshot.get('factory_name', '')}))
         row.save(force_insert=True)
-    # 完成状态仍使用实发原支数占订单/首次产出额度，缺额不会变成可补登记额度。
+    # 完成状态仍使用原实发数量占订单/首次产出额度，缺额不会变成可补登记额度。
     order.status = 'COMPLETED'
     order.version += 1
     order.updated_by_employee = request.employee
@@ -163,4 +163,6 @@ def confirm_tube_final_receipt(*, order_id, data, request):
                 'shortage_reason': row.shortage_reason, 'zone_id': str(row.zone_id) if row.zone_id else None,
                 'movement_id': str(row.stock_movement_id) if row.stock_movement_id else None} for row, _, _ in pending]},
         context_type='PRODUCTION_SCHEDULE', context_id=order.schedule_product.schedule_id, request=request)
+    from apps.wecom.workshop_change_notifications import tube_shortages
+    tube_shortages(header, request.employee)
     return header, True

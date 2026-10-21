@@ -138,6 +138,9 @@ class SampleRequestFormSerializer(serializers.Serializer):
         customers = accessible_customers(request, "add_samplerequest").filter(archived_at__isnull=True)
         if self.instance is not None:
             customers = CustomerAccount.objects.filter(pk=self.instance.customer_account_id)
+            if self.instance.application_payload_hash:
+                self.fields["manual_request_number"].required = False
+                self.fields["manual_request_number"].allow_blank = True
         self.fields["customer_account_id"].queryset = customers
         self.fields["customer_contact_id"].queryset = CustomerContact.objects.filter(
             customer_account__in=customers,
@@ -146,6 +149,8 @@ class SampleRequestFormSerializer(serializers.Serializer):
 
     def validate_manual_request_number(self, value):
         normalized = value.strip().upper()
+        if not normalized and self.instance is not None and self.instance.application_payload_hash:
+            return ""
         if normalized.startswith("HTS-"):
             raise serializers.ValidationError("手写打样单号不要填写 HTS- 前缀，系统会自动生成。")
         try:

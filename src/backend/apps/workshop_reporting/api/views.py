@@ -7,7 +7,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Max, Prefetch, Sum
+from django.db.models import Count, Max, Sum
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -21,11 +21,11 @@ from rest_framework.response import Response
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.files.models import USABLE_FILE_SCAN_STATUSES
-from apps.inventory.assembly_receipts import assembly_progress_for_plans
 from apps.production_scheduling.selectors import accessible_production_schedules
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft, ScheduleStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_task_product_image
-from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
+from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee
+from apps.workshop_config.selectors import active_employees
 
 from ..models import (
     WageScheme, WageSchemeLineStatus, WageSchemeStatus, WorkReport, WorkReportLine,
@@ -37,6 +37,7 @@ from ..selectors import (
     work_report_selection_sources, work_report_task_cards, work_report_task_products, work_report_tasks,
     work_reports_with_context,
 )
+from ..schedule_progress import schedule_progress_statuses
 from ..services import (
     approve_scheme, create_change_scheme, create_scheme, create_work_report, price_scheme_for, return_scheme, submit_scheme, update_scheme,
     update_work_report, bom_options_for_product_line, wage_scheme_progress,
@@ -121,9 +122,9 @@ class ReportingContextView(generics.GenericAPIView):
             craft_ids = schedule_product.crafts.filter(removed_at__isnull=True).values("craft_id")
             crafts = crafts.filter(pk__in=craft_ids)
         operations = Operation.objects.filter(status=RecordStatus.ACTIVE, craft__in=crafts).select_related("craft", "reporting_unit")
-        employees = WorkshopEmployee.objects.filter(
-            status=WorkshopEmployeeStatus.ACTIVE, workshop__in=workshops
-        ).select_related("workshop")
+        employees = active_employees(WorkshopEmployee.objects.filter(
+            workshop__in=workshops
+        )).select_related("workshop")
         bom_items = (
             bom_options_for_product_line(schedule_product.product_line_id)
             if schedule_product else []
@@ -390,138 +391,10 @@ class ScheduleProgressStatusView(generics.GenericAPIView):
                 pk__in=schedule_ids, record_status=ScheduleStatus.ACTIVE,
             ).values_list("pk", flat=True)
         )
-        products = list(
-            ProductionScheduleProduct.objects.filter(
-                schedule_id__in=visible_schedule_ids, removed_at__isnull=True,
-            ).select_related("product_line").prefetch_related(
-                Prefetch(
-                    "crafts",
-                    queryset=ProductionScheduleProductCraft.objects.filter(
-                        removed_at__isnull=True,
-                        craft_type_snapshot="INTERNAL",
-                    ).select_related("craft"),
-                    to_attr="active_internal_crafts",
-                )
-            )
-        )
-        scope_keys = {
-            (product.product_line_id, link.craft.workshop_id, link.craft_id)
-            for product in products
-            for link in product.active_internal_crafts
-            if link.plan_category in {PlanCategory.METAL, PlanCategory.CUTTING, PlanCategory.SEWING}
-        }
-        schemes = list(
-            WageScheme.objects.filter(
-                product_line_id__in=[key[0] for key in scope_keys],
-                workshop_id__in=[key[1] for key in scope_keys],
-                scope_craft_id__in=[key[2] for key in scope_keys],
-                status=WageSchemeStatus.APPROVED,
-                effective_from__lte=production_date,
-            ).filter(
-                effective_to__isnull=True,
-            ).prefetch_related("lines")
-        )
-        # 同一天结束的版本仍然有效，因此把有截止日期的适用版本补入。
-        schemes.extend(
-            WageScheme.objects.filter(
-                product_line_id__in=[key[0] for key in scope_keys],
-                workshop_id__in=[key[1] for key in scope_keys],
-                scope_craft_id__in=[key[2] for key in scope_keys],
-                status=WageSchemeStatus.APPROVED,
-                effective_from__lte=production_date,
-                effective_to__gte=production_date,
-            ).prefetch_related("lines")
-        )
-        schemes_by_scope = {}
-        for scheme in schemes:
-            schemes_by_scope.setdefault(
-                (scheme.product_line_id, scheme.workshop_id, scheme.scope_craft_id), []
-            ).append(scheme)
-        work_item_ids = {
-            line.work_item_id
-            for scheme in schemes
-            for line in scheme.lines.all()
-            if line.status == WageSchemeLineStatus.ACTIVE
-        }
-        cumulative_by_product = {}
-        for row in WorkReportLine.objects.filter(
-            report__schedule_product_id__in=[product.pk for product in products],
-            work_item_id__in=work_item_ids,
-        ).values("report__schedule_product_id", "work_item_id").annotate(quantity=Sum("quantity")):
-            cumulative_by_product.setdefault(row["report__schedule_product_id"], {})[
-                row["work_item_id"]
-            ] = row["quantity"]
-
-        products_by_schedule = {}
-        for product in products:
-            products_by_schedule.setdefault(product.schedule_id, []).append(product)
-
-        category_groups = {
-            "METAL": {PlanCategory.METAL},
-            "SEWING": {PlanCategory.CUTTING, PlanCategory.SEWING},
-        }
-        finished_by_product = assembly_progress_for_plans(products)
-        response_rows = []
-        for schedule_id in schedule_ids:
-            if schedule_id not in visible_schedule_ids:
-                continue
-            schedule_products = products_by_schedule.get(schedule_id, [])
-            progress = {
-                "MATERIAL": {"status": "READY", "percentage": 100, "display": "100%"},
-            }
-            # 成品入库按入库原单统计，与装配报工进度、当前库存余量无关。
-            finished_metrics = [finished_by_product[str(product.pk)] for product in schedule_products]
-            required = sum(item["required"] for item in finished_metrics)
-            received = sum(item["received"] for item in finished_metrics)
-            finished_percentage = 0 if required <= 0 else int(
-                min(Decimal("100"), Decimal(received) * 100 / required).quantize(
-                    Decimal("1"), rounding=ROUND_HALF_UP,
-                )
-            )
-            progress["ASSEMBLY"] = {
-                "status": "READY", "percentage": finished_percentage, "display": f"{finished_percentage}%",
-            }
-            for output_key, categories in category_groups.items():
-                applicable_product_scopes = set()
-                for product in schedule_products:
-                    for link in product.active_internal_crafts:
-                        if link.plan_category in categories:
-                            applicable_product_scopes.add(
-                                (
-                                    product.pk,
-                                    (product.product_line_id, link.craft.workshop_id, link.craft_id),
-                                )
-                            )
-                if not applicable_product_scopes:
-                    progress[output_key] = {"status": "NOT_APPLICABLE", "percentage": None, "display": "—"}
-                    continue
-                metrics = []
-                is_configured = True
-                for product_id, scope in applicable_product_scopes:
-                    candidates = schemes_by_scope.get(scope, [])
-                    if len(candidates) != 1:
-                        is_configured = False
-                        break
-                    metrics.append(
-                        wage_scheme_progress(candidates[0], cumulative_by_product.get(product_id, {}))
-                    )
-                if not is_configured or any(metric is None for metric in metrics):
-                    progress[output_key] = {
-                        "status": "NOT_CONFIGURED", "percentage": None, "display": "待设置工价",
-                    }
-                    continue
-                required_total = sum((metric["required_total"] for metric in metrics), 0)
-                reported_total = sum((metric["reported_total"] for metric in metrics), 0)
-                percentage = 0 if required_total <= 0 else int(
-                    min(Decimal("100"), (reported_total * Decimal("100") / required_total)).quantize(
-                        Decimal("1"), rounding=ROUND_HALF_UP,
-                    )
-                )
-                progress[output_key] = {
-                    "status": "READY", "percentage": max(0, percentage), "display": f"{max(0, percentage)}%",
-                }
-            response_rows.append({"schedule_id": str(schedule_id), "progress": progress})
-        return Response({"data": response_rows})
+        return Response({"data": schedule_progress_statuses(
+            [schedule_id for schedule_id in schedule_ids if schedule_id in visible_schedule_ids],
+            production_date=production_date,
+        )})
 
 
 class WageSchemeViewSet(viewsets.GenericViewSet):
@@ -788,7 +661,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
                 report__in=visible_reports,
                 report__schedule_product_id=schedule_product_id,
                 report__scheme__scope_craft_id=craft_id,
-                workshop_employee__status=WorkshopEmployeeStatus.ACTIVE,
+                workshop_employee__in=active_employees(WorkshopEmployee.objects.all()),
             ).order_by("-report__updated_at", "-line_number", "-id").values(
                 "work_item_id", "workshop_employee_id"
             )

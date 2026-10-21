@@ -21,9 +21,9 @@ const row = {
   id: 'order-1', order_number: 'WW-001', direct_handoff: false, can_delete: false, can_revoke_dispatched: true,
   row_key: 'ORIGINAL:order-1', record_type: 'ORIGINAL', source_kind: 'RAW', source_label: '仓库原料', detail_access: 'REGULAR',
   dispatched_quantities: [{ quantity: '183.75', unit: '米' }], returned_quantities: [{ quantity: '120', unit: '套' }],
-  schedule_number: 'PLAN-001', production_task_number: 'HT-001', product: { product_name: '折叠椅' },
+  schedule_number: 'PLAN-001', production_task_number: 'HT-001', product: { product_name: '折叠椅', product_number: 'PRODUCT-001', material: 'PE' }, product_count: 1,
   craft: { name: '喷塑' }, factory_names: ['加工厂'], factory_count: 1,
-  processing_count: 1, returned_processing_count: 0, delivery_date: '2026-10-01',
+  processing_count: 1, returned_processing_count: 0, delivery_date: '2026-10-01', planned_amount: '12.5000' as string | null,
   status: 'PROCESSING', status_display: '加工中', updated_at: '2026-09-27T00:00:00Z',
 }
 
@@ -85,6 +85,33 @@ describe('普通外发单列表删除入口', () => {
 })
 
 describe('统一外发列表及来源入口', () => {
+  it('产品材质替代品号，保留缺值和多款边界', async () => {
+    const wrapper = await createView()
+    const headers = wrapper.findAll('.el-table__header th').map(cell => cell.text())
+    expect(headers).toContain('产品材质')
+    expect(headers).not.toContain('品号')
+    expect(wrapper.find('.el-table__body .outsourcing-product-material').text()).toBe('PE')
+    expect(wrapper.text()).not.toContain('PRODUCT-001')
+    for (const [product, productCount, expected] of [[{ product_name: '折叠椅', material: '' }, 1, '—'], [{ product_name: '折叠椅' }, 1, '—'], [{ material: 'PE' }, 2, '多款']] as const) {
+      api.list.mockResolvedValue({ data: [{ ...row, product, product_count: productCount }], meta: { total: 1 } })
+      await (wrapper.vm as any).load(); await flushPromises()
+      expect(wrapper.find('.el-table__body .outsourcing-product-material').text()).toBe(expected)
+    }
+  })
+  it.each(['ORIGINAL', 'TUBE', 'REWORK'])('%s显示真实计划金额，去尾零，缺价与0区分', async recordType => {
+    const wrapper = await createView({ ...row, record_type: recordType, planned_amount: '12.5000' })
+    expect(wrapper.find('.el-table__body .outsourcing-planned-amount').text()).toBe('12.5')
+    api.list.mockResolvedValue({ data: [{ ...row, record_type: recordType, planned_amount: null }], meta: { total: 1 } })
+    await (wrapper.vm as any).load(); await flushPromises()
+    expect(wrapper.find('.el-table__body .outsourcing-planned-amount').text()).toBe('未录入')
+    api.list.mockResolvedValue({ data: [{ ...row, record_type: recordType, planned_amount: '0.00' }], meta: { total: 1 } })
+    await (wrapper.vm as any).load(); await flushPromises()
+    expect(wrapper.find('.el-table__body .outsourcing-planned-amount').text()).toBe('0')
+  })
+  it('仅金工详情投影的金额保留不可见状态，不把null显示成0', async () => {
+    const wrapper = await createView({ ...row, detail_access: 'METAL', planned_amount: null })
+    expect(wrapper.find('.el-table__body .outsourcing-planned-amount').text()).toBe('—')
+  })
   it('发出米数与回货套数分别显示，不计算跨单位进度', async () => {
     const wrapper = await createView()
     expect(wrapper.text()).toContain('生产任务单')

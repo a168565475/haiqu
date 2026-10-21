@@ -18,7 +18,7 @@ const boardEntries = [
 const sidebarIconKeys = [
   'workbench', 'customer-management', 'sample-management', 'product-management',
   'production-management', 'procurement-management', 'workshop-management', 'warehouse-management',
-  'boards', 'access-management', 'settings',
+  'employee-management', 'boards', 'access-management', 'settings',
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
@@ -30,6 +30,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'procurement-management': ['purchase-orders', 'purchase-inbounds', 'purchase-returns'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'defective-inventory', 'inventory-warning'],
+  'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
 
@@ -37,7 +38,7 @@ const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
   'purchase-inbounds', 'purchase-returns', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
-  'material-inventory', 'access-management', 'reference-data-settings', 'theme-settings', 'wecom-settings', 'email-account-settings',
+  'material-inventory', 'access-management', 'reference-data-settings', 'theme-settings', 'wecom-settings', 'email-account-settings', 'employee-list', 'wecom-attendance',
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
 
@@ -45,18 +46,18 @@ async function setup() {
   const pinia = createPinia()
   const auth = useAuthStore(pinia)
   auth.user = { id: 1, username: 'admin', display_name: '测试管理员', is_superuser: true,
-    employee: null, data_scope: 'ALL', permissions: [
+    employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, data_scope: 'ALL', permissions: [
       'customers.view_customeraccount', 'customers.view_customercomplaint', 'inquiries.view_inquiry',
       'quotations.view_quotation', 'workflow.view_businesstask', 'samples.view_samplerequest',
       'samples.view_sampleinventoryline', 'products.view_productinformation', 'products.view_rawmaterialinformation',
       'production_tasks.view_productiontask', 'boms.view_bom', 'procurement.view_purchaseorder',
       'workshop_config.view_workshop', 'production_scheduling.view_productionschedule',
       'material_issues.view_materialissue', 'workshop_reporting.view_wagescheme',
-      'inventory.view_finishedgoodsreceipt', 'inventory.view_materialinbound',
+      'inventory.view_finishedgoodsreceipt', 'inventory.view_materialinbound', 'attendance.view_attendance',
     ] }
   const router = createRouter({ history: createMemoryHistory(), routes: routeNames.map(name => ({
     name, path: boardEntries.find(([boardName]) => boardName === name)?.[1] || `/${name}`, component: { template: '<div />' },
-    meta: { activeMenu: name === 'workshop-metalworking-plan' ? 'workshop-internal-plan' : name },
+    meta: { activeMenu: name === 'workshop-metalworking-plan' ? 'workshop-internal-plan' : name === 'wecom-attendance' ? 'attendance' : name },
   })) })
   await router.push('/workshop-metalworking-plan')
   await router.isReady()
@@ -78,7 +79,7 @@ afterEach(() => {
 describe('全局悬停侧栏', () => {
   it('主题移到顶栏后，其余一级菜单仍渲染对应的确认图标', async () => {
     await setup()
-    expect(wrapper.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(sidebarIconKeys.length)
+    expect(wrapper.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(sidebarIconKeys.length + 1)
     for (const key of sidebarIconKeys) {
       const entry = wrapper.get(`[data-menu-key="${key}"]`)
       expect(entry.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(1)
@@ -112,7 +113,7 @@ describe('全局悬停侧栏', () => {
 
   it('悬停各主菜单时浮层标题复用该菜单的确认图标', async () => {
     await setup()
-    for (const key of sidebarIconKeys.slice(0, 9)) {
+    for (const key of sidebarIconKeys.slice(0, 10)) {
       const entry = wrapper.get(`[data-menu-key="${key}"]`)
       await entry.trigger('mouseenter')
       await advance(100)
@@ -124,7 +125,7 @@ describe('全局悬停侧栏', () => {
     }
   })
 
-  it('九组真实二级菜单完整渲染三十八枚对应图标，待开放项也保留图形', async () => {
+  it('各组真实二级菜单完整渲染对应图标，待开放项也保留图形', async () => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, permissions: [...auth.user!.permissions,
       'product_catalog.view_productcatalog', 'material_catalog.view_materialcatalog'] }
@@ -143,8 +144,8 @@ describe('全局悬停侧栏', () => {
         renderedKeys.push(key)
       }
     }
-    expect(renderedKeys).toHaveLength(38)
-    expect(new Set(renderedKeys).size).toBe(38)
+    expect(renderedKeys).toHaveLength(40)
+    expect(new Set(renderedKeys).size).toBe(40)
   })
 
   it('二级悬停复用一个背景，不改变当前路由或选中项', async () => {
@@ -432,7 +433,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     expect(panel().exists()).toBe(false)
     expect(wrapper.findAll('.app-sidebar__menu-label').map(item => item.text())).toEqual(
-      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '看板', '权限', '配置'],
+      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '行政', '看板', '权限', '配置', '企微'],
     )
     expect(group('workshop').classes()).toContain('is-active')
   })
@@ -499,11 +500,12 @@ describe('全局悬停侧栏', () => {
     expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(false)
     expect(panel().exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="access-management"]').exists()).toBe(false)
-    expect(wrapper.find('[data-menu-key="settings"]').exists()).toBe(false)
+    expect(wrapper.find('[data-menu-key="settings"]').exists()).toBe(true) // 有效员工保留个人邮箱配置入口。
   })
 
   it('企业微信管理入口仅显示给在职admin超级管理员', async () => {
     const { auth, router } = await setup()
+    auth.user!.employee!.status = 'INACTIVE'; await nextTick()
     expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
     auth.user!.employee = { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }
     await nextTick()
@@ -512,6 +514,41 @@ describe('全局悬停侧栏', () => {
     expect(wrapper.get('[data-menu-key="wecom-settings"]').attributes('aria-current')).toBe('page')
     auth.user!.is_superuser = false; await nextTick()
     expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
+  })
+
+  it.each([
+    [true, false, ['employee-list']],
+    [false, true, ['attendance']],
+    [true, true, ['employee-list', 'attendance']],
+    [false, false, []],
+  ] as const)('员工目录与考勤权限独立显示：目录%s 考勤%s', async (directory, attendance, expected) => {
+    const { auth } = await setup()
+    auth.user = { ...auth.user!, username: 'employee-reader', is_superuser: false,
+      permissions: attendance ? ['attendance.view_attendance'] : [],
+      effective_access: { active: true, is_superuser: false, roles: [], legacy_sources: [], version: 'menu-test',
+        actions: directory ? {
+          'access_control.manage_accounts': { scopes: ['MODULE'], sources: [{ type: 'ROLE', scope: 'MODULE', role_id: 'role' }] },
+        } : {} },
+    }
+    await nextTick()
+    expect(wrapper.find('.app-sidebar__footer [data-menu-key="wecom-attendance"]').exists()).toBe(false)
+    if (!expected.length) {
+      expect(wrapper.find('[data-menu-key="employee-management"]').exists()).toBe(false)
+      return
+    }
+    await group('employee').trigger('focus')
+    expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(expected)
+  })
+
+  it('只有考勤权限时从员工与考勤组仍可进入原考勤路由并保留选中状态', async () => {
+    const { auth, router } = await setup()
+    auth.user = { ...auth.user!, username: 'attendance-reader', is_superuser: false, permissions: ['attendance.view_attendance'] }
+    await nextTick()
+    await group('employee').trigger('click')
+    await panel().get('[data-menu-key="attendance"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('wecom-attendance')
+    expect(group('employee').classes()).toContain('is-active')
   })
 
   it('卸载时清除尚未触发的悬停计时器', async () => {
@@ -537,5 +574,20 @@ describe('独立演示看板路由', () => {
     expect(resolved.meta.requiresAuth).toBe(true)
     expect(resolved.meta.layout).toBeUndefined()
     expect(createPageTab(resolved)).toBeNull()
+  })
+})
+
+describe('员工考勤入口兼容', () => {
+  it.each([
+    ['/employees', 'employee-list', 'employee-list', '员工管理'],
+    ['/attendance/wecom', 'wecom-attendance', 'attendance', '考勤管理'],
+    ['/settings/wecom', 'wecom-settings', 'settings', '企业微信管理'],
+  ])('%s 仍可解析并生成独立业务页签', (path, name, activeMenu, title) => {
+    const resolved = applicationRouter.resolve(path)
+    expect(resolved.name).toBe(name)
+    expect(resolved.meta.requiresAuth).toBe(true)
+    expect(resolved.meta.activeMenu).toBe(activeMenu)
+    expect(createPageTab(resolved)?.title).toBe(title)
+    expect(createPageTab(resolved)?.fullPath).toBe(path)
   })
 })

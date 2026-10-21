@@ -57,8 +57,8 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
                                          on_delete=models.PROTECT, related_name='internal_receipt_lines')
     input_unit_name = models.CharField(max_length=10, choices=[('支','支'),('米','米')])
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
-    input_per_output = models.DecimalField(max_digits=18, decimal_places=4)
-    input_quantity = models.DecimalField(max_digits=18, decimal_places=4)
+    input_per_output = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
+    input_quantity = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     required_quantity_snapshot = models.DecimalField(max_digits=18, decimal_places=4)
     received_before = models.DecimalField(max_digits=18, decimal_places=4)
     received_after = models.DecimalField(max_digits=18, decimal_places=4)
@@ -81,8 +81,10 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
                                                received_after=F('received_before')+F('quantity'),
                                                received_after__lte=F('required_quantity_snapshot')),
                                    name='inv_int_receipt_quantities'),
-            models.CheckConstraint(condition=Q(input_per_output__gt=0,input_quantity__gt=0,
-                                               input_quantity=F('quantity')*F('input_per_output')),
+            models.CheckConstraint(condition=Q(input_per_output__isnull=False,input_quantity__isnull=False,
+                                               input_per_output__gt=0,input_quantity__gt=0,
+                                               input_quantity=F('quantity')*F('input_per_output'))
+                                               | Q(input_unit_name='米',input_per_output__isnull=True,input_quantity__isnull=True),
                                    name='inv_int_receipt_input'),
             models.CheckConstraint(condition=Q(input_unit_name='米') | Q(input_unit_name='支',input_per_output=1),
                                    name='inv_int_receipt_input_unit'),

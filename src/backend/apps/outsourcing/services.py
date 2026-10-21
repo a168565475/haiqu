@@ -14,8 +14,9 @@ from rest_framework.exceptions import ValidationError
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
+from apps.core.numbering import next_business_number
 from apps.boms.models import Bom, BomLine
-from apps.boms.material_flow_calculations import CUTTING_USAGE_FIELDS, MaterialFlowValueError, cutting_usage_plan
+from apps.boms.material_flow_calculations import CUTTING_QUANTITY_FIELDS, MaterialFlowValueError, cutting_quantity_plan
 from apps.inventory.models import (
     MaterialInboundLine,
     MaterialInboundStatus,
@@ -62,7 +63,7 @@ from .models import (
     OutsourcingReturnLine,
 )
 
-SUPPORTED_OUTSOURCING_CRAFT_CODES = tuple(OutsourcingCode.values)
+SUPPORTED_OUTSOURCING_CRAFT_CODES = tuple(code for code in OutsourcingCode.values if code != 'EMBROIDERY')
 QUANTITY_PRECISION = Decimal("0.0001")
 
 
@@ -98,7 +99,7 @@ def _json_hash(value):
 
 
 def _order_number():
-    return f"WF-{timezone.localdate():%Y%m%d}-{uuid4().hex[:8].upper()}"
+    return next_business_number("OUTSOURCING_ORDER")
 
 
 def _decimal_or_none(value):
@@ -112,7 +113,7 @@ def _decimal_or_none(value):
 
 
 def processing_reference_usage(line):
-    if any(getattr(line, field, None) is not None for field in CUTTING_USAGE_FIELDS):
+    if any(getattr(line, field, None) is not None for field in CUTTING_QUANTITY_FIELDS):
         return str(line.cutting_sets_per_product or "")
     return line.cut_piece_quantity or line.unit_consumption
 
@@ -120,8 +121,8 @@ def processing_reference_usage(line):
 def processing_required_quantity(line, order_quantity):
     """按 BOM 单个用量和订单数量计算加工实物需求，不能回退成产品套数。"""
     try:
-        plan = cutting_usage_plan(**{field: getattr(line, field, None) for field in CUTTING_USAGE_FIELDS},
-                                  order_quantity=order_quantity)
+        plan = cutting_quantity_plan(**{field: getattr(line, field, None) for field in CUTTING_QUANTITY_FIELDS},
+                                     order_quantity=order_quantity)
     except MaterialFlowValueError:
         return None
     if plan is not None:
@@ -140,7 +141,7 @@ def material_required_quantity(line, bom, order_quantity=None):
     """同时返回加工厂实收总需求与采购库存扣减量，避免把采购支数当加工件数量。"""
     order_value = order_quantity if order_quantity is not None else bom.order_quantity
     quantity = processing_required_quantity(line, order_value)
-    usage_field = ("cutting_sets_per_product" if any(getattr(line, field, None) is not None for field in CUTTING_USAGE_FIELDS)
+    usage_field = ("cutting_sets_per_product" if any(getattr(line, field, None) is not None for field in CUTTING_QUANTITY_FIELDS)
                    else "cut_piece_quantity" if str(line.cut_piece_quantity or "").strip() else "unit_consumption")
     usage_text = str(getattr(line, usage_field, "") or "").strip()
     source_field = f"{usage_field}*order_quantity"
@@ -357,7 +358,7 @@ def _validated_crafts(craft_ids):
     for craft in crafts:
         if craft.craft_type != CraftType.EXTERNAL or craft.status != RecordStatus.ACTIVE:
             raise ValidationError({"craft_ids": f"工艺“{craft.name}”不是可用厂外工艺。"})
-        if craft.outsourcing_code not in SUPPORTED_OUTSOURCING_CRAFT_CODES:
+        if craft.outsourcing_code not in OutsourcingCode.values:
             raise ValidationError({"craft_ids": f"工艺“{craft.name}”不在本期委外范围。"})
     return crafts
 
@@ -456,7 +457,8 @@ def _validate_order_source(data):
         list(ProductionTaskProduct.objects.select_for_update(of=("self",)).filter(pk__in=product_ids).order_by("id"))
 
     try:
-        craft = Craft.objects.select_for_update().get(pk=data["craft_id"])
+        # 保护资料校验，同时允许共用 WF 流水的其他单据完成外键检查。
+        craft = Craft.objects.select_for_update(no_key=True).get(pk=data["craft_id"])
     except Craft.DoesNotExist as exc:
         raise ValidationError({"craft_id": "厂外工艺不存在。"}) from exc
     if (
@@ -518,14 +520,16 @@ def _validate_order_source(data):
         for allocation in item["allocations"]
     }
     factories = list(
-        OutsourcingFactory.objects.select_for_update().filter(pk__in=factory_ids).order_by("pk")
+        OutsourcingFactory.objects.select_for_update(no_key=True).filter(pk__in=factory_ids).order_by("pk")
     )
     factory_map = {row.pk: row for row in factories}
     if len(factory_map) != len(factory_ids) or any(row.status != FactoryStatus.ACTIVE for row in factories):
         raise ValidationError({"products": "存在无效或已停用的加工厂。"})
     linked_factory_ids = set(
-        OutsourcingFactoryCraft.objects.select_for_update()
+        # 默认按 factory 排序会关联父表，不能把已取得的工厂锁升级为 FOR UPDATE。
+        OutsourcingFactoryCraft.objects.select_for_update(of=("self",))
         .filter(factory_id__in=factory_ids, craft=craft)
+        .order_by("pk")
         .values_list("factory_id", flat=True)
     )
     if linked_factory_ids != factory_ids:
@@ -534,7 +538,7 @@ def _validate_order_source(data):
     processing_titles = {"管材类"} if craft.outsourcing_code == OutsourcingCode.POWDER_COATING else {"裁剪明细"}
     material_titles = {"管材类", "五金件"} if craft.outsourcing_code == OutsourcingCode.POWDER_COATING else {"面料类", "辅料类"}
     active_units = list(
-        ProductionUnit.objects.select_for_update().filter(
+        ProductionUnit.objects.select_for_update(no_key=True).filter(
             status=ReferenceStatus.ACTIVE,
             archived_at__isnull=True,
         ).order_by("pk")
@@ -561,9 +565,17 @@ def _validate_order_source(data):
             line = line_map[material["bom_line_id"]]
             if line.section.bom_id != bom.pk or line.section.title.strip() not in material_titles:
                 raise ValidationError({"products": "原料不属于本产品当前工艺。"})
-        from .material_flow import normalize_product
+        from .material_flow import normalize_product, output_set_availability
         from apps.inventory.public_stock_mode import public_flow_enabled
         normalize_product(row, line_map, unit_by_text, public=public_flow_enabled())
+        for item in row["processing_items"]:
+            if item["flow_snapshot"].get("quantity_basis") != "OUTPUT_SETS":
+                continue
+            available = output_set_availability(line=line_map[item["bom_line_id"]],
+                product_line_id=product.product_line_id, craft_id=craft.pk, craft_code=craft.outsourcing_code,
+                required_sets=item["flow_snapshot"]["required_sets"])
+            if item["quantity"] > available["available"]:
+                raise ValidationError({"quantity": "加工套数超过该部位订单剩余需求，请核对已分配外发和厂内已入库数量。"})
         normalized_products.append({**row, "schedule_product": product})
 
     # 待外发单不预扣订单原料额度；仓库确认时在同一任务锁内校验净已发量。
@@ -573,6 +585,9 @@ def _validate_order_source(data):
 @stock_write_transaction
 def create_order(*, validated_data, actor_employee, request=None):
     require_craft(request, "outsourcing.add_outsourcingorder", validated_data["craft_id"])
+    if request is not None:
+        from .source_access import require_source
+        require_source(request, "outsourcing.add_outsourcingorder", "PUBLIC_SEMI")
     from apps.access_control.resource_scopes import enabled as resource_scopes_enabled
     if resource_scopes_enabled():
         from django.shortcuts import get_object_or_404
@@ -765,6 +780,8 @@ def create_order(*, validated_data, actor_employee, request=None):
         context_id=schedule.pk,
         request=request,
     )
+    from apps.wecom.workshop_notifications import outsourcing_created
+    outsourcing_created(order, actor_employee)
     return order, True
 
 
@@ -871,7 +888,7 @@ def confirm_dispatch(*, order_id, request_id, line_inputs, remark, actor_employe
 
 
 def _return_number():
-    return f"WH-{timezone.localdate():%Y%m%d}-{uuid4().hex[:8].upper()}"
+    return next_business_number("OUTSOURCING_RETURN")
 
 
 @stock_write_transaction

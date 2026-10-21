@@ -23,8 +23,6 @@ interface Editor {
   blankLine: (unit?: string) => BomLineInput
   persistDraft: () => Promise<boolean>
   submitVerification: () => Promise<void>
-  confirmMaterialSave: () => Promise<boolean>
-  cancelMaterialSave: () => void
   confirmHardwareSelection: () => void
   confirmPlasticSelection: () => void
   confirmPackagingSelection: () => void
@@ -51,7 +49,7 @@ beforeEach(() => {
 })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
-describe('整份 BOM 原料新增确认', () => {
+describe('整份 BOM 原料自动保存', () => {
   it('全部匹配时先预检，再直接保存，不调用旧确认接口', async () => {
     const { vm } = await open()
     expect(await vm.persistDraft()).toBe(true)
@@ -72,22 +70,14 @@ describe('整份 BOM 原料新增确认', () => {
     expect(api.saveBomDraft).not.toHaveBeenCalled()
   })
 
-  it('需要新增时列出合并的来源行，取消不写且保留编辑', async () => {
+  it('需要新增时自动携带预检令牌保存，不再弹出确认清单', async () => {
     vi.mocked(api.previewBomMaterialSave).mockResolvedValue(additions)
-    const { wrapper: page, vm, auxiliary } = await open()
-    await vm.persistDraft(); await flushPromises()
-    const modal = page.get('[data-testid="bom-material-save-preview"]')
-    expect(modal.text()).toContain('织带')
-    expect(modal.text()).toContain('25mm')
-    expect(modal.text()).toContain('黑色')
-    expect(modal.findAll('th').map(cell => cell.text())).toEqual(['分区', '行号', '品名', '规格', '颜色', '材质', '单位', '仓库'])
-    expect(modal.text()).toContain('原料仓')
-    expect(modal.findAll('[data-testid="bom-material-save-preview-row"]')).toHaveLength(1)
-    expect(modal.text()).toContain('1、2')
-    expect(api.saveBomDraft).not.toHaveBeenCalled()
-    vm.cancelMaterialSave(); await flushPromises()
-    expect(auxiliary.lines[0]!.part_name).toBe('织带')
-    expect(api.saveBomDraft).not.toHaveBeenCalled()
+    const { wrapper: page, vm } = await open()
+    expect(await vm.persistDraft()).toBe(true)
+    await flushPromises()
+    expect(page.find('[data-testid="bom-material-save-preview"]').exists()).toBe(false)
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
+    expect(api.saveBomDraft).toHaveBeenCalledWith('b1', expect.any(Array), 'v1', { intent: 'draft', confirmation_token: 'token-1' })
   })
 
   it('确认 BOM 使用同一份预检参数和令牌进行一次原子 PATCH', async () => {
@@ -95,22 +85,17 @@ describe('整份 BOM 原料新增确认', () => {
     const { vm } = await open()
     vm.quantityReason = '数量核对说明'
     await vm.submitVerification()
-    expect(api.saveBomDraft).not.toHaveBeenCalled()
     const previewSections = vi.mocked(api.previewBomMaterialSave).mock.calls[0]![1]
-    await vm.confirmMaterialSave()
     expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
     expect(api.saveBomDraft).toHaveBeenCalledWith('b1', previewSections, 'v1', { intent: 'verify', quantity_confirmation_reason: '数量核对说明', confirmation_token: 'token-1' })
     expect(api.verifyBom).not.toHaveBeenCalled()
   })
 
-  it('新增面料清单同时显示规格、门幅和完整色卡身份', async () => {
-    vi.mocked(api.previewBomMaterialSave).mockResolvedValue({ ...additions, new_materials: [{ ...additions.new_materials[0]!, category_name: '面料', specification: '400*300D', width: '150', color_label: '色卡 A / 001 / 黑色' }] })
-    const { wrapper: page, vm } = await open()
-    await vm.persistDraft(); await flushPromises()
-    const cells = page.get('[data-testid="bom-material-save-preview-row"]').findAll('td')
-    expect(cells[3]!.text()).toContain('400*300D')
-    expect(cells[3]!.text()).toContain('门幅 150')
-    expect(cells[4]!.text()).toBe('色卡 A / 001 / 黑色')
+  it('新增清单缺少令牌时仍停止保存，不绕过服务端确认凭据', async () => {
+    vi.mocked(api.previewBomMaterialSave).mockResolvedValue({ ...additions, confirmation_token: null })
+    const { vm } = await open()
+    expect(await vm.persistDraft()).toBe(false)
+    expect(api.saveBomDraft).not.toHaveBeenCalled()
   })
 
   it('预检失败时不保存，不覆盖页面行', async () => {
@@ -121,19 +106,18 @@ describe('整份 BOM 原料新增确认', () => {
     expect(api.saveBomDraft).not.toHaveBeenCalled()
   })
 
-  it('确认保存失败保留弹窗与页面，不自动重试或显示成功', async () => {
+  it('自动保存冲突时保留页面输入，不自动重试；用户重试时重新预检', async () => {
     vi.mocked(api.previewBomMaterialSave).mockResolvedValue(additions)
     vi.mocked(api.saveBomDraft).mockRejectedValueOnce(Object.assign(new AxiosError('新增清单已变化'), { response: { status: 409, data: { error: { message: '新增清单已变化，请重新检查。' } } } }))
-    const { wrapper: page, vm, auxiliary } = await open()
-    await vm.persistDraft()
-    expect(await vm.confirmMaterialSave()).toBe(false)
+    const { vm, auxiliary } = await open()
+    expect(await vm.persistDraft()).toBe(false)
     await flushPromises()
-    expect(page.get('[data-testid="bom-material-save-preview"]').text()).toContain('新增清单已变化')
     expect(auxiliary.lines[0]!.part_name).toBe('织带')
     expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
     expect(api.previewBomMaterialSave).toHaveBeenCalledTimes(1)
-    expect(await vm.confirmMaterialSave()).toBe(false)
-    expect(api.saveBomDraft).toHaveBeenCalledTimes(1)
+    expect(await vm.persistDraft()).toBe(true)
+    expect(api.previewBomMaterialSave).toHaveBeenCalledTimes(2)
+    expect(api.saveBomDraft).toHaveBeenCalledTimes(2)
   })
 
   it('预检期间编辑内容变化时取消此次保存，保留新输入', async () => {

@@ -20,7 +20,7 @@ export interface WarehouseLocation {
 }
 export interface FinishedGoodsInventoryRow {
   inventory_key: string; product_id: string | null
-  category: string; product_number: string; product_code: string; product_name: string; item_number: string
+  task_number: string; category: string; product_number: string; product_code: string; product_name: string; item_number: string
   specification: string; actual_color: string; inventory_quantity: number; unit_id: string; unit_code: string
   unit_name: string; warehouse_id: string; warehouse_number: string; warehouse_name: string; zone_id: string
   zone_name: string; batch_count: number; occupied_box_slots: number; latest_inbound_time: string; receipt_ids: string[]
@@ -29,7 +29,7 @@ export interface FinishedGoodsReceipt {
   id: string; receipt_number: string; production_task_product_id: string | null; source_type: 'PRODUCTION_ORDER' | 'SAMPLE_INVENTORY'
   source_type_display: string; source_document_number: string; task_number_snapshot: string
   order_number_snapshot: string; category_snapshot: string; product_number_snapshot: string; product_code_snapshot: string
-  product_name_snapshot: string; item_number_snapshot: string; specification_snapshot: string; actual_color: string
+  product_name_snapshot: string; item_number_snapshot: string; specification_snapshot: string; material_snapshot?: string; actual_color: string
   supplier_id: string | null; supplier_name: string | null; unit_id: string; unit_code: string; unit_name: string
   warehouse_id: string; warehouse_number: string; warehouse_name: string; zone_id: string; zone_name: string
   location_id: string; location_number: string; received_quantity: number; remaining_quantity: number
@@ -45,8 +45,26 @@ export interface InventoryOptions {
   suppliers: { id: string; supplier_number: string; supplier_name: string }[]
   product_colors: { id: string; color_card: string; color_code: string; color_name: string }[]
   production_orders: { id: string; task_number: string; order_number: string }[]
+  employees?: InventoryEmployeeOption[]
 }
 export interface PaginatedInventory { count: number; results: FinishedGoodsInventoryRow[] }
+export interface InventoryEmployeeOption { id: string; display_name: string; employee_code?: string }
+export interface FinishedGoodsOutboundLine {
+  id: string; receipt_id: string; receipt_number: string; outbound_quantity: number; quantity_per_box: number
+  box_count: number; tail_quantity: number; before_quantity: number; after_quantity: number
+  task_number_snapshot?: string; product_code_snapshot?: string; product_name_snapshot?: string; material_snapshot?: string
+  item_number_snapshot?: string; specification_snapshot?: string; actual_color?: string; unit_name?: string
+  warehouse_name?: string; location_number?: string
+  order_quantity?: number | null; received_quantity?: number; warehouse_id?: string
+}
+export interface FinishedGoodsOutbound {
+  id: string; outbound_number: string; task_number_snapshot?: string; production_task_number?: string
+  responsible_employee_id?: string | null; responsible_employee_name?: string; responsible_name_snapshot?: string; receiver_name?: string
+  shipment_date?: string | null; loading_fee?: string | number | null; other_fee?: string | number | null
+  remark: string; outbound_by_name?: string; outbound_at: string; loading_images?: Array<{ id?: string; url: string; name?: string }>
+  lines: FinishedGoodsOutboundLine[]
+}
+export type FinishedGoodsOutboundDetail = FinishedGoodsOutbound
 
 export interface MaterialInventoryRow {
   stock_mode?: 'LEGACY' | 'PUBLIC_V2'; completed_craft?: string; completed_craft_code?: string
@@ -96,6 +114,13 @@ export interface EligibleMaterialLine {
 export interface MaterialReceivingOptions {
   warehouses: Pick<Warehouse, 'id' | 'warehouse_number' | 'warehouse_name'>[]
   zones: Pick<WarehouseZone, 'id' | 'warehouse' | 'zone_name'>[]
+}
+export interface SampleMaterialReceivingPayload {
+  purchase_order_id: string
+  client_request_id: string
+  inbound_date: string
+  remark: string
+  items: Array<{ purchase_order_line_id: string; zone_id: string; remark: string }>
 }
 
 export interface MaterialFilterOptions extends MaterialReceivingOptions {

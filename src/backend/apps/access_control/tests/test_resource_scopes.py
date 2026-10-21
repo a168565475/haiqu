@@ -102,7 +102,7 @@ class ResourceScopeTests(ScopedActorMixin, APITestCase):
         from apps.access_control.resource_scopes import validate_resources
         from rest_framework.exceptions import ValidationError
         for code, scope, ids in [
-            ('outsourcing.add_outsourcingorder', 'WORKSHOP', [self.metal.pk]),
+            ('access_control.manage_access', 'WORKSHOP', [self.metal.pk]),
             ('workshop_reporting.view_workreport', 'WORKSHOP', [uuid4()]),
             ('outsourcing.add_outsourcingorder', 'CRAFT', [self.spray.pk, self.spray.pk]),
             ('outsourcing.add_outsourcingorder', 'MODULE', [self.spray.pk]),
@@ -195,13 +195,27 @@ class CraftResourceApiTests(ScopedActorMixin, APITestCase):
         from apps.material_issues.tests.test_metal_processing_p4 import MetalProcessingP4ApiTests
         self.fixture = MetalProcessingP4ApiTests()
         # Reuse historical business fixtures, then enable the new policy for every assertion.
-        with override_settings(MODULE_ACCESS_ENABLED=False, ACCESS_RESOURCE_SCOPES_ENABLED=False):
+        # 手动调用夹具setUp不会触发其测试类的TUBE开关装饰器。
+        with override_settings(MODULE_ACCESS_ENABLED=False, ACCESS_RESOURCE_SCOPES_ENABLED=False, TUBE_OUTSOURCING_ENABLED=False):
             self.fixture.setUp()
             self.order = self.fixture.create_order()
         self.client = self.fixture.client
         self.scoped_actor()
         self.spray = self.fixture.f.spray
         self.other = Craft.objects.get_or_create(outsourcing_code='SCREEN_PRINTING', defaults={'name': '未授权丝印', 'craft_type': 'EXTERNAL'})[0]
+
+    def test_stock_source_cannot_read_or_dispatch_regular_metal_handoff(self):
+        from apps.outsourcing.models import OutsourcingOrder
+        from apps.access_control.resource_scopes import can_order
+        self.grant('outsourcing.view_outsourcingorder', 'STOCK')
+        self.grant('outsourcing.confirm_dispatch_outsourcingorder', 'STOCK')
+        url = f'/api/v1/outsourcing-orders/{self.fixture.original_order}/'
+        self.assertEqual(self.client.get(url).status_code, 404)
+        order = OutsourcingOrder.objects.get(pk=self.fixture.original_order)
+        self.assertFalse(can_order(self.scoped_request(), 'outsourcing.confirm_dispatch_outsourcingorder', order))
+        metal = Workshop.objects.get(name='金工车间')
+        self.grant('outsourcing.view_outsourcingorder', 'WORKSHOP', [metal])
+        self.assertEqual(self.client.get(url).status_code, 200)
 
     def test_selected_craft_reads_regular_unified_and_p4_without_independent_production(self):
         self.grant('outsourcing.view_outsourcingorder', 'CRAFT', [self.spray])

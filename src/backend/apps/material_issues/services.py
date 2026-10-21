@@ -2,7 +2,6 @@ from apps.inventory.public_stock_cutover import stock_write_transaction
 import hashlib
 import json
 from decimal import Decimal
-from uuid import uuid4
 
 from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
@@ -13,6 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
+from apps.core.numbering import next_business_number
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields
 from apps.inventory.models import MaterialStockQuality, SemiFinishedStockBalance
 from apps.inventory.public_stock_mode import public_issues_enabled, require_document_stock_mode
@@ -33,8 +33,8 @@ from apps.workshop_config.models import (
     RecordStatus,
     Workshop,
     WorkshopEmployee,
-    WorkshopEmployeeStatus,
 )
+from apps.workshop_config.selectors import active_employees, locked_active_employees
 
 from .models import (
     MaterialIssue,
@@ -88,8 +88,9 @@ class MaterialIssueConflict(Conflict):
         super().__init__(detail)
 
 
-def pending_issue_quantities(*, requirement_ids=(), semi_balance_ids=(), exclude_issue_id=None):
+def pending_issue_quantities(*, requirement_ids=(), semi_balance_ids=(), exclude_issue_id=None, exclude_tube_order_id=None):
     """统计已经提交、尚未出库的领料数量；草稿和退回单不占用额度。"""
+    requirement_ids = tuple(requirement_ids)
     lines = MaterialIssueLine.objects.filter(issue__status=MaterialIssueStatus.PENDING_REVIEW)
     if exclude_issue_id:
         lines = lines.exclude(issue_id=exclude_issue_id)
@@ -103,14 +104,26 @@ def pending_issue_quantities(*, requirement_ids=(), semi_balance_ids=(), exclude
         .values("semi_finished_balance_id")
         .annotate(quantity=Sum("requested_quantity"))
     )
+    raw_pending = {item["requirement_id"]: item["quantity"] or Decimal("0") for item in raw_rows}
+    from apps.inventory.tube_outsourcing_reservations import tube_material_reserved_quantities
+    tube_pending, _ = tube_material_reserved_quantities(requirement_ids=requirement_ids,
+        exclude_order_id=exclude_tube_order_id)
+    for key, value in tube_pending.items():
+        raw_pending[key] = raw_pending.get(key, Decimal(0)) + value
     return (
-        {item["requirement_id"]: item["quantity"] or Decimal("0") for item in raw_rows},
+        raw_pending,
         {item["semi_finished_balance_id"]: item["quantity"] or Decimal("0") for item in semi_rows},
     )
 
 
 def _require_issue_owner(issue, actor_employee, request):
     if request.user.is_superuser or issue.created_by_employee_id == actor_employee.pk:
+        return
+    from apps.access_control.sales_policy import access_for
+    from apps.access_control.resource_scopes import current_permission
+    code = current_permission(request, 'material_issues.change_materialissue')
+    access = access_for(request)
+    if access['active'] and 'MODULE' in access['actions'].get(code, {}).get('scopes', []):
         return
     raise PermissionDenied("只有制单人可以修改或提交该领料单。")
 
@@ -125,7 +138,7 @@ def _json_safe(value):
 
 
 def _issue_number():
-    return f"LL-{timezone.localdate():%Y%m%d}-{uuid4().hex[:8].upper()}"
+    return next_business_number("MATERIAL_ISSUE")
 
 
 def _material_color(material):
@@ -216,7 +229,7 @@ def _validate_plan_source(*, schedule_product_id, plan_category, production_task
     }
 
 
-def _validate_relations(issue, *, require_complete=False):
+def _validate_relations(issue, *, require_complete=False, lock_employee=False):
     if require_complete and not issue.production_task_id:
         raise ValidationError({"production_task_id": "提交前必须选择生产订单。"})
     if issue.production_task_id:
@@ -235,11 +248,14 @@ def _validate_relations(issue, *, require_complete=False):
     if require_complete and not issue.recipient_workshop_employee_id:
         raise ValidationError({"recipient_workshop_employee_id": "提交前必须选择领料人。"})
     if issue.recipient_workshop_employee_id:
-        recipient = issue.recipient_workshop_employee
+        candidates = WorkshopEmployee.objects.filter(pk=issue.recipient_workshop_employee_id)
+        eligible = locked_active_employees(candidates) if lock_employee else list(active_employees(candidates))
+        if not eligible:
+            raise ValidationError({"recipient_workshop_employee_id": "领料人已停用、离职或关联员工不可用。"})
+        recipient = eligible[0]
+        issue.recipient_workshop_employee = recipient
         if recipient.workshop_id != issue.workshop_id:
             raise ValidationError({"recipient_workshop_employee_id": "领料人不属于所选车间。"})
-        if recipient.status != WorkshopEmployeeStatus.ACTIVE:
-            raise ValidationError({"recipient_workshop_employee_id": "领料人已停用或离职。"})
     if require_complete and issue.issue_at is None:
         raise ValidationError({"issue_at": "提交前必须填写领料时间。"})
 
@@ -382,11 +398,16 @@ def _replace_lines(issue, line_inputs):
 
 
 @stock_write_transaction
-def create_issue(*, validated_data, actor_employee):
+def create_issue(*, validated_data, actor_employee, request=None):
+    if request is not None:
+        from apps.access_control.workshop_scopes import require_task_workshop
+        require_task_workshop(request, 'material_issues.add_materialissue', validated_data.get('production_task_id'), validated_data.get('workshop_id'), owner_id=actor_employee.pk)
     payload_hash = _payload_hash(validated_data)
     request_id = validated_data["client_request_id"]
     existing = MaterialIssue.objects.filter(client_request_id=request_id).first()
     if existing:
+        if request is not None:
+            require_task_workshop(request, 'material_issues.add_materialissue', existing.production_task_id, existing.workshop_id, owner_id=existing.created_by_employee_id)
         if existing.created_by_employee_id != actor_employee.pk:
             raise MaterialIssueConflict("相同提交标识已由其他制单人使用。")
         if existing.request_payload_hash != payload_hash:
@@ -414,7 +435,7 @@ def create_issue(*, validated_data, actor_employee):
             )
             issue._material_issue_plan_category = plan_category
             _apply_header(issue, validated_data)
-            _validate_relations(issue)
+            _validate_relations(issue, lock_employee=True)
             # client_request_id 的并发唯一性由数据库约束裁决，避免 ORM 预检与插入之间的竞态。
             issue.full_clean(validate_unique=False)
             issue.save()
@@ -433,6 +454,9 @@ def create_issue(*, validated_data, actor_employee):
 @stock_write_transaction
 def update_issue(*, issue_id, validated_data, actor_employee, request):
     issue = MaterialIssue.objects.select_for_update().get(pk=issue_id)
+    from apps.access_control.workshop_scopes import require_task_workshop
+    require_task_workshop(request, 'material_issues.change_materialissue', issue.production_task_id, issue.workshop_id, owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
+    require_task_workshop(request, 'material_issues.change_materialissue', validated_data.get('production_task_id', issue.production_task_id), validated_data.get('workshop_id', issue.workshop_id), owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
     _require_issue_owner(issue, actor_employee, request)
     require_matching_etag(request, issue)
     if issue.status not in EDITABLE_STATUSES:
@@ -457,7 +481,7 @@ def update_issue(*, issue_id, validated_data, actor_employee, request):
         and issue.lines.exists()
     ):
         raise ValidationError({"lines": "更换生产订单或产品时必须同时重新提交领料明细。"})
-    _validate_relations(issue)
+    _validate_relations(issue, lock_employee=True)
     issue.version += 1
     issue.updated_by_employee = actor_employee
     issue.save()
@@ -612,13 +636,15 @@ def submit_issue(*, issue_id, actor_employee, request):
     issue = MaterialIssue.objects.select_for_update(of=("self",)).select_related(
         "production_task", "product_line", "workshop", "recipient_workshop_employee"
     ).get(pk=issue_id)
+    from apps.access_control.workshop_scopes import require_task_workshop
+    require_task_workshop(request, 'material_issues.submit_materialissue', issue.production_task_id, issue.workshop_id, owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
     _require_issue_owner(issue, actor_employee, request)
     require_matching_etag(request, issue)
     if issue.status not in EDITABLE_STATUSES:
         raise MaterialIssueConflict("当前状态不允许提交审核。")
     require_document_stock_mode(issue, allow_issue_trial=True)
     _validate_saved_plan(issue)
-    _validate_relations(issue, require_complete=True)
+    _validate_relations(issue, require_complete=True, lock_employee=True)
     blockers, revision_hash = _sync_issue_sources(issue)
     issue_lines = list(issue.lines.all())
     blockers = filter_blockers_for_scope(
@@ -652,12 +678,16 @@ def submit_issue(*, issue_id, actor_employee, request):
     issue.source_revision_hash = revision_hash
     issue.save()
     _record_event(issue, MaterialIssueAction.SUBMITTED, actor_employee)
+    from apps.wecom.workshop_notifications import issue_submitted
+    issue_submitted(issue, actor_employee)
     return issue
 
 
 @stock_write_transaction
 def return_issue(*, issue_id, reason, actor_employee, request):
     issue = MaterialIssue.objects.select_for_update().get(pk=issue_id)
+    from apps.access_control.workshop_scopes import require_task_workshop
+    require_task_workshop(request, 'material_issues.review_materialissue', issue.production_task_id, issue.workshop_id, owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
     from apps.access_control.module_policy import prohibit_self_approval
     prohibit_self_approval(actor_employee, issue.submitted_by_employee_id)
     require_matching_etag(request, issue)
@@ -673,11 +703,13 @@ def return_issue(*, issue_id, reason, actor_employee, request):
 
 @stock_write_transaction
 def confirm_issue(*, issue_id, request_id, actor_employee, request):
+    from apps.access_control.workshop_scopes import require_task_workshop
     from apps.outsourcing.material_flow import lock_request
     lock_request("material_issue_confirm", request_id)
     request_hash = _payload_hash({"issue_id": issue_id, "request_id": request_id})
     existing = MaterialIssueAuditEvent.objects.select_related("issue").filter(request_id=request_id).first()
     if existing:
+        require_task_workshop(request, 'material_issues.review_materialissue', existing.issue.production_task_id, existing.issue.workshop_id, owner_id=existing.issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
         if existing.issue_id != issue_id or existing.request_payload_hash != request_hash:
             raise MaterialIssueConflict("相同审核请求标识已用于不同内容。")
         from apps.access_control.module_policy import prohibit_self_approval
@@ -687,6 +719,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
     issue = MaterialIssue.objects.select_for_update(of=("self",)).select_related(
         "production_task", "product_line", "workshop", "recipient_workshop_employee"
     ).get(pk=issue_id)
+    require_task_workshop(request, 'material_issues.review_materialissue', issue.production_task_id, issue.workshop_id, owner_id=issue.created_by_employee_id, legacy_global='material_issues.view_all_materialissue')
     from apps.access_control.module_policy import prohibit_self_approval
     prohibit_self_approval(actor_employee, issue.submitted_by_employee_id)
     existing = MaterialIssueAuditEvent.objects.select_related("issue").filter(request_id=request_id).first()
@@ -706,7 +739,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
         pk=issue.recipient_workshop_employee_id
     )
     _validate_saved_plan(issue)
-    _validate_relations(issue, require_complete=True)
+    _validate_relations(issue, require_complete=True, lock_employee=True)
     blockers, revision_hash = _sync_issue_sources(issue)
     issue_lines = list(issue.lines.all())
     blockers = filter_blockers_for_scope(

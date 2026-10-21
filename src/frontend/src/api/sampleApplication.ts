@@ -1,8 +1,20 @@
 import type { SampleApplicationDraft } from '@/types/sampleApplication'
 import { apiClient } from './request'
 import type { SampleDetail } from '@/types/sample'
+import type { SampleProductEdit, SampleProductCandidate } from '@/types/sampleEditor'
 
-export async function submitSampleApplication(draft: SampleApplicationDraft, submission: { key: string; sampleId?: string; etag?: string }): Promise<{ id: string; etag: string }> {
+export async function fetchSampleApplicationProductOptions(sampleId: string, query: string): Promise<SampleProductCandidate[]> {
+  if (!sampleId) throw new Error('缺少申请编号。')
+  return (await apiClient.get<{ data: SampleProductCandidate[] }>(`/api/v1/sample-requests/${sampleId}/application-product-options/`, { params: { q: query.trim() } })).data.data
+}
+
+export async function completeSampleApplicationProducts(sampleId: string, etag: string, products: SampleProductEdit[], purpose: string): Promise<{ data: SampleDetail; etag: string }> {
+  if (!sampleId || !etag) throw new Error('缺少申请或数据版本，请重新加载。')
+  const response = await apiClient.patch<{ data: SampleDetail }>(`/api/v1/sample-requests/${sampleId}/application-products/`, { products: products.map(product => ({ ...product, product_id: product.product_id || null })), purpose }, { headers: { 'If-Match': etag } })
+  return { data: response.data.data, etag: response.headers.etag || response.data.data.etag }
+}
+
+export async function submitSampleApplication(draft: SampleApplicationDraft, submission: { key: string; sampleId?: string; etag?: string }): Promise<{ id: string; etag: string; status: SampleDetail['status'] }> {
   const body = new FormData()
   body.append('payload', JSON.stringify({
     customer_account_id: draft.customerId, customer_contact_id: draft.contactId || null, owner_employee_id: draft.ownerId,
@@ -20,7 +32,7 @@ export async function submitSampleApplication(draft: SampleApplicationDraft, sub
   if (submission.sampleId && !submission.etag) throw new Error('缺少申请版本，请刷新后重试。')
   const url = submission.sampleId ? `/api/v1/sample-requests/${submission.sampleId}/application-resubmit/` : '/api/v1/sample-requests/applications/'
   const response = await apiClient.post<{ data: SampleDetail }>(url, body, { timeout: 60000, headers: submission.sampleId ? { 'If-Match': submission.etag } : {} })
-  return { id: response.data.data.id, etag: response.headers.etag || response.data.data.etag }
+  return { id: response.data.data.id, etag: response.headers.etag || response.data.data.etag, status: response.data.data.status }
 }
 
 export async function reviewSampleApplication(input: { sampleId: string; etag: string; decision: 'approve' | 'return'; note: string }): Promise<void> {

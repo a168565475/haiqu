@@ -6,7 +6,8 @@ from tempfile import TemporaryDirectory
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.db import connection
+from django.core.signals import request_finished
+from django.db import close_old_connections, connection
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -54,6 +55,19 @@ class WorkReportTaskCardTests(APITestCase):
             uploaded_by_employee=self.employee, scan_status=scan_status,
         )
 
+    def assert_image_response(self, response, expected):
+        try:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(b''.join(response.streaming_content), expected)
+        finally:
+            # 测试客户端耗尽文件流时已关闭响应；异常提前退出才补关，避免结束测试事务连接。
+            if not response.closed:
+                request_finished.disconnect(close_old_connections)
+                try:
+                    response.close()
+                finally:
+                    request_finished.connect(close_old_connections)
+
     def scoped_client(self):
         user = get_user_model().objects.create_user(username='report-card-viewer')
         employee = Employee.objects.create(user=user, employee_code='REPORT-CARD-VIEWER', display_name='报工卡片查看员')
@@ -79,7 +93,9 @@ class WorkReportTaskCardTests(APITestCase):
             operation_number='CARD-ASSEMBLY', product_name='工价测试产品', craft=craft,
             name='卡片装配', reporting_unit=self.unit,
         )
-        worker = WorkshopEmployee.objects.create(workshop=workshop, position='操作工', name='卡片装配员工')
+        worker = WorkshopEmployee.objects.create(
+            workshop=workshop, position='操作工', name='卡片装配员工', is_supervisor=False,
+        )
         ProductionScheduleProductCraft.objects.create(
             schedule_product=scheduled, craft=craft, craft_type_snapshot=CraftType.INTERNAL,
             craft_name_snapshot=craft.name, plan_category=PlanCategory.ASSEMBLY,
@@ -188,13 +204,9 @@ class WorkReportTaskCardTests(APITestCase):
             self.assertEqual([item['id'] for item in card['workshops']], [str(self.workshop.pk)])
             self.assertEqual(card['product']['image_url'], self.image_url())
             response = client.get(card['product']['image_url'])
-            try:
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(b''.join(response.streaming_content), b'visible.png')
-            finally:
-                response.close()
+            self.assert_image_response(response, b'visible.png')
             self.assertEqual(client.get(self.image_url(hidden_product)).status_code, 404)
-            self.assertEqual(APIClient().get(self.image_url()).status_code, 403)
+            self.assertEqual(APIClient().get(self.image_url()).status_code, 401)
 
     def test_image_primary_gallery_scan_archive_and_path_guards(self):
         # MEDIA_ROOT 和目录外的哨兵文件均在同一专属 TemporaryDirectory 内，退出时自动清理。
@@ -209,19 +221,11 @@ class WorkReportTaskCardTests(APITestCase):
                 self.product_line.save(update_fields=['image_file'])
                 ProductionTaskProductImage.objects.create(product_line=self.product_line, image_file=gallery, line_number=1)
                 response = self.client.get(self.image_url())
-                try:
-                    self.assertEqual(response.status_code, 200)
-                    self.assertEqual(b''.join(response.streaming_content), b'primary.png')
-                finally:
-                    response.close()
+                self.assert_image_response(response, b'primary.png')
                 image.scan_status = FileScanStatus.INFECTED
                 image.save(update_fields=['scan_status'])
                 response = self.client.get(self.image_url())
-                try:
-                    self.assertEqual(response.status_code, 200)
-                    self.assertEqual(b''.join(response.streaming_content), b'gallery.png')
-                finally:
-                    response.close()
+                self.assert_image_response(response, b'gallery.png')
                 gallery.scan_status = FileScanStatus.PENDING
                 gallery.save(update_fields=['scan_status'])
                 self.assertIsNone(self.card()['product']['image_url'])

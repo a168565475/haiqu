@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
-import { ArrowRight, Back } from '@element-plus/icons-vue'
+import { Back } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { fetchSchedule, scheduleProductImageUrl, voidSchedule } from '@/api/productionScheduling'
+import { fetchScheduleExecutionSummary } from '@/api/scheduleExecution'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import ScheduleExecutionOverview from '@/components/productionScheduling/ScheduleExecutionOverview.vue'
 import { useAuthStore } from '@/stores/auth'
-import type { PlanCategory, ProductionSchedule, ScheduleProduct } from '@/types/productionScheduling'
+import type { ProductionSchedule, ScheduleProduct } from '@/types/productionScheduling'
+import type { ScheduleExecutionSummary } from '@/types/scheduleExecution'
+import { formatScheduleMoney } from '@/utils/scheduleExecution'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,6 +23,23 @@ const loading = ref(true)
 const schedule = ref<ProductionSchedule | null>(null)
 const etag = ref('')
 const errorMessage = ref('')
+const executionSummary = ref<ScheduleExecutionSummary | null>(null)
+const executionLoading = ref(false)
+const executionError = ref('')
+let loadSequence = 0
+let executionSequence = 0
+const executionByProduct = computed(() => new Map(executionSummary.value?.products.map(product => [product.schedule_product_id, product]) || []))
+const amountSummaryReason = computed(() => {
+  if (!executionSummary.value) return ''
+  if (executionSummary.value.totals.reason) return executionSummary.value.totals.reason
+  const totals = executionSummary.value.totals
+  if (executionSummary.value.products.length && executionSummary.value.products.every(product => !product.internal_plans.length)
+    && totals.estimated_wage === null && totals.reported_amount === null) {
+    return `本排产没有内部作业计划，报工金额不适用。${totals.outsourcing_planned_amount === null ? '关联外发金额暂不可用。' : ''}`
+  }
+  return [totals.estimated_wage, totals.reported_amount, totals.outsourcing_planned_amount].some(value => value === null)
+    ? '部分金额因工价、计价基数或查看权限暂不可用，缺值显示“—”，不以部分数据代替总额。' : ''
+})
 const voidDialogVisible = ref(false)
 const voidReason = ref('')
 const voidReasonError = ref('')
@@ -28,34 +49,50 @@ const canEdit = computed(() => schedule.value?.record_status === 'ACTIVE'
   && !schedule.value.source_is_archived
   && (auth.user?.is_superuser || auth.hasPermission('production_scheduling.change_productionschedule')))
 const canVoid = computed(() => schedule.value?.record_status === 'ACTIVE' && (auth.user?.is_superuser || auth.hasPermission('production_scheduling.void_productionschedule')))
-const planLinks: Array<{ category: PlanCategory; label: string; path: string }> = [
-  { category: 'METAL', label: '查看金工计划', path: '/workshop/plans/metalworking' },
-  { category: 'CUTTING', label: '查看裁剪计划', path: '/workshop/plans/cutting' },
-  { category: 'SEWING', label: '查看车缝计划', path: '/workshop/plans/sewing' },
-  { category: 'ASSEMBLY', label: '查看装配计划', path: '/workshop/plans/assembly' },
-]
 function errorText(error: unknown) {
   if (!(error instanceof AxiosError)) return '排产详情加载失败。'
   const data = error.response?.data as { error?: { message?: string } } | undefined
   return data?.error?.message || '排产详情加载失败。'
 }
 async function load() {
+  const current = ++loadSequence
+  executionSequence += 1
   loading.value = true
-  try { const result = await fetchSchedule(scheduleId.value); schedule.value = result.data; etag.value = result.etag; errorMessage.value = '' }
-  catch (error) { errorMessage.value = errorText(error) }
-  finally { loading.value = false }
+  schedule.value = null
+  executionSummary.value = null
+  executionError.value = ''
+  errorMessage.value = ''
+  try {
+    const result = await fetchSchedule(scheduleId.value)
+    if (current !== loadSequence) return
+    schedule.value = result.data
+    etag.value = result.etag
+    void loadExecutionSummary()
+  } catch (error) { if (current === loadSequence) errorMessage.value = errorText(error) }
+  finally { if (current === loadSequence) loading.value = false }
 }
-function productHasCategory(product: ScheduleProduct, category: PlanCategory) { return product.crafts.some(craft => craft.craft_type === 'INTERNAL' && craft.plan_category === category) }
-function openPlan(link: typeof planLinks[number], product?: ScheduleProduct) {
-  void router.push({ path: link.path, query: { schedule_id: scheduleId.value, ...(product ? { schedule_product_id: product.id } : {}) } })
+async function loadExecutionSummary() {
+  const current = ++executionSequence
+  const id = scheduleId.value
+  executionLoading.value = true
+  executionSummary.value = null
+  executionError.value = ''
+  try {
+    const result = await fetchScheduleExecutionSummary(id)
+    if (current !== executionSequence || id !== scheduleId.value) return
+    executionSummary.value = result
+  } catch (error) {
+    if (current !== executionSequence || id !== scheduleId.value) return
+    const message = error instanceof AxiosError
+      ? (error.response?.data as { error?: { message?: string } } | undefined)?.error?.message : ''
+    executionError.value = message || '内部作业、外发及领料信息加载失败，金额汇总暂不可用。'
+  } finally { if (current === executionSequence) executionLoading.value = false }
 }
 function formatDate(value: string) { return value ? value.slice(0, 10) : '—' }
-function craftTagClass(craft: ScheduleProduct['crafts'][number]) {
-  if (craft.craft_type === 'EXTERNAL') return 'is-external'
-  if (craft.plan_category === 'CUTTING') return 'is-cutting'
-  if (craft.plan_category === 'SEWING') return 'is-sewing'
-  if (craft.plan_category === 'ASSEMBLY') return 'is-assembly'
-  return 'is-metal'
+function craftTagTone(craft: ScheduleProduct['crafts'][number]) {
+  if (craft.craft_type === 'EXTERNAL' || craft.plan_category === 'SEWING') return 'brand'
+  if (craft.plan_category === 'CUTTING') return 'info'
+  return 'success'
 }
 function openVoidDialog() {
   voidReason.value = ''
@@ -84,13 +121,14 @@ async function submitVoid() {
     etag.value = result.etag
     voidDialogVisible.value = false
     ElMessage.success('排产计划已作废')
+    void loadExecutionSummary()
   } catch (error) {
     voidReasonError.value = errorText(error)
   } finally {
     voiding.value = false
   }
 }
-onMounted(() => { void load() })
+watch(scheduleId, () => { void load() }, { immediate: true })
 </script>
 
 <template>
@@ -98,16 +136,22 @@ onMounted(() => { void load() })
     <header class="schedule-heading detail-heading"><div><ElButton :icon="Back" @click="router.push('/workshop/scheduling')">返回</ElButton><h1>排产计划详情</h1></div><div><ElButton v-if="canVoid" @click="openVoidDialog">整单作废</ElButton><ElButton v-if="canEdit" type="primary" @click="router.push(`/workshop/scheduling/${scheduleId}/edit`)">编辑排产</ElButton></div></header>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
     <template v-if="schedule">
-      <section class="schedule-section detail-basic"><header><h2>基本信息</h2></header><dl><div><dt>排产计划号</dt><dd>{{ schedule.schedule_number }}</dd></div><div><dt>生产任务单</dt><dd>{{ schedule.source.task_number }}</dd></div><div><dt>创建日期</dt><dd>{{ formatDate(schedule.created_at) }}</dd></div><div><dt>创建人</dt><dd>{{ schedule.created_by.name }}</dd></div><div><dt>交货日期</dt><dd>{{ formatDate(schedule.source.delivery_date) }}</dd></div><div><dt>版本</dt><dd>V{{ schedule.version }}</dd></div><div><dt>状态</dt><dd>{{ schedule.record_status_display }}</dd></div></dl></section>
+      <section class="schedule-section detail-basic"><header><h2>基本信息</h2></header><dl><div><dt>排产计划号</dt><dd>{{ schedule.schedule_number }}</dd></div><div><dt>生产任务单</dt><dd>{{ schedule.source.task_number }}</dd></div><div><dt>创建日期</dt><dd>{{ formatDate(schedule.created_at) }}</dd></div><div><dt>创建人</dt><dd>{{ schedule.created_by.name }}</dd></div><div><dt>交货日期</dt><dd>{{ formatDate(schedule.source.delivery_date) }}</dd></div><div><dt>版本</dt><dd>V{{ schedule.version }}</dd></div><div><dt>状态</dt><dd><span class="erp-list-tag" :class="schedule.record_status === 'ACTIVE' ? 'erp-list-tag--info' : 'erp-list-tag--neutral'">{{ schedule.record_status_display }}</span></dd></div></dl></section>
+      <section class="schedule-section schedule-amount-summary" aria-label="本排产金额汇总">
+        <header><h2>本排产金额汇总</h2></header>
+        <dl><div><dt>报工总价（预计）</dt><dd data-testid="schedule-estimated-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.estimated_wage) }}</dd></div><div><dt>已报工金额</dt><dd data-testid="schedule-reported-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.reported_amount) }}</dd></div><div><dt>可见关联外发计划金额</dt><dd data-testid="schedule-outsourcing-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.outsourcing_planned_amount) }}</dd><p class="schedule-amount-summary__scope">按下方关联记录合计，含取消记录；不代表结算金额</p></div></dl>
+        <p v-if="!executionLoading && amountSummaryReason" class="schedule-amount-summary__reason">{{ amountSummaryReason }}</p>
+        <ElAlert v-if="executionError" type="warning" :title="executionError" show-icon :closable="false"><ElButton link type="primary" @click="loadExecutionSummary">重试关联信息</ElButton></ElAlert>
+      </section>
       <section class="schedule-section detail-products"><header><h2>产品排产明细 <span>共 {{ schedule.products.length }} 个产品</span></h2></header>
-        <article v-for="product in schedule.products" :key="product.id" class="schedule-product-card">
+        <article v-for="product in schedule.products" :key="product.id" class="schedule-product-card" :data-schedule-product-id="product.id">
           <div class="schedule-product-card__body">
-            <div class="detail-product-main"><img :src="product.image_file_id ? scheduleProductImageUrl(schedule.production_task_id, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" /><dl><div><dt>产品号</dt><dd>{{ product.product.item_number || product.product.product_number || '—' }}</dd></div><div><dt>产品名称</dt><dd>{{ product.product.product_name || '未命名产品' }}</dd></div><div><dt>规格</dt><dd>{{ product.product.specification || '—' }}</dd></div><div><dt>颜色</dt><dd>{{ product.product.color_name || '—' }}</dd></div></dl></div>
+            <div class="detail-product-main"><img :src="product.image_file_id ? scheduleProductImageUrl(schedule.production_task_id, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" /><dl><div><dt>产品号</dt><dd>{{ product.product.item_number || product.product.product_number || '—' }}</dd></div><div><dt>产品名称</dt><dd>{{ product.product.product_name || '未命名产品' }}</dd></div><div><dt>规格</dt><dd data-field="specification">{{ (product.product.specification_display ?? product.product.specification) || '—' }}</dd></div><div><dt>颜色</dt><dd data-field="color">{{ product.product.color_name || '—' }}</dd></div><div><dt>材质</dt><dd data-field="material">{{ product.product.material || '—' }}</dd></div></dl></div>
             <dl class="detail-quantities"><div><dt>订单数量</dt><dd>{{ product.source_quantity.toLocaleString('zh-CN') }} {{ product.unit_name }}</dd></div><div><dt>排产数量</dt><dd>{{ product.planned_quantity.toLocaleString('zh-CN') }} {{ product.unit_name }}</dd></div></dl>
             <section class="detail-dates"><h3>计划关键日期</h3><dl><div><dt>材料入库时间</dt><dd>{{ formatDate(product.material_inbound_date) }}</dd></div><div><dt>金工回货时间</dt><dd>{{ formatDate(product.metal_return_date) }}</dd></div><div><dt>车缝回货时间</dt><dd>{{ formatDate(product.sewing_return_date) }}</dd></div><div><dt>成品入库时间</dt><dd>{{ formatDate(product.finished_inbound_date) }}</dd></div></dl></section>
-            <div class="detail-crafts"><h3>工艺选择</h3><div><span>厂内工艺</span><p><ElTag v-for="craft in product.crafts.filter(item => item.craft_type === 'INTERNAL')" :key="craft.id" effect="dark" :class="craftTagClass(craft)">{{ craft.name }}</ElTag><em v-if="!product.crafts.some(item => item.craft_type === 'INTERNAL')">—</em></p></div><div><span>厂外工艺</span><p><ElTag v-for="craft in product.crafts.filter(item => item.craft_type === 'EXTERNAL')" :key="craft.id" effect="dark" :class="craftTagClass(craft)">{{ craft.name }}</ElTag><em v-if="!product.crafts.some(item => item.craft_type === 'EXTERNAL')">—</em></p></div></div>
+            <div class="detail-crafts"><h3>工艺选择</h3><div><span>厂内工艺</span><p><span v-for="craft in product.crafts.filter(item => item.craft_type === 'INTERNAL')" :key="craft.id" class="erp-list-tag" :class="`erp-list-tag--${craftTagTone(craft)}`" :title="craft.name">{{ craft.name }}</span><em v-if="!product.crafts.some(item => item.craft_type === 'INTERNAL')">—</em></p></div><div><span>厂外工艺</span><p><span v-for="craft in product.crafts.filter(item => item.craft_type === 'EXTERNAL')" :key="craft.id" class="erp-list-tag" :class="`erp-list-tag--${craftTagTone(craft)}`" :title="craft.name">{{ craft.name }}</span><em v-if="!product.crafts.some(item => item.craft_type === 'EXTERNAL')">—</em></p></div></div>
           </div>
-          <div class="related-plans"><button v-for="link in planLinks.filter(item => productHasCategory(product, item.category))" :key="link.category" type="button" @click="openPlan(link, product)">{{ link.label }}<ElIcon><ArrowRight /></ElIcon></button></div>
+          <ScheduleExecutionOverview :schedule-id="schedule.id" :production-task-id="schedule.production_task_id" :product-line-id="product.product_line_id" :summary="executionByProduct.get(product.id) || null" :loading="executionLoading" :failed="Boolean(executionError)" :active="schedule.record_status === 'ACTIVE'" />
         </article>
       </section>
     </template>

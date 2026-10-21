@@ -1,4 +1,4 @@
-from .pipe_purchase import PIPE_PURCHASE_FIELDS, pipe_source_snapshot, purchase_pipe_values, validate_pipe_purchase_source
+from .pipe_purchase import PIPE_PURCHASE_FIELDS, is_sample_total_meter_snapshot, pipe_source_snapshot, purchase_pipe_values, validate_pipe_purchase_source
 import hashlib
 import json
 import re
@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from pathlib import Path
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import transaction
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -46,43 +46,11 @@ PURCHASABLE_TASK_STATUSES = {
 }
 PLAIN_DECIMAL_PATTERN = re.compile(r"^(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$")
 GROUPED_DECIMAL_PATTERN = re.compile(r"^[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?$")
-PURCHASE_ORDER_NUMBER_PATTERN = re.compile(r"^CGDD[0-9]{8}([0-9]{2,38})$")
-# 编号字段最多 50 个字符，固定前缀和日期占 12 个字符。
-PURCHASE_ORDER_DAILY_LIMIT = 10**38 - 1
 
 
 def next_purchase_order_number(business_date=None):
-    """生成 CGDD + 年月日 + 至少两位当日流水，并串行化同日分配。"""
-    if not connection.in_atomic_block:
-        raise RuntimeError("采购订单号必须在数据库事务中生成。")
-
-    number_date = business_date or timezone.localdate()
-    date_prefix = f"CGDD{number_date:%Y%m%d}"
-    if connection.vendor == "postgresql":
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                [f"PURCHASE_ORDER:{date_prefix}"],
-            )
-
-    current_max = 0
-    existing_numbers = list(
-        PurchaseOrder.objects.filter(order_number__startswith=date_prefix)
-        .values_list("order_number", flat=True)
-    )
-    existing_numbers.extend(
-        SupplierPurchaseSheet.objects.filter(sheet_number__startswith=date_prefix)
-        .values_list("sheet_number", flat=True)
-    )
-    for order_number in existing_numbers:
-        matched = PURCHASE_ORDER_NUMBER_PATTERN.fullmatch(order_number)
-        if matched:
-            current_max = max(current_max, int(matched.group(1)))
-
-    next_value = current_max + 1
-    if next_value > PURCHASE_ORDER_DAILY_LIMIT:
-        raise ValidationError({"order_number": "当天采购编号流水已达到 38 位上限，无法继续生成编号。"})
-    return f"{date_prefix}{next_value:02d}"
+    """采购订单与供应商采购表共用 CGDD + YYMMDD + 至少三位日流水。"""
+    return next_business_number("PURCHASE_ORDER", business_date)
 
 
 def supplier_snapshot(supplier):
@@ -763,9 +731,10 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
             raise ValidationError({"currency_id": "采购币种不存在或已停用。"}) from exc
 
     supplier_ids = {item.get("supplier_id") for item in submitted_lines if item.get("supplier_id")}
+    # 保持供应商状态校验与编辑互斥，同时允许已持 CGDD 流水锁的采购表提交外键。
     suppliers = {
         str(item.pk): item
-        for item in Supplier.objects.select_for_update().filter(
+        for item in Supplier.objects.select_for_update(no_key=True).filter(
             pk__in=supplier_ids,
             archived_at__isnull=True,
             is_disabled=False,
@@ -864,7 +833,7 @@ def _purchase_order_confirmation_errors(order, lines):
     errors = []
     for line in lines:
         validate_pipe_purchase_source(line)
-        if line.section_type_snapshot == 'PROFILE' and line.calculation_snapshot.get('schema_version') == 3:
+        if is_sample_total_meter_snapshot(line.calculation_snapshot):
             if line.raw_bar_length_m is None or line.actual_bar_count is None or line.actual_purchase_meters is None:
                 errors.append(f'第 {line.line_number} 行缺少打样管材采购根数或单根长度')
             elif line.actual_purchase_meters != line.actual_bar_count * line.raw_bar_length_m:
@@ -953,7 +922,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         from .reset_sources import refresh_reset_purchase_source
         reset_source_fields = refresh_reset_purchase_source(line)
         validate_pipe_purchase_source(line)
-        if line.raw_bar_length_m or (line.section_type_snapshot == 'PROFILE' and line.calculation_snapshot.get('schema_version') == 3):
+        if line.raw_bar_length_m or is_sample_total_meter_snapshot(line.calculation_snapshot):
             pipe_input = {**submitted, 'quantity_difference_reason': submitted.get('quantity_difference_reason', line.quantity_difference_reason)}
             pipe_values = purchase_pipe_values(line.calculation_snapshot, pipe_input)
             for key, value in pipe_values.items():

@@ -1,5 +1,6 @@
 """Human labels and matrix grouping, independent of persisted permission identities."""
 RESOURCE_NAMES = dict(item.split(":", 1) for item in (
+    "workshop:车间",
     "productcatalog:产品管理",
     "materialcatalog:原料管理",
     "savedview:个人保存视图",
@@ -29,6 +30,21 @@ ACTION_NAMES = {
 
 
 def presentation(code, permission, module):
+    from .management_permissions import MANAGEMENT_OPERATIONS
+    for name, label, _ in MANAGEMENT_OPERATIONS:
+        if code == f'access_control.{name}':
+            return {"resource": f"access_control.{name}", "resource_name": label,
+                    "action": "special", "action_name": label, "label": label}
+    if code == "organizations.manage_organization":
+        return {"resource": "organizations.organizationunit", "resource_name": "部门与组织",
+                "action": "special", "action_name": "管理部门与组织归属", "label": "部门与组织 · 管理部门与组织归属"}
+    if module == "attendance":
+        actions = {"attendance.view_attendance": ("view", "查看考勤"),
+                   "attendance.sync_attendance": ("special", "同步考勤"),
+                   "attendance.manage_schedule": ("special", "设置月度上班时间")}
+        action, name = actions[code]
+        return {"resource": "attendance.attendancemonth", "resource_name": "企业微信考勤",
+                "action": action, "action_name": name, "label": f"企业微信考勤 · {name}"}
     codename = code.split(".", 1)[1]
     model = permission.content_type.model if permission else ""
     if code.startswith("access_control."):

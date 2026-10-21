@@ -9,6 +9,30 @@ from ..material_reference_selectors import material_reference_options, material_
 
 
 class SampleMaterialActionsMixin:
+    @extend_schema(responses=MaterialResponseSerializer)
+    @action(detail=True, methods=['get'], url_path='procurement-material-context')
+    def procurement_material_context(self, request, pk=None):
+        """采购只读用料页上下文，不能借缺料读取权获取整份样品详情。"""
+        from rest_framework.exceptions import NotFound
+        from ..material_services import _record
+        from ..procurement_status import sample_status_display
+        sample = self.get_object()
+        record = _record(sample)
+        procurement = getattr(record, 'procurement_request', None) if record else None
+        if sample.archived_at or sample.customer_account.archived_at or not procurement or not record.reviewed_at:
+            raise NotFound('当前没有可读取的已核定打样缺料需求。')
+        products = list(sample.products.order_by('line_number'))
+        items = list(sample.items.order_by('line_number'))
+        colors = [' / '.join(value for value in [item.color_name_snapshot, item.color_card_snapshot, item.color_code_snapshot] if value) for item in items]
+        quantity = sum(item.sample_quantity for item in items) if items and all(item.sample_quantity is not None for item in items) else None
+        return Response({'data': {'sample': {
+            'id': str(sample.pk), 'request_number': sample.request_number, 'status': sample.status,
+            'status_display': sample_status_display(sample), 'customer_name': sample.customer_account.account_name,
+            'requested_at': sample.requested_at, 'product_name': '、'.join(product.product_name for product in products),
+            'specification': '；'.join(product.specification for product in products),
+            'color': '；'.join(color for color in colors if color), 'quantity_label': f'{quantity} PCS' if quantity is not None else '',
+        }, 'materials': material_response(sample, request)}})
+
     @extend_schema(request=None, responses=MaterialResponseSerializer)
     @action(detail=True, methods=['post'], url_path='no-materials')
     def no_materials(self, request, pk=None):

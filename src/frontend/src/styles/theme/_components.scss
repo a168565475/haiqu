@@ -11,6 +11,10 @@
   --el-color-success: var(--erp-color-success);
   --el-color-warning: var(--erp-color-warning);
   --el-color-danger: var(--erp-color-danger);
+  // Alert 使用 error，按钮使用 danger；二者映射到同一套错误语义色。
+  --el-color-error: var(--erp-color-danger);
+  --el-color-error-light-9: var(--erp-color-danger-soft);
+  --el-color-error-light-8: var(--erp-color-danger-soft);
   --el-color-info: var(--erp-color-info);
   --el-bg-color: var(--erp-color-surface);
   --el-bg-color-page: var(--erp-color-page);

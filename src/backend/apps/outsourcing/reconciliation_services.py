@@ -59,7 +59,7 @@ def reconciliation(order):
         raw_input = totals["RAW_INPUT"]
         if snapshot.get("kind") == "PIPE":
             capacity[allocation.pk] += raw_input * Decimal(snapshot["pieces_per_bar"])
-        elif snapshot.get("kind") == "FABRIC":
+        elif snapshot.get("kind") == "FABRIC" and snapshot.get("quantity_basis") != "OUTPUT_SETS":
             fabric_inputs[allocation.pk] += raw_input
             fabric_consumptions[allocation.pk] = Decimal(snapshot["fabric_meters_per_set"])
         remaining = line.issued_quantity - totals["RETURN"] - raw_input - totals["RAW_LOSS"]
@@ -85,6 +85,8 @@ def reconciliation(order):
             returned_colors[line.allocation_id].append(actual_color)
     outputs = []
     for allocation in OutsourcingFactoryAllocation.objects.filter(processing_item__order_product__order=order).select_related("processing_item"):
+        if allocation.conversion_snapshot.get("quantity_basis") == "OUTPUT_SETS":
+            capacity[allocation.pk] = allocation.allocated_quantity
         good, bad = returned[allocation.pk]["AVAILABLE"], returned[allocation.pk]["DEFECTIVE"]
         remaining = capacity[allocation.pk] - good - bad - scrap[allocation.pk]
         if remaining:
@@ -179,6 +181,8 @@ def record_entries(order, request_id, inputs, actor):
         raise Conflict("登记超出未处理原料或加工产出余量，已回库不良不能重复报废。")
     if any(Decimal(row["capacity"]) != Decimal(row["capacity"]).to_integral_value() for row in state["outputs"]):
         raise ValidationError({"entries": "本次面料投入合计必须对应整数套数，余米单独处理。"})
+    from apps.wecom.workshop_change_notifications import reconciliation_losses
+    reconciliation_losses(record, actor)
     return True
 
 
@@ -195,6 +199,8 @@ def assert_return_capacity(allocation, received):
     state = reconciliation(allocation.processing_item.order_product.order)
     row = next(row for row in state["outputs"] if row["allocation_id"] == str(allocation.pk))
     if received > Decimal(row["remaining"]):
+        if allocation.conversion_snapshot.get("quantity_basis") == "OUTPUT_SETS":
+            raise Conflict("回货套数超过本厂本部位的剩余加工套数，请核对累计回货及报废。")
         raise Conflict("实际投入不足或产出已处理，请核对投入、累计回货及报废。")
 
 

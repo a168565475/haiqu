@@ -34,8 +34,11 @@ class MaterialFlowFixture:
             material_name="S6 前脚管原料", specification="25", material="铁", unit=root_unit)
         f.cutting.fabric_source_line = f.fabric
         f.cutting.fabric_meters_per_set = Decimal("1.5")
+        f.cutting.cutting_pieces_per_set = 2
+        f.cutting.cutting_sets_per_product = 1
         f.cutting.save()
-        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=4, pieces_per_bar=6, order_quantity=100)
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=4, pieces_per_bar=6, order_quantity=100,
+                         calculation_version=2)
         f.profile.cutting_length_mm = 500
         f.profile.pieces_per_product = 4
         f.profile.pieces_per_bar = 6
@@ -50,21 +53,39 @@ class MaterialFlowFixture:
             source_unit_text_snapshot="米", purchased_quantity_snapshot=305)
         self.pipe_balance = credit_confirmed_inbound_line(line=self.pipe_batch, actor_employee=f.employee).balance
 
-    def payload(self, kind="PIPE", amount="402"):
+    def payload(self, kind="PIPE", amount="402", *, output_sets="66"):
         f = self.f
         payload = f.spray_payload() if kind == "PIPE" else f.payload()
         product = payload["products"][0]
-        output = Decimal(amount) if kind == "PIPE" else Decimal(amount) // Decimal("1.5")
+        output = Decimal(amount) if kind == "PIPE" else Decimal(output_sets)
         product["processing_items"][0]["quantity"] = str(output)
         allocation = product["processing_items"][0]["allocations"][0]
-        allocation.update(input_quantity=amount, allocated_quantity=str(output))
+        allocation.update(input_quantity=amount if kind == "PIPE" else None, allocated_quantity=str(output))
         product["materials"][0]["planned_issue_quantity"] = amount
         return payload
 
-    def create(self, kind="PIPE", amount="402"):
-        response = self.f.create_order(self.payload(kind, amount))
+    def create(self, kind="PIPE", amount="402", *, output_sets="66"):
+        response = self.f.create_order(self.payload(kind, amount, output_sets=output_sets))
         self.assertEqual(response.status_code, 201, response.data)
         return response.data["data"]["id"]
+
+    def freeze_legacy_fabric(self, order_id, *, meters_per_set):
+        """显式建立历史单快照，旧米套换算用例不依赖新单的套数契约。"""
+        allocation = OutsourcingFactoryAllocation.objects.get(processing_item__order_product__order_id=order_id)
+        material = OutsourcingMaterialItem.objects.get(allocation=allocation)
+        snapshot = {key: value for key, value in allocation.conversion_snapshot.items()
+                    if key not in {"quantity_basis", "raw_input_unit", "remainder_meters"}}
+        snapshot.update(input_unit="米", fabric_meters_per_set=str(meters_per_set))
+        allocation.conversion_snapshot = snapshot
+        allocation.input_quantity = material.planned_issue_quantity
+        allocation.input_unit_snapshot = "米"
+        allocation.save()
+        material.conversion_snapshot = snapshot
+        material.save(update_fields=["conversion_snapshot"])
+        processing = allocation.processing_item
+        processing.component_snapshot["flow"] = snapshot
+        processing.save(update_fields=["component_snapshot"])
+        return snapshot
 
     def post(self, order_id, action, payload, expected=200, etag=None):
         detail = self.client.get(f"/api/v1/outsourcing-orders/{order_id}/", HTTP_HOST="localhost")
@@ -401,13 +422,10 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(available[self.f.material_inbound_line.pk], 101)
         self.assertEqual(SemiFinishedStockBalance.objects.get(quality="AVAILABLE").unit.unit_name, "套")
 
-    def test_fabric_less_than_one_set_can_be_returned_without_fictitious_output(self):
-        order_id = self.create("FABRIC", "1")
-        self.assertEqual(OutsourcingFactoryAllocation.objects.get(processing_item__order_product__order_id=order_id).allocated_quantity, 0)
-        _, source = self.dispatch(order_id, "FABRIC", "1")
-        self.raw_return(order_id, source, 1)
-        self.post(order_id, "complete", {"request_id": str(uuid.uuid4())})
-        self.assertFalse(SemiFinishedStockBalance.objects.exists())
+    def test_fabric_zero_set_creation_is_rejected_without_fictitious_output(self):
+        response = self.f.create_order(self.payload("FABRIC", "1", output_sets="0"))
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(OutsourcingOrder.objects.exists())
 
     def test_nonwhole_pipe_create_is_rejected(self):
         response = self.f.create_order(self.payload(amount="400"))
@@ -538,15 +556,16 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         self.pipe_balance.refresh_from_db()
         self.assertEqual(self.pipe_balance.quantity, 100)
 
-    def test_fabric_three_one_meter_inputs_at_three_meters_per_set(self):
+    def test_legacy_fabric_three_one_meter_inputs_at_three_meters_per_set(self):
         self.f.cutting.fabric_meters_per_set = 3
         self.f.cutting.save()
-        payload = self.payload("FABRIC", "3")
+        payload = self.payload("FABRIC", "3", output_sets="1")
         payload["products"][0]["processing_items"][0]["quantity"] = "1"
         payload["products"][0]["processing_items"][0]["allocations"][0]["allocated_quantity"] = "1"
         response = self.f.create_order(payload)
         self.assertEqual(response.status_code, 201, response.data)
         order_id = response.data["data"]["id"]
+        self.freeze_legacy_fabric(order_id, meters_per_set="3")
         batches = [self.f.material_inbound_line]
         for _ in range(2):
             batch = copy.copy(self.f.material_inbound_line)

@@ -5,11 +5,10 @@ from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
 
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
-from apps.workshop_config.models import Craft
+from apps.workshop_config.models import Craft, OutsourcingCode
 
 from ..models import OutsourcingFactory, OutsourcingOrder, OutsourcingOrderStatus
 from ..selectors import factories_with_context
-from ..services import SUPPORTED_OUTSOURCING_CRAFT_CODES
 from ..unified_selectors import (
     SOURCE_GROUP_LABELS, SOURCE_LABELS, VIEW_PERMISSIONS, UnifiedOrderFilters, unified_order_candidates, unified_order_rows,
 )
@@ -38,7 +37,7 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
     @action(detail=False, methods=["get"])
     def options(self, request):
         regular = request.user.has_perm(VIEW_PERMISSIONS[0])
-        codes = SUPPORTED_OUTSOURCING_CRAFT_CODES if regular else ["POWDER_COATING"]
+        codes = OutsourcingCode.values if regular else ["POWDER_COATING"]
         crafts = Craft.objects.filter(craft_type="EXTERNAL", status="ACTIVE", outsourcing_code__in=codes).order_by("name", "id")
         if enabled():
             regular_crafts = filter_crafts(crafts, request, VIEW_PERMISSIONS[0], "pk") if regular else crafts.none()

@@ -33,7 +33,7 @@ class PipeFixture:
         self.product_line.save(update_fields=["quantity"])
         self.bom.order_quantity = 1000
         self.bom.save(update_fields=["order_quantity"])
-        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=1000)
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=1000, calculation_version=2)
         for field in ["cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters"]:
             setattr(self.bom_line, field, plan[field])
         self.bom_line.save()

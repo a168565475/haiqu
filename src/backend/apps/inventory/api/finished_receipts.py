@@ -12,7 +12,7 @@ from apps.production_scheduling.selectors import schedule_items_for_category
 from ..assembly_receipts import load_context, confirm_assembly_receipt, assembly_progress_for_plans
 from ..models import FinishedGoodsReceipt
 from ..selectors import receipt_batches
-from .serializers import FinishedGoodsReceiptSerializer
+from .serializers import FinishedGoodsReceiptSerializer, FinishedGoodsInventoryScopeSerializer
 
 
 class DataResponse(serializers.Serializer):
@@ -33,9 +33,11 @@ class AssemblyInput(serializers.Serializer):
 class Filters(serializers.Serializer):
     q = serializers.CharField(required=False, allow_blank=True, max_length=150, default='')
     source = serializers.ChoiceField(choices=['','ASSEMBLY','PRODUCTION_ORDER','SAMPLE_INVENTORY'], default='')
+    exclude_sample = serializers.BooleanField(default=False)
     warehouse_id = serializers.UUIDField(required=False)
     zone_id = serializers.UUIDField(required=False)
     schedule_product_id = serializers.UUIDField(required=False)
+    product_line_id = serializers.UUIDField(required=False)
     page = serializers.IntegerField(min_value=1, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=100, default=50)
 
@@ -106,8 +108,10 @@ class FinishedRecordViewSet(viewsets.ViewSet):
     serializer_class=DataResponse
     action_permission_map={key:'inventory.view_finishedgoodsreceipt' for key in ['list','retrieve','locations']}
 
+    @extend_schema(parameters=[Filters])
     def list(self,request):
         data=read_data(Filters,request.query_params); rows=record_queryset()
+        if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
         if data['q']:
             rows=rows.filter(Q(receipt_number__icontains=data['q'])|Q(task_number_snapshot__icontains=data['q'])|
                 Q(order_number_snapshot__icontains=data['q'])|Q(product_number_snapshot__icontains=data['q'])|Q(product_name_snapshot__icontains=data['q']))
@@ -118,6 +122,8 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         if 'schedule_product_id' in data:
             plan=get_object_or_404(schedule_items_for_category(request,'ASSEMBLY'),pk=data['schedule_product_id'])
             rows=rows.filter(production_task_product_id=plan.product_line_id)
+        if 'product_line_id' in data:
+            rows=rows.filter(production_task_product_id=data['product_line_id'])
         total=rows.count();start=(data['page']-1)*data['page_size']
         return Response({'data':{'items':[record_payload(r) for r in rows.order_by('-business_date','-received_at','-id')[start:start+data['page_size']]],'total':total}})
 
@@ -127,9 +133,10 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         data=read_data(Input,{'id':pk})
         return Response({'data':record_payload(get_object_or_404(record_queryset(),pk=data['id']))})
 
+    @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     @action(detail=False,methods=['get'])
     def locations(self,request):
-        class Input(serializers.Serializer):
+        class Input(FinishedGoodsInventoryScopeSerializer):
             product_id=serializers.UUIDField(required=False,allow_null=True)
             unit_id=serializers.UUIDField()
             zone_id=serializers.UUIDField()
@@ -140,10 +147,13 @@ class FinishedRecordViewSet(viewsets.ViewSet):
             category=serializers.CharField(allow_blank=True,max_length=150)
             specification=serializers.CharField(allow_blank=True,max_length=300)
             actual_color=serializers.CharField(allow_blank=True,max_length=200)
+            task_number=serializers.CharField(required=False,allow_blank=True,max_length=50)
         data=read_data(Input,request.query_params)
         filters={f'{key}_snapshot':data[key] for key in ['product_number','product_code','product_name','item_number','specification','category']}
         rows=FinishedGoodsReceipt.objects.filter(**filters,production_task_product__product_id=data.get('product_id'),
             unit_id=data['unit_id'],actual_color=data['actual_color'],location__zone_id=data['zone_id'],remaining_quantity__gt=0)
+        if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
+        if 'task_number' in data:rows=rows.filter(task_number_snapshot=data['task_number'])
         locations=rows.values('location_id','location__location_number').annotate(quantity=Sum('remaining_quantity'),slots=Sum('remaining_box_slots'),
             unknown_packaging=Count('pk',filter=Q(remaining_box_slots__isnull=True))).order_by('location__location_number','location_id')
         return Response({'data':{'items':[{'location_id':str(r['location_id']),'location_number':r['location__location_number'],

@@ -6,6 +6,9 @@ Business route enforcement is delivered in stages 4 and 5.
 """
 
 PERMISSION_CODES = (
+    "attendance.view_attendance",
+    "attendance.sync_attendance",
+    "attendance.manage_schedule",
     "product_catalog.add_productcatalog",
     "product_catalog.change_productcatalog",
     "product_catalog.view_productcatalog",

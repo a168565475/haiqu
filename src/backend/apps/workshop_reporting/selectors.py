@@ -24,9 +24,9 @@ def reporting_source_products(request, permission):
 def allowed_workshop_ids(request, *, for_work_reports=False, permission=None):
     from apps.access_control import module_policy
     from apps.access_control import resource_scopes
-    if resource_scopes.enabled():
-        default = 'workshop_reporting.view_workreport' if for_work_reports else 'workshop_reporting.view_wagescheme'
-        code = permission or resource_scopes.current_permission(request, default)
+    default = 'workshop_reporting.view_workreport' if for_work_reports else 'workshop_reporting.view_wagescheme'
+    code = permission or resource_scopes.current_permission(request, default)
+    if resource_scopes.enforcing(request, code):
         ids = resource_scopes.resource_ids(request, code, 'WORKSHOP', include_legacy=False)
         if ids is None:
             return None

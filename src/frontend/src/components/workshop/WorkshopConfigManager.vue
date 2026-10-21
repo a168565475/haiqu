@@ -8,6 +8,7 @@ import {
   createWorkshopConfig,
   fetchWorkshopConfigDetail,
   fetchWorkshopConfigList,
+  fetchWorkshopEmployeeOptions,
   updateWorkshopConfig,
 } from '@/api/workshopConfig'
 import { useAuthStore } from '@/stores/auth'
@@ -23,6 +24,7 @@ import type {
   WorkshopConfigInput,
   WorkshopConfigRecord,
   WorkshopEmployee,
+  WorkshopEmployeeOption,
   WorkshopEmployeeStatus,
 } from '@/types/workshopConfig'
 
@@ -42,7 +44,7 @@ const canAdd = computed(() => can('add'))
 const canChange = computed(() => can('change'))
 
 const metadata = computed(() => ({
-  employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名或岗位' },
+  employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名、工号或岗位' },
   crafts: { title: '工艺信息管理', createLabel: '新增工艺', search: '搜索工艺或车间' },
   operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索编号、品名、工艺或工序' },
 })[props.kind])
@@ -75,8 +77,18 @@ const saving = ref(false)
 const editorMode = ref<'create' | 'edit'>('create')
 const editingId = ref('')
 const editingEtag = ref('')
+const editingEmployee = ref<WorkshopEmployee | null>(null)
+const employeeOptions = ref<WorkshopEmployeeOption[]>([])
+const selectedEmployee = ref<WorkshopEmployeeOption | null>(null)
+const employeeOptionsLoading = ref(false)
+const employeeOptionsError = ref('')
+const employeeOptionsQuery = ref('')
+const employeeOptionsPage = ref(0)
+const employeeOptionsTotalPages = ref(0)
+let employeeOptionsSequence = 0
 const form = reactive({
   name: '',
+  employee: '',
   status: 'ACTIVE' as RecordStatus | WorkshopEmployeeStatus,
   workshop: '',
   position: '',
@@ -87,6 +99,28 @@ const form = reactive({
   craft: '',
   operationNumber: '',
   productName: '',
+})
+
+const employeeLocked = computed(() => Boolean(editingEmployee.value?.employee))
+const employeeUnavailable = computed(() => employeeLocked.value && (
+  editingEmployee.value?.employee_archived || editingEmployee.value?.employee_status !== 'ACTIVE'
+))
+const visibleEmployeeOptions = computed(() => {
+  const selected = selectedEmployee.value
+  return selected && !employeeOptions.value.some((item) => item.id === selected.id)
+    ? [selected, ...employeeOptions.value]
+    : employeeOptions.value
+})
+const employeeIdentityNote = computed(() => {
+  const employee = editingEmployee.value
+  if (employee?.employee) {
+    return employeeUnavailable.value
+      ? '该员工已停用或归档，请结束车间任职后保存。仍保留原关联，不能更换或解绑。'
+      : '已关联统一员工，不能更换或解绑。'
+  }
+  return employee
+    ? `历史姓名：${employee.name}（待关联）。可暂不关联；请人工核对后选择，不会按姓名自动关联。`
+    : '选择统一员工；员工无账号或访问权限也可分配车间。'
 })
 
 const selectedFormCraft = computed(() => crafts.value.find((item) => item.id === form.craft) || null)
@@ -112,6 +146,41 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date).replaceAll('/', '-')
+}
+
+function employeeLabel(employee: WorkshopEmployee): string {
+  if (!employee.employee) return `${employee.name}（待关联）`
+  const name = employee.employee_name || employee.name
+  return employee.employee_code ? `${name}（${employee.employee_code}）` : name
+}
+
+async function loadEmployeeOptions(query = '', targetPage = 1): Promise<void> {
+  if (props.kind !== 'employees' || employeeLocked.value || !(editorMode.value === 'create' ? canAdd.value : canChange.value)) return
+  const sequence = ++employeeOptionsSequence
+  employeeOptionsQuery.value = query.trim()
+  employeeOptionsLoading.value = true
+  employeeOptionsError.value = ''
+  if (targetPage === 1) {
+    employeeOptions.value = []
+    employeeOptionsPage.value = 0
+    employeeOptionsTotalPages.value = 0
+  }
+  try {
+    const result = await fetchWorkshopEmployeeOptions({ q: employeeOptionsQuery.value || undefined, page: targetPage, page_size: 50 })
+    if (sequence !== employeeOptionsSequence) return
+    employeeOptions.value = targetPage === 1 ? result.data : [...employeeOptions.value, ...result.data]
+    employeeOptionsPage.value = result.meta.page
+    employeeOptionsTotalPages.value = result.meta.total_pages
+  } catch (error) {
+    if (sequence !== employeeOptionsSequence) return
+    employeeOptionsError.value = apiErrorMessage(error, '员工列表加载失败，请重试。')
+  } finally {
+    if (sequence === employeeOptionsSequence) employeeOptionsLoading.value = false
+  }
+}
+
+function selectEmployee(value: string): void {
+  selectedEmployee.value = visibleEmployeeOptions.value.find((item) => item.id === value) || null
 }
 
 function buildQuery(): Record<string, string | number | boolean | undefined> {
@@ -194,6 +263,16 @@ function resetFilters(): void {
 
 function resetForm(): void {
   form.name = ''
+  form.employee = ''
+  editingEmployee.value = null
+  selectedEmployee.value = null
+  employeeOptions.value = []
+  employeeOptionsError.value = ''
+  employeeOptionsLoading.value = false
+  employeeOptionsQuery.value = ''
+  employeeOptionsPage.value = 0
+  employeeOptionsTotalPages.value = 0
+  employeeOptionsSequence += 1
   form.status = 'ACTIVE'
   form.workshop = ''
   form.position = ''
@@ -212,6 +291,7 @@ function openCreate(): void {
   resetForm()
   editorMode.value = 'create'
   editorVisible.value = true
+  void loadEmployeeOptions()
 }
 
 async function openEdit(row: WorkshopConfigRecord): Promise<void> {
@@ -226,6 +306,8 @@ async function openEdit(row: WorkshopConfigRecord): Promise<void> {
     form.status = value.status
     if (props.kind === 'employees') {
       const employee = value as WorkshopEmployee
+      editingEmployee.value = employee
+      form.employee = employee.employee || ''
       form.workshop = employee.workshop
       form.position = employee.position
       form.isSupervisor = employee.is_supervisor
@@ -242,6 +324,7 @@ async function openEdit(row: WorkshopConfigRecord): Promise<void> {
       form.craft = operation.craft
     }
     editorVisible.value = true
+    void loadEmployeeOptions()
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '配置详情加载失败，请刷新后重试。'))
   }
@@ -251,7 +334,8 @@ function validateForm(): string {
   if (props.kind === 'employees') {
     if (!form.workshop) return '请选择车间。'
     if (!form.position.trim()) return '请输入岗位。'
-    if (!form.name.trim()) return '请输入姓名。'
+    if (editorMode.value === 'create' && !form.employee) return '请选择统一员工。'
+    if (employeeUnavailable.value && form.status === 'ACTIVE') return '该员工已停用或归档，请结束车间任职后保存。'
   }
   if (props.kind === 'crafts') {
     if (!form.name.trim()) return '请输入工艺名称。'
@@ -272,7 +356,7 @@ function buildPayload(): WorkshopConfigInput {
     return {
       workshop: form.workshop,
       position: form.position.trim(),
-      name: form.name.trim(),
+      ...(!employeeLocked.value && form.employee ? { employee: form.employee } : {}),
       is_supervisor: form.isSupervisor,
       status: form.status as WorkshopEmployeeStatus,
     }
@@ -322,8 +406,12 @@ async function toggleStatus(row: WorkshopConfigRecord): Promise<void> {
   const nextStatus = props.kind === 'employees'
     ? (active ? 'LEFT' : 'ACTIVE')
     : (active ? 'INACTIVE' : 'ACTIVE')
-  const actionLabel = active ? '停用' : '启用'
-  let note = `确认${actionLabel}“${row.name}”吗？`
+  const actionLabel = props.kind === 'employees'
+    ? (active ? '结束车间任职' : '恢复车间任职')
+    : (active ? '停用' : '启用')
+  const name = props.kind === 'employees' ? employeeLabel(row as WorkshopEmployee) : row.name
+  let note = `确认${actionLabel}“${name}”吗？`
+  if (props.kind === 'employees') note += ' 仅修改车间任职状态，不修改统一员工状态。'
   if (active && props.kind === 'crafts') note += ' 若仍有启用工序，系统会阻止操作。'
   try {
     await ElMessageBox.confirm(note, `${actionLabel}确认`, { type: active ? 'warning' : 'info' })
@@ -367,49 +455,39 @@ onMounted(() => { void reloadAll() })
     </div>
 
     <template v-else>
-      <header class="manager-heading">
-        <ElButton v-if="canAdd" type="primary" :icon="Plus" @click="openCreate">{{ metadata.createLabel }}</ElButton>
-      </header>
       <ElAlert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon class="load-error" />
 
       <div class="filter-panel">
         <div class="field field--search">
-          <label>关键词</label>
-          <ElInput v-model="filters.keyword" clearable :prefix-icon="Search" :placeholder="metadata.search" @keyup.enter="search" />
+          <ElInput v-model="filters.keyword" clearable :prefix-icon="Search" :placeholder="metadata.search" aria-label="关键词" @keyup.enter="search" />
         </div>
         <div class="field">
-          <label>车间</label>
-          <ElSelect v-model="filters.workshop" clearable placeholder="全部车间" @change="search">
+          <ElSelect v-model="filters.workshop" clearable placeholder="全部车间" aria-label="车间" @change="search">
             <ElOption v-for="item in workshops" :key="item.id" :label="item.name" :value="item.id" />
           </ElSelect>
         </div>
         <div v-if="kind === 'employees'" class="field">
-          <label>岗位</label>
-          <ElInput v-model="filters.position" clearable placeholder="全部岗位" />
+          <ElInput v-model="filters.position" clearable placeholder="全部岗位" aria-label="岗位" />
         </div>
         <div v-if="kind === 'employees'" class="field field--small">
-          <label>是否主管</label>
-          <ElSelect v-model="filters.isSupervisor" clearable placeholder="全部" @change="search">
+          <ElSelect v-model="filters.isSupervisor" clearable placeholder="是否主管" aria-label="是否主管" @change="search">
             <ElOption label="是" :value="true" /><ElOption label="否" :value="false" />
           </ElSelect>
         </div>
         <div v-if="kind === 'crafts' || kind === 'operations'" class="field field--small">
-          <label>类型</label>
-          <ElSelect v-model="filters.craftType" clearable placeholder="全部类型" @change="search">
+          <ElSelect v-model="filters.craftType" clearable placeholder="全部类型" aria-label="类型" @change="search">
             <ElOption label="厂内" value="INTERNAL" /><ElOption label="厂外" value="EXTERNAL" />
           </ElSelect>
         </div>
         <div v-if="kind === 'operations'" class="field">
-          <label>工艺</label>
-          <ElSelect v-model="filters.craft" clearable filterable placeholder="全部工艺" @change="search">
+          <ElSelect v-model="filters.craft" clearable filterable placeholder="全部工艺" aria-label="工艺" @change="search">
             <ElOption v-for="item in crafts" :key="item.id" :label="item.name" :value="item.id" />
           </ElSelect>
         </div>
         <div class="field field--small">
-          <label>{{ kind === 'employees' ? '在职状态' : '状态' }}</label>
-          <ElSelect v-model="filters.status" clearable placeholder="全部状态" @change="search">
-            <ElOption :label="kind === 'employees' ? '在职' : '启用'" value="ACTIVE" />
-            <ElOption :label="kind === 'employees' ? '离职' : '停用'" :value="kind === 'employees' ? 'LEFT' : 'INACTIVE'" />
+          <ElSelect v-model="filters.status" clearable placeholder="全部状态" :aria-label="kind === 'employees' ? '车间任职状态' : '状态'" @change="search">
+            <ElOption :label="kind === 'employees' ? '任职中' : '启用'" value="ACTIVE" />
+            <ElOption :label="kind === 'employees' ? '已离岗' : '停用'" :value="kind === 'employees' ? 'LEFT' : 'INACTIVE'" />
           </ElSelect>
         </div>
         <div class="filter-actions">
@@ -417,6 +495,7 @@ onMounted(() => { void reloadAll() })
           <ElButton @click="resetFilters">重置</ElButton>
           <ElButton :icon="Refresh" aria-label="刷新" @click="reloadAll">刷新</ElButton>
         </div>
+        <ElButton v-if="canAdd" class="filter-create" type="primary" :icon="Plus" @click="openCreate">{{ metadata.createLabel }}</ElButton>
       </div>
 
       <div class="table-card">
@@ -424,11 +503,11 @@ onMounted(() => { void reloadAll() })
         <ElTable v-if="kind === 'employees'" v-loading="loading" :data="employeeRows" row-key="id" height="100%">
           <ElTableColumn prop="workshop_name" label="车间" min-width="180" fixed />
           <ElTableColumn prop="position" label="岗位" min-width="180" />
-          <ElTableColumn prop="name" label="姓名" min-width="160" />
+          <ElTableColumn label="姓名" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ employeeLabel(row) }}</template></ElTableColumn>
           <ElTableColumn label="是否为主管" width="130"><template #default="{ row }"><ElTag :type="row.is_supervisor ? 'success' : 'info'" effect="dark">{{ row.is_supervisor ? '是' : '否' }}</ElTag></template></ElTableColumn>
-          <ElTableColumn label="在职状态" width="110"><template #default="{ row }"><ElTag :type="row.status === 'ACTIVE' ? 'success' : 'warning'" effect="dark">{{ row.status_display }}</ElTag></template></ElTableColumn>
+          <ElTableColumn label="车间任职" width="110"><template #default="{ row }"><ElTag :type="row.status === 'ACTIVE' ? 'success' : 'warning'" effect="dark">{{ row.status === 'ACTIVE' ? '任职中' : '已离岗' }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
-          <ElTableColumn v-if="canChange" label="操作" width="80" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" @command="handleRowAction($event, row)"><ElButton text circle :icon="MoreFilled" aria-label="更多操作" class="row-action-trigger" /><template #dropdown><ElDropdownMenu><ElDropdownItem command="edit">编辑</ElDropdownItem><ElDropdownItem command="toggle">{{ row.status === 'ACTIVE' ? '离职' : '恢复在职' }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
+          <ElTableColumn v-if="canChange" label="操作" width="80" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" @command="handleRowAction($event, row)"><ElButton text circle :icon="MoreFilled" aria-label="更多操作" class="row-action-trigger" /><template #dropdown><ElDropdownMenu><ElDropdownItem command="edit">编辑</ElDropdownItem><ElDropdownItem command="toggle" :disabled="row.status !== 'ACTIVE' && Boolean(row.employee) && (row.employee_archived || row.employee_status !== 'ACTIVE')">{{ row.status === 'ACTIVE' ? '结束车间任职' : '恢复车间任职' }}</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
           <template #empty><ElEmpty description="暂无车间员工" /></template>
         </ElTable>
 
@@ -468,16 +547,26 @@ onMounted(() => { void reloadAll() })
         <template v-if="kind === 'employees'">
           <ElFormItem label="车间" required><ElSelect v-model="form.workshop" filterable placeholder="请选择车间"><ElOption v-for="item in workshops" :key="item.id" :label="item.name" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
           <ElFormItem label="岗位" required><ElInput v-model="form.position" maxlength="100" placeholder="请输入岗位" /></ElFormItem>
-          <ElFormItem label="姓名" required><ElInput v-model="form.name" maxlength="100" placeholder="请输入姓名" /></ElFormItem>
+          <ElFormItem label="选择员工" :required="editorMode === 'create'">
+            <ElSelect v-model="form.employee" filterable remote :remote-method="loadEmployeeOptions" :loading="employeeOptionsLoading" :disabled="employeeLocked" :clearable="!employeeLocked" :value-on-clear="''" placeholder="搜索姓名或工号" aria-label="选择统一员工" :no-data-text="employeeOptionsError || '暂无可选的在职员工'" @change="selectEmployee">
+              <ElOption v-if="editingEmployee?.employee" :value="editingEmployee.employee" :label="employeeLabel(editingEmployee)" />
+              <ElOption v-for="item in visibleEmployeeOptions" :key="item.id" :value="item.id" :label="`${item.display_name}（${item.employee_code}）`" />
+              <template v-if="!employeeLocked && (employeeOptionsError || employeeOptionsPage < employeeOptionsTotalPages)" #footer>
+                <ElButton text :loading="employeeOptionsLoading" @click="loadEmployeeOptions(employeeOptionsQuery, employeeOptionsPage + 1)">{{ employeeOptionsError ? '重试加载员工' : '加载更多员工' }}</ElButton>
+              </template>
+            </ElSelect>
+            <small class="employee-identity-note">{{ employeeIdentityNote }}</small>
+            <small v-if="employeeOptionsError" class="employee-identity-error" role="alert">{{ employeeOptionsError }}</small>
+          </ElFormItem>
           <ElFormItem label="是否为主管" required><ElSelect v-model="form.isSupervisor"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></ElFormItem>
-          <ElFormItem label="在职状态" required><ElSelect v-model="form.status"><ElOption label="在职" value="ACTIVE" /><ElOption label="离职" value="LEFT" /></ElSelect></ElFormItem>
-          <ElAlert title="主管为必选“是/否”，同一车间允许多名主管；状态变化不会覆盖主管值。" type="success" :closable="false" />
+          <ElFormItem label="车间任职状态" required><ElSelect v-model="form.status"><ElOption label="任职中" value="ACTIVE" :disabled="employeeUnavailable" /><ElOption label="已离岗" value="LEFT" /></ElSelect></ElFormItem>
+          <ElAlert title="主管为必选“是/否”，同一车间允许多名主管；状态变化不会覆盖主管值。此处状态仅表示车间任职，不修改统一员工状态。" type="success" :closable="false" />
         </template>
         <template v-else-if="kind === 'crafts'">
           <ElFormItem label="类型" required><ElSelect v-model="form.craftType" @change="craftTypeChanged"><ElOption label="厂内" value="INTERNAL" /><ElOption label="厂外" value="EXTERNAL" /></ElSelect></ElFormItem>
           <ElFormItem label="车间" :required="form.craftType === 'INTERNAL'"><ElSelect v-model="form.workshop" :disabled="form.craftType === 'EXTERNAL'" clearable filterable :placeholder="form.craftType === 'EXTERNAL' ? '厂外工艺无需填写' : '请选择车间'"><ElOption v-for="item in workshops" :key="item.id" :label="item.name" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
           <ElFormItem label="计划分类"><ElSelect v-model="form.planCategory" :disabled="form.craftType === 'EXTERNAL'" clearable placeholder="可选，用于归入四类计划"><ElOption label="金工计划" value="METAL" /><ElOption label="裁剪计划" value="CUTTING" /><ElOption label="车缝计划" value="SEWING" /><ElOption label="装配计划" value="ASSEMBLY" /></ElSelect></ElFormItem>
-          <ElFormItem label="委外分类"><ElSelect v-model="form.outsourcingCode" :disabled="form.craftType === 'INTERNAL'" clearable placeholder="核对真实工艺后选择"><ElOption label="喷塑" value="POWDER_COATING" /><ElOption label="丝印" value="SCREEN_PRINTING" /><ElOption label="裁剪" value="CUTTING" /><ElOption label="车缝" value="SEWING" /></ElSelect></ElFormItem>
+          <ElFormItem label="委外分类"><ElSelect v-model="form.outsourcingCode" :disabled="form.craftType === 'INTERNAL'" clearable placeholder="核对真实工艺后选择"><ElOption label="喷塑" value="POWDER_COATING" /><ElOption label="丝印" value="SCREEN_PRINTING" /><ElOption label="刺绣" value="EMBROIDERY" /><ElOption label="裁剪" value="CUTTING" /><ElOption label="车缝" value="SEWING" /></ElSelect></ElFormItem>
           <ElFormItem label="工艺名称" required><ElInput v-model="form.name" maxlength="100" placeholder="请输入工艺名称" /></ElFormItem>
           <ElFormItem label="状态" required><ElSelect v-model="form.status"><ElOption label="启用" value="ACTIVE" /><ElOption label="停用" value="INACTIVE" /></ElSelect></ElFormItem>
           <ElAlert title="厂内必须选择车间，计划分类用于归入金工、裁剪、车缝或装配计划；厂外工艺不参与四类计划。" type="warning" :closable="false" />
@@ -523,21 +612,22 @@ onMounted(() => { void reloadAll() })
   display: flex;
   min-height: 0;
   flex: none;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px;
+  overflow-x: auto;
   border: 1px solid token.$crm-border-default;
   border-radius: token.$crm-radius-2;
   background: token.$crm-color-surface;
 }
-.field { width: 142px; }
-.field--search { width: 300px; }
-.field--small { width: 130px; }
-.field label { display: block; margin-bottom: 4px; color: token.$crm-text-secondary; font-size: 11px; font-weight: 500; line-height: 16px; }
+.field { width: 142px; min-width: 100px; }
+.field--search { width: 300px; min-width: 200px; }
+.field--small { width: 130px; min-width: 96px; }
 .field :deep(.el-select), .field :deep(.el-input) { width: 100%; }
-.filter-actions { display: flex; gap: 8px; }
+.filter-actions { display: flex; flex: none; gap: 8px; }
 .filter-actions :deep(.el-button + .el-button) { margin-left: 0; }
+.filter-create { min-width: 140px; flex: none; margin-left: auto; }
 
 .manager :deep(.el-button),
 .manager :deep(.el-input:not(.el-textarea) .el-input__wrapper),
@@ -565,9 +655,7 @@ onMounted(() => { void reloadAll() })
 .manager :deep(.el-input.is-disabled .el-input__wrapper),
 .manager :deep(.el-select__wrapper.is-disabled) { background: var(--erp-input-disabled-background); }
 
-.manager-heading { display: flex; height: 46px; flex: none; align-items: center; justify-content: flex-end; gap: 24px; margin-bottom: 14px; }
-.manager-heading :deep(.el-button--primary) { min-width: 140px; }
-.load-error { flex: none; margin: -7px 0 10px; }
+.load-error { flex: none; margin: 0 0 10px; }
 .table-card { display: flex; min-height: 0; flex: 1; flex-direction: column; margin-top: 14px; overflow: hidden; border: 1px solid token.$crm-border-default; border-radius: token.$crm-radius-2; background: token.$crm-color-surface; }
 .table-region { min-height: 0; flex: 1; }
 .table-region > :deep(.el-table) { height: 100%; }
@@ -588,6 +676,9 @@ onMounted(() => { void reloadAll() })
 .manager-state h2 { margin: 0 0 8px; font-family: token.$crm-font-display; }
 .manager-state p { margin: 0; color: token.$crm-text-muted; }
 .editor-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
+.employee-identity-note, .employee-identity-error { display: block; width: 100%; margin-top: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+.employee-identity-note { color: var(--el-text-color-secondary); }
+.employee-identity-error { color: var(--el-color-danger); }
 .editor-form :deep(.el-select), .editor-form :deep(.el-input-number) { width: 100%; }
 .editor-form :deep(.el-alert) { grid-column: 1 / -1; border-radius: token.$crm-radius-2; }
 .editor-form :deep(.el-textarea__inner) { border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }

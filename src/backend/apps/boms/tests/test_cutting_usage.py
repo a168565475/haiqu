@@ -4,7 +4,10 @@ from django.db import IntegrityError, transaction
 from django.test import SimpleTestCase, TestCase
 
 from apps.products.models import RawMaterialInformation
-from ..material_flow_calculations import CUTTING_USAGE_FIELDS, MaterialFlowValueError, cutting_usage_plan
+from ..material_flow_calculations import (
+    CUTTING_QUANTITY_FIELDS, CUTTING_USAGE_FIELDS, MaterialFlowValueError,
+    cutting_quantity_plan, cutting_usage_plan,
+)
 from ..models import BomLine
 from ..services import create_bom, sync_latest_boms_from_order
 from . import test_material_flow_bom as fixtures
@@ -52,6 +55,28 @@ class CuttingUsageCalculationTests(SimpleTestCase):
         self.assertEqual(maximum["required_meters"], "99999999999999.9999")
 
 
+class CuttingQuantityCalculationTests(SimpleTestCase):
+    def test_quantity_plan_requires_no_meter_values(self):
+        self.assertEqual(cutting_quantity_plan(cutting_pieces_per_set=2, cutting_sets_per_product=3,
+                                               order_quantity=105), {
+            "cutting_pieces_per_set": 2, "cutting_sets_per_product": 3,
+            "required_sets": 315, "required_pieces": 630,
+        })
+
+    def test_missing_legacy_quantities_are_not_guessed(self):
+        self.assertIsNone(cutting_quantity_plan(order_quantity=105))
+
+    def test_partial_invalid_and_overflow_quantities_are_rejected(self):
+        valid = dict(cutting_pieces_per_set=2, cutting_sets_per_product=1, order_quantity=105)
+        changes = [{field: value} for field in CUTTING_QUANTITY_FIELDS
+                   for value in (None, 0, -1, "1.5", True, "NaN", 100000000000000)]
+        changes += [dict(order_quantity=99999999999999),
+                    dict(cutting_sets_per_product=2, order_quantity=99999999999999)]
+        for values in changes:
+            with self.subTest(values=values), self.assertRaises(MaterialFlowValueError):
+                cutting_quantity_plan(**{**valid, **values})
+
+
 class CuttingUsageBomTests(TestCase):
     setUpFixture = fixtures.MaterialFlowBomTests.setUpFixture
     tearDown = fixtures.MaterialFlowBomTests.tearDown
@@ -74,8 +99,7 @@ class CuttingUsageBomTests(TestCase):
         return self.save(sections)
 
     def enable_piece_usage(self, **changes):
-        response = self.save_cutting(cutting_pieces_per_set=2, fabric_meters_per_piece="0.1250",
-                                    cutting_sets_per_product=3, **changes)
+        response = self.save_cutting(cutting_pieces_per_set=2, cutting_sets_per_product=3, **changes)
         self.assertEqual(response.status_code, 200, response.data)
         self.cutting_line.refresh_from_db()
         return response
@@ -108,8 +132,10 @@ class CuttingUsageBomTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         row = next(section for section in self.get().data["data"]["sections"]
                    if section["title"] == "裁剪明细")["lines"][0]
+        self.fabric_line.refresh_from_db()
+        source_color = source.color.color_name if source.color_id else source.color_snapshot
         self.assertEqual((row["material"], row["specification"], row["cutting_color"], row["unit"]),
-                         ("PE", "125 × 1500 mm", "5865C", "套"))
+                         (self.fabric_line.material, "125 × 1500 mm", source_color, "套"))
         self.assertEqual((row["source_inventory_material_id"], row["source_cutting_material_id"]),
                          (str(source.pk), str(source.pk)))
         self.cutting_line.refresh_from_db()
@@ -118,7 +144,7 @@ class CuttingUsageBomTests(TestCase):
         self.assertEqual((self.cutting_line.cutting_pieces_per_set, self.cutting_line.fabric_meters_per_piece,
                           self.cutting_line.cutting_sets_per_product, self.cutting_line.fabric_meters_per_set,
                           self.cutting_line.total_consumption, self.cutting_line.total_purchase_quantity),
-                         (2, Decimal("0.125"), 1, Decimal("0.25"), "250.0000", ""))
+                         (2, None, 1, Decimal("1.5"), "", ""))
         self.assertEqual(RawMaterialInformation.objects.filter(pk=source.pk).values().get(), source_before)
         self.assertEqual(BomLine.objects.filter(pk=self.fabric_line.pk).values(
             "unit_consumption", "total_consumption", "total_purchase_quantity", "raw_values").get(), fabric_before)
@@ -132,8 +158,9 @@ class CuttingUsageBomTests(TestCase):
         response = self.save(sections)
         self.assertEqual(response.status_code, 200, response.data)
         self.cutting_line.refresh_from_db()
+        self.fabric_line.refresh_from_db()
         self.assertEqual((self.cutting_line.material, self.cutting_line.specification, self.cutting_line.unit),
-                         ("PVC", "400 × 600 mm", "套"))
+                         (self.fabric_line.material, "400 × 600 mm", "套"))
         self.assertEqual(self.cutting_line.raw_values["source_inventory_material_id"], str(source.pk))
         before = BomLine.objects.filter(pk=self.cutting_line.pk).values().get()
         self.assertEqual(self.save_cutting(source_inventory_material_id=None).status_code, 400)
@@ -163,19 +190,24 @@ class CuttingUsageBomTests(TestCase):
                         self.assertEqual({field: row[field] for field in expected[row["id"]]}, expected[row["id"]])
         self.assertEqual(self.verify().status_code, 400)
 
-    def test_save_recalculates_forged_derived_values_without_rewriting_fabric_usage(self):
+    def test_save_ignores_hidden_meter_values_without_rewriting_history_or_fabric_usage(self):
         self.enable_piece_usage(fabric_meters_per_set="999", cut_piece_quantity="99", unit_consumption="99",
                                 total_consumption="999", total_purchase_quantity="999", unit="片")
         line = self.cutting_line
         self.assertEqual((line.fabric_meters_per_set, line.cut_piece_quantity, line.unit_consumption, line.unit),
-                         (Decimal("0.25"), "2", "0.1250", "套"))
-        self.assertEqual((line.total_consumption, line.total_purchase_quantity), ("750.0000", ""))
+                         (Decimal("1.5"), "2", "", "套"))
+        self.assertEqual((line.total_consumption, line.total_purchase_quantity), ("", ""))
         self.fabric_line.refresh_from_db()
         self.assertEqual(self.fabric_line.unit_consumption, "2.5")
         self.assertEqual(Decimal(self.fabric_line.total_purchase_quantity), 2500)
         row = next(section for section in self.get().data["data"]["sections"] if section["title"] == "裁剪明细")["lines"][0]
         self.assertEqual((row["cutting_pieces_per_set"], row["fabric_meters_per_piece"], row["cutting_sets_per_product"]),
-                         (2, "0.1250", 3))
+                         (2, None, 3))
+
+    def test_invalid_hidden_meter_payload_is_ignored(self):
+        self.enable_piece_usage(fabric_meters_per_piece="not-a-number", fabric_meters_per_set="NaN")
+        self.assertIsNone(self.cutting_line.fabric_meters_per_piece)
+        self.assertEqual(self.cutting_line.fabric_meters_per_set, Decimal("1.5"))
 
     def test_new_row_requires_complete_bundle_when_new_fields_are_used(self):
         source = RawMaterialInformation.objects.filter(item_type="SEMI_FINISHED", archived_at__isnull=True,
@@ -189,37 +221,40 @@ class CuttingUsageBomTests(TestCase):
         self.assertEqual(invalid.status_code, 400, invalid.data)
         self.assertIn("必须同时填写", str(invalid.data))
         self.assertEqual(BomLine.objects.filter(section__bom=self.bom, section__title="裁剪明细").count(), 1)
-        rows[-1].update(fabric_meters_per_piece="0.125", cutting_sets_per_product=1)
+        rows[-1].update(cutting_sets_per_product=1)
         response = self.save(sections)
         self.assertEqual(response.status_code, 200, response.data)
         created = BomLine.objects.get(section__bom=self.bom, section__title="裁剪明细", line_number=2)
         self.assertEqual((created.fabric_meters_per_set, created.unit, created.total_consumption),
-                         (Decimal("0.25"), "套", "250.0000"))
+                         (None, "套", ""))
+        self.assertIsNone(created.fabric_meters_per_piece)
+        self.assertEqual((created.cutting_pieces_per_set, created.cutting_sets_per_product), (2, 1))
 
     def test_new_mode_cannot_be_partly_or_fully_cleared_and_rolls_back(self):
         self.enable_piece_usage()
         before = list(BomLine.objects.filter(section__bom=self.bom).order_by("pk").values())
-        for changes in [{field: None for field in CUTTING_USAGE_FIELDS}, {"fabric_meters_per_piece": None}]:
+        for changes in [{field: None for field in CUTTING_QUANTITY_FIELDS}, {"cutting_sets_per_product": None}]:
             self.assertEqual(self.save_cutting(**changes).status_code, 400)
             self.assertEqual(list(BomLine.objects.filter(section__bom=self.bom).order_by("pk").values()), before)
 
     def test_invalid_input_and_overflow_are_business_errors_without_partial_save(self):
         self.enable_piece_usage()
         for changes in [dict(cutting_pieces_per_set="1.5"), dict(cutting_sets_per_product=0),
-                        dict(fabric_meters_per_piece="0.00001"), dict(cutting_pieces_per_set=100000000000000),
-                        dict(fabric_meters_per_piece="99999999999999.9999")]:
+                        dict(cutting_pieces_per_set=100000000000000),
+                        dict(cutting_sets_per_product=99999999999999)]:
             with self.subTest(changes=changes):
                 self.assertEqual(self.save_cutting(**changes).status_code, 400)
         self.cutting_line.refresh_from_db()
-        self.assertEqual(self.cutting_line.total_consumption, "750.0000")
+        self.assertEqual(self.cutting_line.total_consumption, "")
 
-    def test_verify_recalculates_copy_relinks_and_order_sync_preserves_old_version(self):
+    def test_verify_copy_and_order_sync_keep_historical_meters_without_recalculation(self):
         self.enable_piece_usage()
-        BomLine.objects.filter(pk=self.cutting_line.pk).update(fabric_meters_per_set=99, total_consumption="99")
+        BomLine.objects.filter(pk=self.cutting_line.pk).update(
+            fabric_meters_per_piece=Decimal("0.125"), fabric_meters_per_set=99, total_consumption="99")
         response = self.verify()
         self.assertEqual(response.status_code, 200, response.data)
         self.cutting_line.refresh_from_db()
-        self.assertEqual(self.cutting_line.total_consumption, "750.0000")
+        self.assertEqual((self.cutting_line.fabric_meters_per_set, self.cutting_line.total_consumption), (99, "99"))
         self.product_line.quantity = 1001
         self.product_line.save()
         copied = sync_latest_boms_from_order(product_line_ids=[self.product_line.pk], actor_employee=self.employee, request=None)[0]
@@ -227,11 +262,21 @@ class CuttingUsageBomTests(TestCase):
         line = BomLine.objects.get(section__bom=copied, section__title="裁剪明细")
         self.assertEqual((line.cutting_pieces_per_set, line.fabric_meters_per_piece, line.cutting_sets_per_product),
                          (2, Decimal("0.125"), 3))
-        self.assertEqual(line.total_consumption, "750.7500")
+        self.assertEqual((line.fabric_meters_per_set, line.total_consumption), (99, "99"))
         self.assertNotEqual(line.fabric_source_line_id, self.fabric_line.pk)
         self.assertEqual(line.fabric_source_line.section.bom_id, copied.pk)
         self.cutting_line.refresh_from_db()
-        self.assertEqual(self.cutting_line.total_consumption, "750.0000")
+        self.assertEqual(self.cutting_line.total_consumption, "99")
+
+    def test_save_and_verify_with_no_current_or_historical_meters(self):
+        BomLine.objects.filter(pk=self.cutting_line.pk).update(fabric_meters_per_set=None)
+        self.enable_piece_usage()
+        response = self.verify()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.cutting_line.refresh_from_db()
+        self.assertIsNone(self.cutting_line.fabric_meters_per_piece)
+        self.assertIsNone(self.cutting_line.fabric_meters_per_set)
+        self.assertEqual((self.cutting_line.cut_piece_quantity, self.cutting_line.unit), ("2", "套"))
 
     def test_legacy_save_confirm_and_copy_do_not_guess_or_change_old_cutting_quantities(self):
         self.cutting_line.cut_piece_quantity = "2"
@@ -250,3 +295,10 @@ class CuttingUsageBomTests(TestCase):
     def test_database_rejects_partial_bundle_even_without_api(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             BomLine.objects.filter(pk=self.cutting_line.pk).update(cutting_pieces_per_set=2)
+
+    def test_database_accepts_quantity_pair_without_meter_values(self):
+        BomLine.objects.filter(pk=self.cutting_line.pk).update(
+            cutting_pieces_per_set=2, cutting_sets_per_product=1, fabric_meters_per_set=None)
+        self.cutting_line.refresh_from_db()
+        self.assertEqual((self.cutting_line.cutting_pieces_per_set, self.cutting_line.cutting_sets_per_product), (2, 1))
+        self.assertIsNone(self.cutting_line.fabric_meters_per_piece)

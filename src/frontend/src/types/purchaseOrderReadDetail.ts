@@ -6,9 +6,17 @@ export type PurchaseReadLine = PurchaseOrderDetail['lines'][number] & {
   received_quantity: string
   accepted_quantity: string
   return_quantity: string
+  received_bar_count?: number | null
+  accepted_bar_count?: number | null
+  return_bar_count?: number | null
 }
 
 export interface PurchaseReadInboundLine {
+  measurement_kind?: string
+  raw_bar_length_m?: string | null
+  received_bar_count?: number | null
+  accepted_bar_count?: number | null
+  return_bar_count?: number | null
   id: string
   purchase_order_line_id: string
   part_name_snapshot: string

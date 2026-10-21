@@ -1,11 +1,14 @@
 import type { TubeDetailLine, TubeOrderDetail } from '@/types/tubeOutsourcing'
 import type { TubeReceipt, TubeReceiptLine } from '@/types/tubeReceipts'
+import { isCuttingSource } from './tubeOutsourcing'
 
 export interface TubeEndedLine extends TubeReceiptLine {
   pieces_per_bar: string | null
   raw_bar_length_m: string | null
   stock_quantity: string | null
   meters: string | null
+  unit_price: string | null
+  planned_amount: string | null
 }
 export interface TubeEndedResult {
   available: boolean
@@ -76,8 +79,15 @@ export function buildTubeEndedResult(order: TubeOrderDetail, receipt: TubeReceip
       stock_movement_id: matched?.stock_movement_id || null,
       pieces_per_bar: positiveQuantity(original.pieces_per_bar, true), raw_bar_length_m: positiveQuantity(original.raw_bar_length_m),
       stock_quantity: positiveQuantity(original.stock_quantity, true), meters: positiveQuantity(original.meters),
+      unit_price: original.unit_price ?? null, planned_amount: original.planned_amount ?? null,
+      fabric_material: matched?.fabric_material, fabric_specification: matched?.fabric_specification,
+      fabric_color: matched?.fabric_color, pieces_per_set: matched?.pieces_per_set,
+      completed_craft_name: matched?.completed_craft_name,
     }
-    for (const key of attributeKeys) {
+    const requiredAttributes = isCuttingSource(order.source_kind)
+      ? ['part_name', 'fabric_material', 'specification', 'fabric_color', 'factory_name'] as const
+      : attributeKeys
+    for (const key of requiredAttributes) {
       const value = matched?.[key]
       row[key] = typeof value === 'string' && value.trim() ? value : '—'
       if (row[key] === '—') issues.add('部分冻结的材料属性缺失，缺失字段显示“—”，不按当前BOM补算。')

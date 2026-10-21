@@ -40,11 +40,11 @@ export async function initiateSampleMaterialIssue(
 export async function confirmSampleMaterialIssue(
   sampleId: string,
   etag: string,
-  lines: Array<{ line_id: string; issued_quantity: string }>,
+  clientRequestId: string,
 ): Promise<{ data: SampleMaterialIssueResult; etag: string }> {
   const response = await apiClient.post<Envelope>(
     `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/material-issue/confirm/`,
-    { request_id: requestId(), lines },
+    { request_id: clientRequestId },
     { headers: { 'If-Match': etag }, timeout: 30_000 },
   )
   return { data: unwrap(response), etag: String(response.headers.etag || '') }

@@ -3,13 +3,15 @@ import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
 import { Refresh, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 
-import { fetchSchedules, scheduleProductImageUrl } from '@/api/productionScheduling'
+import { completeSchedule, fetchSchedules, fetchScheduleCompletionPreview, scheduleProductImageUrl } from '@/api/productionScheduling'
 import { fetchScheduleProgressStatuses } from '@/api/workshopReporting'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
+import ScheduleCompletionDialog from '@/components/productionScheduling/ScheduleCompletionDialog.vue'
 import { useAuthStore } from '@/stores/auth'
-import type { ProductionSchedule } from '@/types/productionScheduling'
+import type { CompleteScheduleInput, CompleteScheduleResult, ProductionSchedule, ScheduleCompletionPreview } from '@/types/productionScheduling'
 import type { ScheduleProgressStatus } from '@/types/workshopReporting'
 
 const router = useRouter()
@@ -26,6 +28,16 @@ const progressBySchedule = ref<Record<string, ScheduleProgressStatus['progress']
 const progressLoadFailed = ref(false)
 let requestSequence = 0
 const canCreate = computed(() => auth.user?.is_superuser || auth.hasPermission('production_scheduling.add_productionschedule'))
+const canFinish = computed(() => auth.moduleCan('access_control.finish_productiontask', 'production_tasks.change_productiontask'))
+const progressKeys = ['MATERIAL', 'METAL', 'SEWING', 'ASSEMBLY'] as const
+const progressNames = { MATERIAL: '材料入库', METAL: '金工回货', SEWING: '车缝回货', ASSEMBLY: '成品入库' }
+const preparingId = ref('')
+const completionVisible = ref(false)
+const completionSubmitting = ref(false)
+const completionPreview = ref<ScheduleCompletionPreview | null>(null)
+const completionResult = ref<CompleteScheduleResult | null>(null)
+const completionUncertain = ref(false)
+const completionError = ref('')
 
 function errorText(error: unknown) {
   if (!(error instanceof AxiosError)) return '排产列表加载失败，请稍后重试。'
@@ -81,6 +93,78 @@ function useProductImageFallback(event: Event) {
   image.classList.add('is-placeholder')
 }
 function openDetail(row: ProductionSchedule) { void router.push(`/workshop/scheduling/${row.id}`) }
+function completionDisabledReason(row: ProductionSchedule) {
+  if (!canFinish.value) return '当前账号没有完成生产任务的权限。'
+  if (row.record_status !== 'ACTIVE') return '排产计划已作废。'
+  if (row.source_current_status !== 'IN_PRODUCTION') return `生产任务${row.source_current_status_display || '当前状态'}，仅生产中任务可完成。`
+  if (progressLoadFailed.value) return '进度加载失败，请刷新后重试。'
+  const progress = progressBySchedule.value[row.id]
+  if (!progress) return '进度尚未加载完成。'
+  const pending = progressKeys.filter(key => progress[key]?.percentage !== 100)
+    .map(key => `${progressNames[key]} ${progress[key]?.display || '进度缺失'}`)
+  return pending.length ? `以下进度未达到100%：${pending.join('、')}` : ''
+}
+function progressReady(row: ProductionSchedule) { return !completionDisabledReason(row) }
+function completionErrorText(error: unknown) {
+  if (error instanceof AxiosError) {
+    const data = error.response?.data as { error?: { message?: string } } | undefined
+    if (data?.error?.message) return data.error.message
+  }
+  return '完成订单失败，请稍后重试。'
+}
+async function completeRow(row: ProductionSchedule) {
+  if (preparingId.value || completionSubmitting.value) return
+  if (!progressReady(row)) {
+    ElMessage.warning(completionDisabledReason(row))
+    return
+  }
+  preparingId.value = row.id
+  try {
+    const preview = await fetchScheduleCompletionPreview(row.id)
+    progressBySchedule.value[row.id] = preview.progress
+    if (!progressReady(row)) { ElMessage.warning(completionDisabledReason(row)); return }
+    if (preview.task.status !== 'IN_PRODUCTION') {
+      ElMessage.warning(`生产任务${preview.task.status_display}，仅生产中任务可完成。`)
+      return
+    }
+    if (!preview.schedule_etag || !preview.task.etag) { ElMessage.error('未取得排产或生产任务版本，请刷新后重试。'); return }
+    completionPreview.value = preview
+    completionResult.value = null
+    completionUncertain.value = false
+    completionError.value = ''
+    completionVisible.value = true
+  } catch (error) {
+    ElMessage.error(completionErrorText(error))
+  } finally { preparingId.value = '' }
+}
+async function submitCompletion(reason: string) {
+  const preview = completionPreview.value
+  if (!preview || completionSubmitting.value || completionResult.value || completionUncertain.value) return
+  if (!canFinish.value || progressKeys.some(key => preview.progress[key]?.percentage !== 100)) {
+    completionError.value = '完成权限或进度已变化，请刷新后重新核对。'
+    return
+  }
+  if (!reason.trim() || reason.trim().length > 500) { completionError.value = '请填写500字以内的完成说明。'; return }
+  const payload: CompleteScheduleInput = { task_etag: preview.task.etag, reason: reason.trim() }
+  if (preview.sales_order.can_sync && preview.sales_order.etag) payload.sales_order_etag = preview.sales_order.etag
+  completionSubmitting.value = true
+  completionError.value = ''
+  try {
+    completionResult.value = await completeSchedule(preview.schedule_id, payload, preview.schedule_etag)
+    await load()
+  } catch (error) {
+    // 断网或代理异常时可能已提交，不能宣称回滚或允许直接重发。
+    completionUncertain.value = !(error instanceof AxiosError) || !error.response
+      || ![400, 401, 403, 404, 409, 412, 428].includes(error.response.status)
+    completionError.value = completionUncertain.value
+      ? '未收到状态更新确认，请关闭弹窗并刷新列表核实结果，避免重复提交。'
+      : completionErrorText(error)
+  } finally { completionSubmitting.value = false }
+}
+function handleRowAction(command: string, row: ProductionSchedule) {
+  if (command === 'view') openDetail(row)
+  if (command === 'complete') void completeRow(row)
+}
 function progressDisplay(row: ProductionSchedule, key: 'MATERIAL' | 'METAL' | 'SEWING' | 'ASSEMBLY') {
   if (key === 'MATERIAL') return '100%'
   if (progressLoadFailed.value) return '加载失败'
@@ -111,11 +195,13 @@ onMounted(() => { void load() })
         <ElTableColumn label="进度" width="128"><template #default="{ row }"><div class="progress-stack"><p>{{ progressDisplay(row, 'MATERIAL') }}</p><p>{{ progressDisplay(row, 'METAL') }}</p><p>{{ progressDisplay(row, 'SEWING') }}</p><p>{{ progressDisplay(row, 'ASSEMBLY') }}</p></div></template></ElTableColumn>
         <ElTableColumn label="创建人" width="112"><template #default="{ row }">{{ row.created_by.name }}</template></ElTableColumn>
         <ElTableColumn prop="created_at" label="创建时间" width="175"><template #default="{ row }">{{ new Date(row.created_at).toLocaleString('zh-CN', { hour12: false }) }}</template></ElTableColumn>
-        <ElTableColumn label="操作" width="122" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openDetail(row)">查看</ElButton></template></ElTableColumn>
+        <ElTableColumn label="操作" width="122" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" placement="bottom-end" @command="handleRowAction($event, row)"><ElButton link type="primary" :loading="preparingId === row.id">更多</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem command="view">查看</ElDropdownItem><ElDropdownItem command="complete" :disabled="!progressReady(row) || Boolean(preparingId) || completionSubmitting" :title="completionDisabledReason(row)">完成订单</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
       </ElTable>
     </div>
     <footer class="schedule-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
     </section>
+    <ScheduleCompletionDialog v-model="completionVisible" :preview="completionPreview" :submitting="completionSubmitting"
+      :result="completionResult" :error="completionError" :uncertain="completionUncertain" @confirm="submitCompletion" />
   </section>
 </template>
 

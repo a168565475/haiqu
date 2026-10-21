@@ -84,6 +84,32 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('统一入口内的单据与来源范围', () => {
+  it('重加工外发按支提交单价，非法单价不能提交', async () => {
+    const wrapper = await createView()
+    const vm = state(wrapper)
+    vm.openOrder({ id: 'rework-price', remaining_allocatable_pieces: 5 })
+    vm.orderForm = { factoryId: 'factory', craftId: 'craft', pieces: '5', unitPrice: '-1' }
+    await vm.submit()
+    expect(api.order).not.toHaveBeenCalled()
+    expect(vm.dialogError).toContain('单价')
+    vm.orderForm.unitPrice = '1.25'
+    api.order.mockResolvedValue({ id: 'priced-order' })
+    await vm.submit()
+    expect(api.order).toHaveBeenCalledWith('rework-price', expect.objectContaining({ allocated_pieces: 5, unit_price: '1.25' }))
+  })
+
+  it('重加工详情显示实际加工价格并去掉金额尾零', async () => {
+    api.externalOrder.mockResolvedValue({ id: 'priced-order', order_number: '新单-价格', source_id: 'source-1',
+      original_return_id: 'return-1', rework_id: 'rework-1', factory_name: '喷塑厂', craft_name: '喷塑',
+      allocated_pieces: 5, handoff_pieces: 0, returned_good_pieces: 0, remaining_return_pieces: 0,
+      unit_price: '2.0000', planned_amount: '10.00', status: 'PENDING_HANDOFF', etag: '"priced"',
+      handoff: null, good_returns: [], closure: null, allocation_history: [] })
+    const wrapper = await createView({ mode: 'rework', externalOrderId: 'priced-order' })
+    expect(wrapper.get('[data-testid="rework-pricing"]').text()).toContain('2 元/支')
+    expect(wrapper.get('[data-testid="rework-pricing"]').text()).toContain('10 元')
+    expect(wrapper.get('[data-testid="rework-pricing"]').text()).not.toContain('10.00')
+  })
+
   it('来源页签嵌入时保留历史来源，且不再加载第二套全量外发单', async () => {
     api.sources.mockResolvedValue({ data: [{ ...completedSource, status: 'CLOSED' }], meta: { total_pages: 1 } })
     const wrapper = await createView({ mode: 'sources', embedded: true })

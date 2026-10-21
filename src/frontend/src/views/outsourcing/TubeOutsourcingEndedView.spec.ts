@@ -17,11 +17,11 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), createTubeOrd
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn(), fetchTubeReceipt: vi.fn(), fetchTubeReceiptCandidates: vi.fn(), confirmTubeReceipt: vi.fn(), findTubeReceipt: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { closeAll: vi.fn(), warning: vi.fn(), success: vi.fn() } }))
 
-const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品' }
+const labels: Record<TubeSourceKind, string> = { RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品', PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发' }
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-ended-real', status: 'COMPLETED', version: 3, etag: '"order-1:v3"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: labels.RAW_PIPE, schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '35', total_stock_quantity: '4', total_meters: '23.74',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '35', planned_amount: '8.75', total_stock_quantity: '4', total_meters: '23.74',
   task_order_number: 'DD-ended-real', task_number: 'SC-ended-real', schedule_number: 'PC-ended-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'raw-zone', zone_name: '原料区', warehouse_name: '原料仓', craft_name: '喷塑', remark: '发出时原单备注', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: '2026-09-30', dispatched_at: '2026-09-30T09:00:00+08:00', dispatched_by_name: '发出员工', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
@@ -29,13 +29,13 @@ const order: TubeOrderDetail = {
   lines: [],
 }
 const firstLine: TubeDetailLine = {
-  id: 'line-1', component_identity: 'component-1', part_name: '同名腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', stock_quantity: '2', meters: '13.10',
+  id: 'line-1', component_identity: 'component-1', part_name: '同名腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
   material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [],
 }
 order.lines = [
   firstLine,
-  { ...firstLine, id: 'line-2', component_identity: 'component-2', factory_id: 'factory-2', factory_name: '加工厂乙', quantity: '10', stock_quantity: '1', meters: '6.55', specification: 'Φ18' },
-  { ...firstLine, id: 'line-3', component_identity: 'component-3', part_name: '支撑管', quantity: '5', stock_quantity: '1', meters: '4.09', pieces_per_bar: '5', raw_bar_length_m: '4.09' },
+  { ...firstLine, id: 'line-2', component_identity: 'component-2', factory_id: 'factory-2', factory_name: '加工厂乙', quantity: '10', planned_amount: '2.50', stock_quantity: '1', meters: '6.55', specification: 'Φ18' },
+  { ...firstLine, id: 'line-3', component_identity: 'component-3', part_name: '支撑管', quantity: '5', planned_amount: '1.25', stock_quantity: '1', meters: '4.09', pieces_per_bar: '5', raw_bar_length_m: '4.09' },
 ]
 
 function makePreview(source: TubeSourceKind = 'RAW_PIPE', quantities = ['18', '10', '0']): TubeReceiptPreview {
@@ -85,6 +85,14 @@ function records(wrapper: VueWrapper, selector = '.d4-ended-lines') {
   const headers = wrapper.findAll(`${selector} th`).map(item => item.text())
   return wrapper.findAll(`${selector} tbody tr`).map(row => Object.fromEntries(row.findAll('td').map((cell, index) => [headers[index]!, cell.text()])))
 }
+function footerQuantities(wrapper: VueWrapper) {
+  const entries = wrapper.get('.d4-ended-footer').findAll('.totals > span')
+  return Object.fromEntries(['实发', '实收', '差额'].map(label => {
+    const matches = entries.filter(item => item.text().startsWith(`${label} `))
+    expect(matches, `页脚须且仅须显示一项${label}数量`).toHaveLength(1)
+    return [label, matches[0]!.get('strong').text()]
+  }))
+}
 function assertNoWriteRequests() {
   expect(orderApi.createTubeOrder).not.toHaveBeenCalled(); expect(orderApi.dispatchTubeOrder).not.toHaveBeenCalled(); expect(orderApi.cancelTubeOrder).not.toHaveBeenCalled()
   expect(receiptApi.confirmTubeReceipt).not.toHaveBeenCalled()
@@ -101,11 +109,40 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('D4已结束原单详情与只读入库凭证', () => {
+  it('裁片结束结果只核对裁片冻结属性，打开同页入库凭证且不要求管材属性', async () => {
+    const preview = makePreview('SEWING')
+    preview.order.craft_name = '刺绣'
+    for (const line of [...preview.order.lines, ...preview.receipt!.lines]) {
+      Object.assign(line, { fabric_material: '涤纶', specification: '420×380', fabric_specification: '600D', fabric_color: '蓝色', pieces_per_set: '2', thickness: '', cutting_length_mm: '', spray_color: '' })
+    }
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(preview)
+    const { wrapper } = await mountPage()
+    expect(wrapper.text()).toContain('已刺绣')
+    expect(wrapper.get('.d4-ended-lines').text()).toContain('实收（套）')
+    expect(wrapper.get('.d4-ended-lines').text()).toContain('涤纶')
+    expect(wrapper.get('.d4-ended-lines').text()).not.toContain('厚度 mm')
+    expect(wrapper.text()).not.toContain('部分冻结的材料属性缺失')
+    const button = wrapper.findAll('button').find(item => item.text() === '查看入库凭证')!
+    expect(button.attributes('disabled')).toBeUndefined()
+    await button.trigger('click'); await flushPromises()
+    expect(wrapper.find('[aria-label="裁片入库凭证 · 只读"]').exists()).toBe(true)
+  })
+  it('结束态按原单外发量显示计划价款，不按实收量重算；未知旧价不补0', async () => {
+    const { wrapper, vm } = await mountPage()
+    expect(records(wrapper)[0]).toMatchObject({ '加工单价（元/支）': '0.25', '计划金额（元）': '5' })
+    expect(wrapper.get('.d4-ended-footer').text()).toContain('计划加工金额 8.75 元')
+    const old = makePreview(); old.order.planned_amount = null
+    old.order.lines.forEach(line => { line.unit_price = null; line.planned_amount = null })
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(old)
+    await vm.loadDetail(); await flushPromises()
+    expect(records(wrapper)[0]).toMatchObject({ '加工单价（元/支）': '未录入', '计划金额（元）': '未录入' })
+    expect(wrapper.get('.d4-ended-footer').text()).toContain('计划加工金额 未录入 元')
+  })
   it.each(['RAW_PIPE', 'PUBLIC_SEMI', 'METAL'] as const)('%s按批准列显示全部结果，凭证使用同一列且仅能关闭', async source => {
     vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(makePreview(source))
     const { wrapper, vm } = await mountPage()
     const expected = ['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂',
-      ...(source === 'RAW_PIPE' ? ['切割支数 支/根', '原材料长度 米/根'] : []), '实发（支）', ...(source === 'RAW_PIPE' ? ['发出扣根', '发出扣米'] : []), '实收（支）', '差额（支）', '差额原因', '入库库区']
+      ...(source === 'RAW_PIPE' ? ['切割支数 支/根', '原材料长度 米/根'] : []), '实发（支）', ...(source === 'RAW_PIPE' ? ['发出扣根', '发出扣米'] : []), '实收（支）', '差额（支）', '差额原因', '入库库区', '加工单价（元/支）', '计划金额（元）']
     expect(wrapper.findAll('.d4-ended-lines th').map(item => item.text())).toEqual(expected)
     expect(wrapper.text()).toContain(labels[source]); expect(wrapper.text()).toContain('当前订单量')
     expect(wrapper.findAll('.d4-ended-context .info-cell')).toHaveLength(12)
@@ -226,7 +263,8 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     const { wrapper } = await mountPage()
     expect(wrapper.text()).toContain('原单历史明细结构不完整')
     expect(wrapper.find('.d4-ended-lines').exists()).toBe(false)
-    expect(wrapper.findAll('.d4-ended-footer strong').map(item => item.text())).toEqual(['—', '—', '—'])
+    expect(footerQuantities(wrapper)).toEqual({ 实发: '—', 实收: '—', 差额: '—' })
+    expect(wrapper.get('.d4-ended-footer .d4-planned-amount strong').text()).toBe('8.75')
     assertReceiptUnavailable(wrapper)
     expect(orderApi.fetchTubeOrder).not.toHaveBeenCalled()
     assertNoWriteRequests()
@@ -240,7 +278,8 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(displayed).toHaveLength(3)
     expect(displayed[0]).toEqual(expect.objectContaining({ '实发（支）': '—', '实收（支）': '—', '差额（支）': '—', 入库库区: '—' }))
     expect(displayed[2]).toEqual(expect.objectContaining({ '实收（支）': '0', '差额（支）': '5', 入库库区: '未入库' }))
-    expect(wrapper.findAll('.d4-ended-footer strong').map(item => item.text())).toEqual(['—', '—', '—'])
+    expect(footerQuantities(wrapper)).toEqual({ 实发: '—', 实收: '—', 差额: '—' })
+    expect(wrapper.get('.d4-ended-footer .d4-planned-amount strong').text()).toBe('8.75')
     assertReceiptUnavailable(wrapper)
     assertNoWriteRequests()
   })

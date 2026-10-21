@@ -29,9 +29,13 @@ class ReadDetailLineSerializer(PurchaseOrderLineSerializer):
     received_quantity = serializers.SerializerMethodField()
     accepted_quantity = serializers.SerializerMethodField()
     return_quantity = serializers.SerializerMethodField()
+    received_bar_count = serializers.SerializerMethodField()
+    accepted_bar_count = serializers.SerializerMethodField()
+    return_bar_count = serializers.SerializerMethodField()
 
     class Meta(PurchaseOrderLineSerializer.Meta):
-        fields = PurchaseOrderLineSerializer.Meta.fields + ["received_quantity", "accepted_quantity", "return_quantity"]
+        fields = PurchaseOrderLineSerializer.Meta.fields + ["received_quantity", "accepted_quantity", "return_quantity",
+                                                          "received_bar_count", "accepted_bar_count", "return_bar_count"]
 
     @staticmethod
     def _quantity(line, field, confirmed_only=False):
@@ -47,6 +51,27 @@ class ReadDetailLineSerializer(PurchaseOrderLineSerializer):
     def get_return_quantity(self, line):
         return self._quantity(line, "return_quantity", confirmed_only=True)
 
+    @staticmethod
+    def _bar_count(line, field, confirmed_only=False):
+        if not line.raw_bar_length_m:
+            return None
+        records = [record for record in line.material_inbound_lines.all()
+                   if not confirmed_only or record.inbound.status == MaterialInboundStatus.CONFIRMED]
+        # 只汇总已保存的根数，旧记录缺少换算来源时不把米数冒充根数。
+        if any(record.measurement_kind != "PIPE" or record.raw_bar_length_m != line.raw_bar_length_m
+               or getattr(record, field) is None for record in records):
+            return None
+        return sum(getattr(record, field) for record in records)
+
+    def get_received_bar_count(self, line) -> int | None:
+        return self._bar_count(line, "received_bar_count")
+
+    def get_accepted_bar_count(self, line) -> int | None:
+        return self._bar_count(line, "accepted_bar_count", confirmed_only=True)
+
+    def get_return_bar_count(self, line) -> int | None:
+        return self._bar_count(line, "return_bar_count", confirmed_only=True)
+
 
 class ReadInboundLineSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source="zone.warehouse.warehouse_name", read_only=True)
@@ -59,7 +84,7 @@ class ReadInboundLineSerializer(serializers.ModelSerializer):
                   "material_snapshot", "supplier_name_snapshot", "source_unit_text_snapshot",
                   "material_attributes_snapshot",
                   "received_quantity", "accepted_quantity", "return_quantity", "quality_remark",
-                  "warehouse_name", "zone_name", "location_number", "received_bar_count",
+                  "warehouse_name", "zone_name", "location_number", "measurement_kind", "received_bar_count",
                   "accepted_bar_count", "return_bar_count", "raw_bar_length_m"]
         read_only_fields = fields
 

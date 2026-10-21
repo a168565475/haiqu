@@ -8,6 +8,7 @@ import { getLogoutErrorMessage } from '@/api/auth'
 import chevronDownIcon from '@/assets/crm-v2/chevron-down.svg'
 import headerLogo from '@/assets/navigation/hitree-header-logo.png'
 import GlobalPageTabs from '@/components/navigation/GlobalPageTabs.vue'
+import HeaderMessages from '@/components/navigation/HeaderMessages.vue'
 import ConfirmedSidebarIcon from '@/components/navigation/ConfirmedSidebarIcon.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
@@ -59,6 +60,7 @@ async function handleUserCommand(command: string | number | object) {
     </div>
 
     <div class="app-header__actions">
+      <HeaderMessages />
       <ElDropdown class="app-header__theme-menu" trigger="click" placement="bottom-end" @command="handleThemeCommand">
         <button
           type="button"
@@ -238,5 +240,14 @@ async function handleUserCommand(command: string | number | object) {
   .app-header { gap: 12px; padding: 0 12px; }
   .app-header__brand { padding-right: 12px; }
   .app-header__user-name { max-width: 96px; }
+}
+@media (max-width: 480px) {
+  .app-header { gap: 6px; padding: 0 8px; }
+  .app-header__brand { width: 32px; padding-right: 8px; overflow: hidden; }
+  .app-header__brand img, .app-header__brand::before { width: 104px; flex: none; }
+  .app-header__brand::after { display: none; }
+  .app-header__user-name { max-width: 32px; }
+  .app-header__user { gap: 4px; padding: 0 4px; }
+  .app-header__actions { gap: 4px; }
 }
 </style>

@@ -1,5 +1,8 @@
 from rest_framework import serializers
 
+from apps.core.api.concurrency import etag_for_instance
+from apps.organizations.models import Employee
+
 from ..constants import METAL_WORKSHOP_NAME
 from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
 
@@ -36,28 +39,52 @@ class WorkshopSerializer(serializers.ModelSerializer):
 class WorkshopEmployeeSerializer(serializers.ModelSerializer):
     workshop_name = serializers.CharField(source="workshop.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all(), required=False, allow_null=True)
+    employee_code = serializers.CharField(source="employee.employee_code", read_only=True, default=None)
+    employee_name = serializers.CharField(source="employee.display_name", read_only=True, default=None)
+    employee_status = serializers.CharField(source="employee.status", read_only=True, default=None)
+    employee_archived = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkshopEmployee
         fields = [
             "id", "workshop", "workshop_name", "position", "name", "is_supervisor", "status",
+            "employee", "employee_code", "employee_name", "employee_status", "employee_archived",
             "status_display", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "workshop_name", "status_display", "created_at", "updated_at"]
+        read_only_fields = ["id", "name", "workshop_name", "status_display", "created_at", "updated_at"]
+        # 历史姓名只读；服务在事务内按最终身份校验两类条件唯一约束。
+        validators = []
 
     def validate_position(self, value):
         return _normalized_text(value, "岗位")
 
-    def validate_name(self, value):
-        return _normalized_text(value, "姓名")
+    def get_employee_archived(self, obj) -> bool:
+        return bool(obj.employee_id and obj.employee.archived_at is not None)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if "name" in self.initial_data:
+            raise serializers.ValidationError({"name": "姓名来自统一员工档案，不能在车间配置中修改。"})
+        if self.instance is None and attrs.get("employee") is None:
+            raise serializers.ValidationError({"employee": "请选择统一员工档案。"})
         workshop = attrs.get("workshop", getattr(self.instance, "workshop", None))
         status = attrs.get("status", getattr(self.instance, "status", WorkshopEmployeeStatus.ACTIVE))
         if status == WorkshopEmployeeStatus.ACTIVE and workshop and workshop.status != RecordStatus.ACTIVE:
             raise serializers.ValidationError({"workshop": "在职员工不能关联已停用车间。"})
         return attrs
+
+
+class WorkshopEmployeeOptionSerializer(serializers.ModelSerializer):
+    etag = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Employee
+        fields = ["id", "employee_code", "display_name", "status", "etag"]
+        read_only_fields = fields
+
+    def get_etag(self, obj) -> str:
+        return etag_for_instance(obj)
 
 
 class CraftSerializer(serializers.ModelSerializer):
@@ -104,7 +131,8 @@ class CraftSerializer(serializers.ModelSerializer):
         if self.instance and (
             craft_type != self.instance.craft_type or outsourcing_code != self.instance.outsourcing_code
         ):
-            if self.instance.outsourcing_orders.exists() or self.instance.outsourcing_factories.exists():
+            if (self.instance.outsourcing_orders.exists() or self.instance.outsourcing_factories.exists()
+                    or self.instance.tube_outsourcing_orders.exists()):
                 raise serializers.ValidationError({"outsourcing_code": "已用于委外业务的工艺不能修改类型或委外编码。"})
         if status == RecordStatus.ACTIVE and workshop and workshop.status != RecordStatus.ACTIVE:
             raise serializers.ValidationError({"workshop": "启用工艺不能关联已停用车间。"})

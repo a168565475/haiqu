@@ -11,12 +11,13 @@ from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.organizations.models import Employee
 
 from ..constants import FIXED_WORKSHOP_NAMES
 from ..models import Craft, CraftType, Operation, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
 from ..selectors import crafts_with_context, employees_with_context, operations_with_context, workshops_with_statistics
 from ..services import create_config, update_config
-from .serializers import CraftSerializer, OperationSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
+from .serializers import CraftSerializer, OperationSerializer, WorkshopEmployeeOptionSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
 
 
 def _parse_uuid(value, field_name):
@@ -139,6 +140,7 @@ class WorkshopEmployeeViewSet(BaseConfigViewSet):
         "create": "workshop_config.add_workshopemployee",
         "update": "workshop_config.change_workshopemployee",
         "partial_update": "workshop_config.change_workshopemployee",
+        "employee_options": ("workshop_config.add_workshopemployee", "workshop_config.change_workshopemployee"),
     }
 
     def get_queryset(self):
@@ -161,8 +163,18 @@ class WorkshopEmployeeViewSet(BaseConfigViewSet):
             queryset = queryset.filter(position__icontains=position)
         keyword = self.request.query_params.get("q", "").strip()
         if keyword:
-            queryset = queryset.filter(Q(name__icontains=keyword) | Q(position__icontains=keyword))
+            queryset = queryset.filter(Q(name__icontains=keyword) | Q(position__icontains=keyword)
+                                       | Q(employee__display_name__icontains=keyword) | Q(employee__employee_code__icontains=keyword))
         return employees_with_context(queryset).order_by("workshop__name", "position", "name", "id")
+
+    @action(detail=False, methods=["get"], url_path="employee-options", serializer_class=WorkshopEmployeeOptionSerializer)
+    def employee_options(self, request):
+        queryset = Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        keyword = request.query_params.get("q", "").strip()
+        if keyword:
+            queryset = queryset.filter(Q(employee_code__icontains=keyword) | Q(display_name__icontains=keyword))
+        page = self.paginate_queryset(queryset.order_by("employee_code", "id"))
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
 
     @action(detail=False, methods=["get"])
     def summary(self, request):

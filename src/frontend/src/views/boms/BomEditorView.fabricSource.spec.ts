@@ -25,7 +25,7 @@ interface Editor {
   blankLine: (unit?: string) => BomLineInput
   followingLineDraft: (section: BomSectionInput, line: BomLineInput) => BomLineInput
   lineFieldError: (section: BomSectionInput, line: BomLineInput, index: number) => string
-  cuttingMaterial: (line: BomLineInput) => string
+  syncCuttingSourceAttributes: (line: BomLineInput) => void
   editableLine: (line: never) => BomLineInput
   persistDraft: () => Promise<boolean>
 }
@@ -189,7 +189,7 @@ describe('BOM 未保存面料来源', () => {
       await vm.addFabricLine()
       const source = fabric.lines[0]!
       source.part_name = '牛津布'
-      const line = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
+      const line = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 }
       vm.editingLineDraft = line
       vm.editingFabricSourceKey = source.client_key!
       expect(vm.editingLineDraft.fabric_source_client_key).toBe(source.client_key)
@@ -229,7 +229,7 @@ describe('BOM 未保存面料来源', () => {
     try {
       await vm.addFabricLine()
       fabric.lines[0]!.part_name = '牛津布'
-      vm.editingLineDraft = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 }
+      vm.editingLineDraft = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 }
       vm.editingFabricSourceKey = fabric.lines[0]!.client_key!
       cutting.lines.push(vm.editingLineDraft)
       vi.mocked(api.saveBomDraft).mockImplementationOnce(async (_id, sections) => {
@@ -249,36 +249,57 @@ describe('BOM 未保存面料来源', () => {
     } finally { wrapper.unmount() }
   })
 
-  it('空或斜杠材质随来源面料变化，有效裁剪材质及手工输入优先', async () => {
+  it('选择来源和再次同步时，裁剪材质与颜色始终采用面料值', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
       await vm.addFabricLine()
       const source = fabric.lines[0]!
-      Object.assign(source, { material: '涤纶', source_fabric_material_id: 'polyester' })
-      vm.editingLineDraft = { ...vm.blankLine('套'), material: ' / ' }
+      Object.assign(source, { material: '涤纶', fabric_color_name: '黑色', source_fabric_material_id: 'polyester' })
+      vm.editingLineDraft = { ...vm.blankLine('套'), material: '210D', cutting_color: '白色' }
       vm.editingFabricSourceKey = source.client_key!
-      expect(vm.cuttingMaterial(vm.editingLineDraft)).toBe('涤纶')
-      expect(vm.editingLineDraft.material).toBe(' / ')
+      expect(vm.editingLineDraft).toMatchObject({ material: '涤纶', cutting_color: '黑色' })
       source.material = '棉'
-      expect(vm.cuttingMaterial(vm.editingLineDraft)).toBe('棉')
-      vm.editingLineDraft.material = ''
-      expect(vm.cuttingMaterial(vm.editingLineDraft)).toBe('棉')
-      vm.editingLineDraft.material = '尼龙'
-      expect(vm.cuttingMaterial(vm.editingLineDraft)).toBe('尼龙')
+      source.fabric_color_name = '蓝色'
+      vm.syncCuttingSourceAttributes(vm.editingLineDraft)
+      expect(vm.editingLineDraft).toMatchObject({ material: '棉', cutting_color: '蓝色' })
+      source.fabric_color_name = ''
+      source.fabric_color_code = 'BLUE-01'
+      vm.syncCuttingSourceAttributes(vm.editingLineDraft)
+      expect(vm.editingLineDraft.cutting_color).toBe('BLUE-01')
       fabric.lines = []
-      vm.editingLineDraft.material = '/'
-      expect(vm.cuttingMaterial(vm.editingLineDraft)).toBe('/')
+      vm.syncCuttingSourceAttributes(vm.editingLineDraft)
+      expect(vm.editingLineDraft).toMatchObject({ material: '', cutting_color: '' })
     } finally { wrapper.unmount() }
   })
 
-  it('重新打开已继承材质的裁剪行，保留原始空值以便再次换来源', async () => {
+  it('重新打开裁剪行不再恢复旧材质，保存前采用最新来源属性', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '涤纶' })
-      const reopened = vm.editableLine({ ...vm.blankLine('套'), id: 'saved-cutting', material: '涤纶', cutting_material_original: '/', fabric_source_line_id: 'saved-fabric' } as never)
-      expect(reopened.material).toBe('/')
-      fabric.lines[0]!.material = '棉'
-      expect(vm.cuttingMaterial(reopened)).toBe('棉')
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '涤纶', fabric_color_name: '黑色' })
+      const reopened = vm.editableLine({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20', material: '涤纶', cutting_material_original: '210D', fabric_source_line_id: 'saved-fabric', fabric_meters_per_set: '0.5' } as never)
+      expect(reopened.material).toBe('涤纶')
+      vm.sections.find(section => section.title === '裁剪明细')!.lines.push(reopened)
+      Object.assign(fabric.lines[0]!, { material: '棉', fabric_color_name: '蓝色' })
+      vi.mocked(api.saveBomDraft).mockImplementationOnce(async (_id, sections) => ({ data: { ...versioned.data, sections: JSON.parse(JSON.stringify(sections)) }, etag: 'v2' }) as never)
+      expect(await vm.persistDraft()).toBe(true)
+      const submitted = vi.mocked(api.saveBomDraft).mock.calls[0]![1].find(section => section.title === '裁剪明细')!.lines[0]
+      expect(submitted).toMatchObject({ material: '棉', cutting_color: '蓝色' })
+    } finally { wrapper.unmount() }
+  })
+
+  it('裁剪列表与行编辑不显示材质颜色输入，来源面料仍可选择', async () => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '涤纶', fabric_color_name: '黑色' })
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20', fabric_source_line_id: 'saved-fabric' })
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      const labels = wrapper.get('.cutting-table').findAll('[label]').map(column => column.attributes('label'))
+      expect(labels).not.toContain('材质')
+      expect(labels).not.toContain('颜色')
+      expect(wrapper.find('[aria-label="材质"]').exists()).toBe(false)
+      expect(wrapper.find('[aria-label="来源面料"]').exists()).toBe(true)
     } finally { wrapper.unmount() }
   })
 })

@@ -163,6 +163,8 @@ class FinishedGoodsReceipt(TimeStampedModel):
     item_number_snapshot = models.CharField(max_length=100)
     specification_snapshot = models.CharField(max_length=300, blank=True)
     actual_color = models.CharField(max_length=200)
+    # 冻结生产任务单当时的材质，避免主数据变更后历史出库单被改写。
+    material_snapshot = models.TextField(blank=True)
     unit = models.ForeignKey("reference_data.ProductionUnit", on_delete=models.PROTECT, related_name="finished_goods_receipts")
     received_quantity = models.PositiveBigIntegerField(validators=[MinValueValidator(1)])
     remaining_quantity = models.PositiveBigIntegerField()
@@ -204,6 +206,14 @@ class FinishedGoodsOutbound(TimeStampedModel):
     receiver_name = models.CharField(max_length=150, blank=True)
     used_for_order_number = models.CharField(max_length=100, blank=True)
     remark = models.TextField(blank=True)
+    responsible_employee = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="responsible_finished_goods_outbounds",
+    )
+    responsible_name_snapshot = models.CharField(max_length=150, blank=True)
+    shipment_date = models.DateField(null=True, blank=True)
+    loading_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    other_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     outbound_by_employee = models.ForeignKey(
         "organizations.Employee", on_delete=models.PROTECT, related_name="finished_goods_outbounds"
     )
@@ -232,6 +242,20 @@ class FinishedGoodsOutboundLine(TimeStampedModel):
             models.CheckConstraint(condition=Q(outbound_quantity__gt=0), name="inv_outbound_qty_positive"),
             models.CheckConstraint(condition=Q(quantity_per_box__gt=0), name="inv_outbound_pack_positive"),
             models.CheckConstraint(condition=Q(after_quantity__lte=models.F("before_quantity")), name="inv_outbound_after_lte"),
+        ]
+
+
+class FinishedGoodsOutboundAttachment(TimeStampedModel):
+    outbound = models.ForeignKey(FinishedGoodsOutbound, on_delete=models.PROTECT, related_name="attachments")
+    business_file = models.ForeignKey(
+        "files.BusinessFile", on_delete=models.PROTECT, related_name="finished_goods_outbound_attachments"
+    )
+
+    class Meta:
+        db_table = "inventory_finished_goods_outbound_attachment"
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["outbound", "business_file"], name="inv_outbound_file_uniq"),
         ]
 
 

@@ -12,6 +12,17 @@ export function formatQuantity(value: unknown): string {
   return (amount / 10000n).toLocaleString('zh-CN') + (fraction ? `.${fraction}` : '')
 }
 
+export function quantityWithUnit(value: unknown, unit: string): string {
+  const quantity = formatQuantity(value)
+  return quantity === '—' ? quantity : `${quantity}${unit ? ` ${unit}` : ''}`
+}
+
+// 管材主数量直接使用已记录的根数，不能把计价米数改名为根数。
+export function purchaseQuantityText(quantity: unknown, unit: string, rawBarLength: string | null | undefined, barCount: number | string | null | undefined): string {
+  if (rawBarLength) return barCount === null || barCount === undefined ? '根数未记录' : quantityWithUnit(String(barCount), '根')
+  return quantityWithUnit(quantity, unit)
+}
+
 export function quantityTotal(lines: { source_unit_text: string }[], values: unknown[]): string {
   if (!lines.length || new Set(lines.map(line => line.source_unit_text.trim())).size !== 1 || !lines[0]?.source_unit_text.trim()) return '—'
   const amounts = values.map(quantityValue)

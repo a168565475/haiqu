@@ -32,6 +32,7 @@ class PipePurchaseFlowTests(APITestCase):
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=10)
         for field in ('cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'raw_bar_length_m', 'suggested_bar_count', 'suggested_purchase_meters'):
             setattr(self.bom_line, field, plan[field])
+        self.bom_line.raw_values['pipe_plan_version'] = 3
         self.bom_line.save()
         self.bom_line.refresh_from_db()
         snapshot = pipe_source_snapshot(self.bom_line)
@@ -70,6 +71,21 @@ class PipePurchaseFlowTests(APITestCase):
         retried = self.quality(received, returned=1)
         self.assertIn(retried.status_code, [200, 409])
         self.assertEqual(MaterialStockMovement.objects.filter(balance=balance).count(), 1)
+
+    def test_read_detail_exposes_stored_roots_and_preserves_meter_amounts(self):
+        first = self.receive(2)
+        self.assertEqual(first.status_code, 201, first.data)
+        pending = self.receive(1, remaining='6.1000')
+        self.assertEqual(pending.status_code, 201, pending.data)
+        self.assertEqual(self.quality(first, returned=1).status_code, 200)
+        response = self.client.get(f'/api/v1/purchase-orders/{self.order.pk}/details/')
+        self.assertEqual(response.status_code, 200, response.data)
+        line = response.data['data']['lines'][0]
+        self.assertEqual((line['received_bar_count'], line['accepted_bar_count'], line['return_bar_count']), (3, 1, 1))
+        self.assertEqual(tuple(Decimal(line[key]) for key in ('received_quantity', 'accepted_quantity', 'return_quantity')),
+                         (Decimal('9.15'), Decimal('3.05'), Decimal('3.05')))
+        self.assertEqual(Decimal(line['amount']), Decimal('24.40'))
+        self.assertTrue(all(row['measurement_kind'] == 'PIPE' for batch in response.data['data']['inbounds'] for row in batch['lines']))
 
     def test_receipt_rejects_half_root_missing_root_and_different_length(self):
         for roots, extra in [(1.5, {}), (0, {}), (None, {}), (2, {'raw_bar_length_m': '3.06'})]:
@@ -175,6 +191,7 @@ class PipePurchaseOrderApiTests(APITestCase):
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6, order_quantity=1000)
         for key in ('cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'raw_bar_length_m', 'suggested_bar_count', 'suggested_purchase_meters'):
             setattr(self.line, key, plan[key])
+        self.line.raw_values['pipe_plan_version'] = 3
         self.line.save()
 
     def create(self, **overrides):
@@ -196,6 +213,39 @@ class PipePurchaseOrderApiTests(APITestCase):
         order_id = created.data['data']['id']
         result = self.client.post(f'/api/v1/purchase-orders/{order_id}/confirm/', {}, format='json')
         self.assertEqual(result.status_code, 200, result.data)
+
+    def test_new_pipe_source_has_no_percent_allowance_and_confirms_normal_purchase(self):
+        source = self.get_source(self.task)
+        self.assertEqual(source.status_code, 200, source.data)
+        self.assertEqual(source.data['data']['lines'][0]['suggested_bar_count'], 334)
+        created = self.create(actual_bar_count=334)
+        self.assertEqual(created.status_code, 201, created.data)
+        line = created.data['data']['lines'][0]
+        self.assertEqual(line['calculation_snapshot']['schema_version'], 2)
+        self.assertEqual(line['calculation_snapshot']['calculation_version'], 3)
+        self.assertEqual(Decimal(line['amount']), Decimal('2037.40'))
+        self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
+        from types import SimpleNamespace
+        from apps.outsourcing.dispatch_services import ready_snapshot
+        from apps.outsourcing.material_flow import processing_basis
+        self.line.refresh_from_db()
+        snapshot = processing_basis(self.line)
+        self.assertEqual(ready_snapshot(SimpleNamespace(conversion_snapshot=snapshot))['allowance_pieces'], 2004)
+
+    def test_legacy_bom_and_purchase_source_keep_original_snapshot(self):
+        self.line.raw_values.pop('pipe_plan_version')
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,
+                         order_quantity=1000, calculation_version=2)
+        self.line.suggested_bar_count = plan['suggested_bar_count']
+        self.line.suggested_purchase_meters = plan['suggested_purchase_meters']
+        self.line.save()
+        self.line.refresh_from_db()
+        before = deepcopy(pipe_source_snapshot(self.line))
+        created = self.create()
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data['data']['lines'][0]['calculation_snapshot'], before)
+        self.assertEqual(before['allowance_pieces'], 2022)
+        self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
 
     def test_changed_roots_without_reason_can_create_and_confirm(self):
         created = self.create(actual_bar_count=338)

@@ -812,7 +812,7 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(created.status_code, 201, created.data)
         self.assertEqual(created.data["data"]["order_number"], "ORDER-BOM-001")
-        self.assertRegex(created.data["data"]["bom_number"], r"^BOM\d{7}$")
+        self.assertRegex(created.data["data"]["bom_number"], r"^BOM[0-9]{6}[0-9]{3,}$")
         self.assertEqual(created.data["data"]["line_count"], 3)
         self.assertEqual(BomSection.objects.count(), 3)
         self.assertEqual(BomLine.objects.count(), 3)
@@ -960,7 +960,7 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(imported.status_code, 201, imported.data)
         imported_number = imported.data["data"]["bom_number"]
-        self.assertRegex(imported_number, r"^BOM\d{7}$")
+        self.assertRegex(imported_number, r"^BOM[0-9]{6}[0-9]{3,}$")
 
         copied = self.client.post(
             "/api/v1/boms/",
@@ -973,8 +973,9 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(copied.status_code, 201, copied.data)
         copied_number = copied.data["data"]["bom_number"]
-        self.assertRegex(copied_number, r"^BOM\d{7}$")
-        self.assertEqual(int(copied_number[3:]), int(imported_number[3:]) + 1)
+        self.assertRegex(copied_number, r"^BOM[0-9]{6}[0-9]{3,}$")
+        self.assertEqual(copied_number[3:9], imported_number[3:9])
+        self.assertEqual(int(copied_number[9:]), int(imported_number[9:]) + 1)
         self.assertEqual(copied.data["data"]["copied_from_number"], imported_number)
         self.assertEqual(copied.data["data"]["source_sheet_name"], "BOM数据")
         self.assertEqual(copied.data["data"]["line_count"], 3)
@@ -990,8 +991,9 @@ class BomApiTests(APITestCase):
         )
         self.assertEqual(blank.status_code, 201, blank.data)
         blank_number = blank.data["data"]["bom_number"]
-        self.assertRegex(blank_number, r"^BOM\d{7}$")
-        self.assertEqual(int(blank_number[3:]), int(copied_number[3:]) + 1)
+        self.assertRegex(blank_number, r"^BOM[0-9]{6}[0-9]{3,}$")
+        self.assertEqual(blank_number[3:9], copied_number[3:9])
+        self.assertEqual(int(blank_number[9:]), int(copied_number[9:]) + 1)
         self.assertEqual(blank.data["data"]["line_count"], 0)
         self.assertEqual(blank.data["data"]["section_count"], 1)
         self.assertEqual(len(blank.data["data"]["sections"]), 1)

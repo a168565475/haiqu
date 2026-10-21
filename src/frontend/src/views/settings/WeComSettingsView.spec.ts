@@ -15,7 +15,7 @@ const savedCredentials = { secret: 'fixture-secret', callback_token: 'fixturetok
 const credentialFields = { secret: '#wecom-secret', callback_token: '#wecom-token', callback_aes_key: '#wecom-aes' } as const
 const config: WeComConfig = { corp_id: 'corp', agent_id: '1', erp_origin: 'https://erp.test', enabled: false, ...savedCredentials, credential_read_errors: [], has_secret: true, has_callback_token: true, has_callback_aes_key: true, encryption_ready: true, configuration_complete: true, last_check_status: 'NOT_CHECKED', last_check_message: '', last_checked_at: null, login_url: 'https://erp.test/api/auth/wecom/start/', callback_url: 'https://erp.test/api/auth/wecom/callback/', trusted_domain: 'erp.test' }
 const wrappers: ReturnType<typeof mount>[] = []
-async function render() { const wrapper = mount(WeComSettingsView, { attachTo: document.body }); wrappers.push(wrapper); await flushPromises(); return wrapper }
+async function render() { const wrapper = mount(WeComSettingsView, { attachTo: document.body, global: { stubs: { WeComMessagePanel: { template: '<section data-testid="wecom-message-panel" />' } } } }); wrappers.push(wrapper); await flushPromises(); return wrapper }
 function button(text: string) { return new DOMWrapper(Array.from(document.querySelectorAll('button')).find(item => item.textContent?.trim() === text)!) }
 beforeEach(() => {
   setActivePinia(createPinia()); vi.resetAllMocks()
@@ -30,19 +30,24 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = '' })
 
 describe('企业微信管理页', () => {
-  it('成员行分配角色按员工ID进入权限管理员工页，总入口不携带员工目标', async () => {
-    const employeeId = '1f3ad143-9029-4be9-9aef-70a733d93964'
-    api.getWeComBindings.mockResolvedValueOnce({ data: [{
-      id: 'binding', user_id: 'Member.One', member_name: '同名成员', employee_id: employeeId,
-      employee_code: 'WECOM-ONE', employee_name: '同名成员', username: 'wecom_one',
-      role_status: 'waiting', source: 'AUTO', created_at: '2026-10-19T00:00:00Z',
-    }], count: 1, page: 1, page_size: 20 })
-    await render()
-    await button('员工绑定').trigger('click'); await flushPromises()
-    await button('分配角色').trigger('click')
-    expect(push).toHaveBeenLastCalledWith({ name: 'access-management', query: { tab: 'employees', employee_id: employeeId } })
-    await button('前往权限管理').trigger('click')
-    expect(push).toHaveBeenLastCalledWith({ name: 'access-management', query: { tab: 'employees' } })
+  it('保留配置与消息标签，员工核对由独立员工管理入口承接', async () => {
+    const wrapper = await render()
+    expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['接入配置', '消息模板'])
+    expect(wrapper.find('#wecom-tab-bindings').exists()).toBe(false)
+    expect(document.body.querySelector('#wecom-user-id')).toBeNull()
+    await button('进入员工管理 →').trigger('click')
+    expect(push).toHaveBeenCalledWith({ name: 'employee-list' })
+    expect(api.getWeComBindings).not.toHaveBeenCalled()
+    expect(api.getWeComEmployees).not.toHaveBeenCalled()
+    expect(api.bindWeComEmployee).not.toHaveBeenCalled()
+  })
+  it('删除绑定标签后键盘仍可在配置与消息之间循环切换', async () => {
+    const wrapper = await render()
+    await wrapper.get('[role="tablist"]').trigger('keydown', { key: 'ArrowRight' })
+    expect(wrapper.get('#wecom-tab-messages').attributes('aria-selected')).toBe('true')
+    expect(wrapper.find('[data-testid="wecom-message-panel"]').exists()).toBe(true)
+    await wrapper.get('[role="tablist"]').trigger('keydown', { key: 'ArrowLeft' })
+    expect(wrapper.get('#wecom-tab-config').attributes('aria-selected')).toBe('true')
   })
   it('工作台应用主页展示并复制ERP根网址，授权回调仍保留专用路径', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -231,29 +236,23 @@ describe('企业微信管理页', () => {
       expect((wrapper.get(selector).element as HTMLInputElement).value).toBe(savedCredentials[key as keyof typeof savedCredentials])
     }
   })
-  it('绑定需要选择员工并确认身份，409保留弹窗且不合并', async () => {
-    api.bindWeComEmployee.mockRejectedValueOnce(new AxiosError('conflict', undefined, undefined, undefined, { status: 409 } as never))
+  it('配置页保留操作记录入口并显示审计空态', async () => {
     await render()
-    await button('员工绑定').trigger('click'); await flushPromises()
-    await button('绑定已有员工').trigger('click'); await flushPromises()
-    expect(button('确认绑定').attributes('disabled')).toBeDefined()
-    const body = new DOMWrapper(document.body)
-    await body.get('#wecom-user-id').setValue('Member.A')
-    await body.get('#wecom-employee').setValue('employee')
-    await body.get('#wecom-confirm').setValue(true)
-    await button('确认绑定').trigger('click'); await flushPromises()
-    expect(api.bindWeComEmployee).toHaveBeenCalledWith('Member.A', expect.objectContaining({ id: 'employee', etag: 'emp-v1' }))
-    expect(document.body.textContent).toContain('未覆盖或合并')
-    expect(document.body.querySelector('#wecom-user-id')).not.toBeNull()
-  })
-  it('绑定列表空态和查询失败不冒充记录，审计空态单独展示', async () => {
-    const wrapper = await render()
-    await button('员工绑定').trigger('click'); await flushPromises()
-    expect(wrapper.text()).toContain('暂无符合条件的绑定记录')
-    api.getWeComBindings.mockRejectedValueOnce(new Error('network'))
-    await button('查询').trigger('click'); await flushPromises()
-    expect(wrapper.text()).toContain('无法读取绑定记录')
-    await button('绑定记录').trigger('click'); await flushPromises()
+    await button('操作记录').trigger('click'); await flushPromises()
+    expect(api.getWeComAudits).toHaveBeenCalledWith(1)
+    expect(document.body.querySelector('[role="dialog"][aria-label="操作记录"]')).not.toBeNull()
     expect(document.body.textContent).toContain('暂无操作记录')
+  })
+  it('操作记录读取失败可重试，并展示通讯录人工核对动作', async () => {
+    api.getWeComAudits.mockRejectedValueOnce(new Error('network'))
+    await render()
+    await button('操作记录').trigger('click'); await flushPromises()
+    expect(document.body.textContent).toContain('无法读取操作记录')
+    api.getWeComAudits.mockResolvedValueOnce({ data: [{ id: 'audit', action: 'DIRECTORY_MATCH', result: 'SUCCESS',
+      user_id: 'member', employee_name: '已核对员工', actor_name: '管理员', message: '身份已核对', occurred_at: '2026-10-21T00:00:00Z',
+    }], count: 1, page: 1, page_size: 20 })
+    await button('重试').trigger('click'); await flushPromises()
+    expect(document.body.textContent).toContain('人工核对员工')
+    expect(document.body.textContent).toContain('身份已核对')
   })
 })

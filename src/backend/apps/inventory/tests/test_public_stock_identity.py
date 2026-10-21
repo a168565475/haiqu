@@ -211,6 +211,29 @@ class PublicStockIdentityTests(SimpleTestCase):
         sewing = SimpleNamespace(pk=uuid4(), craft_type="EXTERNAL", outsourcing_code="SEWING", name="车缝")
         self.assertNotEqual(self.cutting_semi()["identity_key"], self.cutting_semi(craft=sewing)["identity_key"])
 
+    def test_embroidery_and_printing_keep_cutting_attributes_but_distinct_finished_stock(self):
+        line = self.cutting_line()
+        identities = []
+        for code in ("SEWING", "EMBROIDERY", "SCREEN_PRINTING"):
+            craft = SimpleNamespace(pk=uuid4(), craft_type="EXTERNAL", outsourcing_code=code)
+            identity = self.cutting_semi(line=line, craft=craft)
+            self.assertEqual(validate_public_identity(identity), identity)
+            snapshot = identity["identity_snapshot"]
+            self.assertEqual(snapshot["unit_name"], "套")
+            self.assertEqual(snapshot["pieces_per_set"], 2)
+            self.assertEqual(snapshot["specification"], "450*500")
+            self.assertEqual(snapshot["fabric"]["color_code"], "5865C")
+            identities.append(identity)
+        self.assertEqual(len({item["identity_key"] for item in identities}), 3)
+        for identity in identities[1:]:
+            first = {key: value for key, value in identities[0]["identity_snapshot"].items() if key != "completed_craft"}
+            actual = {key: value for key, value in identity["identity_snapshot"].items() if key != "completed_craft"}
+            self.assertEqual(first, actual)
+
+    def test_embroidery_cannot_be_assigned_to_pipe_stock(self):
+        embroidery = SimpleNamespace(pk=uuid4(), craft_type="EXTERNAL", outsourcing_code="EMBROIDERY")
+        self.assert_invalid(lambda: self.semi(craft=embroidery), "completed_craft")
+
     def test_craft_display_rename_does_not_split_same_completed_process(self):
         initial = self.semi()
         self.coating.name = "管材喷塑"

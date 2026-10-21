@@ -151,6 +151,21 @@ class OutsourcingFactoryApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400, response.data)
 
+    def test_embroidery_factory_is_supported_but_not_legacy_raw_fabric_order(self):
+        embroidery = Craft.objects.create(craft_type=CraftType.EXTERNAL, name="刺绣",
+            outsourcing_code=OutsourcingCode.EMBROIDERY, status=RecordStatus.ACTIVE,
+            created_by_employee=self.employee, updated_by_employee=self.employee)
+        options = self.client.get("/api/v1/outsourcing-factories/options/")
+        self.assertEqual(options.status_code, 200, options.data)
+        self.assertIn(str(embroidery.pk), {str(row["id"]) for row in options.data["data"]["crafts"]})
+        created = self.client.post("/api/v1/outsourcing-factories/",
+            self.payload(craft_ids=[str(embroidery.pk)]), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["data"]["crafts"][0]["name"], "刺绣")
+        legacy = self.client.get("/api/v1/outsourcing-orders/options/")
+        self.assertEqual(legacy.status_code, 200, legacy.data)
+        self.assertNotIn(str(embroidery.pk), {str(row["id"]) for row in legacy.data["data"]["crafts"]})
+
     def test_factory_permissions_are_model_scoped(self):
         user = get_user_model().objects.create_user(username="outsourcing_no_permission")
         Employee.objects.create(user=user, employee_code="OUTSOURCING_NONE", display_name="无权限员工")

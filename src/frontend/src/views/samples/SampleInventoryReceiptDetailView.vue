@@ -89,14 +89,6 @@ function inventoryLocations(line: SampleInventoryReceiptDetail['lines'][number])
   return `${line.location || '—'} / ${finishedLocation}`
 }
 
-function sourceFlowDescription(flowCondition: string): string {
-  const parts: string[] = []
-  if (flowCondition.includes('PMC✓')) parts.push('PMC 审核通过')
-  if (flowCondition.includes('金工✓')) parts.push('金工参数完成')
-  if (flowCondition.includes('裁剪✓')) parts.push('裁剪参数完成')
-  return parts.join(' · ') || '流程条件未完整'
-}
-
 watch(receiptId, () => { void loadDetail() }, { immediate: true })
 onBeforeUnmount(() => { detailRequest++ })
 </script>
@@ -187,8 +179,8 @@ onBeforeUnmount(() => { detailRequest++ })
               {{ line.sample_request_number }}
             </button>
             <span>{{ line.product_name || '—' }}</span>
-            <CustomerActivityTag class="source-status" :tone="line.source_status === '流程已结束' ? 'success' : 'neutral'" :label="line.source_status" />
-            <span class="source-flow" :title="`成品入库单：${line.finished_goods_receipt_number || '—'}；${sourceFlowDescription(line.flow_condition)}`">成品入库单：{{ line.finished_goods_receipt_number || '—' }}；{{ sourceFlowDescription(line.flow_condition) }}</span>
+            <CustomerActivityTag class="source-status" tone="success" label="已入库" />
+            <span class="source-flow" :title="`成品入库单：${line.finished_goods_receipt_number || '—'}；${line.flow_condition || '已入库'}`">成品入库单：{{ line.finished_goods_receipt_number || '—' }}；{{ line.flow_condition || '已入库' }}</span>
           </div>
           <div v-if="!detail.lines.length" class="detail-empty">暂无来源样品</div>
         </div>

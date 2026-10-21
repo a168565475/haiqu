@@ -113,7 +113,7 @@ function confirm(): void {
       </section>
     </div>
     <template #footer>
-      <div class="picker-dialog-footer"><span>订单需求数量 = BOM 单个用量 × 订单数量；管材按支输入、面料按米输入，回货按支/套</span><div><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="!selectedCount" @click="confirm">确认选择</ElButton></div></div>
+      <div class="picker-dialog-footer"><span>订单需求数量按 BOM 与订单计算；管材加工按支、车缝加工按套，实际发料米数单独填写</span><div><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="!selectedCount" @click="confirm">确认选择</ElButton></div></div>
     </template>
   </AppWindowDialog>
 </template>

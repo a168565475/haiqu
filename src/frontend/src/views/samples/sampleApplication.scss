@@ -12,29 +12,22 @@
 .application-heading-actions .submit-error { max-width: 360px; margin: 0; color: token.$crm-danger; font-size: 13px; line-height: 20px; }
 .returned-note { margin: -4px 0 16px; padding: 10px 12px; border-left: 3px solid sample.$action-primary; color: token.$crm-text-secondary; background: token.$crm-color-surface; font-size: 13px; line-height: 20px; }
 .basic-section { min-width: 0; }
-.basic-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px 28px; }
-.basic-grid :deep(.el-form-item), .product-fields > :deep(.el-form-item:not(.requirements-field)), .dimensions-grid :deep(.el-form-item) { height: 72px; }
-.application-form :deep(.el-form-item) { min-width: 0; margin: 0; }
-.application-form :deep(.el-form-item__label) { height: 22px; margin-bottom: 8px; padding: 0; color: token.$crm-text-primary; font-size: 14px; font-weight: 500; line-height: 22px; }
-.application-form :deep(.el-form-item__content) { min-width: 0; line-height: 40px; }
-.application-form :deep(.el-select), .application-form :deep(.el-date-editor.el-input) { width: 100%; }
-.application-form :deep(.el-date-editor .el-input__prefix) { order: 2; margin-left: 8px; }
-.application-form :deep(.el-date-editor .el-input__prefix-inner > :last-child) { margin-right: 0; }
-.application-form :deep(.el-input__wrapper), .application-form :deep(.el-select__wrapper) { background: token.$crm-color-surface; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
-.application-form :deep(.el-input.is-disabled .el-input__wrapper), .application-form :deep(.el-select__wrapper.is-disabled), .application-form :deep(.el-cascader.is-disabled .el-input__wrapper) { background: token.$crm-color-disabled; box-shadow: 0 0 0 1px token.$crm-border-default inset; }
-.application-form :deep(.el-input.is-disabled .el-input__inner) { color: token.$crm-text-secondary; -webkit-text-fill-color: token.$crm-text-secondary; }
-.application-form :deep(.readonly-field.is-disabled .el-input__wrapper) { background: token.$crm-color-page; }
-.application-form :deep(.readonly-field.is-disabled .el-input__inner) { color: token.$crm-text-secondary; -webkit-text-fill-color: token.$crm-text-secondary; }
-.application-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 14px; margin-top: 14px; }
+.basic-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; padding: 0; }
+.basic-grid :deep(.el-form-item), .product-fields > :deep(.el-form-item:not(.requirements-field)), .dimensions-grid :deep(.el-form-item) { height: auto; min-height: 58px; }
+.sample-create-page .application-form :deep(.el-form-item) { min-width: 0; margin: 0; }
+.sample-create-page .application-form :deep(.el-form-item__label) { height: 20px; margin-bottom: 6px; padding: 0; color: token.$crm-text-primary; font-size: 12px; font-weight: 500; line-height: 20px; }
+.sample-create-page .application-form :deep(.el-form-item__content) { min-width: 0; line-height: 32px; }
+.sample-create-page .application-form :deep(.el-select), .sample-create-page .application-form :deep(.el-date-editor.el-input) { width: 100%; }
+.sample-create-page .application-form :deep(.el-date-editor .el-input__prefix) { order: 2; margin-left: 8px; }
+.sample-create-page .application-form :deep(.el-date-editor .el-input__prefix-inner > :last-child) { margin-right: 0; }
+.application-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 12px; margin-top: 12px; }
 .product-section { min-width: 0; }
-.product-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); gap: 28px; }
+.product-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); gap: 20px; }
 .product-image { display: grid; height: 238px; place-items: center; border: 1px solid token.$crm-border-subtle; border-radius: 4px; color: token.$crm-text-muted; background: token.$crm-color-page; font-size: 12px; }
-.product-fields { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
-.dimensions-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
-.requirements-field :deep(.el-textarea__inner) { height: 114px; padding: 12px; color: token.$crm-text-primary; background: token.$crm-color-surface; box-shadow: 0 0 0 1px token.$crm-border-default inset; font-size: 14px; line-height: 22px; }
-.requirements-field :deep(.el-textarea.is-disabled .el-textarea__inner) { background: token.$crm-color-disabled; }
-.requirements-field :deep(.el-textarea__inner:focus) { box-shadow: 0 0 0 1px token.$crm-focus inset; }
-.requirements-field :deep(.el-input__count) { right: 12px; bottom: 8px; color: token.$crm-text-muted; background: transparent; line-height: 22px; }
+.product-fields { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+.dimensions-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sample-create-page .requirements-field :deep(.el-textarea__inner) { height: 78px; line-height: 20px; }
+.sample-create-page .requirements-field :deep(.el-input__count) { right: 12px; bottom: 8px; color: token.$crm-text-muted; background: transparent; line-height: 22px; }
 .application-aside { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
 .upload-section { min-width: 0; }
 .upload-section :deep(h2) { margin-bottom: 12px; }
@@ -60,13 +53,13 @@
 .product-option-spec { max-width: 65%; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; text-overflow: ellipsis; }
 .application-error { padding: 24px; color: token.$crm-danger; background: token.$crm-color-surface; }
 @media (max-width: 1440px) {
-  .basic-grid { gap: 16px; }
+  .basic-grid { gap: 12px 16px; }
   .product-body { grid-template-columns: 160px minmax(0, 1fr); gap: 20px; }
   .dimensions-grid { gap: 8px; }
 }
 @media (max-width: 1200px) {
   .basic-section, .product-section { height: auto; }
-  .basic-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .basic-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .application-columns { grid-template-columns: 1fr; }
   .application-aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

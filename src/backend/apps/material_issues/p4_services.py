@@ -6,7 +6,7 @@ from apps.inventory.public_stock_cutover import stock_write_transaction
 本模块只处理管材加工件的数量状态和半成品合格入库，不恢复原料库存、不创建不良品、不修改原外发单数量。
 """
 
-from decimal import Decimal
+from decimal import Decimal, localcontext
 import hashlib
 import json
 from uuid import uuid4
@@ -23,13 +23,14 @@ from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
 from apps.core.api.exceptions import Conflict
 from apps.core.auth import active_employee_for
 from apps.core.audit import write_audit_log
+from apps.core.numbering import next_business_number
 from apps.audit.models import AuditLog
 from apps.inventory.models import MaterialStockQuality, WarehouseType, WarehouseZone
 from apps.inventory.stock_services import credit_semi_finished_stock
 from apps.inventory.public_bom_snapshot import build_output_identity
 from apps.inventory.public_stock_identity import validate_public_identity
 from apps.inventory.public_stock_mode import require_document_stock_mode
-from apps.inventory.public_stock_services import credit_public_stock
+from apps.inventory.public_stock_services import credit_public_stock, lock_public_stock_locations
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.production_tasks.models import ProductionTask
 from apps.outsourcing.material_flow import lock_request
@@ -137,11 +138,11 @@ def _require_order_etag(request, order):
 
 
 def _order_number():
-    return f"P4-{timezone.localdate():%Y%m%d}-{uuid4().hex[:10].upper()}"
+    return next_business_number("OUTSOURCING_ORDER")
 
 
 def _return_number():
-    return f"P4-R-{timezone.localdate():%Y%m%d}-{uuid4().hex[:10].upper()}"
+    return next_business_number("OUTSOURCING_RETURN")
 
 
 def _original_allocation(source, original_order, factory_id):
@@ -448,6 +449,9 @@ def confirm_original_good_return(*, request, handoff_id, request_id, good_pieces
     unit = get_object_or_404(ProductionUnit, pk=identity["unit_id"])
     zones = WarehouseZone.objects.all() if public_mode else WarehouseZone.objects.select_for_update(of=("self",))
     zone = get_object_or_404(zones.select_related("warehouse"), pk=zone_id)
+    if public_mode:
+        # 与普通回货统一先锁库区，再取共享 WH 日流水，避免双方反序等待。
+        zone = lock_public_stock_locations([zone.pk])[zone.pk]
     if zone.status != "ACTIVE" or zone.warehouse.status != "ACTIVE" or zone.warehouse.warehouse_type != WarehouseType.SEMI_FINISHED:
         raise ValidationError({"zone_id": "合格回货只能进入启用的半成品库区。"})
     receiver = _active_employee(received_by_employee_id)
@@ -564,6 +568,9 @@ def _allocation_context(order, request=None):
 def _order_result(order, request=None):
     closure = getattr(order, "closure", None)
     handoff = getattr(order, "handoff", None)
+    with localcontext() as context:
+        context.prec = 40
+        planned_amount = format(order.unit_price * order.allocated_pieces, '.2f') if order.unit_price is not None else None
     return {
         "id": str(order.pk), "order_number": order.order_number,
         "stock_mode": order.stock_mode, "public_output_identity": order.output_identity_snapshot or None,
@@ -571,6 +578,8 @@ def _order_result(order, request=None):
         "original_return_id": str(order.original_return_id), "factory_id": str(order.factory_id),
         "factory_name": order.factory.name, "craft_id": str(order.craft_id),
         "craft_name": order.craft.name, "allocated_pieces": order.allocated_pieces,
+        "unit_price": str(order.unit_price) if order.unit_price is not None else None,
+        "planned_amount": planned_amount,
         "handoff_pieces": order.handoff_pieces, "returned_good_pieces": order.returned_good_pieces,
         "remaining_return_pieces": order.handoff_pieces - order.returned_good_pieces,
         "status": order.status, "version": order.version, "etag": _p4_order_etag(order),
@@ -854,7 +863,7 @@ def _validate_p4_factory_craft(factory_id, craft_id):
 
 
 @stock_write_transaction
-def create_external_order(*, request, rework_id, request_id, factory_id, craft_id, allocated_pieces):
+def create_external_order(*, request, rework_id, request_id, factory_id, craft_id, allocated_pieces, unit_price=None):
     require_record(request, "material_issues.create_metalprocessingexternalorder", "rework", rework_id)
     resource_scopes.require_craft(request, "material_issues.create_metalprocessingexternalorder", craft_id)
     require_external_destination(request, rework_id, craft_id)
@@ -862,6 +871,9 @@ def create_external_order(*, request, rework_id, request_id, factory_id, craft_i
     lock_request("metal-p4-external-order", request_id)
     payload = {"rework_id": str(rework_id), "factory_id": str(factory_id), "craft_id": str(craft_id),
                "allocated_pieces": allocated_pieces}
+    # 未传单价的历史请求保留原摘要，避免重试被误判为新内容。
+    if unit_price is not None:
+        payload["unit_price"] = format(unit_price, '.2f')
     request_hash = _payload_hash(payload)
     existing = MetalProcessingExternalOrder.objects.filter(client_request_id=request_id).first()
     if existing:
@@ -887,7 +899,7 @@ def create_external_order(*, request, rework_id, request_id, factory_id, craft_i
         stock_mode="PUBLIC_V2" if public_mode else origin_order.stock_mode, output_identity_snapshot=output_identity,
         order_number=_order_number(), rework=rework, source=rework.source,
         original_return=rework.unsprayed_return, factory=factory, craft=craft,
-        allocated_pieces=allocated_pieces, client_request_id=request_id,
+        allocated_pieces=allocated_pieces, unit_price=unit_price, client_request_id=request_id,
         request_payload_hash=request_hash, created_by_employee=actor, updated_by_employee=actor,
     )
     return _order_result(order, request)
@@ -1024,6 +1036,9 @@ def confirm_external_good_return(*, request, order_id, request_id, good_pieces, 
         bom_line = BomLine.objects.select_for_update(of=("self",), no_key=True).get(pk=bom_line.pk)
     zones = WarehouseZone.objects.all() if public_mode else WarehouseZone.objects.select_for_update(of=("self",))
     zone = get_object_or_404(zones.select_related("warehouse"), pk=zone_id)
+    if public_mode:
+        # 与普通回货统一先锁库区，再取共享 WH 日流水，避免双方反序等待。
+        zone = lock_public_stock_locations([zone.pk])[zone.pk]
     if zone.status != "ACTIVE" or zone.warehouse.status != "ACTIVE" or zone.warehouse.warehouse_type != WarehouseType.SEMI_FINISHED:
         raise ValidationError({"zone_id": "合格回货只能进入启用的半成品库区。"})
     receiver = _active_employee(received_by_employee_id)

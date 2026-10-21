@@ -16,8 +16,8 @@ export async function fetchSemiReceiptRecords(params: Record<string, unknown>) {
   const response = await apiClient.get<{ data: { items: SemiReceiptRecord[]; total: number } }>(root, { params, timeout: 15000 })
   return response.data.data
 }
-export async function fetchSemiReceiptRecord(id: string) {
-  const response = await apiClient.get<{ data: SemiReceiptRecord }>(`${root}${id}/`, { timeout: 15000 })
+export async function fetchSemiReceiptRecord(id: string, direction: 'IN' | 'OUT' = 'IN') {
+  const response = await apiClient.get<{ data: SemiReceiptRecord }>(`${root}${id}/`, { params: { direction }, timeout: 15000 })
   return response.data.data
 }
 

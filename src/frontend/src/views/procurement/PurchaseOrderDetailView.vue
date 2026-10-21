@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { usePageTabsStore } from '@/stores/pageTabs'
 import type { PurchaseOrderReadDetail } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue, type MaterialAttributeSource } from '@/utils/materialAttributes'
-import { formatMoney, formatQuantity, formatTime, formatUnitPrice, quantityTotal } from './purchaseOrderDetailDisplay'
+import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
 
 type Tab = 'materials' | 'inbounds' | 'returns' | 'completion'
 interface Column { key: string; label: string; width: number; numeric?: boolean }
@@ -108,38 +108,36 @@ const columns = computed(() => {
   return isSample ? sampleMaterialColumns : materialColumns
 })
 const tableWidth = computed(() => columns.value.reduce((total, column) => total + column.width, 0))
-const quantityWithUnit = (value: unknown, unit: string) => {
-  const number = formatQuantity(value)
-  return number === '—' ? number : `${number}${unit ? ` ${unit}` : ''}`
-}
 const rows = computed<RecordRow[]>(() => {
   if (!order.value) return []
   if (activeTab.value === 'materials') return order.value.lines.map((line, index) => ({ id: line.id, materialSource: line, cells: {
-    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: quantityWithUnit(line.actual_purchase_quantity, line.source_unit_text),
-    price: formatUnitPrice(line.unit_price), amount: formatMoney(line.amount), received: quantityWithUnit(line.received_quantity, line.source_unit_text),
-    accepted: quantityWithUnit(line.accepted_quantity, line.source_unit_text), returned: quantityWithUnit(line.return_quantity, line.source_unit_text),
+    index: String(index + 1), name: line.part_name || line.raw_material || '—', specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', purchase: purchaseQuantityText(line.actual_purchase_quantity, line.source_unit_text, line.raw_bar_length_m, line.actual_bar_count),
+    price: `${formatUnitPrice(line.unit_price)}${line.raw_bar_length_m && line.unit_price !== null ? ` ${order.value?.currency_code === 'CNY' ? '元' : order.value?.currency_code || '币种未记录'}/米` : ''}`, amount: formatMoney(line.amount), received: purchaseQuantityText(line.received_quantity, line.source_unit_text, line.raw_bar_length_m, line.received_bar_count),
+    accepted: purchaseQuantityText(line.accepted_quantity, line.source_unit_text, line.raw_bar_length_m, line.accepted_bar_count), returned: purchaseQuantityText(line.return_quantity, line.source_unit_text, line.raw_bar_length_m, line.return_bar_count),
   } }))
   if (activeTab.value === 'inbounds') {
     const materials = new Map(order.value.lines.map(line => [line.id, line]))
     return order.value.inbounds.flatMap(batch => batch.lines.map(line => ({ id: line.id, status: batch.status, materialSource: line, cells: {
       number: batch.inbound_number, date: batch.inbound_date, name: line.part_name_snapshot, specification: order.value?.source_type === 'SAMPLE' ? (line.specification_snapshot || '—') : materialSpecificationValue(line), material: line.material_snapshot || '—', color: materials.get(line.purchase_order_line_id)?.color || '—', supplier: line.supplier_name_snapshot || '—',
-      received: quantityWithUnit(line.received_quantity, line.source_unit_text_snapshot),
-      accepted: batch.status === 'CONFIRMED' ? quantityWithUnit(line.accepted_quantity, line.source_unit_text_snapshot) : '—',
-      returned: batch.status === 'CONFIRMED' ? quantityWithUnit(line.return_quantity, line.source_unit_text_snapshot) : '—',
+      received: purchaseQuantityText(line.received_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.received_bar_count),
+      accepted: batch.status === 'CONFIRMED' ? purchaseQuantityText(line.accepted_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.accepted_bar_count) : '—',
+      returned: batch.status === 'CONFIRMED' ? purchaseQuantityText(line.return_quantity, line.source_unit_text_snapshot, line.raw_bar_length_m, line.return_bar_count) : '—',
       status: batch.status_display, warehouse: [line.warehouse_name, line.zone_name, line.location_number].filter(Boolean).join(' / ') || '—',
       receiver: batch.received_by_name || '—', inspector: batch.quality_confirmed_by_name || '—', time: formatTime(batch.quality_confirmed_at), remark: line.quality_remark || '—',
     } })))
   }
   return order.value.returns.flatMap(record => record.lines.map(line => ({ id: line.id, status: record.status, materialSource: line, cells: {
-    number: record.return_number, inbound: record.inbound_number, name: line.part_name, specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', supplier: record.supplier_name || '—', quantity: quantityWithUnit(line.quantity, line.unit), status: record.status_display,
+    number: record.return_number, inbound: record.inbound_number, name: line.part_name, specification: order.value?.source_type === 'SAMPLE' ? (line.specification || '—') : materialSpecificationValue(line), material: line.material || '—', color: line.color || '—', supplier: record.supplier_name || '—', quantity: purchaseQuantityText(line.quantity, line.unit, line.raw_bar_length_m, line.return_bar_count), status: record.status_display,
     remark: line.quality_remark || '—', confirmedBy: record.confirmed_by_name || '—', completedBy: record.completed_by_name || '—', time: formatTime(record.completed_at),
   } })))
 })
 const totals = computed<Record<string, string>>(() => {
   const lines = order.value?.lines ?? []
-  return { index: '合计', purchase: quantityTotal(lines, lines.map(line => line.actual_purchase_quantity)),
-    amount: formatMoney(order.value?.total_amount), received: quantityTotal(lines, lines.map(line => line.received_quantity)),
-    accepted: quantityTotal(lines, lines.map(line => line.accepted_quantity)), returned: quantityTotal(lines, lines.map(line => line.return_quantity)) }
+  const units = lines.map(line => ({ source_unit_text: line.raw_bar_length_m ? '根' : line.source_unit_text }))
+  const quantity = (line: typeof lines[number], meters: unknown, bars: unknown) => line.raw_bar_length_m ? (bars == null ? null : String(bars)) : meters
+  return { index: '合计', purchase: quantityTotal(units, lines.map(line => quantity(line, line.actual_purchase_quantity, line.actual_bar_count))),
+    amount: formatMoney(order.value?.total_amount), received: quantityTotal(units, lines.map(line => quantity(line, line.received_quantity, line.received_bar_count))),
+    accepted: quantityTotal(units, lines.map(line => quantity(line, line.accepted_quantity, line.accepted_bar_count))), returned: quantityTotal(units, lines.map(line => quantity(line, line.return_quantity, line.return_bar_count))) }
 })
 function statusTone(status: string) {
   return ['COMPLETED', 'CONFIRMED'].includes(status) ? 'success' : ['DRAFT', 'PENDING_QUALITY', 'QUALITY_GENERATED'].includes(status) ? 'warning' : 'info'

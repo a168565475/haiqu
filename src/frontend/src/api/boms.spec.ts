@@ -71,6 +71,21 @@ describe('BOM API', () => {
     expect(mockedPost).not.toHaveBeenCalled()
   })
 
+  it('裁剪保存和预检省略历史耗米字段，面料采购单耗仍原样提交', async () => {
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'bom-1' } }, headers: { etag: 'v2' } })
+    const sections = [
+      { title: '面料类', section_type: 'FABRIC', lines: [{ unit_consumption: '1.5', total_consumption: '150' }] },
+      { title: '裁剪明细', section_type: 'FABRIC', lines: [{ cutting_pieces_per_set: 2, cutting_sets_per_product: 3, fabric_meters_per_piece: '0.5', fabric_meters_per_set: '1', unit_consumption: '0.5', total_consumption: '300' }] },
+    ]
+    await previewBomMaterialSave('bom-1', sections as never, 'v1', { intent: 'draft' })
+    await saveBomDraft('bom-1', sections as never, 'v1', { intent: 'draft' })
+    const expected = { sections: [sections[0], { title: '裁剪明细', section_type: 'FABRIC', lines: [{ cutting_pieces_per_set: 2, cutting_sets_per_product: 3 }] }], intent: 'draft' }
+    expect(mockedPost.mock.calls[0]![1]).toEqual(expected)
+    expect(mockedPatch.mock.calls[0]![1]).toEqual(expected)
+    expect(sections[1]!.lines[0]).toHaveProperty('fabric_meters_per_set', '1')
+  })
+
   it('同一保存请求保留面料临时标识与裁剪引用，不传图片草稿 key', async () => {
     mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'bom-1', sections: [] } }, headers: { etag: 'v2' } })
     const key = '11111111-1111-4111-8111-111111111111'

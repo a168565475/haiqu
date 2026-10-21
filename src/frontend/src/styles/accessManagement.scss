@@ -28,6 +28,12 @@
 .access-title-line {display:flex;align-items:center;gap:14px;span{color:t.$crm-text-secondary;}}
 .access-tabs {display:flex;gap:28px;border-bottom:1px solid t.$crm-border-default;margin-bottom:14px;flex:none;button{border:0;border-radius:0;background:none;padding:0 2px;color:t.$crm-text-secondary;&.active{border-bottom:2px solid t.$crm-primary;color:t.$crm-primary;font-weight:600;}}}
 .access-role-layout, .access-team-layout {display:grid;grid-template-columns:236px minmax(0,1fr);gap:14px;flex:1;min-height:0;}
+.access-department-layout {grid-template-columns:190px 210px minmax(0,1fr);min-width:0;}
+.access-department-list .access-boxhead {display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.access-department-row {display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:8px 0;border-bottom:1px solid var(--erp-input-border);label{display:flex;align-items:center;gap:6px;min-width:100px;}input[type='radio']{margin:0;}}
+.access-department-history {overflow:auto;table{min-width:620px;}td{padding:8px;}}
+@media(max-width:1100px) {.access-department-layout {grid-template-columns:150px 170px minmax(0,1fr);gap:10px;}.access-department-layout .access-editorhead{align-items:flex-start;}.access-department-layout .access-actions{gap:8px;}}
+@media(max-width:760px) {.access-department-layout {grid-template-columns:130px minmax(0,1fr);grid-template-rows:280px minmax(450px,1fr);align-content:start;overflow:auto;}.access-department-layout>.access-editor,.access-department-layout>.access-empty{grid-column:1 / -1;min-height:450px;}.access-department-layout>.access-role-list{max-height:320px;}}
 .access-box {@include detail.surface; overflow:hidden;}
 .access-role-list {display:flex;flex-direction:column;>input{margin:14px 14px 10px;width:calc(100% - 28px);flex:none;}footer{padding:12px 14px;border-top:1px solid t.$crm-border-default;font-size:11px;color:t.$crm-text-secondary;}}
 .access-boxhead {padding:14px;border-bottom:1px solid t.$crm-border-default;flex:none;}

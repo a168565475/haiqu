@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -19,6 +20,11 @@ class WeComError(Exception):
         self.message = message
         self.status = status
         super().__init__(message)
+
+
+class WeComSendUncertain(WeComError):
+    def __init__(self):
+        super().__init__("SEND_UNCERTAIN", "发送结果待核对，请先查看企业微信，勿重复发送。")
 
 
 ERROR_MESSAGES = {
@@ -218,3 +224,65 @@ class WeComClient:
         if not isinstance(name, str):
             raise _error()
         return {"agentid": self.agent_id, "name": name}
+
+    @sensitive_variables()
+    def _post_message(self, token, payload):
+        request = Request(self.API_BASE_URL + "message/send?" + urlencode({"access_token": token}),
+                          data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                          headers={"Accept": "application/json", "Content-Type": "application/json"}, method="POST")
+        try:
+            with self.opener.open(request, timeout=self.TIMEOUT_SECONDS) as response:
+                if response.status != 200:
+                    raise WeComSendUncertain()
+                body = response.read(self.MAX_RESPONSE_BYTES + 1)
+        except HTTPError as error:
+            error.close()
+            raise WeComSendUncertain() from None
+        except (URLError, OSError, HTTPException):
+            # POST 发出后无法由网络异常判断对方是否已经接受，绝不自动重发。
+            raise WeComSendUncertain() from None
+        if len(body) > self.MAX_RESPONSE_BYTES:
+            raise WeComSendUncertain()
+        try:
+            result = json.loads(body.decode("utf-8"))
+        except (UnicodeError, ValueError):
+            raise WeComSendUncertain() from None
+        if not isinstance(result, dict) or type(result.get("errcode")) is not int:
+            raise WeComSendUncertain()
+        return result
+
+    @sensitive_variables()
+    def send_text(self, user_id, content):
+        valid_recipient = isinstance(user_id, str) and re.fullmatch(r"[A-Za-z0-9_.@-]{1,64}", user_id) and user_id.lower() != "@all"
+        try:
+            valid_content = (isinstance(content, str) and content.strip() and len(content.encode("utf-8")) <= 2048
+                             and not any(ord(char) < 32 and char not in "\n\r\t" for char in content))
+        except UnicodeError:
+            valid_content = False
+        if not valid_recipient or not valid_content:
+            raise WeComError("MESSAGE_REJECTED", "接收人或消息正文无效。", 400)
+        payload = {"touser": user_id, "msgtype": "text", "agentid": self.agent_id, "text": {"content": content},
+                   "enable_duplicate_check": 1, "duplicate_check_interval": 1800}
+        token = self._access_token()
+        result = self._post_message(token, payload)
+        if result["errcode"] in (40014, 42001):
+            # 官方明确拒绝旧 token 才可重试一次；同一正文及接收人保持不变。
+            token = self._access_token(rejected_token=token)
+            result = self._post_message(token, payload)
+        if result["errcode"] != 0:
+            code, message = UPSTREAM_ERRORS.get(result["errcode"], ("MESSAGE_REJECTED", "企业微信明确拒绝了消息。"))
+            if result["errcode"] == 81013 or code == "MEMBER_REJECTED":
+                code, message = "RECIPIENT_REJECTED", "接收人无效、不在应用可见范围内或缺少接口许可。"
+            raise WeComError(code, message)
+        for field in ("invaliduser", "unlicenseduser", "invalidparty", "invalidtag"):
+            invalid = result.get(field, "")
+            if not isinstance(invalid, str):
+                raise WeComSendUncertain()
+            if invalid:
+                if field in ("invaliduser", "unlicenseduser") and user_id.lower() in invalid.lower().split("|"):
+                    raise WeComError("RECIPIENT_REJECTED", "接收人无效、不在应用可见范围内或缺少接口许可。")
+                raise WeComSendUncertain()
+        msgid = result.get("msgid")
+        if not _valid_text(msgid, 512):
+            raise WeComSendUncertain()
+        return {"msgid": msgid}

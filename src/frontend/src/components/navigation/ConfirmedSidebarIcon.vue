@@ -77,6 +77,13 @@ defineProps<{ name: string }>()
       <path class="icon-muted" d="M3 43V17L24 5l21 12v26h-9V22H12v21Z" />
     </g>
 
+    <g v-else-if="name === 'employee-management'">
+      <circle class="icon-warm" cx="16" cy="13" r="7" />
+      <path class="icon-warm" d="M3 38v-5c0-7 5-11 13-11 4 0 7 1 10 4" />
+      <rect class="icon-muted" x="25" y="23" width="19" height="20" rx="3" />
+      <path class="icon-accent-stroke" d="M30 20v6m9-6v6m-14 5h19m-13 5 3 3 5-5" />
+    </g>
+
     <g v-else-if="name === 'boards'">
       <path d="m14 42 9-9m2 0 9 9" />
       <rect x="5" y="8" width="38" height="26" rx=".7" />

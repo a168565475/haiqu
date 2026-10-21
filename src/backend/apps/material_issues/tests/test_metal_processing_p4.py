@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.db import close_old_connections, connection, transaction
 from django.db.migrations.recorder import MigrationRecorder
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase, APITransactionTestCase
 
@@ -82,6 +83,8 @@ class MetalProcessingP4Fixture(ProcessingFixture):
         return MetalProcessingExternalOrder.objects.get(pk=response.data["data"]["id"])
 
 
+# P4 旧完成登记夹具不含 D1 工价报工；显式验证保留旧流程，不受运行环境开关影响。
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingP4ApiTests(MetalProcessingP4Fixture, APITestCase):
     def original_good_context(self, handoff):
         response = self.client.get(f"/api/v1/metal-processing-handoffs/{handoff.pk}/")
@@ -109,6 +112,8 @@ class MetalProcessingP4ApiTests(MetalProcessingP4Fixture, APITestCase):
         self.assertEqual((result["returned_good_pieces"], result["remaining_return_pieces"]), (3, 5))
         self.assertEqual(result["original_order_status"], "PARTIAL_RETURN")
         self.assertEqual(result["good_returns"][0]["good_pieces"], 3)
+        self.assertRegex(OutsourcingReturn.objects.get().return_number,
+            rf"^WH{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
         self.post(url, payload, etag=context["etag"])
         self.assertEqual(OutsourcingReturn.objects.count(), 1)
         self.assertEqual(SemiFinishedStockMovement.objects.count(), 1)
@@ -305,6 +310,13 @@ class MetalProcessingP4ApiTests(MetalProcessingP4Fixture, APITestCase):
                   {"request_id": str(uuid.uuid4()), "factory_id": str(self.f.factory.pk),
                    "craft_id": str(self.f.spray.pk), "allocated_pieces": 5}, etag='"ignored"', expected=201)
         self.assertEqual(MetalProcessingExternalOrder.objects.filter(rework_id=rework_id).count(), 2)
+        prefix = f"WF{timezone.localdate():%y%m%d}"
+        original_number = OutsourcingOrder.objects.get(pk=self.original_order).order_number
+        self.assertRegex(original_number, rf"^{prefix}[0-9]{{3,}}$")
+        first_sequence = int(original_number[len(prefix):])
+        self.assertSetEqual(set(MetalProcessingExternalOrder.objects.filter(rework_id=rework_id)
+            .values_list('order_number', flat=True)),
+            {f"{prefix}{first_sequence + offset:03d}" for offset in (1, 2)})
         source = self.line.processing_source
         source.refresh_from_db()
         self.assertEqual((source.completed_pieces, source.dispatched_pieces), (12, 8))
@@ -358,6 +370,11 @@ class MetalProcessingP4ApiTests(MetalProcessingP4Fixture, APITestCase):
         )
         self.assertEqual(final.data["data"]["status"], MetalProcessingExternalOrderStatus.COMPLETED)
         self.assertEqual(MetalProcessingExternalGoodReturn.objects.filter(order=order).count(), 3)
+        return_numbers = list(MetalProcessingExternalGoodReturn.objects.filter(order=order)
+            .values_list('return_number', flat=True))
+        self.assertEqual(len(set(return_numbers)), 3)
+        for number in return_numbers:
+            self.assertRegex(number, rf"^WH{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
         self.assertEqual(MetalProcessingExternalClosure.objects.filter(order=order).count(), 1)
         self.assertEqual(SemiFinishedStockBalance.objects.get().quantity, 5)
 
@@ -651,6 +668,7 @@ class OriginalClosureFixture(MetalProcessingP4Fixture):
         return MetalProcessingOriginalHandoff.objects.get(pk=result.data["data"]["operation_id"])
 
 
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingOriginalClosureTests(OriginalClosureFixture, APITestCase):
     def test_pending_plan_blocks_finish_and_close_until_explicit_cancel(self):
         handoff = self.prepare_original(plan=18)
@@ -887,6 +905,7 @@ class P4AllocationFixture(MetalProcessingP4Fixture):
         return response.data["data"]
 
 
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingP4AllocationTests(P4AllocationFixture, APITestCase):
     def test_adjustment_releases_own_allocation_and_keeps_stock_and_source_unchanged(self):
         from apps.audit.models import AuditLog
@@ -1015,6 +1034,7 @@ class MetalProcessingP4AllocationTests(P4AllocationFixture, APITestCase):
         self.assertEqual((current["allocated_pieces"], current["version"], current["allocation_history"]), (8, 1, []))
 
 
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingP4AllocationConcurrencyTests(P4AllocationFixture, APITransactionTestCase):
     serialized_rollback = True
 
@@ -1074,6 +1094,7 @@ class MetalProcessingP4AllocationConcurrencyTests(P4AllocationFixture, APITransa
         self.assertIn((current["allocated_pieces"], current["handoff_pieces"]), ((10, 0), (8, 8)))
 
 
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingOriginalClosureConcurrencyTests(OriginalClosureFixture, APITransactionTestCase):
     serialized_rollback = True
     concurrent_posts = MetalProcessingP4AllocationConcurrencyTests.concurrent_posts
@@ -1137,6 +1158,7 @@ class MetalProcessingOriginalClosureConcurrencyTests(OriginalClosureFixture, API
         self.assertEqual(current["original_order_status"], "CLOSED")
 
 
+@override_settings(TUBE_OUTSOURCING_ENABLED=False)
 class MetalProcessingP4LockOrderTests(MetalProcessingP4Fixture, APITransactionTestCase):
     serialized_rollback = True
 

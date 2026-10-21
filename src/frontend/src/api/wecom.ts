@@ -1,6 +1,6 @@
 import { isAxiosError } from 'axios'
 import { apiClient } from './request'
-import type { WeComAudit, WeComBinding, WeComConfig, WeComConfigResponse, WeComConfigWrite, WeComEmployeeOption, WeComPage } from '@/types/wecom'
+import type { WeComAudit, WeComBinding, WeComConfig, WeComConfigResponse, WeComConfigWrite, WeComEmployeeOption, WeComPage, WeComMessageTemplate, WeComMessageTemplateResponse, WeComMessageTemplateWrite, WeComMessageTestWrite, WeComMessageAttempt, WeComMessageAttemptQuery } from '@/types/wecom'
 
 const root = '/api/v1/wecom/'
 const options = (etag?: string) => ({ timeout: 20000, ...(etag ? { headers: { 'If-Match': etag } } : {}) })
@@ -42,8 +42,30 @@ export async function getWeComAudits(page = 1): Promise<WeComPage<WeComAudit>> {
   return (await apiClient.get<WeComPage<WeComAudit>>(root + 'audits/', { ...options(), params: { page, page_size: 20 } })).data
 }
 
+function messageTemplateResult(response: { data: { data: WeComMessageTemplate }; headers: Record<string, unknown> }): WeComMessageTemplateResponse {
+  const etag = response.headers.etag
+  if (typeof etag !== 'string' || !etag) throw new Error('模板版本缺失，无法安全保存或发送。')
+  return { data: response.data.data, etag }
+}
+
+export async function getWeComMessageTemplate(): Promise<WeComMessageTemplateResponse> {
+  return messageTemplateResult(await apiClient.get<{ data: WeComMessageTemplate }>(root + 'message-template/', options()))
+}
+
+export async function saveWeComMessageTemplate(data: WeComMessageTemplateWrite, etag: string): Promise<WeComMessageTemplateResponse> {
+  return messageTemplateResult(await apiClient.patch<{ data: WeComMessageTemplate }>(root + 'message-template/', data, options(etag)))
+}
+
+export async function sendWeComMessageTest(data: WeComMessageTestWrite, etag: string): Promise<WeComMessageAttempt> {
+  return (await apiClient.post<{ data: WeComMessageAttempt }>(root + 'message-tests/', data, options(etag))).data.data
+}
+
+export async function getWeComMessageAttempts(params: WeComMessageAttemptQuery): Promise<WeComPage<WeComMessageAttempt>> {
+  return (await apiClient.get<WeComPage<WeComMessageAttempt>>(root + 'message-attempts/', { ...options(), params })).data
+}
+
 const knownErrorCodes = new Set(['VALIDATION_ERROR', 'AUTHENTICATION_REQUIRED', 'PERMISSION_DENIED', 'NOT_FOUND', 'TOO_MANY_REQUESTS', 'CONFLICT', 'PRECONDITION_FAILED', 'PRECONDITION_REQUIRED', 'REQUEST_FAILED', 'WECOM_UNAVAILABLE', 'WECOM_UPSTREAM_ERROR', 'WECOM_ROLE_REQUIRED'])
-const fieldLabels: Record<string, string> = { corp_id: '企业 ID', agent_id: '应用 ID', erp_origin: 'ERP 访问地址', enabled: '启用状态', secret: '应用 Secret', callback_token: '消息回调 Token', callback_aes_key: 'EncodingAESKey', user_id: '企业微信账号', employee_id: 'ERP 员工', confirmed: '身份确认', search: '搜索条件', status: '状态', page: '页码', page_size: '每页条数', non_field_errors: '提交内容' }
+const fieldLabels: Record<string, string> = { corp_id: '企业 ID', agent_id: '应用 ID', erp_origin: 'ERP 访问地址', enabled: '启用状态', secret: '应用 Secret', callback_token: '消息回调 Token', callback_aes_key: 'EncodingAESKey', user_id: '企业微信账号', employee_id: 'ERP 员工', confirmed: '身份确认', search: '搜索条件', status: '状态', page: '页码', page_size: '每页条数', non_field_errors: '提交内容', name: '模板名称', body: '消息正文', binding_id: '接收员工', message_content: '测试内容', idempotency_key: '发送请求编号' }
 
 export function wecomError(error: unknown): string {
   if (!isAxiosError(error) || !error.response) return '请求未确认完成，请重新加载核实结果后再操作。'

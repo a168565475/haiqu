@@ -184,6 +184,91 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         self.assertEqual(records.data['data']['total'],1)
         self.assertEqual(records.data['data']['items'][0]['source_type_display'],'样品入库')
 
+    def test_records_exclude_samples_before_count_and_pagination(self):
+        assembly=self.post(self.payload(received_quantity=2))
+        self.assertEqual(assembly.status_code,201,assembly.data)
+        payload=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=2,quantity_per_box=None,expected_received_total=2)
+        production=self.client.post('/api/v1/finished-goods-inventory/receipts/',payload,format='json')
+        self.assertEqual(production.status_code,201,production.data)
+        sample=self.client.post('/api/v1/finished-goods-inventory/receipts/',{**payload,'expected_received_total':4},format='json')
+        self.assertEqual(sample.status_code,201,sample.data)
+        FinishedGoodsReceipt.objects.filter(pk=sample.data['data']['id']).update(
+            source_type='SAMPLE_INVENTORY',production_task_product=None,source_document_number='SYGJ-EXCLUDE-TEST')
+        url='/api/v1/finished-goods-records/'
+        self.assertEqual(self.client.get(url).data['data']['total'],3)
+        sources=set()
+        for page in [1,2]:
+            response=self.client.get(url,{'exclude_sample':'true','page_size':1,'page':page})
+            self.assertEqual(response.status_code,200,response.data)
+            self.assertEqual(response.data['data']['total'],2)
+            self.assertEqual(len(response.data['data']['items']),1)
+            sources.add(response.data['data']['items'][0]['source_type'])
+        self.assertEqual(sources,{'ASSEMBLY','PRODUCTION_ORDER'})
+        samples=self.client.get(url,{'source':'SAMPLE_INVENTORY','exclude_sample':'true'})
+        self.assertEqual(samples.data['data'],{'items':[],'total':0})
+        self.assertEqual(self.client.get(url,{'source':'SAMPLE_INVENTORY'}).data['data']['total'],1)
+
+    def test_records_reject_invalid_sample_exclusion(self):
+        response=self.client.get('/api/v1/finished-goods-records/',{'exclude_sample':'invalid'})
+        self.assertEqual(response.status_code,400,response.data)
+
+    def test_inventory_excludes_samples_before_aggregation_and_pagination(self):
+        for quantity in [2,1]:
+            response=self.post(self.payload(received_quantity=quantity))
+            self.assertEqual(response.status_code,201,response.data)
+        payload=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=2,quantity_per_box=None,
+            expected_received_total=3,actual_color='白色')
+        response=self.client.post('/api/v1/finished-goods-inventory/receipts/',payload,format='json')
+        self.assertEqual(response.status_code,201,response.data)
+        sample=self.client.post('/api/v1/finished-goods-inventory/receipts/',
+            {**payload,'expected_received_total':5,'actual_color':'黑色'},format='json')
+        self.assertEqual(sample.status_code,201,sample.data)
+        sample_id=sample.data['data']['id']
+        # 保留相同汇总键，验证样品批次不会混入正式批次的数量、批次数和详情。
+        FinishedGoodsReceipt.objects.filter(pk=sample_id).update(source_type='SAMPLE_INVENTORY')
+        sample_only=FinishedGoodsReceipt.objects.get(pk=sample_id)
+        sample_only.pk=None;sample_only.receipt_number='SAMPLE-ONLY-STOCK'
+        sample_only.production_task_product=None;sample_only.actual_color='样品专用色'
+        sample_only.save()
+        url='/api/v1/finished-goods-inventory/'
+        original=self.client.get(url)
+        self.assertEqual(original.status_code,200,original.data)
+        self.assertEqual(original.data['count'],3)
+        black=next(row for row in original.data['results'] if row['actual_color']=='黑色')
+        self.assertEqual((black['inventory_quantity'],black['batch_count']),(5,3))
+        colors=set()
+        fields=['product_id','unit_id','zone_id','product_number','product_code','product_name','item_number','category','specification','actual_color']
+        for page in [1,2]:
+            result=self.client.get(url,{'exclude_sample':'true','page_size':1,'page':page})
+            self.assertEqual(result.status_code,200,result.data)
+            self.assertEqual(result.data['count'],2)
+            self.assertEqual(len(result.data['results']),1)
+            row=result.data['results'][0];colors.add(row['actual_color'])
+            self.assertNotIn(str(sample_id),[str(pk) for pk in row['receipt_ids']])
+            expected=(3,2) if row['actual_color']=='黑色' else (2,1)
+            self.assertEqual((row['inventory_quantity'],row['batch_count']),expected)
+            detail=self.client.get('/api/v1/finished-goods-records/locations/',
+                {**{key:row[key] for key in fields},'exclude_sample':'true'})
+            self.assertEqual(detail.status_code,200,detail.data)
+            self.assertEqual(sum(item['quantity'] for item in detail.data['data']['items']),row['inventory_quantity'])
+        self.assertEqual(colors,{'黑色','白色'})
+        self.assertEqual(self.client.get(url,{'exclude_sample':'true','page_size':1,'page':3}).data['results'],[])
+        self.assertEqual(self.client.get(url,{'exclude_sample':'true','q':'样品专用色'}).data['count'],0)
+        self.assertEqual(self.client.get(url,{'exclude_sample':'false'}).data['count'],3)
+        self.assertEqual(FinishedGoodsReceipt.objects.filter(source_type='SAMPLE_INVENTORY').count(),2)
+
+    def test_inventory_scope_validation_and_permissions(self):
+        url='/api/v1/finished-goods-inventory/'
+        for target in [url,'/api/v1/finished-goods-records/locations/']:
+            response=self.client.get(target,{'exclude_sample':'invalid'})
+            self.assertEqual(response.status_code,400,response.data)
+            self.assertIn('exclude_sample',response.data['error']['field_errors'])
+        self.user.user_permissions.remove(Permission.objects.get(codename='view_finishedgoodsreceipt'))
+        self.client.force_authenticate(type(self.user).objects.get(pk=self.user.pk))
+        self.assertEqual(self.client.get(url,{'exclude_sample':'true'}).status_code,403)
+        self.client.force_authenticate(None)
+        self.assertIn(self.client.get(url,{'exclude_sample':'true'}).status_code,[401,403])
+
     def test_unrelated_employee_cannot_preview_or_replay_source(self):
         from django.contrib.auth import get_user_model
         from apps.organizations.models import Employee

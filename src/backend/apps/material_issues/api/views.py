@@ -21,7 +21,8 @@ from apps.inventory.stock_services import available_stock
 from apps.organizations.models import EmployeeStatus
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_task_source_image_ids
-from apps.workshop_config.models import RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
+from apps.workshop_config.models import RecordStatus, Workshop, WorkshopEmployee
+from apps.workshop_config.selectors import active_employees
 
 from ..material_flow import pipe_requirement_rows
 from ..models import MaterialIssueStatus, OrderMaterialRequirement
@@ -126,7 +127,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         task_id = serializer.validated_data.get("production_task_id")
         if task_id and not accessible_production_tasks(request).filter(pk=task_id).exists():
             raise ValidationError({"production_task_id": "生产订单不存在或不可访问。"})
-        issue = create_issue(validated_data=dict(serializer.validated_data), actor_employee=request.employee)
+        issue = create_issue(validated_data=dict(serializer.validated_data), actor_employee=request.employee, request=request)
         issue = self.get_queryset().get(pk=issue.pk)
         response = Response({"data": MaterialIssueReadSerializer(issue).data}, status=status.HTTP_201_CREATED)
         response["ETag"] = etag_for_instance(issue)
@@ -198,6 +199,14 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=["get"])
     def options(self, request):
+        from apps.access_control.resource_scopes import current_permission, resource_ids, has_legacy_permission
+        from apps.production_tasks.selectors import legacy_accessible_production_tasks
+        code = current_permission(request, 'material_issues.view_materialissue')
+        ids = resource_ids(request, code, 'WORKSHOP', include_legacy=False)
+        if request.user.has_perm('material_issues.view_all_materialissue') or (
+            has_legacy_permission(request, code) and legacy_accessible_production_tasks(request).exists()
+        ):
+            ids = None
         task_query = accessible_production_tasks(request).filter(
             archived_at__isnull=True,
             status__in=[ProductionTaskStatus.READY, ProductionTaskStatus.IN_PRODUCTION],
@@ -214,11 +223,13 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 name__in=WORKSHOP_MATERIAL_SECTION_CODES,
             ).order_by("name", "id").values("id", "name")
         )
-        employees = WorkshopEmployee.objects.filter(
-            status=WorkshopEmployeeStatus.ACTIVE,
+        employees = active_employees(WorkshopEmployee.objects.filter(
             workshop__status=RecordStatus.ACTIVE,
             workshop__name__in=WORKSHOP_MATERIAL_SECTION_CODES,
-        ).select_related("workshop").order_by("workshop__name", "name", "id")
+        )).select_related("workshop").order_by("workshop__name", "name", "id")
+        if ids is not None:
+            workshops = [row for row in workshops if str(row['id']) in ids]
+            employees = employees.filter(workshop_id__in=ids)
         return Response(
             {
                 "data": {
@@ -251,6 +262,8 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             "image_file", "unit", "production_task",
             "sales_order_delivery_batch_line__sales_order_line__product_image",
         ).prefetch_related("images__image_file").order_by("line_number", "id")
+        from apps.access_control.workshop_scopes import filter_task_products
+        products = filter_task_products(products, request, 'material_issues.view_materialissue')
         return Response(
             {
                 "data": [
@@ -279,11 +292,14 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
     def product_image(self, request, task_id=None, file_id=None):
         task_id = _uuid(task_id, "production_task_id")
         products = ProductionTaskProduct.objects.filter(production_task_id=task_id)
+        from apps.access_control.workshop_scopes import filter_task_products
         if not accessible_production_tasks(request).filter(pk=task_id).exists():
             # 可查看领料单不一定可查看整张生产任务，只放行该领料单明确关联的产品图片。
             products = products.filter(material_issues__in=accessible_material_issues(request).filter(
                 production_task_id=task_id,
             ))
+        else:
+            products = filter_task_products(products, request, 'material_issues.view_materialissue')
         task = get_object_or_404(
             ProductionTask.objects.filter(products__in=products).distinct(), pk=task_id,
         )
@@ -312,9 +328,14 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
         workshop_id = _uuid(request.query_params.get("workshop_id"), "workshop_id")
         if not task_id or not product_line_id or not workshop_id:
             raise ValidationError({"detail": "必须同时选择生产订单、产品和领料车间。"})
+        from apps.access_control.resource_scopes import current_permission
+        from apps.access_control.workshop_scopes import require_task_workshop, filter_task_products
+        code = current_permission(request, 'material_issues.view_materialissue')
+        require_task_workshop(request, code, task_id, workshop_id)
         task = get_object_or_404(accessible_production_tasks(request), pk=task_id)
         if not task.products.filter(pk=product_line_id).exists():
             raise ValidationError({"product_line_id": "所选产品不属于该生产订单。"})
+        get_object_or_404(filter_task_products(task.products.all(), request, code), pk=product_line_id)
         workshop = get_object_or_404(Workshop.objects.filter(status=RecordStatus.ACTIVE), pk=workshop_id)
         from apps.inventory.public_stock_mode import public_issues_enabled
         public_stock = public_issues_enabled()

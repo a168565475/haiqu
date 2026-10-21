@@ -185,7 +185,7 @@ class OutsourcingOrderReadSerializer(serializers.Serializer):
 
 class OutsourcingFactoryAllocationWriteSerializer(serializers.Serializer):
     factory_id = serializers.UUIDField()
-    input_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    input_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False, allow_null=True)
     allocated_quantity = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal("0"),
     )

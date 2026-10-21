@@ -635,7 +635,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
 
 <style scoped lang="scss">
 @use '@/styles/theme/detail' as detail;
-.bom-create-page { min-width: 1320px; min-height: 1024px; padding: 0 32px 52px; box-sizing: border-box; background: var(--erp-page-background); color: var(--erp-color-text-primary); }
+.bom-create-page { min-width: 1320px; min-height: 1024px; padding: 0; box-sizing: border-box; background: var(--erp-page-background); color: var(--erp-color-text-primary); }
 .page-heading { height: 126px; display: flex; align-items: flex-start; justify-content: space-between; box-sizing: border-box; padding-top: 18px; }
 .breadcrumb { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 14px; }
 .page-heading h1 { margin: 5px 0 0; font-size: 28px; line-height: 34px; }
@@ -760,7 +760,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
 }
 
 /* BOM-V3-02：以 1920×1080 原型为基准的三步建立流程。 */
-.bom-create-page { min-width: 0; min-height: 0; padding: 0 28px 20px; background: transparent; color: var(--erp-color-text-primary); }
+.bom-create-page { min-width: 0; min-height: 0; padding: 0; background: transparent; color: var(--erp-color-text-primary); }
 .page-heading { height: 107px; padding: 15px 0 0; }
 .page-heading h1 { margin: 0; font-family: "Noto Serif SC", "Songti SC", serif; font-size: 34px; line-height: 44px; letter-spacing: -.5px; }
 .page-heading p { margin: 8px 0 0; color: var(--erp-color-text-primary); font-size: 15px; line-height: 23px; }
@@ -870,7 +870,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
 }
 
 @media (max-width: 900px) {
-  .bom-create-page { padding: 0 16px 20px; }
+  .bom-create-page { padding: 0; }
   .wizard-layout { display: block; }
   .wizard-steps { min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; padding: 0; }
   .wizard-step { min-height: 76px; grid-template-columns: 34px 1fr; }

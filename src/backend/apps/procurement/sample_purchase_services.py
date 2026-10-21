@@ -137,7 +137,8 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
         if currency is None:
             raise ValidationError({"currency_id": "采购币种不存在或已停用。"})
     ids = {row["supplier_id"] for row in submitted if row.get("supplier_id")}
-    suppliers = {s.pk: s for s in Supplier.objects.select_for_update().filter(pk__in=ids, archived_at__isnull=True, is_disabled=False)}
+    # 与普通采购一致：阻止状态变更，但允许共池采购表的供应商外键检查。
+    suppliers = {s.pk: s for s in Supplier.objects.select_for_update(no_key=True).filter(pk__in=ids, archived_at__isnull=True, is_disabled=False)}
     if ids - suppliers.keys():
         raise ValidationError({"lines": "采购明细包含不存在、已禁用或已归档的供应商。"})
     sample = procurement.material_request.sample_request

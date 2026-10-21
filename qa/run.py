@@ -572,7 +572,7 @@ def _print_list(manifest: dict[str, Any]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="haiqu ERP QA 统一入口")
-    parser.add_argument("module", nargs="?", help="production、quotation、inquiry、material_catalog、workbench、wecom 或 all")
+    parser.add_argument("module", nargs="?", help="production、quotation、inquiry、material_catalog、workbench、wecom、wecom-employee-login、workshop-employee-identity、employee-menu、attendance、organizations、permissions、finished-outbound、finished-outbound-list 或 all")
     parser.add_argument("--list", action="store_true", help="列出注册条目，不运行测试")
     parser.add_argument("--audit-headless", action="store_true", help="扫描 QA Playwright 启动点的 headless 门禁")
     parser.add_argument("--dry-run", action="store_true", help="只预检，不启动子进程")
@@ -607,8 +607,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         _print_list(manifest)
         return 0
-    if args.module not in {"production", "quotation", "inquiry", "material_catalog", "workbench", "wecom", "all"}:
-        print("请指定 production、quotation、inquiry、material_catalog、workbench 或 all；可用 --list 查看注册表。", file=sys.stderr)
+    if args.module not in {"production", "quotation", "inquiry", "material_catalog", "workbench", "wecom", "wecom-employee-login", "workshop-employee-identity", "employee-menu", "attendance", "organizations", "permissions", "finished-outbound", "finished-outbound-list", "all"}:
+        print("请指定 production、quotation、inquiry、material_catalog、workbench、wecom、wecom-employee-login、workshop-employee-identity、employee-menu、attendance、organizations、permissions、finished-outbound、finished-outbound-list 或 all；可用 --list 查看注册表。", file=sys.stderr)
         return 2
     if args.timeout is not None and args.timeout <= 0:
         print("--timeout 必须是正整数。", file=sys.stderr)

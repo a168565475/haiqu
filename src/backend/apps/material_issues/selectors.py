@@ -1,6 +1,6 @@
 from django.db.models import Prefetch, Q
 
-from apps.production_tasks.selectors import accessible_production_tasks
+from apps.production_tasks.selectors import accessible_production_tasks, legacy_accessible_production_tasks
 
 from .models import MaterialIssue, MaterialIssuePublicStockAllocation
 
@@ -9,6 +9,15 @@ def accessible_material_issues(request):
     queryset = MaterialIssue.objects.all()
     if request.user.is_superuser or request.user.has_perm("material_issues.view_all_materialissue"):
         return queryset
+    from apps.access_control.resource_scopes import enforcing, current_permission, resource_ids
+    code = current_permission(request, 'material_issues.view_materialissue')
+    if enforcing(request, code):
+        from apps.access_control.resource_scopes import has_legacy_permission
+        ids = resource_ids(request, code, 'WORKSHOP', include_legacy=False)
+        selected = queryset if ids is None else queryset.filter(workshop_id__in=ids)
+        legacy = queryset.filter(Q(production_task_id__in=legacy_accessible_production_tasks(request).values('id')) |
+            Q(production_task__isnull=True, created_by_employee=request.employee))
+        return selected.distinct() | legacy.distinct() if has_legacy_permission(request, code) else selected
     task_ids = accessible_production_tasks(request).values("id")
     return queryset.filter(
         Q(production_task_id__in=task_ids)

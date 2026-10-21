@@ -22,7 +22,7 @@ export function unifiedQuantityText(row: UnifiedOutsourcingOrder, field: 'sent' 
   return '—'
 }
 
-export function unifiedProductAttribute(row: UnifiedOutsourcingOrder, field: 'product_number' | 'item_number' | 'color_name'): string {
+export function unifiedProductAttribute(row: UnifiedOutsourcingOrder, field: 'product_number' | 'item_number' | 'color_name' | 'material'): string {
   if (row.product_count > 1) return '多款'
   return row.product[field] || '—'
 }

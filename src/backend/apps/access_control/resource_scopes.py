@@ -11,7 +11,19 @@ def enabled():
     return configured() and bool(getattr(settings, 'MODULE_ACCESS_ENABLED', False))
 
 
+def enforcing(request, code):
+    if enabled():
+        return True
+    from .sales_policy import access_for
+    # 回退开关不能把已配置的资源角色升级成全模块；关闭资源开关时不读取资源表。
+    return bool(set(access_for(request)['actions'].get(code, {}).get('scopes', [])) & {'MODULE', 'ALL', 'WORKSHOP', 'CRAFT', 'STOCK'})
+
+
 def scope_kind(code):
+    if code.startswith('production_scheduling.') and '.view_all_' not in code:
+        return 'WORKSHOP'
+    if code.startswith('material_issues.') and code.endswith('materialissue') and '.view_all_' not in code:
+        return 'WORKSHOP'
     if code.startswith('workshop_reporting.') and '.view_all_' not in code:
         return 'WORKSHOP'
     if code.startswith('outsourcing.') and 'outsourcingorder' in code:
@@ -35,13 +47,21 @@ def resource_ids(request, code, kind, *, include_legacy=True):
     """None = unrestricted, empty = no access. Never union different operations."""
     from .sales_policy import access_for
     from .module_operations import LEGACY_ALIASES
-    if not enabled():
+    if not enforcing(request, code):
         return None
     access = access_for(request)
     if not access['active']:
         return set()
     entry = access['actions'].get(code, {})
     if access['is_superuser'] or set(entry.get('scopes', [])) & {'MODULE', 'ALL'}:
+        return None
+    if kind == 'CRAFT' and code.startswith('outsourcing.') and (
+        'STOCK' in entry.get('scopes', []) or any(
+            source.get('scope') == 'WORKSHOP' and source.get('resource_ids')
+            for source in entry.get('sources', [])
+        )
+    ):
+        # 来源范围还须由source_access检查实际库存/车间，不能仅凭此处放行对象。
         return None
     legacy = {row['permission'] for row in access['legacy_sources']}
     if include_legacy and (code in legacy or LEGACY_ALIASES.get(code) in legacy):
@@ -65,7 +85,7 @@ def has_legacy_permission(request, permission):
 
 def craft_access_union(queryset, legacy_queryset, request, permission, field='craft_id'):
     """Union sources without combining a legacy scope with new contextual visibility."""
-    if not enabled():
+    if not enforcing(request, permission):
         return legacy_queryset
     selected = filter_crafts(queryset, request, permission, field, include_legacy=False)
     if has_legacy_permission(request, permission):
@@ -89,6 +109,10 @@ def can_craft(request, permission, craft_id):
 def can_order(request, permission, order):
     if not can_craft(request, permission, order.craft_id):
         return False
+    from .sales_policy import access_for
+    if enforcing(request, permission) and set(access_for(request)['actions'].get(permission, {}).get('scopes', [])) & {'STOCK', 'WORKSHOP'}:
+        from apps.outsourcing.selectors import accessible_outsourcing_orders
+        return accessible_outsourcing_orders(request, permission=permission).filter(pk=order.pk).exists()
     if not enabled():
         return True
     ids = resource_ids(request, permission, 'CRAFT', include_legacy=False)
@@ -104,7 +128,7 @@ def can_order(request, permission, order):
 
 
 def require_order_craft(request, permission, order_id):
-    if not enabled():
+    if not enforcing(request, permission):
         return
     from django.shortcuts import get_object_or_404
     from apps.outsourcing.selectors import accessible_outsourcing_orders
@@ -120,11 +144,14 @@ def has_resource_grant(request, permission, kind):
 
 
 def require_workshop(request, permission, workshop_id):
-    if not enabled():
+    if not enforcing(request, permission):
         return
-    from apps.workshop_reporting.selectors import allowed_workshop_ids
-    ids = allowed_workshop_ids(request, permission=permission,
-                              for_work_reports=permission.endswith('workreport'))
+    if permission.startswith('workshop_reporting.'):
+        from apps.workshop_reporting.selectors import allowed_workshop_ids
+        ids = allowed_workshop_ids(request, permission=permission,
+                                  for_work_reports=permission.endswith('workreport'))
+    else:
+        ids = resource_ids(request, permission, 'WORKSHOP')
     if ids is not None and str(workshop_id) not in {str(pk) for pk in ids}:
         raise PermissionDenied('当前操作未授权该车间。')
 
@@ -150,7 +177,10 @@ def validate_resources(rows):
             if ids:
                 raise ValidationError({'grants': '只有指定车间或工艺范围可以选择资源。'})
             continue
-        if not configured() or scope_kind(row['permission']) != scope:
+        supported = scope_kind(row['permission']) == scope or (
+            scope == 'WORKSHOP' and row['permission'].startswith('outsourcing.')
+            and 'outsourcingorder' in row['permission'])
+        if not configured() or not supported:
             raise ValidationError({'grants': '当前操作不支持该资源范围。'})
         if len(ids) != len(set(ids)):
             raise ValidationError({'grants': '所选资源不能重复。'})

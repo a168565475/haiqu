@@ -132,7 +132,7 @@ def _touch(instance):
 
 
 def _write_sample_records(*, sample_request, action, actor_employee, request, before_data=None, note=""):
-    write_audit_log(
+    audit = write_audit_log(
         object_type="SAMPLE_REQUEST",
         object_id=sample_request.pk,
         context_type="CUSTOMER_ACCOUNT",
@@ -152,6 +152,9 @@ def _write_sample_records(*, sample_request, action, actor_employee, request, be
         source_id=sample_request.pk,
         actor_employee=actor_employee,
     )
+    if sample_request.application_payload_hash:
+        from .notification_events import action_recorded
+        action_recorded(sample_request, audit, actor_employee)
 
 
 def _record_workflow_stage(
@@ -980,6 +983,10 @@ def delete_sample_parameter_image(*, sample_request, image_id, actor_employee, r
     ).first()
     if image is None:
         raise ValidationError({"image_id": "参数图片不存在或已删除。"})
+    from apps.access_control.module_policy import can_sample
+    permission = 'access_control.metalwork_sample' if image.parameter_type == 'METALWORK' else 'access_control.cutting_sample'
+    if not can_sample(request, sample_request, permission, 'samples.change_samplerequest'):
+        raise PermissionDenied('当前账号不能删除另一工序的参数图片。')
     before_data = model_snapshot(sample_request, SAMPLE_FIELDS)
     business_file = image.business_file
     now = timezone.now()

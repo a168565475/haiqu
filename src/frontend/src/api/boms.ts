@@ -150,6 +150,15 @@ function writableBomSections(sections: BomSectionInput[]) {
       const { images, draft_images: draftImages, draft_key: draftKey, ...writableLine } = line
       void images
       void draftKey
+      if (section.title === '裁剪明细') {
+        const { fabric_meters_per_piece, fabric_meters_per_set, unit_consumption, total_consumption, ...cuttingLine } = writableLine
+        void fabric_meters_per_piece
+        void fabric_meters_per_set
+        void unit_consumption
+        void total_consumption
+        const draftImageIds = line.id ? [] : (draftImages || []).map((image) => image.id)
+        return draftImageIds.length ? { ...cuttingLine, draft_image_ids: draftImageIds } : cuttingLine
+      }
       const draftImageIds = line.id ? [] : (draftImages || []).map((image) => image.id)
       return draftImageIds.length ? { ...writableLine, draft_image_ids: draftImageIds } : writableLine
     }),

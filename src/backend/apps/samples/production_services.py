@@ -61,6 +61,8 @@ def finish_production_if_ready(sample, *, actor_employee):
         _record_workflow_stage(sample_request=sample, stage=Stage.WORKFLOW_FINISHED,
                                actor_employee=actor_employee, note='金工、裁剪参数齐全且生产均已确认完成。', operated_at=now)
         _finish_sla(sample, False, now)
+        from .notification_events import production_completed
+        production_completed(sample, actor_employee)
 
 
 @transaction.atomic

@@ -101,10 +101,10 @@ class TubeProductDisplayTests(ScopedActorMixin, TubeApiFixture, APITestCase):
         self.assertEqual(self.context()['image_file_id'], str(image.pk))
         response = self.client.get(row['image_url'], HTTP_HOST='localhost')
         self.assertEqual(response.status_code, 200)
+        image_bytes = b''.join(response.streaming_content)
         self.assertEqual(response['Content-Type'], 'image/png')
         self.assertEqual(response['Cache-Control'], 'private, no-store')
-        self.assertEqual(b''.join(response.streaming_content), (self.media_root / image.storage_key).read_bytes())
-        response.file_to_stream.close()
+        self.assertEqual(image_bytes, (self.media_root / image.storage_key).read_bytes())
 
     def test_missing_permission_wrong_scope_and_unrelated_file_are_rejected(self):
         image, unrelated = self.image(), self.image('unrelated.png')

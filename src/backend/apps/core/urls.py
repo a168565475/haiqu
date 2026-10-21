@@ -16,6 +16,8 @@ urlpatterns = [
     path("v1/", include("apps.core.api.urls")),
     path("v1/access/", include("apps.access_control.api.urls")),
     path("v1/wecom/", include("apps.wecom.urls")),
+    path("v1/notifications/", include("apps.wecom.notification_urls")),
+    path("v1/attendance/", include("apps.attendance.urls")),
     path("v1/workshop-reporting/", include("apps.workshop_reporting.api.urls")),
 ]
 

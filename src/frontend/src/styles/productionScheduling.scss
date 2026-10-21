@@ -119,12 +119,11 @@ $inverse: crm.$crm-text-inverse;
   border: 1px solid var(--erp-table-grid);
   border-radius: 6px;
   background: var(--erp-table-body-fill);
-  scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle);
+  scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track);
   scrollbar-width: thin;
 
   &::-webkit-scrollbar { height: 10px; }
-  &::-webkit-scrollbar-track { background: var(--erp-table-body-fill); }
-  &::-webkit-scrollbar-thumb { border: 2px solid var(--erp-table-grid); border-radius: 999px; background: var(--erp-table-body-fill); }
+  &::-webkit-scrollbar-thumb { border: 2px solid var(--erp-scrollbar-track); border-radius: 999px; }
 
   table { min-width: 1794px; width: 100%; table-layout: fixed; border-collapse: collapse; }
   th { height: 44px; padding: 0 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); color: var(--erp-table-header-text); background: var(--erp-table-header-fill); text-align: left; font-size: 13px; font-weight: 600; white-space: nowrap; }

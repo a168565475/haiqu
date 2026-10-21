@@ -8,7 +8,7 @@ from .test_material_api import SampleMaterialApiTests
 
 
 class SampleMaterialIssueApiTests(SampleMaterialApiTests):
-    def test_full_supply_requires_issue_then_confirms_actual_quantity(self):
+    def test_full_supply_requires_issue_then_confirms_all_without_quantities(self):
         state = self.to_warehouse()
         ready = self.put('warehouse-review', self.supplies(state, ('12', '6', '4')), True, state['ETag'])
         self.assertEqual(ready.status_code, 200, ready.data)
@@ -33,7 +33,6 @@ class SampleMaterialIssueApiTests(SampleMaterialApiTests):
                 self.root + 'material-issue/confirm/',
                 {
                     'request_id': str(uuid.uuid4()),
-                    'lines': [{'line_id': line['id'], 'issued_quantity': line['availableQuantity']} for line in lines],
                 },
                 format='json', HTTP_IF_MATCH=initiated['ETag'],
             )

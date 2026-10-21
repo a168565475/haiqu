@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, resolve_bom_line_raw_material, resolve_cutting_fabric_material
 from apps.reference_data.models import FabricMaterial
 from .material_flow_calculations import (
-    CUTTING_USAGE_FIELDS, MaterialFlowValueError, cutting_usage_plan, decimal_quantity, pipe_plan, positive_integer,
+    CUTTING_QUANTITY_FIELDS, MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, pipe_plan, positive_integer,
 )
 
 PIPE_FIELDS = ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
@@ -19,13 +19,29 @@ def is_meter_fabric_section(section):
     return section.section_type == "FABRIC" and not any(word in title for word in ("裁剪", "裁片")) and any(word in title for word in ("面辅料", "面料", "布料"))
 
 
+def is_pipe_cutting_line(line):
+    return "管材" in f"{line.category} {(line.raw_values or {}).get('cutting_category', '')}"
+
+
+def inherit_cutting_fabric_attributes(line):
+    if line.section.title.strip() != "裁剪明细" or is_pipe_cutting_line(line):
+        return
+    line.raw_values.pop("cutting_material_original", None)
+    source = line.fabric_source_line
+    source_values = source.raw_values or {} if source is not None else {}
+    line.material = source.material if source is not None else ""
+    line.raw_values["cutting_color"] = str(
+        source_values.get("fabric_color_name") or source_values.get("fabric_color_code") or ""
+    ).strip()
+
+
 def validate_cutting_specification(specification, line_number):
     # 与公共库存身份保持同一占位口径，避免保存后才在入库时发现规格缺失。
     if (specification or "").strip() in {"", "/", "—", "-", "--", "–", "N/A", "n/a", "NULL", "null"}:
         raise ValidationError({"sections": f"“裁剪明细”第 {line_number} 行请填写实际规格，不能使用空白或“/”等占位内容。"})
 
 
-def apply_line_quantities(line, order_quantity, *, require_complete=False, tolerate_legacy=False):
+def apply_line_quantities(line, order_quantity, *, require_complete=False, tolerate_legacy=False, recalculate_pipe=False):
     """旧展示字段只是新规则的投影；导入缺参留待补齐，不能猜每根切割支数。"""
     label = f"{line.section.title}第 {line.line_number} 行"
     if require_complete and line.section.section_type == "PROFILE" and (line.raw_values or {}).get("pipe_source_sync_pending"):
@@ -34,11 +50,11 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
         raise ValidationError({"sections": f"{label}请补齐材质、规格、门幅和颜色并保存，自动关联原料后再确认 BOM。"})
     if require_complete and line.section.title.strip() == "裁剪明细":
         validate_cutting_specification(line.specification, line.line_number)
-    cutting_values = {field: getattr(line, field) for field in CUTTING_USAGE_FIELDS}
+    cutting_values = {field: getattr(line, field) for field in CUTTING_QUANTITY_FIELDS}
     if any(value is not None for value in cutting_values.values()) and line.section.title.strip() != "裁剪明细":
-        raise ValidationError({"sections": f"{label}只有裁剪明细可以填写片数、每片耗米和每成品套数。"})
+        raise ValidationError({"sections": f"{label}只有裁剪明细可以填写每套片数和每成品套数。"})
     try:
-        cutting_plan = cutting_usage_plan(**cutting_values, order_quantity=order_quantity)
+        cutting_plan = cutting_quantity_plan(**cutting_values, order_quantity=order_quantity)
     except MaterialFlowValueError as error:
         # 新字段错误即使在复制或同步时也不能当成旧资料缺参而静默清除。
         raise ValidationError({"sections": f"{label}：{error}"}) from error
@@ -63,7 +79,10 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                     raise ValidationError({"sections": f"{label}请补齐整数切割长度、单耗和每根切割支数。"})
                 snapshot = None
             else:
-                snapshot = pipe_plan(**inputs, order_quantity=order_quantity)
+                inputs_changed = any(positive_integer(value, field) != getattr(line, field)
+                                     for field, value in inputs.items())
+                version = 3 if recalculate_pipe or inputs_changed else (line.raw_values or {}).get("pipe_plan_version", 2)
+                snapshot = pipe_plan(**inputs, order_quantity=order_quantity, calculation_version=version)
             for field in PIPE_FIELDS:
                 setattr(line, field, snapshot[field] if snapshot else None)
             line.branch_count = str(snapshot["suggested_bar_count"]) if snapshot else ""
@@ -71,6 +90,8 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
             line.total_purchase_quantity = snapshot["suggested_purchase_meters"] if snapshot else ""
             line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": line.original_material_length}
             if snapshot:
+                if snapshot.get("calculation_version", 2) == 3:
+                    line.raw_values["pipe_plan_version"] = 3
                 line.length_value = str(snapshot["cutting_length_mm"])
                 line.unit_consumption = str(snapshot["pieces_per_product"])
                 line.total_consumption = str(snapshot["demand_pieces"])
@@ -90,12 +111,9 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
             for field in PIPE_FIELDS:
                 setattr(line, field, None)
             if cutting_plan is not None:
-                line.fabric_meters_per_set = Decimal(cutting_plan["fabric_meters_per_set"])
                 line.cut_piece_quantity = str(cutting_plan["cutting_pieces_per_set"])
-                line.unit_consumption = cutting_plan["fabric_meters_per_piece"]
-                line.total_consumption = cutting_plan["required_meters"]
                 line.unit = "套"
-                # 裁片是加工产出，准确耗米显示在总用量；不伪装成一条直接采购原料。
+                # 历史耗米保留供旧单据追溯；裁片数量不再计算或覆盖原料米数。
                 line.total_purchase_quantity = ""
             # FABRIC 同时包括辅料和裁片，只有明确的面料类按米计算。
             if is_meter_fabric_section(line.section):
@@ -120,7 +138,7 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
         line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": ""}
     if require_complete and line.section.title.strip() != "裁剪明细":
         if line.section.title.strip() == "辅料类" and material is None:
-            raise ValidationError({"sections": f"{label}尚未关联库存原料，请保存并确认待新增原料后再确认 BOM。"})
+            raise ValidationError({"sections": f"{label}尚未关联库存原料，请保存 BOM 以自动关联原料。"})
         if (expected and (material is None or material.item_type != "MATERIAL")) or not line.unit.strip() or line.unit.strip() in {"-", "—", "/"}:
             if line.section.section_type == "PROFILE" and material is None:
                 raise ValidationError({"sections": f"{label}尚未关联有效管材原料，请补齐管材参数并保存，系统会自动关联原料。"})
@@ -133,8 +151,8 @@ def validate_fabric_links(lines, *, require_complete=False):
     current = {line.pk: line for line in lines}
     for line in lines:
         if line.section.title.strip() != "裁剪明细":
-            if line.fabric_source_line_id or line.fabric_meters_per_set is not None:
-                raise ValidationError({"sections": "只有裁剪明细可以设置来源面料和每套耗米。"})
+            if line.fabric_source_line_id:
+                raise ValidationError({"sections": "只有裁剪明细可以设置来源面料。"})
             continue
         if line.fabric_source_line_id:
             source = current.get(line.fabric_source_line_id)
@@ -159,13 +177,8 @@ def validate_fabric_links(lines, *, require_complete=False):
                         unmapped_draft = False
                 if not unmapped_draft:
                     raise ValidationError({"sections": f"裁剪第 {line.line_number} 行的来源面料第 {source.line_number} 行未关联有效米制面料原料，请补齐该面料行的材质、规格、门幅和颜色后保存。"})
-        if require_complete and (not line.fabric_source_line_id or not line.fabric_meters_per_set):
-            raise ValidationError({"sections": f"裁剪第 {line.line_number} 行请关联来源面料并填写每套耗米。"})
-        if line.fabric_meters_per_set is not None:
-            try:
-                decimal_quantity(line.fabric_meters_per_set, "fabric_meters_per_set")
-            except MaterialFlowValueError as error:
-                raise ValidationError({"sections": f"裁剪第 {line.line_number} 行：{error}"}) from error
+        if require_complete and not line.fabric_source_line_id:
+            raise ValidationError({"sections": f"裁剪第 {line.line_number} 行请关联来源面料。"})
 
 
 def validate_used_components(bom, lines):

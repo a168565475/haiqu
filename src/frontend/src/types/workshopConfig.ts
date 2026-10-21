@@ -6,7 +6,7 @@ export type RecordStatus = 'ACTIVE' | 'INACTIVE'
 export type WorkshopEmployeeStatus = 'ACTIVE' | 'LEFT'
 export type CraftType = 'INTERNAL' | 'EXTERNAL'
 export type PlanCategory = 'METAL' | 'CUTTING' | 'SEWING' | 'ASSEMBLY'
-export type OutsourcingCode = 'POWDER_COATING' | 'SCREEN_PRINTING' | 'CUTTING' | 'SEWING'
+export type OutsourcingCode = 'POWDER_COATING' | 'EMBROIDERY' | 'SCREEN_PRINTING' | 'CUTTING' | 'SEWING'
 
 export interface Workshop {
   id: string
@@ -29,6 +29,11 @@ export interface WorkshopEmployee {
   workshop_name: string
   position: string
   name: string
+  employee: string | null
+  employee_code: string | null
+  employee_name: string | null
+  employee_status: string | null
+  employee_archived: boolean
   is_supervisor: boolean
   status: WorkshopEmployeeStatus
   status_display: string
@@ -79,9 +84,22 @@ export type WorkshopConfigRecord = Workshop | WorkshopEmployee | Craft | Operati
 export interface WorkshopEmployeeInput {
   workshop: string
   position: string
-  name: string
+  employee?: string
   is_supervisor: boolean
   status: WorkshopEmployeeStatus
+}
+
+export interface WorkshopEmployeeOption {
+  id: string
+  employee_code: string
+  display_name: string
+  status: string
+  etag: string
+}
+
+export interface WorkshopEmployeeOptions {
+  data: WorkshopEmployeeOption[]
+  meta: PageMeta
 }
 
 export interface CraftInput {

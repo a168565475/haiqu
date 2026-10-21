@@ -411,7 +411,7 @@ class FabricMaterialSaveConfirmationTests(TestCase):
                "warehouse_number": "CK001", "warehouse_name": "原料布面仓"}
         next(section for section in body["sections"] if section["title"] == "裁剪明细")["lines"] = [
             {"part_name": "座布", "pending_raw_material": raw, "fabric_source_client_key": key,
-             "fabric_meters_per_set": "0.5"},
+             "cutting_pieces_per_set": 2, "cutting_sets_per_product": 1},
         ]
         before = self.snapshot()
         preview = self.preview(body, etag)
@@ -428,4 +428,10 @@ class FabricMaterialSaveConfirmationTests(TestCase):
         source = RawMaterialInformation.objects.get(pk=cutting.raw_values["source_inventory_material_id"])
         self.assertEqual(source.item_type, "SEMI_FINISHED")
         self.assertEqual(cutting.material, self.fabric_material.material_name)
+        self.assertEqual((source.material, source.color_id, source.color_snapshot),
+                         (self.fabric_material.material_name, self.fabric_color.pk, self.fabric_color.color_name))
+        self.assertEqual(cutting.raw_values["cutting_color"], self.fabric_color.color_name)
         self.assertEqual(cutting.fabric_source_line.section.title, "面料类")
+        self.assertEqual((cutting.cutting_pieces_per_set, cutting.cutting_sets_per_product), (2, 1))
+        self.assertIsNone(cutting.fabric_meters_per_piece)
+        self.assertIsNone(cutting.fabric_meters_per_set)

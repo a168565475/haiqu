@@ -8,17 +8,21 @@ from django.db import connections, transaction
 from django.test import TransactionTestCase, override_settings
 
 from apps.core.api.concurrency import PreconditionFailed
-from apps.inventory.models import PublicStockBalance, PublicStockMovement
+from apps.core.numbering import next_business_number
+from apps.inventory.models import PublicStockBalance, PublicStockMovement, Warehouse, WarehouseZone
+from apps.inventory.public_stock_services import lock_public_stock_locations
 from apps.organizations.models import Employee
+from apps.outsourcing.models import OutsourcingReturn
 from apps.production_tasks.models import ProductionTask
 from apps.workshop_config.models import Craft
 
-from ..models import MetalProcessingExternalGoodReturn, MetalProcessingExternalOrder, MetalProcessingSource
-from ..p4_services import confirm_external_good_return
+from ..models import MetalProcessingExternalGoodReturn, MetalProcessingExternalOrder, MetalProcessingOriginalHandoff, MetalProcessingSource
+from ..p4_services import confirm_external_good_return, confirm_original_good_return
 from .test_public_processing_flow import PublicProcessingFixture
 
 
-@override_settings(PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)
+# 使用公共库存的 P4 旧完成登记夹具；WH 取号与回货锁函数与新开关启用时相同。
+@override_settings(TUBE_OUTSOURCING_ENABLED=False, PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)
 class PublicProcessingConcurrencyTests(PublicProcessingFixture, TransactionTestCase):
     serialized_rollback = True
 
@@ -83,6 +87,63 @@ class PublicProcessingConcurrencyTests(PublicProcessingFixture, TransactionTestC
         self.assertEqual(PublicStockBalance.objects.get(stock_kind="SEMI").quantity, pieces)
         self.assertEqual(list(PublicStockMovement.objects.filter(direction="OUT").order_by("pk").values()), self.raw_out_before)
         self.assertEqual(MetalProcessingSource.objects.values().get(pk=self.order.source_id), self.source_before)
+
+    def assert_location_before_return_number(self, receive):
+        location_locked, return_requests_location = threading.Event(), threading.Event()
+        location_tables = (Warehouse._meta.db_table, WarehouseZone._meta.db_table)
+        earlier_numbers = []
+
+        def location_then_number():
+            with transaction.atomic():
+                lock_public_stock_locations([self.f.semi_zone.pk])
+                location_locked.set()
+                self.await_event(return_requests_location, "P4 回货没有请求仓库或库区锁")
+                # 复现普通回货的锁顺序。P4 若先持 WH 再等库区，双连接会反序等待。
+                earlier_numbers.append(next_business_number("OUTSOURCING_RETURN"))
+            return "LOCATION_THEN_NUMBER"
+
+        def receive_after_location_lock():
+            self.await_event(location_locked, "另一事务没有取得库区锁")
+
+            def observe(execute, sql, params, many, context):
+                if ("FOR " in sql and "UPDATE" in sql
+                        and any(f'FROM "{table}"' in sql for table in location_tables)):
+                    return_requests_location.set()
+                return execute(sql, params, many, context)
+
+            with connections["default"].execute_wrapper(observe):
+                receive()
+            return "RETURNED"
+
+        self.assertCountEqual(self.threads(location_then_number, receive_after_location_lock),
+                              ["LOCATION_THEN_NUMBER", "RETURNED"])
+        earlier = earlier_numbers[0]
+        return f"{earlier[:8]}{int(earlier[8:]) + 1:03d}"
+
+    def test_external_return_locks_location_before_shared_daily_number(self):
+        payload = self.good_payload(3)
+        expected = self.assert_location_before_return_number(lambda: self.return_good(payload))
+        self.assert_single_return(3)
+        self.assertEqual(MetalProcessingExternalGoodReturn.objects.get(order=self.order).return_number, expected)
+
+    def test_original_return_locks_location_before_shared_daily_number(self):
+        handoff = MetalProcessingOriginalHandoff.objects.get(source__issue_line=self.line)
+        etag, payload = self.good_context(handoff)["etag"], self.good_payload(2)
+
+        def receive():
+            request = SimpleNamespace(
+                user=get_user_model().objects.get(pk=self.f.user.pk),
+                employee=Employee.objects.get(pk=self.f.employee.pk),
+                headers={"If-Match": etag}, META={},
+            )
+            return confirm_original_good_return(request=request, handoff_id=handoff.pk, **payload)
+
+        expected = self.assert_location_before_return_number(receive)
+        record = OutsourcingReturn.objects.get(order_id=self.original_order)
+        self.assertEqual(record.return_number, expected)
+        self.assertEqual(PublicStockBalance.objects.get(stock_kind="SEMI").quantity, 2)
+        self.assertEqual(list(PublicStockMovement.objects.filter(direction="OUT").order_by("pk").values()),
+                         self.raw_out_before)
 
     def test_return_waiting_for_task_does_not_hold_craft_or_source(self):
         task_locked, return_requests_task = threading.Event(), threading.Event()

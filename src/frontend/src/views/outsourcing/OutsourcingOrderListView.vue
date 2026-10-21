@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ArrowDown, Refresh } from '@element-plus/icons-vue'
@@ -107,8 +108,8 @@ function hasShortage(row: UnifiedOutsourcingOrder): boolean {
   return row.record_type === 'TUBE' && row.receipt_state === 'RECORDED' && Boolean(row.shortage_quantities?.some(amount => Number(amount.quantity) > 0))
 }
 
-function openTubeCreate(): void {
-  if (canCreateOriginal.value && canViewOrders.value && !accessDenied.value) void router.push('/workshop/outsourcing/tube/new')
+function openTubeCreate(category?: 'cutting'): void {
+  if (canCreateOriginal.value && canViewOrders.value && !accessDenied.value) void router.push(category === 'cutting' ? '/workshop/outsourcing/tube/new?category=cutting' : '/workshop/outsourcing/tube/new')
 }
 
 function switchTab(tab: 'orders' | 'sources'): void {
@@ -307,10 +308,10 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
     <section v-glass-spotlight class="erp-list-filter">
     <header class="outsourcing-heading erp-list-heading">
       <div class="heading-title"><h1>委外加工</h1><span>统一查看外发与回货</span></div>
-      <div v-if="activeTab === 'sources'" class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreate" :disabled="!canViewOrders || accessDenied" @click="openCreate">新建外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate">新建管材外发单</ElButton></div>
+      <div v-if="activeTab === 'sources'" class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreate" :disabled="!canViewOrders || accessDenied" @click="openCreate">新建外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div>
     </header>
     <nav class="unified-outsourcing-tabs erp-list-tabs" role="tablist" aria-label="委外加工内容">
-      <button v-if="canViewRegularOrders" id="outsourcing-orders-tab" role="tab" :aria-selected="activeTab === 'orders'" aria-controls="outsourcing-orders-panel" :class="{ 'is-active': activeTab === 'orders' }" @click="switchTab('orders')">外发单 <small>{{ total ?? '—' }}</small></button>
+      <button v-if="canViewRegularOrders" id="outsourcing-orders-tab" role="tab" :aria-selected="activeTab === 'orders'" aria-controls="outsourcing-orders-panel" :class="{ 'is-active': activeTab === 'orders' }" @click="switchTab('orders')">外发单</button>
       <button v-if="canViewSources" id="outsourcing-sources-tab" role="tab" :aria-selected="activeTab === 'sources'" aria-controls="outsourcing-sources-panel" :class="{ 'is-active': activeTab === 'sources' }" @click="switchTab('sources')">待外发材料</button>
     </nav>
     <div v-if="activeTab === 'orders' && canViewRegularOrders" class="outsourcing-filter-bar order-filter-bar unified-order-filter-bar erp-list-filters">
@@ -326,17 +327,18 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
       <MetalProcessingP4View mode="sources" embedded @updated="load" />
     </section>
     <section v-else-if="canViewRegularOrders" id="outsourcing-orders-panel" class="erp-list-data" role="tabpanel" aria-labelledby="outsourcing-orders-tab">
-    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreate" :disabled="!canViewOrders || accessDenied" @click="openCreate">新建外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate">新建管材外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">数量仅含所选加工厂 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
+    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreate" :disabled="!canViewOrders || accessDenied" @click="openCreate">新建外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">数量仅含所选加工厂 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
       <div class="d4-list-table-area erp-list-table-frame"><ElTable :data="rows" border height="100%" row-key="row_key" class="d4-list-table" @row-click="openDetail">
         <ElTableColumn prop="order_number" label="外发单号" width="170" show-overflow-tooltip><template #default="{ row }"><RouterLink class="order-number-link" :to="unifiedOutsourcingDetailPath(row)" @click.stop>{{ row.order_number }}</RouterLink></template></ElTableColumn>
         <ElTableColumn label="生产任务单" width="130" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
         <ElTableColumn label="产品名称" min-width="155" show-overflow-tooltip><template #default="{ row }"><span class="table-product">{{ productName(row) }}</span></template></ElTableColumn>
-        <ElTableColumn label="品号" width="95" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'product_number') }}</template></ElTableColumn>
+        <ElTableColumn label="产品材质" width="95" class-name="outsourcing-product-material" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'material') }}</template></ElTableColumn>
         <ElTableColumn label="货号" width="85" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'item_number') }}</template></ElTableColumn>
         <ElTableColumn label="订单颜色" width="96" show-overflow-tooltip><template #default="{ row }">{{ unifiedProductAttribute(row, 'color_name') }}</template></ElTableColumn>
-        <ElTableColumn label="材料来源" width="125"><template #default="{ row }"><span class="unified-source-tag erp-list-tag" :class="row.source_kind === 'RAW' ? 'erp-list-tag--info' : row.source_kind === 'METAL' ? 'erp-list-tag--success' : 'erp-list-tag--warning'" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span></template></ElTableColumn>
+        <ElTableColumn label="材料来源" width="150"><template #default="{ row }"><span class="unified-source-tag erp-list-tag" :class="row.source_kind === 'RAW' ? 'erp-list-tag--info' : row.source_kind === 'METAL' ? 'erp-list-tag--success' : 'erp-list-tag--warning'" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span></template></ElTableColumn>
         <ElTableColumn label="加工工艺" width="96"><template #default="{ row }"><span v-if="row.craft.name" class="craft-tag erp-list-tag" :class="[`craft-${craftTone(row.craft.name)}`, row.craft.name === '车缝' ? 'erp-list-tag--brand' : row.craft.name === '裁剪' ? 'erp-list-tag--info' : row.craft.name === '喷塑' ? 'erp-list-tag--success' : row.craft.name === '丝印' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.craft.name }}</span><span v-else>—</span></template></ElTableColumn>
         <ElTableColumn label="加工厂" width="135" show-overflow-tooltip><template #default="{ row }"><span :title="row.factory_names.join('、')">{{ factoryName(row) }}</span></template></ElTableColumn>
+        <ElTableColumn label="计划加工金额（元）" width="155" align="right" class-name="outsourcing-planned-amount num"><template #default="{ row }">{{ row.detail_access === 'METAL' ? '—' : formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
         <ElTableColumn label="发出数量" width="95" align="right" class-name="num" show-overflow-tooltip><template #default="{ row }">{{ unifiedQuantityText(row, 'sent') }}</template></ElTableColumn>
         <ElTableColumn label="回货数量" width="95" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="新管材按最终实收支数；其他外发沿用原合格回货口径。" placement="top"><span>回货数量</span></ElTooltip></template><template #default="{ row }"><ElTooltip v-if="row.receipt_state === 'MISSING'" content="已结束，但最终凭证尚无法核对；不当作0回货。" placement="top"><span>—</span></ElTooltip><span v-else>{{ unifiedQuantityText(row, 'received') }}</span></template></ElTableColumn>
         <ElTableColumn label="管材差额" width="90" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示新管材最终登记后的实发减实收。面料等不同单位不相减。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>

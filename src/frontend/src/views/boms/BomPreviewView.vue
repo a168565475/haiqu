@@ -41,7 +41,7 @@ function lineValue(line: BomLine, key: string, section: BomSection) {
 }
 function cuttingNote(line: BomLine, section: BomSection) {
   if (!/裁剪|裁片/.test(section.title)) return ''
-  if (legacyPipeCuttingValues(line)) return '管材旧口径：片数、米/片和套数沿用编辑页只读试算，仍按原单位流转。'
+  if (legacyPipeCuttingValues(line)) return '管材旧口径：片数和套数沿用编辑页只读展示，仍按原单位流转。'
   return cuttingCalculation(line, bom.value?.order_quantity).error
 }
 function tableWidth(section: BomSection) {

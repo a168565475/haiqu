@@ -142,7 +142,7 @@ onMounted(() => { if (canReceive.value) void loadBase() })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
-.manual-inbound-page { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+.manual-inbound-page { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 0; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-border-color: #{token.$crm-border-default}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-border-radius-base: 5px; }
 h1, h2, p { margin: 0; } i { color: token.$crm-danger; font-style: normal; }
 .page-head, .notice, .form-card > header, .material-summary, .submit-bar { display: flex; align-items: center; }

@@ -114,11 +114,42 @@ def production_sales_order_sources(request):
 def accessible_production_tasks(request):
     queryset = ProductionTask.objects.all()
     from apps.access_control import module_policy
-    if module_policy.enabled() and module_policy.has_module_grant(request,
-            'production_tasks', 'production_scheduling', 'boms', 'procurement', 'inventory',
-            'material_issues', 'outsourcing', 'workshop_reporting'):
+    view = (getattr(request, 'parser_context', None) or {}).get('view')
+    permission = module_policy.action_permission(request, view) if view is not None else None
+    direct = type(view).__name__ == 'ProductionTaskViewSet'
+    modules = ('production_tasks',) if direct else (
+        'production_tasks', 'production_scheduling', 'boms', 'procurement', 'inventory',
+        'material_issues', 'outsourcing', 'workshop_reporting')
+    if view is not None and not direct:
+        if isinstance(permission, str):
+            from apps.access_control.catalog import module_for
+            modules = (module_for(permission),)
+    if module_policy.enabled() and module_policy.has_module_grant(request, *modules):
         return queryset
     if request.user.is_superuser or request.user.has_perm("production_tasks.view_all_productiontask"):
+        return queryset
+    from apps.access_control import resource_scopes
+    if not direct and (resource_scopes.enabled() or isinstance(permission, str) and resource_scopes.enforcing(request, permission)):
+        from apps.access_control.sales_policy import access_for
+        access = access_for(request)
+        ids = {pk for code, entry in access['actions'].items()
+               if (code == permission if isinstance(permission, str) else code.startswith(('production_scheduling.', 'material_issues.', 'workshop_reporting.')))
+               for source in entry.get('sources', []) if source.get('scope') == 'WORKSHOP'
+               for pk in source.get('resource_ids', [])}
+        if isinstance(permission, str) and 'WORKSHOP' in access['actions'].get(permission, {}).get('scopes', []) and not ids and not resource_scopes.has_legacy_permission(request, permission):
+            return queryset.none()
+        if ids:
+            return queryset.filter(production_schedules__record_status='ACTIVE',
+                production_schedules__products__removed_at__isnull=True,
+                production_schedules__products__crafts__removed_at__isnull=True,
+                production_schedules__products__crafts__craft__workshop_id__in=ids).distinct()
+    return legacy_accessible_production_tasks(request)
+
+
+def legacy_accessible_production_tasks(request):
+    """旧直授/原生组只沿用原归属；不借其他角色的模块/车间读取放宽。"""
+    queryset = ProductionTask.objects.all()
+    if request.user.is_superuser or request.user.has_perm('production_tasks.view_all_productiontask'):
         return queryset
     employee = getattr(request, "employee", None)
     if employee is None:

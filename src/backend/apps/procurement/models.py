@@ -183,8 +183,8 @@ class PurchaseOrder(ArchivableModel):
     )
     completion_remark = models.TextField(blank=True, max_length=2000)
     order_number = models.CharField(max_length=50, unique=True, validators=[RegexValidator(
-        regex=r"^CGDD[0-9]{8}[0-9]{2,38}$",
-        message="采购订单号必须是 CGDD 加 8 位日期和 2 至 38 位当日流水。",
+        regex=r"^CGDD(?:[0-9]{6}[0-9]{3,40}|[0-9]{8}[0-9]{2,38})$",
+        message="采购订单号必须是 CGDD 加 6 位日期和至少 3 位流水，兼容历史 8 位日期和至少 2 位流水，总长不超过 50 位。",
     )])
     production_task = models.OneToOneField(
         "production_tasks.ProductionTask",
@@ -703,8 +703,8 @@ class SupplierPurchaseSheet(ArchivableModel):
     sheet_number = models.CharField(
         max_length=50,
         validators=[RegexValidator(
-            regex=r"^CGDD[0-9]{8}[0-9]{2,38}$",
-            message="采购表编号必须是 CGDD 加 8 位日期和 2 至 38 位当日流水。",
+            regex=r"^CGDD(?:[0-9]{6}[0-9]{3,40}|[0-9]{8}[0-9]{2,38})$",
+            message="采购表编号必须是 CGDD 加 6 位日期和至少 3 位流水，兼容历史 8 位日期和至少 2 位流水，总长不超过 50 位。",
         )],
     )
     version_number = models.PositiveIntegerField(default=1)

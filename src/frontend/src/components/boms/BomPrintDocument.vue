@@ -11,6 +11,7 @@ const sections = computed(() => [...props.sections].sort((a, b) => {
   return rank(a.title) - rank(b.title)
 }))
 const totalLines = computed(() => sections.value.reduce((sum, section) => sum + section.lines.length, 0))
+const savedLines = computed(() => new Map((props.bom.sections || []).flatMap(section => section.lines).map(line => [line.id, line])))
 function printWeight(column: BomPreviewColumn) {
   if (column.key === 'line_number') return 48
   if (column.key === 'unit') return 54
@@ -45,7 +46,7 @@ function columnWidth(column: BomPreviewColumn, section: BomPreviewSection) {
                 <BomLineImageSummary v-if="line.images?.length || line.draft_images?.length" :line="line" />
                 <template v-else>—</template>
               </template>
-              <template v-else>{{ bomPreviewCell(line, column.key, section, bom.order_quantity, sections) }}</template>
+              <template v-else>{{ bomPreviewCell(line, column.key, section, bom.order_quantity, sections, savedLines.get(line.id || '')) }}</template>
             </td>
           </tr>
           <tr v-if="!section.lines.length"><td :colspan="bomPreviewColumns(section).length" class="bom-print-empty">暂无明细</td></tr>

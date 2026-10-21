@@ -7,7 +7,7 @@ from django.db import connection
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.material_flow_calculations import (
-    CUTTING_USAGE_FIELDS, MaterialFlowValueError, cutting_usage_plan, decimal_quantity, fabric_output, pipe_issue,
+    CUTTING_QUANTITY_FIELDS, MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, fabric_output, pipe_issue,
 )
 from apps.boms.models import BomStatus
 from apps.material_issues.pipe_requirements import pipe_source_snapshot
@@ -56,18 +56,17 @@ def processing_basis(line):
             or material is None or material.item_type != "MATERIAL" or material.unit.unit_name != "米"):
         raise ValidationError({"fabric_source_line": "裁片必须关联同 BOM 中以米计量的有效面料原料。"})
     try:
-        cutting_plan = cutting_usage_plan(**{field: getattr(line, field) for field in CUTTING_USAGE_FIELDS},
-                                          order_quantity=bom.order_quantity)
+        cutting_plan = cutting_quantity_plan(**{field: getattr(line, field) for field in CUTTING_QUANTITY_FIELDS},
+                                             order_quantity=bom.order_quantity)
     except MaterialFlowValueError as error:
         raise ValidationError({error.field: str(error), "code": error.code}) from error
-    consumption = quantity(cutting_plan["fabric_meters_per_set"] if cutting_plan else line.fabric_meters_per_set,
-                           "fabric_meters_per_set")
+    if cutting_plan is None:
+        raise ValidationError({"cutting_sets_per_product": "裁片须填写每套片数和每成品套数。"})
     snapshot = {"schema_version": 2, "kind": "FABRIC", "bom_id": str(bom.pk), "bom_line_id": str(line.pk),
             "component_identity": str(line.component_identity), "raw_material_id": str(material.pk),
-            "material_line_id": str(fabric.pk), "fabric_meters_per_set": str(consumption),
-            "output_unit": "套", "input_unit": "米"}
-    if cutting_plan is not None:
-        snapshot.update(cutting_plan)
+            "material_line_id": str(fabric.pk), "quantity_basis": "OUTPUT_SETS",
+            "output_unit": "套", "input_unit": "套", "raw_input_unit": "米"}
+    snapshot.update(cutting_plan)
     return snapshot
 
 
@@ -76,12 +75,34 @@ def input_plan(value, snapshot):
         amount = pipe_amount(value, snapshot)
         return {**amount, "output_quantity": Decimal(amount["requested_pieces"]),
                 "raw_quantity": Decimal(amount["bar_count"]), "remainder_meters": "0"}
+    if snapshot.get("quantity_basis") == "OUTPUT_SETS":
+        return {"output_quantity": quantity(value, "allocated_quantity", integer=True),
+                "raw_quantity": None, "remainder_meters": None}
     value = quantity(value, "input_quantity")
     try:
         result = fabric_output(issued_meters=value, meters_per_set=snapshot["fabric_meters_per_set"])
     except MaterialFlowValueError as error:
         raise ValidationError({"input_quantity": str(error)}) from error
     return {**result, "output_quantity": Decimal(result["expected_sets"]), "raw_quantity": value}
+
+
+def output_set_availability(*, line, product_line_id, craft_id, craft_code, required_sets):
+    """加工额度使用套数；已分配外发与厂内已入库不能重复占用订单需求。"""
+    from django.db.models import Sum
+    from apps.inventory.models import InternalSemiFinishedReceiptLine
+    from .models import OutsourcingProcessingItem
+    allocated = OutsourcingProcessingItem.objects.filter(
+        order_product__schedule_product__product_line_id=product_line_id,
+        bom_line__component_identity=line.component_identity, order_product__order__craft_id=craft_id,
+    ).exclude(order_product__order__status="CANCELLED").aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    internal = Decimal("0")
+    if craft_code == "SEWING":
+        internal = InternalSemiFinishedReceiptLine.objects.filter(
+            receipt__schedule_product__product_line_id=product_line_id,
+            receipt__plan_category="SEWING", component_identity=line.component_identity,
+        ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    return {"available": max(Decimal("0"), Decimal(required_sets) - allocated - internal),
+            "allocated": allocated, "internal": internal}
 
 
 def normalize_product(row, line_map, unit_by_text, *, public=False):
@@ -97,9 +118,15 @@ def normalize_product(row, line_map, unit_by_text, *, public=False):
         item["flow_snapshot"] = snapshot
         output_total = Decimal("0")
         for allocation in item["allocations"]:
-            value = allocation.get("input_quantity")
-            if value is None:
-                raise ValidationError({"input_quantity": "请填写本厂实际计划发出的支数或米数。"})
+            if snapshot.get("quantity_basis") == "OUTPUT_SETS":
+                if allocation.get("input_quantity") is not None:
+                    raise ValidationError({"input_quantity": "裁片加工按套数填写；实际发料米数请填写在原料明细。"})
+                allocation["input_quantity"] = None
+                value = allocation["allocated_quantity"]
+            else:
+                value = allocation.get("input_quantity")
+                if value is None:
+                    raise ValidationError({"input_quantity": "请填写本厂实际计划发出的支数或米数。"})
             plan = input_plan(value, snapshot)
             if allocation["allocated_quantity"] != plan["output_quantity"]:
                 raise ValidationError({"allocated_quantity": "预计加工支数/套数与输入原料的换算结果不一致。"})
@@ -108,7 +135,7 @@ def normalize_product(row, line_map, unit_by_text, *, public=False):
             output_total += plan["output_quantity"]
         if item["quantity"] != output_total:
             raise ValidationError({"quantity": "加工数量必须等于各厂预计产出之和。"})
-        item["required_quantity"] = Decimal(snapshot["allowance_pieces"]) if snapshot["kind"] == "PIPE" else output_total
+        item["required_quantity"] = Decimal(snapshot["allowance_pieces"] if snapshot["kind"] == "PIPE" else snapshot["required_sets"])
     primary_seen = set()
     for material in row["materials"]:
         line = line_map[material["bom_line_id"]]
@@ -123,11 +150,12 @@ def normalize_product(row, line_map, unit_by_text, *, public=False):
             raise ValidationError({"materials": "原料与本部位加工来源不符，不能混用其他管材或面料。"})
         entered = quantity(material["planned_issue_quantity"])
         if is_primary:
-            if entered != allocation["input_quantity"]:
+            output_sets = snapshot.get("quantity_basis") == "OUTPUT_SETS"
+            if not output_sets and entered != allocation["input_quantity"]:
                 raise ValidationError({"materials": "部位的原料输入必须与本厂加工分配一致。"})
             primary_seen.add(key)
-            material["planned_issue_quantity"] = plan["raw_quantity"]
-            material["flow_snapshot"] = snapshot
+            material["planned_issue_quantity"] = entered if output_sets else plan["raw_quantity"]
+            material["flow_snapshot"] = {**snapshot, "input_unit": "米"} if output_sets else snapshot
             material["planned_piece_count"] = int(entered) if snapshot["kind"] == "PIPE" else None
             material["planned_meters"] = Decimal(plan["meters"]) if snapshot["kind"] == "PIPE" else None
         else:
@@ -173,14 +201,8 @@ def normalize_product(row, line_map, unit_by_text, *, public=False):
 def enrich_source_context(data, processing_lines, material_lines, product):
     from apps.material_issues.models import OrderMaterialRequirement
     from apps.material_issues.requirements import build_requirement_specs
-    task, specs, _blockers, _ = build_requirement_specs(product.schedule.production_task_id)
+    task, _specs, _blockers, _ = build_requirement_specs(product.schedule.production_task_id)
     existing = {row.pk: row for row in OrderMaterialRequirement.objects.filter(production_task=task)}
-    remaining_by_line = {}
-    for spec in specs:
-        old = existing.get(spec["id"])
-        remaining = max(Decimal("0"), spec["required_quantity"] - (old.internal_issued_quantity + old.outsourcing_issued_quantity if old else 0))
-        for contribution in spec["contributions"]:
-            remaining_by_line[str(contribution["bom_line"].pk)] = remaining
     line_map = {str(line.pk): line for _, line in processing_lines + material_lines}
     for row in data["processing_items"]:
         line = line_map[row["id"]]
@@ -194,10 +216,13 @@ def enrich_source_context(data, processing_lines, material_lines, product):
                 row["reference_usage"] = str(snapshot["pieces_per_product"])
                 row["dispatched_quantity"] = str(old.outsourcing_issued_quantity if old else 0)
             else:
-                remaining = remaining_by_line.get(snapshot["material_line_id"], Decimal("0"))
-                if "cutting_sets_per_product" in snapshot:
-                    row["required_quantity"] = str(snapshot["required_sets"])
-                    row["reference_usage"] = str(snapshot["cutting_sets_per_product"])
+                available = output_set_availability(line=line, product_line_id=product.product_line_id,
+                    craft_id=data["craft"]["id"], craft_code=data["craft"]["outsourcing_code"],
+                    required_sets=snapshot["required_sets"])
+                remaining = available["available"]
+                row["outsourced_quantity"] = str(available["allocated"])
+                row["required_quantity"] = str(snapshot["required_sets"])
+                row["reference_usage"] = str(snapshot["cutting_sets_per_product"])
             row.update(conversion_snapshot=snapshot, input_unit=snapshot["input_unit"], unit=snapshot["output_unit"],
                        available_quantity=str(remaining), quantity_error="")
         except ValidationError as error:

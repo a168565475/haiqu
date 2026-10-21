@@ -1,9 +1,35 @@
+from decimal import Decimal
+
 from django.db.models import Prefetch, Q, Sum
 from django.db.models.functions import Coalesce
 
 from apps.customers.selectors import accessible_customers
 
-from .models import SalesOrder, SalesOrderLine, SalesOrderStatus
+from .models import (
+    CollaborationEventStatus, CollaborationEventType, DeliveryBatchStatus,
+    SalesOrder, SalesOrderDeliveryBatchLine, SalesOrderLine, SalesOrderStatus,
+)
+
+
+def sales_order_completion_progress(order):
+    active_demand = SalesOrderDeliveryBatchLine.objects.filter(
+        delivery_batch__sales_order=order,
+        delivery_batch__status=DeliveryBatchStatus.ACTIVE,
+    ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    shipped = order.collaboration_events.filter(
+        event_type=CollaborationEventType.SHIPMENT,
+        status=CollaborationEventStatus.COMPLETED,
+    ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+    balance_completed = order.collaboration_events.filter(
+        event_type=CollaborationEventType.BALANCE,
+        status=CollaborationEventStatus.COMPLETED,
+    ).exists()
+    blockers = []
+    if shipped < active_demand:
+        blockers.append(f"累计发货 {shipped}，有效交付需求 {active_demand}")
+    if not balance_completed:
+        blockers.append("余款尚未登记完成")
+    return {"active_demand": active_demand, "shipped_quantity": shipped, "blockers": blockers}
 
 
 def accessible_sales_orders(request, permission="sales_orders.view_salesorder"):

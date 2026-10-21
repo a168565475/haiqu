@@ -11,7 +11,7 @@ const columns: Array<[string, string[]]> = [
   ['辅料类', ['序号', '品名', '规格', '颜色', '材质', '单位', '单个用量', '备注', '图片']],
   ['面料类', ['序号', '规格', '材质', '色卡', '颜色', '色号', '门幅', '单个用量', '裁片', '单位', '备注', '图片']],
   ['包材类', ['序号', '品名', '材质', '颜色', '规格', '单位', '箱数（多少一箱）', '单个用量', '图片']],
-  ['裁剪明细', ['序号', '裁剪名称', '规格', '材质', '颜色', '裁片量（片/套）', '单个用量（米/片）', '每成品套数（套/成品）', '每套耗米（米/套）', '流转单位', '图片', '备注']],
+  ['裁剪明细', ['序号', '裁剪名称', '规格', '裁片量（片/套）', '每成品套数（套/成品）', '订单裁剪套数', '订单裁剪片数', '流转单位', '图片', '备注']],
 ]
 
 describe('BOM 预览按编辑分区展示', () => {
@@ -43,12 +43,12 @@ describe('BOM 预览按编辑分区展示', () => {
     expect(bomPreviewCell(line({ units_per_box: '4', unit_consumption: '1' }), 'units_per_box', section('包材类'), '1', [])).toBe('4')
   })
 
-  it('裁剪保留填写值并复用每套耗米计算，材质可来自关联面料', () => {
-    const row = line({ material: '/', cutting_pieces_per_set: 3, fabric_meters_per_piece: '0.2000', cutting_sets_per_product: 2, fabric_source_line_id: 'fabric-1' })
+  it('裁剪只按片套计算订单数量，不依赖历史米数', () => {
+    const row = line({ material: '/', cutting_pieces_per_set: 3, cutting_sets_per_product: 2, fabric_source_line_id: 'fabric-1' })
     const fabric = { ...section('面料类'), lines: [line({ id: 'fabric-1', material: 'PE', unit: '米' })] }
     const value = (key: string) => bomPreviewCell(row, key, section('裁剪明细'), '10', [fabric])
-    expect([value('cutting_pieces_per_set'), value('fabric_meters_per_piece'), value('fabric_meters_per_set'), value('material'), value('unit')]).toEqual(['3', '0.2000', '0.6', 'PE', '套'])
-    expect(bomPreviewCell({ ...row, cutting_sets_per_product: null }, 'fabric_meters_per_set', section('裁剪明细'), '10', [])).toBe('—')
+    expect([value('cutting_pieces_per_set'), value('cutting_sets_per_product'), value('order_cutting_sets'), value('order_cutting_pieces'), value('unit')]).toEqual(['3', '2', '20', '60', '套'])
+    expect(bomPreviewCell({ ...row, cutting_sets_per_product: null }, 'order_cutting_pieces', section('裁剪明细'), '10', [])).toBe('—')
     expect(bomPreviewCell({ ...row, material: '服务端补齐值', cutting_material_original: '手填材质' }, 'material', section('裁剪明细'), '10', [fabric])).toBe('手填材质')
     const unsavedFabric = { ...section('面料类'), lines: [{ ...line({ material: '新增面料', unit: '米' }), client_key: 'local-fabric' }] }
     expect(bomPreviewCell({ ...row, fabric_source_line_id: null, fabric_source_client_key: 'local-fabric' }, 'material', section('裁剪明细'), '10', [unsavedFabric])).toBe('新增面料')
@@ -57,9 +57,9 @@ describe('BOM 预览按编辑分区展示', () => {
   it('管材旧裁剪只读试算与编辑一致，普通旧裁剪不反推新参数', () => {
     const row = line({ category: '管材', cut_piece_quantity: '3', fabric_meters_per_set: '2', unit: '根' })
     const value = (item: BomLine, key: string) => bomPreviewCell(item, key, section('裁剪明细'), '10', [])
-    expect([value(row, 'cutting_pieces_per_set'), value(row, 'fabric_meters_per_piece'), value(row, 'cutting_sets_per_product'), value(row, 'unit')]).toEqual(['3', '0.6667', '1', '根'])
+    expect([value(row, 'cutting_pieces_per_set'), value(row, 'cutting_sets_per_product'), value(row, 'unit')]).toEqual(['3', '1', '根'])
     expect(value({ ...row, category: '布面' }, 'cutting_pieces_per_set')).toBe('—')
-    expect(value(row, 'fabric_meters_per_set')).toBe('2')
+    expect(value(row, 'order_cutting_pieces')).toBe('—')
     expect(row).not.toHaveProperty('cutting_pieces_per_set')
   })
 })

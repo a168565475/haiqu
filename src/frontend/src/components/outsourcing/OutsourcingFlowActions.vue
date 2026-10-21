@@ -6,7 +6,7 @@ import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import { confirmOutsourcingDispatch, confirmOutsourcingFlow, confirmOutsourcingReturn, fetchOutsourcingDispatchContext, fetchOutsourcingOptions, fetchOutsourcingReconciliation } from '@/api/outsourcing'
 import type { OutsourcingDispatchContext, OutsourcingOptions, OutsourcingOrderDetail, OutsourcingReconciliation, OutsourcingReconciliationInput, VersionedOutsourcingOrder } from '@/types/outsourcing'
-import { decimalUnits, outsourcingPlan } from '@/utils/outsourcingQuantities'
+import { decimalUnits, outsourcingDispatchPlan } from '@/utils/outsourcingQuantities'
 import { pipeMeters } from '@/utils/pipeQuantities'
 import type { OutsourcingConversion } from '@/types/outsourcing'
 
@@ -48,7 +48,7 @@ const issuedTotal = (row: DispatchMaterial) => quantityText(String(Number(row.in
 const selectedZone = (row: DispatchRow) => row.material.zones.find(zone => zone.zone_id === row.zone_id)
 const zoneRowCount = (materialId: string) => dispatchRows.value.filter(row => row.material.material_item_id === materialId).length
 const pipeQuantityError = (row: DispatchRow) => row.material.conversion_snapshot.kind === 'PIPE' && row.quantity.trim()
-  ? outsourcingPlan(row.quantity, row.material.conversion_snapshot).error : ''
+  ? outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error : ''
 const pipeQuantityRule = (row: DispatchRow) => {
   const pieces = Number(row.material.conversion_snapshot.pieces_per_bar || 0)
   return pieces > 0 ? `每根可切 ${pieces} 支；本次发料须填写 ${pieces} 的正整数倍。` : '管材切割规则缺失，请先核对 BOM。'
@@ -193,7 +193,7 @@ async function submit() {
           if (!zone) throw new Error(`${material.material_name}：请选择发料库区。`)
           if (usedZones.has(zone.zone_id)) throw new Error(`${material.material_name}：同一库区只能填写一行。`)
           usedZones.add(zone.zone_id)
-          const plan = outsourcingPlan(row.quantity, material.conversion_snapshot)
+          const plan = outsourcingDispatchPlan(row.quantity, material.conversion_snapshot)
           if (plan.error) throw new Error(`${material.material_name}：${plan.error}`)
           const requested = decimalUnits(row.quantity)!
           const stockQuantity = decimalUnits(plan.raw)!
@@ -278,7 +278,7 @@ async function submit() {
           <ElTableColumn label="发料库区" width="170"><template #default="{ row }"><ElSelect v-model="row.zone_id" :aria-label="`${row.material.material_name}发料库区`" placeholder="选择库区" filterable><ElOption v-for="zone in row.material.zones" :key="zone.zone_id" :value="zone.zone_id" :label="`${zone.zone_name} / ${zone.warehouse_name}`" /></ElSelect></template></ElTableColumn>
           <ElTableColumn label="库区可用" width="225"><template #default="{ row }"><template v-if="selectedZone(row)">{{ quantityText(selectedZone(row)!.available_input_quantity) }}<template v-if="row.material.conversion_snapshot.kind === 'PIPE'"> / {{ quantityText(selectedZone(row)!.available_quantity) }} {{ row.material.procurement_unit }} / {{ selectedZone(row)!.available_meters === null ? '—' : quantityText(selectedZone(row)!.available_meters!) }} 米</template></template><span v-else>—</span></template></ElTableColumn>
           <ElTableColumn label="本次发料" width="115"><template #default="{ row }"><ElTooltip :disabled="!pipeQuantityError(row)" :content="pipeQuantityRule(row)" placement="top" effect="light" popper-class="dispatch-pipe-rule-tooltip"><ElInput v-model="row.quantity" class="dispatch-quantity-input" :class="{ 'is-rule-error': Boolean(pipeQuantityError(row)) }" :aria-invalid="Boolean(pipeQuantityError(row))" :aria-label="`${row.material.material_name}本次发料数量`" :inputmode="row.material.conversion_snapshot.kind === 'PIPE' ? 'numeric' : 'decimal'" /></ElTooltip></template></ElTableColumn>
-          <ElTableColumn label="预计扣库" width="180"><template #default="{ row }"><span v-if="row.quantity && outsourcingPlan(row.quantity, row.material.conversion_snapshot).error" class="flow-error" :title="outsourcingPlan(row.quantity, row.material.conversion_snapshot).error">{{ outsourcingPlan(row.quantity, row.material.conversion_snapshot).error }}</span><span v-else-if="row.quantity">{{ row.material.conversion_snapshot.kind === 'PIPE' ? `${outsourcingPlan(row.quantity, row.material.conversion_snapshot).raw} ${row.material.procurement_unit} / ${outsourcingPlan(row.quantity, row.material.conversion_snapshot).meters} 米` : outsourcingPlan(row.quantity, row.material.conversion_snapshot).raw }}</span><span v-else>—</span></template></ElTableColumn>
+          <ElTableColumn label="预计扣库" width="180"><template #default="{ row }"><span v-if="row.quantity && outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error" class="flow-error" :title="outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error">{{ outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error }}</span><span v-else-if="row.quantity">{{ row.material.conversion_snapshot.kind === 'PIPE' ? `${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw} ${row.material.procurement_unit} / ${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).meters} 米` : outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw }}</span><span v-else>—</span></template></ElTableColumn>
           <ElTableColumn v-if="dispatchRows.length > context.materials.length" label="操作" width="80" fixed="right"><template #default="{ row }"><ElButton v-if="zoneRowCount(row.material.material_item_id) > 1" link type="danger" @click="removeZone(row)">移除</ElButton></template></ElTableColumn>
         </ElTable>
       </template>

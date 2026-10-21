@@ -21,6 +21,7 @@ from apps.procurement.tests import test_pipe_purchase_flow as pipe_fixture
 
 class SamplePipeFlowTests(APITestCase):
     receive = pipe_fixture.PipePurchaseFlowTests.receive
+    receive_all = sample_fixture.SamplePurchaseApiTests.receive_all
     quality = pipe_fixture.PipePurchaseFlowTests.quality
 
     def setUp(self):
@@ -120,9 +121,13 @@ class SamplePipeFlowTests(APITestCase):
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, 'DRAFT')
 
-    def test_partial_arrival_replay_and_finished_sample_remain_consistent(self):
+    def test_historical_pending_batches_replay_and_finished_sample_remain_consistent(self):
+        from apps.inventory.tests.test_sample_receiving import legacy_sample_receipt
         self.purchasing()
-        first = self.receive(2)
+        # 变更前已收货的三批待检记录仍可逐批完成原品质流程。
+        first = legacy_sample_receipt(self, '6.10', bars=2)
+        second = legacy_sample_receipt(self, '3.05', bars=1)
+        third = legacy_sample_receipt(self, '3.05', bars=1)
         self.assertEqual(first.status_code, 201, first.data)
         self.assertFalse(SampleMaterialArrival.objects.exists())
         result = self.quality(first)
@@ -138,14 +143,12 @@ class SamplePipeFlowTests(APITestCase):
             receive_material_arrival(procurement_request_id=self.procurement.pk, line_key=self.key,
                                      inbound_line_id=line.pk, request=request)
         self.assertEqual(SampleMaterialArrival.objects.count(), 1)
-        second = self.receive(1, remaining='6.1000')
         self.assertEqual(self.quality(second).status_code, 200)
         self.sample.refresh_from_db()
         # 到货只解除采购等待；还需样品部一次性领料后才进入金工。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
         self.sample.status = 'FINISHED'
         self.sample.save(update_fields=['status'])
-        third = self.receive(1, remaining='3.0500')
         self.assertEqual(self.quality(third).status_code, 200)
         self.sample.refresh_from_db()
         self.assertEqual(self.sample.status, 'FINISHED')
@@ -154,9 +157,10 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(sum(MaterialStockBalance.objects.values_list('meter_quantity', flat=True)), Decimal('12.20'))
         self.assertEqual(MaterialStockMovement.objects.count(), 3)
 
-    def test_quality_rejected_roots_do_not_count_as_arrived_pieces(self):
+    def test_historical_quality_rejected_roots_do_not_count_as_arrived_pieces(self):
+        from apps.inventory.tests.test_sample_receiving import legacy_sample_receipt
         self.purchasing()
-        first = self.receive(2)
+        first = legacy_sample_receipt(self, '6.10', bars=2)
         result = self.quality(first, 1)
         self.assertEqual(result.status_code, 200, result.data)
         self.assertEqual(SampleMaterialArrival.objects.get().accepted_quantity, 6)
@@ -166,25 +170,24 @@ class SamplePipeFlowTests(APITestCase):
         self.purchasing()
         self.raw_material.material_name = '采购后改名'
         self.raw_material.save(update_fields=['material_name'])
-        received = self.receive(2)
+        received = self.receive_all()
         self.assertEqual(received.status_code, 201, received.data)
-        result = self.quality(received)
-        self.assertEqual(result.status_code, 200, result.data)
         line_id = received.data['data']['lines'][0]['id']
         receive_material_arrival(procurement_request_id=self.procurement.pk, line_key=self.key, inbound_line_id=line_id,
                                  request=SimpleNamespace(user=self.user, employee=self.employee, META={}))
-        self.assertEqual(SampleMaterialArrival.objects.get().accepted_quantity, 12)
+        self.assertEqual(SampleMaterialArrival.objects.get().accepted_quantity, 24)
         self.assertEqual(MaterialStockMovement.objects.count(), 1)
 
     def test_return_completed_then_replenished_roots_advance_only_accepted_pieces(self):
         from apps.procurement.models import PurchaseReturn
+        from apps.inventory.tests.test_sample_receiving import legacy_sample_receipt
         self.purchasing()
-        first = self.receive(4)
+        first = legacy_sample_receipt(self, '12.20', bars=4)
         self.assertEqual(self.quality(first, 2).status_code, 200)
         self.sample.refresh_from_db()
         # 新流程到货验收完成后进入一次性领料，不再停留在采购中。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
-        self.assertEqual(self.receive(2, remaining='6.1000').status_code, 409)
+        self.assertEqual(self.receive_all().status_code, 409)
         returned = PurchaseReturn.objects.get(purchase_order=self.order)
         url = f'/api/v1/purchase-returns/{returned.pk}/'
         detail = self.client.get(url)
@@ -192,9 +195,8 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         completed = self.client.post(url + 'complete/', {}, format='json', HTTP_IF_MATCH=confirmed['ETag'])
         self.assertEqual(completed.status_code, 200, completed.data)
-        second = self.receive(2, remaining='6.1000')
+        second = self.receive_all()
         self.assertEqual(second.status_code, 201, second.data)
-        self.assertEqual(self.quality(second).status_code, 200)
         self.sample.refresh_from_db()
         # 到货只解除采购等待；还需样品部一次性领料后才进入金工。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')

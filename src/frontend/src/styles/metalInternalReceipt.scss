@@ -7,6 +7,7 @@
 // 表格容器独占四边，单元格只画内部右/下边。仅表格在溢出时滚动，备注和底栏保留。
 // 15 列宽依次为 90/60/120/70/100/85/80/90/90/100/80/80/90/90/140px。
 .metal-receipt-page,
+.sewing-receipt-page,
 .metal-receipt-dialog {
   --el-color-primary: #{crm.$crm-primary};
   --el-color-primary-light-3: #{crm.$crm-primary-light-3};
@@ -47,7 +48,7 @@
   .info-cell > strong { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .status { display: inline-flex; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px; color: var(--erp-color-text-inverse); white-space: nowrap; }
   .status.info { background: var(--erp-tag-info-background); }
-  .metal-receipt-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle); }
+  .metal-receipt-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
   .metal-receipt-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 12px; }
   .metal-receipt-table thead { position: sticky; top: 0; z-index: 2; }
   .metal-receipt-table th { height: 44px; padding: 0 16px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -74,13 +75,14 @@
   .el-textarea__inner { border-radius: var(--erp-radius-control); min-height: 74px !important; font: 12px/22px var(--el-font-family); padding: 8px 12px; resize: none; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
 }
 
-.metal-receipt-page {
+.metal-receipt-page, .sewing-receipt-page {
   height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px;
   h1 { font: 700 36px/44px var(--erp-font-body); }
   .el-button { border-radius: var(--erp-radius-control); }
   .page-heading { min-height: 44px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
   .panel { @include detail.surface; padding: 16px; }
-  .d1-context { flex-shrink: 0; }
+  .d1-context { flex-shrink: 0; min-width: 0; }
+  .d1-context .info-grid { grid-template-columns: repeat(5, minmax(160px, 1fr)); overflow-x: auto; }
   .form-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--erp-color-text-secondary); }
   .form-field > span { font-size: 12px; }
   .form-field.required > span::before { content: '* '; color: var(--erp-color-danger); }
@@ -90,7 +92,10 @@
   .section-heading > div { display: flex; align-items: center; gap: 14px; }
   .d1-workspace { display: flex; flex-direction: column; gap: 14px; min-height: 0; flex: 1; overflow: hidden; }
   .d1-workspace > .d1-lines { flex: 0 1 auto; min-height: 86px; }
-  .d1-fields { flex-shrink: 0; }
+  .d1-fields { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 14px 24px; }
+  .d1-fields .form-field { flex-direction: row; align-items: center; flex: 0 0 auto; }
+  .d1-fields .form-field > span { flex: 0 0 64px; width: 64px; white-space: nowrap; }
+  .d1-fields .el-date-editor, .d1-fields .el-input, .d1-fields .el-select { flex: 0 0 220px; width: 220px; }
   .d1-lines .metal-receipt-table th, .d1-lines .metal-receipt-table td { padding-left: 8px; padding-right: 8px; }
   .d1-lines strong { font-weight: 500; }
   .d1-unit { margin-left: 4px; }
@@ -103,6 +108,17 @@
   .d1-fallback { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .el-skeleton { padding: 20px; }
   > .el-alert { flex-shrink: 0; }
+}
+
+.sewing-receipt-page {
+  min-width: 0;
+  .section-heading > div { flex-wrap: wrap; gap: 8px 14px; }
+  .d1-lines input[type='number'] { appearance: textfield; }
+  .d1-lines input[type='number']::-webkit-inner-spin-button,
+  .d1-lines input[type='number']::-webkit-outer-spin-button { appearance: none; margin: 0; }
+  @media (max-width: 800px) {
+    .footer-bar { flex-wrap: wrap; }
+  }
 }
 
 .metal-receipt-dialog {

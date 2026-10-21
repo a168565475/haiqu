@@ -10,11 +10,11 @@ vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: f
 vi.mock('@/api/outsourcing', () => ({ fetchOutsourcingOrder: api.fetch, deleteOutsourcingOrder: api.remove, revokeDispatchedOutsourcingOrder: api.revoke, outsourcingProductImageUrl: () => '' }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
 const baseDetail = {
-  id: 'order-1', order_number: '原单-001', status: 'PARTIAL_RETURN', status_display: '部分回货',
+  id: 'order-1', order_number: '原单-001', status: 'PARTIAL_RETURN', status_display: '部分回货', planned_amount: '25.0000',
   schedule_number: '排产-001', production_task_number: '任务-001', craft: { name: '喷塑', outsourcing_code: 'POWDER_COATING' },
   products: [{ id: 'product-1', product: { product_name: '桌子' }, image_file_id: null, planned_quantity: 100,
     processing_items: [{ id: 'part-1', part_name: '前脚管', allocations: [{ id: 'allocation-1', factory_id: 'factory-1',
-      factory_name: '喷塑厂', unit: '支', allocated_quantity: '100', materials: [],
+      factory_name: '喷塑厂', unit: '支', allocated_quantity: '100', unit_price: '0.2500', planned_amount: '25.0000', materials: [],
     }] }],
   }],
   returns: [{ id: 'return-1', return_number: '回货-001', return_date: '2026-09-22', factory_name: '喷塑厂',
@@ -39,11 +39,26 @@ beforeEach(() => { vi.resetAllMocks(); route.query = {}; auth.permissions = new 
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('原外发详情的直接交接展示及保护', () => {
+  it('同一加工厂不同部位按各分配显示真实单价，不把首行价格当成全厂统一价', async () => {
+    const detail = structuredClone(baseDetail)
+    const first = detail.products[0]!.processing_items[0]!
+    detail.products[0]!.processing_items.push({ ...first, id: 'part-2', part_name: '后脚管', allocations: [{ ...first.allocations[0]!, id: 'allocation-2', unit_price: '0.5000', planned_amount: '50.0000' }] })
+    detail.planned_amount = '75.0000'
+    const wrapper = await createView(detail)
+    const prices = wrapper.get('.order-price-card')
+    expect(prices.text()).toContain('75 元')
+    const rows = prices.findAll('.el-table__body tbody tr')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.text()).toContain('0.25 元/支')
+    expect(rows[1]!.text()).toContain('0.5 元/支')
+    expect((wrapper.vm as any).factoryProgressRows).toHaveLength(1)
+  })
   it('受限金工投影即使拥有普通权限也不请求可能越界的原单详情', async () => {
     auth.permissions.add('material_issues.view_metalprocessingsource')
     route.query = { view: 'metal' }
     const wrapper = await createView()
     expect(api.fetch).not.toHaveBeenCalled()
+    expect(wrapper.find('.order-price-card').exists()).toBe(false)
     expect(wrapper.find('metal-processing-p4-view-stub').attributes('originalorderid')).toBe('order-1')
   })
 

@@ -4,7 +4,7 @@ export interface ReceiptAttributes {
 }
 export interface ReceiptPreviewLine {
   bom_line_id: string; component_key: string; usage: string; attributes: ReceiptAttributes; stage: string
-  required: string; received: string; can_receive: string; input_remaining: string; input_supported: string
+  required: string; received: string; can_receive: string; input_remaining: string | null; input_supported: string | null
 }
 export interface ReceiptPreview {
   schedule_product_id: string; plan_category: 'METAL' | 'SEWING'; etag: string; production_order: string
@@ -19,7 +19,7 @@ export interface SemiReceiptRecord {
   id: string; receipt_number: string; source: 'INTERNAL' | 'EXTERNAL'; source_display: string
   production_order: string; product: string; attributes: ReceiptAttributes; stage: string
   quantity: string; unit: string; receipt_date: string; status: string; warehouse: string; zone: string; actor: string; remark: string
-  source_detail?: Record<string, string>
+  source_detail?: Record<string, string | null>
 }
 
 export interface InternalReceiptResult {

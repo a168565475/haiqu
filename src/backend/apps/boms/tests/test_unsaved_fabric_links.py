@@ -109,7 +109,7 @@ class UnsavedFabricLinkApiTests(TestCase):
             {"section_type": "FABRIC", "title": "裁剪明细", "lines": [{
                 "part_name": "新裁片", "source_cutting_material_id": str(self.cutting_source.pk),
                 "fabric_source_client_key": key, "cutting_pieces_per_set": 2,
-                "fabric_meters_per_piece": "0.125", "cutting_sets_per_product": 1,
+                "cutting_sets_per_product": 1,
             }]},
         ]
 
@@ -146,7 +146,10 @@ class UnsavedFabricLinkApiTests(TestCase):
         fabric = BomLine.objects.get(section__bom=self.bom, section__title="面料类")
         cutting = BomLine.objects.get(section__bom=self.bom, section__title="裁剪明细")
         self.assertEqual(cutting.fabric_source_line_id, fabric.pk)
-        self.assertEqual(cutting.total_consumption, "250.0000")
+        self.assertEqual((cutting.cutting_pieces_per_set, cutting.cutting_sets_per_product), (2, 1))
+        self.assertIsNone(cutting.fabric_meters_per_piece)
+        self.assertIsNone(cutting.fabric_meters_per_set)
+        self.assertEqual(cutting.total_consumption, "")
         for section in response.data["data"]["sections"]:
             for row in section["lines"]:
                 self.assertNotIn("client_key", row)
@@ -225,7 +228,7 @@ class UnsavedFabricLinkApiTests(TestCase):
                          (material.material_name, specification.specification_name, "米"))
         self.assertEqual(cutting.fabric_source_line_id, fabric.pk)
         self.assertEqual(cutting.material, material.material_name)
-        self.assertEqual(cutting.raw_values["cutting_material_original"], "/")
+        self.assertNotIn("cutting_material_original", cutting.raw_values)
         self.assertFalse(fabric.raw_values.get("source_inventory_material_id"))
         saved = self.get().data["data"]["sections"]
         self.assertEqual(self.save(saved).status_code, 200)
@@ -237,7 +240,7 @@ class UnsavedFabricLinkApiTests(TestCase):
         self.cutting_source.refresh_from_db()
         self.assertEqual(self.cutting_source.material, "/")
 
-    def test_existing_unmapped_reference_fabric_keeps_cutting_own_and_manual_material(self):
+    def test_existing_unmapped_reference_fabric_overrides_cutting_own_and_manual_material(self):
         payload, _, _ = self.unmapped_fabric_payload()
         response = self.save(payload[:1])
         self.assertEqual(response.status_code, 200, response.data)
@@ -250,13 +253,13 @@ class UnsavedFabricLinkApiTests(TestCase):
         response = self.save(saved)
         self.assertEqual(response.status_code, 200, response.data)
         cutting = BomLine.objects.get(section__bom=self.bom, section__title="裁剪明细")
-        self.assertEqual((cutting.fabric_source_line_id, cutting.material), (fabric.pk, "测试面料"))
+        self.assertEqual((cutting.fabric_source_line_id, cutting.material), (fabric.pk, fabric.material))
         saved = response.data["data"]["sections"]
         next(section for section in saved if section["title"] == "裁剪明细")["lines"][0]["material"] = "手填材质"
         response = self.save(saved)
         self.assertEqual(response.status_code, 200, response.data)
         cutting.refresh_from_db()
-        self.assertEqual((cutting.fabric_source_line_id, cutting.material), (fabric.pk, "手填材质"))
+        self.assertEqual((cutting.fabric_source_line_id, cutting.material), (fabric.pk, fabric.material))
 
     def test_unmapped_reference_fabric_still_cannot_confirm_bom(self):
         payload, _, _ = self.unmapped_fabric_payload()
@@ -366,7 +369,7 @@ class UnsavedFabricLinkApiTests(TestCase):
                 row = next(section for section in self.get().data["data"]["sections"]
                            if section["title"] == "裁剪明细")["lines"][0]
                 self.assertEqual(row["material"], "测试材质")
-                self.assertEqual(row["cutting_material_original"], missing_material)
+                self.assertEqual(row["cutting_material_original"], "测试材质")
                 self.cutting_source.refresh_from_db()
                 self.assertEqual(self.cutting_source.material, missing_material)
 
@@ -392,14 +395,14 @@ class UnsavedFabricLinkApiTests(TestCase):
             row = next(section for section in result.data["data"]["sections"]
                        if section["title"] == "裁剪明细")["lines"][0]
             self.assertEqual(row["material"], "测试材质" if omit_material else "第二种面料材质")
-            self.assertEqual(row["cutting_material_original"], "/")
+            self.assertEqual(row["cutting_material_original"], row["material"])
 
-    def test_own_cutting_material_and_manual_override_take_precedence(self):
+    def test_source_fabric_overrides_own_cutting_material_and_manual_input(self):
         result = self.save(self.payload())
         self.assertEqual(result.status_code, 200, result.data)
         row = next(section for section in result.data["data"]["sections"]
                    if section["title"] == "裁剪明细")["lines"][0]
-        self.assertEqual(row["material"], "测试面料")
+        self.assertEqual(row["material"], "测试材质")
         self.cutting_source.material = "/"
         self.cutting_source.save(update_fields=["material"])
         result = self.save(self.payload())
@@ -411,9 +414,9 @@ class UnsavedFabricLinkApiTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         row = next(section for section in result.data["data"]["sections"]
                    if section["title"] == "裁剪明细")["lines"][0]
-        self.assertEqual((row["material"], row["cutting_material_original"]), ("用户填写材质", "用户填写材质"))
+        self.assertEqual((row["material"], row["cutting_material_original"]), ("测试材质", "测试材质"))
 
-    def test_clearing_fabric_source_restores_missing_original_material(self):
+    def test_clearing_fabric_source_clears_inherited_material(self):
         self.cutting_source.material = "/"
         self.cutting_source.save(update_fields=["material"])
         result = self.save(self.payload())
@@ -425,9 +428,9 @@ class UnsavedFabricLinkApiTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         row = next(section for section in result.data["data"]["sections"]
                    if section["title"] == "裁剪明细")["lines"][0]
-        self.assertEqual((row["material"], row["cutting_material_original"]), ("/", "/"))
+        self.assertEqual((row["material"], row["cutting_material_original"]), ("", ""))
 
-    def test_explicit_material_equal_to_previous_fallback_remains_user_input(self):
+    def test_explicit_material_cannot_survive_cleared_source(self):
         self.cutting_source.material = "/"
         self.cutting_source.save(update_fields=["material"])
         result = self.save(self.payload())
@@ -441,4 +444,4 @@ class UnsavedFabricLinkApiTests(TestCase):
         self.assertEqual(result.status_code, 200, result.data)
         row = next(section for section in result.data["data"]["sections"]
                    if section["title"] == "裁剪明细")["lines"][0]
-        self.assertEqual((row["material"], row["cutting_material_original"]), ("测试材质", "测试材质"))
+        self.assertEqual((row["material"], row["cutting_material_original"]), ("", ""))

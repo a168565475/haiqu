@@ -115,8 +115,8 @@ export interface NumberRule {
   format_pattern: string
   sequence_name: string
   sequence_padding: number
-  date_granularity: 'NONE' | 'YEAR' | 'MONTH'
-  reset_policy: 'NEVER'
+  date_granularity: 'NONE' | 'YEAR' | 'MONTH' | 'DAY'
+  reset_policy: 'NEVER' | 'DAILY' | 'YEARLY'
   is_configured: boolean
   status: ReferenceStatus
   sort_order: number

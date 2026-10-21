@@ -133,6 +133,21 @@ describe('打样详情的真实状态与操作边界', () => {
     expect(wrapper.findAll('.sample-section').length).toBeGreaterThan(0)
   })
 
+  it('兼容已进入材料待填写但尚未完善需求的新版申请，详情页不再提供独立编辑页入口', async () => {
+    api.permissions = ['samples.complete_sample_requirements']
+    const value = response('MATERIALS_PENDING')
+    api.fetch.mockResolvedValue({ ...value, data: {
+      ...value.data,
+      application_actions: { is_application: true, can_director_review: false, can_resubmit: false },
+      edit_capabilities: { mode: 'COMPLETE', can_full_edit: true, can_report_edit: true, can_complete: true },
+    } })
+    const wrapper = await render()
+    expect(wrapper.find('.request-number').text()).toBe('HTS-123')
+    expect(wrapper.find('.detail-actions').text()).not.toContain('编辑需求')
+    expect(wrapper.text()).not.toContain('完善并提交')
+    expect(api.push).not.toHaveBeenCalled()
+  })
+
   it('PMC 审核只发一次请求并携带原 ETag，成功后显示返回的真实下一状态', async () => {
     let finish: (value: ReturnType<typeof response>) => void = () => {}
     api.pmc.mockImplementation(() => new Promise(resolve => { finish = resolve }))

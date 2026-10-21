@@ -27,6 +27,10 @@ export interface SampleMaterialDraft {
   notes: string
 }
 export interface SampleMaterialUnit { id: string; label: string; decimalPlaces?: number }
+export interface SampleProcurementMaterialContext {
+  sample: { id: string; request_number: string; status: import('./sample').SampleStatus; status_display: string; customer_name: string; requested_at: string; product_name: string; specification: string; color: string; quantity_label: string }
+  materials: SampleMaterialLoadResult
+}
 export type SampleMaterialField = 'name' | 'specification' | 'material' | 'color'
 export interface SampleMaterialOption { label: string; pinyin_search?: string }
 export interface SampleMaterialReferences {
@@ -49,7 +53,7 @@ export interface SampleMaterialProgress {
   label: string; status: string
   lines: Array<SampleMaterialLine & {
     unitLabel: string; supplyQuantity: string; arrivedQuantity: string; remainingQuantity: string
-    availableQuantity?: string; issuedQuantity?: string | null; shortageQuantity?: string
+    availableQuantity?: string; issuedQuantity?: string | null; shortageQuantity?: string; procurementQuantity?: string | null
   }>
 }
 export type SampleMaterialLoadResult =

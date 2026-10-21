@@ -12,15 +12,16 @@ const rules = ref<NumberRule[]>([])
 
 function formatExample(rule: NumberRule): string {
   if (!rule.is_configured) return '未配置'
-  const date = rule.date_granularity === 'MONTH' ? '202608' : rule.date_granularity === 'YEAR' ? '2026' : ''
+  const date = { NONE: '', YEAR: '2026', MONTH: '202608', DAY: '20260820' }[rule.date_granularity]
   return rule.format_pattern
     .replace('{prefix}', rule.prefix)
     .replace('{date}', date)
+    .replace('{short_date}', '260820')
     .replace('{sequence}', '1'.padStart(rule.sequence_padding, '0'))
 }
 
 function dateGranularityLabel(value: NumberRule['date_granularity']): string {
-  return { NONE: '无', YEAR: '年份', MONTH: '年月' }[value]
+  return { NONE: '无', YEAR: '年份', MONTH: '年月', DAY: '年月日' }[value]
 }
 
 async function loadRules() {

@@ -232,6 +232,7 @@ class PurchaseCompletionApiTests(MaterialInventoryApiTests):
         self.assertEqual(inbound_status(), ("COMPLETED", "已完成"))
 
     def test_return_workflow_requires_confirmation_and_remark_but_not_replenishment(self):
+        self.use_general_material()
         receipt = self.receive()
         self.assertEqual(self.confirm_quality(receipt, return_quantity="2.5000").status_code, 200)
         record = PurchaseReturn.objects.get()
@@ -276,6 +277,7 @@ class PurchaseCompletionApiTests(MaterialInventoryApiTests):
         self.assertEqual(blocked.status_code, 409, blocked.data)
 
     def test_quality_return_generation_is_atomic_and_cannot_duplicate(self):
+        self.use_general_material()
         receipt = self.receive()
         with patch("apps.procurement.completion_services.next_business_number", side_effect=RuntimeError("模拟编号异常")):
             with self.assertRaises(RuntimeError):

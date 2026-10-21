@@ -141,6 +141,13 @@ def complete_purchase_order(*, order_id, remark, allowed_task_ids, actor_employe
         actor_employee=actor_employee, before_data={"status": previous_status},
         after_data={"status": order.status, "completion_remark": remark}, request=request,
     )
+    from apps.wecom.notification_services import register_business_event
+    register_business_event(
+        event_code="PURCHASE_ORDER_COMPLETED", idempotency_key=f"PURCHASE_ORDER_COMPLETED:{order.pk}:1",
+        object_type="procurement.PurchaseOrder", object_id=order.pk, object_version=1,
+        context={"document_no": order.order_number, "operator": actor_employee.display_name,
+                 "occurred_at": order.completed_at.isoformat(), "status": order.get_status_display()},
+    )
     return purchase_orders_with_context().get(pk=order.pk)
 
 

@@ -1050,7 +1050,6 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   opacity: 0.45 !important;
 }
 
-.data-surface :deep(.el-scrollbar__thumb) { background: var(--erp-color-text-muted); }
 
 .empty-state,
 .data-state {

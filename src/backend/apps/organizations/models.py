@@ -43,6 +43,7 @@ class OrganizationUnit(ArchivableModel):
 
     class Meta:
         db_table = "organization_unit"
+        permissions = [("manage_organization", "管理部门与组织归属")]
         ordering = ["sort_order", "unit_code"]
         constraints = [
             models.CheckConstraint(condition=Q(status__in=OrganizationStatus.values), name="org_unit_status_valid"),
@@ -160,6 +161,9 @@ class EmployeeOrganizationAssignment(TimeStampedModel):
 
 
 class RoleProfile(ArchivableModel):
+    department = models.ForeignKey(
+        OrganizationUnit, null=True, blank=True, on_delete=models.PROTECT, related_name="roles",
+    )
     auth_group = models.OneToOneField(
         "auth.Group",
         on_delete=models.PROTECT,

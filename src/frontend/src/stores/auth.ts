@@ -20,6 +20,19 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isAuthenticated: (state) => state.user !== null,
     waitingForRole: (state) => state.user?.waiting_for_role === true,
+    managementCan: (state) => (permission: string) => {
+      const user = state.user
+      if (user?.employee?.status !== 'ACTIVE') return false
+      if (user.is_superuser && user.username === 'admin') return true
+      const access = user.effective_access
+      return access?.active === true && access.actions[permission]?.sources.some(
+        source => source.type === 'ROLE' && source.scope === 'MODULE',
+      ) === true
+    },
+    canReadAccessDirectory(): boolean {
+      return ['organizations.manage_organization', 'access_control.manage_access',
+        'access_control.manage_accounts', 'access_control.manage_wecom'].some(code => this.managementCan(code))
+    },
     hasPermission: (state) => (permission: string) => {
       return state.user?.permissions.includes(permission) ?? false
     },

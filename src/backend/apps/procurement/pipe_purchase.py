@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 
 from rest_framework.exceptions import ValidationError
 from apps.core.api.exceptions import Conflict
-from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan, positive_integer
+from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan_for_line, positive_integer
 from apps.products.material_identity import resolve_bom_line_raw_material
 
 
@@ -26,8 +26,7 @@ def pipe_source_snapshot(line):
             or material.category.status != 'ACTIVE' or material.category.archived_at):
         raise ValidationError({'lines': '管材须关联有效的根制原材料。'})
     try:
-        result = pipe_plan(cutting_length_mm=line.cutting_length_mm, pieces_per_product=line.pieces_per_product,
-                           pieces_per_bar=line.pieces_per_bar, order_quantity=line.section.bom.order_quantity)
+        result = pipe_plan_for_line(line)
     except MaterialFlowValueError as error:
         raise ValidationError({error.field: f'请先补齐并确认管材 BOM：{error}'}) from error
     if (line.raw_bar_length_m != Decimal(result['raw_bar_length_m'])

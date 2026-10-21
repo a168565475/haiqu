@@ -1,9 +1,15 @@
 from apps.procurement.source_access import purchase_order_access
 from uuid import UUID
+from collections.abc import Mapping
+from pathlib import Path
+import json
 
+from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError
 from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.http import FileResponse
+from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -25,12 +31,15 @@ from apps.procurement.models import (
 )
 from apps.products.models import RawMaterialInformation
 from apps.production_tasks.models import ProductionTask, ProductionTaskStatus
+from apps.organizations.models import Employee, EmployeeStatus
+from apps.files.uploads import save_scanned_image
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.reference_data.models import AccessoryMaterial, FabricMaterial, ProductColor, ReferenceStatus
 from apps.reference_data.pinyin_search import build_pinyin_search
 
 from ..models import (
     FinishedGoodsReceipt,
+    FinishedGoodsOutbound,
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
@@ -50,6 +59,7 @@ from ..selectors import (
     eligible_orders_for_product,
     eligible_product_lines_with_remaining,
     finished_goods_inventory_rows,
+    finished_goods_outbounds,
     locations_with_usage,
     material_inbounds,
     material_inbound_order_totals,
@@ -73,15 +83,21 @@ from ..services import (
     save_zone,
 )
 from ..workflow import purchase_inbound_workflow_status
+from ..sample_receiving_services import receive_sample_purchase
 from ..public_stock_mode import public_flow_enabled
 from ..public_inventory_queries import public_pipe_summary, public_raw_inventory_rows, public_semi_inventory_page
 from .serializers import (
     FinishedGoodsOutboundInputSerializer,
     FinishedGoodsOutboundSerializer,
+    FinishedGoodsOutboundResponseSerializer,
+    FinishedGoodsOutboundListResponseSerializer,
     FinishedGoodsReceiptBatchInputSerializer,
     FinishedGoodsReceiptInputSerializer,
     FinishedGoodsReceiptSerializer,
+    FinishedGoodsInventoryScopeSerializer,
     MaterialInboundInputSerializer,
+    SampleMaterialInboundInputSerializer,
+    SampleMaterialInboundResponseSerializer,
     ManualMaterialInboundInputSerializer,
     MaterialQualityConfirmationInputSerializer,
     MaterialInboundSerializer,
@@ -260,20 +276,38 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
         "batch_receipts": "inventory.add_finishedgoodsreceipt",
         "outbound_batches": "inventory.add_finishedgoodsoutbound",
         "outbounds": "inventory.add_finishedgoodsoutbound",
+        "outbounds.GET": "inventory.view_finishedgoodsoutbound",
+        "outbound_detail": "inventory.view_finishedgoodsoutbound",
+        "outbound_attachment": "inventory.view_finishedgoodsoutbound",
     }
 
+    def get_permissions(self):
+        if self.action == "options" and self.request.method == "GET" and self.request.query_params.get("scope") == "filters":
+            # 仅共享仓库/库区筛选选项；完整入库选项仍要求查看入库权限。
+            self.action_permission_map = {
+                **self.action_permission_map,
+                "options.GET": ["inventory.view_finishedgoodsreceipt", "inventory.view_finishedgoodsoutbound"],
+            }
+        return super().get_permissions()
+
+    @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     def list(self, request):
+        scope = FinishedGoodsInventoryScopeSerializer(data=request.query_params)
+        scope.is_valid(raise_exception=True)
         warehouse_id = request.query_params.get("warehouse_id", "").strip()
         zone_id = request.query_params.get("zone_id", "").strip()
         if warehouse_id:
             warehouse_id = str(uuid_value(warehouse_id, "warehouse_id"))
         if zone_id:
             zone_id = str(uuid_value(zone_id, "zone_id"))
+        production_task_id = scope.validated_data.get("production_task_id")
         rows = finished_goods_inventory_rows(
             keyword=request.query_params.get("q", "").strip(),
             warehouse_id=warehouse_id,
             zone_id=zone_id,
             category=request.query_params.get("category", "").strip(),
+            production_task_id=str(production_task_id) if production_task_id else "",
+            exclude_sample=scope.validated_data["exclude_sample"],
         )
         page = positive_int(request.query_params.get("page"), "page", 1)
         page_size = min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100)
@@ -285,10 +319,11 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
     def _inventory_payload(item):
         return {
             "inventory_key": "|".join(str(item[key]) for key in (
-                "production_task_product__product_id", "category_snapshot", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot", "item_number_snapshot",
+                "production_task_product__product_id", "task_number_snapshot", "category_snapshot", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot", "item_number_snapshot",
                 "specification_snapshot", "actual_color", "unit_id", "location__zone__warehouse_id", "location__zone_id"
             )),
             "product_id": item["production_task_product__product_id"],
+            "task_number": item["task_number_snapshot"],
             "category": item["category_snapshot"],
             "product_number": item["product_number_snapshot"],
             "product_code": item["product_code_snapshot"],
@@ -358,6 +393,8 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                 for item in product_colors
             ],
             "production_orders": list(production_orders),
+            "employees": list(Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True)
+                .order_by("employee_code", "id").values("id", "employee_code", "display_name")),
         }})
 
     @action(detail=False, methods=["get"], url_path="eligible-products")
@@ -430,18 +467,101 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
         queryset = receipt_batches(FinishedGoodsReceipt.objects.filter(pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids], remaining_quantity__gt=0))
         return Response({"data": FinishedGoodsReceiptSerializer(queryset, many=True).data})
 
-    @action(detail=False, methods=["post"])
+    @extend_schema(methods=["GET"], operation_id="finished_goods_outbounds_list",
+        parameters=[OpenApiParameter("production_task_id", UUID), OpenApiParameter("product_line_id", UUID),
+                    OpenApiParameter("q", str, description="搜索出货单号、生产任务单号、产品编码、品名、货号、规格或颜色，最长300字；命中后返回完整出货单。"),
+                    OpenApiParameter("warehouse_id", UUID, description="出库仓库；与其他条件须命中同一明细。"),
+                    OpenApiParameter("page", int), OpenApiParameter("page_size", int)],
+        responses=FinishedGoodsOutboundListResponseSerializer)
+    @extend_schema(methods=["POST"], operation_id="finished_goods_outbounds_create",
+        request=FinishedGoodsOutboundInputSerializer, responses={201: FinishedGoodsOutboundResponseSerializer})
+    @action(detail=False, methods=["get", "post"])
     def outbounds(self, request):
-        serializer = FinishedGoodsOutboundInputSerializer(data=request.data)
+        if request.method == "GET":
+            keyword = request.query_params.get("q", "").strip()
+            if len(keyword) > 300:
+                raise ValidationError({"q": "搜索内容不能超过300字。"})
+            task_id = request.query_params.get("production_task_id", "").strip()
+            product_line_id = request.query_params.get("product_line_id", "").strip()
+            warehouse_id = request.query_params.get("warehouse_id", "").strip()
+            queryset = finished_goods_outbounds(
+                keyword=keyword,
+                production_task_id=uuid_value(task_id, "production_task_id") if task_id else None,
+                product_line_id=uuid_value(product_line_id, "product_line_id") if product_line_id else None,
+                warehouse_id=uuid_value(warehouse_id, "warehouse_id") if warehouse_id else None,
+            )
+            page = positive_int(request.query_params.get("page"), "page", 1)
+            page_size = min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100)
+            start = (page - 1) * page_size
+            return Response({"data": {"items": FinishedGoodsOutboundSerializer(queryset[start:start + page_size], many=True).data, "total": queryset.count()}})
+        if not isinstance(request.data, Mapping):
+            raise ValidationError("出库请求必须为对象。")
+        # multipart 的 QueryDict 不适合承载嵌套明细，先转换为普通字典。
+        payload = {key: request.data.get(key) for key in request.data}
+        if isinstance(payload.get("items"), str):
+            try:
+                payload["items"] = json.loads(payload["items"])
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"items": "出库明细格式不正确。"}) from exc
+        images = request.FILES.getlist("loading_images")
+        if images:
+            payload["loading_images"] = images
+        serializer = FinishedGoodsOutboundInputSerializer(data=payload)
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
-        outbound = create_finished_goods_outbound(
-            items=values["items"], receiver_name=values["receiver_name"],
-            used_for_order_number=values["used_for_order_number"], remark=values["remark"],
-            actor_employee=request.employee, request=request,
-        )
-        outbound = outbound.__class__.objects.prefetch_related("lines__receipt").select_related("outbound_by_employee").get(pk=outbound.pk)
+        uploaded = []
+        try:
+            for image in images:
+                uploaded.append(save_scanned_image(image, request.employee,
+                    storage_folder="inventory/finished-goods-loading", field_label="装卸图片"))
+            outbound = create_finished_goods_outbound(
+                items=values["items"], receiver_name=values["receiver_name"],
+                used_for_order_number=values["used_for_order_number"], remark=values["remark"],
+                actor_employee=request.employee, request=request,
+                responsible_employee_id=values["responsible_employee_id"], shipment_date=values["shipment_date"],
+                loading_fee=values["loading_fee"], other_fee=values["other_fee"], attachment_ids=[file.pk for file in uploaded],
+            )
+        except Exception:
+            # 数据库事务回滚不会删除磁盘文件，只清理当前请求刚创建的上传副本。
+            folder = (Path(settings.MEDIA_ROOT) / "inventory/finished-goods-loading").resolve()
+            for file in uploaded:
+                path = (Path(settings.MEDIA_ROOT) / file.storage_key).resolve()
+                if folder not in path.parents:
+                    raise RuntimeError("装卸图片清理路径超出本次上传目录。")
+                path.unlink(missing_ok=True)
+                file.archived_at = timezone.now()
+                file.archived_by_employee = request.employee
+                file.archive_reason = "出库提交失败，清理本次上传副本"
+                file.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+            raise
+        outbound = finished_goods_outbounds().get(pk=outbound.pk)
         return Response({"data": FinishedGoodsOutboundSerializer(outbound).data}, status=status.HTTP_201_CREATED)
+
+    @extend_schema(operation_id="finished_goods_outbound_detail", responses=FinishedGoodsOutboundResponseSerializer,
+        parameters=[OpenApiParameter("outbound_id", UUID, location=OpenApiParameter.PATH)])
+    @action(detail=False, methods=["get"], url_path=r"outbounds/(?P<outbound_id>[^/.]+)")
+    def outbound_detail(self, request, outbound_id=None):
+        outbound = finished_goods_outbounds().filter(pk=uuid_value(outbound_id, "outbound_id")).first()
+        if outbound is None:
+            raise NotFound("出库单不存在。")
+        return Response({"data": FinishedGoodsOutboundSerializer(outbound).data})
+
+    @extend_schema(responses={(200, 'image/*'): bytes}, parameters=[
+        OpenApiParameter("outbound_id", UUID, location=OpenApiParameter.PATH),
+        OpenApiParameter("file_id", UUID, location=OpenApiParameter.PATH)])
+    @action(detail=False, methods=["get"], url_path=r"outbounds/(?P<outbound_id>[^/.]+)/attachments/(?P<file_id>[^/.]+)")
+    def outbound_attachment(self, request, outbound_id=None, file_id=None):
+        outbound = FinishedGoodsOutbound.objects.filter(pk=uuid_value(outbound_id, "outbound_id")).first()
+        if outbound is None:
+            raise NotFound("出库单不存在。")
+        link = outbound.attachments.select_related("business_file").filter(business_file_id=uuid_value(file_id, "file_id")).first()
+        if link is None or link.business_file.archived_at is not None or link.business_file.scan_status not in {"CLEAN", "SKIPPED"}:
+            raise NotFound("装卸图片不存在或尚未通过安全扫描。")
+        storage_root = Path(settings.MEDIA_ROOT).resolve()
+        path = (storage_root / link.business_file.storage_key).resolve()
+        if storage_root not in path.parents or not path.is_file():
+            raise NotFound("装卸图片文件不存在。")
+        return FileResponse(path.open("rb"), content_type=link.business_file.content_type)
 
 
 class MaterialInventoryViewSet(viewsets.ViewSet):
@@ -459,6 +579,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         "receipts.POST": "inventory.receive_material",
         "batch_receipts": "inventory.receive_material",
         "receivings": "inventory.receive_material",
+        "sample_receivings": "inventory.receive_material",
         "quality_batches": "inventory.quality_confirm_material",
         "quality_batch": "inventory.quality_confirm_material",
         "confirm_quality": "inventory.quality_confirm_material",
@@ -1011,7 +1132,8 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         if not purchase_order_id:
             raise ValidationError({"purchase_order_id": "请选择采购单。"})
         order_id = uuid_value(purchase_order_id, "purchase_order_id")
-        if not PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request), pk=order_id).exists():
+        order = PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request), pk=order_id).first()
+        if order is None:
             raise NotFound("采购单不存在或无权访问。")
         rows = []
         for line, remaining in eligible_material_lines(order_id, read_optimized=True):
@@ -1039,7 +1161,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "remaining_quantity": f"{remaining:.4f}",
                 "pinyin_search": build_pinyin_search(text),
             })
-        return Response({"data": rows})
+        return Response({"data": rows}, headers={"ETag": etag_for_instance(order)})
 
     @action(detail=False, methods=["get", "post"])
     def receipts(self, request):
@@ -1078,6 +1200,19 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         )
         inbound = material_inbounds(MaterialInbound.objects.filter(pk=inbound.pk)).get()
         return Response({"data": MaterialInboundSerializer(inbound).data}, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=SampleMaterialInboundInputSerializer,
+                   parameters=[OpenApiParameter('If-Match', str, location='header', required=True)],
+                   responses={200: SampleMaterialInboundResponseSerializer, 201: SampleMaterialInboundResponseSerializer})
+    @action(detail=False, methods=['post'], url_path='sample-receivings')
+    def sample_receivings(self, request):
+        serializer = SampleMaterialInboundInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        inbound, created = receive_sample_purchase(**serializer.validated_data,
+            actor_employee=request.employee, request=request)
+        inbound = material_inbounds(MaterialInbound.objects.filter(pk=inbound.pk)).get()
+        return Response({'data': MaterialInboundSerializer(inbound).data},
+                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     def _accessible_inbounds(self, request, *, read_optimized=False):
         return material_inbounds(

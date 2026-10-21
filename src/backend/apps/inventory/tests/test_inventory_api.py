@@ -9,6 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType, BomStatus
+from apps.core.models import DailyBusinessNumberCounter
 from apps.customers.models import CustomerAccount
 from apps.organizations.models import Employee
 from apps.procurement.models import (
@@ -32,6 +33,7 @@ from ..models import (
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
+    MaterialStockBalance,
     MaterialStockMovement,
     WarehouseLocation,
 )
@@ -134,9 +136,9 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         self.assertEqual(str(row["receipt_ids"][0]), receipt["id"])
         self.assertEqual(str(row["product_id"]), str(self.product.pk))
         self.assertNotIn("order_number", row)
-        self.assertNotIn("task_number", row)
+        self.assertEqual(row["task_number"], self.task.task_number)
 
-    def test_inventory_merges_same_product_from_different_orders_and_receipts_keep_sources(self):
+    def test_inventory_separates_production_tasks_and_receipts_keep_sources(self):
         first = self.client.post(
             "/api/v1/finished-goods-inventory/receipts/",
             self.receipt_payload(received_quantity=2, quantity_per_box=None),
@@ -168,9 +170,9 @@ class FinishedGoodsInventoryApiTests(APITestCase):
 
         inventory = self.client.get("/api/v1/finished-goods-inventory/")
         self.assertEqual(inventory.status_code, 200, inventory.data)
-        self.assertEqual(inventory.data["count"], 1)
-        self.assertEqual(inventory.data["results"][0]["inventory_quantity"], 5)
-        self.assertEqual(inventory.data["results"][0]["batch_count"], 2)
+        self.assertEqual(inventory.data["count"], 2)
+        self.assertEqual(sorted(row["inventory_quantity"] for row in inventory.data["results"]), [2, 3])
+        self.assertTrue(all(row["batch_count"] == 1 for row in inventory.data["results"]))
 
         receipts = self.client.get("/api/v1/finished-goods-inventory/receipts/")
         self.assertEqual(receipts.status_code, 200, receipts.data)
@@ -238,7 +240,7 @@ class FinishedGoodsInventoryApiTests(APITestCase):
 
     def test_partial_outbound_recalculates_slots_and_stale_stock_returns_409(self):
         receipt = self.create_receipt()
-        payload = {"receiver_name": "领用人", "used_for_order_number": "EXT-001", "remark": "测试", "items": [{"receipt_id": receipt["id"], "expected_remaining_quantity": 6, "outbound_quantity": 4, "quantity_per_box": 3}]}
+        payload = {"responsible_employee_id": str(self.employee.pk), "shipment_date": str(timezone.localdate()), "receiver_name": "领用人", "used_for_order_number": "EXT-001", "remark": "测试", "items": [{"receipt_id": receipt["id"], "expected_remaining_quantity": 6, "outbound_quantity": 4, "quantity_per_box": 3}]}
         response = self.client.post("/api/v1/finished-goods-inventory/outbounds/", payload, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         current = FinishedGoodsReceipt.objects.get(pk=receipt["id"])
@@ -254,7 +256,7 @@ class FinishedGoodsInventoryApiTests(APITestCase):
             source_document_number="SYGJ-20260909-001",
         )
         payload = {
-            "receiver_name": "领用人",
+            "responsible_employee_id": str(self.employee.pk), "shipment_date": str(timezone.localdate()), "receiver_name": "领用人",
             "used_for_order_number": "",
             "remark": "测试重复扣减保护",
             "items": [{
@@ -444,7 +446,40 @@ class MaterialInventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["locations"], [])
 
+    def use_general_material(self):
+        # 本组通用收货断言使用小数数量，明确为配件，避免混入管材根米专用门禁。
+        self.raw_material.category, _ = ProductCategory.objects.get_or_create(
+            category_name="五金", defaults={"item_type": "MATERIAL"},
+        )
+        self.raw_material.material_name = "测试连接件"
+        self.raw_material.specification = "连接件规格"
+        self.raw_material.material = "铁"
+        self.raw_material.save(update_fields=["category", "material_name", "specification", "material"])
+        section = self.bom_line.section
+        section.section_type, section.title = BomSectionType.ACCESSORY, "配件类"
+        section.save(update_fields=["section_type", "title"])
+        source_values = {
+            "category": "五金", "material": "铁", "part_name": "测试连接件",
+            "specification": "连接件规格", "raw_material": "测试连接件",
+            "branch_count": "", "budget_quantity": "10.5",
+        }
+        for field, value in source_values.items():
+            setattr(self.bom_line, field, value)
+        self.bom_line.save(update_fields=list(source_values))
+        self.supplier.supplier_categories = ["HARDWARE"]
+        self.supplier.save(update_fields=["supplier_categories"])
+        purchase_values = {
+            "section_type_snapshot": BomSectionType.ACCESSORY, "section_title_snapshot": "配件类",
+            "category_snapshot": "五金", "material_snapshot": "铁", "part_name_snapshot": "测试连接件",
+            "specification_snapshot": "连接件规格", "raw_material_snapshot": "测试连接件",
+            "source_quantity_field": "budget_quantity", "supplier_categories_snapshot": ["HARDWARE"],
+        }
+        for field, value in purchase_values.items():
+            setattr(self.purchase_line, field, value)
+        self.purchase_line.save(update_fields=list(purchase_values))
+
     def test_receipt_allows_material_zone_without_location(self):
+        self.use_general_material()
         WarehouseLocation.objects.filter(pk__in=[self.location_id, self.second_location_id]).delete()
         payload = self.payload()
         payload["items"][0].pop("location_id")
@@ -663,6 +698,19 @@ class MaterialInventoryApiTests(APITestCase):
         future = (timezone.localdate() + timedelta(days=1)).isoformat()
         response = self.client.post("/api/v1/material-inventory/receipts/", self.payload(inbound_date=future), format="json")
         self.assertEqual(response.status_code, 400, response.data)
+
+    def test_receipt_date_before_short_year_range_returns_400_without_writes(self):
+        self.use_general_material()
+        counters = list(DailyBusinessNumberCounter.objects.order_by("pk").values())
+        response = self.client.post(
+            "/api/v1/material-inventory/receipts/", self.payload(inbound_date="1999-12-31"), format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("2000–2099", str(response.data))
+        self.assertFalse(MaterialInbound.objects.exists())
+        self.assertFalse(MaterialInboundLine.objects.exists())
+        self.assertFalse(MaterialStockMovement.objects.exists())
+        self.assertEqual(list(DailyBusinessNumberCounter.objects.order_by("pk").values()), counters)
 
     def test_only_purchasing_order_can_receive_material(self):
         for order_status in (PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.COMPLETED):

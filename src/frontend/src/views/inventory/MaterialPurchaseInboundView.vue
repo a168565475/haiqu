@@ -4,11 +4,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Calendar, Refresh, Tickets, WarningFilled } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
-import { createMaterialReceiving, fetchEligibleMaterialLines, fetchEligibleMaterialPurchaseOrders, fetchMaterialReceivingOptions } from '@/api/inventory'
+import { createMaterialReceiving, createSampleMaterialReceiving, fetchEligibleMaterialLinesWithVersion, fetchEligibleMaterialPurchaseOrders, fetchMaterialReceivingOptions } from '@/api/inventory'
 import { useAuthStore } from '@/stores/auth'
 import { router } from '@/router'
-import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, MaterialReceivingOptions } from '@/types/inventory'
+import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, MaterialReceivingOptions, SampleMaterialReceivingPayload } from '@/types/inventory'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
+import { createClientUuid } from '@/utils/clientUuid'
 
 interface ReceivingRow {
   line: EligibleMaterialLine
@@ -44,7 +45,10 @@ const receivingDraftKey = computed(() => `material-receiving-draft:v2:${selected
 let linesRequest = 0
 let disposed = false
 const selectedOrder = computed(() => purchaseOrders.value.find((item) => item.id === selectedPurchaseOrderId.value))
-const selectedRows = computed(() => rows.value.filter((row) => row.included))
+const isSample = computed(() => selectedOrder.value?.source_type === 'SAMPLE')
+const receivingVersion = ref('')
+let sampleAttempt: { fingerprint: string; payload: SampleMaterialReceivingPayload } | null = null
+const selectedRows = computed(() => isSample.value ? rows.value : rows.value.filter((row) => row.included))
 const warehouseZones = (warehouseId: string) => options.value.zones.filter((zone) => zone.warehouse === warehouseId)
 const bulkZones = computed(() => warehouseZones(bulk.warehouseId))
 function hasZone(row: Pick<ReceivingRow, 'warehouseId' | 'zoneId'>) {
@@ -63,11 +67,12 @@ function validDate(value: unknown): value is string {
 }
 const zoneReadyCount = computed(() => selectedRows.value.filter(hasZone).length)
 const readyToSubmit = computed(() => canReceive.value && !locked.value && !loadError.value && !!selectedOrder.value && validDate(form.inboundDate)
+  && (!isSample.value || !!receivingVersion.value)
   && selectedRows.value.length > 0 && selectedRows.value.length <= 100
   && selectedRows.value.every((row) => hasZone(row) && validQuantity(row)))
 const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
-  set: (value: boolean) => { if (!locked.value) rows.value.forEach((row) => { row.included = value }) },
+  set: (value: boolean) => { if (!locked.value && !isSample.value) rows.value.forEach((row) => { row.included = value }) },
 })
 function apiMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
@@ -79,7 +84,18 @@ function formatQuantity(value: string | number): string {
   return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
 function purchaseQuantityText(line: EligibleMaterialLine): string {
-  return `${line.raw_bar_length_m ? `${line.actual_bar_count} 根 / ` : ''}${formatQuantity(line.purchased_quantity)} ${line.unit}`
+  if (line.raw_bar_length_m) return line.actual_bar_count == null ? '根数未记录' : `${formatQuantity(line.actual_bar_count)} 根`
+  return `${formatQuantity(line.purchased_quantity)} ${line.unit}`
+}
+function receivedQuantityText(line: EligibleMaterialLine): string {
+  if (line.raw_bar_length_m) return line.actual_bar_count == null || line.remaining_bar_count == null
+    ? '根数未记录' : `${formatQuantity(line.actual_bar_count - line.remaining_bar_count)} 根`
+  return `${formatQuantity(Number(line.purchased_quantity) - Number(line.remaining_quantity))} ${line.unit}`
+}
+function sampleReceiptQuantityText(line: EligibleMaterialLine): string {
+  return line.raw_bar_length_m
+    ? `${line.remaining_bar_count ?? '—'} 根 × ${formatQuantity(line.raw_bar_length_m)} 米/根 = ${formatQuantity(line.remaining_quantity)} 米`
+    : `${formatQuantity(line.remaining_quantity)} ${line.unit}`
 }
 function initialQuantity(value: string): string {
   const number = Number(value)
@@ -108,7 +124,7 @@ async function loadBase() {
     const [optionData, orderData, lineData] = await Promise.all([
       fetchMaterialReceivingOptions(),
       fetchEligibleMaterialPurchaseOrders({ purchase_order_id: orderId }),
-      fetchEligibleMaterialLines(orderId),
+      fetchEligibleMaterialLinesWithVersion(orderId),
     ])
     if (disposed) return
     options.value = optionData
@@ -124,7 +140,7 @@ async function loadBase() {
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
-async function selectOrder(preserveCurrent = false, preloadedLines?: EligibleMaterialLine[]) {
+async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<ReturnType<typeof fetchEligibleMaterialLinesWithVersion>>) {
   const request = ++linesRequest
   const orderId = selectedPurchaseOrderId.value
   const currentDraft = preserveCurrent && orderId && rows.value.length ? {
@@ -137,13 +153,15 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: EligibleMat
     form.remark = ''
   }
   loadError.value = ''
+  receivingVersion.value = ''
   linesLoading.value = false
   if (!orderId) return
   linesLoading.value = true
   try {
-    const lines = preloadedLines ?? await fetchEligibleMaterialLines(orderId)
+    const response = preloadedLines ?? await fetchEligibleMaterialLinesWithVersion(orderId)
     // 切换采购单后，迟到的旧响应不能覆盖新单据。
     if (disposed || request !== linesRequest || selectedPurchaseOrderId.value !== orderId) return
+    receivingVersion.value = response.etag
     let draft: Record<string, unknown> = currentDraft || {}
     if (!currentDraft) {
       try { draft = record(JSON.parse(localStorage.getItem(receivingDraftKey.value) || '{}')) } catch { /* 草稿不可用时仍可正常收货。 */ }
@@ -152,11 +170,11 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: EligibleMat
     if (validDate(draft.inboundDate)) form.inboundDate = draft.inboundDate
     if (typeof draft.remark === 'string') form.remark = draft.remark.slice(0, 3000)
     const savedRows = record(draft.rows)
-    rows.value = lines.map((line) => {
+    rows.value = response.data.map((line) => {
       const saved = record(savedRows[line.id])
       const row: ReceivingRow = {
-        line, included: typeof saved.included === 'boolean' ? saved.included : true,
-        receivedQuantity: saved.receivedQuantity === undefined ? line.raw_bar_length_m ? String(line.remaining_bar_count ?? '') : initialQuantity(line.remaining_quantity)
+        line, included: isSample.value || (typeof saved.included === 'boolean' ? saved.included : true),
+        receivedQuantity: isSample.value || saved.receivedQuantity === undefined ? line.raw_bar_length_m ? String(line.remaining_bar_count ?? '') : initialQuantity(line.remaining_quantity)
           : typeof saved.receivedQuantity === 'string' || typeof saved.receivedQuantity === 'number' ? String(saved.receivedQuantity) : '',
         warehouseId: typeof saved.warehouseId === 'string' ? saved.warehouseId : '',
         zoneId: typeof saved.zoneId === 'string' ? saved.zoneId : '',
@@ -183,10 +201,22 @@ function saveDraft() {
 }
 async function submitReceiving() {
   if (locked.value || !canReceive.value) return
-  if (!readyToSubmit.value) return ElMessage.warning('请核对到货日期、数量和库区；每批最多提交 100 项。')
+  if (!readyToSubmit.value) return ElMessage.warning(isSample.value
+    ? '请核对入库日期和全部明细的库区；每批最多提交 100 项。'
+    : '请核对到货日期、数量和库区；每批最多提交 100 项。')
   submitting.value = true
   try {
-    await createMaterialReceiving({
+    if (isSample.value) {
+      const content = {
+        purchase_order_id: selectedPurchaseOrderId.value, inbound_date: form.inboundDate, remark: form.remark,
+        items: rows.value.map((row) => ({ purchase_order_line_id: row.line.id, zone_id: row.zoneId, remark: row.remark })),
+      }
+      const fingerprint = JSON.stringify(content)
+      if (!sampleAttempt || sampleAttempt.fingerprint !== fingerprint) {
+        sampleAttempt = { fingerprint, payload: { ...content, client_request_id: createClientUuid() } }
+      }
+      await createSampleMaterialReceiving(sampleAttempt.payload, receivingVersion.value)
+    } else await createMaterialReceiving({
       inbound_date: form.inboundDate, remark: form.remark,
       items: selectedRows.value.map((row) => ({
         purchase_order_line_id: row.line.id, zone_id: row.zoneId, expected_remaining_quantity: row.line.remaining_quantity,
@@ -195,14 +225,14 @@ async function submitReceiving() {
     })
     receiptCreated.value = true
   } catch (error) {
-    ElMessage.error(apiMessage(error, '提交品质确认失败，请核对收货记录后重试。'))
+    ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交品质确认失败，请核对收货记录后重试。'))
     submitting.value = false
     return
   }
   // 收货成功后，草稿清理或跳转失败都不能再次提交同一批次。
   try { localStorage.removeItem(receivingDraftKey.value) } catch { ElMessage.warning('收货已登记，但浏览器中的旧草稿未能清理。') }
-  ElMessage.success('仓库收货已登记，已转入品质确认。')
-  try { await router.push({ name: canQuality.value ? 'material-quality-confirmation' : 'purchase-inbounds' }) }
+  ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '仓库收货已登记，已转入品质确认。')
+  try { await router.push({ name: !isSample.value && canQuality.value ? 'material-quality-confirmation' : 'purchase-inbounds' }) }
   catch { ElMessage.warning('收货已登记，请从采购入库列表继续处理。') }
   finally { submitting.value = false }
 }
@@ -215,7 +245,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
     <div v-if="!canReceive" class="empty-state"><h1>无权进行采购入库</h1><p>请联系管理员开通采购入库权限。</p></div>
     <template v-else>
       <header class="page-title-row">
-        <div><h1>采购入库</h1><p>核对当前采购单的到货数量，并登记材料仓和库区。</p></div>
+        <div><h1>采购入库</h1><p>{{ isSample ? '确认样品采购材料全部到齐，并登记材料仓和库区。' : '核对当前采购单的到货数量，并登记材料仓和库区。' }}</p></div>
         <div class="head-actions"><ElButton :icon="Refresh" :loading="loading" :disabled="locked" @click="loadBase">刷新</ElButton><ElButton :icon="Tickets" :disabled="submitting" @click="router.push({ name: 'purchase-inbounds' })">返回列表</ElButton></div>
       </header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
@@ -226,31 +256,31 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
           <div class="bulk-controls">
             <ElSelect v-model="bulk.warehouseId" aria-label="批量材料仓" placeholder="选择材料仓" :disabled="locked" @change="bulkWarehouseChanged"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect>
             <ElSelect v-model="bulk.zoneId" aria-label="批量库区" placeholder="选择库区" :disabled="locked || !bulk.warehouseId"><ElOption v-for="item in bulkZones" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect>
-            <ElButton :disabled="locked || !selectedRows.length" @click="applyBulkZone">应用到已勾选</ElButton>
+            <ElButton :disabled="locked || !selectedRows.length" @click="applyBulkZone">{{ isSample ? '应用到全部' : '应用到已勾选' }}</ElButton>
           </div>
         </div>
       </section>
       <section class="surface table-card">
         <div class="table-head">
-          <div><h2>采购明细</h2><div v-if="selectedOrder" class="table-order-meta"><span>采购单号 <strong>{{ selectedOrder.order_number }}</strong></span><span>生产单号 <strong>{{ selectedOrder.production_task_number || '—' }}</strong></span><span>状态 <ElTag type="warning" round>{{ receiptCreated ? '已收货，待质检' : '待收货' }}</ElTag></span></div></div>
+          <div><h2>采购明细</h2><div v-if="selectedOrder" class="table-order-meta"><span>采购单号 <strong>{{ selectedOrder.order_number }}</strong></span><span>生产单号 <strong>{{ selectedOrder.production_task_number || '—' }}</strong></span><span>状态 <ElTag type="warning" round>{{ receiptCreated ? isSample ? '已入库' : '已收货，待质检' : '待收货' }}</ElTag></span></div></div>
           <strong>共 {{ rows.length }} 项</strong>
         </div>
         <div v-loading="loading" class="receiving-table-scroll">
           <table class="erp-table-editor receiving-table">
             <colgroup><col v-for="(width, index) in [56, 58, 230, 190, 234, 160, 106, 200, 182, 164, 214, 124]" :key="index" :style="{ width: width / 1918 * 100 + '%' }" /></colgroup>
             <thead><tr>
-              <th><ElCheckbox v-model="allSelected" aria-label="全选物料" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked || !rows.length" /></th>
-              <th v-for="title in ['序号', '物料信息', '规格', '供应商', '采购数量', '累计已收', '本次到货数量', '材料仓', '库区', '差异说明', '状态']" :key="title" scope="col">{{ title }}</th>
+              <th><ElCheckbox v-model="allSelected" aria-label="全选物料" :indeterminate="selectedRows.length > 0 && !allSelected" :disabled="locked || isSample || !rows.length" /></th>
+              <th v-for="title in ['序号', '物料信息', '规格', '供应商', '采购数量', '累计已收', isSample ? '本次入库数量' : '本次到货数量', '材料仓', '库区', '差异说明', '状态']" :key="title" scope="col">{{ title }}</th>
             </tr></thead>
             <tbody><tr v-for="(row, index) in rows" :key="row.line.id" :data-row-id="row.line.id" @mouseenter="hoveredRowId = row.line.id" @mouseleave="hoveredRowId = ''">
-              <td><ElCheckbox v-model="row.included" :aria-label="'勾选第 ' + (index + 1) + ' 项'" :disabled="locked" /></td><td>{{ index + 1 }}</td>
+              <td><ElCheckbox v-model="row.included" :aria-label="'勾选第 ' + (index + 1) + ' 项'" :disabled="locked || isSample" /></td><td>{{ index + 1 }}</td>
               <td class="material-cell"><strong>{{ materialTitle(row.line) }}</strong></td>
               <td class="specification-cell"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowId === row.line.id && hoveredSupplierRowId !== row.line.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ materialSpecificationValue(row.line) }}</span></ElTooltip></td>
               <ElTooltip :content="row.line.supplier_name" placement="top" :show-after="150" :disabled="!row.line.supplier_name" :teleported="true">
                 <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name || '—' }}</td>
               </ElTooltip>
-              <td class="purchase-quantity-cell" :title="purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ formatQuantity(Number(row.line.purchased_quantity) - Number(row.line.remaining_quantity)) }}</td>
-              <td><ElInput v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ row.line.raw_bar_length_m ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
+              <td class="purchase-quantity-cell" :title="row.line.raw_bar_length_m ? `${formatQuantity(row.line.purchased_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
+              <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ row.line.raw_bar_length_m ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
               <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="'第 ' + (index + 1) + ' 项库区'" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
               <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="'第 ' + (index + 1) + ' 项差异说明'" :maxlength="3000" :disabled="locked" /></td>
@@ -258,13 +288,13 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
             </tr><tr v-if="!rows.length"><td colspan="12" class="table-empty">{{ loadError || (selectedOrder ? '该采购单暂无待收货明细。' : '请先选择采购单') }}</td></tr></tbody>
           </table>
         </div>
-        <footer><span>已勾选 {{ selectedRows.length }} 项 · 到货数量按采购剩余数量带入</span><strong :class="{ complete: zoneReadyCount === selectedRows.length && selectedRows.length > 0 }">{{ selectedRows.length > 100 ? '每批最多提交 100 项' : '库区完成 ' + zoneReadyCount + '/' + selectedRows.length }}</strong></footer>
+        <footer><span>{{ isSample ? '全部' : '已勾选' }} {{ selectedRows.length }} 项 · {{ isSample ? '按采购剩余数量全部入库' : '到货数量按采购剩余数量带入' }}</span><strong :class="{ complete: zoneReadyCount === selectedRows.length && selectedRows.length > 0 }">{{ selectedRows.length > 100 ? '每批最多提交 100 项' : '库区完成 ' + zoneReadyCount + '/' + selectedRows.length }}</strong></footer>
       </section>
-      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>提交后进入“待质检”，此时不增加可用库存；品质确认后按实收数量减退货数量入库。</span></div>
+      <div class="receiving-notice"><ElIcon><WarningFilled /></ElIcon><span>{{ isSample ? '确认剩余采购材料已全部到齐后，直接全部入库，不再填写数量或进行品质确认。' : '提交后进入“待质检”，此时不增加可用库存；品质确认后按实收数量减退货数量入库。' }}</span></div>
       <section class="submit-bar">
         <label for="receiving-batch-remark">本批次备注（可选）</label><ElInput id="receiving-batch-remark" v-model="form.remark" placeholder="请输入备注信息…" :maxlength="3000" :disabled="locked" />
         <ElButton :disabled="locked || !rows.length" @click="saveDraft">保存草稿</ElButton>
-        <ElButton type="primary" :loading="submitting" :disabled="!readyToSubmit" @click="submitReceiving">提交品质确认</ElButton>
+        <ElButton type="primary" :loading="submitting" :disabled="!readyToSubmit" @click="submitReceiving">{{ isSample ? '全部入库' : '提交品质确认' }}</ElButton>
       </section>
     </template>
   </section>
@@ -273,7 +303,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
-.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 28px 28px 14px; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
+.inventory-workflow { box-sizing: border-box; height: auto; min-height: 0; overflow: visible; padding: 0; background: transparent; color: token.$crm-text-primary; font: 13px/20px token.$crm-font-body;
   --el-color-primary: #{token.$crm-primary}; --el-text-color-primary: #{token.$crm-text-primary}; --el-text-color-regular: #{token.$crm-text-secondary}; --el-text-color-placeholder: #{token.$crm-text-muted}; --el-border-color: #{token.$crm-border-default}; --el-border-color-light: #{token.$crm-border-subtle}; --el-fill-color-blank: #{token.$crm-color-surface}; --el-fill-color-light: #{token.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }

@@ -47,6 +47,7 @@ from ..material_flow_calculations import MaterialFlowValueError, decimal_quantit
 from ..material_save_plan import material_save_preview
 from ..selectors import accessible_boms, boms_with_context, pipe_material_matches, search_boms
 from ..services import (
+    archive_bom,
     confirm_bom_product,
     create_bom,
     preview_imported_bom,
@@ -353,23 +354,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
     @extend_schema(request=None, responses=None)
     @action(detail=True, methods=["post"])
     def archive(self, request, pk=None):
-        bom = self.get_object()
-        require_matching_etag(request, bom)
-        bom.archived_at = timezone.now()
-        bom.archived_by_employee = getattr(request, "employee", None)
-        bom.archive_reason = "BOM 列表删除"
-        bom.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
-        write_audit_log(
-            object_type="BOM",
-            object_id=bom.pk,
-            context_type="PRODUCTION_TASK",
-            context_id=bom.production_task_id,
-            action="ARCHIVE",
-            actor_employee=getattr(request, "employee", None),
-            before_data={"archived_at": None, "bom_number": bom.bom_number},
-            after_data={"archived_at": bom.archived_at.isoformat(), "bom_number": bom.bom_number},
-            request=request,
-        )
+        bom = archive_bom(bom=self.get_object(), actor_employee=getattr(request, "employee", None), request=request)
         return Response({"data": {"id": str(bom.pk), "archived": True}})
 
     @extend_schema(request=BomUpdateInputSerializer, responses=BomDetailSerializer)

@@ -136,9 +136,6 @@ def save_warehouse(*, sample_id, data, request):
     record = _record(sample)
     if not record or not record.submitted_at:
         raise Conflict('没有已提交的材料需求。')
-    if data['submit']:
-        from apps.access_control.module_policy import prohibit_self_approval
-        prohibit_self_approval(request.employee, record.submitted_by_id)
     before = model_snapshot(sample, SAMPLE_FIELDS)
     draft, submit = deepcopy(data['draft']), data['submit']
     required = {line['key']: line for line in record.draft['lines']}

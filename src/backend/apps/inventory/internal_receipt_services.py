@@ -1,4 +1,4 @@
-"""从实际领用投入确认厂内产出；复用公共余额，不选择采购批次。"""
+"""确认厂内产出；金工核对领用投入，车缝按实际套数及订单剩余办理。"""
 from collections import defaultdict
 from dataclasses import asdict
 from decimal import Decimal
@@ -14,6 +14,7 @@ from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionFailed, PreconditionRequired
 from apps.core.api.exceptions import Conflict
 from apps.core.auth import active_employee_for
+from apps.core.numbering import next_business_number
 from apps.material_issues.models import (MaterialIssue, MaterialIssueLine, MaterialIssueAuditEvent,
     MaterialIssuePublicStockAllocation, MetalProcessingSource, RequirementContribution)
 from apps.material_issues.processing_selectors import digest, frozen_source
@@ -24,7 +25,7 @@ from apps.products.material_identity import resolve_bom_line_raw_material, resol
 from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
 from .internal_receipt_quantities import (ComponentDemand, InputPool, ReceivedOutput, ReceiptQuantityError,
-    calculate_receipt, validate_receipt, net_component_demand, fabric_input_per_set)
+    calculate_receipt, validate_receipt, net_component_demand)
 from .models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, WarehouseZone, PublicStockMovement
 from .public_stock_cutover import stock_write_transaction
 from .public_stock_identity import build_semi_finished_identity
@@ -78,6 +79,9 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
             lock_tube_product_scope(plan.product_line_id)
             if uses_tube_receipt(schedule_product_id=schedule_product_id):
                 return load_tube_receipt_context(request, schedule_product_id, lock=True)
+        else:
+            from .sewing_processing_services import lock_sewing_product_scope
+            lock_sewing_product_scope(plan.product_line_id)
         # 既有加工/原单回货先锁领料再锁订单；保持同序，不能拿着订单锁等待领料锁。
         locked_issue_ids = list(MaterialIssue.objects.filter(production_task_id=plan.schedule.production_task_id,
             product_line_id=plan.product_line_id, status='ISSUED').order_by('id').select_for_update().values_list('id',flat=True))
@@ -133,6 +137,10 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
         production_task=task, product_line=product, direction='IN', balance__quality='AVAILABLE',
         source_type__in=['OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN'],
         balance__identity_snapshot__completed_craft__code=category).values('bom_line__component_identity').annotate(total=Sum('quantity'))}
+    direct_usage = {}
+    if category == 'SEWING':
+        from .sewing_processing_services import sewing_output_usage
+        direct_usage = sewing_output_usage(product.pk)
     for line in lines:
         if line.component_identity in seen:
             _fail('BOM 部位编号重复，请先修正。')
@@ -153,8 +161,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
             _fail('管材投入与当前部位不一致。')
         usage = line.pieces_per_product if category == 'METAL' else line.cutting_sets_per_product
         required = net_component_demand(product.quantity, usage)
-        input_per_output = Decimal(1) if category == 'METAL' else fabric_input_per_set(
-            line.cutting_pieces_per_set, line.fabric_meters_per_piece)
+        input_per_output = Decimal(1) if category == 'METAL' else None
         component_key = _key(product.pk, line.component_identity, category)
         source_key = f'{product.pk}:{requirement.pk}'
         try:
@@ -170,7 +177,9 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
                 {'detail':f'部位“{line.part_name}”的{label}：{error.detail[field]}', **error.detail},
                 code=error.api_error_code, meta=error.error_meta) from error
         demands.append(ComponentDemand(scope, component_key, source_key, input_unit, unit_name, required, input_per_output,
-                                       external_received.get(line.component_identity, Decimal(0))))
+                                       external_received.get(line.component_identity, Decimal(0)),
+                                       sum(direct_usage.get(str(line.component_identity), {}).get(name, 0)
+                                           for name in ('dispatched', 'reserved'))))
         facts[component_key] = dict(line=line, requirement=requirement, identity=identity, usage=usage)
         requirement_ids.add(requirement.pk)
     issued_query = MaterialIssueLine.objects.filter(issue__production_task=task, issue__product_line=product,
@@ -178,7 +187,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
         'issue__product_line', 'issue__production_task', 'requirement').prefetch_related(
         Prefetch('issue__audit_events', queryset=MaterialIssueAuditEvent.objects.filter(action='CREATED')),
         Prefetch('public_stock_allocations', queryset=MaterialIssuePublicStockAllocation.objects.select_related('movement', 'balance'))).order_by('issue_id','id')
-    issued_lines = list(issued_query)
+    issued_lines = list(issued_query) if category == 'METAL' else []
     sources_query = MetalProcessingSource.objects.filter(issue_line_id__in=[line.pk for line in issued_lines]).order_by('id')
     if lock:
         sources_query = sources_query.select_for_update()
@@ -227,6 +236,11 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
         if not fact or fact['identity']['identity_snapshot'] != row.attribute_snapshot:
             raise Conflict('已入库部位的实物属性或工序发生变化，请先核对原单。')
     tube_basis = None
+    if category == 'SEWING':
+        known_components = {str(fact['line'].component_identity) for fact in facts.values()}
+        if any((row['dispatched'] or row['reserved']) and key not in known_components
+               for key, row in direct_usage.items()):
+            raise Conflict('已有直发或预留的裁片部位不在当前 BOM，不能丢弃历史占用。')
     if category == 'METAL':
         from apps.outsourcing.models import TubeOutsourcingLine
         pending = {str(row['component_identity']): Decimal(row['quantity']) for row in
@@ -238,15 +252,17 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
             tube_basis = metal_component_limits(product)
             for fact in facts.values():
                 committed[f'{product.pk}:{fact["requirement"].pk}'] += pending.get(str(fact['line'].component_identity), Decimal(0))
-    pools = [InputPool(scope, f'{product.pk}:{identifier}', '支' if category == 'METAL' else '米',
-                      issued[f'{product.pk}:{identifier}'], committed[f'{product.pk}:{identifier}']) for identifier in sorted(requirement_ids, key=str)]
-    args = dict(scope_key=scope, demands=demands, inputs=pools, history=history)
+    pools = [InputPool(scope, f'{product.pk}:{identifier}', '支',
+                      issued[f'{product.pk}:{identifier}'], committed[f'{product.pk}:{identifier}'])
+             for identifier in sorted(requirement_ids, key=str)] if category == 'METAL' else []
+    args = dict(scope_key=scope, demands=demands, inputs=pools, history=history, check_inputs=category == 'METAL')
     calculation = calculate_receipt(**args) if demands else None
     revision = digest({'plan': str(plan.pk), 'plan_revision': plan.source_revision_hash, 'bom':str(bom.pk),
         'category':category, 'demands':[asdict(item) for item in demands], 'pools':[asdict(item) for item in pools],
         'history':[asdict(item) for item in history], 'identities':[fact['identity'] for fact in facts.values()],
         'sources':[(str(line.pk), source.version if source else 0) for line, source, _ in source_facts],
-        'tube_basis_revision': tube_basis['revision'] if tube_basis else None})
+        'tube_basis_revision': tube_basis['revision'] if tube_basis else None,
+        **({'quantity_basis':'ORDER_REMAINING'} if category == 'SEWING' else {})})
     return dict(plan=plan, task=task, product=product, bom=bom, craft=craft, unit=unit, category=category,
                 facts=facts, args=args, calculation=calculation, revision=revision, sources=source_facts, excluded=excluded,
                 tube_basis=tube_basis)
@@ -319,13 +335,14 @@ def confirm_receipt(request, data):
             expected_revision=context['tube_basis']['revision'])
     zone = get_object_or_404(WarehouseZone, pk=data['zone_id'], status='ACTIVE',
                             warehouse__status='ACTIVE', warehouse__warehouse_type='SEMI_FINISHED')
-    header = InternalSemiFinishedReceipt.objects.create(receipt_number='BNRK'+timezone.localtime().strftime('%Y%m%d%H%M%S')+uuid.uuid4().hex[:10].upper(),
+    header = InternalSemiFinishedReceipt.objects.create(receipt_number=next_business_number('INTERNAL_SEMI_RECEIPT'),
         request_id=data['request_id'], request_payload_hash=payload_hash, schedule_product=context['plan'],
         completed_craft=context['craft'], plan_category=context['category'], receipt_date=data['receipt_date'],
         zone=zone, actor_employee=actor, source_revision_hash=context['revision'], remark=data.get('remark',''),
         source_snapshot={'production_order':context['task'].task_number,'product':context['product'].product_name_snapshot,
                          'order_quantity':str(context['product'].quantity),'bom_id':str(context['bom'].pk),
-                         'plan_category':context['category'],'schedule_id':str(context['plan'].schedule_id)})
+                         'plan_category':context['category'],'schedule_id':str(context['plan'].schedule_id),
+                         **({'quantity_basis':'ORDER_REMAINING'} if context['category'] == 'SEWING' else {})})
     for key, quantity in requested.items():
         fact = context['facts'][key]
         allowance = calculation.components[key]

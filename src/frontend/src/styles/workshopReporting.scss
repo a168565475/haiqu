@@ -58,7 +58,7 @@
 .wr-status-tag:not(.erp-list-tag).is-neutral { background: var(--erp-tag-neutral-background); }
 .wr-table td.wr-money .cell { color: var(--erp-table-text); font-size: 13px; font-weight: 600; }
 .wr-form-grid { display: grid; grid-template-columns: 328px minmax(0, 1fr); gap: 14px; }
-.wr-page.wr-form-page { display: flex; min-height: 0; min-width: 0; flex-direction: column; background: transparent; }
+.wr-page.wr-form-page { display: flex; min-height: 0; min-width: 0; flex-direction: column; padding: 0; background: transparent; }
 .wr-form-heading { min-height: 64px; align-items: center; margin-bottom: 0; }
 .wr-form-page .wr-card { @include detail.surface; padding: 16px; }
 .wr-card h2 { margin: 0 0 16px; color: var(--erp-color-text-primary); font-size: 16px; font-weight: 600; }

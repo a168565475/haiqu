@@ -54,7 +54,7 @@ onBeforeUnmount(() => {
 const quotationRoutes = ['quotations', 'quotation-edit', 'quotation-preview', 'quotation-versions', 'quotation-packaging', 'quotation-price-history']
 const quotationRoute = computed(() => quotationRoutes.includes(String(route.name || '')))
 const wageSchemeRoute = computed(() => ['wage-schemes', 'wage-scheme-new', 'wage-scheme-change', 'wage-scheme-detail'].includes(String(route.name || '')))
-const settingsRoutes = ['wecom-settings', 'access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
+const settingsRoutes = ['wecom-settings', 'notification-rules', 'access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
 const settingsRoute = computed(() => settingsRoutes.includes(String(route.name || '')))
 const fastReadLoadingRoute = computed(() => [
   'contacts', 'customer-duplicates',
@@ -89,7 +89,7 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
   'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns',
-  'supplier-purchase-sheet-editor', 'sample-edit', 'sample-materials', 'sample-warehouse-review',
+  'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
   'material-inventory', 'workshop-scheduling',
@@ -128,9 +128,9 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         'settings-layout': settingsRoute,
         'business-compact-layout': compactBusinessRoute,
         'production-scheduling-detail-layout': route.name === 'workshop-scheduling-detail',
+        'production-task-create-layout': ['production-task-create', 'production-task-manual-create'].includes(String(route.name)),
         'wage-scheme-layout': wageSchemeRoute,
         'wage-scheme-detail-layout': route.name === 'wage-scheme-detail',
-        'sample-form-layout': route.name === 'sample-edit',
         'sample-create-layout': route.name === 'sample-new',
         'sample-material-layout': route.name === 'sample-materials',
         'bom-create-layout': route.name === 'bom-create',
@@ -167,30 +167,30 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .customer-list-layout :deep(.page-container) { padding: 0; }
 .content-scroll-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .quotation-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
-.quotation-layout :deep(.page-container) { padding: 14px; }
+.quotation-layout :deep(.page-container) { padding: 0; }
 .wage-scheme-detail-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .quotation-layout :deep(.page-container__content) { min-height: 100%; }
 .quotation-list-layout :deep(#erp-main-content) { overflow: hidden; }
-.quotation-list-layout :deep(.page-container) { padding-bottom: 5px; }
+.quotation-list-layout :deep(.page-container) { padding-bottom: 0; }
 .quotation-list-layout :deep(.page-container__content) { min-height: 0; }
 .glass-list-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .glass-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .glass-detail-layout.viewport-table-layout :deep(#erp-main-content) { overflow: hidden; }
-.glass-detail-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+.glass-detail-layout :deep(#erp-main-content .page-container) { padding: 0; }
 @media screen {
   .glass-detail-layout :deep(#erp-main-content .page-container),
   .customer-detail-layout :deep(#erp-main-content .page-container) { padding: 0; }
 }
-.glass-form-layout :deep(#erp-main-content .page-container) { padding: 14px; }
+.glass-form-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .glass-form-layout.bom-editor-layout :deep(#erp-main-content .page-container),
 .glass-form-layout.wage-scheme-layout :deep(#erp-main-content .page-container) { padding: 0; }
+.production-task-create-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .settings-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
-.settings-layout :deep(.page-container) { padding: 14px; }
+.settings-layout :deep(.page-container) { padding: 0; }
 .production-scheduling-detail-layout :deep(#erp-main-content) { overflow: auto; background: transparent; }
 .bom-create-layout :deep(#erp-main-content) { overflow-x: hidden; overflow-y: auto; }
 .bom-create-layout :deep(.page-container), .bom-create-layout :deep(.page-container__content) { min-height: max-content; }
-.sample-form-layout :deep(.page-container) { padding: 0; }
-.sample-create-layout :deep(.page-container) { padding: 0; }
+.sample-create-layout :deep(#erp-main-content .page-container) { padding: 0; }
 .sample-create-layout :deep(#erp-main-content .sample-create-page .application-heading-actions .el-button) {
   height: 32px !important;
   min-height: 32px !important;
@@ -200,11 +200,11 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
 .sample-material-layout :deep(.page-container) { padding: 0; }
 
 .business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content .page-container:not(.page-container--flush)) {
-  padding: 14px;
+  padding: 0;
 }
 
 .business-compact-layout.quotation-list-layout:not(.glass-list-layout) :deep(#erp-main-content .page-container:not(.page-container--flush)) {
-  padding-bottom: 5px;
+  padding-bottom: 0;
 }
 
 .business-compact-layout:not(.glass-list-layout) :deep(#erp-main-content) {

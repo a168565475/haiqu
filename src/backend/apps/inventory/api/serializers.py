@@ -106,6 +106,11 @@ class WarehouseLocationSerializer(serializers.ModelSerializer):
         return max(instance.capacity_box_slots - int(instance.occupied_box_slots or 0), 0)
 
 
+class FinishedGoodsInventoryScopeSerializer(serializers.Serializer):
+    exclude_sample = serializers.BooleanField(default=False)
+    production_task_id = serializers.UUIDField(required=False, allow_null=True)
+
+
 class FinishedGoodsReceiptInputSerializer(serializers.Serializer):
     production_task_product_id = serializers.UUIDField()
     location_id = serializers.UUIDField()
@@ -135,6 +140,11 @@ class FinishedGoodsReceiptBatchInputSerializer(serializers.Serializer):
 
 
 class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
+    material_snapshot = serializers.SerializerMethodField()
+
+    def get_material_snapshot(self, instance) -> str:
+        return instance.material_snapshot or (instance.production_task_product.material_snapshot if instance.production_task_product_id else "")
+
     source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
     supplier_name = serializers.CharField(source="supplier.supplier_name", allow_null=True, read_only=True)
     unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
@@ -153,7 +163,7 @@ class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
             "id", "receipt_number", "production_task_product_id", "source_type", "source_type_display",
             "source_document_number", "task_number_snapshot", "order_number_snapshot",
             "category_snapshot", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot",
-            "item_number_snapshot", "specification_snapshot", "actual_color", "supplier_id", "supplier_name",
+            "item_number_snapshot", "specification_snapshot", "material_snapshot", "actual_color", "supplier_id", "supplier_name",
             "unit_id", "unit_code", "unit_name", "warehouse_id", "warehouse_number", "warehouse_name", "zone_id",
             "zone_name", "location_id", "location_number", "received_quantity", "remaining_quantity",
             "quantity_per_box", "box_count", "tail_quantity", "occupied_box_slots", "remaining_box_slots", "remark",
@@ -173,6 +183,11 @@ class FinishedGoodsOutboundInputSerializer(serializers.Serializer):
     receiver_name = serializers.CharField(max_length=150, required=False, allow_blank=True, trim_whitespace=True, default="")
     used_for_order_number = serializers.CharField(max_length=100, required=False, allow_blank=True, trim_whitespace=True, default="")
     remark = serializers.CharField(max_length=3000, required=False, allow_blank=True, trim_whitespace=True, default="")
+    responsible_employee_id = serializers.UUIDField()
+    shipment_date = serializers.DateField()
+    loading_fee = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, default=0)
+    other_fee = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0, default=0)
+    loading_images = serializers.ListField(child=serializers.FileField(), required=False, max_length=20, write_only=True)
     items = FinishedGoodsOutboundLineInputSerializer(many=True, allow_empty=False, max_length=100)
 
     def validate_items(self, items):
@@ -181,14 +196,36 @@ class FinishedGoodsOutboundInputSerializer(serializers.Serializer):
             raise serializers.ValidationError("同一入库批次不能重复出库。")
         return items
 
+    def validate(self, data):
+        if "attachment_ids" in self.initial_data:
+            raise serializers.ValidationError({"loading_images": "请直接上传本次出库的装卸图片。"})
+        return data
+
 
 class FinishedGoodsOutboundLineSerializer(serializers.ModelSerializer):
     receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
+    task_number_snapshot = serializers.CharField(source="receipt.task_number_snapshot", read_only=True)
+    product_code_snapshot = serializers.CharField(source="receipt.product_code_snapshot", read_only=True)
+    product_number_snapshot = serializers.CharField(source="receipt.product_number_snapshot", read_only=True)
+    product_name_snapshot = serializers.CharField(source="receipt.product_name_snapshot", read_only=True)
+    item_number_snapshot = serializers.CharField(source="receipt.item_number_snapshot", read_only=True)
+    specification_snapshot = serializers.CharField(source="receipt.specification_snapshot", read_only=True)
+    actual_color = serializers.CharField(source="receipt.actual_color", read_only=True)
+    material_snapshot = serializers.CharField(source="receipt.material_snapshot", read_only=True)
+    unit_code = serializers.CharField(source="receipt.unit.unit_code", read_only=True)
+    unit_name = serializers.CharField(source="receipt.unit.unit_name", read_only=True)
+    order_quantity = serializers.IntegerField(source="receipt.production_task_product.quantity", read_only=True, allow_null=True)
+    received_quantity = serializers.IntegerField(source="receipt.received_quantity", read_only=True)
+    warehouse_id = serializers.UUIDField(source="receipt.location.zone.warehouse_id", read_only=True)
+    warehouse_name = serializers.CharField(source="receipt.location.zone.warehouse.warehouse_name", read_only=True)
+    location_number = serializers.CharField(source="receipt.location.location_number", read_only=True)
 
     class Meta:
         model = FinishedGoodsOutboundLine
         fields = [
-            "id", "receipt_id", "receipt_number", "outbound_quantity", "quantity_per_box", "box_count",
+            "id", "receipt_id", "receipt_number", "task_number_snapshot", "product_code_snapshot", "product_number_snapshot", "product_name_snapshot",
+            "item_number_snapshot", "specification_snapshot", "actual_color", "material_snapshot", "unit_code", "unit_name", "warehouse_name", "location_number",
+            "order_quantity", "received_quantity", "warehouse_id", "outbound_quantity", "quantity_per_box", "box_count",
             "tail_quantity", "before_quantity", "after_quantity",
         ]
         read_only_fields = fields
@@ -196,15 +233,41 @@ class FinishedGoodsOutboundLineSerializer(serializers.ModelSerializer):
 
 class FinishedGoodsOutboundSerializer(serializers.ModelSerializer):
     outbound_by_name = serializers.CharField(source="outbound_by_employee.display_name", read_only=True)
+    responsible_employee_name = serializers.CharField(source="responsible_employee.display_name", read_only=True, allow_null=True)
     lines = FinishedGoodsOutboundLineSerializer(many=True, read_only=True)
+    attachments = serializers.SerializerMethodField()
+    loading_images = serializers.SerializerMethodField()
+
+    def get_attachments(self, instance) -> list[dict]:
+        return [{"id": str(item.business_file_id), "name": item.business_file.original_name,
+                 "url": f"/api/v1/finished-goods-inventory/outbounds/{instance.pk}/attachments/{item.business_file_id}/",
+                 "content_type": item.business_file.content_type, "size_bytes": item.business_file.size_bytes,
+                 "scan_status": item.business_file.scan_status} for item in instance.attachments.all()]
+
+    def get_loading_images(self, instance) -> list[dict]:
+        return self.get_attachments(instance)
 
     class Meta:
         model = FinishedGoodsOutbound
         fields = [
-            "id", "outbound_number", "receiver_name", "used_for_order_number", "remark", "outbound_by_name",
-            "outbound_at", "lines",
+            "id", "outbound_number", "receiver_name", "used_for_order_number", "remark", "responsible_employee_id",
+            "responsible_name_snapshot", "responsible_employee_name", "shipment_date", "loading_fee", "other_fee",
+            "outbound_by_name", "outbound_at", "lines", "attachments", "loading_images",
         ]
         read_only_fields = fields
+
+
+class FinishedGoodsOutboundResponseSerializer(serializers.Serializer):
+    data = FinishedGoodsOutboundSerializer()
+
+
+class FinishedGoodsOutboundListDataSerializer(serializers.Serializer):
+    items = FinishedGoodsOutboundSerializer(many=True)
+    total = serializers.IntegerField()
+
+
+class FinishedGoodsOutboundListResponseSerializer(serializers.Serializer):
+    data = FinishedGoodsOutboundListDataSerializer()
 
 
 class MaterialInboundLineInputSerializer(serializers.Serializer):
@@ -243,6 +306,31 @@ class MaterialInboundInputSerializer(serializers.Serializer):
         default="",
     )
     items = MaterialInboundLineInputSerializer(many=True, allow_empty=False, max_length=100)
+
+
+class SampleMaterialInboundLineInputSerializer(serializers.Serializer):
+    purchase_order_line_id = serializers.UUIDField()
+    zone_id = serializers.UUIDField()
+    location_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    remark = serializers.CharField(max_length=3000, required=False, allow_blank=True, default='')
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and set(data) - set(self.fields):
+            raise serializers.ValidationError({'non_field_errors': ['样品全部入库只提交采购明细及库区，不填写数量或长度。']})
+        return super().to_internal_value(data)
+
+
+class SampleMaterialInboundInputSerializer(serializers.Serializer):
+    purchase_order_id = serializers.UUIDField()
+    client_request_id = serializers.UUIDField()
+    inbound_date = serializers.DateField(default=timezone.localdate)
+    remark = serializers.CharField(max_length=3000, required=False, allow_blank=True, default='')
+    items = SampleMaterialInboundLineInputSerializer(many=True, allow_empty=False, max_length=100)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and set(data) - set(self.fields):
+            raise serializers.ValidationError({'non_field_errors': ['样品全部入库不接受额外的数量或品质参数。']})
+        return super().to_internal_value(data)
 
 
 class ManualMaterialInboundLineInputSerializer(serializers.Serializer):
@@ -388,6 +476,10 @@ class MaterialInboundSerializer(serializers.ModelSerializer):
     @staticmethod
     def get_source_type_display(instance):
         return "采购入库" if instance.purchase_order_id else "额外入库"
+
+
+class SampleMaterialInboundResponseSerializer(serializers.Serializer):
+    data = MaterialInboundSerializer()
 
 
 class MaterialQualityLineInputSerializer(serializers.Serializer):

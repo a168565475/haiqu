@@ -31,6 +31,7 @@ const props = defineProps<{
   subjectLabel?: string
   testId?: string
   requireCuttingSpecification?: boolean
+  inheritFabricAttributes?: boolean
   stageMaterial?: (payload: RawMaterialInput, display: Pick<RawMaterialInformation, 'category_name' | 'unit_name' | 'unit_code' | 'color_name'>) => void | Promise<void>
 }>()
 
@@ -194,7 +195,7 @@ async function submit(): Promise<void> {
     form.warehouse_number = ''
     return
   }
-  if (form.color && !options.value.colors.some((item) => item.id === form.color)) {
+  if (!props.inheritFabricAttributes && form.color && !options.value.colors.some((item) => item.id === form.color)) {
     submitError.value = '所选颜色已不可用，请重新选择。'
     form.color = ''
     return
@@ -207,8 +208,8 @@ async function submit(): Promise<void> {
     material_name: form.material_name.trim(),
     specification: form.specification.trim(),
     unit: selectedUnit.id,
-    color: form.color || null,
-    material: form.material.trim(),
+    color: props.inheritFabricAttributes ? null : form.color || null,
+    material: props.inheritFabricAttributes ? '' : form.material.trim(),
     is_packaging_auxiliary: false,
     box_shape: '',
     notes: form.notes.trim(),
@@ -223,7 +224,7 @@ async function submit(): Promise<void> {
         category_name: options.value.categories.find(item => item.id === selectedCategoryId)?.category_name || '',
         unit_name: selectedUnit.unit_name,
         unit_code: selectedUnit.unit_code,
-        color_name: options.value.colors.find(item => item.id === form.color)?.color_name || '',
+        color_name: props.inheritFabricAttributes ? '' : options.value.colors.find(item => item.id === form.color)?.color_name || '',
       })
     } else {
       const created = await createRawMaterial(payload)
@@ -281,7 +282,7 @@ watch(
     @closed="handleClosed"
   >
     <el-alert
-      :title="stageMaterial ? '本次仅暂存到 BOM，保存整份 BOM 并确认新增清单后才建立原料档案。' : categoryName
+      :title="stageMaterial ? '本次仅暂存到 BOM，保存整份 BOM 时自动建立原料档案。' : categoryName
         ? `类型固定为“${(itemType || 'MATERIAL') === 'MATERIAL' ? '材料' : '半成品'}”，类别固定为“${categoryName}”；保存后将刷新当前选择列表。`
         : `类型固定为“${(itemType || 'MATERIAL') === 'MATERIAL' ? '材料' : '半成品'}”；保存后将刷新当前选择列表。`"
       type="info"
@@ -369,7 +370,7 @@ watch(
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="颜色" prop="color">
+        <el-form-item v-if="!inheritFabricAttributes" label="颜色" prop="color">
           <el-select v-model="form.color" :aria-label="`${subjectLabel || categoryName || '原料'}颜色`" clearable filterable placeholder="请选择颜色（选填）">
             <el-option
               v-for="item in options.colors"
@@ -379,7 +380,7 @@ watch(
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="材质" prop="material">
+        <el-form-item v-if="!inheritFabricAttributes" label="材质" prop="material">
           <el-input v-model="form.material" :aria-label="`${subjectLabel || categoryName || '原料'}材质`" maxlength="200" placeholder="请输入材质（选填）" />
         </el-form-item>
         <el-form-item label="备注" prop="notes" class="form-item--wide">

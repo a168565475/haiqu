@@ -1,9 +1,9 @@
 import type { BomLine, BomLineInput, BomSectionInput } from '@/types/bom'
 import { cuttingCalculation, legacyPipeCuttingValues } from './bomCuttingQuantities'
-import { pipePlan } from './materialFlow'
+import { pipePlanForBomLine, type SavedPipePlanBasis } from './materialFlow'
 
 export interface BomPreviewColumn { key: string; label: string; width: number }
-export type BomPreviewLine = BomLineInput & Pick<Partial<BomLine>, 'cutting_material_original'>
+export type BomPreviewLine = BomLineInput & Pick<Partial<BomLine>, 'cutting_material_original'> & SavedPipePlanBasis
 export type BomPreviewSection = Omit<BomSectionInput, 'lines'> & { lines: BomPreviewLine[] }
 const column = (key: string, label: string, width = 110): BomPreviewColumn => ({ key, label, width })
 const serial = column('line_number', '序号', 54)
@@ -38,9 +38,10 @@ export function bomPreviewColumns(section: BomPreviewSection): BomPreviewColumn[
   if (/辅料/.test(section.title)) return [serial, name, specification, column('accessory_color', '颜色'), material, unit, consumption, notes, images]
   if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '箱数（多少一箱）', 140), consumption, images]
   if (/裁剪|裁片/.test(section.title)) return [
-    serial, column('part_name', '裁剪名称', 140), specification, material, column('cutting_color', '颜色'),
-    column('cutting_pieces_per_set', '裁片量（片/套）', 130), column('fabric_meters_per_piece', '单个用量（米/片）', 145),
-    column('cutting_sets_per_product', '每成品套数（套/成品）', 160), column('fabric_meters_per_set', '每套耗米（米/套）', 150),
+    serial, column('part_name', '裁剪名称', 140), specification,
+    column('cutting_pieces_per_set', '裁片量（片/套）', 130),
+    column('cutting_sets_per_product', '每成品套数（套/成品）', 160),
+    column('order_cutting_sets', '订单裁剪套数', 130), column('order_cutting_pieces', '订单裁剪片数', 130),
     column('unit', '流转单位', 100), images, notes,
   ]
   return [serial, material, name, specification, consumption, column('total_consumption', '当前需求'), unit, notes, images]
@@ -50,10 +51,10 @@ function text(value: unknown) {
   return value === null || value === undefined || value === '' ? '—' : String(value)
 }
 
-export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPreviewSection, orderQuantity: string, sections: BomPreviewSection[]): string {
+export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPreviewSection, orderQuantity: string, sections: BomPreviewSection[], savedLine?: SavedPipePlanBasis): string {
   if (section.section_type === 'PROFILE') {
     if (['total_consumption', 'tube_cut_length_m', 'branch_count', 'suggested_purchase_meters'].includes(key)) {
-      const plan = pipePlan(line.length_value || '', line.unit_consumption || '', line.tube_cut_piece_count || '', orderQuantity)
+      const plan = pipePlanForBomLine(line, orderQuantity, savedLine || line)
       return plan ? plan[key as keyof typeof plan] : '—'
     }
     if (key === 'specification') return line.specification || `${line.tube_diameter || '—'} × ${line.tube_thickness || '—'}`
@@ -71,10 +72,10 @@ export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPr
     const legacy = legacyPipeCuttingValues(line)
     if (legacy) {
       if (key === 'cutting_pieces_per_set') return legacy.pieces
-      if (key === 'fabric_meters_per_piece') return legacy.metersPerPiece
       if (key === 'cutting_sets_per_product') return legacy.sets
     }
-    if (key === 'fabric_meters_per_set') return text(calculation.mode === 'legacy' ? line.fabric_meters_per_set : calculation.metersPerSet)
+    if (key === 'order_cutting_sets') return text(calculation.orderSets)
+    if (key === 'order_cutting_pieces') return text(calculation.orderPieces)
     if (key === 'unit') return calculation.mode === 'legacy' ? text(line.unit) : '套'
     if (key === 'material') {
       const ownMaterial = line.cutting_material_original ?? line.material

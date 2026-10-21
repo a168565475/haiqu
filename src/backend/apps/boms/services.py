@@ -19,8 +19,9 @@ from apps.sales_orders.models import SalesOrder, SalesOrderLine
 from apps.quotations.product_writeback import save_bom_product_information
 from apps.products.material_identity import lock_bom_line_material_identities
 from apps.products.lineage import resolve_production_task_product_lineage
-from .material_flow_bom import apply_line_quantities, is_meter_fabric_section, validate_fabric_links, validate_used_components
-from .material_flow_calculations import CUTTING_USAGE_FIELDS, pipe_plan, MaterialFlowValueError
+from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, validate_fabric_links, validate_used_components
+from .material_flow_calculations import CUTTING_QUANTITY_FIELDS, pipe_plan, MaterialFlowValueError
+from .duplicate_lines import validate_duplicate_material_lines
 
 from .image_files import delete_business_file_if_unreferenced
 from .maintenance import match_maintenance_configuration
@@ -37,6 +38,7 @@ from .models import (
     BomStatus,
 )
 from .selectors import boms_with_context
+from .notification_events import expire_task_bom_events, register_task_boms_confirmed
 from .uploads import persist_prepared_bom_upload, prepare_bom_upload
 from .workbook_import import BomWorkbookError, parse_bom_workbook, validate_workbook_identity
 
@@ -209,14 +211,15 @@ def _calculation_text(value, precision=CALCULATION_PRECISION, keep_trailing_zero
     return text if keep_trailing_zeros else text.rstrip("0").rstrip(".") or "0"
 
 
-def _tube_calculations(line_data, product_quantity):
+def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
     length = _decimal_value(line_data.get("length_value"))
     unit_consumption = _decimal_value(line_data.get("unit_consumption"))
     total_consumption = cut_length = branch_count = None
     try:
         plan = pipe_plan(cutting_length_mm=line_data.get("length_value"),
                          pieces_per_product=line_data.get("unit_consumption"),
-                         pieces_per_bar=line_data.get("tube_cut_piece_count"), order_quantity=product_quantity)
+                          pieces_per_bar=line_data.get("tube_cut_piece_count"), order_quantity=product_quantity,
+                          calculation_version=calculation_version)
         total_consumption = Decimal(plan["demand_pieces"])
         cut_length = Decimal(plan["raw_bar_length_m"])
         branch_count = Decimal(plan["suggested_bar_count"])
@@ -247,8 +250,11 @@ def _tube_calculations(line_data, product_quantity):
     }
 
 
-def _editable_model_values(line_data, section_type, product_quantity, *, existing_line=None):
+def _editable_model_values(line_data, section_type, product_quantity, *, existing_line=None, section_title=""):
     values = {field: line_data[field] for field in EDITABLE_LINE_FIELDS if field in line_data}
+    if section_title.strip() == "裁剪明细":
+        for field in ("unit_consumption", "total_consumption", "purchase_consumption"):
+            values.pop(field, None)
     tube_fields = ("tube_shape", "tube_diameter", "tube_thickness")
     source_id = line_data.get("source_inventory_material_id")
     # 当前完整参数决定显示规格；仅传来源 ID 的历史调用仍保留原快照。
@@ -470,7 +476,7 @@ def _create_sections(bom, plan):
     for line in BomLine.objects.filter(section__bom=bom).select_related("section"):
         if is_meter_fabric_section(line.section) and not line.unit_consumption:
             line.unit_consumption = line.purchase_consumption
-        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True)
+        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True)
         line.save()
 
 
@@ -500,7 +506,7 @@ def _copy_sections(bom, source_bom):
         for source_line, copied_line in zip(source_lines, copied_lines):
             copied_by_source[source_line.pk] = copied_line
             links.append((source_line.fabric_source_line_id, copied_line))
-            apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True)
+            apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True)
             copied_line.save()
         BomLineImage.objects.bulk_create(
             [
@@ -567,6 +573,7 @@ def create_bom(
             raise ValidationError({"creation_method": "BOM 建立方式不正确。"})
 
         with transaction.atomic():
+            ProductionTask.objects.select_for_update().get(pk=product_line.production_task_id)
             locked_product_line = (
                 product_line.__class__.objects.select_for_update()
                 .select_related("production_task")
@@ -663,6 +670,7 @@ def create_bom(
                 user_agent=(request.META.get("HTTP_USER_AGENT", "")[:500] if request else ""),
                 occurred_at=timezone.now(),
             )
+            expire_task_bom_events(bom.production_task_id)
             return bom
     except Exception:
         if persisted_path and Path(persisted_path).exists():
@@ -786,6 +794,8 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
         action="REVIEW_PRODUCT", actor_employee=actor_employee, before_data=before,
         after_data=_product_writeback_snapshot(locked_bom, snapshot_fields), request=request,
     )
+    if before != _product_writeback_snapshot(locked_bom, snapshot_fields):
+        expire_task_bom_events(locked_bom.production_task_id, force=True)
     return locked_bom
 
 
@@ -1032,10 +1042,12 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
 
 def _sync_profile_lines_to_order_quantity(bom, *, previous_order_quantity=None):
     for line in BomLine.objects.select_for_update().filter(section__bom=bom).select_related("section"):
-        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True)
+        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True,
+                              recalculate_pipe=previous_order_quantity is not None and Decimal(previous_order_quantity) != Decimal(bom.order_quantity))
         if line.section.section_type == "PROFILE":
             _, raw = _tube_calculations({"length_value": line.length_value, "unit_consumption": line.unit_consumption,
-                                        "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", "")}, bom.order_quantity)
+                                         "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", "")}, bom.order_quantity,
+                                        calculation_version=(line.raw_values or {}).get("pipe_plan_version", 2))
             line.raw_values = {**line.raw_values, **raw}
         line.save()
 
@@ -1045,6 +1057,8 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
     """同步发生产品或数量变更的产品行；已校验 BOM 复制为新版本以保留历史。"""
     from apps.production_tasks.models import ProductionTaskProduct
 
+    task_ids = ProductionTaskProduct.objects.filter(pk__in=product_line_ids).values_list("production_task_id", flat=True)
+    list(ProductionTask.objects.select_for_update().filter(pk__in=task_ids).order_by("pk"))
     product_lines = (
         ProductionTaskProduct.objects.select_for_update()
         .select_related("production_task")
@@ -1129,6 +1143,7 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
             ]
         )
         _sync_profile_lines_to_order_quantity(target, previous_order_quantity=previous_order_quantity)
+        expire_task_bom_events(target.production_task_id)
         write_audit_log(
             object_type="BOM",
             object_id=target.pk,
@@ -1284,6 +1299,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             drafts_for_payload_line[id(line_data)] = ordered_drafts
 
     material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True)
+    if intent == "verify":
+        validate_duplicate_material_lines(material_plan["lines"].values())
     persist_material_plan(plan=material_plan, bom=locked, request=request, actor_employee=actor_employee,
                           intent=intent, confirmation_token=confirmation_token)
 
@@ -1327,6 +1344,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
                     section.section_type,
                     Decimal(locked.order_quantity),
                     existing_line=line,
+                    section_title=section.title,
                 )
                 for field, value in model_values.items():
                     setattr(line, field, value)
@@ -1349,6 +1367,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
                     line_data,
                     section.section_type,
                     Decimal(locked.order_quantity),
+                    section_title=section.title,
                 )
                 line = BomLine.objects.create(
                     section=section,
@@ -1367,18 +1386,17 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
                 saved_lines_by_client_key[line_data["client_key"]] = line
             if "fabric_source_line_id" in line_data or line_data.get("fabric_source_client_key"):
                 fabric_links.append((line, line_data))
-            if "fabric_meters_per_set" in line_data:
-                line.fabric_meters_per_set = line_data["fabric_meters_per_set"]
-            was_piece_usage = any(getattr(line, field) is not None for field in CUTTING_USAGE_FIELDS)
-            for field in CUTTING_USAGE_FIELDS:
+            was_piece_usage = any(getattr(line, field) is not None for field in CUTTING_QUANTITY_FIELDS)
+            for field in CUTTING_QUANTITY_FIELDS:
                 if field in line_data:
                     setattr(line, field, line_data[field])
-            if was_piece_usage and all(getattr(line, field) is None for field in CUTTING_USAGE_FIELDS):
-                raise ValidationError({"sections": "已采用每片用量的裁剪明细不能清空三个参数退回旧口径。"})
+            if was_piece_usage and all(getattr(line, field) is None for field in CUTTING_QUANTITY_FIELDS):
+                raise ValidationError({"sections": "已填写裁片数量的明细不能清空每套片数和每成品套数退回旧口径。"})
             planned_line = material_plan["lines"][(section_number - 1, line_number)]
             line.raw_values = planned_line.raw_values
             line.raw_material, line.category, line.unit = planned_line.raw_material, planned_line.category, planned_line.unit
             line.specification = planned_line.specification
+            line.material = planned_line.material
             apply_line_quantities(line, locked.order_quantity)
             line.save()
             saved_lines.append(line)
@@ -1418,12 +1436,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
     for line in saved_lines:
         if line.section.title.strip() != "裁剪明细":
             continue
-        original_material = line.material
-        if original_material.strip() in {"", "/"} and line.fabric_source_line_id:
-            line.raw_values["cutting_material_original"] = original_material
-            line.material = line.fabric_source_line.material
-        else:
-            line.raw_values.pop("cutting_material_original", None)
+        inherit_cutting_fabric_attributes(line)
         line.save(update_fields=["material", "raw_values"])
     stale_line_ids = set(existing_lines) - kept_line_ids
     stale_image_file_ids = []
@@ -1475,6 +1488,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
         after_data=_edit_snapshot(refreshed),
         request=request,
     )
+    expire_task_bom_events(locked.production_task_id)
     if intent == "verify":
         _verify_locked_bom(locked=refreshed, quantity_confirmation_reason=quantity_confirmation_reason,
                            actor_employee=actor_employee, request=request)
@@ -1535,6 +1549,11 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
         apply_line_quantities(line, locked.order_quantity, require_complete=True)
         line.save()
     validate_fabric_links(lines, require_complete=True)
+    for line in lines:
+        if line.section.title.strip() == "裁剪明细":
+            inherit_cutting_fabric_attributes(line)
+            line.save(update_fields=["material", "raw_values"])
+    validate_duplicate_material_lines(lines)
     validate_used_components(locked, lines)
 
     _writeback_confirmed_bom_product(locked_bom=locked, actor_employee=actor_employee, request=request)
@@ -1565,4 +1584,25 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
         after_data={"status": locked.status, "quantity_confirmation_reason": reason},
         request=request,
     )
+    register_task_boms_confirmed(task_id=locked.production_task_id, actor_employee=actor_employee,
+                                 confirmed_at=locked.confirmed_at)
+    return locked
+
+
+@transaction.atomic
+def archive_bom(*, bom, actor_employee, request):
+    ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
+    locked = Bom.objects.select_for_update().get(pk=bom.pk)
+    require_matching_etag(request, locked)
+    locked.archived_at = timezone.now()
+    locked.archived_by_employee = actor_employee
+    locked.archive_reason = "BOM 列表删除"
+    locked.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+    write_audit_log(
+        object_type="BOM", object_id=locked.pk, context_type="PRODUCTION_TASK", context_id=locked.production_task_id,
+        action="ARCHIVE", actor_employee=actor_employee,
+        before_data={"archived_at": None, "bom_number": locked.bom_number},
+        after_data={"archived_at": locked.archived_at.isoformat(), "bom_number": locked.bom_number}, request=request,
+    )
+    expire_task_bom_events(locked.production_task_id)
     return locked

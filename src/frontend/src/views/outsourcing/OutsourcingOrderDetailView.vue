@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/auth'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import type { OutsourcingOrderDetail, VersionedOutsourcingOrder } from '@/types/outsourcing'
 import { createClientUuid } from '@/utils/clientUuid'
+import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 
 const route = useRoute()
 const router = useRouter()
@@ -345,6 +346,18 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
       </div>
 
       <MetalProcessingP4View v-if="showMetalOperations" mode="original" embedded :original-order-id="detail.id" @updated="load" />
+
+      <section class="detail-card order-price-card">
+        <div class="detail-card-heading"><h2>加工价格</h2><span>计划加工金额合计：{{ formatOutsourcingMoney(detail.planned_amount) }} 元</span></div>
+        <ElTable :data="allocationRows" border row-key="id" empty-text="暂无加工价格明细">
+          <ElTableColumn prop="product_name" label="产品" min-width="150" />
+          <ElTableColumn prop="part_name" label="部位" min-width="130" />
+          <ElTableColumn prop="factory_name" label="加工厂" min-width="150" />
+          <ElTableColumn label="计划加工量" width="130" align="right"><template #default="{ row }">{{ row.allocated_quantity }} {{ row.unit }}</template></ElTableColumn>
+          <ElTableColumn label="加工单价" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="row.unit_price != null"> 元/{{ row.unit }}</template></template></ElTableColumn>
+          <ElTableColumn label="计划金额（元）" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
+        </ElTable>
+      </section>
 
       <section v-if="!showMetalOperations" class="detail-card order-progress-card">
         <div class="detail-card-heading"><h2>分厂加工进度</h2></div>

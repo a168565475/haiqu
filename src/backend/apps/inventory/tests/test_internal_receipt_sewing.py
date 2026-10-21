@@ -66,13 +66,47 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
             'lines':[{'bom_line_id':str(line.pk),'quantity':str(quantity)} for line,quantity in zip(self.parts,[seat,back]) if quantity]}
         return self.client.post(self.url,payload,format='json',HTTP_IF_MATCH=self.preview()['etag'])
 
-    def test_shared_fabric_sum_and_whole_sets(self):
-        response=self.receive(100,101)
+    def test_actual_sewing_sets_are_limited_by_order_demand_without_shared_meter_cap(self):
+        response=self.receive(501,500)
         self.assertEqual(response.status_code,400,response.data)
         self.assertFalse(InternalSemiFinishedReceiptLine.objects.exists())
-        self.assertEqual(self.receive(100,100).status_code,201)
-        self.assertEqual(sum(InternalSemiFinishedReceiptLine.objects.values_list('input_quantity',flat=True)),100)
+        response=self.receive(500,500)
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(set(InternalSemiFinishedReceiptLine.objects.values_list('input_per_output','input_quantity')), {(None,None)})
+        self.assertEqual(InternalSemiFinishedReceipt.objects.get().source_snapshot['quantity_basis'],'ORDER_REMAINING')
         self.assertTrue(all(Decimal(row['can_receive'])==0 for row in self.preview()['lines']))
+        self.fabric_issue_line.refresh_from_db()
+        self.assertEqual(self.fabric_issue_line.issued_quantity,100)
+        detail=self.client.get(self.url+response.data['data']['record_ids'][0]+'/')
+        self.assertEqual(detail.status_code,200,detail.data)
+        self.assertIsNone(detail.data['data']['source_detail']['input_quantity'])
+
+    def test_unissued_material_and_missing_meter_usage_do_not_limit_actual_sewing_sets(self):
+        self.fabric_issue.status='DRAFT'
+        self.fabric_issue.save(update_fields=['status'])
+        for line in self.parts:
+            line.fabric_meters_per_piece=None
+            line.fabric_meters_per_set=None
+            line.save(update_fields=['fabric_meters_per_piece','fabric_meters_per_set'])
+        preview=self.preview()
+        for row in preview['lines']:
+            self.assertEqual(row['can_receive'],'500')
+            self.assertEqual((row['input_remaining'],row['input_supported'],row['consumes_input']), (None,None,None))
+        response=self.receive(500,500)
+        self.assertEqual(response.status_code,201,response.data)
+
+    def test_legacy_receipt_meter_values_remain_and_only_its_sets_reduce_remaining_demand(self):
+        response=self.receive(100)
+        self.assertEqual(response.status_code,201,response.data)
+        legacy=InternalSemiFinishedReceiptLine.objects.get()
+        InternalSemiFinishedReceiptLine.objects.filter(pk=legacy.pk).update(input_per_output=Decimal('0.6'),input_quantity=60)
+        self.parts[0].fabric_meters_per_piece=Decimal('2')
+        self.parts[0].save(update_fields=['fabric_meters_per_piece'])
+        response=self.receive(400)
+        self.assertEqual(response.status_code,201,response.data)
+        legacy.refresh_from_db()
+        self.assertEqual((legacy.input_per_output,legacy.input_quantity),(Decimal('0.6'),60))
+        self.assertEqual(self.receive(1).status_code,400)
 
     def test_missing_cutting_specification_names_part_and_preserves_error(self):
         part=self.parts[0]
@@ -111,7 +145,7 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
         row=InternalSemiFinishedReceiptLine.objects.get()
         self.assertEqual(row.stock_movement.balance_id,external.balance_id)
         self.assertEqual(row.received_before,450)
-        self.assertEqual(row.input_quantity,30)
+        self.assertIsNone(row.input_quantity)
         with self.assertRaises(ValidationError):
             credit_public_stock(identity=identity,zone=self.semi_zone,quantity=1,actor_employee=self.employee,
                 source_type='OUTSOURCING_RETURN',source_id=uuid.uuid4(),source_line_id=uuid.uuid4(),
@@ -133,7 +167,9 @@ class InternalSewingReceiptTests(SewingFixture,TestCase):
             response=self.client.get(self.url+'preview/',{'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING'})
             self.assertEqual(response.status_code,400,response.data)
 
-    def test_legacy_issued_fabric_is_not_silently_converted(self):
+    def test_legacy_issued_fabric_is_not_read_or_converted_for_sewing_set_count(self):
         self.fabric_issue.stock_mode='LEGACY'; self.fabric_issue.save(update_fields=['stock_mode'])
         response=self.client.get(self.url+'preview/',{'schedule_product_id':str(self.schedule_product.pk),'plan_category':'SEWING'})
-        self.assertEqual(response.status_code,400,response.data)
+        self.assertEqual(response.status_code,200,response.data)
+        self.fabric_issue.refresh_from_db()
+        self.assertEqual(self.fabric_issue.stock_mode,'LEGACY')

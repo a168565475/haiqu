@@ -757,7 +757,9 @@ class NumberRule(ProtectedReferenceModel):
                 name="number_rule_reset_policy_valid",
             ),
             models.CheckConstraint(
-                condition=Q(is_configured=False) | (~Q(prefix="") & ~Q(format_pattern="") & ~Q(sequence_name="")),
+                condition=Q(is_configured=False) | (
+                    ~Q(prefix="") & ~Q(format_pattern="") & (Q(reset_policy="DAILY") | ~Q(sequence_name=""))
+                ),
                 name="number_rule_configured_fields_required",
             ),
         ]

@@ -43,6 +43,7 @@ class EmployeeRolesSerializer(StrictSerializer):
 
 
 class RoleSerializer(serializers.ModelSerializer):
+    department_id = serializers.UUIDField(read_only=True, allow_null=True)
     archived = serializers.SerializerMethodField()
     grants = serializers.SerializerMethodField()
     etag = serializers.SerializerMethodField()
@@ -50,7 +51,7 @@ class RoleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RoleProfile
-        fields = ["id", "role_code", "display_name", "description", "archived", "grants", "updated_at", "etag", "assigned_employee_count"]
+        fields = ["id", "role_code", "display_name", "description", "department_id", "archived", "grants", "updated_at", "etag", "assigned_employee_count"]
 
     def get_assigned_employee_count(self, obj) -> int:
         from django.db.models import Q

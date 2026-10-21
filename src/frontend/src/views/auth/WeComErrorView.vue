@@ -18,6 +18,8 @@ const messages: Record<string, string> = {
     ? '当前 ERP 登录账号与企业微信成员不一致。原会话未切换，请联系管理员核对身份。'
     : '当前 ERP 登录账号与企业微信成员不一致。原会话未切换，请先退出原账号后重试。',
   MEMBER_REJECTED: '当前成员无法使用此应用，请联系管理员核对在职状态、应用可见范围和员工绑定。',
+  BINDING_REQUIRED: '成员身份需要管理员核对关联，请联系管理员确认对应的 ERP 员工后重新登录。',
+  ACCOUNT_INACTIVE: '对应的 ERP 员工或账号当前不可用，请联系管理员核对员工状态及账号是否启用。',
   UPSTREAM_UNAVAILABLE: `企业微信服务暂时无法连接，${retryInstruction}。`,
   LOGIN_FAILED: `企业微信登录未完成，${retryInstruction}；仍失败时联系管理员。`,
 }

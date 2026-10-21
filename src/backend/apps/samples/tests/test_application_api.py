@@ -36,6 +36,35 @@ class SampleApplicationApiTests(APITestCase):
     def review(self, created, decision='approve', note='', etag=None, client=None):
         return (client or self.client).post(f"/api/v1/sample-requests/{created.data['data']['id']}/director-review/", {'decision': decision, 'note': note}, format='json', HTTP_IF_MATCH=etag or created['ETag'])
 
+    def completion_payload(self, response):
+        data = response.data['data']
+        source_product = data['products'][0]
+        source_detail = source_product['details'][0]
+        payload = legacy_tests.SampleApiTests.sample_form_payload(self, manual_request_number='', idempotency_key='')
+        product = payload['products'][0]
+        product.update({
+            'id': source_product['id'],
+            'client_key': source_product['id'],
+            'source_inquiry_item_id': source_product['source_inquiry_item_id'],
+            'source_quotation_line_id': source_product['source_quotation_line_id'],
+            'product_name': source_product['product_name'],
+            'specification': source_product['specification'],
+            'sampling_details': [],
+        })
+        product['details'] = [{
+            'id': source_detail['id'],
+            'product_color_id': str(self.product_color.pk),
+            'color_code': self.product_color.color_code,
+            'sample_quantity': source_detail['sample_quantity'],
+            'tolerance': 'NONE',
+            'notes': '',
+            'cutting_reported_quantity': 0,
+            'metalwork_reported_quantity': 0,
+            'cutting_completed': False,
+            'metalwork_completed': False,
+        }]
+        return payload
+
     def test_create_and_approve_preserve_all_fields_and_audit(self):
         created = self.submit()
         self.assertEqual(created.status_code, 201, created.data)
@@ -48,12 +77,54 @@ class SampleApplicationApiTests(APITestCase):
         self.assertTrue(data['application_actions']['can_director_review'])
         approved = self.review(created, note='可以制作')
         self.assertEqual(approved.status_code, 200, approved.data)
-        self.assertEqual(approved.data['data']['status'], 'MATERIALS_PENDING')
+        self.assertEqual(approved.data['data']['status'], 'PENDING_COMPLETION')
         self.assertEqual(approved.data['data']['director_note'], '可以制作')
         self.assertFalse(approved.data['data']['application_actions']['can_director_review'])
         self.assertTrue(AuditLog.objects.filter(object_id=data['id'], action='DIRECTOR_APPROVED').exists())
         self.assertEqual(self.review(created).status_code, 412)
         self.assertEqual(self.review(approved).status_code, 409)
+
+    @override_settings(MODULE_ACCESS_ENABLED=True)
+    def test_submitter_can_director_review_own_application(self):
+        created = self.submit()
+        self.assertEqual(created.status_code, 201, created.data)
+        approved = self.review(created, note='本人确认')
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data['data']['status'], 'PENDING_COMPLETION')
+        another = self.submit()
+        returned = self.review(another, decision='return', note='本人退回')
+        self.assertEqual(returned.status_code, 200, returned.data)
+        self.assertEqual(returned.data['data']['status'], 'APPLICATION_RETURNED')
+
+    def test_approved_application_completes_requirements_before_materials_without_task_sheet(self):
+        created = self.submit()
+        approved = self.review(created, note='可以制作')
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data['data']['edit_capabilities']['mode'], 'COMPLETE')
+        completed = self.client.patch(
+            f"/api/v1/sample-requests/{created.data['data']['id']}/form/",
+            {'payload': self.completion_payload(approved)},
+            format='json',
+            HTTP_IF_MATCH=approved['ETag'],
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        data = completed.data['data']
+        self.assertEqual(data['request_number'], created.data['data']['request_number'])
+        self.assertEqual(data['status'], 'MATERIALS_PENDING')
+        self.assertIsNone(data['products'][0]['task_sheet_file_id'])
+        self.assertEqual(data['edit_capabilities']['mode'], 'READ_ONLY')
+        self.assertTrue(AuditLog.objects.filter(object_id=data['id'], action='REQUIREMENTS_COMPLETED').exists())
+
+    def test_existing_materials_pending_application_without_completed_requirements_remains_completable(self):
+        created = self.submit()
+        approved = self.review(created, note='可以制作')
+        sample = SampleRequest.objects.get(pk=approved.data['data']['id'])
+        sample.status = SampleRequestStatus.MATERIALS_PENDING
+        sample.save(update_fields=['status', 'updated_at'])
+        detail = self.client.get(f"/api/v1/sample-requests/{sample.pk}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['edit_capabilities']['mode'], 'COMPLETE')
+        self.assertTrue(detail.data['data']['edit_capabilities']['can_complete'])
 
     def test_return_edit_resubmit_approve_repeated_rounds(self):
         payload = self.payload()

@@ -8,7 +8,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
-from apps.boms.material_flow_calculations import MaterialFlowValueError, pipe_plan
+from apps.boms.material_flow_calculations import MaterialFlowValueError, pipe_plan_for_line
 from apps.boms.models import Bom, BomLine, BomStatus
 from apps.products.material_identity import lock_bom_line_material_identities, resolve_bom_line_raw_material
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
@@ -28,8 +28,7 @@ def pipe_error(code, detail):
 
 def pipe_source_snapshot(line, raw_material):
     try:
-        result = pipe_plan(cutting_length_mm=line.cutting_length_mm, pieces_per_product=line.pieces_per_product,
-                           pieces_per_bar=line.pieces_per_bar, order_quantity=line.section.bom.order_quantity)
+        result = pipe_plan_for_line(line)
     except MaterialFlowValueError as error:
         raise pipe_error(error.code, str(error)) from error
     if (line.raw_bar_length_m != Decimal(result["raw_bar_length_m"])

@@ -4,7 +4,7 @@ import type { TubeSourceKind } from '@/types/tubeOutsourcing'
 import type { TubeReceipt, TubeReceiptCandidates, TubeReceiptInput, TubeReceiptPreview } from '@/types/tubeReceipts'
 
 const root = '/api/v1/tube-outsourcing-orders/'
-export async function fetchTubeReceiptCandidates(params: { search?: string; source_kind?: TubeSourceKind; page?: number; page_size?: number }): Promise<TubeReceiptCandidates> {
+export async function fetchTubeReceiptCandidates(params: { search?: string; source_kind?: TubeSourceKind; page?: number; page_size?: number; category?: 'cutting' }): Promise<TubeReceiptCandidates> {
   const response = await apiClient.get<DataResponse<TubeReceiptCandidates>>(`${root}receipt-candidates/`, { params, timeout: 15000 })
   return response.data.data
 }

@@ -1090,6 +1090,9 @@ def update_production_task(*, task, validated_data, files, actor_employee, reque
             actor_employee=actor_employee,
             request=request,
         )
+    if products is not None:
+        from apps.boms.notification_events import expire_task_bom_events
+        expire_task_bom_events(task.pk)
     write_audit_log(
         object_type="PRODUCTION_TASK",
         object_id=task.pk,
@@ -1183,12 +1186,12 @@ def submit_production_task(*, task, actor_employee, request):
 
 @transaction.atomic
 def transition_production_task(*, task, target_status, actor_employee, request):
-    from apps.access_control.module_policy import prohibit_audit_self_approval
+    from apps.access_control.production_approval import check_production_approval
     allowed = {
         ProductionTaskStatus.PENDING_VALIDATION: ProductionTaskStatus.READY,
     }
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
-    prohibit_audit_self_approval(actor_employee, 'PRODUCTION_TASK', task.pk, ['SUBMITTED'])
+    check_production_approval(actor_employee, task)
     if allowed.get(task.status) != target_status:
         raise Conflict("当前生产任务单状态不能执行此操作。")
     before_data = _snapshot(task)
@@ -1200,7 +1203,28 @@ def transition_production_task(*, task, target_status, actor_employee, request):
         action="CONFIRMED" if target_status == ProductionTaskStatus.READY else "STARTED",
         actor_employee=actor_employee, before_data=before_data, after_data=_snapshot(task), request=request,
     )
+    _register_task_confirmed(task, actor_employee)
     return task
+
+
+def _register_task_confirmed(task, actor_employee):
+    from apps.wecom.notification_services import register_business_event
+
+    # 确认时间来自本次已保存状态；两条入口使用同一事件契约。
+    version = task.updated_at.isoformat()
+    names = list(task.products.order_by("line_number", "id").values_list("product_name_snapshot", flat=True))
+    product_name = "未记录产品"
+    if names:
+        product_name = names[0]
+        if len(names) > 1:
+            product_name = f"{product_name}等{len(names)}项产品"
+    register_business_event(
+        event_code="PRODUCTION_TASK_CONFIRMED",
+        idempotency_key=f"PRODUCTION_TASK_CONFIRMED:{task.pk}:{version}",
+        object_type="production_tasks.ProductionTask", object_id=task.pk, object_version=version,
+        context={"document_no": task.task_number, "product_name": product_name, "operator": actor_employee.display_name,
+                 "occurred_at": version, "status": task.get_status_display()},
+    )
 
 
 @transaction.atomic
@@ -1546,8 +1570,8 @@ def create_production_order_from_sales_order(*, validated_data, actor_employee, 
 @transaction.atomic
 def decide_production_order_by_pmc(*, task, validated_data, actor_employee, request=None):
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
-    from apps.access_control.module_policy import prohibit_audit_self_approval
-    prohibit_audit_self_approval(actor_employee, 'PRODUCTION_TASK', task.pk, ['SUBMITTED'])
+    from apps.access_control.production_approval import check_production_approval
+    check_production_approval(actor_employee, task)
     require_matching_etag(request, task)
     if task.status != ProductionTaskStatus.PENDING_VALIDATION:
         raise Conflict("只有待 PMC 确认的生产订单可以处理。")
@@ -1603,6 +1627,8 @@ def decide_production_order_by_pmc(*, task, validated_data, actor_employee, requ
         after_data=_snapshot(task),
         request=request,
     )
+    if validated_data["decision"] == "CONFIRM":
+        _register_task_confirmed(task, actor_employee)
     return task
 
 

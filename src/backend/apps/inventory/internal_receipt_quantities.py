@@ -1,4 +1,4 @@
-"""厂内入库数量核算：订单净需求与实际投入共同封顶。
+"""厂内入库数量核算：金工检查实际投入，车缝按订单剩余套数办理。
 
 本模块只做精确计算，不访问数据库或修改库存。调用服务必须在事务锁内从
 服务端读取已出库投入、既有产出及外发占用，不能信任前端传来的这些数值。
@@ -40,8 +40,9 @@ class ComponentDemand:
     input_unit: str
     output_unit: str
     required: Decimal
-    input_per_output: Decimal
+    input_per_output: Decimal | None
     completed_elsewhere: Decimal = ZERO
+    directly_committed: Decimal = ZERO
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class ReceivedOutput:
     input_unit: str
     output_unit: str
     quantity: Decimal
-    input_quantity: Decimal
+    input_quantity: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -60,14 +61,15 @@ class ComponentAllowance:
     required: Decimal
     received: Decimal
     demand_remaining: Decimal
-    input_remaining: Decimal
-    input_supported: Decimal
+    input_remaining: Decimal | None
+    input_supported: Decimal | None
     can_receive: Decimal
     requested: Decimal
-    consumes_input: Decimal
+    consumes_input: Decimal | None
     received_after: Decimal
     demand_remaining_after: Decimal
     complete_after: bool
+    directly_committed: Decimal = ZERO
 
 
 @dataclass(frozen=True)
@@ -133,12 +135,13 @@ def _scope(item, expected):
         _error('SCOPE_MISMATCH', '投入或产出不属于当前订单，不能混算入库额度。')
 
 
-def calculate_receipt(*, scope_key, demands, inputs, history=(), requested=None):
+def calculate_receipt(*, scope_key, demands, inputs, history=(), requested=None, check_inputs=True):
     """返回各部位单独可入量，同时校验整张申请对共享投入的合计占用。
 
     history 必须包含本订单相关投入池的全部有效历史产出，不因库存已领走而删除。
     externally_committed 是已交外发及有效待交占用之和，不再重复包含 history。
     requested=None/{} 只用于预览；实际确认须使用 validate_receipt。
+    check_inputs=False 仅用于车缝按实际套数入库，不计算或改写历史耗米。
     """
     scope_key = _key(scope_key, '订单范围')
     if not isinstance(demands, (tuple, list)) or not isinstance(inputs, (tuple, list)) or not isinstance(history, (tuple, list)):
@@ -147,13 +150,15 @@ def calculate_receipt(*, scope_key, demands, inputs, history=(), requested=None)
         requested = {}
     if not isinstance(requested, Mapping):
         _error('PAYLOAD_INVALID', '本次入库数量必须按部位提供。')
+    if type(check_inputs) is not bool or (not check_inputs and inputs):
+        _error('PAYLOAD_INVALID', '车缝按套入库不应提供材料投入池。')
     # 大数与小数相乘时不依赖调用方的全局Decimal精度。
     with localcontext() as context:
         context.prec = 60
-        return _calculate(scope_key, demands, inputs, history, requested)
+        return _calculate(scope_key, demands, inputs, history, requested, check_inputs)
 
 
-def _calculate(scope_key, demands, inputs, history, requested):
+def _calculate(scope_key, demands, inputs, history, requested, check_inputs):
     pools, specs, received, input_used = {}, {}, {}, {}
     for pool in inputs:
         if not isinstance(pool, InputPool):
@@ -180,20 +185,27 @@ def _calculate(scope_key, demands, inputs, history, requested):
         if key in specs:
             _error('DUPLICATE_COMPONENT', '同一部位同阶段只能提供一份累计需求。', key)
         source = _key(demand.source_key, '投入汇总键')
-        if source not in pools:
+        if check_inputs and source not in pools:
             _error('INPUT_MISSING', '未找到该部位对应的材料投入，不能猜测可入数量。', key)
         input_unit = _key(demand.input_unit, 'BOM投入单位')
         output_unit = _key(demand.output_unit, '产出单位')
-        if input_unit != pools[source][0]:
+        if check_inputs and input_unit != pools[source][0]:
             _error('UNIT_MISMATCH', 'BOM用量单位与实际投入单位不一致。', key)
         if (input_unit, output_unit) not in {('支', '支'), ('米', '套')}:
             _error('UNIT_MISMATCH', '本期仅支持金工支→支、车缝米→套。', key)
         required = _number(demand.required, '部位需求', positive=True, whole=True)
-        usage = _number(demand.input_per_output, '每单位产出耗用', positive=True)
+        if not check_inputs and ((input_unit, output_unit) != ('米', '套') or demand.input_per_output is not None):
+            _error('UNIT_MISMATCH', '只有车缝套数入库可以不核算材料投入。', key)
+        usage = _number(demand.input_per_output, '每单位产出耗用', positive=True) if check_inputs else None
         if demand.output_unit == '支' and usage != 1:
             _error('UNIT_MISMATCH', '金工投入按已领切割支数核算，每支产出占用一支。', key)
+        direct = _number(demand.directly_committed, '已直发及待发预留', whole=True)
+        if check_inputs and direct:
+            _error('PAYLOAD_INVALID', '金工外发占用应从投入池核算。', key)
         specs[key] = (demand, required, usage)
         received[key] = _number(demand.completed_elsewhere, '外发同阶段已入库', whole=True)
+        if not check_inputs and received[key] + direct > required:
+            _error('DEMAND_HISTORY_CONFLICT', '累计已入库超过当前BOM需求，请核对需求变更。', key)
 
     for entry in history:
         if not isinstance(entry, ReceivedOutput):
@@ -206,13 +218,14 @@ def _calculate(scope_key, demands, inputs, history, requested):
         if (entry.source_key, entry.input_unit, entry.output_unit) != (demand.source_key, demand.input_unit, demand.output_unit):
             _error('SOURCE_CHANGED', '历史入库的投入来源或单位发生变化，须先核对需求版本。', key)
         quantity = _number(entry.quantity, '历史入库量', positive=True, whole=True)
-        used = _number(entry.input_quantity, '历史投入占用', positive=True)
-        if used != quantity * usage:
-            _error('SOURCE_CHANGED', '历史投入占用与当前单耗不一致，不自动重算旧记录。', key)
+        if check_inputs:
+            used = _number(entry.input_quantity, '历史投入占用', positive=True)
+            if used != quantity * usage:
+                _error('SOURCE_CHANGED', '历史投入占用与当前单耗不一致，不自动重算旧记录。', key)
+            input_used[entry.source_key] += used
         received[key] += quantity
-        if received[key] > required:
-            _error('DEMAND_HISTORY_CONFLICT', '累计已入库超过当前BOM需求，请核对需求变更。', key)
-        input_used[entry.source_key] += used
+        if received[key] + _number(demand.directly_committed, '已直发及待发预留', whole=True) > required:
+            _error('DEMAND_HISTORY_CONFLICT', '累计入库、直发及预留超过当前BOM需求，请核对需求变更。', key)
 
     remaining_inputs = {}
     for key, (_, issued, external) in pools.items():
@@ -228,20 +241,22 @@ def _calculate(scope_key, demands, inputs, history, requested):
 
     result, total_input_requests = {}, {key: ZERO for key in pools}
     for key, (demand, required, usage) in specs.items():
-        remaining = required - received[key]
-        available_input = remaining_inputs[demand.source_key]
-        supported = available_input // usage
-        allowance = min(remaining, supported)
+        direct = _number(demand.directly_committed, '已直发及待发预留', whole=True)
+        remaining = required - received[key] - direct
+        available_input = remaining_inputs[demand.source_key] if check_inputs else None
+        supported = available_input // usage if check_inputs else None
+        allowance = min(remaining, supported) if check_inputs else remaining
         quantity = requests.get(key, ZERO)
         if quantity > remaining:
             _error('DEMAND_EXCEEDED', '本次入库超过该部位订单剩余需求。', key)
-        if quantity > supported:
+        if check_inputs and quantity > supported:
             _error('INPUT_INSUFFICIENT', '已审核出库材料扣除历史产出及外发占用后不足。', key)
-        consumed = quantity * usage
-        total_input_requests[demand.source_key] += consumed
+        consumed = quantity * usage if check_inputs else None
+        if check_inputs:
+            total_input_requests[demand.source_key] += consumed
         result[key] = ComponentAllowance(required, received[key], remaining, available_input, supported,
                                          allowance, quantity, consumed, received[key] + quantity,
-                                         remaining - quantity, quantity == remaining)
+                                         remaining - quantity, quantity == remaining, direct)
 
     for key, used in total_input_requests.items():
         if used > remaining_inputs[key]:

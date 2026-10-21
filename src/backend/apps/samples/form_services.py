@@ -37,16 +37,28 @@ TERMINAL_FORM_STATUSES = {
 }
 
 
+def application_requirements_pending(sample_request):
+    if not sample_request.application_payload_hash or sample_request.status not in {
+        SampleRequestStatus.PENDING_COMPLETION,
+        SampleRequestStatus.MATERIALS_PENDING,
+    }:
+        return False
+    return not any(
+        record.stage == SampleWorkflowStage.REQUIREMENTS_COMPLETED
+        for record in sample_request.workflow_records.all()
+    )
+
+
 def sample_form_edit_capabilities(sample_request):
-    if sample_request.application_payload_hash:
-        return {"mode": "READ_ONLY", "can_full_edit": False, "can_report_edit": False, "can_complete": False}
-    if sample_request.status == SampleRequestStatus.PENDING_COMPLETION:
+    if application_requirements_pending(sample_request) or sample_request.status == SampleRequestStatus.PENDING_COMPLETION:
         return {
             "mode": "COMPLETE",
             "can_full_edit": True,
             "can_report_edit": True,
             "can_complete": True,
         }
+    if sample_request.application_payload_hash:
+        return {"mode": "READ_ONLY", "can_full_edit": False, "can_report_edit": False, "can_complete": False}
     if sample_request.status in TERMINAL_FORM_STATUSES:
         return {
             "mode": "READ_ONLY",
@@ -508,6 +520,7 @@ def _update_full(
     *,
     preserve_requested_at=False,
     require_sampling_details=True,
+    require_task_sheet=True,
 ):
     for field_name in [
         "owner_employee",
@@ -588,14 +601,14 @@ def _update_full(
                 setattr(product, field_name, value)
             if client_key in task_files:
                 product.task_sheet_file = task_files[client_key]
-            if product.task_sheet_file_id is None:
+            if require_task_sheet and product.task_sheet_file_id is None:
                 raise ValidationError({f"task_sheet_{client_key}": "每个产品必须上传一张任务单图片。"})
             product.save()
         else:
             if submitted_inquiry_id or submitted_quote_id:
                 raise Conflict("补充产品不能伪造来源关系。")
             task_file = task_files.get(client_key)
-            if task_file is None:
+            if require_task_sheet and task_file is None:
                 raise ValidationError({f"task_sheet_{client_key}": "每个产品必须上传一张任务单图片。"})
             product = SampleProduct.objects.create(
                 sample_request=sample_request,
@@ -667,11 +680,12 @@ def update_sample_form(
     data.pop("source_type", None)
     data.pop("source_id", None)
     data.pop("idempotency_key", None)
-    completing = sample_request.status == SampleRequestStatus.PENDING_COMPLETION
+    completing = capabilities["mode"] == "COMPLETE"
+    application_completion = completing and bool(sample_request.application_payload_hash)
     _assert_immutable_sample_fields(sample_request, data, completing=completing)
-    manual_number = data["manual_request_number"]
-    formal_number = f"HTS-{manual_number}"
-    if completing and SampleRequest.objects.filter(request_number=formal_number).exclude(pk=sample_request.pk).exists():
+    manual_number = data.get("manual_request_number", "")
+    formal_number = f"HTS-{manual_number}" if manual_number else ""
+    if completing and not application_completion and SampleRequest.objects.filter(request_number=formal_number).exclude(pk=sample_request.pk).exists():
         raise ValidationError({"manual_request_number": "该打样单号已存在。"})
     before_data = model_snapshot(sample_request, SAMPLE_FIELDS)
     if capabilities["mode"] == "REPORT_ONLY":
@@ -703,22 +717,27 @@ def update_sample_form(
             sampling_image_files,
             preserve_requested_at=completing,
             require_sampling_details=not completing,
+            require_task_sheet=not application_completion,
         )
     if completing:
         completed_at = timezone.now()
-        sample_request.manual_request_number = manual_number
-        sample_request.request_number = formal_number
-        sample_request.created_by_employee = actor_employee
-        sample_request.status = SampleRequestStatus.PENDING
-        sample_request.save(
-            update_fields=[
-                "manual_request_number",
-                "request_number",
-                "created_by_employee",
-                "status",
-                "updated_at",
-            ]
-        )
+        if application_completion:
+            sample_request.status = SampleRequestStatus.MATERIALS_PENDING
+            sample_request.save(update_fields=["status", "updated_at"])
+        else:
+            sample_request.manual_request_number = manual_number
+            sample_request.request_number = formal_number
+            sample_request.created_by_employee = actor_employee
+            sample_request.status = SampleRequestStatus.PENDING
+            sample_request.save(
+                update_fields=[
+                    "manual_request_number",
+                    "request_number",
+                    "created_by_employee",
+                    "status",
+                    "updated_at",
+                ]
+            )
         _start_sla(sample_request, completed_at)
         _record_workflow_stage(
             sample_request=sample_request,

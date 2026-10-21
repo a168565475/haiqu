@@ -5,8 +5,9 @@ These are prepared permissions; business enforcement follows in stages 4/5.
 
 from .sales_operations import SALES_OPERATIONS
 from .module_operations import MODULE_OPERATIONS
+from .management_permissions import MANAGEMENT_OPERATIONS
 
-EXTRA_OPERATIONS = tuple((code, label, module) for code, label, module, _ in (*SALES_OPERATIONS, *MODULE_OPERATIONS)) + (
+EXTRA_OPERATIONS = MANAGEMENT_OPERATIONS + tuple((code, label, module) for code, label, module, _ in (*SALES_OPERATIONS, *MODULE_OPERATIONS)) + (
     ("confirm_salesorder", "确认销售订单", "sales_orders"),
     ("complete_salesorder", "完成销售订单", "sales_orders"),
     ("submit_purchaserequest", "提交采购申请", "procurement"),

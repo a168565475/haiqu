@@ -86,6 +86,8 @@ class TubeReceiptsApiTests(TubeReceiptFixture, APITestCase):
         records = self.client.get('/api/v1/semi-finished-receipts/', HTTP_HOST='localhost')
         self.assertEqual(records.status_code, 200, records.data)
         row = records.data['data']['items'][0]
+        receipt = TubeOutsourcingReceipt.objects.get(order_id=order['id'])
+        self.assertRegex(receipt.receipt_number, rf'^WFHK{timezone.localdate():%y%m%d}[0-9]{{3,}}$')
         self.assertEqual(row['source_display'], '外发入库')
         self.assertEqual(row['receipt_date'], str(timezone.localdate()))
         detail = self.client.get(f"/api/v1/semi-finished-receipts/{row['id']}/", HTTP_HOST='localhost')

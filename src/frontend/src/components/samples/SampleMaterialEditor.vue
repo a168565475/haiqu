@@ -11,7 +11,7 @@ import SampleMaterialPicker from './SampleMaterialPicker.vue'
 import SampleMaterialLineDrawer from './SampleMaterialLineDrawer.vue'
 import { sampleMaterialCategories, type SampleMaterialCategory, type SampleMaterialLine, type SampleMaterialUnit, type SampleMaterialReferences, type SampleMaterialCandidate } from '@/types/sampleMaterial'
 
-const props = defineProps<{ modelValue: SampleMaterialLine[]; units: SampleMaterialUnit[]; fullscreen: boolean; unavailableMessage?: string; disabled?: boolean }>()
+const props = defineProps<{ modelValue: SampleMaterialLine[]; units: SampleMaterialUnit[]; fullscreen: boolean; unavailableMessage?: string; disabled?: boolean; layout?: 'sidebar' }>()
 const emit = defineEmits<{ 'update:modelValue': [lines: SampleMaterialLine[]]; 'toggle-fullscreen': []; 'editing-change': [value: boolean]; 'dirty-change': [value: boolean] }>()
 const category = ref<SampleMaterialCategory>('tube')
 const table = ref<HTMLElement>()
@@ -22,6 +22,7 @@ const fields = [{ key: 'name', label: '材料名称', max: 300 }, { key: 'specif
 const pickerLabel = computed(() => ({ tube: '选择管材', fabric: '选择面料', hardware: '选择数据', plastic: '选择数据', accessory: '选择辅料', packaging: '选择包材' })[category.value as 'tube' | 'fabric' | 'hardware' | 'plastic' | 'accessory' | 'packaging'] || '')
 const visibleLines = computed(() => props.modelValue.filter(line => line.category === category.value))
 const counts = computed(() => Object.fromEntries(sampleMaterialCategories.map(item => [item.key, props.modelValue.filter(line => line.category === item.key).length])))
+const categoryLabel = computed(() => sampleMaterialCategories.find(item => item.key === category.value)?.label || '材料需求')
 const hasNext = computed(() => {
   const index = visibleLines.value.findIndex(line => line.key === editingLine.value?.key)
   return index >= 0 && index < visibleLines.value.length - 1
@@ -114,10 +115,14 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
 </script>
 
 <template>
-  <section class="material-editor" :class="{ 'is-fullscreen': fullscreen }" aria-label="材料需求">
-    <header class="material-toolbar"><h2>材料需求</h2><p>按材料分类填写，本次打样需要多少就填多少。</p><ElButton v-if="pickerLabel" :disabled="disabled || (category === 'accessory' && !references)" @click="pickerOpen = true">{{ pickerLabel }}</ElButton><ElButton v-if="!pickerLabel" :disabled="disabled" @click="addLine">＋ 添加材料</ElButton><ElButton class="fullscreen-toggle" @click="emit('toggle-fullscreen')">{{ fullscreen ? '退出全屏' : '全屏填写' }}</ElButton></header>
+  <section class="material-editor" :class="{ 'is-fullscreen': fullscreen, 'editor-grid': layout === 'sidebar' }" aria-label="材料需求">
+    <aside v-if="layout === 'sidebar'" class="section-sidebar">
+      <h2>物料分类</h2><nav class="section-tabs" aria-label="材料分区"><button v-for="item in sampleMaterialCategories" :key="item.key" type="button" :aria-pressed="category === item.key" :class="{ active: category === item.key }" :disabled="pickerOpen || drawerOpen" @click="category = item.key"><span>{{ item.label }}</span><b>{{ counts[item.key] || 0 }}</b></button></nav>
+    </aside>
+    <div class="material-main">
+    <header class="material-toolbar"><h2>{{ layout === 'sidebar' ? categoryLabel : '材料需求' }}</h2><p>按材料分类填写，本次打样需要多少就填多少。</p><ElButton v-if="pickerLabel" :disabled="disabled || (category === 'accessory' && !references)" @click="pickerOpen = true">{{ pickerLabel }}</ElButton><ElButton v-if="!pickerLabel" :disabled="disabled" @click="addLine">＋ 添加材料</ElButton><ElButton class="fullscreen-toggle" @click="emit('toggle-fullscreen')">{{ fullscreen ? '退出全屏' : '全屏填写' }}</ElButton></header>
     <div v-if="referenceError" role="alert" class="reference-error">{{ referenceError }} <ElButton link :loading="referenceLoading" @click="loadReferences">重试</ElButton></div>
-    <SampleMaterialTabs v-model="category" :counts="counts" />
+    <SampleMaterialTabs v-if="layout !== 'sidebar'" v-model="category" :counts="counts" />
     <div ref="table" class="material-table">
       <div class="table-scroll" tabindex="0" aria-label="材料录入表格">
         <table><colgroup><col class="col-number"><col class="col-name"><col class="col-spec"><col class="col-material"><col class="col-color"><col class="col-quantity"><col class="col-unit"><col class="col-notes"><col class="col-actions"></colgroup>
@@ -137,6 +142,7 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
       <ElButton v-if="!pickerLabel" class="add-row" :disabled="disabled" @click="addLine">＋ 添加一行</ElButton>
     </div>
     <div class="material-count"><span>当前分区 {{ visibleLines.length }} 项 · 全部分区 {{ modelValue.length }} 项{{ unavailableMessage ? '（本页未保存）' : '' }}</span><span>* 为必填</span></div>
+    </div>
     <SampleMaterialPicker v-model="pickerOpen" :category="category" :references="references" :units="units" :disabled="disabled" @choose="chooseMaterials" />
     <SampleMaterialLineDrawer v-if="editingLine" v-model="drawerOpen" :line="editingLine" :references="references" :units="units" :has-next="hasNext" :can-add-next="!pickerLabel || category === 'tube'" :disabled="disabled" @apply="applyLine" @dirty-change="emit('dirty-change', $event)" />
   </section>
@@ -144,6 +150,8 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
 
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
+@use '@/styles/theme/detail' as detail;
+.material-main { display: contents; }
 .material-editor { display: flex; min-width: 0; flex: none; flex-direction: column; gap: 14px; padding: 24px; border-radius: 4px; background: token.$crm-color-surface; box-shadow: inset 0 0 0 1px token.$crm-border-subtle; }
 .material-toolbar { display: flex; height: 44px; flex: none; align-items: center; gap: 16px; }
 h2 { width: 140px; flex: none; margin: 0; font-family: token.$crm-font-display; font-size: 22px; line-height: 30px; }
@@ -170,6 +178,23 @@ td :deep(.el-input__inner::placeholder), td :deep(.el-select__placeholder) { col
 .is-fullscreen { min-height: 100%; }
 .is-fullscreen .material-table { height: auto; flex: none; }
 .material-editor.is-fullscreen .fullscreen-toggle { display: none; }
+.material-editor.editor-grid { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 14px; padding: 0; background: transparent; box-shadow: none; border-radius: 0; align-items: stretch; }
+.editor-grid .section-sidebar, .editor-grid .material-main { @include detail.surface; }
+.editor-grid .section-sidebar { padding: 14px 0; overflow: hidden; }
+.editor-grid .section-sidebar h2 { width: auto; padding: 0 16px 12px; border-bottom: 1px solid var(--erp-color-border); font-family: inherit; font-size: 17px; line-height: 26px; }
+.editor-grid .section-tabs { display: grid; }
+.editor-grid .section-tabs button { display: flex; width: 100%; height: 46px; align-items: center; justify-content: space-between; padding: 0 16px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--erp-color-text-secondary); text-align: left; cursor: pointer; }
+.editor-grid .section-tabs button b { color: var(--erp-color-text-muted); font-size: 12px; font-weight: 500; }
+.editor-grid .section-tabs button.active { border-left-color: var(--erp-color-brand); color: var(--erp-color-brand); background: var(--erp-color-selected); }
+.editor-grid .section-tabs button.active b { color: var(--erp-color-brand); }
+.editor-grid .section-tabs button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: -2px; }
+.editor-grid .material-main { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 14px 12px 12px; }
+.editor-grid .material-toolbar { height: auto; min-height: 44px; flex-wrap: wrap; gap: 8px 16px; }
+.editor-grid .material-toolbar h2 { width: auto; font-family: inherit; font-size: 17px; line-height: 26px; }
+.editor-grid .material-toolbar p { font-size: 12px; }
+.editor-grid .table-scroll { overflow: auto; }
+.editor-grid table { min-width: 960px; }
+@media (max-width: 900px) { .material-editor.editor-grid { grid-template-columns: 152px minmax(0, 1fr); } }
 </style>
 
 <style lang="scss" src="@/styles/crm/_sample-material-overlays.scss"></style>

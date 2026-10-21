@@ -5,7 +5,6 @@
   .heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .heading-actions > a.el-button { text-decoration: none; }
   .unified-outsourcing-tabs { margin-bottom: 10px; }
-  .unified-outsourcing-tabs small { margin-left: 8px; font-size: 12px; }
   .unified-order-filter-bar > .el-input { width: 320px; max-width: 100%; }
   .unified-order-filter-bar > .el-select { width: 168px; }
   .unified-order-filter-bar > .factory-picker { width: 180px; }
@@ -13,6 +12,13 @@
   .el-table__body tr { cursor: pointer; }
   .num .cell { font-variant-numeric: tabular-nums; }
   .table-product { font-weight: 400; }
+  .unified-source-tag { white-space: nowrap; }
+  .order-number-link {
+    color: var(--erp-color-brand);
+    text-decoration: none;
+    &:hover { color: var(--erp-color-brand-hover); text-decoration: none; }
+    &:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+  }
   .brand { color: var(--erp-color-brand); }
   .craft-tag { min-width: 0; padding: 0 6px; }
   .cell-actions { display: flex; align-items: center; }

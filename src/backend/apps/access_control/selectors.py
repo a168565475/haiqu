@@ -41,6 +41,7 @@ def role_snapshot(role):
     return {
         "id": str(role.pk), "role_code": role.role_code, "display_name": role.display_name,
         "description": role.description, "archived": role.archived_at is not None,
+        "department_id": str(role.department_id) if role.department_id else None,
         "grants": grant_rows(role),
     }
 

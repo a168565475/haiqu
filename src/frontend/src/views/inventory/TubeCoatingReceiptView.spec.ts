@@ -18,12 +18,12 @@ const key = 'tube-coating-receipt:v1:7:order-1'
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-real', status: 'PROCESSING', version: 2, etag: '"order-1:v2"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: '原材料', schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', total_stock_quantity: '2', total_meters: '13.10',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
   task_order_number: 'DD-real', task_number: 'SC-real', schedule_number: 'PC-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '真实测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'raw-zone', zone_name: '原料区', warehouse_name: '原料仓', craft_name: '喷塑', remark: '', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: '2026-09-30', dispatched_at: '2026-09-30T09:00:00+08:00', dispatched_by_name: '发出员工', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: false, can_cancel: false },
-  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', stock_quantity: '2', meters: '13.10',
+  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
     material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [] }],
 }
 const base: TubeReceiptPreview = { order, etag: order.etag, can_receive: true, blockers: [], actor_name: '真实收货经办人', today: '2026-09-30',
@@ -66,19 +66,43 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('D3整单喷塑回货', () => {
+  it.each(['PUBLIC_CUTTING', 'SEWING'] as const)('%s裁片复用回货页，按套收货且少回仍须原因', async source => {
+    const current = structuredClone(base)
+    current.order.source_kind = source; current.order.craft_name = '丝印'
+    Object.assign(current.order.lines[0]!, { fabric_material: '涤纶', specification: '420×380', fabric_specification: '600D', fabric_color: '蓝色', pieces_per_set: '2' })
+    vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValue(current)
+    const { wrapper, vm } = await mountPage()
+    expect(wrapper.get('h1').text()).toBe('裁片回货入库')
+    expect(wrapper.get('.d3-lines').text()).toContain('实收（套）')
+    expect(wrapper.get('.d3-lines').text()).toContain('涤纶')
+    expect(wrapper.get('.d3-lines').text()).not.toContain('喷塑颜色')
+    expect(wrapper.text()).toContain('已丝印')
+    receive(vm, '18'); vm.rows[0]!.reason = ''; vm.openConfirm()
+    expect(vm.dialog).toBe('')
+    vm.rows[0]!.reason = '损耗'; vm.openConfirm(); await flushPromises()
+    expect(vm.dialog).toBe('confirm')
+    expect(wrapper.get('.d3-confirm-lines').text()).toContain('实收（套）')
+    expect(api.confirmTubeReceipt).not.toHaveBeenCalled()
+  })
+  it('回货只读显示原单计划金额，少回时不重算成实收结算额', async () => {
+    const { wrapper, vm } = await mountPage(); receive(vm, '18'); await flushPromises()
+    expect(wrapper.get('.d3-lines').text()).toContain('0.25')
+    expect(wrapper.get('.d3-footer').text()).toContain('计划加工金额 5 元')
+    expect(api.confirmTubeReceipt).not.toHaveBeenCalled()
+  })
   it('真实日期经办人、13独立属性列，无勾选、批次、实际颜色或根米换算', async () => {
     const { wrapper, vm } = await mountPage()
     expect(vm.receiptDate).toBe(base.today); expect(wrapper.get('[aria-label="入库经办人"]').attributes('readonly')).toBeDefined()
     expect(wrapper.get('[aria-label="入库经办人"]').attributes('value')).toBeUndefined()
     expect(wrapper.findAll('.d3-context .info-cell')).toHaveLength(12)
-    expect(wrapper.findAll('.d3-lines th').map(item => item.text())).toEqual(['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '实发（支）', '实收（支）', '差额（支）', '差额原因', '入库库区'])
+    expect(wrapper.findAll('.d3-lines th').map(item => item.text())).toEqual(['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂', '实发（支）', '实收（支）', '差额（支）', '差额原因', '入库库区', '加工单价（元/支）', '计划金额（元）'])
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false); expect(wrapper.text()).not.toContain('批次'); expect(wrapper.text()).not.toContain('实发（根）')
     expect(vm.rows[0]!.received).toBe(''); expect(vm.warehouse).toBe('')
   })
   it.each(['RAW_PIPE', 'PUBLIC_SEMI', 'METAL'] as const)('%s三来源采用同一支数入库页面', async source => {
     const current = structuredClone(base); current.order.source_kind = source; vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValue(current)
     const { wrapper } = await mountPage(); expect(wrapper.text()).toContain({ RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品' }[source])
-    expect(wrapper.findAll('.d3-lines th')).toHaveLength(13)
+    expect(wrapper.findAll('.d3-lines th')).toHaveLength(15)
   })
   it('全回只增加实收，保存UUID及原版本，结束后只读且不能追加', async () => {
     const { wrapper, vm } = await mountPage(); receive(vm); vm.openConfirm(); await flushPromises()

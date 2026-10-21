@@ -53,18 +53,14 @@ def create_sample_inventory_receipt(*, items, finished_goods_destination, actor_
         FinishedGoodsReceipt,
         FinishedGoodsReceiptSource,
         RecordStatus,
-        WarehouseLocation,
         WarehouseType,
     )
+    from apps.inventory.services import lock_finished_goods_locations
     from apps.reference_data.models import ProductionUnit, ReferenceStatus
     from apps.reference_data.pinyin_search import build_pinyin_search
 
-    location = (
-        WarehouseLocation.objects.select_for_update()
-        .select_related("zone", "zone__warehouse")
-        .filter(pk=finished_goods_destination["location_id"])
-        .first()
-    )
+    location = lock_finished_goods_locations([finished_goods_destination["location_id"]]).get(
+        str(finished_goods_destination["location_id"]))
     if location is None:
         raise ValidationError({"finished_goods_destination": "成品入库库位不存在。"})
     if (

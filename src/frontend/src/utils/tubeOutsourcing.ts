@@ -1,4 +1,11 @@
-import type { TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+
+export const tubeSourceLabels: Record<TubeSourceKind, string> = {
+  RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品',
+  PUBLIC_CUTTING: '已入库裁片半成品', SEWING: '车缝完成未入库直发',
+}
+export const isCuttingSource = (source: string | undefined) => source === 'PUBLIC_CUTTING' || source === 'SEWING'
+export const isDirectSource = (source: string | undefined) => source === 'METAL' || source === 'SEWING'
 
 export function wholeTubeQuantity(value: string): number | null {
   const text = value.trim()
@@ -26,16 +33,16 @@ export function tubeMeters(quantity: string, row: Pick<TubeSourceRow, 'pieces_pe
   return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
 }
 
-export function tubeQuantityError(quantity: string, row: TubeSourceRow, raw: boolean): string {
+export function tubeQuantityError(quantity: string, row: TubeSourceRow, raw: boolean, unit = '支'): string {
   if (!quantity.trim()) return ''
   const pieces = wholeTubeQuantity(quantity)
-  if (pieces === null) return `${row.part_name}：请填写整数支数，不支持负数、小数或文字。`
+  if (pieces === null) return `${row.part_name}：请填写整数${unit}数，不支持负数、小数或文字。`
   if (!pieces) return ''
   if (row.blockers.length) return `${row.part_name}：${row.blockers.join('；')}`
   if (raw && (tubeRoots(quantity, row.pieces_per_bar) === null || tubeMeters(quantity, row) === null)) {
     return `${row.part_name}：每根切${row.pieces_per_bar || '—'}支，填写支数须能整除为根，请填写每根切割支数的整数倍。`
   }
   const maximum = wholeTubeQuantity(row.max_quantity)
-  if (maximum === null || pieces > maximum) return `${row.part_name}：本次最多可发${row.max_quantity}支，不能超量。`
+  if (maximum === null || pieces > maximum) return `${row.part_name}：本次最多可发${row.max_quantity}${unit}，不能超量。`
   return ''
 }

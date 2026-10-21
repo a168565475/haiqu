@@ -1,8 +1,10 @@
 from rest_framework.routers import SimpleRouter
 
 from .views import AccessAuditViewSet, AccessEmployeeViewSet, CatalogViewSet, RoleViewSet, SalesTeamViewSet
+from .organization_views import DepartmentViewSet
 
 router = SimpleRouter()
+router.register("departments", DepartmentViewSet, basename="access-department")
 router.register("catalog", CatalogViewSet, basename="access-catalog")
 router.register("roles", RoleViewSet, basename="access-role")
 router.register("employees", AccessEmployeeViewSet, basename="access-employee")

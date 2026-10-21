@@ -8,11 +8,11 @@ import { useAuthStore } from '@/stores/auth'
 import { pageInstanceKey } from '@/utils/pageInstanceKey'
 import type { AccessEmployee, AccessRole } from '@/types/access'
 
-const api = vi.hoisted(() => ({ getRoles: vi.fn(), getEmployees: vi.fn(), getTeams: vi.fn(), getCatalog: vi.fn(), assignRoles: vi.fn() }))
+const api = vi.hoisted(() => ({ getRoles: vi.fn(), getEmployees: vi.fn(), getTeams: vi.fn(), getCatalog: vi.fn(), getDepartments: vi.fn(), setRoleDepartment: vi.fn(), assignRoles: vi.fn() }))
 vi.mock('@/api/access', async original => ({ ...await original<object>(), ...api }))
 vi.mock('@/directives/horizontalOverflow', () => ({ vHorizontalOverflow: {} }))
 const dialogStub = { props: ['modelValue', 'title'], template: '<section v-if="modelValue" role="dialog"><h2>{{ title }}</h2><slot /><slot name="footer" /></section>' }
-const role: AccessRole = { id: '10000000-0000-4000-8000-000000000001', role_code: 'ROLE_ONE', display_name: '测试角色', description: '', archived: false, assigned_employee_count: 0, grants: [], etag: 'role-v1' }
+const role: AccessRole = { id: '10000000-0000-4000-8000-000000000001', role_code: 'ROLE_ONE', display_name: '测试角色', description: '', department_id: null, archived: false, assigned_employee_count: 0, grants: [], etag: 'role-v1' }
 function employee(index: number): AccessEmployee {
   return { id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, employee_code: `EMP-${index}`,
     display_name: index === 1 || index === 31 ? '同名员工' : `员工${index}`, status: 'ACTIVE', username: `account_${index}`,
@@ -39,10 +39,44 @@ beforeEach(() => {
   vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: vi.fn() }))
   api.getRoles.mockResolvedValue([role]); api.getEmployees.mockResolvedValue(Array.from({ length: 31 }, (_, index) => employee(index + 1)))
   api.getTeams.mockResolvedValue([]); api.getCatalog.mockResolvedValue([]); api.assignRoles.mockResolvedValue(target)
+  api.getDepartments.mockResolvedValue([{ id:'department-production', unit_code:'DEPT_PRODUCTION', unit_name:'生产部', parent_id:null, status:'ACTIVE', sort_order:40, etag:'dep-v1' }, { id:'department-support', unit_code:'DEPT_SUPPORT', unit_name:'技术支持', parent_id:null, status:'ACTIVE', sort_order:110, etag:'dep-v1' }])
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('企微成员进入现有员工角色分配', () => {
+  it('组织管理员可以读取三栏，但授权和账号操作禁用', async () => {
+    const auth = useAuthStore()
+    auth.user = { ...auth.user!, username: 'organization-manager', is_superuser: false,
+      effective_access: { active: true, is_superuser: false, roles: [], legacy_sources: [], version: 'org',
+        actions: { 'organizations.manage_organization': { scopes: ['MODULE'], sources: [{ type: 'ROLE', scope: 'MODULE' }] } } } }
+    const { wrapper } = await render()
+    expect(wrapper.find('.access-department-layout').exists()).toBe(true)
+    expect(wrapper.findAll('.access-tabs button').map(item => item.text())).toEqual(['角色与权限', '员工与账号'])
+    expect(api.getTeams).not.toHaveBeenCalled()
+    expect(button(wrapper, '修改资料').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '复制为新角色').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '调整部门').attributes('disabled')).toBeUndefined()
+  })
+  it('部门筛选显示空部门和未分类，切换不产生写请求', async () => {
+    const { wrapper } = await render()
+    await wrapper.findAll('.access-department-list button').find(b=>b.text().includes('技术支持'))!.trigger('click')
+    expect(wrapper.get('.access-role-list:not(.access-department-list)').text()).toContain('此部门暂无角色')
+    expect(wrapper.find('.access-editor').exists()).toBe(false)
+    await wrapper.findAll('.access-department-list button').find(b=>b.text().includes('未分类'))!.trigger('click')
+    expect(wrapper.get('.access-editor').text()).toContain('测试角色')
+    expect(api.setRoleDepartment).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.access-tabs button').map(b=>b.text())).toEqual(['角色与权限','员工与账号','销售团队','授权记录'])
+  })
+  it('调整角色部门使用角色版本，保留授权内容并定位到新部门', async () => {
+    api.setRoleDepartment.mockResolvedValue({ ...role, department_id:'department-production', etag:'role-v2' })
+    const { wrapper } = await render()
+    await button(wrapper,'调整部门').trigger('click')
+    await wrapper.get('[role="dialog"] select').setValue('department-production')
+    api.getRoles.mockResolvedValue([{ ...role, department_id:'department-production', etag:'role-v2' }])
+    await button(wrapper,'确认保存').trigger('click'); await flushPromises()
+    expect(api.setRoleDepartment).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id:role.id, etag:'role-v1', grants:[] }), 'department-production')
+    expect(wrapper.get('.access-department-list .current').text()).toContain('生产部')
+  })
   it('普通入口仍默认角色页，不自动弹窗或保存', async () => {
     const { wrapper } = await render()
     expect(wrapper.get('.access-tabs .active').text()).toBe('角色与权限')
@@ -143,7 +177,7 @@ describe('企微成员进入现有员工角色分配', () => {
   it.each(['bad-id', '', [target.id, employee(1).id], null].map(value => [value]))('无效员工ID明确提示且不打开分配窗口：%j', async employeeId => {
     const { wrapper, router } = await render({ tab: 'employees', employee_id: employeeId })
     expect(wrapper.get('.access-tabs .active').text()).toBe('员工与账号')
-    expect(ElMessage.warning).toHaveBeenCalledWith('员工定位参数无效，请从企业微信管理重新进入。')
+    expect(ElMessage.warning).toHaveBeenCalledWith('员工定位参数无效，请从员工管理重新进入。')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     expect(router.currentRoute.value.query).toEqual({ tab: 'employees' })
     expect(api.assignRoles).not.toHaveBeenCalled()

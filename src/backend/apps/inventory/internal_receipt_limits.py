@@ -16,6 +16,12 @@ def validate_combined_output(*, source, identity, quantity, quality):
     if not line or not product:
         return  # 来源完整性由公共记账服务处理。
     stage = identity['identity_snapshot']['completed_craft']['code']
+    direct_committed = 0
+    if stage == 'SEWING':
+        # 公共记账已锁任务和产品；这里只读核对，不反向获取领料/排产锁。
+        from .sewing_processing_services import sewing_output_usage
+        usage = sewing_output_usage(product.pk).get(str(line.component_identity), {})
+        direct_committed = usage.get('dispatched', 0) + usage.get('reserved', 0)
     if source['source_type'] == 'INTERNAL_SEMI_RECEIPT' and stage == 'METAL':
         from apps.outsourcing.models import TubeOutsourcingLine
         pending = TubeOutsourcingLine.objects.filter(order__product_line=product,
@@ -44,7 +50,7 @@ def validate_combined_output(*, source, identity, quantity, quality):
                     code='TUBE_OUTSOURCING_OUTPUT_RESERVED' if pending else 'TUBE_REPORT_OUTPUT_LIMIT')
     internal = InternalSemiFinishedReceiptLine.objects.filter(receipt__schedule_product__product_line=product,
         component_identity=line.component_identity,attribute_snapshot__completed_craft__code=stage)
-    if source['source_type'] != 'INTERNAL_SEMI_RECEIPT' and not internal.exists():
+    if source['source_type'] != 'INTERNAL_SEMI_RECEIPT' and not internal.exists() and not direct_committed:
         return  # 尚未使用厂内新流程的旧外发单继续原有数量门禁。
     latest = Bom.objects.filter(product_line=product,archived_at__isnull=True).order_by('-version_number','-id').first()
     targets = list(BomLine.objects.filter(section__bom=latest,component_identity=line.component_identity))
@@ -55,5 +61,5 @@ def validate_combined_output(*, source, identity, quantity, quality):
     total=PublicStockMovement.objects.filter(production_task_id=source['production_task_id'],product_line=product,
         bom_line__component_identity=line.component_identity,direction='IN',source_type__in=types,
         balance__quality='AVAILABLE',balance__identity_snapshot__completed_craft__code=stage).aggregate(total=Sum('quantity'))['total'] or 0
-    if total+quantity>required:
-        raise InventoryStockValidationError({'detail':'厂内及外发累计入库超过该部位 BOM 单个用量 × 订单数量。'},code='INTERNAL_RECEIPT_DEMAND_EXCEEDED')
+    if total + quantity + direct_committed > required:
+        raise InventoryStockValidationError({'detail':'厂内及外发累计入库、直发及预留超过该部位 BOM 单个用量 × 订单数量。'},code='INTERNAL_RECEIPT_DEMAND_EXCEEDED')

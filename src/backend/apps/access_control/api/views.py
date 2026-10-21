@@ -1,19 +1,21 @@
-from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema, extend_schema_view
-from rest_framework import mixins, serializers, viewsets
+from drf_spectacular.utils import OpenApiTypes, extend_schema, extend_schema_view
+from rest_framework import mixins, serializers
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import etag_for_instance
-from apps.core.api.permissions import HasActiveEmployee
 from apps.organizations.models import Employee, RoleProfile
 from .. import services
 from .. import account_services, team_services
 from ..models import SalesTeam
 from ..catalog import catalog
-from ..permissions import CanManageAccess
+from .base import AccessViewSet, IF_MATCH
+from .organization_views import RoleDepartmentActions, EmployeeDepartmentActions
 from ..selectors import business_scope_enforcement, effective_access
+from ..permissions import CanManageAccounts, CanReadAccessDirectory
+from apps.core.api.permissions import HasActiveEmployee
+from rest_framework.permissions import IsAuthenticated
 from .serializers import (
     AccessEmployeeSerializer, CatalogEntrySerializer, EffectiveAccessSerializer,
     EmployeeRolesSerializer, GrantReplaceSerializer, RoleCreateSerializer,
@@ -22,15 +24,8 @@ from .serializers import (
     TeamCreateSerializer, TeamUpdateSerializer, TeamMembersSerializer, TeamSerializer,
 )
 
-IF_MATCH = OpenApiParameter("If-Match", str, location=OpenApiParameter.HEADER, required=True)
-
-
-class AccessViewSet(viewsets.GenericViewSet):
-    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageAccess]
-    filter_backends = []
-
-
 class CatalogViewSet(AccessViewSet):
+    permission_classes = [IsAuthenticated, HasActiveEmployee, CanReadAccessDirectory]
     serializer_class = CatalogEntrySerializer
 
     @extend_schema(responses=CatalogEntrySerializer(many=True))
@@ -48,7 +43,12 @@ class CatalogViewSet(AccessViewSet):
     create=extend_schema(request=RoleCreateSerializer, responses={201: RoleSerializer}),
     partial_update=extend_schema(request=RoleUpdateSerializer, responses=RoleSerializer, parameters=[IF_MATCH]),
 )
-class RoleViewSet(mixins.ListModelMixin, AccessViewSet):
+class RoleViewSet(RoleDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+    def get_permissions(self):
+        if self.action in {'list', 'retrieve', 'grants'}:
+            return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]
+        return super().get_permissions()
+
     queryset = RoleProfile.objects.select_related("auth_group").order_by("role_code")
     serializer_class = RoleSerializer
 
@@ -88,7 +88,14 @@ class RoleViewSet(mixins.ListModelMixin, AccessViewSet):
         return self.respond(services.copy_role(request, pk, serializer.validated_data), status=201)
 
 
-class AccessEmployeeViewSet(mixins.ListModelMixin, AccessViewSet):
+class AccessEmployeeViewSet(EmployeeDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+    def get_permissions(self):
+        if self.action in {'list', 'roles', 'effective'}:
+            return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]
+        if self.action in {'account', 'account_status', 'reset_password'}:
+            return [IsAuthenticated(), HasActiveEmployee(), CanManageAccounts()]
+        return super().get_permissions()
+
     queryset = Employee.objects.filter(archived_at__isnull=True).select_related("user").order_by("employee_code")
     serializer_class = AccessEmployeeSerializer
 
@@ -147,7 +154,7 @@ class AccessAuditSerializer(serializers.ModelSerializer):
 
 
 class AccessAuditViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, AccessViewSet):
-    queryset = AuditLog.objects.filter(object_type__in=["ACCESS_ROLE", "ACCESS_EMPLOYEE", "ACCESS_TEAM"]).order_by("-occurred_at", "-id")
+    queryset = AuditLog.objects.filter(object_type__in=["ACCESS_ROLE", "ACCESS_EMPLOYEE", "ACCESS_TEAM", "ACCESS_ORGANIZATION"]).order_by("-occurred_at", "-id")
     serializer_class = AccessAuditSerializer
 
 

@@ -1,6 +1,7 @@
 import { isAxiosError } from 'axios'
 import { apiClient } from './request'
 import type { AccessAudit, AccessEmployee, AccessPage, AccessRole, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
+import type { AccessDepartment, EmployeeDepartmentInput, EmployeeDepartments } from '@/types/access'
 
 const root = '/api/v1/access/'
 const options = (etag?: string) => ({ timeout: 20000, ...(etag ? {headers: {'If-Match': etag}} : {}) })
@@ -17,6 +18,12 @@ async function all<T>(path: string): Promise<T[]> {
 export const getCatalog = async () => (await apiClient.get<CatalogEntry[]>(root + 'catalog/', options())).data
 export const getScopeOptions = async () => (await apiClient.get<ScopeOptions>(root + 'catalog/scope-options/', options())).data
 export const getRoles = () => all<AccessRole>('roles/')
+export const getDepartments = () => all<AccessDepartment>('departments/')
+export const createDepartment = async (data: {unit_code: string; unit_name: string; parent_id: string | null; sort_order: number}) => (await apiClient.post<AccessDepartment>(root + 'departments/', data, options())).data
+export const updateDepartment = async (department: AccessDepartment, data: {unit_name?: string; status?: 'ACTIVE' | 'INACTIVE'; sort_order?: number}) => (await apiClient.patch<AccessDepartment>(root + `departments/${department.id}/`, data, options(department.etag))).data
+export const setRoleDepartment = async (role: AccessRole, department_id: string | null) => (await apiClient.put<AccessRole>(root + `roles/${role.id}/department/`, {department_id}, options(role.etag))).data
+export const getEmployeeDepartments = async (employee: AccessEmployee) => (await apiClient.get<EmployeeDepartments>(root + `employees/${employee.id}/departments/`, options())).data
+export const assignDepartments = async (employee: AccessEmployee, departments: EmployeeDepartmentInput[], etag: string) => (await apiClient.put<EmployeeDepartments>(root + `employees/${employee.id}/departments/`, {departments}, options(etag))).data
 export const getEmployees = () => all<AccessEmployee>('employees/')
 export const getTeams = () => all<SalesTeam>('sales-teams/')
 export const getAudit = async (page = 1) => (await apiClient.get<AccessPage<AccessAudit>>(root + 'audit-events/', {...options(), params: {page}})).data

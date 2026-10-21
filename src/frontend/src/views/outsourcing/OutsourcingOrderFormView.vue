@@ -53,6 +53,7 @@ const saving = ref(false)
 const bomContexts = ref<Record<string, OutsourcingSourceBomContext>>({})
 const processingRowsByProduct = ref<Record<string, SelectedOutsourcingProcessingRow[]>>({})
 const materialRowsByProduct = ref<Record<string, SelectedOutsourcingMaterialRow[]>>({})
+const fabricIssueQuantities = ref<Record<string, string>>({})
 const hoveredProcessingRow = ref<SelectedOutsourcingProcessingRow | null>(null)
 const processingHintStyle = ref<Record<string, string>>({})
 let latestSourceRequest = 0
@@ -187,6 +188,7 @@ watch(craftId, async () => {
   bomContexts.value = {}
   processingRowsByProduct.value = {}
   materialRowsByProduct.value = {}
+  fabricIssueQuantities.value = {}
   await loadDeepLinkedSource()
 })
 
@@ -235,6 +237,7 @@ function confirmSource(plan: OutsourcingSourcePlan, productIds: string[]): void 
   bomContexts.value = {}
   processingRowsByProduct.value = {}
   materialRowsByProduct.value = {}
+  fabricIssueQuantities.value = {}
 }
 
 function openProcessingDialog(): void {
@@ -252,7 +255,7 @@ function materialsForProduct(productId: string): SelectedOutsourcingMaterialRow[
   const primaryIds = new Set(processing.map(row => row.conversion_snapshot?.material_line_id))
   const primary = processing.flatMap(row => {
     const source = context?.material_items.find(item => item.id === row.conversion_snapshot?.material_line_id)
-    return source ? [{ ...source, planned_issue_quantity: row.input_quantity, factory_id: row.factory_id, processing_bom_line_id: row.id }] : []
+    return source ? [{ ...source, planned_issue_quantity: isFabricSetsRow(row) ? fabricIssueQuantities.value[row.row_key] || '' : row.input_quantity, factory_id: row.factory_id, processing_bom_line_id: row.id }] : []
   })
   return [...primary, ...(materialRowsByProduct.value[productId] || []).filter(row => !primaryIds.has(row.id))]
 }
@@ -275,8 +278,24 @@ function addFactoryRow(row: SelectedOutsourcingProcessingRow): void {
 
 function materialPlan(row: SelectedOutsourcingMaterialRow) {
   const processing = processingRows.value.find(item => item.id === row.processing_bom_line_id && item.factory_id === row.factory_id)
-  if (processing?.conversion_snapshot?.material_line_id === row.id) return outsourcingPlan(processing.input_quantity, processing.conversion_snapshot)
+  if (processing?.conversion_snapshot?.material_line_id === row.id && !isFabricSetsRow(processing)) return outsourcingPlan(processing.input_quantity, processing.conversion_snapshot)
   return null
+}
+
+function isFabricSetsRow(row: OutsourcingProcessingCandidate) {
+  return row.conversion_snapshot?.kind === 'FABRIC' && row.conversion_snapshot.quantity_basis === 'OUTPUT_SETS'
+}
+
+function isPrimaryMaterial(row: SelectedOutsourcingMaterialRow) {
+  return processingRows.value.some(item => item.id === row.processing_bom_line_id && item.factory_id === row.factory_id
+    && item.conversion_snapshot?.material_line_id === row.id)
+}
+
+function setMaterialQuantity(row: SelectedOutsourcingMaterialRow, value: string) {
+  const processing = processingRows.value.find(item => item.id === row.processing_bom_line_id && item.factory_id === row.factory_id
+    && item.conversion_snapshot?.material_line_id === row.id)
+  if (processing && isFabricSetsRow(processing)) fabricIssueQuantities.value[processing.row_key] = value
+  else row.planned_issue_quantity = value
 }
 
 
@@ -351,6 +370,7 @@ function selectMaterialAllocation(row: SelectedOutsourcingMaterialRow, value: st
 
 function processingHint(row: SelectedOutsourcingProcessingRow): string {
   const plan = outsourcingPlan(row.input_quantity, row.conversion_snapshot)
+  if (isFabricSetsRow(row)) return `加工数量按套填写，发料米数在原材料发料中单独填写${plan.error ? ` · ${plan.error}` : ''}`
   if (row.conversion_snapshot?.kind === 'PIPE') {
     const conversion = row.conversion_snapshot
     const detail = `切割长度 ${conversion.cutting_length_mm} mm · 每根 ${conversion.pieces_per_bar} 支 · 原材料 ${conversion.raw_bar_length_m} 米/根`
@@ -405,9 +425,9 @@ function createPayload(): OutsourcingOrderCreateInput {
             const plan = outsourcingPlan(row.input_quantity, row.conversion_snapshot)
             if (plan.error) throw new Error(plan.error)
             inputTotal += decimalUnits(row.input_quantity)!
-            return { factory_id: row.factory_id, allocated_quantity: plan.output, input_quantity: row.input_quantity, unit_price: Number(row.unit_price || 0).toFixed(2), remark: '' }
+            return { factory_id: row.factory_id, allocated_quantity: plan.output, input_quantity: isFabricSetsRow(row) ? null : row.input_quantity, unit_price: Number(row.unit_price || 0).toFixed(2), remark: '' }
           })
-          if (inputTotal > (decimalUnits(rows[0]?.available_quantity) || 0n)) throw new Error('各厂合计输入超过当前可外发原料额度。')
+          if (inputTotal > (decimalUnits(rows[0]?.available_quantity) || 0n)) throw new Error(isFabricSetsRow(rows[0]!) ? '各厂加工套数合计超过当前剩余可外发套数。' : '各厂合计输入超过当前可外发原料额度。')
           return { bom_line_id: id, quantity: String(allocations.reduce((sum, row) => sum + BigInt(row.allocated_quantity), 0n)), processing_requirement: rows[0]?.technical_reference || '', allocations }
         }),
         materials: materialsForProduct(product.id).map(row => ({
@@ -489,8 +509,8 @@ onMounted(() => { void loadOptions() })
             <ElTableColumn type="index" label="#" width="45" />
             <ElTableColumn prop="part_name" label="部位" min-width="120" /><ElTableColumn prop="specification" label="规格" min-width="100" />
             <ElTableColumn label="订单需求" width="108"><template #default="{ row }">{{ quantityText(row.required_quantity) }} {{ row.unit }}</template></ElTableColumn>
-            <ElTableColumn label="原料可外发" width="120"><template #default="{ row }">{{ quantityText(row.available_quantity) }} {{ row.input_unit }}</template></ElTableColumn>
-            <ElTableColumn label="本次外发" width="160"><template #default="{ row }"><div class="quantity-input-with-unit"><ElInput v-model="row.input_quantity" aria-label="本次外发数量" inputmode="decimal" /><span>{{ row.input_unit }}</span></div></template></ElTableColumn>
+            <ElTableColumn label="剩余可外发" width="120"><template #default="{ row }">{{ quantityText(row.available_quantity) }} {{ row.input_unit }}</template></ElTableColumn>
+            <ElTableColumn label="本次外发" width="160"><template #default="{ row }"><div class="quantity-input-with-unit"><ElInput v-model="row.input_quantity" :aria-label="isFabricSetsRow(row) ? '本次加工套数' : '本次外发数量'" :inputmode="isFabricSetsRow(row) ? 'numeric' : 'decimal'" /><span>{{ row.input_unit }}</span></div></template></ElTableColumn>
             <ElTableColumn label="加工厂" min-width="145"><template #default="{ row }"><ElSelect v-model="row.factory_id" placeholder="请选择加工厂"><ElOption v-for="factory in availableFactories" :key="factory.id" :label="factory.name" :value="factory.id" /></ElSelect></template></ElTableColumn>
             <ElTableColumn label="加工单价" width="145"><template #default="{ row }"><div class="quantity-input-with-unit"><ElInputNumber v-model="row.unit_price" :min="0" :precision="2" :controls="false" /><span>元/{{ row.unit }}</span></div></template></ElTableColumn>
             <ElTableColumn label="预计加工" width="105"><template #default="{ row }">{{ outsourcingPlan(row.input_quantity, row.conversion_snapshot).output || '—' }} {{ row.unit }}</template></ElTableColumn>
@@ -503,10 +523,10 @@ onMounted(() => { void loadOptions() })
           <div class="card-title-row"><h2>{{ materialCardTitle }}</h2><ElButton :disabled="!selectedProduct || bomLoading" @click="openMaterialDialog">＋ 添加五金 / 辅料</ElButton></div>
           <ElTable class="erp-table-editor scroll-actions-table" :data="materialRows" :max-height="272" border empty-text="选择加工明细后，再选择本次需要外发的 BOM 材料">
             <ElTableColumn type="index" label="#" width="45" /><ElTableColumn prop="name" label="原材料" min-width="150" /><ElTableColumn prop="specification" label="规格" min-width="120" />
-            <ElTableColumn label="加工厂 / 部位" min-width="230"><template #default="{ row }"><span v-if="materialPlan(row)">{{ availableFactories.find(item => item.id === row.factory_id)?.name || '待选择加工厂' }} / {{ processingRows.find(item => item.id === row.processing_bom_line_id)?.part_name }}</span><ElSelect v-else :model-value="materialAllocationKey(row)" @change="selectMaterialAllocation(row, $event)"><ElOption v-for="item in processingRows.filter(item => item.factory_id)" :key="item.row_key" :value="`${item.id}|${item.factory_id}`" :label="`${availableFactories.find(factory => factory.id === item.factory_id)?.name} / ${item.part_name}`" /></ElSelect></template></ElTableColumn>
-            <ElTableColumn label="本次输入" width="180"><template #default="{ row }"><span v-if="materialPlan(row)">{{ row.planned_issue_quantity || '—' }} {{ row.unit }}</span><ElInput v-else v-model="row.planned_issue_quantity" /></template></ElTableColumn>
+            <ElTableColumn label="加工厂 / 部位" min-width="230"><template #default="{ row }"><span v-if="isPrimaryMaterial(row)">{{ availableFactories.find(item => item.id === row.factory_id)?.name || '待选择加工厂' }} / {{ processingRows.find(item => item.id === row.processing_bom_line_id)?.part_name }}</span><ElSelect v-else :model-value="materialAllocationKey(row)" @change="selectMaterialAllocation(row, $event)"><ElOption v-for="item in processingRows.filter(item => item.factory_id)" :key="item.row_key" :value="`${item.id}|${item.factory_id}`" :label="`${availableFactories.find(factory => factory.id === item.factory_id)?.name} / ${item.part_name}`" /></ElSelect></template></ElTableColumn>
+            <ElTableColumn label="本次发料" width="180"><template #default="{ row }"><span v-if="materialPlan(row)">{{ row.planned_issue_quantity || '—' }} {{ row.unit }}</span><ElInput v-else :model-value="row.planned_issue_quantity" :aria-label="`${row.name}发料数量`" inputmode="decimal" @update:model-value="setMaterialQuantity(row, $event)"><template #suffix>{{ row.unit }}</template></ElInput></template></ElTableColumn>
             <ElTableColumn label="预计扣库" min-width="205"><template #default="{ row }"><span v-if="materialPlan(row) && !materialPlan(row)?.error">{{ materialPlan(row)?.raw }} {{ row.procurement_unit }}<template v-if="row.category === 'PROFILE'"> / {{ materialPlan(row)?.meters }} 米</template></span><span v-else>{{ materialPlan(row)?.error || `${row.planned_issue_quantity || '—'} ${row.unit}` }}</span></template></ElTableColumn>
-            <ElTableColumn label="操作" width="90" fixed="right"><template #default="{ row }"><ElButton v-if="!materialPlan(row)" link type="danger" @click="removeMaterial(row.id)">移除</ElButton><span v-else>随部位联动</span></template></ElTableColumn>
+            <ElTableColumn label="操作" width="90" fixed="right"><template #default="{ row }"><ElButton v-if="!isPrimaryMaterial(row)" link type="danger" @click="removeMaterial(row.id)">移除</ElButton><span v-else>随部位联动</span></template></ElTableColumn>
           </ElTable>
         </section>
         <section class="form-card return-measure-card"><h2>回货计量</h2><p>管材半成品按支回货，裁片半成品按套回货，均填写整数；合格与不良分别入库。</p><p>保存外发单不扣库存。仓库确认发料后扣原料，回货不重复扣原料；原料和产出去向均对平后手动结清。</p></section>
@@ -545,6 +565,7 @@ onMounted(() => { void loadOptions() })
 <style lang="scss">@use '@/styles/outsourcing.scss';</style>
 
 <style lang="scss" scoped>
+.outsourcing-page.outsourcing-order-form-page { padding: 0; }
 .outsourcing-order-form-page .processing-card,
 .outsourcing-order-form-page .material-card { max-height: none; overflow: visible; }
 .processing-row-tip { position: fixed; z-index: 3000; display: flex; flex-wrap: wrap; gap: 4px 12px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--erp-color-border); border-radius: 4px; background: var(--erp-color-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--erp-shadow-color) 13.333%, transparent); color: var(--erp-color-text-regular); font-size: 12px; line-height: 20px; pointer-events: none; }

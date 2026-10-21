@@ -7,7 +7,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.response import Response
 
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
-from apps.core.api.permissions import HasActiveEmployee
+from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.access_control.module_operations import ACTION_OVERRIDES
 from apps.boms.models import Bom, BomStatus
 from apps.production_tasks.models import ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks
@@ -50,15 +51,8 @@ class PurchaseRequestViewSet(
     mixins.CreateModelMixin,
     viewsets.GenericViewSet,
 ):
-    permission_classes = [HasActiveEmployee]
-
-    def get_permissions(self):
-        from apps.access_control import module_policy
-        from apps.core.api.permissions import BusinessActionPermission
-        permissions = super().get_permissions()
-        if module_policy.enabled():
-            permissions.append(BusinessActionPermission())
-        return permissions
+    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    action_permission_map = ACTION_OVERRIDES['PurchaseRequestViewSet']
     serializer_class = PurchaseRequestSerializer
 
     def get_serializer_class(self):

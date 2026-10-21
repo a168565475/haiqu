@@ -13,6 +13,21 @@ const authenticated: AuthResponse = {
   user: { id: 1, username: 'test', display_name: '测试用户', is_superuser: false, employee: null, permissions: ['customers.view_customeraccount'], data_scope: 'ALL' },
 }
 
+describe('普通ERP角色管理入口', () => {
+  it('有效组织管理角色可读目录，但不获得账号或企微管理', () => {
+    setActivePinia(createPinia())
+    const store = useAuthStore()
+    store.user = { ...authenticated.user!, employee: { id: 'worker', employee_code: 'WORKER', display_name: '员工', status: 'ACTIVE' },
+      effective_access: { active: true, is_superuser: false, roles: [], legacy_sources: [], version: 'test',
+        actions: { 'organizations.manage_organization': { scopes: ['MODULE'], sources: [{ type: 'ROLE', scope: 'MODULE' }] } } } }
+    expect(store.canReadAccessDirectory).toBe(true)
+    expect(store.managementCan('access_control.manage_accounts')).toBe(false)
+    expect(store.managementCan('access_control.manage_wecom')).toBe(false)
+    store.user.employee!.status = 'INACTIVE'
+    expect(store.canReadAccessDirectory).toBe(false)
+  })
+})
+
 describe('路由登录状态刷新', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

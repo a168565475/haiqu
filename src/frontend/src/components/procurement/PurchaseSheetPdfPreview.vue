@@ -110,8 +110,12 @@ onBeforeUnmount(release)
   .pdf-notice .el-icon { font-size: 16px; }
   .pdf-viewer { position: relative; height: 792px; overflow: auto; background: crm.$crm-color-subtle; border-radius: 4px; }
   .pdf-pages { box-sizing: border-box; min-height: 100%; display: flex; flex-direction: column; gap: 24px; padding: 14px 0 30px 118px; }
+  // 保留原14px尺寸；auto让WebKit使用全局伪元素主题色，不覆盖自定义尺寸。
+  @supports selector(::-webkit-scrollbar) {
+    .pdf-viewer { scrollbar-color: auto; }
+  }
   .pdf-viewer::-webkit-scrollbar { width: 14px; }
-  .pdf-viewer::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 7px; background: crm.$crm-border-default; background-clip: padding-box; }
+  .pdf-viewer::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 7px; background-clip: padding-box; }
   .pdf-state { position: absolute; inset: 0; z-index: 2; box-sizing: border-box; height: 792px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: crm.$crm-text-secondary; background: crm.$crm-color-subtle; }
   .pdf-state[role=status] p { position: relative; top: 45px; z-index: 2001; }
   .pdf-error p { color: crm.$crm-danger; }

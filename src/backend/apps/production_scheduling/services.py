@@ -244,6 +244,10 @@ def _sync_crafts(row, craft_ids, craft_map, actor_employee, now):
 
 @transaction.atomic
 def create_schedule(*, validated_data, actor_employee, request=None):
+    from apps.access_control.workshop_scopes import require_schedule_write
+    require_schedule_write(request, 'production_scheduling.add_productionschedule',
+                           {pk for item in validated_data['items'] for pk in item['craft_ids']},
+                           task_id=validated_data['production_task_id'])
     request_id = validated_data["client_request_id"]
     payload_hash = _payload_hash(validated_data)
     existing = ProductionSchedule.objects.select_for_update().filter(client_request_id=request_id).first()
@@ -322,6 +326,14 @@ def create_schedule(*, validated_data, actor_employee, request=None):
         context_id=task.sales_order_id or task.customer_account_id,
         request=request,
     )
+    from apps.wecom.notification_services import register_business_event
+    # 一张计划一个创建事件；多车间关系由通知权限层从已保存工艺解析并按员工去重。
+    register_business_event(
+        event_code="PRODUCTION_PLAN_CREATED", idempotency_key=f"PRODUCTION_PLAN_CREATED:{schedule.pk}:1",
+        object_type="production_scheduling.ProductionSchedule", object_id=schedule.pk, object_version=1,
+        context={"document_no": schedule.schedule_number, "operator": actor_employee.display_name,
+                 "occurred_at": schedule.created_at.isoformat()},
+    )
     return schedule
 
 
@@ -357,6 +369,9 @@ def create_schedule_batch(*, validated_data, actor_employee, request=None):
 @transaction.atomic
 def update_schedule(*, schedule_id, validated_data, actor_employee, request):
     schedule = ProductionSchedule.objects.select_for_update().get(pk=schedule_id)
+    from apps.access_control.workshop_scopes import require_schedule_write
+    require_schedule_write(request, 'production_scheduling.change_productionschedule',
+                           {pk for item in validated_data['items'] for pk in item['craft_ids']}, schedule)
     require_matching_etag(request, schedule)
     if schedule.record_status != ScheduleStatus.ACTIVE:
         raise Conflict("已作废排产不能编辑。")
@@ -407,6 +422,8 @@ def update_schedule(*, schedule_id, validated_data, actor_employee, request):
 @transaction.atomic
 def void_schedule(*, schedule_id, reason, actor_employee, request):
     schedule = ProductionSchedule.objects.select_for_update().get(pk=schedule_id)
+    from apps.access_control.workshop_scopes import require_schedule_write
+    require_schedule_write(request, 'production_scheduling.void_productionschedule', set(), schedule)
     require_matching_etag(request, schedule)
     if schedule.record_status != ScheduleStatus.ACTIVE:
         raise Conflict("该排产计划已经作废。")

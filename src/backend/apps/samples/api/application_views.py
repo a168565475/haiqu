@@ -1,11 +1,32 @@
 from drf_spectacular.utils import OpenApiRequest, extend_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 from .application_serializers import SampleApplicationSerializer, SampleApplicationReviewSerializer, SampleApplicationRequestSerializer
 from ..application_services import submit_application, review_application
+from .application_product_serializers import SampleApplicationProductsSerializer, SampleApplicationProductQuerySerializer, SampleApplicationProductCandidateSerializer, SampleApplicationProductOptionsSerializer
 
 
 class SampleApplicationActionsMixin:
+    # q 用于产品检索；申请对象仍由 get_queryset 执行数据范围校验。
+    @extend_schema(parameters=[SampleApplicationProductQuerySerializer], responses=SampleApplicationProductOptionsSerializer)
+    @action(detail=True, methods=['get'], url_path='application-product-options', filter_backends=[])
+    def application_product_options(self, request, pk=None):
+        from ..application_product_services import application_product_candidates
+        query = SampleApplicationProductQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        candidates = application_product_candidates(sample=self.get_object(), query=query.validated_data['q'], request=request)
+        return Response({'data': SampleApplicationProductCandidateSerializer(candidates, many=True).data})
+
+    @extend_schema(request=SampleApplicationProductsSerializer)
+    @action(detail=True, methods=['patch'], url_path='application-products')
+    def application_products(self, request, pk=None):
+        from ..application_product_services import complete_application_products
+        serializer = SampleApplicationProductsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        sample = complete_application_products(sample_id=self.get_object().pk, data=serializer.validated_data, request=request)
+        return self._form_response(sample)
+
     def _submit_application(self, request, sample_id=None):
         payload = self._form_payload(request)
         serializer = SampleApplicationSerializer(data=payload, context=self.get_serializer_context())

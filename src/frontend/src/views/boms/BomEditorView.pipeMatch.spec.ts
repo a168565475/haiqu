@@ -22,6 +22,7 @@ interface Editor {
   cancelLineDrawer: () => Promise<void>
   applyLineDrawer: () => Promise<void>
   persistDraft: () => Promise<boolean>
+  tubeCalculations: (line: BomLineInput) => Record<string, string>
 }
 async function open(values: Partial<BomLineInput> = {}) {
   const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' } } } })
@@ -45,6 +46,44 @@ beforeEach(() => {
 })
 
 describe('BOM 管材保存时自动关联原料', () => {
+  it('打开旧BOM和只改备注后仍显示原808根，保存不提交计算版本', async () => {
+    const source = { id: 'saved-line', part_name: '后座管', length_value: '500', unit_consumption: '2', tube_cut_piece_count: '5',
+      cutting_length_mm: 500, pieces_per_product: 2, pieces_per_bar: 5, raw_values: {}, images: [] }
+    const legacy = { ...versioned, data: { ...versioned.data, order_quantity: '2000', current_order_quantity: '2000',
+      sections: [{ id: 'pipe-section', title: '管材类', section_type: 'PROFILE', lines: [source] }] } }
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue(legacy as never)
+    const { wrapper, vm, section } = await open({ id: source.id, length_value: '500', unit_consumption: '2', tube_cut_piece_count: '5' })
+    try {
+      expect(vm.tubeCalculations(section.lines[0]!).branch_count).toBe('808')
+      vm.editingLineDraft.notes = '只改备注'
+      await vm.applyLineDrawer()
+      expect(vm.tubeCalculations(section.lines[0]!).branch_count).toBe('808')
+      vi.mocked(api.saveBomDraft).mockImplementationOnce(async (_id, sections) => {
+        const row = sections.find(item => item.section_type === 'PROFILE')!.lines[0]!
+        expect(row).not.toHaveProperty('pipe_plan_version')
+        expect(row).not.toHaveProperty('raw_values')
+        return legacy as never
+      })
+      expect(await vm.persistDraft()).toBe(true)
+      expect(vm.tubeCalculations(vm.sections.find(item => item.section_type === 'PROFILE')!.lines[0]!).branch_count).toBe('808')
+    } finally { wrapper.unmount() }
+  })
+
+  it('旧行修改切割参数实时显示800根，恢复原参数回到808根；新增行用800根', async () => {
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue({ ...versioned, data: { ...versioned.data, order_quantity: '2000',
+      sections: [{ id: 'pipe-section', title: '管材类', section_type: 'PROFILE', lines: [{ id: 'saved-line',
+        cutting_length_mm: 500, pieces_per_product: 2, pieces_per_bar: 5, raw_values: {}, images: [] }] }] } } as never)
+    const { wrapper, vm } = await open({ id: 'saved-line', length_value: '500', unit_consumption: '2', tube_cut_piece_count: '5' })
+    try {
+      expect(vm.tubeCalculations(vm.editingLineDraft).branch_count).toBe('808')
+      vm.editingLineDraft.length_value = '501'
+      expect(vm.tubeCalculations(vm.editingLineDraft).branch_count).toBe('800')
+      vm.editingLineDraft.length_value = '500'
+      expect(vm.tubeCalculations(vm.editingLineDraft).branch_count).toBe('808')
+      expect(vm.tubeCalculations({ ...vm.editingLineDraft, id: undefined }).branch_count).toBe('800')
+    } finally { wrapper.unmount() }
+  })
+
   it('录入管材不要求查询或手选原料，应用行保留全部填写参数', async () => {
     const { wrapper, vm, section } = await open()
     try {

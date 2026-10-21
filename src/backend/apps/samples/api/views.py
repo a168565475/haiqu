@@ -152,6 +152,7 @@ class SampleRequestViewSet(
         "material_reference_options": "samples.edit_sample_materials",
         "material_candidates": "samples.edit_sample_materials",
         "materials.GET": "samples.view_samplerequest",
+        "procurement_material_context": "samples.view_sample_procurement",
         "materials.PUT": "samples.edit_sample_materials",
         "warehouse_review.GET": "samples.view_samplerequest",
         "warehouse_review.PUT": "samples.review_sample_materials",
@@ -159,6 +160,8 @@ class SampleRequestViewSet(
         "material_issue_initiate": "samples.edit_sample_materials",
         "material_issue_confirm": "samples.review_sample_materials",
         "application_create": "samples.add_samplerequest",
+        "application_products": "samples.complete_sample_requirements",
+        "application_product_options": "samples.complete_sample_requirements",
         "application_resubmit": "samples.add_samplerequest",
         "director_review": "samples.review_sample_application",
         "list": "samples.view_samplerequest",
@@ -208,11 +211,17 @@ class SampleRequestViewSet(
 
     def get_queryset(self):
         from apps.access_control import module_policy
-        if module_policy.enabled() and self.action == 'form':
+        if module_policy.enabled() and self.action == 'parameter_image':
+            queryset = (accessible_sample_requests(self.request, 'access_control.metalwork_sample') |
+                        accessible_sample_requests(self.request, 'access_control.cutting_sample'))
+        elif module_policy.enabled() and self.action == 'form':
             editable = accessible_sample_requests(self.request, 'samples.change_samplerequest').exclude(status=SampleRequestStatus.PENDING_COMPLETION)
             completable = accessible_sample_requests(self.request, 'samples.complete_sample_requirements').filter(status=SampleRequestStatus.PENDING_COMPLETION)
+            legacy_application_completion = accessible_sample_requests(self.request, 'samples.complete_sample_requirements').filter(
+                status=SampleRequestStatus.MATERIALS_PENDING,
+            ).exclude(application_payload_hash='').exclude(workflow_records__stage='REQUIREMENTS_COMPLETED')
             reportable = module_policy.reportable_samples(self.request).exclude(status=SampleRequestStatus.PENDING_COMPLETION)
-            queryset = editable | completable | reportable
+            queryset = editable | completable | legacy_application_completion | reportable
         elif module_policy.enabled() and self.action == 'production_report':
             queryset = module_policy.reportable_samples(self.request)
         else:

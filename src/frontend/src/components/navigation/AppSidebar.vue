@@ -114,8 +114,15 @@ const menuItems: MenuItem[] = [
     children: [
       { key: 'finished-goods-inventory', label: '成品库存', to: { name: 'finished-goods-inventory' }, permission: 'inventory.view_finishedgoodsreceipt' },
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
-      { key: 'defective-inventory', label: '不良品库存', permission: 'inventory.view_finishedgoodsreceipt' },
-      { key: 'inventory-warning', label: '库存预警', permission: 'inventory.view_finishedgoodsreceipt' },
+    ],
+  },
+  {
+    key: 'employee-management',
+    label: '行政',
+    defaultChildKey: 'employee-list',
+    children: [
+      { key: 'employee-list', label: '员工管理', to: { name: 'employee-list' } },
+      { key: 'attendance', label: '考勤管理', to: { name: 'wecom-attendance' }, permission: 'attendance.view_attendance' },
     ],
   },
   {
@@ -131,6 +138,7 @@ const menuItems: MenuItem[] = [
 ]
 
 const canShowMenuItem = (item: MenuItem) => {
+  if (item.key === 'employee-list') return authStore.canReadAccessDirectory
   if (item.workbenchMode) {
     return resolveWorkbenchMode(authStore.user, item.workbenchMode) !== null
   }
@@ -323,7 +331,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
     </div>
 
     <div class="app-sidebar__footer" @mouseenter="scheduleClose">
-      <RouterLink v-if="authStore.user?.username === 'admin' && authStore.user?.is_superuser"
+      <RouterLink v-if="authStore.canReadAccessDirectory"
         :to="{ name: 'access-management' }" class="app-sidebar__footer-link"
         :class="{ 'is-active': route.name === 'access-management' }"
         :aria-current="route.name === 'access-management' ? 'page' : undefined"
@@ -341,7 +349,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
         </span>
         <span class="app-sidebar__menu-label">配置</span>
       </RouterLink>
-      <RouterLink v-if="authStore.user?.username === 'admin' && authStore.user.is_superuser && authStore.user.employee?.status === 'ACTIVE'"
+      <RouterLink v-if="authStore.managementCan('access_control.manage_wecom')"
         :to="{ name: 'wecom-settings' }" class="app-sidebar__footer-link"
         :class="{ 'is-active': route.name === 'wecom-settings' }"
         :aria-current="route.name === 'wecom-settings' ? 'page' : undefined"
@@ -439,7 +447,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: var(--erp-color-border-strong) transparent;
+  scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track);
 }
 
 .app-sidebar__menu {
@@ -583,7 +591,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   padding: 0 6px 16px;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: var(--erp-color-border-strong) transparent;
+  scrollbar-color: var(--erp-scrollbar-thumb) transparent;
 }
 
 .app-sidebar__hover-plate {

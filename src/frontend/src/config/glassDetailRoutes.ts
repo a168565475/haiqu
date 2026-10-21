@@ -19,6 +19,7 @@ export const glassDetailRouteNames = [
   'work-report-day-detail',
   'material-issue-detail',
   'material-inventory-detail',
+  'finished-goods-outbound-detail',
   'workshop-outsourcing-tube-detail',
   'workshop-outsourcing-rework-detail',
   'workshop-outsourcing-detail',

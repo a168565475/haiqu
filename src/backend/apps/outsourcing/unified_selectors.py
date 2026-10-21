@@ -3,7 +3,7 @@
 from apps.access_control.resource_scopes import can_order
 from apps.material_issues.p4_access import scoped_records
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 from django.conf import settings
 from django.db.models import Case, CharField, Exists, F, OuterRef, Prefetch, Q, Value, When
@@ -18,19 +18,23 @@ from .models import (
     OutsourcingDispatch, OutsourcingDispatchLine, OutsourcingFactoryAllocation,
     OutsourcingOrder, OutsourcingOrderProduct, OutsourcingOrderStatus,
     OutsourcingProcessingItem, OutsourcingReturnLine,
-    TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingOrder,
+    TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingMaterial, TubeOutsourcingOrder,
     TubeOutsourcingReceipt, TubeOutsourcingReceiptLine,
 )
 from .selectors import accessible_outsourcing_orders
 from .tube_selectors import saved_orders_for_permission
+from .tube_prices import planned_amount
 
 
 VIEW_PERMISSIONS = ("outsourcing.view_outsourcingorder", "material_issues.view_metalprocessingsource")
 SOURCE_LABELS = {"RAW": "仓库原料", "METAL": "金工加工件", "REWORK": "重加工件", "UNSELECTED": "待选择",
-                 "RAW_PIPE": "原材料", "PUBLIC_SEMI": "未喷塑半成品", "TUBE_METAL": "未入库半成品"}
+                 "RAW_PIPE": "原材料", "PUBLIC_SEMI": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
+                 "PUBLIC_CUTTING": "已入库裁片半成品", "SEWING": "未入库车缝完成件"}
 SOURCE_GROUP_LABELS = {"RAW": "原材料", "TUBE_PUBLIC": "未喷塑半成品", "TUBE_METAL": "未入库半成品",
+                       "CUTTING_PUBLIC": "已入库裁片半成品", "SEWING": "未入库车缝完成件",
                        "OLD_METAL": "金工加工件（旧流程）", "REWORK": "重加工件（旧流程）", "UNSELECTED": "待选择（旧流程）"}
 SOURCE_GROUP_KINDS = {"RAW": ("RAW", "RAW_PIPE"), "TUBE_PUBLIC": ("PUBLIC_SEMI",),
+                      "CUTTING_PUBLIC": ("PUBLIC_CUTTING",), "SEWING": ("SEWING",),
                       "TUBE_METAL": ("TUBE_METAL",), "OLD_METAL": ("METAL",),
                       "REWORK": ("REWORK",), "UNSELECTED": ("UNSELECTED",)}
 TUBE_STATUS_LABELS = {"PENDING_DISPATCH": "待外发", "PROCESSING": "加工中", "COMPLETED": "已结束", "CANCELLED": "已取消"}
@@ -158,7 +162,8 @@ def _tube_candidates(request, filters):
     if filters.get("source_group"):
         tubes = tubes.filter(unified_source__in=SOURCE_GROUP_KINDS[filters["source_group"]])
     if filters.get("factory_id"):
-        tubes = tubes.filter(lines__factory_id=filters["factory_id"])
+        tubes = tubes.filter(Q(lines__factory_id=filters["factory_id"])
+                             | Q(materials__factory_id=filters["factory_id"])).distinct()
     keyword = filters.get("search", "")
     if keyword:
         search = (Q(order_number__icontains=keyword)
@@ -200,7 +205,7 @@ def _base_row(order, record_type, source_kind, detail_access):
 def _regular_context(ids):
     allocations = OutsourcingFactoryAllocation.objects.select_related("factory").order_by("factory__name", "id")
     items = OutsourcingProcessingItem.objects.prefetch_related(Prefetch("allocations", queryset=allocations, to_attr="list_allocations"))
-    products = OutsourcingOrderProduct.objects.prefetch_related(Prefetch("processing_items", queryset=items, to_attr="list_items")).order_by("line_number", "id")
+    products = OutsourcingOrderProduct.objects.select_related("schedule_product__product_line").prefetch_related(Prefetch("processing_items", queryset=items, to_attr="list_items")).order_by("line_number", "id")
     return OutsourcingOrder.objects.filter(pk__in=ids).select_related("schedule__production_task").prefetch_related(
         Prefetch("products", queryset=products, to_attr="list_products"),
     )
@@ -227,11 +232,15 @@ def _regular_rows(request, candidates, filters):
                 entries.extend(matching)
         factories = {str(allocation.factory_id): allocation.factory_snapshot.get("name") or allocation.factory.name
                      for _item, allocation in entries}
+        product = dict(products[0].product_snapshot) if products else {}
+        if products:
+            # 旧快照缺少产品材质时只补展示，不修改已保存的快照。
+            product.setdefault("material", products[0].schedule_product.product_line.material_snapshot)
         row.update(
             schedule_id=str(order.schedule_id), schedule_number=order.schedule.schedule_number,
             production_task_number=order.schedule.production_task.task_number,
             craft={"id": str(order.craft_id), "name": order.craft_name_snapshot}, delivery_date=order.delivery_date,
-            product=products[0].product_snapshot if products else {}, product_count=len(products),
+            product=product, product_count=len(products),
             processing_count=len({item.pk for item, _allocation in entries}),
             factory_names=list(factories.values()), factory_count=len(factories),
             planned_amount=f"{sum((allocation.allocated_quantity * allocation.unit_price for _item, allocation in entries), Decimal(0)):.2f}",
@@ -305,9 +314,10 @@ def _tube_rows(candidates, filters):
         return {}
     sources = {row["id"]: row["unified_source"] for row in candidates}
     orders = TubeOutsourcingOrder.objects.filter(pk__in=sources).select_related(
-        "schedule_product__schedule__production_task", "craft",
+        "schedule_product__schedule__production_task", "product_line", "craft",
     ).prefetch_related(
         Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id"), to_attr="list_lines"),
+        Prefetch("materials", queryset=TubeOutsourcingMaterial.objects.order_by("created_at", "id"), to_attr="list_materials"),
         Prefetch("actions", queryset=TubeOutsourcingAction.objects.all(), to_attr="list_actions"),
     )
     receipts = {receipt.order_id: receipt for receipt in TubeOutsourcingReceipt.objects.filter(order_id__in=sources)
@@ -315,9 +325,13 @@ def _tube_rows(candidates, filters):
     factory_id, rows = str(filters.get("factory_id", "")), {}
     for order in orders:
         row = _base_row(order, "TUBE", sources[order.pk], "TUBE")
+        from .tube_kinds import output_unit
+        unit = output_unit(order.source_kind)
         lines = [line for line in order.list_lines if not factory_id or str(line.factory_id) == factory_id]
+        materials = [material for material in order.list_materials
+                     if not factory_id or str(material.factory_id) == factory_id]
         factories = {}
-        for line in lines:
+        for line in [*lines, *materials]:
             snapshot = line.snapshot if isinstance(line.snapshot, dict) else {}
             factories[str(line.factory_id)] = snapshot.get("factory_name", "")
         product = order.schedule_product.product_snapshot
@@ -326,14 +340,16 @@ def _tube_rows(candidates, filters):
             schedule_id=str(order.schedule_product.schedule_id),
             schedule_number=order.schedule_product.schedule.schedule_number,
             production_task_number=order.schedule_product.schedule.production_task.task_number,
-            product={field: product.get(field, "") for field in ("product_name", "product_number", "item_number", "color_name")},
+            product={**{field: product.get(field, "") for field in ("product_name", "product_number", "item_number", "color_name")},
+                     "material": product.get("material", order.product_line.material_snapshot)},
             product_count=1, craft={"id": str(order.craft_id), "name": order.craft.name},
             delivery_date=order.expected_return_date, processing_count=len(lines),
             factory_names=sorted(factories.values()), factory_count=len(factories),
+            planned_amount=planned_amount(lines),
             receipt_state="MISSING" if order.status == "COMPLETED" else "NOT_RECEIVED", shortage_quantities=[],
         )
         if factory_id:
-            row["factory_allocation_count"] = len(lines)
+            row["factory_allocation_count"] = len(lines) + len(materials)
         actions = {action.kind: action for action in order.list_actions}
         dispatch = actions.get("DISPATCH")
         # 状态或保存数量不能单独证明实发；先核对整单动作，再按厂投影冻结明细。
@@ -341,7 +357,12 @@ def _tube_rows(candidates, filters):
                           and isinstance(dispatch.snapshot, dict)
                           and dispatch.snapshot.get("quantity") == sum(line.quantity for line in order.list_lines))
         if valid_dispatch:
-            row["dispatched_quantities"] = [{"quantity": str(sum(line.quantity for line in lines)), "unit": "支"}]
+            quantities = defaultdict(Decimal)
+            if lines:
+                quantities[unit] += sum(line.quantity for line in lines)
+            for material in materials:
+                quantities[material.snapshot.get('unit', '')] += material.quantity
+            row["dispatched_quantities"] = _quantities(quantities)
         receipt = receipts.get(order.pk)
         if receipt is not None:
             receipt_lines = {line.order_line_id: line for line in receipt.list_lines}
@@ -356,8 +377,8 @@ def _tube_rows(candidates, filters):
             if valid_receipt:
                 received = sum(receipt_lines[line.pk].received_quantity for line in lines)
                 shortage = sum(receipt_lines[line.pk].shortage_quantity for line in lines)
-                row.update(returned_quantities=[{"quantity": str(received), "unit": "支"}],
-                           shortage_quantities=[{"quantity": str(shortage), "unit": "支"}])
+                row.update(returned_quantities=[{"quantity": str(received), "unit": unit}] if lines else [],
+                           shortage_quantities=[{"quantity": str(shortage), "unit": unit}] if lines else [])
                 if factory_id:
                     row["factory_returned_quantity"] = str(received)
         rows[row["row_key"]] = row
@@ -380,11 +401,15 @@ def unified_order_rows(request, candidates, filters):
     ).select_related("source__issue_line__issue__production_task", "factory", "craft")
     for order in reworks:
         row = _base_row(order, "REWORK", "REWORK", "METAL")
+        with localcontext() as context:
+            context.prec = 40
+            amount = format(Decimal(order.allocated_pieces) * order.unit_price, '.2f') if order.unit_price is not None else None
         row.update(
             source_issue_line_id=str(order.source.issue_line_id),
             production_task_number=order.source.issue_line.issue.production_task.task_number,
             craft={"id": str(order.craft_id), "name": order.craft.name}, processing_count=1,
             factory_names=[order.factory.name], factory_count=1,
+            planned_amount=amount,
             dispatched_quantities=[{"quantity": str(order.handoff_pieces), "unit": "支"}],
             returned_quantities=[{"quantity": str(order.returned_good_pieces), "unit": "支"}],
             factory_allocated_quantity=str(order.allocated_pieces), factory_allocated_unit="支",

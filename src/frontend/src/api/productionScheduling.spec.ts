@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  completeSchedule,
   createSchedule,
   createSchedulesBatch,
   fetchScheduleItems,
+  fetchScheduleCompletionPreview,
   fetchTaskCandidate,
   scheduleProductImageUrl,
   updateSchedule,
@@ -27,6 +29,14 @@ describe('生产排产 API', () => {
     mockedGet.mockReset()
     mockedPost.mockReset()
     mockedPatch.mockReset()
+  })
+
+  it('完成预览从只读接口读取数量、状态和提交版本', async () => {
+    const preview = { schedule_id: 's1', schedule_etag: '"s-v1"', products: [{ required_quantity: 200, received_quantity: 199 }] }
+    mockedGet.mockResolvedValueOnce({ data: { data: preview } })
+    expect(await fetchScheduleCompletionPreview('schedule/1')).toEqual(preview)
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/production-schedules/schedule%2F1/completion-preview/')
+    expect(mockedPost).not.toHaveBeenCalled()
   })
 
   it('按真实任务 ID 读取可排产产品详情', async () => {
@@ -105,5 +115,13 @@ describe('生产排产 API', () => {
     const params = { category: 'METAL', schedule_id: 'schedule-1', schedule_product_id: 'product-1' }
     await fetchScheduleItems(params)
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/production-schedule-items/', { params })
+  })
+
+  it('完成排产携带排产、任务和销售版本，返回销售同步结果', async () => {
+    const payload = { task_etag: '"task-v2"', sales_order_etag: '"sales-v3"', reason: '生产完成' }
+    const result = { production_task_status: 'COMPLETED', sales_sync: { status: 'SKIPPED', reason: '余款未结清。' } }
+    mockedPost.mockResolvedValueOnce({ data: { data: result } })
+    expect(await completeSchedule('schedule/1', payload, '"schedule-v1"')).toEqual(result)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/production-schedules/schedule%2F1/complete/', payload, { headers: { 'If-Match': '"schedule-v1"' } })
   })
 })

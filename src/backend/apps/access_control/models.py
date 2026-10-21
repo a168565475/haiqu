@@ -11,6 +11,7 @@ class AccessScope(models.TextChoices):
     MODULE = "MODULE", "按模块"
     WORKSHOP = "WORKSHOP", "指定车间"
     CRAFT = "CRAFT", "指定外协工艺"
+    STOCK = "STOCK", "库存来源"
 
 
 class RoleActionGrant(TimeStampedModel):

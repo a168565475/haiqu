@@ -1,5 +1,14 @@
 export type SampleMaterialIssueStatus = 'NOT_STARTED' | 'PENDING_CONFIRMATION' | 'ISSUED'
 
+export interface SampleMaterialIssuePipeBatch {
+  balanceId: string
+  warehouseName: string
+  zoneName: string
+  rawBarLengthM: string
+  barCount: number
+  meterQuantity: string
+}
+
 export interface SampleMaterialIssueLine {
   id: string | null
   lineKey: string
@@ -11,10 +20,13 @@ export interface SampleMaterialIssueLine {
   unitLabel: string
   requestedQuantity: string
   warehouseQuantity: string
+  procurementQuantity: string
   arrivedQuantity: string
   availableQuantity: string
   issuedQuantity: string | null
   shortageQuantity: string
+  barCount: number | null
+  pipeBatches: SampleMaterialIssuePipeBatch[]
 }
 
 export interface SampleMaterialIssueResult {
@@ -28,5 +40,6 @@ export interface SampleMaterialIssueResult {
   canConfirm?: boolean
   initiatedAt?: string | null
   confirmedAt?: string | null
+  blockers?: string[]
   lines?: SampleMaterialIssueLine[]
 }

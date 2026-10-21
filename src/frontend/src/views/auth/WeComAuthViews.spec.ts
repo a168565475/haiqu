@@ -22,6 +22,9 @@ describe('企微独立认证页面', () => {
     const wrapper = mount(WaitingRoleView); wrappers.push(wrapper)
     expect(wrapper.find('[data-action="logout"]').exists()).toBe(false)
     expect(wrapper.get('[data-action="refresh-role"]').text()).toBe('检查授权状态')
+    expect(wrapper.get('h1').text()).toBe('等待管理员分配访问权限')
+    expect(wrapper.text()).toContain('管理员分配有效访问权限后，即可进入 ERP')
+    expect(wrapper.get('small').text()).toBe('有效访问权限分配前，暂不能访问业务数据。')
   })
   it('企业微信身份冲突页不要求使用已隐藏的退出操作', () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 WXWork/4.1.0' })
@@ -45,7 +48,7 @@ describe('企微独立认证页面', () => {
     const wrapper = mount(WaitingRoleView); wrappers.push(wrapper)
     expect(wrapper.text()).toContain('等待员工')
     await wrapper.get('[data-action="refresh-role"]').trigger('click'); await flushPromises()
-    expect(wrapper.text()).toContain('尚未分配有效角色')
+    expect(wrapper.text()).toContain('尚未分配有效访问权限')
     expect(replace).not.toHaveBeenCalled()
     await wrapper.get('[data-action="refresh-role"]').trigger('click'); await flushPromises()
     expect(replace).toHaveBeenCalledWith({ name: 'home' })
@@ -70,6 +73,8 @@ describe('企微独立认证页面', () => {
     ['CONFIGURATION_ERROR', '接入配置尚未就绪'],
     ['IDENTITY_MISMATCH', '原会话未切换'],
     ['MEMBER_REJECTED', '当前成员无法使用此应用'],
+    ['BINDING_REQUIRED', '成员身份需要管理员核对关联'],
+    ['ACCOUNT_INACTIVE', '对应的 ERP 员工或账号当前不可用'],
     ['UPSTREAM_UNAVAILABLE', '暂时无法连接'],
     ['LOGIN_FAILED', '仍失败时联系管理员'],
   ])('公开错误码%s显示固定可操作说明', (reason, message) => {

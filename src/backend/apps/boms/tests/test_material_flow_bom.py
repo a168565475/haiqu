@@ -92,8 +92,9 @@ class MaterialFlowBomTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         line = BomLine.objects.get(section__bom=self.bom)
         self.assertEqual((line.cutting_length_mm, line.suggested_bar_count, line.raw_bar_length_m, line.suggested_purchase_meters),
-                         (500, 337, Decimal("3.05"), Decimal("1027.85")))
-        self.assertEqual((line.branch_count, line.original_material_length, line.unit), ("337", "3.05", "根"))
+                         (500, 334, Decimal("3.05"), Decimal("1018.70")))
+        self.assertEqual((line.branch_count, line.original_material_length, line.unit), ("334", "3.05", "根"))
+        self.assertEqual(line.raw_values["pipe_plan_version"], 3)
 
     def test_readonly_quantity_preview_formula_errors_permissions_and_no_writes(self):
         endpoint = '/api/v1/boms/material-flow-preview/'
@@ -101,7 +102,7 @@ class MaterialFlowBomTests(TestCase):
         before = (BomLine.objects.count(), OrderMaterialRequirement.objects.count())
         result = self.client.post(endpoint, payload, format='json')
         self.assertEqual(result.status_code, 200, result.data)
-        self.assertEqual((result.data['data']['suggested_bar_count'], result.data['data']['suggested_purchase_meters']), (337, '1027.85'))
+        self.assertEqual((result.data['data']['suggested_bar_count'], result.data['data']['suggested_purchase_meters']), (334, '1018.70'))
         fabric = self.client.post(endpoint, {'kind': 'FABRIC', 'order_quantity': '1000', 'unit_consumption': '2.5'}, format='json')
         self.assertEqual(fabric.data['data']['suggested_purchase_meters'], '2500.0000')
         for bad in ['1.5', '0', '-1', 'NaN', '1e100']:
@@ -119,7 +120,7 @@ class MaterialFlowBomTests(TestCase):
         for field in ["length_value", "tube_cut_piece_count", "unit_consumption"]:
             response = self.save([{"section_type": "PROFILE", "title": "管材类", "lines": [self.pipe_payload(**{field: "1.5"})]}])
             self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(BomLine.objects.get(section__bom=self.bom).suggested_bar_count, 337)
+        self.assertEqual(BomLine.objects.get(section__bom=self.bom).suggested_bar_count, 334)
 
     def test_missing_cut_count_can_save_but_cannot_verify(self):
         response = self.save([{"section_type": "PROFILE", "title": "管材类", "lines": [self.pipe_payload(tube_cut_piece_count="")]}])
@@ -133,7 +134,74 @@ class MaterialFlowBomTests(TestCase):
         self.assertFalse(OrderMaterialRequirement.objects.filter(measurement_kind="PIPE", production_task=self.task).exists())
         from apps.material_issues.pipe_requirements import sync_pipe_requirement
         requirement = sync_pipe_requirement(BomLine.objects.get(section__bom=self.bom).pk)
-        self.assertEqual(requirement.required_quantity, 2022)
+        self.assertEqual(requirement.required_quantity, 2004)
+
+    def legacy_pipe(self):
+        from ..material_flow_calculations import pipe_plan
+        self.initial()
+        line = BomLine.objects.get(section__bom=self.bom)
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,
+                         order_quantity=1000, calculation_version=2)
+        line.raw_values.pop("pipe_plan_version")
+        line.suggested_bar_count = plan["suggested_bar_count"]
+        line.suggested_purchase_meters = Decimal(plan["suggested_purchase_meters"])
+        line.branch_count = str(plan["suggested_bar_count"])
+        line.total_purchase_quantity = plan["suggested_purchase_meters"]
+        line.save()
+        return line
+
+    def test_legacy_save_and_verify_preserve_snapshot_and_ignore_client_version(self):
+        from apps.material_issues.pipe_requirements import pipe_source_snapshot
+        line = self.legacy_pipe()
+        before = pipe_source_snapshot(line, self.pipe)
+        payload = self.get().data["data"]["sections"]
+        row = next(section for section in payload if section["section_type"] == "PROFILE")["lines"][0]
+        row["part_name"] = "座架名称调整"
+        row["pipe_plan_version"] = 3
+        row["raw_values"] = {"pipe_plan_version": 3}
+        response = self.save(payload)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self.verify().status_code, 200)
+        line.refresh_from_db()
+        self.assertNotIn("pipe_plan_version", line.raw_values)
+        self.assertEqual((line.suggested_bar_count, line.suggested_purchase_meters), (337, Decimal("1027.85")))
+        self.assertEqual(pipe_source_snapshot(line, self.pipe), before)
+
+    def test_copy_of_legacy_bom_uses_new_rule_without_changing_original(self):
+        original = self.legacy_pipe()
+        copied = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=self.bom,
+                            actor_employee=self.employee)
+        line = BomLine.objects.get(section__bom=copied)
+        self.assertEqual((line.raw_values["pipe_plan_version"], line.suggested_bar_count), (3, 334))
+        original.refresh_from_db()
+        self.assertEqual(original.suggested_bar_count, 337)
+        self.assertNotIn("pipe_plan_version", original.raw_values)
+
+    def test_legacy_parameter_change_recalculates_without_extra_allowance(self):
+        line = self.legacy_pipe()
+        payload = self.get().data["data"]["sections"]
+        row = next(section for section in payload if section["section_type"] == "PROFILE")["lines"][0]
+        row["length_value"] = "501"
+        response = self.save(payload)
+        self.assertEqual(response.status_code, 200, response.data)
+        line.refresh_from_db()
+        self.assertEqual((line.raw_values["pipe_plan_version"], line.suggested_bar_count,
+                          line.suggested_purchase_meters), (3, 334, Decimal("1022.04")))
+
+    def test_legacy_order_sync_changes_version_only_when_quantity_changes(self):
+        from django.db import transaction
+        line = self.legacy_pipe()
+        with transaction.atomic():
+            _sync_profile_lines_to_order_quantity(self.bom, previous_order_quantity=1000)
+        line.refresh_from_db()
+        self.assertEqual(line.suggested_bar_count, 337)
+        self.assertNotIn("pipe_plan_version", line.raw_values)
+        self.bom.order_quantity = 1001
+        self.bom.save()
+        with transaction.atomic():
+            _sync_profile_lines_to_order_quantity(self.bom, previous_order_quantity=1000)
+        line.refresh_from_db()
+        self.assertEqual((line.raw_values["pipe_plan_version"], line.suggested_bar_count), (3, 334))
 
     def test_copy_keeps_revision_identity_and_relinks_fabric(self):
         self.initial()
@@ -164,7 +232,7 @@ class MaterialFlowBomTests(TestCase):
         with transaction.atomic():
             _sync_profile_lines_to_order_quantity(self.bom, previous_order_quantity=1000)
         line = BomLine.objects.get(section__bom=self.bom)
-        self.assertEqual((line.branch_count, line.total_purchase_quantity), ("338", "1030.90"))
+        self.assertEqual((line.branch_count, line.total_purchase_quantity), ("334", "1018.70"))
 
     def add_fabric_and_cutting(self):
         fabric_section = BomSection.objects.filter(bom=self.bom, title="面料类").first()
@@ -259,7 +327,7 @@ class MaterialFlowBomTests(TestCase):
         self.product_line.save()
         copied = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=self.bom, actor_employee=self.employee)
         line = BomLine.objects.get(section__bom=copied)
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("3.05") * 674 * Decimal("0.464"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("3.05") * 667 * Decimal("0.464"))
 
     def imported_plan(self, *, with_cutting_header=False):
         from io import BytesIO
@@ -290,7 +358,7 @@ class MaterialFlowBomTests(TestCase):
         _create_sections(self.bom, plan)
         pipe = BomLine.objects.get(section__bom=self.bom, section__section_type='PROFILE')
         self.assertEqual((pipe.cutting_length_mm, pipe.pieces_per_bar, pipe.raw_bar_length_m), (331, 3, Decimal('1.05')))
-        self.assertEqual(pipe.suggested_bar_count, 674)
+        self.assertEqual(pipe.suggested_bar_count, 667)
         old_plan = self.imported_plan()
         self.assertNotIn('tube_cut_piece_count', old_plan['sections'][0]['lines'][0]['raw_values'])
 

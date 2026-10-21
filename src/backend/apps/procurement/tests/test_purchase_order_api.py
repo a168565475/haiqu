@@ -586,7 +586,7 @@ class PurchaseOrderApiTests(APITestCase):
 
         self.assertEqual(created.status_code, 201, created.data)
         data = created.data["data"]
-        self.assertRegex(data["order_number"], r"^CGDD[0-9]{8}[0-9]{2}$")
+        self.assertRegex(data["order_number"], r"^CGDD[0-9]{6}[0-9]{3,}$")
         self.assertEqual(data["status"], "DRAFT")
         self.assertEqual(Decimal(data["total_amount"]), Decimal("7.8000"))
         self.assertEqual(Decimal(data["lines"][0]["amount"]), Decimal("7.8000"))
@@ -641,7 +641,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(bad_date.status_code, 400)
         self.assertEqual(impossible_date.status_code, 400)
 
-    def test_purchase_order_number_uses_date_and_two_digit_daily_sequence(self):
+    def test_purchase_order_number_uses_short_date_and_three_digit_daily_sequence(self):
         created_numbers = []
         for suffix in ("NUMBER-1", "NUMBER-2"):
             task = self.make_task(suffix)
@@ -658,8 +658,8 @@ class PurchaseOrderApiTests(APITestCase):
             self.assertEqual(response.status_code, 201, response.data)
             created_numbers.append(response.data["data"]["order_number"])
 
-        today_prefix = f"CGDD{timezone.localdate():%Y%m%d}"
-        self.assertEqual(created_numbers, [f"{today_prefix}01", f"{today_prefix}02"])
+        today_prefix = f"CGDD{timezone.localdate():%y%m%d}"
+        self.assertEqual(created_numbers, [f"{today_prefix}001", f"{today_prefix}002"])
 
     def test_currency_is_required_before_header_total_can_be_calculated(self):
         task = self.make_task("NO-CURRENCY")
@@ -1306,7 +1306,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertEqual(generated.status_code, 201, generated.data)
         self.assertEqual(len(generated.data["data"]), 1)
         sheet_id = generated.data["data"][0]["id"]
-        self.assertRegex(generated.data["data"][0]["sheet_number"], r"^CGDD[0-9]{10}$")
+        self.assertRegex(generated.data["data"][0]["sheet_number"], r"^CGDD[0-9]{6}[0-9]{3,}$")
         self.assertEqual(len(generated.data["data"][0]["line_images"]), 1)
         self.assertEqual(
             generated.data["data"][0]["line_images"][0]["image_file_id"],

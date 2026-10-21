@@ -34,6 +34,7 @@ from .models import (
     SalesOrderVersion,
 )
 from .pricing import cny_line_amounts, freeze_sales_rate, validate_cny_total
+from .selectors import sales_order_completion_progress
 
 
 MONEY_QUANT = Decimal("0.0001")
@@ -1056,23 +1057,10 @@ def complete_sales_order(*, order, exception_close, reason, actor_employee, requ
     if order.status not in {SalesOrderStatus.CONFIRMED, SalesOrderStatus.FULFILLING}:
         raise Conflict("只有已确认或履约中的销售订单可以完结。")
     normalized_reason = str(reason or "").strip()
-    active_demand = SalesOrderDeliveryBatchLine.objects.filter(
-        delivery_batch__sales_order=order,
-        delivery_batch__status=DeliveryBatchStatus.ACTIVE,
-    ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-    shipped = order.collaboration_events.filter(
-        event_type=CollaborationEventType.SHIPMENT,
-        status=CollaborationEventStatus.COMPLETED,
-    ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-    balance_completed = order.collaboration_events.filter(
-        event_type=CollaborationEventType.BALANCE,
-        status=CollaborationEventStatus.COMPLETED,
-    ).exists()
-    blockers = []
-    if shipped < active_demand:
-        blockers.append(f"累计发货 {shipped}，有效交付需求 {active_demand}")
-    if not balance_completed:
-        blockers.append("余款尚未登记完成")
+    progress = sales_order_completion_progress(order)
+    active_demand = progress["active_demand"]
+    shipped = progress["shipped_quantity"]
+    blockers = progress["blockers"]
     if blockers and not exception_close:
         raise ValidationError({"completion": [*blockers, "商业单证为提醒项，不阻断完结。"]})
     if exception_close and not normalized_reason:

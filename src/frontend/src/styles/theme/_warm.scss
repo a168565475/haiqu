@@ -1,6 +1,10 @@
 // 主题色表：新增主题需提供相同用途的全部值，不能回退到另一主题。
 $palette: (
   'color-scheme': 'light',
+  'scrollbar-track': '#eee7dc',
+  'scrollbar-thumb': '#93806c',
+  'scrollbar-thumb-hover': '#7c6a58',
+  'scrollbar-thumb-active': '#695846',
   'shadow-color': '#3f3227',
   'overlay-scrim-color': '#1f1d18',
   'login-background': 'linear-gradient(90deg, #e8c76b 0%, #d67a38 38%, #ab4029 68%, #4a1a13 100%)',

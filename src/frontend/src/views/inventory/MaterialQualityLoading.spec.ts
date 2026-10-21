@@ -18,6 +18,20 @@ describe('品质确认读取', () => {
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([first, second] as never)
     vi.mocked(api.fetchMaterialQualityBatch).mockImplementation(async id => (id === second.id ? second : first) as never)
   })
+  it('管材质检显示根数，退货按整数根输入，米数只用于换算提示', async () => {
+    vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([{ ...first, lines: [{ ...line, measurement_kind: 'PIPE', raw_bar_length_m: '3.35', received_bar_count: 10, return_bar_count: 0, received_quantity: '33.5000', source_unit_text_snapshot: '米' }] }] as never)
+    const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
+    vm.rows[0]!.returnQuantity = '2'; await flushPromises()
+    const cells = wrapper.findAll('td.quantity-cell')
+    expect(cells[0]!.text()).toBe('10 根'); expect(cells[1]!.text()).toBe('8 根')
+    expect(cells[1]!.attributes('title')).toContain('26.80 米')
+    expect(vm.canSubmit).toBe(true)
+    vm.rows[0]!.returnQuantity = '0.5'; expect(vm.canSubmit).toBe(false)
+    vm.rows[0]!.returnQuantity = '11'; expect(vm.canSubmit).toBe(false)
+    vm.rows[0]!.returnQuantity = '10'; await flushPromises()
+    expect(cells[1]!.text()).toBe('0 根'); expect(vm.canSubmit).toBe(true)
+    wrapper.unmount()
+  })
   it('首次和刷新复用刚读取的完整批次，保留输入且不重复读取详情', async () => {
     const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
     expect(vm.rows).toHaveLength(1); expect(vm.canSubmit).toBe(true)

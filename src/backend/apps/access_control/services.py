@@ -15,9 +15,11 @@ from .permissions import CanManageAccess
 from .selectors import grant_rows, role_grants, role_snapshot
 
 
-def require_manager(request):
-    if not CanManageAccess().has_permission(request, None):
-        raise PermissionDenied(CanManageAccess.message)
+def require_manager(request, code='access_control.manage_access'):
+    permission = CanManageAccess()
+    permission.code = code
+    if not permission.has_permission(request, None):
+        raise PermissionDenied(permission.message)
     employee = active_employee_for(request.user)
     if employee is None:
         raise PermissionDenied("需要有效员工档案记录授权操作者。")
@@ -25,8 +27,11 @@ def require_manager(request):
 
 
 def audit(request, instance, action, before, after, object_type="ACCESS_ROLE"):
+    employee = active_employee_for(request.user)
+    if employee is None:
+        raise PermissionDenied("需要有效员工档案记录管理操作者。")
     write_audit_log(object_type=object_type, object_id=instance.pk, action=action,
-                    actor_employee=require_manager(request), before_data=before, after_data=after, request=request)
+                    actor_employee=employee, before_data=before, after_data=after, request=request)
 
 
 def assert_managed_projection(role):

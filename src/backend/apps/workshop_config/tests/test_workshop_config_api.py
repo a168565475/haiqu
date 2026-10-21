@@ -22,6 +22,19 @@ class WorkshopConfigApiTests(APITestCase):
     def fixed_workshop(self, name="装配车间"):
         return Workshop.objects.get(name=name)
 
+    def test_external_embroidery_is_configurable_and_internal_code_is_rejected(self):
+        response = self.client.post("/api/v1/workshop-config/crafts/", {
+            "craft_type": CraftType.EXTERNAL, "name": "刺绣", "outsourcing_code": "EMBROIDERY",
+            "status": RecordStatus.ACTIVE,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["data"]["outsourcing_code_display"], "刺绣")
+        detail = self.client.get(f'/api/v1/workshop-config/crafts/{response.data["data"]["id"]}/')
+        rejected = self.client.patch(f'/api/v1/workshop-config/crafts/{response.data["data"]["id"]}/', {
+            "craft_type": CraftType.INTERNAL, "workshop": str(self.fixed_workshop("车缝车间").pk),
+        }, format="json", HTTP_IF_MATCH=detail["ETag"])
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
     def test_workshops_are_fixed_and_read_only(self):
         response = self.client.get("/api/v1/workshop-config/workshops/", {"page_size": 100})
         self.assertEqual(response.status_code, 200, response.data)
@@ -45,12 +58,13 @@ class WorkshopConfigApiTests(APITestCase):
 
     def test_complete_relationship_and_derived_operation_fields(self):
         workshop = self.fixed_workshop()
+        source = Employee.objects.create(employee_code="WORKSHOP_CONFIG_SOURCE_1", display_name="测试员工")
         employee = self.client.post(
             "/api/v1/workshop-config/employees/",
             {
                 "workshop": str(workshop.pk),
                 "position": "装配组长",
-                "name": "测试员工",
+                "employee": str(source.pk),
                 "is_supervisor": True,
                 "status": WorkshopEmployeeStatus.ACTIVE,
             },
@@ -183,10 +197,11 @@ class WorkshopConfigApiTests(APITestCase):
 
     def test_validation_uniqueness_filters_and_pagination(self):
         workshop = self.fixed_workshop("敲布孔")
+        source = Employee.objects.create(employee_code="WORKSHOP_CONFIG_SOURCE_2", display_name="测试员工")
         employee_payload = {
             "workshop": str(workshop.pk),
             "position": "打孔",
-            "name": "测试员工",
+            "employee": str(source.pk),
             "is_supervisor": False,
             "status": WorkshopEmployeeStatus.ACTIVE,
         }

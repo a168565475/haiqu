@@ -864,7 +864,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           </template>
         </ElTable>
         <p v-if="isSampleSource && source?.notes" class="sample-warehouse-note">仓库备注：{{ source.notes }}</p>
-        <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>金额＝实际采购数量 × 采购单价</span></footer>
+        <footer><span>{{ isPreviewMode ? `已找到 ${lines.length} 项采购需求 · 当前仅预览` : lines.length ? `已载入 ${lines.length} 项 · 已完整填写 ${completeLineCount} 项` : '请先选择采购来源' }}</span><span>管材金额＝总米数 × 米单价；其他物料按采购数量计价</span></footer>
       </section>
 
       <section v-if="isDetailStep" class="summary-card">
@@ -884,7 +884,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 @use '@/styles/theme/detail' as detail;
 .purchase-form-page {
   box-sizing: border-box; width: 100%; min-width: 0; height: auto; min-height: 0;
-  display: flex; flex-direction: column; padding: 30px 28px 0; overflow: visible;
+  display: flex; flex-direction: column; padding: 0; overflow: visible;
   color: crm.$crm-text-primary; background: transparent; font: 14px/1.5 crm.$crm-font-body;
   --el-color-primary: #{crm.$crm-primary}; --el-color-primary-light-3: #{crm.$crm-primary-light-3};
   --el-color-primary-light-9: #{crm.$crm-color-selected}; --el-color-primary-dark-2: #{crm.$crm-primary-pressed};

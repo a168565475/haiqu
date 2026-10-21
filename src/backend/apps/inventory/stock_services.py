@@ -330,7 +330,12 @@ def debit_material_stock(
     if zone is not None:
         balance_query = balance_query.filter(zone=zone)
     balances = list(balance_query)
-    total = sum((item.quantity for item in balances), Decimal("0"))
+    from .tube_outsourcing_reservations import tube_material_reserved_quantities
+    _, reserved = tube_material_reserved_quantities(raw_material_ids=[raw_material.pk])
+    free = {item.pk: max(item.quantity - reserved.get(
+        (str(item.raw_material_id), str(item.unit_id), str(item.zone_id)), Decimal(0)), Decimal(0))
+        for item in balances}
+    total = sum(free.values(), Decimal("0"))
     if total < quantity:
         raise InventoryStockValidationError(
             "合格公共可用库存不足。",
@@ -342,7 +347,9 @@ def debit_material_stock(
     for balance in balances:
         if remaining <= 0:
             break
-        allocated = min(balance.quantity, remaining)
+        allocated = min(free[balance.pk], remaining)
+        if allocated <= 0:
+            continue
         before = balance.quantity
         balance.quantity = before - allocated
         balance.version += 1

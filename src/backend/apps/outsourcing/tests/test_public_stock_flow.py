@@ -5,11 +5,13 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.db import connection, connections, transaction
 from django.test import TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.exceptions import APIException
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from apps.boms.models import Bom, BomLine, BomSection
 from apps.boms.material_flow_calculations import pipe_plan
@@ -25,9 +27,11 @@ from apps.production_scheduling.models import ProductionSchedule, ProductionSche
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductCategory, ProductionUnit
+from apps.workshop_config.models import Craft
 
 from ..dispatch_services import confirm_flow_dispatch
-from ..models import OutsourcingDispatchLine, OutsourcingMaterialItem, OutsourcingOrder, OutsourcingReturnLine
+from ..models import OutsourcingDispatchLine, OutsourcingFactory, OutsourcingMaterialItem, OutsourcingOrder, OutsourcingReturn, OutsourcingReturnLine
+from .numbering_concurrency import assert_reference_locks_allow_number_holder
 from .test_material_flow import MaterialFlowFixture
 
 
@@ -165,6 +169,7 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
                 self.dispatch(order_id, amount="12")
             self.assertFalse(any("inventory_material_inbound" in row["sql"] or "material_inbound_line" in row["sql"] for row in queries))
         source = OutsourcingDispatchLine.objects.get(dispatch__order_id=order_id)
+        self.assertRegex(source.dispatch.dispatch_number, rf"^FL{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
         self.assertIsNone(source.inbound_line_id)
         self.assertIsNone(source.stock_balance_id)
         self.assertEqual(source.public_stock_balance_id, self.public_balance.pk)
@@ -229,6 +234,10 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         _, b = self.dispatch(second, amount="12")
         self.return_goods(first, a, 12, raw_inputs=[self.entry(a, "RAW_INPUT", 2)])
         self.return_goods(second, b, 12, raw_inputs=[self.entry(b, "RAW_INPUT", 2)])
+        numbers = list(OutsourcingReturn.objects.filter(order_id__in=[first, second]).values_list('return_number', flat=True))
+        self.assertEqual(len(set(numbers)), 2)
+        for number in numbers:
+            self.assertRegex(number, rf"^WH{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
         balances = PublicStockBalance.objects.filter(stock_kind="SEMI")
         self.assertEqual(balances.count(), 1)
         self.assertEqual(balances.get().quantity, 24)
@@ -237,7 +246,7 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         self.assertEqual(OutsourcingReturnLine.objects.filter(semi_finished_balance__isnull=False).count(), 0)
 
     def test_fabric_meters_out_and_sets_return_frozen_after_bom_change(self):
-        order_id = self.create("FABRIC", "90")
+        order_id = self.create("FABRIC", "90", output_sets="60")
         _, source = self.dispatch(order_id, "FABRIC", "90")
         self.f.material_balance.refresh_from_db()
         self.assertEqual(self.f.material_balance.quantity, 110)
@@ -252,7 +261,7 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         self.return_goods(order_id, source, 1, expected=409)
 
     def test_fabric_unused_return_and_revoke_restores_ordinary_without_batch(self):
-        order_id = self.create("FABRIC", "90")
+        order_id = self.create("FABRIC", "90", output_sets="60")
         _, source = self.dispatch(order_id, "FABRIC", "90")
         self.raw_return(order_id, source, "1.5")
         self.revoke(order_id)
@@ -266,7 +275,7 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         _, requirements, _, _ = sync_order_requirements(scope.task.pk)
         requirement = next(row for row in requirements if row.raw_material_id == self.f.raw_material.pk)
         self.pending(requirement, "140", scope=scope, pipe=False)
-        order_id = self.create("FABRIC", "90")
+        order_id = self.create("FABRIC", "90", output_sets="60")
         self.dispatch(order_id, "FABRIC", "90", expected=409)
 
     def test_hardware_keeps_original_unit_and_shared_balance(self):
@@ -362,6 +371,21 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True)
 class PublicOutsourcingConcurrencyTests(PublicOutsourcingFixture, TransactionTestCase):
     serialized_rollback = True
+
+    def test_creation_reference_locks_allow_other_wf_order_foreign_keys(self):
+        payload = self.payload(amount="12")
+
+        def create():
+            client = APIClient()
+            client.force_authenticate(get_user_model().objects.get(pk=self.f.user.pk))
+            response = client.post("/api/v1/outsourcing-orders/", payload, format="json", HTTP_HOST="localhost")
+            self.assertEqual(response.status_code, 201, response.data)
+            return response.data["data"]["order_number"]
+
+        references = [(Craft, self.f.spray.pk), (OutsourcingFactory, self.f.factory.pk)]
+        references.extend((ProductionUnit, pk) for pk in ProductionUnit.objects.filter(
+            status="ACTIVE", archived_at__isnull=True).values_list("pk", flat=True))
+        assert_reference_locks_allow_number_holder(self, create, references)
 
     def test_raw_return_and_another_dispatch_lock_schedule_before_task(self):
         from ..reconciliation_services import confirm_raw_return

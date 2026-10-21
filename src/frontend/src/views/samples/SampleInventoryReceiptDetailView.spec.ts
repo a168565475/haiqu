@@ -105,7 +105,8 @@ describe('SampleInventoryReceiptDetailView', () => {
     expect(wrapper.text()).toContain('藤编双人椅')
     expect(wrapper.text()).toContain('成品仓 / 一楼 / A-001')
     expect(wrapper.text()).toContain('CPRK-202609-000001')
-    expect(wrapper.text()).toContain('PMC 审核通过 · 金工参数完成 · 裁剪参数完成')
+    expect(wrapper.find('.source-status').text()).toBe('已入库')
+    expect(wrapper.find('.source-flow').text()).toContain('PMC✓ 金工✓ 裁剪✓')
 
     const headers = wrapper.findAll('.lines-table-head > span').map((item) => item.text())
     expect(headers.slice(0, 9)).toEqual([
@@ -133,6 +134,18 @@ describe('SampleInventoryReceiptDetailView', () => {
     expect(wrapper.find('button.source-link').attributes('disabled')).toBeDefined()
     await wrapper.find('button.source-link').trigger('click')
     expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  it('新版打样入库显示已入库，不依赖旧PMC文本判断流程', async () => {
+    apiMocks.fetchDetail.mockResolvedValueOnce({
+      ...detailFixture,
+      lines: [{ ...detailFixture.lines[0], flow_condition: '新版打样：参数及生产完成后入库', source_status: '流程未结束' }],
+    })
+    const wrapper = await render()
+    expect(wrapper.find('.source-status').text()).toBe('已入库')
+    expect(wrapper.find('.source-flow').text()).toContain('新版打样：参数及生产完成后入库')
+    expect(wrapper.text()).not.toContain('流程条件未完整')
+    expect(wrapper.find('.source-card').text()).not.toContain('流程未结束')
   })
 
   it('有权限按来源单号打开打样详情', async () => {

@@ -39,11 +39,9 @@ const zoneName = computed(() => zones.value.find(item => item.id === zoneId.valu
 const entered = computed(() => rows.value.filter(row => (wholeQuantity(row.quantity) || 0) > 0))
 const total = computed(() => entered.value.reduce((sum, row) => sum + (wholeQuantity(row.quantity) || 0), 0))
 const info = computed(() => [
-  ['生产任务单号', preview.value?.production_order], ['排产单号', preview.value?.schedule_number],
-  ['订单量', preview.value ? `${format(preview.value.order_quantity)} ${preview.value.product_unit}` : '—'],
-  ['订单喷塑色', preview.value?.product_color], ['入库人', preview.value?.actor],
-  ['产品名称', preview.value?.product], ['品号', preview.value?.product_number], ['货号', preview.value?.item_number],
-  ['入库来源', '厂内金工'], ['加工状态', '未喷塑'],
+  ['生产任务单号', preview.value?.production_order], ['产品名称', preview.value?.product],
+  ['工序', '金工'], ['订单数量', preview.value ? `${format(preview.value.order_quantity)} ${preview.value.product_unit}` : '—'],
+  ['入库来源', '厂内金工'],
 ])
 const columns = computed(() => [
   { key: 'part', label: '部位', width: 90 }, { key: 'material', label: '材质', width: 60 },
@@ -267,7 +265,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
       <div class="panel d1-context"><div class="info-grid"><div v-for="[label, value] in info" :key="label" class="info-cell"><span>{{ label }}</span><strong :class="{ brand: label === '加工状态' }" :title="value || '—'">{{ value || '—' }}</strong></div></div></div>
       <div class="panel workspace d1-workspace">
         <div class="section-heading"><div><h2>本次入库</h2><span class="muted">填写数量即可办理 · 数量单位：支</span></div><ElButton :icon="Refresh" :disabled="saving || !!pending || loading || storageError" @click="load(true)">刷新</ElButton></div>
-        <div class="field-grid d1-fields">
+        <div class="field-grid d1-fields erp-flat-form">
           <label class="form-field required"><span>收货日期</span><ElDatePicker v-model="receiptDate" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" popper-class="schedule-date-popper" placeholder="选择日期" aria-label="收货日期" :disabled="formLocked" /></label>
           <label class="form-field required"><span>材料仓</span><ElSelect v-model="warehouseId" aria-label="材料仓" :disabled="formLocked" @change="zoneId = ''"><ElOption v-for="item in warehouses" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
           <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" placeholder="请选择库区" :disabled="formLocked"><ElOption v-for="item in zones" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
@@ -285,7 +283,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
           <template #cell-available="{ row }"><strong :class="capacity(row) > 0 ? 'brand' : 'muted'">{{ row.metal_processing.basis_ready ? format(capacity(row)) : '—' }}</strong></template>
           <template #cell-quantity="{ row }"><ElInput v-model="row.quantity" :aria-label="`${row.part}本次入库`" inputmode="numeric" :placeholder="!row.metal_processing.basis_ready ? '依据不完整' : capacity(row) ? '填写数量' : '暂无可入'" :disabled="rowDisabled(row)" @blur="validQuantity(row)"><template v-if="!rowDisabled(row)" #suffix><span class="d1-unit">支</span></template></ElInput></template>
         </MetalReceiptTable>
-        <label class="form-field d1-remark"><span>入库备注 <small class="muted">选填</small></span><ElInput v-model="remark" type="textarea" :rows="3" maxlength="2000" :disabled="formLocked" placeholder="填写本次收货或存放说明" aria-label="入库备注" /></label>
+        <label class="form-field d1-remark erp-flat-form"><span>入库备注 <small class="muted">选填</small></span><ElInput v-model="remark" type="textarea" :rows="3" maxlength="2000" :disabled="formLocked" placeholder="填写本次收货或存放说明" aria-label="入库备注" /></label>
       </div>
     </template>
     <div v-else class="panel d1-fallback">

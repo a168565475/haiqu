@@ -34,7 +34,7 @@ async function open(specification?: string) {
   vm.activeSectionIndex = vm.sections.findIndex(section => section.title === '裁剪明细')
   const cutting = vm.sections[vm.activeSectionIndex]!
   vm.sections.find(section => section.title === '面料类')!.lines.push({ ...vm.blankLine('米'), id: 'fabric-1', part_name: '牛津布', specification: '600D', material: '涤纶', unit_consumption: '1' })
-  if (specification !== undefined) cutting.lines.push({ ...vm.blankLine('套'), id: 'cutting-1', category: '布片', part_name: '床面', specification, source_cutting_material_id: 'semi-1', fabric_source_line_id: 'fabric-1', cutting_pieces_per_set: 2, fabric_meters_per_piece: '0.5', cutting_sets_per_product: 1 })
+  if (specification !== undefined) cutting.lines.push({ ...vm.blankLine('套'), id: 'cutting-1', category: '布片', part_name: '床面', specification, source_cutting_material_id: 'semi-1', fabric_source_line_id: 'fabric-1', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 })
   await flushPromises()
   return { page: wrapper, cutting }
 }
@@ -69,6 +69,9 @@ describe('裁剪规格提醒和新增裁片', () => {
     await page.get('.cutting-table button[aria-label="编辑当前行"]').trigger('click')
     await flushPromises()
     expect(page.text()).toContain('规格必填')
+    expect(page.find('[aria-label="单个用量（米/片）"]').exists()).toBe(false)
+    expect(page.find('[aria-label="每套耗米（米/套）"]').exists()).toBe(false)
+    expect(page.get('[data-testid="cutting-order-pieces"]').text()).toBe('2000 片')
     await button(page, '应用修改').trigger('click')
     await flushPromises()
     expect(page.find('input[aria-label="规格"]').exists()).toBe(true)
@@ -81,6 +84,7 @@ describe('裁剪规格提醒和新增裁片', () => {
     await flushPromises()
     const submitted = vi.mocked(api.saveBomDraft).mock.calls[0]![1].find(section => section.title === '裁剪明细')!.lines[0]!
     expect(submitted.specification).toBe('120×60cm')
+    expect(submitted).toMatchObject({ cutting_pieces_per_set: 2, cutting_sets_per_product: 1 })
   })
 
   it('找不到现有裁片时可打开新增入口，填写明确规格后才允许暂存', async () => {

@@ -10,7 +10,8 @@ from ..public_stock_services import debit_public_stock
 from .test_public_stock_services import PublicStockFixture
 
 
-@override_settings(PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)
+# 本类验证旧加工来源额度入库；报工最小工序量的新口径由 test_tube_d1_receipts 覆盖。
+@override_settings(TUBE_OUTSOURCING_ENABLED=False, PUBLIC_STOCK_FLOW_ENABLED=True, PUBLIC_STOCK_ISSUES_ENABLED=True)
 class InternalReceiptApiTests(PublicStockFixture, TestCase):
     url = '/api/v1/semi-finished-receipts/'
 
@@ -60,6 +61,7 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
         response = self.receive(400)
         self.assertEqual(response.status_code,201,response.data)
         line = InternalSemiFinishedReceiptLine.objects.get()
+        self.assertRegex(line.receipt.receipt_number, rf'^BNRK{timezone.localdate():%y%m%d}[0-9]{{3,}}$')
         self.assertEqual((line.quantity,line.input_quantity,line.received_after),(400,400,400))
         self.assertEqual(line.stock_movement.balance.quantity,400)
         source = MetalProcessingSource.objects.get(issue_line=self.issue_line)

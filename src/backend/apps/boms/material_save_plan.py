@@ -21,6 +21,7 @@ from apps.reference_data.models import (AccessoryColor, AccessoryMaterial, Acces
     AccessorySpecification, FabricMaterial, FabricSpecification, FabricWidth, ProductCategory,
     ProductColor, ProductionUnit)
 from .fabric_material_sync import fabric_parameter_values, synchronize_fabric_material, _specification
+from .duplicate_lines import validate_duplicate_material_lines
 from .models import BomLine, BomSection
 from .pipe_material_sync import pipe_parameter_values, synchronize_pipe_material
 
@@ -147,8 +148,8 @@ def _auxiliary_source(line, sources, request):
 
 def build_material_save_plan(*, bom, sections, request, for_update=False):
     from .services import _editable_model_values, _merged_raw_values, _tube_specification
-    from .material_flow_bom import apply_line_quantities
-    from .material_flow_calculations import CUTTING_USAGE_FIELDS
+    from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, is_pipe_cutting_line
+    from .material_flow_calculations import CUTTING_QUANTITY_FIELDS
 
     existing = {line.pk: line for line in BomLine.objects.filter(section__bom=bom).select_related("section")}
     source_ids, materials, names = set(), set(), set()
@@ -181,56 +182,81 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                     and source.category.item_type == "MATERIAL" and source.category.category_name == "管材" and source.unit.unit_name == "根"]
     fabric_sources = [source for source in sources if _active(source) and source.item_type == "MATERIAL"
                       and source.category.item_type == "MATERIAL" and source.category.category_name == "面料" and source.unit.unit_name == "米"]
-    planned_lines, locations = {}, {}
+    planned_lines, locations, inputs, lines_by_client_key = {}, {}, {}, {}
     for section_index, section_data in enumerate(sections):
         section = BomSection(bom=bom, title=section_data["title"], section_type=section_data["section_type"])
         for line_number, data in enumerate(section_data["lines"], 1):
             old = existing.get(data.get("id"))
             line = copy(old) if old else BomLine()
             line.section, line.line_number = section, line_number
-            values, calculated = _editable_model_values(data, section.section_type, bom.order_quantity, existing_line=old)
+            values, calculated = _editable_model_values(data, section.section_type, bom.order_quantity,
+                                                        existing_line=old, section_title=section.title)
             for field, value in values.items():
                 setattr(line, field, value)
-            for field in (*CUTTING_USAGE_FIELDS, "fabric_meters_per_set"):
+            for field in CUTTING_QUANTITY_FIELDS:
                 if field in data:
                     setattr(line, field, data[field])
             line.raw_values = _merged_raw_values(deepcopy(old.raw_values) if old else {}, data,
                                                 section.section_type, section.title, calculated)
-            source = None
-            if data.get("_pending_raw_source") is not None:
-                source = _generic_source(data["_pending_raw_source"], sources, request=request,
-                                         label=f"{section.title}第 {line_number} 行")
-            elif section.section_type == "PROFILE":
-                if synchronize_pipe_material(line, bom=bom, actor_employee=None, request=request, sources=pipe_sources,
-                    had_parameters=bool(old and any(pipe_parameter_values(old.raw_values or {}).values()))):
-                    line.specification = _tube_specification(pipe_parameter_values(line.raw_values))
-            elif section.title == "面料类":
-                synchronize_fabric_material(line, bom=bom, actor_employee=None, request=request, sources=fabric_sources,
-                                            previous_parameters=fabric_parameter_values(old) if old else None)
-            elif section.title == "辅料类":
-                source = _auxiliary_source(line, sources, request)
-            if source:
-                line.raw_values["source_inventory_material_id"] = str(source.pk)
-                line.raw_material, line.category, line.unit = source.material_number, source.category.category_name, source.unit.unit_name
-                # 暂存新增行也保留各分区已有来源字段，刷新后的编辑和图片流程继续使用真实 UUID。
-                if data.get("_pending_raw_source") is not None:
-                    key = {"五金件": "source_raw_material_id", "塑料件类": "source_raw_material_id",
-                           "包材类": "source_packaging_material_id", "裁剪明细": "source_cutting_material_id"}.get(section.title)
-                    if key:
-                        line.raw_values[key] = str(source.pk)
-                    number_key = {"五金件": "hardware_material_number", "塑料件类": "plastic_material_number",
-                                  "包材类": "packaging_material_number", "裁剪明细": "cutting_material_number"}.get(section.title)
-                    if number_key:
-                        line.raw_values[number_key] = source.material_number
-                    if section.title == "五金件":
-                        line.raw_values["hardware_flow_unit"] = source.flow_unit or ""
-                        if source.flow_unit.strip().upper() == "KG" and Decimal(data.get("unit_material_weight_kg") or "0") <= 0:
-                            raise ValidationError({"sections": f"五金件第 {line_number} 行按公斤流转，须填写大于 0 的单个材料重量。"})
-            apply_line_quantities(line, bom.order_quantity)
             planned_lines[(section_index, line_number)] = line
-            source_id = line.raw_values.get("source_inventory_material_id")
-            if source_id:
-                locations.setdefault(str(source_id), []).append({"section_title": section.title, "line_number": line_number})
+            inputs[line.pk] = (data, old)
+            if data.get("client_key"):
+                lines_by_client_key[data["client_key"]] = line
+    lines_by_id = {line.pk: line for line in planned_lines.values()}
+    # 先规划面料，再按同次保存的来源属性规划裁片，不能用裁片自填属性判重或建档。
+    for line in sorted(planned_lines.values(), key=lambda row: row.section.title.strip() == "裁剪明细"):
+        data, old = inputs[line.pk]
+        section, line_number = line.section, line.line_number
+        pending = data.get("_pending_raw_source")
+        if section.title.strip() == "裁剪明细":
+            source_key = data.get("fabric_source_client_key")
+            source_id = data.get("fabric_source_line_id", None if source_key else line.fabric_source_line_id)
+            if source_key and source_id:
+                raise ValidationError({"sections": "来源面料不能同时指定已保存行和未保存行。"})
+            fabric = lines_by_client_key.get(source_key) if source_key else lines_by_id.get(source_id)
+            if (source_key or source_id) and (fabric is None or not is_meter_fabric_section(fabric.section)):
+                raise ValidationError({"sections": f"裁剪第 {line_number} 行须选择本 BOM 保留的面料行。"})
+            line.fabric_source_line = fabric
+            inherit_cutting_fabric_attributes(line)
+            if pending is not None and not is_pipe_cutting_line(line):
+                pending = copy(pending)
+                pending.material = line.material
+                pending.color_id = (fabric.raw_values or {}).get("source_product_color_id") if fabric else None
+                pending.color_snapshot = line.raw_values["cutting_color"]
+        source = None
+        if pending is not None:
+            source = _generic_source(pending, sources, request=request,
+                                     label=f"{section.title}第 {line_number} 行")
+        elif section.section_type == "PROFILE":
+            if synchronize_pipe_material(line, bom=bom, actor_employee=None, request=request, sources=pipe_sources,
+                had_parameters=bool(old and any(pipe_parameter_values(old.raw_values or {}).values()))):
+                line.specification = _tube_specification(pipe_parameter_values(line.raw_values))
+        elif section.title == "面料类":
+            synchronize_fabric_material(line, bom=bom, actor_employee=None, request=request, sources=fabric_sources,
+                                        previous_parameters=fabric_parameter_values(old) if old else None)
+        elif section.title == "辅料类":
+            source = _auxiliary_source(line, sources, request)
+        if source:
+            line.raw_values["source_inventory_material_id"] = str(source.pk)
+            line.raw_material, line.category, line.unit = source.material_number, source.category.category_name, source.unit.unit_name
+            # 暂存新增行也保留各分区已有来源字段，刷新后的编辑和图片流程继续使用真实 UUID。
+            if pending is not None:
+                key = {"五金件": "source_raw_material_id", "塑料件类": "source_raw_material_id",
+                       "包材类": "source_packaging_material_id", "裁剪明细": "source_cutting_material_id"}.get(section.title)
+                if key:
+                    line.raw_values[key] = str(source.pk)
+                number_key = {"五金件": "hardware_material_number", "塑料件类": "plastic_material_number",
+                              "包材类": "packaging_material_number", "裁剪明细": "cutting_material_number"}.get(section.title)
+                if number_key:
+                    line.raw_values[number_key] = source.material_number
+                if section.title == "五金件":
+                    line.raw_values["hardware_flow_unit"] = source.flow_unit or ""
+                    if source.flow_unit.strip().upper() == "KG" and Decimal(data.get("unit_material_weight_kg") or "0") <= 0:
+                        raise ValidationError({"sections": f"五金件第 {line_number} 行按公斤流转，须填写大于 0 的单个材料重量。"})
+        apply_line_quantities(line, bom.order_quantity)
+        source_id = line.raw_values.get("source_inventory_material_id")
+        if source_id:
+            locations.setdefault(str(source_id), []).append({"section_title": section.title, "line_number": line_number})
     new_sources = {str(source.pk): source for source in [*sources, *pipe_sources, *fabric_sources] if source._state.adding}
     entries = []
     for source_id, source in new_sources.items():
@@ -255,6 +281,8 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
 def material_save_preview(*, bom, sections, request, intent):
     require_save_permissions(request, intent)
     plan = build_material_save_plan(bom=bom, sections=sections, request=request)
+    if intent == "verify":
+        validate_duplicate_material_lines(plan["lines"].values())
     token = None
     if plan["new_materials"]:
         token = signing.dumps({"bom": str(bom.pk), "user": str(request.user.pk), "etag": etag_for_instance(bom),

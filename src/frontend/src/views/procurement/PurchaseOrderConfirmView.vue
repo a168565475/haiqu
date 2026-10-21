@@ -396,7 +396,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
 @use '@/styles/theme/detail' as detail;
-.confirm-page { height: auto; min-height: 0; box-sizing: border-box; padding: 30px 28px 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font-family: crm.$crm-font-body; font-size: 14px;
+.confirm-page { height: auto; min-height: 0; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font-family: crm.$crm-font-body; font-size: 14px;
   --el-color-primary: #{crm.$crm-primary}; --el-text-color-primary: #{crm.$crm-text-primary}; --el-text-color-regular: #{crm.$crm-text-regular}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-color: #{crm.$crm-border-default}; --el-border-color-light: #{crm.$crm-border-subtle}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-fill-color-light: #{crm.$crm-color-subtle}; --el-border-radius-base: 5px;
 }
 .purchase-icon { width: 16px; height: 16px; flex: none; }

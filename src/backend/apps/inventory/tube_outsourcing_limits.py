@@ -242,7 +242,7 @@ def tube_source_context(*, schedule_product, source_kind, zone=None):
 
 
 def prepare_tube_source(*, schedule_product, source_kind, zone, requested, expected_revision,
-                        exclude_order_id=None, require_revision=True):
+                        exclude_order_id=None, require_revision=True, additional_stock_lines=()):
     if not connection.in_atomic_block:
         raise RuntimeError('外发预留必须在同一数据库事务内保存。')
     product = lock_tube_product_scope(schedule_product.product_line_id)
@@ -260,8 +260,9 @@ def prepare_tube_source(*, schedule_product, source_kind, zone, requested, expec
                 sync_pipe_requirement(row['bom_line_id'])
         context, issue, stock_lines = _build_context(schedule_product=schedule_product, source_kind=source_kind,
                                                    zone=zone, exclude_order_id=exclude_order_id)
-    if stock_lines:
-        _lock_public_issue_stock(issue, stock_lines)
+    if stock_lines or additional_stock_lines:
+        # 附带五金与管材整单按同一池/库区/余额顺序取锁，避免两个库存体系反序。
+        _lock_public_issue_stock(issue, [*stock_lines, *additional_stock_lines])
         # 等锁期间库存或其他订单预留可能已改变，必须重新读取。
         context, _, stock_lines = _build_context(schedule_product=schedule_product, source_kind=source_kind,
                                                 zone=zone, exclude_order_id=exclude_order_id)

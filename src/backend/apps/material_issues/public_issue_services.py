@@ -146,6 +146,7 @@ def public_issue_quantity_context(issue, *, exclude_issue_id=None, lines=None, e
     raw_pending, _ = pending_issue_quantities(
         requirement_ids=[line.requirement_id for line in lines if line.requirement_id],
         exclude_issue_id=exclude_issue_id,
+        exclude_tube_order_id=exclude_tube_order_id,
     )
     semi_requirements = {line.semi_requirement_id: line.semi_requirement for line in lines if line.semi_requirement_id}
     # 同一 BOM 部位可同时存在未喷塑、已喷塑两个公共半成品状态，
@@ -182,7 +183,7 @@ def public_issue_quantity_context(issue, *, exclude_issue_id=None, lines=None, e
                 [key[1] for key in ordinary], exclude_issue_id=exclude_issue_id).items():
             stock_pending[("OTHER", str(raw_id), str(unit_id))] += quantity
     from apps.inventory.tube_outsourcing_reservations import (
-        tube_public_reserved_quantities, tube_raw_reserved_quantities,
+        tube_public_reserved_quantities, tube_raw_reserved_quantities, tube_material_reserved_quantities,
     )
     raw_scopes = {}
     for line in lines:
@@ -198,6 +199,13 @@ def public_issue_quantity_context(issue, *, exclude_issue_id=None, lines=None, e
         raw_pending[key] = raw_pending.get(key, Decimal(0)) + quantity
     reserved_by_zone = tube_public_reserved_quantities(identities.values(), exclude_order_id=exclude_tube_order_id)
     tube_pending_stock = defaultdict(Decimal)
+    material_pending_raw, material_pending_zone = tube_material_reserved_quantities(
+        requirement_ids=[line.requirement_id for line in lines if line.requirement_id],
+        raw_material_ids=[pool[1] for pool in ordinary], exclude_order_id=exclude_tube_order_id)
+    # 普通领料和旧外发也须尊重新管材单附带五金的真实预留。
+    tube_pending_raw.update(material_pending_raw)
+    for (raw_id, unit_id, _zone_id), quantity in material_pending_zone.items():
+        tube_pending_stock[("OTHER", raw_id, unit_id)] += quantity
     for balance in balances:
         pool = (balance.stock_kind, balance.identity_key, str(balance.unit_id))
         tube_pending_stock[pool] += reserved_by_zone.get((pool, str(balance.zone_id)), Decimal(0))

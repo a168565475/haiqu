@@ -11,15 +11,18 @@ from apps.inventory.models import PublicStockBalance
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from apps.inventory.public_stock_services import _lock_source, debit_public_stock
 from apps.inventory.tube_outsourcing_limits import prepare_tube_source
-from apps.inventory.tube_processing_services import lock_tube_product_scope, assert_tube_reports_cover_usage
+from apps.inventory.tube_processing_services import assert_tube_reports_cover_usage
 from apps.material_issues.models import OrderMaterialRequirement
 
 from .material_flow import lock_request
 from .models import OutsourcingFactory, TubeOutsourcingAction, TubeOutsourcingOrder
 from .services import _json_hash
+from .tube_kinds import CUTTING_SOURCES, DIRECT_SOURCES, lock_source_product
 from .tube_selectors import (CANCEL_PERMISSION, DISPATCH_PERMISSION, require_saved_order_access,
                             require_tube_feature, source_factories, source_product, source_zone)
 from .tube_services import _json, _stock_amount
+from .tube_materials import (dispatch_materials, frozen_material_inputs, lock_material_sources,
+                            prepare_materials)
 
 
 MOVEMENT_SOURCE = 'TUBE_OUTSOURCING_DISPATCH'
@@ -35,7 +38,7 @@ def _matching_frozen_line(line, current, source_kind):
     output = snapshot.get('public_output_identity')
     latest = current.get('snapshot', {})
     if not output or _json_hash(output) != _json_hash(latest.get('public_output_identity')):
-        raise Conflict('当前BOM的管材实物属性或喷塑颜色与原单不一致，请取消后重新创建。')
+        raise Conflict('当前BOM的加工部位实物属性或加工颜色与原单不一致，请取消后重新创建。')
     # 已加工来源以实物身份为准，不新增原料长度/每根切割支数的限制。
     for field in ('raw_material_id', 'cutting_length_mm', 'pieces_per_bar', 'raw_bar_length_m') if source_kind == 'RAW_PIPE' else ():
         try:
@@ -48,7 +51,7 @@ def _matching_frozen_line(line, current, source_kind):
             equal = False
         if not equal:
             raise Conflict('当前BOM的原料或切割换算与原单不一致，请取消后重新创建。')
-    if source_kind != 'METAL' and _json_hash(line.input_identity) != _json_hash(current.get('input_identity')):
+    if source_kind not in DIRECT_SOURCES and _json_hash(line.input_identity) != _json_hash(current.get('input_identity')):
         raise Conflict('来源公共库存的实物身份与原单不一致，请取消后重新创建。')
     stock_quantity, meters = _stock_amount(source_kind, line.quantity, current)
     try:
@@ -56,7 +59,7 @@ def _matching_frozen_line(line, current, source_kind):
     except (ValueError, TypeError, ArithmeticError):
         matching_meters = False
     if stock_quantity != line.stock_quantity or not matching_meters:
-        raise Conflict('原单支、根、米换算凭证不一致，不能发出。')
+        raise Conflict('原单加工数量与库存数量的换算凭证不一致，不能发出。')
     return stock_quantity, meters
 
 
@@ -64,7 +67,7 @@ def _matching_frozen_line(line, current, source_kind):
 def confirm_tube_action(*, order_id, kind, data, request):
     require_tube_feature()
     if kind not in {'DISPATCH', 'CANCEL'}:
-        _fail('不支持该管材外发操作。')
+        _fail('不支持该外发单操作。')
     permission = DISPATCH_PERMISSION if kind == 'DISPATCH' else CANCEL_PERMISSION
     if not request.headers.get('If-Match'):
         raise PreconditionRequired()
@@ -81,7 +84,7 @@ def confirm_tube_action(*, order_id, kind, data, request):
     initial = get_object_or_404(TubeOutsourcingOrder.objects.select_related('schedule_product'), pk=order_id)
     require_saved_order_access(request, initial, permission)
     # 先共同产品锁，后本单锁；与D1入库、D2保存和旧直接交接保持同一顺序。
-    lock_tube_product_scope(initial.product_line_id)
+    lock_source_product(initial.product_line_id, initial.source_kind)
     order = TubeOutsourcingOrder.objects.select_for_update(of=('self',)).select_related(
         'schedule_product', 'product_line', 'zone__warehouse', 'craft').get(pk=order_id)
     require_saved_order_access(request, order, permission)
@@ -89,34 +92,47 @@ def confirm_tube_action(*, order_id, kind, data, request):
     if order.status != 'PENDING_DISPATCH':
         raise Conflict('只有待外发原单可以发出或取消，请刷新查看当前状态。')
     lines = list(order.lines.select_for_update(of=('self',)).order_by('pk'))
+    materials = list(order.materials.select_for_update(of=('self',)).select_related('order_line', 'zone').order_by('pk'))
     if not lines:
         _fail('原单没有可办理明细，不能提交。')
     before = {'status': order.status, 'version': order.version}
     movements = []
     context = None
+    prepared_materials = []
     if kind == 'DISPATCH':
-        product, craft = source_product(request, order.schedule_product_id, permission)
+        product, craft = source_product(request, order.schedule_product_id, permission,
+            source_kind=order.source_kind, craft_id=order.craft_id)
         if craft.pk != order.craft_id:
-            raise Conflict('当前喷塑工艺与原单不一致，请取消后重新创建。')
+            raise Conflict('当前加工工艺与原单不一致，请取消后重新创建。')
         zone = source_zone(order.source_kind, order.zone_id)
+        material_inputs = frozen_material_inputs(materials)
+        material_stock_lines = lock_material_sources(product, material_inputs, source_kind=order.source_kind)
         # 同一事件在库存余额前锁定，且不引入采购批次查询。
-        if order.source_kind != 'METAL':
+        if order.source_kind not in DIRECT_SOURCES:
             for line in lines:
                 _lock_source({'source_type': MOVEMENT_SOURCE, 'source_line_id': line.pk}, 'OUT')
-        context = prepare_tube_source(schedule_product=product, source_kind=order.source_kind, zone=zone,
+        prepare, craft_args = prepare_tube_source, {}
+        if order.source_kind in CUTTING_SOURCES:
+            from .cutting_sources import prepare_cutting_source
+            prepare, craft_args = prepare_cutting_source, {'craft': craft}
+        context = prepare(schedule_product=product, source_kind=order.source_kind, zone=zone,
             requested={str(line.component_identity): line.quantity for line in lines}, expected_revision=None,
-            exclude_order_id=order.pk, require_revision=False)
+            exclude_order_id=order.pk, require_revision=False, additional_stock_lines=material_stock_lines, **craft_args)
+        frozen = {str(value.pk): value for value in materials}
+        prepared_materials = prepare_materials(product, material_inputs, exclude_order_id=order.pk,
+                                               frozen=frozen, source_kind=order.source_kind)
         # 在可能的锁等待后重新检查当前计划、工艺权限和库区。
-        product, craft = source_product(request, order.schedule_product_id, permission)
+        product, craft = source_product(request, order.schedule_product_id, permission,
+            source_kind=order.source_kind, craft_id=order.craft_id)
         if craft.pk != order.craft_id:
-            raise Conflict('当前喷塑工艺已变化，请取消后重新创建。')
+            raise Conflict('当前加工工艺已变化，请取消后重新创建。')
         source_zone(order.source_kind, order.zone_id)
-        factories = {line.factory_id for line in lines}
+        factories = {line.factory_id for line in [*lines, *materials]}
         locked_factories = list(OutsourcingFactory.objects.select_for_update(of=('self',))
                                 .filter(pk__in=factories).order_by('pk'))
         visible = set(source_factories(request, craft, permission).filter(pk__in=factories).values_list('pk', flat=True))
         if {factory.pk for factory in locked_factories} != factories or visible != factories:
-            _fail('加工厂不存在、已停用或不再获授权办理本单喷塑工艺，请取消后重建。')
+            _fail('加工厂不存在、已停用或不再获授权办理本单加工工艺，请取消后重建。')
         by_component = {row['component_identity']: row for row in context['rows']}
         for line in lines:
             current = by_component.get(str(line.component_identity))
@@ -128,11 +144,12 @@ def confirm_tube_action(*, order_id, kind, data, request):
     order.version += 1
     order.updated_by_employee = request.employee
     order.save(update_fields=['status', 'version', 'updated_by_employee', 'updated_at'])
+    material_movements = []
     if kind == 'DISPATCH':
         by_component = {row['component_identity']: row for row in context['rows']}
         for line in lines:
             row = by_component[str(line.component_identity)]
-            if order.source_kind == 'METAL':
+            if order.source_kind in DIRECT_SOURCES:
                 continue
             identity = line.input_identity
             balance = PublicStockBalance.objects.filter(stock_kind=identity['stock_kind'],
@@ -162,11 +179,16 @@ def confirm_tube_action(*, order_id, kind, data, request):
                 requirement.save(update_fields=['outsourcing_issued_quantity', 'updated_at'])
         if order.source_kind == 'METAL':
             assert_tube_reports_cover_usage(order.product_line_id)
+        elif order.source_kind == 'SEWING':
+            from apps.inventory.sewing_processing_services import assert_sewing_reports_cover_usage
+            assert_sewing_reports_cover_usage(order.product_line_id)
+        material_movements = dispatch_materials(order, materials, prepared_materials, request)
     record = TubeOutsourcingAction.objects.create(order=order, kind=kind,
         client_request_id=data['client_request_id'], request_payload_hash=payload_hash,
         actual_dispatch_date=data.get('actual_dispatch_date'), remark=data.get('remark', ''),
         actor_employee=request.employee, snapshot=_json({'quantity': sum(line.quantity for line in lines),
-            'source_revision': context['source_revision'] if context else None, 'movements': movements}))
+            'source_revision': context['source_revision'] if context else None, 'movements': movements,
+            'material_movements': material_movements}))
     write_audit_log(object_type='TUBE_OUTSOURCING_ORDER', object_id=order.pk,
         action='DISPATCH_CONFIRMED' if kind == 'DISPATCH' else 'CANCELLED', actor_employee=request.employee,
         before_data=before, after_data={'order_number': order.order_number, 'status': order.status,

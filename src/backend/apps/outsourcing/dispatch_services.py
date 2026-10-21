@@ -2,7 +2,6 @@ from apps.access_control.resource_scopes import require_craft, require_order_cra
 """S6 外发实际发料，整单事务、按批次扣库、与厂内共用订单额度。"""
 from collections import defaultdict
 from decimal import Decimal
-from uuid import uuid4
 
 from django.db import transaction
 from django.db.models import Q
@@ -12,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
+from apps.core.numbering import next_business_number
 from apps.inventory.models import MaterialInboundLine, MaterialStockBalance, MaterialStockMovement, WarehouseZone
 from apps.inventory.stock_services import inbound_batch_available_quantities, inbound_line_material, debit_material_stock
 from apps.material_issues.pipe_requirements import sync_pipe_requirement
@@ -327,7 +327,7 @@ def confirm_flow_dispatch(*, order_id, request_id, line_inputs, remark, actor_em
         if amount > requirement.required_quantity - requirement.internal_issued_quantity - requirement.outsourcing_issued_quantity - pending.get(key, Decimal("0")):
             raise Conflict("外发与厂内领料合计超过订单该部位剩余额度。")
     before = order_audit_snapshot(order)
-    dispatch = OutsourcingDispatch.objects.create(order=order, dispatch_number=f"FL-{timezone.localdate():%Y%m%d}-{uuid4().hex[:8].upper()}",
+    dispatch = OutsourcingDispatch.objects.create(order=order, dispatch_number=next_business_number("OUTSOURCING_DISPATCH"),
         client_request_id=request_id, request_payload_hash=digest, remark=remark,
         confirmed_by_employee=actor_employee, confirmed_at=timezone.now())
     for item, line, raw, requirement, entered, actual, balance in prepared:

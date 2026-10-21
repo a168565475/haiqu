@@ -60,6 +60,7 @@ ACTION_OVERRIDES = {
     'ProductionTaskViewSet': {'cancel': 'access_control.cancel_productiontask', 'finish': 'access_control.finish_productiontask'},
     'BomViewSet': {'sync_order_quantity': 'access_control.sync_bomquantity'},
     'SampleRequestViewSet': {
+        'parameter_image': ['access_control.metalwork_sample', 'access_control.cutting_sample'],
         'form': ['samples.change_samplerequest', 'samples.complete_sample_requirements', 'access_control.productionreport_sample'],
         'submit': 'access_control.submit_samplerequest', 'start_preparing': 'access_control.prepare_samplerequest',
         'finance_confirm': 'access_control.financeconfirm_sample', 'pmc_approve': 'access_control.pmcapprove_sample',

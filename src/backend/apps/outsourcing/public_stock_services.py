@@ -4,7 +4,7 @@ import hashlib
 import json
 from collections import defaultdict
 from decimal import Decimal
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import connection
@@ -16,6 +16,7 @@ from apps.boms.models import Bom, BomLine
 from apps.boms.material_attributes import bom_attribute_fields
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
+from apps.core.numbering import next_business_number
 from apps.inventory.models import MaterialStockBalance, PublicStockBalance, WarehouseZone
 from apps.inventory.public_stock_identity import build_pipe_stock_identity, validate_public_identity
 from apps.inventory.public_stock_services import _lock_source, credit_public_stock, debit_public_stock, lock_public_stock_locations
@@ -275,7 +276,7 @@ def confirm_public_dispatch(order, *, request_id, digest, line_inputs, remark, a
             raise Conflict("所选库区公共库存不足。")
     before = order_audit_snapshot(order)
     dispatch = OutsourcingDispatch.objects.create(order=order,
-        dispatch_number=f"FL-{timezone.localdate():%Y%m%d}-{uuid4().hex[:8].upper()}",
+        dispatch_number=next_business_number("OUTSOURCING_DISPATCH"),
         client_request_id=request_id, request_payload_hash=digest, remark=remark,
         confirmed_by_employee=actor_employee, confirmed_at=timezone.now())
     for item, line, zone_id, entered, actual, event_id in prepared:

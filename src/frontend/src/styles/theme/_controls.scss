@@ -266,3 +266,8 @@ body .erp-table-editor {
     --el-tag-hover-color: var(--erp-tag-#{$tone}-background);
   }
 }
+
+// 错误底色上的重试链接保持可读，不沿用普通辅助文字的悬停色。
+.el-alert--error.is-light .el-button.is-link {
+  --el-button-hover-link-text-color: var(--erp-color-danger);
+}

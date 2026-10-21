@@ -1,4 +1,5 @@
 from django.db.models import Q
+from django.db.models.fields.json import KeyTextTransform
 import re
 from django.db.models.functions import Coalesce, TruncDate
 from django.shortcuts import get_object_or_404
@@ -68,12 +69,14 @@ class PreviewInput(serializers.Serializer):
 
 
 class RecordFilter(serializers.Serializer):
+    direction = serializers.ChoiceField(choices=['IN','OUT'], default='IN')
     source = serializers.ChoiceField(choices=['','INTERNAL','EXTERNAL'], default='')
     search = serializers.CharField(required=False, allow_blank=True, max_length=100)
     date_from = serializers.DateField(required=False)
     date_to = serializers.DateField(required=False)
     page = serializers.IntegerField(min_value=1, default=1)
     page_size = serializers.IntegerField(min_value=1, max_value=100, default=20)
+    product_line_id = serializers.UUIDField(required=False)
 
     def validate(self, data):
         if data.get('date_from') and data.get('date_to') and data['date_from'] > data['date_to']:
@@ -85,21 +88,24 @@ class ReceiptResponse(serializers.Serializer):
     data = serializers.DictField()
 
 
-STAGES = {'METAL':'金工完成','SEWING':'车缝完成','CUTTING':'裁剪完成','POWDER_COATING':'喷塑完成','SCREEN_PRINTING':'丝印完成'}
+STAGES = {'METAL':'金工完成','SEWING':'车缝完成','CUTTING':'裁剪完成','POWDER_COATING':'喷塑完成','SCREEN_PRINTING':'丝印完成','EMBROIDERY':'刺绣完成'}
 TUBE_SOURCE_LABELS = {'RAW_PIPE':'原材料','PUBLIC_SEMI':'未喷塑半成品','METAL':'未入库半成品'}
 
 
 def record_data(row):
     attributes = row.balance.identity_snapshot
     snapshot = row.snapshot or {}
-    internal = row.source_type == 'INTERNAL_SEMI_RECEIPT'
-    return dict(id=str(row.pk),receipt_number=row.business_number or snapshot.get('receipt_number') or snapshot.get('return_number') or snapshot.get('order_number') or str(row.source_id),
-        source='INTERNAL' if internal else 'EXTERNAL',source_display='厂内入库' if internal else '外发入库',
+    outgoing = row.direction == 'OUT'
+    internal = row.source_type == 'INTERNAL_SEMI_RECEIPT' or (outgoing and row.source_type == 'MATERIAL_ISSUE')
+    source_label = {'MATERIAL_ISSUE':'生产领用出库', 'OUTSOURCING_DISPATCH':'外发出库',
+        'TUBE_OUTSOURCING_DISPATCH':'管材外发出库'}.get(row.source_type, '半成品出库') if outgoing else ('厂内入库' if internal else '外发入库')
+    return dict(id=str(row.pk),receipt_number=row.business_number or snapshot.get('issue_number') or snapshot.get('dispatch_number') or snapshot.get('receipt_number') or snapshot.get('return_number') or snapshot.get('order_number') or str(row.source_id),
+        direction=row.direction, source='INTERNAL' if internal else 'EXTERNAL',source_display=source_label,
         production_order=row.production_task.task_number if row.production_task_id else '',
         product=row.product_line.product_name_snapshot if row.product_line_id else '',
         attributes=attributes,stage=STAGES.get(attributes.get('completed_craft',{}).get('code'),''),
         quantity=str(row.quantity),unit=attributes.get('unit_name',''),
-        receipt_date=str(row.business_date),status='已入库',
+        receipt_date=str(row.business_date),status='已出库' if outgoing else '已入库',
         warehouse=row.balance.zone.warehouse.warehouse_name,zone=row.balance.zone.zone_name,
         actor=row.actor_employee.display_name if row.actor_employee_id else '',
         remark=snapshot.get('remark',''))
@@ -147,6 +153,14 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         return Response({'data': receipt_result(receipt)})
 
     def records(self, request):
+        params = RecordFilter(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        if params.validated_data['direction'] == 'OUT':
+            return PublicStockMovement.objects.filter(direction='OUT', balance__stock_kind='SEMI',
+                production_task_id__in=accessible_production_tasks(request).values('id')).select_related(
+                    'balance__zone__warehouse','production_task','product_line','actor_employee').annotate(
+                        business_number=KeyTextTransform('issue_number', 'snapshot'),
+                        business_date=TruncDate('occurred_at')).order_by('-occurred_at','-id')
         return PublicStockMovement.objects.filter(direction='IN',balance__stock_kind='SEMI',
             production_task_id__in=accessible_production_tasks(request).values('id'),
                     source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN']).select_related(
@@ -163,15 +177,18 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
         rows = self.records(request)
+        internal_source = 'MATERIAL_ISSUE' if params['direction'] == 'OUT' else 'INTERNAL_SEMI_RECEIPT'
         if params['source'] == 'INTERNAL':
-            rows = rows.filter(source_type='INTERNAL_SEMI_RECEIPT')
+            rows = rows.filter(source_type=internal_source)
         elif params['source'] == 'EXTERNAL':
-            rows = rows.exclude(source_type='INTERNAL_SEMI_RECEIPT')
+            rows = rows.exclude(source_type=internal_source)
         if params.get('search'):
             value = params['search']
             rows = rows.filter(Q(production_task__task_number__icontains=value) | Q(product_line__product_name_snapshot__icontains=value)
                 | Q(balance__identity_snapshot__part_name__icontains=value) | Q(business_number__icontains=value)
                 | Q(snapshot__order_number__icontains=value) | Q(snapshot__receipt_number__icontains=value))
+        if params.get('product_line_id'):
+            rows = rows.filter(product_line_id=params['product_line_id'])
         if params.get('date_from'):
             rows = rows.filter(business_date__gte=params['date_from'])
         if params.get('date_to'):
@@ -184,12 +201,16 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         pk = serializers.UUIDField().run_validation(pk)
         row = get_object_or_404(self.records(request),pk=pk)
         data = record_data(row)
+        if row.direction == 'OUT':
+            data['source_detail'] = {'before_quantity':str(row.before_quantity), 'after_quantity':str(row.after_quantity)}
+            return Response({'data':data})
         if row.source_type == 'INTERNAL_SEMI_RECEIPT':
             line = get_object_or_404(InternalSemiFinishedReceiptLine.objects.select_related('receipt__completed_craft'),stock_movement=row)
             data['source_detail'] = {**line.receipt.source_snapshot,'source_number':line.receipt.receipt_number,
                 'workshop':line.receipt.completed_craft.name,'required':str(line.required_quantity_snapshot),
                 'received_before':str(line.received_before),'received_after':str(line.received_after),
-                'input_quantity':str(line.input_quantity),'input_unit':line.input_unit_name,'remark':line.receipt.remark}
+                'input_quantity':str(line.input_quantity) if line.input_quantity is not None else None,
+                'input_unit':line.input_unit_name,'remark':line.receipt.remark}
         else:
             data['source_detail'] = {'source_number':row.snapshot.get('order_number',''),
                 'factory':row.snapshot.get('factory_name') or row.snapshot.get('factory',''),'source_id':str(row.source_id),

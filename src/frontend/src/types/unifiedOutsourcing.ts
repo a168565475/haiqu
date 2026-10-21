@@ -1,7 +1,7 @@
 import type { OutsourcingOptions, OutsourcingOrder, OutsourcingOrderStatus } from './outsourcing'
 
-export type UnifiedOutsourcingSourceKind = 'RAW' | 'METAL' | 'REWORK' | 'UNSELECTED' | 'RAW_PIPE' | 'PUBLIC_SEMI' | 'TUBE_METAL'
-export type UnifiedOutsourcingSourceGroup = 'RAW' | 'TUBE_PUBLIC' | 'TUBE_METAL' | 'OLD_METAL' | 'REWORK' | 'UNSELECTED'
+export type UnifiedOutsourcingSourceKind = 'RAW' | 'METAL' | 'REWORK' | 'UNSELECTED' | 'RAW_PIPE' | 'PUBLIC_SEMI' | 'TUBE_METAL' | 'PUBLIC_CUTTING' | 'SEWING'
+export type UnifiedOutsourcingSourceGroup = 'RAW' | 'TUBE_PUBLIC' | 'TUBE_METAL' | 'OLD_METAL' | 'REWORK' | 'UNSELECTED' | 'CUTTING_PUBLIC' | 'SEWING'
 export type UnifiedOutsourcingStatus = OutsourcingOrderStatus | 'PENDING_HANDOFF'
 
 export interface OutsourcingQuantitySummary {

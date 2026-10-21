@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.db import IntegrityError, transaction
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -56,6 +57,15 @@ class SamplePurchaseApiTests(APITestCase):
         self.sample_order_id = result.data['data']['id']
         self.purchase_line = PurchaseOrderLine.objects.get(purchase_order_id=self.sample_order_id)
         return result
+
+    def receive_all(self):
+        order_id = str(self.purchase_line.purchase_order_id)
+        current = self.client.get('/api/v1/material-inventory/eligible-lines/', {'purchase_order_id': order_id})
+        self.assertEqual(current.status_code, 200, current.data)
+        return self.client.post('/api/v1/material-inventory/sample-receivings/', {
+            'purchase_order_id': order_id, 'client_request_id': str(uuid.uuid4()),
+            'items': [{'purchase_order_line_id': str(self.purchase_line.pk), 'zone_id': self.zone_id}],
+        }, format='json', HTTP_IF_MATCH=current['ETag'])
 
     def test_create_has_real_sample_source_and_no_bom(self):
         options = self.client.get(self.root + 'options/').data['data']
@@ -113,7 +123,8 @@ class SamplePurchaseApiTests(APITestCase):
         self.assertEqual(sample_status_display(SampleRequest.objects.get(pk=self.sample.pk)), '等待采购')
         self.create_order()
 
-    def test_update_confirm_generate_and_real_quality_arrival(self):
+    @override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
+    def test_update_confirm_generate_and_direct_full_arrival(self):
         created = self.create_order()
         changed = self.client.patch(self.root + self.sample_order_id + '/', {
             'is_mailed': False, 'lines': [{'id': str(self.purchase_line.pk), 'supplier_id': str(self.supplier.pk),
@@ -157,26 +168,37 @@ class SamplePurchaseApiTests(APITestCase):
         eligible = self.client.get('/api/v1/material-inventory/eligible-purchase-orders/')
         self.assertEqual(eligible.status_code, 200, eligible.data)
         self.assertIn(self.sample_order_id, [str(row['id']) for row in eligible.data['data']])
-        # 品质员没有样品核对权限，仍只在本人来源范围内通过真实品质接口回写。
+        # 仓库人员无需品质或样品核对权限，直接全部入库并回写样品来源。
         self.user.user_permissions.remove(*Permission.objects.filter(content_type__app_label='samples'))
+        self.user.user_permissions.remove(Permission.objects.get(codename='quality_confirm_material'))
         self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('2', '4'), format='json')
+        # 模块门禁开启时，旧直授不等于仓管MODULE范围。先证明越权被拒，再给真实岗位动作。
+        denied = self.client.get('/api/v1/material-inventory/eligible-lines/', {'purchase_order_id': str(self.purchase_line.purchase_order_id)})
+        self.assertEqual(denied.status_code, 404, denied.data)
+        from django.contrib.auth.models import Group
+        from apps.access_control.models import RoleActionGrant
+        from apps.organizations.models import RoleProfile, EmployeeRoleAssignment
+        receiver_role = RoleProfile.objects.create(auth_group=Group.objects.create(name='SAMPLE_DIRECT_RECEIVER'),
+            role_code='SAMPLE_DIRECT_RECEIVER', display_name='样品收货测试仓管')
+        EmployeeRoleAssignment.objects.create(employee=self.employee, role_profile=receiver_role, effective_from=timezone.now())
+        RoleActionGrant.objects.create(role=receiver_role, scope='MODULE', permission=Permission.objects.get(
+            content_type__app_label='inventory', codename='receive_material'))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        received = self.receive_all()
         self.assertEqual(received.status_code, 201, received.data)
-        quality = self.confirm_quality(received)
-        self.assertEqual(quality.status_code, 200, quality.data)
         self.assertEqual(SampleMaterialArrival.objects.filter(procurement_request=self.procurement).count(), 1)
-        self.sample.refresh_from_db()
-        # 只要有合格到货即可进入一次性领料，剩余缺口继续保留。
-        self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('2', '2'), format='json')
-        self.assertEqual(received.status_code, 201, received.data)
-        quality = self.confirm_quality(received)
-        self.assertEqual(quality.status_code, 200, quality.data)
+        self.assertEqual(SampleMaterialArrival.objects.get(procurement_request=self.procurement).accepted_quantity, 4)
+        self.assertEqual(received.data['data']['status'], 'CONFIRMED')
+        from apps.wecom.models import NotificationEvent
+        ready_event = NotificationEvent.objects.get(event_code='SAMPLE_MATERIALS_AVAILABLE', object_id=str(self.sample.pk))
+        self.assertEqual(ready_event.context['document_no'], self.sample.request_number)
+        self.assertNotIn('product_name', ready_event.context)  # 此历史夹具无产品，不用单号冒充产品名。
+        self.assertFalse(NotificationEvent.objects.filter(event_code='MATERIAL_RECEIPT_RECORDED').exists())
+        self.assertIsNone(received.data['data']['quality_confirmed_at'])
         self.sample.refresh_from_db()
         # 到货不会跳过样品领料确认。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
-        self.assertEqual(SampleMaterialArrival.objects.filter(procurement_request=self.procurement).count(), 2)
-        self.assertEqual(self.confirm_quality(received).status_code, 409)
+        self.assertEqual(self.receive_all().status_code, 409)
         self.assertEqual(self.client.delete(self.root + self.sample_order_id + '/').status_code, 409)
 
     def test_same_material_different_colors_survive_sheet_edit_and_exports(self):
@@ -224,14 +246,15 @@ class SamplePurchaseApiTests(APITestCase):
             (output / 'sample-colors.pdf').write_bytes(b''.join(pdf.streaming_content) if pdf.streaming else pdf.content)
             (output / 'sample-colors.xlsx').write_bytes(binary)
 
-    def test_full_return_and_failed_arrival_do_not_partially_advance(self):
+    def test_historical_pending_full_return_and_failed_arrival_do_not_partially_advance(self):
         from unittest.mock import patch
         from rest_framework.exceptions import ValidationError
         self.create_order()
         self.assertEqual(self.client.post(self.root + self.sample_order_id + '/confirm/', {}, format='json').status_code, 200)
         # 本用例验证入库回写，准备已正式发布的采购状态；正式发布另有整链路测试。
         PurchaseOrder.objects.filter(pk=self.sample_order_id).update(status='PURCHASING')
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('4', '4'), format='json')
+        from apps.inventory.tests.test_sample_receiving import legacy_sample_receipt
+        received = legacy_sample_receipt(self, '4')
         with patch('apps.samples.material_arrival_services.receive_material_arrival', side_effect=ValidationError('测试回写失败')):
             failed = self.confirm_quality(received, return_quantity='1')
         self.assertEqual(failed.status_code, 400, failed.data)
@@ -252,7 +275,7 @@ class SamplePurchaseApiTests(APITestCase):
         order = PurchaseOrder.objects.get(pk=self.sample_order_id)
         order.status = 'PURCHASING'
         order.save()
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('2', '4'), format='json')
+        received = self.receive_all()
         self.assertEqual(received.status_code, 201, received.data)
         outsider = get_user_model().objects.create_user(username='outside_sample_purchase')
         Employee.objects.create(user=outsider, employee_code='OUTSIDE_PUR', display_name='范围外员工')
@@ -270,11 +293,12 @@ class SamplePurchaseApiTests(APITestCase):
         self.assertEqual(MaterialInbound.objects.count(), before)
 
     def test_returns_completion_and_replenishment_do_not_block_sample(self):
+        from apps.inventory.tests.test_sample_receiving import legacy_sample_receipt
         self.create_order()
         self.assertEqual(self.client.post(self.root + self.sample_order_id + '/confirm/', {}, format='json').status_code, 200)
         # 本用例验证入库回写，准备已正式发布的采购状态；正式发布另有整链路测试。
         PurchaseOrder.objects.filter(pk=self.sample_order_id).update(status='PURCHASING')
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('4', '4'), format='json')
+        received = legacy_sample_receipt(self, '4')
         self.assertEqual(received.status_code, 201, received.data)
         quality = self.confirm_quality(received, return_quantity='2')
         self.assertEqual(quality.status_code, 200, quality.data)
@@ -292,10 +316,8 @@ class SamplePurchaseApiTests(APITestCase):
         detail = self.client.get(self.root + self.sample_order_id + '/')
         result = self.client.post(self.root + self.sample_order_id + '/complete/', {'remark': '退货完成，补货继续跟进'}, format='json', HTTP_IF_MATCH=detail['ETag'])
         self.assertEqual(result.status_code, 200, result.data)
-        received = self.client.post('/api/v1/material-inventory/receipts/', self.payload('2', '2'), format='json')
+        received = self.receive_all()
         self.assertEqual(received.status_code, 201, received.data)
-        result = self.confirm_quality(received)
-        self.assertEqual(result.status_code, 200, result.data)
         self.sample.refresh_from_db()
         # 到货不会跳过样品领料确认。
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
@@ -308,6 +330,63 @@ from django.test import TransactionTestCase
 class SamplePurchaseConcurrencyTests(TransactionTestCase):
     setUp = SamplePurchaseApiTests.setUp
     purchase_payload = SamplePurchaseApiTests.purchase_payload
+
+    def test_sample_order_and_supplier_sheet_do_not_reverse_supplier_and_counter_locks(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from datetime import date
+        from threading import Event
+        from unittest.mock import patch
+        from django.db import close_old_connections, connection, connections
+        from rest_framework.test import APIClient
+        from apps.procurement.models import PurchaseContractTemplate, PurchaseContractTemplateVersion
+        from apps.procurement.purchase_sheet_services import generate_supplier_purchase_sheets
+        from apps.procurement.services import next_purchase_order_number
+
+        payload = self.purchase_payload()
+        self.order.status = 'SUBMITTED'
+        self.order.save(update_fields=['status'])
+        template = PurchaseContractTemplate.objects.create(template_code='SAMPLE-LOCK', template_name='并发采购模板')
+        version = PurchaseContractTemplateVersion.objects.create(template=template, version_number=1)
+        counter_locked, supplier_locked = Event(), Event()
+
+        def sheet_number():
+            number = next_purchase_order_number(date(2099, 12, 20))
+            counter_locked.set()
+            self.assertTrue(supplier_locked.wait(timeout=10), '样品采购未取得供应商锁')
+            return number
+
+        def sample_number():
+            supplier_locked.set()
+            return next_purchase_order_number(date(2099, 12, 20))
+
+        def create(kind):
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '5s'")
+                    cursor.execute("SET statement_timeout = '10s'")
+                if kind == 'sheet':
+                    sheets = generate_supplier_purchase_sheets(
+                        order_id=self.order.pk,
+                        assignments=[{'supplier_id': self.supplier.pk, 'template_version_id': version.pk}],
+                        allowed_task_ids=[self.task.pk], actor_employee=self.employee,
+                    )
+                    return sheets[0].sheet_number
+                self.assertTrue(counter_locked.wait(timeout=10), '采购表未取得共用流水锁')
+                client = APIClient()
+                client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+                response = client.post(self.root, payload, format='json')
+                self.assertEqual(response.status_code, 201, response.data)
+                return response.data['data']['order_number']
+            finally:
+                connections.close_all()
+
+        with patch('apps.procurement.purchase_sheet_services.next_purchase_order_number', side_effect=sheet_number), \
+                patch('apps.procurement.services.next_purchase_order_number', side_effect=sample_number):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                sheet, sample = [pool.submit(create, kind) for kind in ('sheet', 'sample')]
+                numbers = [sheet.result(timeout=20), sample.result(timeout=20)]
+        self.assertEqual(numbers, ['CGDD991220001', 'CGDD991220002'])
 
     def test_same_sample_concurrent_creation_is_serialized(self):
         from concurrent.futures import ThreadPoolExecutor

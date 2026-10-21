@@ -70,3 +70,20 @@ class ArchivableModel(TimeStampedModel):
         super().clean()
         if self.archived_at is None and (self.archived_by_employee_id is not None or self.archive_reason):
             raise ValidationError("未归档记录不能填写归档人或归档原因。")
+
+
+class DailyBusinessNumberCounter(models.Model):
+    """已成功分配的日流水；业务单据删除或取消时保留计数。"""
+
+    number_type = models.CharField(max_length=30, validators=[uppercase_code_validator])
+    business_date = models.DateField()
+    last_value = models.PositiveBigIntegerField()
+
+    class Meta:
+        db_table = "core_daily_business_number_counter"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["number_type", "business_date"], name="daily_business_number_unique",
+            ),
+            models.CheckConstraint(condition=Q(last_value__gte=1), name="daily_business_number_positive"),
+        ]

@@ -10,7 +10,7 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'or
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/api/inventory', async original => ({ ...await original<typeof import('@/api/inventory')>(),
   fetchProcurementInboundOrders: vi.fn(), fetchMaterialInventoryOptions: vi.fn(), fetchMaterialReceivingOptions: vi.fn(),
-  fetchEligibleMaterialPurchaseOrders: vi.fn(), fetchEligibleMaterialLines: vi.fn(), createMaterialReceiving: vi.fn(),
+  fetchEligibleMaterialPurchaseOrders: vi.fn(), fetchEligibleMaterialLinesWithVersion: vi.fn(), createMaterialReceiving: vi.fn(),
 }))
 const options = { warehouses: [{ id: 'wh', warehouse_number: 'CK01', warehouse_name: '材料仓' }], zones: [{ id: 'zone', warehouse: 'wh', zone_name: '库区' }] }
 const order = { id: 'order-1', order_number: 'CGDD2026091601', supplier_names: ['供应商'], remaining_line_count: 1 }
@@ -22,8 +22,26 @@ describe('采购入库读取', () => {
     vi.mocked(api.fetchMaterialInventoryOptions).mockResolvedValue({ ...options, locations: [], sections: [], production_orders: [] } as never)
     vi.mocked(api.fetchMaterialReceivingOptions).mockResolvedValue(options)
     vi.mocked(api.fetchEligibleMaterialPurchaseOrders).mockResolvedValue([order] as never)
-    vi.mocked(api.fetchEligibleMaterialLines).mockResolvedValue([line] as never)
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [line], etag: '"receiving-v1"' } as never)
     vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([])
+  })
+  it('管材采购和累计到货显示根，输入整数根数且提交根数字段', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [{ ...line, unit: '米', purchased_quantity: '33.5', remaining_quantity: '20.1', raw_bar_length_m: '3.35', actual_bar_count: 10, remaining_bar_count: 6 }], etag: '"receiving-v1"' } as never)
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as { rows: Array<{ receivedQuantity: string; warehouseId: string; zoneId: string }>; readyToSubmit: boolean; submitReceiving: () => Promise<void> }
+    const purchaseCell = wrapper.get('.purchase-quantity-cell')
+    expect(purchaseCell.text()).toBe('10 根'); expect(purchaseCell.element.nextElementSibling?.textContent).toBe('4 根')
+    expect(purchaseCell.attributes('title')).toContain('33.5 米')
+    expect(vm.rows[0]!.receivedQuantity).toBe('6')
+    vm.rows[0]!.warehouseId = 'wh'; vm.rows[0]!.zoneId = 'zone'
+    vm.rows[0]!.receivedQuantity = '1.5'; expect(vm.readyToSubmit).toBe(false)
+    vm.rows[0]!.receivedQuantity = '7'; expect(vm.readyToSubmit).toBe(false)
+    vm.rows[0]!.receivedQuantity = '2'; expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(api.createMaterialReceiving).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ received_bar_count: '2', raw_bar_length_m: '3.35', expected_remaining_quantity: '20.1' })] }))
+    const payload = vi.mocked(api.createMaterialReceiving).mock.calls[0]![0] as { items: Record<string, unknown>[] }
+    expect(payload.items[0]).not.toHaveProperty('received_quantity')
+    wrapper.unmount()
   })
   it('采购入库搜索支持回车、放大镜和清空，并保留入库状态', async () => {
     vi.mocked(api.fetchProcurementInboundOrders).mockResolvedValue([
@@ -62,7 +80,7 @@ describe('采购入库读取', () => {
     vi.mocked(api.fetchMaterialInventoryOptions).mockReturnValue(new Promise(() => {}))
     vi.mocked(api.fetchMaterialReceivingOptions).mockReturnValue(new Promise(() => {}))
     const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
-    expect(api.fetchEligibleMaterialLines).toHaveBeenCalledExactlyOnceWith('order-1')
+    expect(api.fetchEligibleMaterialLinesWithVersion).toHaveBeenCalledExactlyOnceWith('order-1')
     expect(api.fetchMaterialInventoryOptions).not.toHaveBeenCalled()
     const vm = wrapper.vm as unknown as { loading: boolean; readyToSubmit: boolean }
     expect(vm.loading).toBe(true); expect(vm.readyToSubmit).toBe(false)
@@ -77,17 +95,17 @@ describe('采购入库读取', () => {
     await vm.loadBase()
     expect(vm.rows[0]).toMatchObject({ receivedQuantity: '3', warehouseId: 'wh', zoneId: 'zone' })
     expect(vm.readyToSubmit).toBe(true)
-    expect(api.fetchEligibleMaterialLines).toHaveBeenCalledTimes(2)
+    expect(api.fetchEligibleMaterialLinesWithVersion).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
   it('必要读取失败时禁止提交，刷新可恢复且卸载回包失效', async () => {
-    vi.mocked(api.fetchEligibleMaterialLines).mockRejectedValueOnce(new Error('明细失败'))
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockRejectedValueOnce(new Error('明细失败'))
     const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
     const vm = wrapper.vm as unknown as { rows: unknown[]; loadBase: () => Promise<void>; readyToSubmit: boolean; loadError: string }
     expect(vm.loadError).not.toBe(''); expect(vm.readyToSubmit).toBe(false)
     await vm.loadBase(); expect(vm.rows).toHaveLength(1); expect(vm.loadError).toBe('')
     let finish!: (value: never) => void
-    vi.mocked(api.fetchEligibleMaterialLines).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
     const pending = vm.loadBase(); wrapper.unmount(); finish([] as never); await pending
     expect(vm.rows).toHaveLength(1); expect(api.createMaterialReceiving).not.toHaveBeenCalled()
   })

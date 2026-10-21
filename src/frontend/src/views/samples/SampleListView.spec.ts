@@ -198,3 +198,22 @@ it('新版生产阶段查看进入详情，更多保留固定用料入口', asyn
   expect(api.push).toHaveBeenCalledWith({ name: 'sample-detail', params: { sampleId: 'NEW-PRODUCTION' } })
   expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).filter(item => item.text() === '查看用料需求')).toHaveLength(1)
 })
+
+it('新版申请尚未完善需求时开放编辑入口', async () => {
+  const data = result('WAITING-REQUIREMENTS')
+  api.rows.mockResolvedValue({ ...data, data: [{
+    ...data.data[0],
+    status: 'MATERIALS_PENDING',
+    application_actions: { is_application: true, can_resubmit: false },
+    edit_capabilities: { mode: 'COMPLETE', can_full_edit: true, can_report_edit: true, can_complete: true, can_cancel: false },
+  }] })
+  const wrapper = render('employee', ['samples.complete_sample_requirements'])
+  await flushPromises()
+  await wrapper.find('.row-actions button').trigger('click')
+  await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).some(item => item.text() === '编辑需求')).toBe(true))
+  const edit = wrapper.findAllComponents({ name: 'ElDropdownItem' }).find(item => item.text() === '编辑需求')!
+  expect(edit.props('disabled')).toBe(false)
+  edit.vm.$emit('click')
+  await flushPromises()
+  expect(api.push).toHaveBeenCalledWith({ name: 'sample-detail', params: { sampleId: 'WAITING-REQUIREMENTS' } })
+})

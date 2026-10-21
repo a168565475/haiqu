@@ -10,7 +10,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access_control.permissions import CanManageAccess
+from apps.access_control.permissions import CanManageWeCom
 from apps.core.api.exceptions import Conflict
 from apps.core.api.permissions import HasActiveEmployee
 from . import selectors, services
@@ -94,7 +94,7 @@ class QRLoginView(APIView):
 
 @method_decorator(sensitive_post_parameters("secret", "callback_token", "callback_aes_key"), name="dispatch")
 class ManagementView(APIView):
-    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageAccess]
+    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageWeCom]
 
     def initial(self, request, *args, **kwargs):
         request._request.exception_reporter_filter = WeComExceptionReporterFilter()
@@ -184,6 +184,7 @@ def oauth_error(reason):
     # reason 仅来自内部枚举，不拼接第三方错误、code、凭据或用户输入。
     public_codes = {"INVALID_STATE": "STATE_INVALID", "CONFIG_UNAVAILABLE": "CONFIGURATION_ERROR",
                     "CONFIGURATION_ERROR": "CONFIGURATION_ERROR", "ACCOUNT_MISMATCH": "IDENTITY_MISMATCH",
+                    "BINDING_REQUIRED": "BINDING_REQUIRED", "ACCOUNT_INACTIVE": "ACCOUNT_INACTIVE",
                     "MEMBER_REJECTED": "MEMBER_REJECTED", "UPSTREAM_UNAVAILABLE": "UPSTREAM_UNAVAILABLE"}
     return HttpResponseRedirect("/auth/wecom-error?reason=" + public_codes.get(reason, "LOGIN_FAILED"))
 

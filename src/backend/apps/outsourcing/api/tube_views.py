@@ -23,6 +23,7 @@ from ..tube_action_services import confirm_tube_action
 from ..tube_receipt_services import confirm_tube_final_receipt
 from ..tube_receipt_selectors import (receipt_candidates, receipt_data, receipt_preview,
                                      receipt_queryset, require_receipt_read_access)
+from ..tube_kinds import CUTTING_SOURCES, source_category, output_unit
 from .tube_serializers import (TubeCancelWriteSerializer, TubeDispatchWriteSerializer,
     TubeOrderWriteSerializer, TubeSourceQuerySerializer, TubeReceiptCandidatesQuerySerializer,
     TubeReceiptWriteSerializer, TubeReceiptResponseSerializer, TubeReceiptPreviewResponseSerializer,
@@ -30,7 +31,7 @@ from .tube_serializers import (TubeCancelWriteSerializer, TubeDispatchWriteSeria
 
 
 class TubeActionPermission(BasePermission):
-    message = '当前账号没有执行管材外发操作的权限。'
+    message = '当前账号没有执行外发单操作的权限。'
 
     def has_permission(self, request, view):
         permission = view.action_permission_map.get(view.action)
@@ -52,11 +53,13 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         super().initial(request, *args, **kwargs)
         require_tube_feature()
 
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('category', str, location=OpenApiParameter.QUERY, enum=['tube', 'cutting'], default='tube')])
     @action(detail=False, methods=['get'])
     def options(self, request):
-        return Response({'data': tube_options(request)})
+        return Response({'data': tube_options(request, category=request.query_params.get('category', 'tube'))})
 
-    @extend_schema(parameters=[
+    @extend_schema(request=None, parameters=[
         OpenApiParameter('schedule_product_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH),
         OpenApiParameter('file_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)],
         responses={(200, 'application/octet-stream'): OpenApiTypes.BINARY})
@@ -65,7 +68,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def product_image(self, request, schedule_product_id=None, file_id=None):
         schedule_product_id = serializers.UUIDField().run_validation(schedule_product_id)
         file_id = serializers.UUIDField().run_validation(file_id)
-        product = get_object_or_404(visible_products(request), pk=schedule_product_id)
+        product = get_object_or_404(visible_products(request, category='all'), pk=schedule_product_id)
         # 图片读取只继承当前外发产品的可见范围，不能转为整张任务或通用文件权限。
         image = production_task_product_image(product.product_line)
         if image is None or image.pk != file_id or not image.content_type.startswith('image/'):
@@ -83,17 +86,28 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response['Cache-Control'] = 'private, no-store'
         return response
 
+    @extend_schema(request=None, parameters=[TubeSourceQuerySerializer], responses=OpenApiTypes.OBJECT)
     @action(detail=False, methods=['get'], url_path='source-context')
     def source_context(self, request):
         serializer = TubeSourceQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        product, craft = source_product(request, data['schedule_product_id'])
+        product, craft = source_product(request, data['schedule_product_id'],
+            source_kind=data['source_kind'], craft_id=data.get('craft_id'))
         zone = source_zone(data['source_kind'], data.get('zone_id'))
         from apps.inventory.tube_outsourcing_limits import tube_source_context
-        context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
-        options = tube_options(request)
-        context = {**context, **product_summary(product), **product_display(product), **options, 'craft_name': craft.name,
+        from ..tube_materials import tube_material_context
+        if data['source_kind'] in CUTTING_SOURCES:
+            from ..cutting_sources import cutting_source_context
+            context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)
+        else:
+            context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
+        options = tube_options(request, category=source_category(data['source_kind']))
+        context = {**context, **product_summary(product), **product_display(product),
+                   **tube_material_context(product, source_kind=data['source_kind']),
+                   **options, 'craft_name': craft.name, 'craft_id': str(craft.pk),
+                   'output_unit': output_unit(data['source_kind']),
+                   'material_category': '辅料' if data['source_kind'] in CUTTING_SOURCES else '五金',
                    'source_kind': data['source_kind'], 'zone_id': str(zone.pk) if zone else None,
                    'factories': [{'id': str(factory.pk), 'name': factory.name} for factory in source_factories(request, craft)]}
         # 库存身份和冻结凭证仅供保存服务使用，页面按可显示字段读取。
@@ -101,6 +115,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
                            for row in context.get('rows', [])]
         return Response({'data': context})
 
+    @extend_schema(request=TubeOrderWriteSerializer, responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT})
     def create(self, request):
         serializer = TubeOrderWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -111,6 +126,8 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response['ETag'] = data['etag']
         return response
 
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('request_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=False, methods=['get'], url_path=r'by-request/(?P<request_id>[^/.]+)')
     def by_request(self, request, request_id=None):
         request_id = serializers.UUIDField().run_validation(request_id)
@@ -121,6 +138,8 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response['ETag'] = data['etag']
         return response
 
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     def retrieve(self, request, pk=None):
         pk = serializers.UUIDField().run_validation(pk)
         order = get_object_or_404(tube_order_queryset(), pk=pk)
@@ -133,10 +152,16 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response['ETag'] = data['etag']
         return response
 
+    @extend_schema(request=TubeDispatchWriteSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True),
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['post'], url_path='dispatch')
     def confirm_dispatch(self, request, pk=None):
         return self._confirm_action(request, pk, 'DISPATCH', TubeDispatchWriteSerializer)
 
+    @extend_schema(request=TubeCancelWriteSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True),
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         return self._confirm_action(request, pk, 'CANCEL', TubeCancelWriteSerializer)
@@ -150,6 +175,9 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         order = tube_order_queryset().get(pk=order.pk)
         return self._detail_response(order, request, action_record=record, created=created)
 
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH),
+        OpenApiParameter('request_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['get'], url_path=r'action-by-request/(?P<request_id>[^/.]+)')
     def action_by_request(self, request, pk=None, request_id=None):
         pk = serializers.UUIDField().run_validation(pk)
@@ -160,14 +188,14 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
                                    order_id=order.pk, client_request_id=request_id)
         return self._detail_response(order, request, action_record=record)
 
-    @extend_schema(parameters=[TubeReceiptCandidatesQuerySerializer], responses=TubeReceiptCandidatesResponseSerializer)
+    @extend_schema(request=None, parameters=[TubeReceiptCandidatesQuerySerializer], responses=TubeReceiptCandidatesResponseSerializer)
     @action(detail=False, methods=['get'], url_path='receipt-candidates')
     def receipt_candidates(self, request):
         serializer = TubeReceiptCandidatesQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         return Response({'data': receipt_candidates(request, serializer.validated_data)})
 
-    @extend_schema(responses=TubeReceiptPreviewResponseSerializer,
+    @extend_schema(request=None, responses=TubeReceiptPreviewResponseSerializer,
         parameters=[OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['get'], url_path='receipt-preview')
     def receipt_preview(self, request, pk=None):
@@ -196,7 +224,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response['ETag'] = data['etag']
         return response
 
-    @extend_schema(responses=TubeReceiptResponseSerializer, parameters=[
+    @extend_schema(request=None, responses=TubeReceiptResponseSerializer, parameters=[
         OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH),
         OpenApiParameter('request_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['get'], url_path=r'receipt-by-request/(?P<request_id>[^/.]+)')
@@ -207,7 +235,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         require_saved_order_access(request, record.order, RETURN_PERMISSION)
         return self._receipt_response(record)
 
-    @extend_schema(responses=TubeReceiptResponseSerializer,
+    @extend_schema(request=None, responses=TubeReceiptResponseSerializer,
         parameters=[OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
     @action(detail=True, methods=['get'], url_path='receipt')
     def receipt(self, request, pk=None):

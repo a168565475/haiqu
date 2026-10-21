@@ -55,7 +55,7 @@
   .field-grid .el-date-editor, .field-grid .el-input, .field-grid .el-select { width: 100%; }
   .notice { background: var(--erp-color-page); padding: 12px 16px; color: var(--erp-color-text-secondary); border-radius: 5px; line-height: 20px; flex-shrink: 0; }
   .notice.warning { background: var(--erp-color-warning-soft); color: var(--erp-color-warning); }
-  .tube-detail-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-color-border-strong) var(--erp-color-subtle); }
+  .tube-detail-table-wrap { border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-table-body-fill); overflow: auto; min-width: 0; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
   .tube-detail-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 12px; }
   .tube-detail-table thead { position: sticky; top: 0; z-index: 2; }
   .tube-detail-table th { height: 44px; padding: 0 10px; background: var(--erp-table-header-fill); color: var(--erp-table-header-text); font-size: 11px; font-weight: 500; line-height: 16px; text-align: left; white-space: nowrap; }

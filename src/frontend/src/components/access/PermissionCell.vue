@@ -8,7 +8,7 @@ const joined = computed(() => scopes.value.join(','))
 const restricted = computed(() => scopes.value.some(scope => scope === 'WORKSHOP' || scope === 'CRAFT'))
 const choices = computed(() => [
   ['OWN', '本人'], ['TEAM', '所管团队'], ['OWN,TEAM', '本人及团队'], ['ALL', '全部'],
-  ['MODULE', '按模块'], ['WORKSHOP', '指定车间'], ['CRAFT', '指定工艺'],
+  ['MODULE', '按模块'], ['WORKSHOP', '指定车间'], ['CRAFT', '指定工艺'], ['STOCK', '库存来源'],
 ].filter(([value]) => value!.split(',').every(scope => props.entry.scopes.includes(scope as AccessScope))))
 const custom = computed(() => joined.value && !choices.value.some(c => c[0] === joined.value))
 function check(event: Event) {

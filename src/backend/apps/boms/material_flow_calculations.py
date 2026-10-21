@@ -3,6 +3,7 @@
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, localcontext
 
 CUTTING_USAGE_FIELDS = ("cutting_pieces_per_set", "fabric_meters_per_piece", "cutting_sets_per_product")
+CUTTING_QUANTITY_FIELDS = ("cutting_pieces_per_set", "cutting_sets_per_product")
 
 
 class MaterialFlowValueError(ValueError):
@@ -35,6 +36,26 @@ def positive_integer(value, field, *, allow_zero=False):
     return int(decimal_quantity(value, field, places=0, max_digits=14, allow_zero=allow_zero))
 
 
+def cutting_quantity_plan(*, cutting_pieces_per_set=None, cutting_sets_per_product=None, order_quantity):
+    """裁片只计算套数与片数；两项全空保留旧记录，不从历史耗米猜数量。"""
+    values = (cutting_pieces_per_set, cutting_sets_per_product)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise MaterialFlowValueError("cutting_quantity", "每套片数和每成品套数必须同时填写。")
+    pieces = positive_integer(cutting_pieces_per_set, "cutting_pieces_per_set")
+    sets = positive_integer(cutting_sets_per_product, "cutting_sets_per_product")
+    order = positive_integer(order_quantity, "order_quantity")
+    required_sets = positive_integer(order * sets, "cutting_required_sets")
+    required_pieces = positive_integer(required_sets * pieces, "cutting_required_pieces")
+    return {
+        "cutting_pieces_per_set": pieces,
+        "cutting_sets_per_product": sets,
+        "required_sets": required_sets,
+        "required_pieces": required_pieces,
+    }
+
+
 def cutting_usage_plan(*, cutting_pieces_per_set=None, fabric_meters_per_piece=None,
                        cutting_sets_per_product=None, order_quantity):
     """三字段全空保留旧口径；新口径分别计算套数、片数与米数，不猜历史值。"""
@@ -64,7 +85,9 @@ def cutting_usage_plan(*, cutting_pieces_per_set=None, fabric_meters_per_piece=N
     }
 
 
-def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_quantity):
+def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_quantity, calculation_version=3):
+    if type(calculation_version) is not int or calculation_version not in (2, 3):
+        raise MaterialFlowValueError("pipe_plan_version", "管材计算版本无效。")
     length = positive_integer(cutting_length_mm, "cutting_length_mm")
     consumption = positive_integer(pieces_per_product, "pieces_per_product")
     cuts = positive_integer(pieces_per_bar, "pieces_per_bar")
@@ -75,11 +98,15 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         meters = decimal_quantity(meters, "raw_bar_length_m", places=2)
         demand = positive_integer(order * consumption, "demand_pieces")
         # 整数分数向上取整，避免 1/3 等无限小数的中间舍入。
-        bars = positive_integer((demand * 101 + cuts * 100 - 1) // (cuts * 100), "suggested_bar_count")
+        # 旧版本保留已确认的 1% 采购余量；新版本只按净需求向上取整根数。
+        factor = 101 if calculation_version == 2 else 100
+        bars = positive_integer((demand * factor + cuts * 100 - 1) // (cuts * 100), "suggested_bar_count")
         allowance = positive_integer(bars * cuts, "allowance_pieces")
         total = decimal_quantity(bars * meters, "suggested_purchase_meters", places=2, max_digits=22)
+    # 数量规则单独标记；结构版本不变，旧快照不新增键以保留来源版本摘要。
     return {
         "schema_version": 2,
+        **({"calculation_version": 3} if calculation_version == 3 else {}),
         "cutting_length_mm": length,
         "pieces_per_product": consumption,
         "pieces_per_bar": cuts,
@@ -90,6 +117,17 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         "suggested_purchase_meters": format(total, ".2f"),
         "allowance_pieces": allowance,
     }
+
+
+def pipe_plan_for_line(line, *, order_quantity=None):
+    """按已保存 BOM 的版本复算；未标记的旧行保留原快照及来源版本摘要。"""
+    return pipe_plan(
+        cutting_length_mm=line.cutting_length_mm,
+        pieces_per_product=line.pieces_per_product,
+        pieces_per_bar=line.pieces_per_bar,
+        order_quantity=line.section.bom.order_quantity if order_quantity is None else order_quantity,
+        calculation_version=(line.raw_values or {}).get("pipe_plan_version", 2),
+    )
 
 
 def pipe_issue(*, requested_pieces, pieces_per_bar, raw_bar_length_m):

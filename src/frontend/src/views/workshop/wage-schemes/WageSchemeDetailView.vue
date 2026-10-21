@@ -20,6 +20,8 @@ const canApprove = () => auth.user?.is_superuser || auth.hasPermission('workshop
 const canChange = () => auth.user?.is_superuser || auth.hasPermission('workshop_reporting.change_wagescheme')
 const canEditDraft = () => canChange() && (
   auth.user?.is_superuser || scheme.value?.created_by_id === auth.user?.employee?.id
+  || auth.user?.effective_access?.actions['workshop_reporting.change_wagescheme']?.scopes
+    .some(scope => scope === 'MODULE' || scope === 'ALL')
 )
 const canSubmit = () => auth.user?.is_superuser || auth.hasPermission('workshop_reporting.submit_wagescheme')
 const schemeType = computed(() => scheme.value?.parent_scheme ? '变更' : '新增')

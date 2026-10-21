@@ -17,6 +17,7 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework.exceptions import ValidationError
 
 from apps.audit.models import AuditLog
+from apps.core.models import DailyBusinessNumberCounter
 from apps.access_control.tests import test_resource_scopes as access_fixture
 from apps.inventory.models import PublicStockMovement
 from apps.inventory.public_stock_identity import build_pipe_stock_identity
@@ -31,6 +32,7 @@ from apps.workshop_config.models import Craft
 from apps.workshop_reporting.models import WorkReportLine
 from apps.boms.models import BomLine
 from ..models import OutsourcingFactory, OutsourcingFactoryCraft, OutsourcingOrder, TubeOutsourcingOrder, TubeOutsourcingLine
+from .numbering_concurrency import assert_reference_locks_allow_number_holder
 
 
 BASE = '/api/v1/tube-outsourcing-orders/'
@@ -144,6 +146,9 @@ class TubeOrdersApiTests(TubeApiFixture, APITestCase):
         old_orders = OutsourcingOrder.objects.count()
         response = self.post_order(payload)
         data = response.data['data']
+        self.assertRegex(data['order_number'], rf'^WF{timezone.localdate():%y%m%d}[0-9]{{3,}}$')
+        counter = DailyBusinessNumberCounter.objects.get(number_type='OUTSOURCING_ORDER', business_date=timezone.localdate())
+        sequence = counter.last_value
         self.assertEqual((data['total_quantity'], data['total_stock_quantity'], data['total_meters']), ('20', '2', '10.10'))
         self.assertEqual(data['status'], 'PENDING_DISPATCH')
         self.assertIn('ETag', response)
@@ -152,6 +157,8 @@ class TubeOrdersApiTests(TubeApiFixture, APITestCase):
         self.assertEqual(recovered.status_code, 200, recovered.data)
         self.assertEqual(data['order_number'], recovered.data['data']['order_number'])
         self.assertFalse(replay.data['data']['created'])
+        counter.refresh_from_db()
+        self.assertEqual(counter.last_value, sequence)
         self.assertEqual(TubeOutsourcingOrder.objects.count(), 1)
         self.assertEqual(TubeOutsourcingLine.objects.count(), 1)
         self.raw_balance.refresh_from_db()
@@ -300,16 +307,28 @@ class TubeOrdersApiTests(TubeApiFixture, APITestCase):
 
     def test_audit_failure_rolls_back_order_and_reservation(self):
         payload = self.order_payload()
+        counters = list(DailyBusinessNumberCounter.objects.order_by('pk').values())
         with patch('apps.outsourcing.tube_services.write_audit_log', side_effect=RuntimeError('模拟审计故障')):
             with self.assertRaises(RuntimeError):
                 self.post_order(payload)
         self.assertFalse(TubeOutsourcingOrder.objects.exists())
         self.assertFalse(TubeOutsourcingLine.objects.exists())
+        self.assertEqual(list(DailyBusinessNumberCounter.objects.order_by('pk').values()), counters)
         self.post_order(payload)
 
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class TubeOrdersConcurrencyTests(TubeApiFixture, TransactionTestCase):
+    def test_factory_lock_allows_other_wf_order_foreign_key(self):
+        payload = self.order_payload()
+
+        def create():
+            client = APIClient()
+            client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+            return self.post_order(payload, client=client).data['data']['order_number']
+
+        assert_reference_locks_allow_number_holder(self, create, [(OutsourcingFactory, self.factory.pk)])
+
     def concurrent_posts(self, payloads):
         barrier, results = threading.Barrier(len(payloads)), []
 

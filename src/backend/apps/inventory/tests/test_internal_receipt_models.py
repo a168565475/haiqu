@@ -14,6 +14,15 @@ from ..models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLin
 from .test_public_stock_services import PublicStockFixture
 
 
+class InternalReceiptPermissionTests(TestCase):
+    def test_receipt_permissions_include_controlled_pending_delete(self):
+        codes=set(Permission.objects.filter(content_type__app_label='inventory',
+                                            content_type__model='internalsemifinishedreceipt').values_list('codename',flat=True))
+        self.assertEqual(codes,{'add_internalsemifinishedreceipt','view_internalsemifinishedreceipt',
+                              'confirm_internalsemifinishedreceipt','delete_internalsemifinishedreceipt'})
+        self.assertFalse(Permission.objects.filter(content_type__app_label='inventory',content_type__model='internalsemifinishedreceiptline').exists())
+
+
 class InternalReceiptModelTests(PublicStockFixture, TestCase):
     def setUp(self):
         super().setUp()
@@ -55,12 +64,6 @@ class InternalReceiptModelTests(PublicStockFixture, TestCase):
         for stage in ['CUTTING','ASSEMBLY','POWDER_COATING','']:
             with self.subTest(stage=stage),self.assertRaises(IntegrityError),transaction.atomic():
                 self.header(plan_category=stage)
-
-    def test_only_add_and_view_permissions_are_created(self):
-        codes=set(Permission.objects.filter(content_type__app_label='inventory',
-                                            content_type__model='internalsemifinishedreceipt').values_list('codename',flat=True))
-        self.assertEqual(codes,{'add_internalsemifinishedreceipt','view_internalsemifinishedreceipt'})
-        self.assertFalse(Permission.objects.filter(content_type__app_label='inventory',content_type__model='internalsemifinishedreceiptline').exists())
 
     def test_before_after_and_original_input_snapshot_are_saved(self):
         row=self.row(received_before=20,received_after=30)

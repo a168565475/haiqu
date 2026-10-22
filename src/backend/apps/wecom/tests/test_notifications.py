@@ -150,7 +150,8 @@ class NotificationServiceTests(NotificationFixture, TestCase):
         self.assertEqual(self.register(idempotency_key="no-recipient").status, "NO_RECIPIENT")
         code = "SEMI_FINISHED_RECEIPT_SUBMITTED"
         create_rule(code, self.member, [self.role.role_code])
-        self.assertEqual(self.register(event_code=code, idempotency_key="not-ready").status, "NOT_READY")
+        with self.assertRaises(Conflict):
+            self.register(event_code=code, idempotency_key="invalid-pending-object")
         self.assertFalse(NotificationRecipient.objects.exists())
 
     def test_submitter_scope_uses_real_object_authorization_and_does_not_broadcast(self):

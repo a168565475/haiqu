@@ -2,7 +2,7 @@
 from django.db.models import Sum
 from apps.boms.models import Bom, BomLine
 from apps.production_tasks.models import ProductionTaskProduct
-from .models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, PublicStockMovement
+from .models import InternalReceiptStatus, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, PublicStockMovement
 from .internal_receipt_quantities import net_component_demand
 from .stock_services import InventoryStockValidationError
 
@@ -31,7 +31,15 @@ def validate_combined_output(*, source, identity, quantity, quality):
         if pending or report_based:
             # 这里已经持有父对象锁，仅只读复核，不能反向取得领料/计划锁。
             from .tube_processing_services import metal_component_limits, _basis_dates
-            current = metal_component_limits(product)
+            # 确认待入库原明细时，其预占已包含在usage内；仅排除当前原单，防止重复扣额度。
+            exclude_receipt_id = InternalSemiFinishedReceiptLine.objects.filter(
+                pk=source['source_line_id'], receipt_id=source['source_id'],
+                receipt__status=InternalReceiptStatus.PENDING,
+                receipt__schedule_product__product_line=product,
+                bom_line=line, component_identity=line.component_identity,
+                quantity=quantity, stock_movement__isnull=True,
+            ).values_list('receipt_id', flat=True).first()
+            current = metal_component_limits(product, exclude_receipt_id=exclude_receipt_id)
             basis = current['components'].get(str(line.component_identity))
             unmatched = PublicStockMovement.objects.filter(product_line=product,
                 bom_line__component_identity=line.component_identity, direction='IN',
@@ -42,7 +50,8 @@ def validate_combined_output(*, source, identity, quantity, quality):
             for day in _basis_dates(product.pk):
                 if str(day) == current['as_of']:
                     continue
-                future = metal_component_limits(product, as_of=day)['components'].get(str(line.component_identity))
+                future = metal_component_limits(product, as_of=day,
+                    exclude_receipt_id=exclude_receipt_id)['components'].get(str(line.component_identity))
                 allowed = max(future['allowance']['reported_minimum'] - future['allowance']['report_protected_usage'] - unmatched, 0) if future and future['basis_ready'] else 0
                 remaining = min(remaining, allowed)
             if not basis or not basis['basis_ready'] or quantity > remaining:

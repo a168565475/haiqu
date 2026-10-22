@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElSelect } from 'element-plus'
+import ElementPlus, { ElMessage, ElSelect } from 'element-plus'
 import { nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -75,6 +75,39 @@ function metalReportingContext(productIds: string[]) {
   }
 }
 
+function historyScheme() {
+  return {
+    id: 'history-1', scheme_number: 'GJ-HISTORY', workshop: { id: 'workshop-1', name: '金工车间' },
+    crafts: [{ id: 'craft-1', name: '管材加工' }], operation_product_name: '管材加工',
+    production_task: { task_number: 'TASK-HISTORY' }, product: { name: '历史产品' },
+    effective_from: '2026-10-01', effective_to: null,
+    lines: [{
+      bom_component_identity: 'other-product-component', display_name: '前脚管-铁-20*1.0*500',
+      craft_id: 'craft-1', operation_id: 'operation-1', counting_mode: 'PIECE',
+      production_description: '历史制作说明', declared_price: '1.25', note: '历史备注', status: 'ACTIVE',
+    }],
+  }
+}
+
+async function openMetalHistory(context = metalReportingContext(['product-a'])) {
+  api.context.mockResolvedValue(context)
+  const wrapper = await render()
+  productSelect(wrapper).vm.$emit('update:modelValue', 'product-a')
+  await flushPromises()
+  wrapper.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', 'workshop-1')
+  await flushPromises()
+  await wrapper.find('.wr-history-button').trigger('click')
+  await flushPromises()
+  return wrapper
+}
+
+async function applyFirstHistory(wrapper: ReturnType<typeof mount>) {
+  const button = wrapper.findAllComponents({ name: 'ElButton' }).find(item => item.text() === '引用')
+  if (!button) throw new Error('找不到历史引用按钮')
+  button.vm.$emit('click', new MouseEvent('click'))
+  await flushPromises()
+}
+
 async function render() {
   const wrapper = mount(WageSchemeFormView, { global: { plugins: [ElementPlus] } })
   wrappers.push(wrapper)
@@ -118,6 +151,75 @@ afterEach(() => {
 })
 
 describe('工价方案产品上下文切换', () => {
+  it('选择车间前不查询历史，历史请求及列表只保留当前车间', async () => {
+    const first = await render()
+    await first.find('.wr-history-button').trigger('click')
+    expect(api.history).not.toHaveBeenCalled()
+    const source = historyScheme()
+    api.history.mockResolvedValue({ data: [source, { ...source, id: 'other', workshop: { id: 'workshop-other', name: '其他车间' } }] })
+    const wrapper = await openMetalHistory()
+    expect(api.history).toHaveBeenCalledWith({ workshop_id: 'workshop-1', page: 1, page_size: 100 })
+    const table = wrapper.findAllComponents({ name: 'ElTable' }).find(item => item.props('height') === '540')!
+    expect(table.props('data')).toEqual([source])
+  })
+
+  it('跨产品引用时按唯一完整名称对应当前 BOM，并提交当前部件与历史工价', async () => {
+    api.history.mockResolvedValue({ data: [historyScheme()] })
+    api.create.mockResolvedValue({ data: { id: 'scheme-new' }, etag: '"1"' })
+    api.submit.mockResolvedValue({ data: { id: 'scheme-new' }, etag: '"2"' })
+    const wrapper = await openMetalHistory()
+    await applyFirstHistory(wrapper)
+    expect(selectByTestId(wrapper, 'metal-bom-display-select').props('modelValue')).toBe('bom-line-1')
+    expect(wrapper.text()).toContain('200')
+    await wrapper.findAll('.wr-form-actions button').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(api.create).toHaveBeenCalledWith(expect.objectContaining({
+      history_source_scheme_id: 'history-1',
+      lines: [expect.objectContaining({ bom_line_id: 'bom-line-1', display_name: '前脚管-铁-20*1.0*500', declared_price: '1.25', production_description: '历史制作说明' })],
+    }))
+  })
+
+  it('同部件编号优先匹配，并使用当前 BOM 已更新的名称', async () => {
+    const source = historyScheme()
+    source.lines[0]!.bom_component_identity = 'component-1'
+    source.lines[0]!.display_name = '旧名称'
+    api.history.mockResolvedValue({ data: [source] })
+    const wrapper = await openMetalHistory()
+    await applyFirstHistory(wrapper)
+    expect(selectByTestId(wrapper, 'metal-bom-display-select').props('modelValue')).toBe('bom-line-1')
+    expect(selectByTestId(wrapper, 'metal-bom-display-select').text()).toContain('前脚管-铁-20*1.0*500')
+  })
+
+  it.each(['duplicate', 'different-spec'])('BOM 匹配不唯一或规格不同时不自动套用：%s', async kind => {
+    const context = metalReportingContext(['product-a'])
+    if (kind === 'duplicate') context.bom_items.push({ ...context.bom_items[0]!, id: 'duplicate', component_identity: 'duplicate' })
+    else context.bom_items[0]!.label = '前脚管-铁-20*1.0*600'
+    api.history.mockResolvedValue({ data: [historyScheme()] })
+    const warning = vi.spyOn(ElMessage, 'warning')
+    const wrapper = await openMetalHistory(context)
+    await applyFirstHistory(wrapper)
+    const select = selectByTestId(wrapper, 'metal-bom-display-select')
+    expect(select.props('modelValue')).toBeNull()
+    expect(select.props('placeholder')).toContain('未匹配：前脚管-铁-20*1.0*500')
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('1 条名称 / 部位未能唯一对应'))
+    await wrapper.findAll('.wr-form-actions button').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(api.create).not.toHaveBeenCalled()
+  })
+
+  it('切换车间后丢弃旧车间的迟到历史响应', async () => {
+    let resolve!: (value: unknown) => void
+    api.history.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const wrapper = await openMetalHistory()
+    wrapper.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', 'other-workshop')
+    await flushPromises()
+    resolve({ data: [historyScheme()] })
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'AppWindowDialog' })
+    expect(dialog.props('modelValue')).toBe(false)
+    expect(wrapper.findAllComponents({ name: 'ElButton' }).some(item => item.text() === '引用')).toBe(false)
+  })
+
   it('新增页从未选择到首次选择产品时重新请求对应上下文', async () => {
     const wrapper = await render()
 

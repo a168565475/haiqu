@@ -71,12 +71,12 @@ const schedulingBlockerText = computed(() => (
     : ''
 ))
 
-function apiError(error: unknown) {
-  if (!(error instanceof AxiosError)) return error instanceof Error ? error.message : '排产资料加载失败。'
+function apiError(error: unknown, fallback = '排产资料加载失败，请稍后重试。') {
+  if (!(error instanceof AxiosError)) return error instanceof Error ? error.message : fallback
   const data = error.response?.data as { error?: { message?: string }; detail?: string } | undefined
   if (error.response?.status === 403) return '当前账号没有创建排产计划的权限。'
   if (error.response?.status === 409) return data?.error?.message || '该生产任务单已经存在有效排产计划。'
-  return data?.error?.message || data?.detail || '排产资料加载失败，请稍后重试。'
+  return data?.error?.message || data?.detail || fallback
 }
 
 function blankDraft(product: ScheduleTaskProduct): ProductDraft {
@@ -239,7 +239,7 @@ async function save() {
     emit('saved', result.data.id)
     emit('update:modelValue', false)
   } catch (error) {
-    errorMessage.value = apiError(error)
+    errorMessage.value = apiError(error, '保存排产失败，请稍后重试。')
   } finally {
     saving.value = false
   }

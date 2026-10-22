@@ -4,7 +4,8 @@ from dataclasses import asdict
 from decimal import Decimal
 import uuid
 
-from django.db import connection
+from django.db import connection, models
+from django.db.models.deletion import ProtectedError
 from django.db.models import Prefetch, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -26,18 +27,21 @@ from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
 from .internal_receipt_quantities import (ComponentDemand, InputPool, ReceivedOutput, ReceiptQuantityError,
     calculate_receipt, validate_receipt, net_component_demand)
-from .models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, WarehouseZone, PublicStockMovement
+from .models import (InternalReceiptStatus, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine,
+                     WarehouseZone, PublicStockMovement)
 from .public_stock_cutover import stock_write_transaction
 from .public_stock_identity import build_semi_finished_identity
 from .public_stock_services import credit_public_stock
 from .public_stock_mode import public_flow_enabled
 from .stock_services import InventoryStockValidationError
+from .receipt_permissions import can_delete_pending_receipt, receipt_plans_for_category
 
 
-def require_operator(request, *, write=False):
+def require_operator(request, *, write=False, permission=None):
+    from apps.access_control.module_policy import has_permission
     actor = active_employee_for(request.user)
-    permission = 'add' if write else 'view'
-    if actor is None or not request.user.has_perm(f'inventory.{permission}_internalsemifinishedreceipt'):
+    required_permission = permission or ('add_internalsemifinishedreceipt' if write else 'view_internalsemifinishedreceipt')
+    if actor is None or not has_permission(request, f'inventory.{required_permission}'):
         raise PermissionDenied('没有厂内半成品入库权限。')
     request.employee = actor
     return actor
@@ -61,24 +65,27 @@ def _json(value):
     return value
 
 
-def load_receipt_context(request, schedule_product_id, category, *, lock=False):
+def load_receipt_context(request, schedule_product_id, category, *, lock=False, exclude_receipt_id=None,
+                         confirmation=False):
     if category == 'METAL':
         from .tube_receipt_services import uses_tube_receipt, load_tube_receipt_context
         if uses_tube_receipt(schedule_product_id=schedule_product_id):
-            return load_tube_receipt_context(request, schedule_product_id, lock=lock)
+            return load_tube_receipt_context(request, schedule_product_id, lock=lock,
+                                             exclude_receipt_id=exclude_receipt_id, confirmation=confirmation)
     require_operator(request)
     if not public_flow_enabled():
         _fail('公共库存流程尚未启用，不能在旧库存流程登记厂内半成品。')
     if category not in {'METAL', 'SEWING'}:
         _fail('只有金工、车缝计划可以登记厂内半成品入库；裁剪直接交车缝。')
-    plan = get_object_or_404(schedule_items_for_category(request, category), pk=schedule_product_id)
+    plan = get_object_or_404(receipt_plans_for_category(request, category, confirmation=confirmation), pk=schedule_product_id)
     locked_issue_ids = None
     if lock:
         if category == 'METAL':
             from .tube_processing_services import lock_tube_product_scope
             lock_tube_product_scope(plan.product_line_id)
             if uses_tube_receipt(schedule_product_id=schedule_product_id):
-                return load_tube_receipt_context(request, schedule_product_id, lock=True)
+                return load_tube_receipt_context(request, schedule_product_id, lock=True,
+                                                 exclude_receipt_id=exclude_receipt_id, confirmation=confirmation)
         else:
             from .sewing_processing_services import lock_sewing_product_scope
             lock_sewing_product_scope(plan.product_line_id)
@@ -90,7 +97,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
         ProductionTask.objects.select_for_update().get(pk=plan.schedule.production_task_id)
         ProductionScheduleProduct.objects.select_for_update().get(pk=plan.pk)
         ProductionTaskProduct.objects.select_for_update().get(pk=plan.product_line_id)
-        plan = get_object_or_404(schedule_items_for_category(request, category), pk=plan.pk)
+        plan = get_object_or_404(receipt_plans_for_category(request, category, confirmation=confirmation), pk=plan.pk)
         current_issue_ids = list(MaterialIssue.objects.filter(production_task_id=plan.schedule.production_task_id,
             product_line_id=plan.product_line_id,status='ISSUED').order_by('id').values_list('id',flat=True))
         if current_issue_ids != locked_issue_ids:
@@ -223,8 +230,11 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
                 consumed = source.issued_pieces - source.internal_received_pieces
             committed[source_key] += consumed
             source_facts.append((line, source, snapshot))
-    history_lines = list(InternalSemiFinishedReceiptLine.objects.filter(
-        receipt__schedule_product__product_line=product).select_related('receipt', 'unit').order_by('id'))
+    history_query = InternalSemiFinishedReceiptLine.objects.filter(
+        receipt__schedule_product__product_line=product)
+    if exclude_receipt_id is not None:
+        history_query = history_query.exclude(receipt_id=exclude_receipt_id)
+    history_lines = list(history_query.select_related('receipt', 'unit').order_by('id'))
     history = []
     for row in history_lines:
         if row.receipt.plan_category != category:
@@ -249,7 +259,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False):
                 .values('component_identity').annotate(quantity=Sum('quantity'))}
         if pending:
             from .tube_processing_services import metal_component_limits
-            tube_basis = metal_component_limits(product)
+            tube_basis = metal_component_limits(product, exclude_receipt_id=exclude_receipt_id)
             for fact in facts.values():
                 committed[f'{product.pk}:{fact["requirement"].pk}'] += pending.get(str(fact['line'].component_identity), Decimal(0))
     pools = [InputPool(scope, f'{product.pk}:{identifier}', '支',
@@ -293,11 +303,12 @@ def preview_data(context, actor):
 
 
 @stock_write_transaction
-def confirm_receipt(request, data):
+def submit_receipt(request, data):
+    """车间提交厂内产出；这里只登记待确认原单，不产生库存流水。"""
     if data['plan_category'] == 'METAL':
-        from .tube_receipt_services import uses_tube_receipt, confirm_tube_receipt
+        from .tube_receipt_services import uses_tube_receipt, submit_tube_receipt
         if uses_tube_receipt(schedule_product_id=data['schedule_product_id'], request_id=data['request_id']):
-            return confirm_tube_receipt(request, data)
+            return submit_tube_receipt(request, data)
     actor = require_operator(request, write=True)
     payload_hash = digest({'actor':str(actor.pk),'data':data})
     with connection.cursor() as cursor:
@@ -311,10 +322,10 @@ def confirm_receipt(request, data):
     context = load_receipt_context(request, data['schedule_product_id'], data['plan_category'], lock=True)
     if context.get('tube_new'):
         # 等待统一产品锁期间可能出现首笔新口径记录，继续使用新口径办理。
-        from .tube_receipt_services import confirm_tube_receipt
+        from .tube_receipt_services import submit_tube_receipt
         data = {**data, 'lines': sorted([{'bom_line_id': row['bom_line_id'], 'quantity': int(row['quantity'])}
             for row in data['lines']], key=lambda row: str(row['bom_line_id']))}
-        return confirm_tube_receipt(request, data)
+        return submit_tube_receipt(request, data)
     expected = request.headers.get('If-Match')
     if not expected:
         raise PreconditionRequired()
@@ -335,14 +346,85 @@ def confirm_receipt(request, data):
             expected_revision=context['tube_basis']['revision'])
     zone = get_object_or_404(WarehouseZone, pk=data['zone_id'], status='ACTIVE',
                             warehouse__status='ACTIVE', warehouse__warehouse_type='SEMI_FINISHED')
+    now = timezone.now()
     header = InternalSemiFinishedReceipt.objects.create(receipt_number=next_business_number('INTERNAL_SEMI_RECEIPT'),
         request_id=data['request_id'], request_payload_hash=payload_hash, schedule_product=context['plan'],
         completed_craft=context['craft'], plan_category=context['category'], receipt_date=data['receipt_date'],
-        zone=zone, actor_employee=actor, source_revision_hash=context['revision'], remark=data.get('remark',''),
+        zone=zone, actor_employee=actor, status=InternalReceiptStatus.PENDING,
+        submitted_by_employee=actor, submitted_at=now, source_revision_hash=context['revision'], remark=data.get('remark',''),
         source_snapshot={'production_order':context['task'].task_number,'product':context['product'].product_name_snapshot,
                          'order_quantity':str(context['product'].quantity),'bom_id':str(context['bom'].pk),
                          'plan_category':context['category'],'schedule_id':str(context['plan'].schedule_id),
                          **({'quantity_basis':'ORDER_REMAINING'} if context['category'] == 'SEWING' else {})})
+    for key, quantity in requested.items():
+        fact = context['facts'][key]
+        allowance = calculation.components[key]
+        row_id = uuid.uuid4()
+        demand = next(item for item in context['args']['demands'] if item.component_key == key)
+        InternalSemiFinishedReceiptLine.objects.create(id=row_id,receipt=header,bom_line=fact['line'],
+            component_identity=fact['line'].component_identity,unit=context['unit'],input_requirement=fact['requirement'],
+            input_unit_name=demand.input_unit,quantity=quantity,input_per_output=demand.input_per_output,
+            input_quantity=allowance.consumes_input,required_quantity_snapshot=allowance.required,
+            received_before=allowance.received,received_after=allowance.received_after,stock_movement=None,
+            attribute_snapshot=fact['identity']['identity_snapshot'],input_snapshot=_json(asdict(allowance)))
+    from .notification_events import internal_receipt_submitted
+    internal_receipt_submitted(header, actor)
+    return header, False
+
+
+def _receipt_requested(receipt):
+    return {str(line.bom_line_id): line.quantity for line in receipt.lines.select_related('bom_line').all()}
+
+
+@stock_write_transaction
+def confirm_receipt(request, receipt_id):
+    """仓库确认待入库原单；成功后才写公共库存和通知。"""
+    actor = require_operator(request, permission='confirm_internalsemifinishedreceipt')
+    receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_related('schedule_product'), pk=receipt_id)
+    from .tube_processing_services import lock_tube_product_scope
+    lock_tube_product_scope(receipt.schedule_product.product_line_id)
+    receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_for_update(of=('self',)).select_related(
+        'schedule_product', 'zone', 'completed_craft'), pk=receipt_id)
+    get_object_or_404(receipt_plans_for_category(request, receipt.plan_category, confirmation=True), pk=receipt.schedule_product_id)
+    if receipt.status == InternalReceiptStatus.CONFIRMED:
+        return receipt, True
+    if receipt.status != InternalReceiptStatus.PENDING:
+        raise Conflict('该入库原单状态不允许确认。')
+    if receipt.source_snapshot.get('quantity_basis') == 'WORK_REPORT_MINIMUM':
+        from .tube_receipt_services import confirm_tube_receipt
+        return confirm_tube_receipt(request, receipt)
+    context = load_receipt_context(request, receipt.schedule_product_id, receipt.plan_category,
+                                   lock=True, exclude_receipt_id=receipt.pk, confirmation=True)
+    expected = request.headers.get('If-Match')
+    if not expected:
+        raise PreconditionRequired()
+    if expected != f'"{receipt.source_revision_hash}"':
+        raise PreconditionFailed('待入库原单版本已变化，请刷新后重试。')
+    if (receipt.source_snapshot.get('bom_id') != str(context['bom'].pk)
+            or receipt.completed_craft_id != context['craft'].pk):
+        raise Conflict('BOM或完成工序已变化，请删除待入库原单后重新提交。')
+    by_id = {str(fact['line'].pk): key for key, fact in context['facts'].items()}
+    requested, pending_lines = {}, {}
+    for item in receipt.lines.select_related('bom_line').all():
+        key = by_id.get(str(item.bom_line_id))
+        if not key or key in requested:
+            _fail('待确认明细不属于当前计划或部位重复。')
+        fact = context['facts'][key]
+        demand = next(row for row in context['args']['demands'] if row.component_key == key)
+        if (item.component_identity != fact['line'].component_identity
+                or item.attribute_snapshot != fact['identity']['identity_snapshot']
+                or item.unit_id != context['unit'].pk or item.input_requirement_id != fact['requirement'].pk
+                or item.input_unit_name != demand.input_unit or item.input_per_output != demand.input_per_output):
+            raise Conflict('部位实物属性或投入依据已变化，请删除待入库原单后重新提交。')
+        requested[key] = item.quantity
+        pending_lines[key] = item
+    calculation = validate_receipt(**context['args'], requested=requested)
+    if context.get('tube_basis'):
+        from .tube_processing_services import assert_tube_quantity_available
+        assert_tube_quantity_available(product_line_id=context['product'].pk,
+            requested={str(context['facts'][key]['line'].component_identity): quantity
+                       for key, quantity in requested.items()},
+            expected_revision=context['tube_basis']['revision'], exclude_receipt_id=receipt.pk)
     for key, quantity in requested.items():
         fact = context['facts'][key]
         allowance = calculation.components[key]
@@ -352,12 +434,13 @@ def confirm_receipt(request, data):
                 if issue_line.requirement_id != fact['requirement'].pk or (source and source.status == 'CLOSED'):
                     continue
                 if source is None:
-                    source = MetalProcessingSource.objects.create(issue_line=issue_line,source_snapshot=snapshot,
-                        source_hash=digest(snapshot),issued_pieces=snapshot['issued_pieces'])
+                    source = MetalProcessingSource.objects.create(issue_line=issue_line, source_snapshot=snapshot,
+                        source_hash=digest(snapshot), issued_pieces=snapshot['issued_pieces'])
                 available = source.issued_pieces-source.internal_received_pieces-source.reserved_pieces-source.dispatched_pieces
                 take = min(remaining, available)
                 source.internal_received_pieces += take
-                source.completed_pieces = max(source.completed_pieces, source.internal_received_pieces+source.reserved_pieces+source.dispatched_pieces)
+                source.completed_pieces = max(source.completed_pieces,
+                    source.internal_received_pieces+source.reserved_pieces+source.dispatched_pieces)
                 source.version += 1
                 source.save(update_fields=['internal_received_pieces','completed_pieces','version','updated_at'])
                 remaining -= take
@@ -365,17 +448,56 @@ def confirm_receipt(request, data):
                     break
             if remaining:
                 raise Conflict('实际已领投入不足，本次入库已全部回滚。')
-        row_id = uuid.uuid4()
-        movement = credit_public_stock(identity=fact['identity'],zone=zone,quantity=quantity,
-            source_type='INTERNAL_SEMI_RECEIPT',source_id=header.pk,source_line_id=row_id,
-            actor_employee=actor,production_task=context['task'],product_line=context['product'],bom_line=fact['line'],
-            snapshot={**header.source_snapshot,'receipt_number':header.receipt_number,'receipt_date':str(header.receipt_date),
-                      'actor_name':actor.display_name,'source':'厂内入库','remark':header.remark})
-        demand = next(item for item in context['args']['demands'] if item.component_key == key)
-        InternalSemiFinishedReceiptLine.objects.create(id=row_id,receipt=header,bom_line=fact['line'],
-            component_identity=fact['line'].component_identity,unit=context['unit'],input_requirement=fact['requirement'],
-            input_unit_name=demand.input_unit,quantity=quantity,input_per_output=demand.input_per_output,
-            input_quantity=allowance.consumes_input,required_quantity_snapshot=allowance.required,
-            received_before=allowance.received,received_after=allowance.received_after,stock_movement=movement,
-            attribute_snapshot=fact['identity']['identity_snapshot'],input_snapshot=_json(asdict(allowance)))
-    return header, False
+        line = pending_lines[key]
+        movement = credit_public_stock(identity=fact['identity'], zone=receipt.zone, quantity=quantity,
+            source_type='INTERNAL_SEMI_RECEIPT', source_id=receipt.pk, source_line_id=line.pk,
+            actor_employee=actor, production_task=context['task'], product_line=context['product'], bom_line=fact['line'],
+            snapshot={**receipt.source_snapshot, 'receipt_number':receipt.receipt_number,
+                      'receipt_date':str(receipt.receipt_date), 'actor_name':actor.display_name,
+                      'source':'厂内入库', 'remark':receipt.remark})
+        line.stock_movement = movement
+        line.save(update_fields=['stock_movement','updated_at'])
+    receipt.status = InternalReceiptStatus.CONFIRMED
+    receipt.confirmed_by_employee = actor
+    receipt.confirmed_at = timezone.now()
+    receipt.save(update_fields=['status','confirmed_by_employee','confirmed_at','updated_at'])
+    from .notification_events import internal_receipt_confirmed
+    internal_receipt_confirmed(receipt, actor)
+    return receipt, False
+
+
+@stock_write_transaction
+def delete_pending_receipt(request, receipt_id):
+    require_operator(request, permission='delete_internalsemifinishedreceipt')
+    receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_related('schedule_product'), pk=receipt_id)
+    from .tube_processing_services import lock_tube_product_scope
+    # 与提交、确认共用产品额度锁；原单删除与额度释放一起提交。
+    lock_tube_product_scope(receipt.schedule_product.product_line_id)
+    receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_for_update(of=('self',)), pk=receipt_id)
+    if receipt.status != InternalReceiptStatus.PENDING:
+        raise Conflict('已入库记录不能删除。')
+    if not can_delete_pending_receipt(request, receipt, receipt.plan_category):
+        raise PermissionDenied('只能删除本人提交的待入库记录。')
+    expected = request.headers.get('If-Match')
+    if not expected:
+        raise PreconditionRequired()
+    if expected != f'"{receipt.source_revision_hash}"':
+        raise PreconditionFailed()
+    if (receipt.confirmed_at is not None or receipt.lines.filter(stock_movement__isnull=False).exists()
+            or PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT', source_id=receipt.pk).exists()):
+        raise Conflict('入库记录已有库存流水，不能删除。')
+    try:
+        # 仅本服务在行锁和状态核验后绕过禁止历史删除的模型保护。
+        from apps.core.audit import write_audit_log
+        write_audit_log(object_type='INTERNAL_SEMI_RECEIPT', object_id=receipt.pk, action='DELETED',
+            actor_employee=request.employee, context_type='PRODUCTION_SCHEDULE',
+            context_id=receipt.schedule_product.schedule_id, request=request,
+            before_data={'receipt_number': receipt.receipt_number,
+                         'product_line_id': str(receipt.schedule_product.product_line_id),
+                         'submitted_at': receipt.submitted_at or receipt.created_at,
+                         'submitted_by_name': (receipt.submitted_by_employee or receipt.actor_employee).display_name,
+                         'status': receipt.status})
+        models.QuerySet.delete(receipt.lines.all())
+        models.Model.delete(receipt)
+    except ProtectedError as error:
+        raise Conflict('入库记录已有业务引用，不能删除。') from error

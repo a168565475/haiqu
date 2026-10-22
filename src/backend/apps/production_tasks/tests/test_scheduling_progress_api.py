@@ -84,10 +84,10 @@ class ProductionTaskSchedulingProgressApiTests(APITestCase):
         second.pk = None
         second.line_number = 2
         second.save()
-        self.assert_progress("PARTIAL", "ORDER_COMPLETED")
+        self.assert_progress("PARTIAL", "ORDER_PARTIAL")
         self.bom.archived_at = timezone.now()
         self.bom.save(update_fields=["archived_at", "updated_at"])
-        self.assert_progress("NOT_CREATED", "ORDER_COMPLETED")
+        self.assert_progress("NOT_CREATED", "ORDER_PARTIAL")
 
     def test_confirmed_or_purchasing_order_is_not_completed(self):
         for status in (PurchaseOrderStatus.DRAFT, PurchaseOrderStatus.SUBMITTED, PurchaseOrderStatus.PURCHASING):

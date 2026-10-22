@@ -20,6 +20,7 @@ const hydrating = ref(false)
 const sourceStatus = ref('')
 const savedSchemeId = ref<string | null>(null)
 let contextRequestSequence = 0
+let historyRequestSequence = 0
 const form = reactive({ scheduleProductId: String(route.query.schedule_product_id || ''), workshopId: String(route.query.workshop_id || ''), craftIds: route.query.craft_id ? [String(route.query.craft_id)] : [] as string[], operationProductName: '', remark: '', historySourceSchemeId: null as string | null, lines: [] as WageSchemeLineInput[] })
 const historyVisible = ref(false); const historyLoading = ref(false); const historyRows = ref<WageScheme[]>([])
 const scheduleProduct = computed(() => {
@@ -83,7 +84,28 @@ function requiredQuantity(line: WageSchemeLineInput) {
   return line.counting_mode === 'PIECE' ? setQuantity * option.cutting_pieces_per_set : setQuantity
 }
 function quantityText(value: number | null) { return value === null ? '待完善 BOM' : value.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }
-async function openHistory() { historyVisible.value = true; historyLoading.value = true; try { const result = await fetchWageSchemeHistory({ page: 1, page_size: 100 }); historyRows.value = result.data } catch (error) { ElMessage.error(errorText(error)) } finally { historyLoading.value = false } }
+async function openHistory() {
+  if (!form.workshopId) return ElMessage.warning('请先选择当前车间。')
+  const workshopId = form.workshopId
+  const current = ++historyRequestSequence
+  historyRows.value = []; historyVisible.value = true; historyLoading.value = true
+  try {
+    const result = await fetchWageSchemeHistory({ workshop_id: workshopId, page: 1, page_size: 100 })
+    if (current === historyRequestSequence && workshopId === form.workshopId) {
+      historyRows.value = result.data.filter(item => item.workshop.id === workshopId)
+    }
+  } catch (error) {
+    if (current === historyRequestSequence) ElMessage.error(errorText(error))
+  } finally { if (current === historyRequestSequence) historyLoading.value = false }
+}
+function historyBomOption(line: WageScheme['lines'][number]) {
+  const byIdentity = line.bom_component_identity
+    ? bomItemsForCraft.value.filter(item => item.component_identity === line.bom_component_identity) : []
+  if (byIdentity.length) return byIdentity.length === 1 ? byIdentity[0] : undefined
+  // 不同产品的 BOM 部件编号不同；仅完整名称唯一相同时自动对应，不能按行号或近似名称套价。
+  const byName = bomItemsForCraft.value.filter(item => item.label === line.display_name.trim())
+  return byName.length === 1 ? byName[0] : undefined
+}
 async function useHistory(item: WageScheme) {
   const sameWorkshop = item.workshop.id === form.workshopId
   const selectedCraftIds = new Set(form.craftIds)
@@ -100,9 +122,20 @@ async function useHistory(item: WageScheme) {
     } catch { return }
   }
   form.historySourceSchemeId = item.id
-  form.lines = item.lines.filter(line => line.status === 'ACTIVE').map(line => ({ bom_line_id: bomLineId(line.bom_component_identity), craft_id: line.craft_id, operation_id: line.operation_id, display_name: line.display_name, counting_mode: line.counting_mode, production_description: line.production_description, previous_price: line.declared_price, revised_price: null, declared_price: line.declared_price, status: 'ACTIVE', note: line.note }))
-  historyVisible.value = false; ElMessage.success('已复制历史批准工价；当前方案仍需重新送审。')
+  form.lines = item.lines.filter(line => line.status === 'ACTIVE').map(line => {
+    const option = usesBomName.value ? historyBomOption(line) : undefined
+    return { bom_line_id: option?.id || null, craft_id: line.craft_id, operation_id: line.operation_id, display_name: option?.label || line.display_name, counting_mode: line.counting_mode, production_description: line.production_description, previous_price: line.declared_price, revised_price: null, declared_price: line.declared_price, status: 'ACTIVE', note: line.note }
+  })
+  historyVisible.value = false
+  const unmatched = usesBomName.value ? form.lines.filter(line => !line.bom_line_id).length : 0
+  if (unmatched) ElMessage.warning(`已引用工价，${unmatched} 条名称 / 部位未能唯一对应当前 BOM，请手动选择后再提交。`)
+  else ElMessage.success('已复制历史批准工价；当前方案仍需重新送审。')
 }
+watch(() => form.workshopId, () => {
+  historyRequestSequence += 1
+  historyRows.value = []; historyVisible.value = false; historyLoading.value = false
+  form.historySourceSchemeId = null
+})
 watch(() => form.scheduleProductId, async (value, previous) => {
   if (hydrating.value || value === previous) return
   if (form.craftIds.length || form.lines.length) ElMessage.warning('排产产品已切换，原车间、工艺和工价明细已清空，请重新选择。')
@@ -269,7 +302,7 @@ onMounted(load)
       <ElFormItem label="备注"><ElInput v-model="form.remark" type="textarea" :rows="4" maxlength="2000" show-word-limit /></ElFormItem>
     </ElForm></section><section class="wr-card wr-card--wide"><div class="wr-card-title"><h2>工价明细</h2><div><ElButton class="wr-history-button" @click="openHistory">选择历史数据</ElButton><ElButton class="wr-add-line-button" type="primary" :icon="Plus" @click="addLine">添加明细</ElButton></div></div>
       <ElTable class="erp-table-editor wr-wage-line-table scroll-actions-table" :data="form.lines" border>
-        <ElTableColumn label="名称 / 部位" min-width="190" align="left"><template #default="{ row }"><ElSelect v-if="usesBomName" v-model="row.bom_line_id" :data-testid="isMetalWorkshop ? 'metal-bom-display-select' : 'bom-display-select'" filterable :placeholder="isMetalWorkshop ? '选择部件、材质和规格' : '选择 BOM 名称和规格'" @change="bomChanged(row)"><ElOption v-for="item in bomItemsForCraft" :key="item.id" :label="item.label" :value="item.id" /></ElSelect><ElInput v-else v-model="row.display_name" maxlength="200" /></template></ElTableColumn>
+        <ElTableColumn label="名称 / 部位" min-width="190" align="left"><template #default="{ row }"><ElSelect v-if="usesBomName" v-model="row.bom_line_id" :data-testid="isMetalWorkshop ? 'metal-bom-display-select' : 'bom-display-select'" filterable :placeholder="!row.bom_line_id && row.display_name ? `未匹配：${row.display_name}，请选择` : (isMetalWorkshop ? '选择部件、材质和规格' : '选择 BOM 名称和规格')" @change="bomChanged(row)"><ElOption v-for="item in bomItemsForCraft" :key="item.id" :label="item.label" :value="item.id" /></ElSelect><ElInput v-else v-model="row.display_name" maxlength="200" /></template></ElTableColumn>
         <ElTableColumn label="申报工序" min-width="140" align="left"><template #default="{ row }"><ElSelect v-model="row.operation_id" data-testid="wage-operation-select" filterable @change="operationChanged(row)"><ElOption v-for="item in operationOptions(row.craft_id)" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></template></ElTableColumn>
         <ElTableColumn v-if="isSewingCraft" label="计数方式" width="106" align="left"><template #default="{ row }"><ElSelect v-model="row.counting_mode"><ElOption label="按套" value="SET" /><ElOption label="按片" value="PIECE" /></ElSelect></template></ElTableColumn>
         <ElTableColumn label="需完成次数" width="108" align="right"><template #default="{ row }">{{ quantityText(requiredQuantity(row)) }}</template></ElTableColumn>

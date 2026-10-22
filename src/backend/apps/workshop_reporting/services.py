@@ -606,7 +606,7 @@ def approve_scheme(*, scheme_id, actor, request, effective_from=None, effective_
     scheme = WageScheme.objects.select_for_update().select_related("product_line").get(pk=scheme_id)
     require_workshop(request, "workshop_reporting.approve_wagescheme", scheme.workshop_id)
     from apps.access_control.module_policy import prohibit_self_approval, enabled
-    if enabled():
+    if enabled() and not request.user.is_superuser:
         submitter = scheme.events.filter(action=WageSchemeAction.SUBMITTED).order_by('-scheme_revision', '-created_at', '-id').values_list('actor_employee_id', flat=True).first()
         prohibit_self_approval(actor, submitter)
     require_matching_etag(request, scheme)
@@ -675,7 +675,7 @@ def return_scheme(*, scheme_id, actor, request, comment=""):
     scheme = WageScheme.objects.select_for_update().get(pk=scheme_id)
     require_workshop(request, "workshop_reporting.approve_wagescheme", scheme.workshop_id)
     from apps.access_control.module_policy import prohibit_self_approval, enabled
-    if enabled():
+    if enabled() and not request.user.is_superuser:
         submitter = scheme.events.filter(action=WageSchemeAction.SUBMITTED).order_by('-scheme_revision', '-created_at', '-id').values_list('actor_employee_id', flat=True).first()
         prohibit_self_approval(actor, submitter)
     require_matching_etag(request, scheme)
@@ -935,6 +935,11 @@ def create_work_report(*, data, actor, request=None):
                 report=report, schedule_product=schedule_product, built=built
             ))
             remember_report(report)
+            from apps.core.audit import write_audit_log
+            write_audit_log(object_type="WORK_REPORT", object_id=report.pk, action="CREATED",
+                actor_employee=actor, context_type="PRODUCTION_SCHEDULE", context_id=schedule_product.schedule_id,
+                after_data={"report_number": report.report_number, "product_line_id": str(report.product_line_id),
+                            "production_date": str(report.production_date)}, request=request)
             _update_plan_execution(
                 schedule_product=schedule_product, scheme=scheme,
                 completed=plan_will_complete, actor=actor,

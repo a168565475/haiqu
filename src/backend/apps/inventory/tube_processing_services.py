@@ -68,7 +68,7 @@ def _metal_schemes(product_line_id):
         | Q(scope_craft__workshop__name='金工车间')).filter(scope_craft__craft_type='INTERNAL')
 
 
-def _usage(product_line_id, *, exclude_tube_order_id=None):
+def _usage(product_line_id, *, exclude_tube_order_id=None, exclude_receipt_id=None):
     """累计真实首次产出，不读取公共库存余额，不读取采购批次。"""
     usage = defaultdict(lambda: dict(received=0, dispatched=0, reserved=0, legacy_dispatched=0))
     from apps.outsourcing.models import TubeOutsourcingLine
@@ -81,9 +81,12 @@ def _usage(product_line_id, *, exclude_tube_order_id=None):
         usage[str(row['component_identity'])]['reserved'] += row['quantity']
     for row in tube_rows.filter(order__status__in=['PROCESSING', 'COMPLETED']).values('component_identity').annotate(quantity=Sum('quantity')):
         usage[str(row['component_identity'])]['dispatched'] += row['quantity']
-    for row in InternalSemiFinishedReceiptLine.objects.filter(
+    receipt_rows = InternalSemiFinishedReceiptLine.objects.filter(
         receipt__schedule_product__product_line_id=product_line_id, receipt__plan_category='METAL',
-    ).values('component_identity').annotate(quantity=Sum('quantity')):
+    )
+    if exclude_receipt_id is not None:
+        receipt_rows = receipt_rows.exclude(receipt_id=exclude_receipt_id)
+    for row in receipt_rows.values('component_identity').annotate(quantity=Sum('quantity')):
         usage[str(row['component_identity'])]['received'] = row['quantity']
     for row in MetalProcessingSource.objects.filter(
         issue_line__issue__product_line_id=product_line_id,
@@ -104,12 +107,13 @@ def _usage(product_line_id, *, exclude_tube_order_id=None):
     return usage
 
 
-def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=None):
+def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=None, exclude_receipt_id=None):
     """当前适用方案的稳定工序累计量。返回依据缺失原因，不按名称猜部位。"""
     if not isinstance(product_line, ProductionTaskProduct):
         product_line = ProductionTaskProduct.objects.get(pk=product_line)
     as_of = as_of or timezone.localdate()
-    usage = _usage(product_line.pk, exclude_tube_order_id=exclude_tube_order_id)
+    usage = _usage(product_line.pk, exclude_tube_order_id=exclude_tube_order_id,
+                   exclude_receipt_id=exclude_receipt_id)
     bom = Bom.objects.filter(product_line=product_line, archived_at__isnull=True).order_by('-version_number', '-pk').first()
     bom_ready = bom is not None and bom.status == 'VERIFIED' and bom.order_quantity == product_line.quantity
     bom_lines = list(BomLine.objects.filter(section__bom=bom, section__section_type='PROFILE')) if bom else []
@@ -271,10 +275,12 @@ def assert_tube_reports_cover_usage(product_line_id):
                     f'{row["allowance"]["reported_minimum"]}支，不能低于已处理及预留合计{used}支。'})
 
 
-def assert_tube_quantity_available(*, product_line_id, requested, expected_revision, exclude_tube_order_id=None):
+def assert_tube_quantity_available(*, product_line_id, requested, expected_revision, exclude_tube_order_id=None,
+                                  exclude_receipt_id=None):
     """S3入库/直接外发共同入口；调用者须同事务记录首次产出或有效预留。"""
     product = lock_tube_product_scope(product_line_id)
-    context = metal_component_limits(product, exclude_tube_order_id=exclude_tube_order_id)
+    context = metal_component_limits(product, exclude_tube_order_id=exclude_tube_order_id,
+                                     exclude_receipt_id=exclude_receipt_id)
     if not expected_revision or expected_revision != context['revision']:
         raise PreconditionFailed('工价、报工、领料或已处理数量已变化，请刷新后重试。')
     if not isinstance(requested, dict) or not requested:
@@ -299,7 +305,8 @@ def assert_tube_quantity_available(*, product_line_id, requested, expected_revis
     for as_of in _basis_dates(product_line_id):
         if str(as_of) == context['as_of']:
             continue
-        future = metal_component_limits(product, as_of=as_of, exclude_tube_order_id=exclude_tube_order_id)
+        future = metal_component_limits(product, as_of=as_of, exclude_tube_order_id=exclude_tube_order_id,
+                                         exclude_receipt_id=exclude_receipt_id)
         for key, quantity in quantities.items():
             row = future['components'].get(key)
             if (not row or not row['basis_ready'] or row['allowance']['reported_minimum']

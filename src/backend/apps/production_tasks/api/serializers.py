@@ -893,9 +893,18 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
         if cached is not None:
             return cached
 
-        purchase_order = getattr(instance, "purchase_order", None)
-        if purchase_order is not None and purchase_order.archived_at is None:
-            summary = (f"ORDER_{purchase_order.status}", purchase_order.get_status_display())
+        from apps.procurement.selectors import purchase_orders_by_product, purchase_orders_with_product_ids
+        orders = getattr(instance, "_active_purchase_orders_for_status", None)
+        if orders is None:
+            orders = list(purchase_orders_with_product_ids(instance.purchase_orders.filter(archived_at__isnull=True)))
+        if orders:
+            purchased_ids = purchase_orders_by_product(orders)
+            if any(product.pk not in purchased_ids for product in instance.products.all()):
+                summary = ("ORDER_PARTIAL", "部分产品已建采购单")
+            elif len({order.status for order in orders}) > 1:
+                summary = ("ORDER_MIXED", "采购单多状态")
+            else:
+                summary = (f"ORDER_{orders[0].status}", orders[0].get_status_display())
             instance._serialized_purchase_status_summary = summary
             return summary
 

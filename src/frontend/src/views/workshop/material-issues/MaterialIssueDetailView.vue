@@ -304,17 +304,17 @@ onMounted(load)
 
     <AppWindowDialog v-model="confirmVisible" title="仓库确认出库" :width="1200" :height="650" :show-close="!acting" :close-on-click-modal="!acting" :close-on-press-escape="!acting">
       <ElAlert v-if="previewError" :title="previewError" type="error" :closable="false" />
-      <p>请核对每项物料和数量。确认时将重新检查合格库存、额度与来源，并由系统自动分配库存，任一明细失败均不会部分扣账。</p>
-      <ElTable :data="confirmationRows" border max-height="420" data-testid="issue-live-preview">
+      <p>请核对每项物料和数量。确认时将重新检查合格库存、额度与来源，任一明细失败均不会部分扣账。</p>
+      <ElTable class="issue-confirm-table" :data="confirmationRows" border show-overflow-tooltip max-height="420" data-testid="issue-live-preview">
         <ElTableColumn label="分区 / 物料部位" min-width="220"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
         <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
-        <ElTableColumn label="规格" min-width="140"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+        <ElTableColumn label="规格" min-width="220"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ row.line_type === 'SEMI' ? colorValue(row, true) : colorValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="申请数量" width="150"><template #default="{ row }">{{ numberText(row.requested_quantity) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="公共可用量" min-width="120"><template #default="{ row }">{{ numberText(row.available_stock) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="本订单剩余" min-width="120"><template #default="{ row }">{{ numberText(row.order_remaining) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn v-if="isPublicIssue" label="本次可领" min-width="120"><template #default="{ row }">{{ numberText(row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn label="预计扣库" min-width="320"><template #default="{ row }"><span v-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根 / {{ numberText(row.meters) }} 米 · 系统自动分配库存</span><span v-else>{{ numberText(row.requested_quantity) }} {{ row.unit }} · {{ row.warehouse_zone || '合格公共库存' }}</span></template></ElTableColumn>
+        <ElTableColumn label="预计扣库" min-width="230"><template #default="{ row }"><span v-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根 / {{ numberText(row.meters) }} 米</span><span v-else>{{ numberText(row.requested_quantity) }} {{ row.unit }} · {{ row.warehouse_zone || '合格公共库存' }}</span></template></ElTableColumn>
       </ElTable>
       <template #footer><ElButton :disabled="acting" @click="confirmVisible = false">取消</ElButton><ElButton :disabled="acting" @click="openConfirmation">重新核对</ElButton><ElButton type="primary" :loading="acting" :disabled="acting || !previewReady || Boolean(previewError)" @click="confirmIssue">确认出库</ElButton></template>
     </AppWindowDialog>
@@ -332,6 +332,7 @@ onMounted(load)
 @use '@/styles/theme/detail' as detail;
 .material-issue-detail { display: flex; height: 100%; flex-direction: column; overflow: hidden; container-type: inline-size; }
 .detail-table :deep(td.specification-cell .cell) { padding-top: 8px; padding-bottom: 8px; white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
+.issue-confirm-table :deep(.cell) { white-space: nowrap; }
 .detail-scroll { min-height: 0; flex: 1; overflow: auto; padding: 0 0 14px; }
 .detail-title { display: flex; flex-wrap: wrap; min-height: 44px; align-items: flex-start; gap: 14px; margin-bottom: 14px; }
 .detail-title h1 { margin: 0; color: var(--erp-color-text-primary); font: 700 36px/44px var(--erp-font-body); }

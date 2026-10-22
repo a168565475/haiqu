@@ -47,6 +47,7 @@ def rule_payload(rule):
         "body_template": rule.body_template,
         "allowed_variables": event["allowed_variables"],
         "required_variables": event["required_variables"],
+        "variable_definitions": event["variable_definitions"],
         "supported_scopes": event["supported_scopes"],
         "scope_labels": RECIPIENT_SCOPES,
         "recipient_role_codes": list(rule.recipient_role_codes),
@@ -68,6 +69,7 @@ def default_rule_payload(event):
         "name": event["display_name"], "title_template": event["default_title"],
         "body_template": event["default_body"], "allowed_variables": event["allowed_variables"],
         "required_variables": event["required_variables"], "supported_scopes": event["supported_scopes"],
+        "variable_definitions": event["variable_definitions"],
         "scope_labels": RECIPIENT_SCOPES, "recipient_role_codes": event["default_role_codes"],
         "recipient_roles": [], "recipient_scope": event["supported_scopes"][0],
         "enabled": event["enabled_by_default"], "version": 0, "updated_at": None,
@@ -95,7 +97,9 @@ def content_accessible(recipient, user):
     if recipient.event.status == "STALE":
         return False
     return event_object_accessible(recipient.event.event_code, recipient.event.object_id, user,
-                                   role_codes=recipient.role_codes, object_version=recipient.event.object_version)
+                                   role_codes=recipient.role_codes, object_version=recipient.event.object_version,
+                                   submitter_id=(recipient.event.context.get("submitter_id")
+                                                 if recipient.scope == "SUBMITTER" else None))
 
 
 def target_accessible(recipient, user):
@@ -109,6 +113,11 @@ def recipient_payload(recipient, user):
         title, body, target = recipient.event.rendered_title, recipient.event.rendered_body, recipient.event.target
     else:
         title, body, target = "通知内容不可访问", "该业务内容当前不可访问。", None
+        from apps.inventory.notification_events import INVENTORY_EVENTS, current_inventory_object
+        if recipient.event.event_code in INVENTORY_EVENTS and current_inventory_object(
+            recipient.event.event_code, recipient.event.object_id, recipient.event.object_version,
+        ) is None:
+            title, body = "通知已过期", "原入出库记录或成功凭证已变化，请查看当前库存记录。"
         from .workshop_notifications import WORKSHOP_EVENTS, current_workshop_object
         if recipient.event.event_code in WORKSHOP_EVENTS and current_workshop_object(
             recipient.event.event_code, recipient.event.object_id, recipient.event.object_version,

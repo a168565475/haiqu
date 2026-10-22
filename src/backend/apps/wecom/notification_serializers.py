@@ -46,6 +46,7 @@ class NotificationRuleSerializer(serializers.Serializer):
     body_template = serializers.CharField()
     allowed_variables = serializers.ListField(child=serializers.CharField())
     required_variables = serializers.ListField(child=serializers.CharField())
+    variable_definitions = serializers.ListField(child=serializers.DictField(child=serializers.CharField()))
     supported_scopes = serializers.ListField(child=serializers.CharField())
     scope_labels = serializers.DictField()
     recipient_role_codes = serializers.ListField(child=serializers.CharField())
@@ -78,16 +79,36 @@ class NotificationPreviewSerializer(serializers.Serializer):
     recipient_scope = serializers.CharField(max_length=20, required=False)
     enabled = serializers.BooleanField(required=False)
 
-    def validate(self, attrs):
-        if set(self.initial_data) - {
+    def to_internal_value(self, data):
+        # 预览既用于独立请求，也嵌套在试发请求中；嵌套Serializer没有initial_data。
+        if isinstance(data, dict) and set(data) - {
             "variables", "name", "title_template", "body_template", "recipient_role_codes", "recipient_scope", "enabled",
         }:
             raise serializers.ValidationError("预览只接收规则字段和示例变量。")
-        return attrs
+        return super().to_internal_value(data)
 
 
 class NotificationPreviewResponseSerializer(serializers.Serializer):
     data = serializers.DictField()
+
+
+class NotificationPreviewSendSerializer(serializers.Serializer):
+    preview_token = serializers.CharField(max_length=16000, trim_whitespace=False)
+    binding_id = serializers.UUIDField()
+    config_etag = serializers.CharField(max_length=100)
+    draft = NotificationPreviewSerializer()
+
+    def validate(self, attrs):
+        if set(self.initial_data) - {"preview_token", "binding_id", "config_etag", "draft"}:
+            raise serializers.ValidationError("试发只接收预览凭证、单个绑定人员、配置版本和当前草稿。")
+        if set(attrs["draft"]) != {"variables", "name", "title_template", "body_template", "recipient_role_codes", "recipient_scope", "enabled"}:
+            raise serializers.ValidationError("请提交生成预览时的完整草稿。")
+        return attrs
+
+
+class NotificationPreviewRecipientQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    page = serializers.IntegerField(min_value=1, default=1)
 
 
 class NotificationItemSerializer(serializers.Serializer):

@@ -1,34 +1,44 @@
 @use '@/styles/crm/tokens' as token;
-@use '@/styles/crm/sample-controls' as sample;
 @use '@/styles/crm/sample-workspace' as workspace;
 @use '@/styles/theme/detail';
 
 .warehouse-review-page { @include workspace.frame; }
 .warehouse-content { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 14px; padding: 0; overflow-y: auto; }
 .warehouse-page-heading { min-height: 44px; flex: none; }
-.warehouse-heading-row { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 24px; }
+.warehouse-heading-row { display: flex; min-height: 44px; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.warehouse-heading-copy { min-width: 0; }
+.warehouse-heading-copy p { margin: 12px 0 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 20px; }
 .warehouse-heading-main { display: flex; min-width: 0; align-items: center; gap: 12px; }
-h1 { width: 432px; flex: none; margin: 0; font-family: token.$crm-font-display; font-size: 34px; line-height: 44px; }
+h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; font-weight: 500; line-height: 44px; }
 .warehouse-heading-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 10px; }
 .warehouse-heading-actions :deep(.el-button) { width: auto; min-width: 96px; height: 32px; min-height: 32px; padding: 0 16px; border-radius: 5px; font-size: 13px; }
 .warehouse-heading-actions :deep(.submit-action) { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
+.warehouse-review-page :deep(.submit-action.is-disabled) { color: var(--erp-button-disabled-text); background: var(--erp-button-disabled-background); border-color: var(--erp-button-disabled-border); box-shadow: none; opacity: 1; }
 .warehouse-inline-message { min-height: 20px; color: token.$crm-danger; font-size: 13px; line-height: 20px; }
-.warehouse-error { color: token.$crm-danger; }
-.warehouse-application { @include detail.surface; display: grid; min-height: 108px; flex: none; grid-template-columns: minmax(0, 396fr) minmax(0, 340fr) minmax(0, 250fr) minmax(0, 340fr) 164px; align-items: start; gap: 24px; padding: 16px; }
-.warehouse-application :deep(.field-value) { padding-left: 5px; border-radius: 0; box-shadow: none; }
-.warehouse-review-page .warehouse-application :deep(.el-button.is-link) { justify-content: flex-start; color: token.$crm-text-secondary; font-size: 14px; line-height: 22px; }
-.warehouse-statistics { @include detail.surface; display: grid; min-height: 80px; flex: none; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.warehouse-statistics > div { display: flex; flex-direction: column; gap: 2px; padding: 16px 24px 6px; }
-.warehouse-statistics span { color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; }
-.warehouse-statistics strong { font-size: 26px; font-weight: 500; line-height: 34px; }
+.warehouse-error { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid token.$crm-border-subtle; border-radius: 5px; color: token.$crm-danger; background: token.$crm-color-surface; }
+.warehouse-application { @include detail.surface; display: grid; min-height: 76px; flex: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; }
+.warehouse-application :deep(.sample-readonly-field) { height: auto; gap: 5px; }
+.warehouse-application :deep(.field-label) { color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; line-height: 16px; }
+.warehouse-application :deep(.field-value) { min-height: 20px; padding: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; font-weight: 500; line-height: 20px; }
+.warehouse-review-page .warehouse-application :deep(.el-button.is-link) { justify-content: flex-start; color: token.$crm-text-secondary; font-size: 13px; line-height: 20px; }
+.warehouse-statistics { display: flex; flex: none; flex-wrap: wrap; gap: 12px 28px; padding: 0 16px; }
+.warehouse-statistics > div { display: flex; align-items: baseline; gap: 8px; }
+.warehouse-statistics span { color: token.$crm-text-secondary; font-size: 12px; line-height: 20px; }
+.warehouse-statistics strong { font-size: 13px; font-weight: 500; line-height: 20px; }
 .success { color: token.$crm-success; }
 .shortage { color: token.$crm-primary; }
 .warehouse-notes { @include detail.surface; min-height: 80px; flex: none; padding: 12px 16px; }
-.warehouse-notes label { display: block; margin-bottom: 4px; font-size: 14px; line-height: 22px; }
+.warehouse-notes label { display: block; margin-bottom: 5px; color: token.$crm-text-secondary; font-size: 12px; line-height: 16px; }
 .warehouse-notes :deep(.el-input__wrapper) { min-height: 32px; height: 32px; }
 .warehouse-review-page.is-fullscreen { background: var(--erp-page-background); position: fixed; z-index: 2000; inset: 0; width: 100%; height: 100dvh; }
 .warehouse-review-page.is-fullscreen .warehouse-content { gap: 0; }
+.warehouse-content :deep(.sample-material-progress) { flex: none; margin-bottom: 0; padding: var(--erp-list-card-padding); }
 
-@media (max-width: 1440px) {
-  .warehouse-application { gap: 16px; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, .7fr) minmax(0, 1fr) 100px; }
+@media (max-width: 1400px) {
+  .warehouse-application { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 800px) {
+  .warehouse-heading-row, .warehouse-heading-main, .warehouse-heading-actions { flex-wrap: wrap; }
+  .warehouse-heading-actions { flex: 0 1 auto; justify-content: flex-start; }
+  .warehouse-application { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

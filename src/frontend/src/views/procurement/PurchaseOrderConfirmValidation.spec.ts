@@ -74,4 +74,31 @@ describe('采购订单确认校验', () => {
     expect(payload?.lines[0]).not.toHaveProperty('quantity_difference_reason')
     wrapper.unmount()
   })
+
+  it.each(['SAMPLE', 'PRODUCTION'])('%s 管材再次保存保留对应的根数和长度契约', async (sourceType) => {
+    const wrapper = shallowMount(PurchaseOrderConfirmView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      order: { source_type: string; lines: Array<{ actual_bar_count: number; raw_bar_length_m: string }> }
+      saveChanges: (showSuccess: boolean) => Promise<boolean>
+    }
+    vm.order.source_type = sourceType
+    vm.order.lines[0]!.actual_bar_count = 4
+    vm.order.lines[0]!.raw_bar_length_m = '3.05'
+    vi.mocked(api.updatePurchaseOrder).mockResolvedValue({ data: vm.order, etag: 'version-2' } as never)
+
+    try {
+      expect(await vm.saveChanges(false)).toBe(true)
+      const call = vi.mocked(api.updatePurchaseOrder).mock.calls[0]!
+      expect(call[2]).toBe('version-1')
+      expect(call[1].lines[0]).toMatchObject({ actual_bar_count: 4, actual_purchase_quantity: null })
+      if (sourceType === 'SAMPLE') {
+        expect(call[1].lines[0]).toHaveProperty('raw_bar_length_m', '3.05')
+      } else {
+        expect(call[1].lines[0]).not.toHaveProperty('raw_bar_length_m')
+      }
+    } finally {
+      wrapper.unmount()
+    }
+  })
 })

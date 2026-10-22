@@ -110,7 +110,8 @@ h1 { margin: 0; font-family: token.$crm-font-display; font-size: 34px; line-heig
 .director-heading-actions { display: flex; flex: none; align-items: center; gap: 10px; }
 .director-heading .action-buttons { display: flex; gap: 10px; }
 .action-buttons :deep(.el-button) { width: auto; height: 32px; padding: 0 16px; border-radius: 5px; font-size: 13px; }
-.action-buttons :deep(.el-button--primary) { background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
+.action-buttons :deep(.el-button--primary) { color: token.$crm-text-inverse; background: var(--erp-button-primary-surface); border-color: var(--erp-button-primary-border); }
+.action-buttons :deep(.el-button--primary.is-disabled) { color: var(--erp-button-disabled-text); background: var(--erp-button-disabled-background); border-color: var(--erp-button-disabled-border); box-shadow: none; opacity: 1; }
 .director-action-error, .director-error { color: token.$crm-danger; font-size: 13px; }
 .readonly-hint { color: token.$crm-text-secondary; font-size: 13px; }
 </style>

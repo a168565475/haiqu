@@ -27,6 +27,20 @@ export interface SampleApplicationDraft {
   removeReferenceImage?: boolean
 }
 
+export interface SampleApplicationBasicInput {
+  source_type: 'inquiry' | 'quotation' | null
+  source_id: string | null
+  customer_account_id: string
+  customer_contact_id: string | null
+  owner_employee_id: string
+  sample_type: string
+  shipping_method: string
+  delivery_batch: string
+  is_repeat_order: boolean | null
+  order_date: string | null
+  sample_due_date: string | null
+}
+
 export const sampleDimensionFields = [
   { key: 'lengthCm', label: '长（cm）' },
   { key: 'armrestWidthCm', label: '扶手宽（cm）' },

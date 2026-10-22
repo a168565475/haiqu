@@ -18,6 +18,41 @@ RECIPIENT_SCOPES = {
 
 VARIABLE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
 
+VARIABLE_DEFINITIONS = {
+    "document_no": ("单据编号", "示例单号"),
+    "product_name": ("产品名称", "示例产品"),
+    "quantity": ("数量", "1"),
+    "operator": ("操作人", "示例操作人"),
+    "occurred_at": ("操作时间", "示例时间"),
+    "workshop_name": ("车间名称", "示例车间"),
+    "status": ("业务状态", "示例状态"),
+    "submitter": ("申请人／提交人", "示例提交人"),
+    "confirmed_by": ("确认人", "示例确认人"),
+    "confirmed_at": ("确认时间", "2026-10-21 10:00:00"),
+    "object_version": ("业务版本标识", "示例版本"),
+    "product_count": ("产品明细项数", "2"),
+    "purchase_order_no": ("采购单编号", "示例采购单号"),
+    "accepted_quantity": ("合格数量", "10"),
+    "return_quantity": ("退回数量", "1"),
+    "receipt_date": ("入库日期", "2026-10-21"),
+    "unit": ("数量单位", "件"),
+    "kind": ("损耗登记类型", "损耗"),
+    "reason_summary": ("原因摘要", "示例原因"),
+    "source_kind": ("来源类型编码", "METAL"),
+    "source_name": ("来源类型名称", "金工车间"),
+}
+
+
+def variable_definitions(event):
+    quantity_labels = {
+        "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": "本次入库数量",
+        "OUTSOURCING_LOSS_RECORDED": "本次损耗登记数量",
+        "TUBE_OUTSOURCING_SHORTAGE_RECORDED": "本次少回数量",
+    }
+    return [{"name": name,
+             "label": quantity_labels.get(event["event_code"], "数量") if name == "quantity" else VARIABLE_DEFINITIONS[name][0],
+             "example": VARIABLE_DEFINITIONS[name][1]} for name in event["allowed_variables"]]
+
 
 def _event(name, title, body, roles, scopes, required_permission, target_key, *, enabled=True, variables=None):
     required_variables = list(dict.fromkeys(VARIABLE.findall(f"{title} {body}")))
@@ -89,6 +124,31 @@ EVENTS = {
     "SEMI_FINISHED_RECEIPT_SUBMITTED": _event(
         "SEMI_FINISHED_RECEIPT_SUBMITTED", "半成品入库申请提交", "半成品入库申请 {{document_no}} 已提交，等待仓管确认。",
         ["WAREHOUSE_KEEPER"], ["ROLE_MEMBERS"], "inventory.view_internalsemifinishedreceipt", "semi-finished-receipt-detail",
+        variables=("document_no", "product_name", "quantity", "operator", "occurred_at", "workshop_name",
+                   "status", "submitter", "object_version", "receipt_date"),
+    ),
+    "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED": _event(
+        "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED", "装配成品入库申请提交", "装配成品入库申请 {{document_no}} 已提交，等待仓管确认。",
+        ["WAREHOUSE_KEEPER"], ["ROLE_MEMBERS"], "inventory.view_finishedgoodsreceipt", "finished-goods-inventory",
+        variables=("document_no", "product_name", "quantity", "unit", "receipt_date", "operator", "occurred_at", "status", "object_version"),
+    ),
+    "INTERNAL_SEMI_RECEIPT_CONFIRMED": _event(
+        "INTERNAL_SEMI_RECEIPT_CONFIRMED", "半成品直接入库完成",
+        "半成品入库单 {{document_no}} 已由 {{operator}} 于 {{occurred_at}} 完成入库，请核对现有入库记录。",
+        ["METAL_DIRECTOR", "SEWING_DIRECTOR", "ASSEMBLY_DIRECTOR"], ["SUBMITTER", "ROLE_MEMBERS"], "inventory.view_internalsemifinishedreceipt", "semi-receipt-records",
+        variables=("document_no", "operator", "occurred_at", "product_name", "receipt_date", "status", "submitter", "confirmed_by", "confirmed_at", "object_version"),
+    ),
+    "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": _event(
+        "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED", "装配成品入库完成",
+        "装配成品入库单 {{document_no}} 已由 {{operator}} 于 {{occurred_at}} 完成入库，请核对成品入库记录。",
+        ["METAL_DIRECTOR", "SEWING_DIRECTOR", "ASSEMBLY_DIRECTOR"], ["SUBMITTER", "ROLE_MEMBERS"], "inventory.view_finishedgoodsreceipt", "finished-goods-inventory",
+        variables=("document_no", "operator", "occurred_at", "product_name", "quantity", "unit", "receipt_date", "status", "submitter", "confirmed_by", "confirmed_at", "object_version"),
+    ),
+    "FINISHED_GOODS_OUTBOUND_CONFIRMED": _event(
+        "FINISHED_GOODS_OUTBOUND_CONFIRMED", "成品实际出库完成",
+        "成品出库单 {{document_no}} 已由 {{operator}} 于 {{occurred_at}} 完成实际出库。",
+        ["FACTORY_MANAGER"], ["ROLE_MEMBERS"], "inventory.view_finishedgoodsoutbound", "finished-goods-outbound-detail",
+        variables=("document_no", "operator", "occurred_at", "status", "object_version"),
     ),
     "WAGE_SCHEME_SUBMITTED": _event(
         "WAGE_SCHEME_SUBMITTED", "工价送审", "工价方案 {{document_no}} 已由 {{operator}} 于 {{occurred_at}} 送审。",
@@ -207,6 +267,7 @@ def get_event(event_code):
         raise ValueError(f"未登记的通知事件：{event_code}") from None
     event["required_permissions"] = list(EVENT_OBJECT_PERMISSIONS[event_code])
     event["required_permission"] = next(iter(event["required_permissions"]), "")
+    event["variable_definitions"] = variable_definitions(event)
     return event
 
 
@@ -228,6 +289,11 @@ def target_for(event_code, object_id):
         "PURCHASE_ORDER_COMPLETED": ("purchase-order-detail", "id"),
         "PRODUCTION_PLAN_CREATED": ("workshop-scheduling-detail", "scheduleId"),
         "MATERIAL_ISSUE_SUBMITTED": ("material-issue-detail", "issueId"),
+        "SEMI_FINISHED_RECEIPT_SUBMITTED": ("semi-receipt-records", None),
+        "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED": ("finished-goods-inventory", None),
+        "INTERNAL_SEMI_RECEIPT_CONFIRMED": ("semi-receipt-records", None),
+        "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": ("finished-goods-inventory", None),
+        "FINISHED_GOODS_OUTBOUND_CONFIRMED": ("finished-goods-outbound-detail", "outboundId"),
         "WAGE_SCHEME_SUBMITTED": ("wage-scheme-detail", "schemeId"),
         "WAGE_SCHEME_DECIDED": ("wage-scheme-detail", "schemeId"),
         "WORK_REPORT_SAVED": ("work-report-day-detail", "productionDate"),

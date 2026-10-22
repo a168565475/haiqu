@@ -30,6 +30,11 @@ ACTION_NAMES = {
 
 
 def presentation(code, permission, module):
+    if code in {'inventory.delete_finishedgoodsreceipt', 'inventory.delete_internalsemifinishedreceipt'}:
+        model = code.split('.', 1)[1].removeprefix('delete_')
+        return {"resource": f"inventory.{model}", "resource_name": RESOURCE_NAMES[model],
+                "action": "delete", "action_name": "删除待入库记录",
+                "label": f"{RESOURCE_NAMES[model]} · 删除待入库记录"}
     from .management_permissions import MANAGEMENT_OPERATIONS
     for name, label, _ in MANAGEMENT_OPERATIONS:
         if code == f'access_control.{name}':

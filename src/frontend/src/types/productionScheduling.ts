@@ -108,6 +108,8 @@ export interface ProductionSchedule {
   record_status_display: string
   version: number
   source: Record<string, any>
+  list_amounts?: { estimated_wage: string | null; reported_amount: string | null } | null
+  factory_follower_names?: string[]
   source_revision_hash: string
   source_current_status: string
   source_current_status_display: string

@@ -1,15 +1,5 @@
 .schedule-detail {
   .erp-list-tag { max-width: 100%; overflow: hidden; white-space: nowrap; font-weight: 500; }
-  .schedule-amount-summary {
-    padding: 12px 16px 16px;
-    > header { padding: 0 0 12px; }
-    dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
-    dl > div { min-width: 0; padding: 0 24px; border-left: 1px solid var(--erp-table-border); }
-    dl > div:first-child { padding-left: 0; border-left: 0; }
-    dt { color: var(--erp-color-text-secondary); font-size: 13px; line-height: 20px; }
-    dd { margin: 6px 0 0; color: var(--erp-color-text-primary); font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-    .schedule-amount-summary__reason, .schedule-amount-summary__scope { margin: 8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
-  }
   .schedule-execution { min-width: 0; display: grid; gap: 20px; padding: 16px; border-top: 1px solid var(--erp-table-border); }
 }
 
@@ -46,9 +36,4 @@
   &__track i.is-complete { background: var(--erp-tag-success-background); }
   &__state { margin: 0; padding: 16px; color: var(--erp-color-text-secondary); background: var(--erp-glass-inner-background); border-radius: var(--erp-radius-control); font-size: 13px; line-height: 20px; }
   &__note { margin: 8px 0 0; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
-}
-
-@container (max-width: 700px) {
-  .schedule-detail .schedule-amount-summary dl { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .schedule-detail .schedule-amount-summary dl > div { padding: 0; border-left: 0; }
 }

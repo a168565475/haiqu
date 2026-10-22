@@ -92,7 +92,7 @@ async function submit() {
   try {
     const result = await confirmInternalReceipt(pending.value.payload,pending.value.etag)
     pending.value = null; sessionStorage.removeItem(pendingKey)
-    ElMessage.success(`入库成功：${result.receipt_number}`)
+    ElMessage.success(`已提交待入库：${result.receipt_number}`)
     await load()
   } catch (cause) {
     const status = cause instanceof AxiosError ? cause.response?.status : undefined
@@ -151,6 +151,6 @@ onMounted(() => {
       </section>
     </template>
     <section v-else class="panel d1-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton :icon="Refresh" @click="load">重新加载</ElButton></template></section>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>确认后立即增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="!preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!preview || (!pending && !selection.length)" @click="submit">{{ pending ? '核对本次提交' : '确认入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="!preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!preview || (!pending && !selection.length)" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 </template>

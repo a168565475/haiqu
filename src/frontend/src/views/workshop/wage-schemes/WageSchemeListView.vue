@@ -154,7 +154,7 @@ onMounted(() => { void loadFilterOptions(); void load() })
       <ElTableColumn label="类型" width="60"><template #default="{ row }">{{ schemeType(row) }}</template></ElTableColumn>
       <ElTableColumn label="工价合计" width="90" align="right" class-name="wr-money"><template #default="{ row }">{{ formatWageMoney(row.declared_total) }}</template></ElTableColumn>
       <ElTableColumn label="审批状态" width="120" align="center"><template #default="{ row }"><span class="wr-status-tag" :class="['erp-list-tag', statusClass(row.status).replace('is-', 'erp-list-tag--')]">{{ statusText(row) }}</span></template></ElTableColumn>
-      <ElTableColumn label="更新日期" width="123"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
+      <ElTableColumn label="更新日期" width="160" class-name="wr-updated-at"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
       <ElTableColumn label="操作" width="130" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="openDetail(row.id)">查看</ElButton><ElButton v-if="canProcess(row)" link type="primary" @click="router.push({ name: 'wage-scheme-detail', params: { schemeId: row.id } })">处理</ElButton><ElButton v-if="row.can_create_change && canChange && canSubmit" link type="primary" @click="router.push({ name: 'wage-scheme-change', params: { schemeId: row.id } })">变更</ElButton></template></ElTableColumn>
       </ElTable></div>
       <footer v-if="!errorMessage" class="wr-pagination erp-list-footer"><span>共 {{ total }} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" layout="sizes, prev, pager, next" @current-change="load" @size-change="page = 1; load()" /></footer>
@@ -167,6 +167,7 @@ onMounted(() => { void loadFilterOptions(); void load() })
 
 <style scoped lang="scss">
 .wr-status-tag.erp-list-tag { white-space: nowrap; }
+:deep(.wr-updated-at .cell) { white-space: nowrap; }
 .wr-wage-filter-toolbar > :deep(.el-input) { width: min(100%, 380px); }
 .wr-wage-filter-toolbar > :deep(.el-select) { width: 186px; }
 .wr-list-card__header > div { display: flex; align-items: center; gap: 8px; margin-left: auto; }

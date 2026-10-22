@@ -38,6 +38,7 @@ from ..selectors import (
     work_reports_with_context,
 )
 from ..schedule_progress import schedule_progress_statuses
+from ..schedule_stage_progress import schedule_stage_progress_statuses
 from ..services import (
     approve_scheme, create_change_scheme, create_scheme, create_work_report, price_scheme_for, return_scheme, submit_scheme, update_scheme,
     update_work_report, bom_options_for_product_line, wage_scheme_progress,
@@ -391,10 +392,14 @@ class ScheduleProgressStatusView(generics.GenericAPIView):
                 pk__in=schedule_ids, record_status=ScheduleStatus.ACTIVE,
             ).values_list("pk", flat=True)
         )
-        return Response({"data": schedule_progress_statuses(
-            [schedule_id for schedule_id in schedule_ids if schedule_id in visible_schedule_ids],
-            production_date=production_date,
-        )})
+        ordered_ids = [schedule_id for schedule_id in schedule_ids if schedule_id in visible_schedule_ids]
+        rows = schedule_progress_statuses(ordered_ids, production_date=production_date)
+        stage_rows = schedule_stage_progress_statuses(
+            ordered_ids, request=request, as_of_date=production_date,
+        )
+        for row in rows:
+            row.update(stage_rows[row["schedule_id"]])
+        return Response({"data": rows})
 
 
 class WageSchemeViewSet(viewsets.GenericViewSet):

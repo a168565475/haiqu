@@ -9,7 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.conf import settings
 from django.db import IntegrityError, connection
-from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Subquery, Sum
+from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Sum
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -51,13 +51,14 @@ from ..selectors import (
     filter_purchase_return_status,
     active_suppliers,
     production_tasks_with_purchase_sources,
+    purchase_orders_by_product,
+    purchase_orders_with_product_ids,
     purchase_orders_with_context,
     search_purchase_orders,
     search_suppliers,
     suppliers_with_context,
 )
 from ..services import (
-    PurchaseSourceUnavailable,
     create_purchase_order,
     create_supplier,
     delete_purchase_order,
@@ -102,15 +103,6 @@ from .serializers import (
 
 SUPPLIER_NUMBER_PATTERN = re.compile(r"^GYS([0-9]{5})$")
 SUPPLIER_NUMBER_START = 266
-
-
-def is_purchase_task_uniqueness_error(exc):
-    database_error = getattr(exc, "__cause__", None)
-    diagnostics = getattr(database_error, "diag", None)
-    constraint_name = getattr(diagnostics, "constraint_name", "") or ""
-    if constraint_name == "procurement_purchase_order_production_task_id_key":
-        return True
-    return "procurement_purchase_order.production_task_id" in str(exc)
 
 
 def next_supplier_number_preview():
@@ -472,19 +464,12 @@ class PurchaseOrderViewSet(
     def create(self, request, *args, **kwargs):
         serializer = PurchaseOrderCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        try:
-            order = create_purchase_order(
-                validated_data=serializer.validated_data,
-                allowed_task_ids=self._accessible_task_ids(),
-                actor_employee=getattr(request, "employee", None),
-                request=request,
-            )
-        except IntegrityError as exc:
-            if not is_purchase_task_uniqueness_error(exc):
-                raise
-            raise PurchaseSourceUnavailable(
-                [{"code": "PURCHASE_ORDER_EXISTS", "message": "该生产订单已建立采购订单。"}]
-            ) from exc
+        order = create_purchase_order(
+            validated_data=serializer.validated_data,
+            allowed_task_ids=self._accessible_task_ids(),
+            actor_employee=getattr(request, "employee", None),
+            request=request,
+        )
         response = Response(
             {"data": PurchaseOrderDetailSerializer(order).data},
             status=status.HTTP_201_CREATED,
@@ -668,7 +653,8 @@ class PurchaseOrderViewSet(
             "suppliers": list(suppliers.values("id", "supplier_number", "supplier_name")),
             "production_tasks": [
                 {"id": order.production_task_id, "task_number": order.production_task_number_snapshot, "order_number": order.sales_order_number_snapshot}
-                for order in orders.filter(production_task__isnull=False).order_by("production_task_number_snapshot")
+                for order in orders.filter(production_task__isnull=False)
+                .order_by("production_task_id", "-created_at", "-id").distinct("production_task_id")
             ],
             "statuses": [{"value": value, "label": label} for value, label in PurchaseOrderStatus.choices],
         }})
@@ -719,9 +705,6 @@ class PurchaseOrderViewSet(
             raise ValidationError({"scope": "选项范围必须为 full、suppliers、sources 或 detail。"})
 
         if scope == "sources":
-            existing_orders = PurchaseOrder.objects.filter(
-                production_task_id=OuterRef("pk"), archived_at__isnull=True,
-            ).order_by("created_at", "id")
             bom_options = Bom.objects.filter(
                 archived_at__isnull=True,
             ).only(
@@ -736,23 +719,23 @@ class PurchaseOrderViewSet(
                 production_task_id=OuterRef("pk"), archived_at__isnull=True,
             ))).select_related("customer_account").annotate(
                 purchase_product_count=Count("products", distinct=True),
-                existing_purchase_order_id=Subquery(existing_orders.values("id")[:1]),
-                existing_purchase_order_number=Subquery(existing_orders.values("order_number")[:1]),
             ).prefetch_related(
                 Prefetch("products", queryset=product_options, to_attr="purchase_source_products"),
+                Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(), to_attr="purchase_source_orders"),
             ).order_by("-updated_at", "-id")
             task_rows = []
             for task in tasks:
                 blockers = []
+                existing_by_product = purchase_orders_by_product(task.purchase_source_orders)
                 if task.status not in {"READY", "IN_PRODUCTION"}:
                     blockers.append({
                         "code": "TASK_NOT_READY",
                         "message": "生产任务单必须经 PMC 确认后，才能创建采购订单。",
                     })
-                if task.existing_purchase_order_id:
+                if None in existing_by_product:
                     blockers.append({
-                        "code": "PURCHASE_ORDER_EXISTS",
-                        "message": "该生产订单已建立采购订单。",
+                        "code": "PURCHASE_PRODUCT_UNKNOWN",
+                        "message": "已有采购单缺少可核实的产品明细，请先核实原单据。",
                     })
                 if task.purchase_product_count == 0:
                     blockers.append({
@@ -765,7 +748,11 @@ class PurchaseOrderViewSet(
                 missing_bom_count = 0
                 stale_bom_count = 0
                 empty_bom_count = 0
+                purchased_product_count = 0
                 for product in products:
+                    if product.pk in existing_by_product:
+                        purchased_product_count += 1
+                        continue
                     latest_bom = (getattr(product, "purchase_source_boms", []) or [None])[0]
                     if latest_bom is None:
                         missing_bom_count += 1
@@ -778,7 +765,12 @@ class PurchaseOrderViewSet(
                     else:
                         verified_bom_count += 1
                 if task.purchase_product_count and verified_bom_count == 0:
-                    if pending_bom_count:
+                    if purchased_product_count == task.purchase_product_count:
+                        blockers.append({
+                            "code": "PURCHASE_ORDER_EXISTS",
+                            "message": "该生产订单的所有产品均已建立采购订单。",
+                        })
+                    elif pending_bom_count:
                         blockers.append({
                             "code": "BOM_NOT_VERIFIED",
                             "message": "该订单最新 BOM 尚未确认，确认后才能采购。",
@@ -798,12 +790,14 @@ class PurchaseOrderViewSet(
                             "code": "BOM_MISSING",
                             "message": "该订单没有已确认的有效 BOM。",
                         })
-                if task.existing_purchase_order_id:
+                if task.purchase_product_count and purchased_product_count == task.purchase_product_count:
                     source_status_display = "已建采购单"
                 elif task.status not in {"READY", "IN_PRODUCTION"}:
                     source_status_display = task.get_status_display()
                 elif verified_bom_count == 0:
                     source_status_display = "BOM待确认" if pending_bom_count else "未建立BOM"
+                elif purchased_product_count:
+                    source_status_display = "部分产品已建采购单"
                 elif pending_bom_count or missing_bom_count or stale_bom_count or empty_bom_count:
                     source_status_display = "部分BOM待确认"
                 else:
@@ -811,11 +805,12 @@ class PurchaseOrderViewSet(
                 task_rows.append({
                     **self._task_payload(task),
                     "product_count": task.purchase_product_count,
+                    "remaining_product_count": task.purchase_product_count - purchased_product_count,
                     "can_create": not blockers,
                     "blockers": blockers,
                     "source_status_display": source_status_display,
-                    "existing_purchase_order_id": str(task.existing_purchase_order_id) if task.existing_purchase_order_id else None,
-                    "existing_purchase_order_number": task.existing_purchase_order_number,
+                    "existing_purchase_order_id": None,
+                    "existing_purchase_order_number": None,
                 })
 
             procurement_sources = list(sample_procurement_sources(request))
@@ -899,6 +894,7 @@ class PurchaseOrderViewSet(
                 {
                     **self._task_payload(task),
                     "product_count": source["product_count"],
+                    "remaining_product_count": source["remaining_product_count"],
                     "can_create": source["has_creatable_bom"],
                     "blockers": source["blockers"],
                     "existing_purchase_order_id": source["existing_purchase_order_id"],

@@ -63,9 +63,16 @@ class MaterialSaveSerializer(serializers.Serializer):
     submit = serializers.BooleanField()
 
 
+class WarehouseAllocationSerializer(serializers.Serializer):
+    balanceId = serializers.UUIDField()
+    stockMode = serializers.ChoiceField(choices=['LEGACY', 'PUBLIC_V2'])
+    quantity = serializers.CharField(max_length=30)
+
+
 class WarehouseLineSerializer(serializers.Serializer):
     key = serializers.UUIDField()
     supplyQuantity = serializers.CharField(max_length=30, allow_blank=True)
+    inventoryAllocations = WarehouseAllocationSerializer(many=True, max_length=200, required=False)
 
 
 class WarehouseDraftSerializer(serializers.Serializer):

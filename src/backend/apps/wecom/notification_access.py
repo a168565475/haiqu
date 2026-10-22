@@ -15,7 +15,11 @@ EVENT_OBJECT_PERMISSIONS = {
     "PURCHASE_ORDER_COMPLETED": ("procurement.view_purchaseorder",),
     "PRODUCTION_PLAN_CREATED": ("production_scheduling.view_productionschedule",),
     "MATERIAL_ISSUE_SUBMITTED": ("material_issues.review_materialissue",),
-    "SEMI_FINISHED_RECEIPT_SUBMITTED": (),
+    "SEMI_FINISHED_RECEIPT_SUBMITTED": ("inventory.view_internalsemifinishedreceipt",),
+    "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED": ("inventory.view_finishedgoodsreceipt",),
+    "INTERNAL_SEMI_RECEIPT_CONFIRMED": ("inventory.view_internalsemifinishedreceipt",),
+    "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": ("inventory.view_finishedgoodsreceipt",),
+    "FINISHED_GOODS_OUTBOUND_CONFIRMED": ("inventory.view_finishedgoodsoutbound",),
     "WAGE_SCHEME_SUBMITTED": ("workshop_reporting.approve_wagescheme",),
     "WAGE_SCHEME_DECIDED": ("workshop_reporting.view_wagescheme",),
     "WORK_REPORT_SAVED": ("workshop_reporting.view_workreport",),
@@ -39,9 +43,7 @@ EVENT_OBJECT_PERMISSIONS = {
     "SAMPLE_INVENTORY_RECEIVED": ("samples.view_sampleinventoryline",),
 }
 
-UNAVAILABLE_EVENT_OBJECTS = {
-    "SEMI_FINISHED_RECEIPT_SUBMITTED": "现有半成品模型仅保存已确认入库，申请模型待单元07登记。",
-}
+UNAVAILABLE_EVENT_OBJECTS = {}
 
 
 def plan_workshop_ids(object_id):
@@ -125,6 +127,30 @@ def _object_queryset(event_code, request, permission):
 
         return accessible_material_issues(request)
 
+    if event_code == "INTERNAL_SEMI_RECEIPT_CONFIRMED":
+        from apps.inventory.models import InternalSemiFinishedReceipt
+        from apps.production_tasks.selectors import accessible_production_tasks
+        return InternalSemiFinishedReceipt.objects.filter(
+            schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values("pk"))
+
+    if event_code == "SEMI_FINISHED_RECEIPT_SUBMITTED":
+        from apps.inventory.models import InternalSemiFinishedReceipt
+        from apps.production_tasks.selectors import accessible_production_tasks
+        return InternalSemiFinishedReceipt.objects.filter(
+            schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values("pk"))
+
+    if event_code == "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED":
+        from apps.inventory.selectors import receipt_batches
+        return receipt_batches().filter(source_type="PRODUCTION_ORDER", assembly_source__isnull=False)
+
+    if event_code == "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED":
+        from apps.inventory.selectors import receipt_batches
+        return receipt_batches().filter(source_type="PRODUCTION_ORDER", assembly_source__isnull=False)
+
+    if event_code == "FINISHED_GOODS_OUTBOUND_CONFIRMED":
+        from apps.inventory.selectors import finished_goods_outbounds
+        return finished_goods_outbounds()
+
     if event_code in {"WAGE_SCHEME_SUBMITTED", "WAGE_SCHEME_DECIDED"}:
         from apps.workshop_reporting.selectors import accessible_wage_schemes
 
@@ -182,10 +208,11 @@ def _object_queryset(event_code, request, permission):
     return None
 
 
-def event_object_accessible(event_code, object_id, user, *, role_codes=None, object_version=None):
+def event_object_accessible(event_code, object_id, user, *, role_codes=None, object_version=None, submitter_id=None):
     """检查当前有效身份、可选历史接收角色、实际动作及对象范围。
 
     role_codes 仅用于重试时确认快照接收角色仍有效，不用当前规则追收新成员。
+    submitter_id 仅由原提交人回执传入，允许当前超级管理员读取本人的回执。
     未登记事件、尚无真实申请模型或不存在的对象均拒绝；数据库错误正常上抛。
     """
     if event_code not in EVENT_OBJECT_PERMISSIONS or event_code in UNAVAILABLE_EVENT_OBJECTS:
@@ -217,12 +244,16 @@ def event_object_accessible(event_code, object_id, user, *, role_codes=None, obj
             return False
         if event_code == 'SAMPLE_RETURNED' and sample_for_event(event_code, identifier)[0].requested_by_employee_id != employee.pk:
             return False
-    if role_codes is not None and not current_assignments(employee).filter(
+    is_superuser_submitter = current_user.is_superuser and str(employee.pk) == str(submitter_id)
+    if role_codes is not None and not is_superuser_submitter and not current_assignments(employee).filter(
         role_profile__role_code__in=role_codes,
     ).exists():
         return False
 
     from .workshop_notifications import WORKSHOP_EVENTS, current_workshop_object
+    from apps.inventory.notification_events import INVENTORY_EVENTS, current_inventory_object
+    if event_code in INVENTORY_EVENTS and current_inventory_object(event_code, identifier, object_version) is None:
+        return False
     from .workshop_change_notifications import CHANGE_EVENTS, current_change_object
     if event_code in CHANGE_EVENTS and current_change_object(event_code, identifier, object_version) is None:
         return False

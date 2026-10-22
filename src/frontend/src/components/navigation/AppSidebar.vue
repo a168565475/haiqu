@@ -187,6 +187,8 @@ let closeTimer: ReturnType<typeof setTimeout> | undefined
 
 function clearFlyoutHover() {
   hoveredChildKey.value = ''
+  hoverPlateTop.value = 0
+  hoverPlateHeight.value = 0
 }
 
 function hoverFlyoutChild(event: MouseEvent, child: MenuItem) {
@@ -373,7 +375,7 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
         </div>
         <div :key="displayedGroup.key" class="app-sidebar__flyout-menu" :class="{ 'is-open': panelOpen }"
           @mouseleave="clearFlyoutHover" @scroll="clearFlyoutHover">
-          <span class="app-sidebar__hover-plate" data-sidebar-hover-plate
+          <span v-show="hoveredChildKey" class="app-sidebar__hover-plate" data-sidebar-hover-plate
             :data-hover-menu-key="hoveredChildKey" :style="hoverPlateStyle" aria-hidden="true" />
           <component :is="child.to ? RouterLink : 'span'" v-for="(child, index) in displayedGroup.children" :key="child.key"
             :to="child.to" class="app-sidebar__flyout-link"
@@ -590,9 +592,10 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
   overflow-x: hidden;
   padding: 0 6px 16px;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--erp-scrollbar-thumb) transparent;
+  scrollbar-width: none;
 }
+
+.app-sidebar__flyout-menu::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 .app-sidebar__hover-plate {
   position: absolute;

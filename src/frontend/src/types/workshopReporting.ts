@@ -59,6 +59,49 @@ export interface ScheduleProgressValue {
 export interface ScheduleProgressStatus {
   schedule_id: string
   progress: Record<'MATERIAL' | 'METAL' | 'SEWING' | 'ASSEMBLY', ScheduleProgressValue>
+  as_of_date?: string
+  overall_percentage?: number | null
+  stage_progress?: Record<ScheduleStageKey, ScheduleStageProgress>
+  outbound_progress?: ScheduleStageProgress
+  outsourcing_status?: Record<'METAL' | 'SEWING', ScheduleOutsourcingStatus>
+}
+
+export type ScheduleOutsourcingState = 'NONE' | 'WAITING' | 'IN_PROGRESS' | 'RETURNED' | 'SHORTAGE' | 'UNKNOWN'
+export type ScheduleOutsourcingRisk = 'none' | 'normal' | 'attention' | 'slow' | 'urgent' | 'unknown'
+export interface ScheduleOutsourcingRecord {
+  id: string
+  order_number: string
+  craft_name: string
+  factory_name: string
+  quantity_unit: string
+  expected_return_date: string | null
+  remaining_quantity: string | null
+  remaining_display: string
+  state: ScheduleOutsourcingState
+  risk: ScheduleOutsourcingRisk
+  description: string
+}
+export interface ScheduleOutsourcingStatus {
+  state: ScheduleOutsourcingState
+  risk: ScheduleOutsourcingRisk
+  description: string
+  records: ScheduleOutsourcingRecord[]
+}
+
+export type ScheduleStageKey = 'METAL' | 'CUTTING' | 'SEWING' | 'ASSEMBLY'
+export interface ScheduleProductStageProgress {
+  received_quantity?: number | null
+  order_quantity?: number | null
+  outbound_quantity?: number | null
+  schedule_product_id: string
+  status: ScheduleProgressValue['status']
+  percentage: number | null
+  planned_date: string | null
+}
+export interface ScheduleStageProgress {
+  status: ScheduleProgressValue['status']
+  percentage: number | null
+  products: ScheduleProductStageProgress[]
 }
 
 export interface WageSchemeLine {

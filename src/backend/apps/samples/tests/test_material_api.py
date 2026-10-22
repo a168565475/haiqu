@@ -6,7 +6,7 @@ from django.test import override_settings
 from rest_framework.test import APIClient, APITestCase
 from apps.reference_data.models import ProductionUnit
 from apps.audit.models import AuditLog
-from ..models import SampleMaterialRequest, SampleMaterialProcurementRequest
+from ..models import SampleMaterialRequest, SampleMaterialProcurementRequest, SampleRequestStatus
 from . import test_application_api as application_tests
 
 
@@ -59,21 +59,98 @@ class SampleMaterialApiTests(APITestCase):
     def supplies(self, response, values=('12', '2', '0')):
         return {'lines': [{'key': line['key'], 'supplyQuantity': value} for line, value in zip(response.data['data']['draft']['lines'], values)], 'notes': '请采购缺口材料'}
 
-    def test_material_draft_reload_submit_and_freeze(self):
+    def test_material_draft_reload_submit_and_continue_editing(self):
         self.prepare()
         state = self.client.get(self.root + 'materials/')
         self.assertTrue(state.data['data']['canEdit'])
+        self.assertTrue(state.data['data']['canSubmit'])
+        self.assertFalse(state.data['data']['isRevision'])
         draft = self.draft()
         saved = self.put('materials', draft, False, state['ETag'])
         self.assertEqual(saved.status_code, 200, saved.data)
         self.assertEqual(self.client.get(self.root + 'materials/').data['data']['draft']['lines'][0]['color'], '黑色')
         submitted = self.put('materials', draft, True, saved['ETag'])
         self.assertEqual(submitted.data['data']['status'], 'WAREHOUSE_PENDING')
-        self.assertFalse(submitted.data['data']['canEdit'])
-        self.assertEqual(self.put('materials', draft, False, submitted['ETag']).status_code, 409)
+        self.assertTrue(submitted.data['data']['canEdit'])
+        self.assertFalse(submitted.data['data']['canSubmit'])
+        self.assertTrue(submitted.data['data']['isRevision'])
+        continued = self.put('materials', draft, False, submitted['ETag'])
+        self.assertEqual(continued.status_code, 200, continued.data)
+        self.assertEqual(continued.data['data']['status'], 'WAREHOUSE_PENDING')
         record = SampleMaterialRequest.objects.get()
         self.assertEqual(record.submitted_by_id, self.employee.pk)
         self.assertIsNotNone(record.submitted_at)
+
+    def test_revisions_at_every_stage_preserve_submitted_and_procurement_snapshots(self):
+        state = self.to_warehouse()
+        confirmed = self.put('warehouse-review', self.supplies(state), True, state['ETag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        record = SampleMaterialRequest.objects.get()
+        sample = record.sample_request
+        frozen = deepcopy(record.draft)
+        warehouse = deepcopy(record.warehouse_draft)
+        submitted_at, reviewed_at = record.submitted_at, record.reviewed_at
+        procurement = SampleMaterialProcurementRequest.objects.get()
+        shortages = deepcopy(procurement.lines)
+        for status in SampleRequestStatus.values:
+            with self.subTest(status=status):
+                sample.status = status
+                sample.save(update_fields=['status', 'updated_at'])
+                current = self.client.get(self.root + 'materials/')
+                self.assertTrue(current.data['data']['canEdit'])
+                self.assertEqual(current.data['data']['canSubmit'], status == SampleRequestStatus.MATERIALS_PENDING)
+                revision = deepcopy(current.data['data']['draft'])
+                revision['lines'][0].update(key=str(uuid.uuid4()), name='修订后的材料', quantity='20')
+                revision['notes'] = status
+                saved = self.put('materials', revision, False, current['ETag'])
+                self.assertEqual(saved.status_code, 200, saved.data)
+                self.assertEqual(saved.data['data']['status'], status)
+                self.assertTrue(saved.data['data']['isRevision'])
+                self.assertEqual(set(saved.data['data']['draft']), {'lines', 'notes'})
+                self.assertEqual(saved.data['data']['draft']['lines'][0]['name'], '修订后的材料')
+                self.assertEqual(saved.data['data']['draft']['notes'], status)
+                self.assertEqual(self.client.get(self.root + 'materials/').data['data']['draft'], saved.data['data']['draft'])
+                self.assertEqual(saved.data['data']['progress']['lines'][0]['name'], frozen['lines'][0]['name'])
+                self.assertEqual(self.put('materials', revision, False, current['ETag']).status_code, 412)
+                if status != SampleRequestStatus.MATERIALS_PENDING:
+                    self.assertEqual(self.put('materials', revision, True, saved['ETag']).status_code, 409)
+                    self.assertEqual(self.client.post(self.root + 'no-materials/', {}, format='json', HTTP_IF_MATCH=saved['ETag']).status_code, 409)
+                record.refresh_from_db()
+                procurement.refresh_from_db()
+                sample.refresh_from_db()
+                self.assertEqual(sample.status, status)
+                self.assertEqual({key: record.draft[key] for key in ('lines', 'notes')}, frozen)
+                self.assertNotIn('currentDraft', record.draft['currentDraft'])
+                self.assertEqual(record.warehouse_draft, warehouse)
+                self.assertEqual((record.submitted_at, record.reviewed_at), (submitted_at, reviewed_at))
+                self.assertEqual(procurement.lines, shortages)
+                self.assertFalse(record.no_materials)
+        warehouse_response = self.client.get(self.root + 'warehouse-review/')
+        self.assertEqual(warehouse_response.data['data']['draft']['lines'][0]['name'], frozen['lines'][0]['name'])
+
+    def test_no_materials_can_save_revision_without_changing_readiness(self):
+        self.prepare()
+        state = self.client.get(self.root + 'materials/')
+        confirmed = self.client.post(self.root + 'no-materials/', {}, format='json', HTTP_IF_MATCH=state['ETag'])
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data['data']['draft'], {'lines': [], 'notes': ''})
+        self.assertTrue(confirmed.data['data']['isRevision'])
+        self.assertTrue(confirmed.data['data']['canEdit'])
+        self.assertFalse(confirmed.data['data']['canSubmit'])
+        record = SampleMaterialRequest.objects.get()
+        submitted_at = record.submitted_at
+        revision = self.draft()
+        saved = self.put('materials', revision, False, confirmed['ETag'])
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data['data']['status'], 'METALWORK_PENDING')
+        self.assertTrue(saved.data['data']['noMaterials'])
+        self.assertEqual(saved.data['data']['progress']['lines'], [])
+        self.assertEqual(len(saved.data['data']['draft']['lines']), 3)
+        record.refresh_from_db()
+        self.assertEqual(set(record.draft), {'currentDraft'})
+        self.assertEqual(record.submitted_at, submitted_at)
+        self.assertEqual(self.put('materials', revision, True, saved['ETag']).status_code, 409)
+        self.assertEqual(self.client.post(self.root + 'no-materials/', {}, format='json', HTTP_IF_MATCH=saved['ETag']).status_code, 409)
 
     def test_incomplete_draft_allowed_but_submit_rejected(self):
         self.prepare()
@@ -143,6 +220,9 @@ class SampleMaterialApiTests(APITestCase):
         client = APIClient()
         client.force_authenticate(user=self.other_user)
         self.assertEqual(client.get(self.root + 'warehouse-review/').status_code, 200)
+        material_state = client.get(self.root + 'materials/')
+        self.assertFalse(material_state.data['data']['canEdit'])
+        self.assertFalse(material_state.data['data']['canSubmit'])
         self.assertEqual(self.put('materials', self.draft(), False, state['ETag'], client).status_code, 403)
         self.assertEqual(self.put('warehouse-review', self.supplies(state), False, '', client).status_code, 428)
         self.assertEqual(self.put('warehouse-review', self.supplies(state), False, state['ETag'], client).status_code, 200)

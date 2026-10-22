@@ -39,6 +39,7 @@ from apps.reference_data.pinyin_search import build_pinyin_search
 
 from ..models import (
     FinishedGoodsReceipt,
+    FinishedGoodsReceiptStatus,
     FinishedGoodsOutbound,
     MaterialInbound,
     MaterialInboundLine,
@@ -56,8 +57,6 @@ from ..models import (
 from ..selectors import (
     eligible_material_lines,
     eligible_material_purchase_orders,
-    eligible_orders_for_product,
-    eligible_product_lines_with_remaining,
     finished_goods_inventory_rows,
     finished_goods_outbounds,
     locations_with_usage,
@@ -73,8 +72,6 @@ from ..selectors import (
 )
 from ..services import (
     create_finished_goods_outbound,
-    create_finished_goods_receipt,
-    create_finished_goods_receipts,
     create_manual_material_inbound,
     create_material_inbound,
     confirm_material_quality,
@@ -91,8 +88,6 @@ from .serializers import (
     FinishedGoodsOutboundSerializer,
     FinishedGoodsOutboundResponseSerializer,
     FinishedGoodsOutboundListResponseSerializer,
-    FinishedGoodsReceiptBatchInputSerializer,
-    FinishedGoodsReceiptInputSerializer,
     FinishedGoodsReceiptSerializer,
     FinishedGoodsInventoryScopeSerializer,
     MaterialInboundInputSerializer,
@@ -269,11 +264,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
     action_permission_map = {
         "list": "inventory.view_finishedgoodsreceipt",
         "options": "inventory.view_finishedgoodsreceipt",
-        "eligible_products": "inventory.add_finishedgoodsreceipt",
-        "eligible_orders": "inventory.add_finishedgoodsreceipt",
         "receipts.GET": "inventory.view_finishedgoodsreceipt",
-        "receipts.POST": "inventory.add_finishedgoodsreceipt",
-        "batch_receipts": "inventory.add_finishedgoodsreceipt",
         "outbound_batches": "inventory.add_finishedgoodsoutbound",
         "outbounds": "inventory.add_finishedgoodsoutbound",
         "outbounds.GET": "inventory.view_finishedgoodsoutbound",
@@ -397,74 +388,24 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                 .order_by("employee_code", "id").values("id", "employee_code", "display_name")),
         }})
 
-    @action(detail=False, methods=["get"], url_path="eligible-products")
-    def eligible_products(self, request):
-        unique = {}
-        for line in eligible_product_lines_with_remaining():
-            product = line.product
-            unique[str(line.product_id)] = {
-                "product_id": line.product_id, "product_number": product.product_number,
-                "product_code": product.product_code, "product_name": product.product_name,
-                "item_number": product.product_item.item_number, "specification": product.specification,
-                "pinyin_search": build_pinyin_search(product.product_name),
-            }
-        return Response({"data": list(unique.values())})
-
-    @action(detail=False, methods=["get"], url_path="eligible-orders")
-    def eligible_orders(self, request):
-        product_id = request.query_params.get("product_id", "").strip()
-        if not product_id:
-            raise ValidationError({"product_id": "请选择产品。"})
-        rows = []
-        for line, maximum, received, remaining in eligible_orders_for_product(uuid_value(product_id, "product_id")):
-            rows.append({
-                "production_task_product_id": line.pk, "task_number": line.production_task.task_number,
-                "order_number": line.production_task.order_number, "order_quantity": line.quantity,
-                "maximum_receivable": maximum, "received_total": received, "remaining_receivable": remaining,
-                "actual_color_default": line.color_name_snapshot or line.color_code_snapshot,
-                "unit_id": line.unit_id, "unit_code": line.unit.unit_code, "unit_name": line.unit.unit_name,
-            })
-        return Response({"data": rows})
-
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get"])
     def receipts(self, request):
-        if request.method == "POST":
-            serializer = FinishedGoodsReceiptInputSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            try:
-                receipt = create_finished_goods_receipt(validated_data=serializer.validated_data, actor_employee=request.employee, request=request)
-            except (FinishedGoodsReceipt.DoesNotExist,) as exc:
-                raise NotFound("入库关联数据不存在。") from exc
-            receipt = receipt_batches().get(pk=receipt.pk)
-            return Response({"data": FinishedGoodsReceiptSerializer(receipt).data}, status=status.HTTP_201_CREATED)
         queryset = receipt_batches()
         receipt_ids = request.query_params.get("receipt_ids", "").strip()
         if receipt_ids:
             queryset = queryset.filter(pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids.split(",") if item])
         return Response({"data": FinishedGoodsReceiptSerializer(queryset[:1000], many=True).data})
 
-    @action(detail=False, methods=["post"], url_path="batch-receipts")
-    def batch_receipts(self, request):
-        serializer = FinishedGoodsReceiptBatchInputSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        receipts = create_finished_goods_receipts(
-            items=serializer.validated_data["items"],
-            actor_employee=request.employee,
-            request=request,
-        )
-        receipt_ids = [receipt.pk for receipt in receipts]
-        created = receipt_batches(FinishedGoodsReceipt.objects.filter(pk__in=receipt_ids))
-        return Response(
-            {"data": FinishedGoodsReceiptSerializer(created, many=True).data},
-            status=status.HTTP_201_CREATED,
-        )
-
     @action(detail=False, methods=["get"], url_path="outbound-batches")
     def outbound_batches(self, request):
         receipt_ids = [item for item in request.query_params.get("receipt_ids", "").split(",") if item]
         if not receipt_ids:
             raise ValidationError({"receipt_ids": "请至少选择一条库存。"})
-        queryset = receipt_batches(FinishedGoodsReceipt.objects.filter(pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids], remaining_quantity__gt=0))
+        queryset = receipt_batches(FinishedGoodsReceipt.objects.filter(
+            pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids],
+            status=FinishedGoodsReceiptStatus.CONFIRMED,
+            remaining_quantity__gt=0,
+        ))
         return Response({"data": FinishedGoodsReceiptSerializer(queryset, many=True).data})
 
     @extend_schema(methods=["GET"], operation_id="finished_goods_outbounds_list",

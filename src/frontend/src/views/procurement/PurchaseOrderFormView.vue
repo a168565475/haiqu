@@ -76,7 +76,9 @@ const isDetailStep = computed(() => route.name === 'purchase-order-create-detail
 const isSampleSource = computed(() => selectedTask.value?.source_type === 'SAMPLE')
 const sourceTypeLabel = computed(() => isSampleSource.value ? '打样单' : '生产订单')
 const selectedTask = computed(() => sourceOptions.value.find((item) => item.id === selectedTaskId.value) || null)
-const selectedProducts = computed(() => source.value?.production_task?.products || [])
+const selectedProducts = computed(() => (source.value?.production_task?.products || []).filter(
+  product => !productBomOption(product.id)?.blockers.some(blocker => blocker.code === 'PURCHASE_ORDER_EXISTS'),
+))
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
 const selectedSupplierCount = computed(() => new Set(lines.value.map((line) => line.supplier_id).filter(Boolean)).size)
@@ -277,10 +279,6 @@ function materialTitle(line: PurchaseLineDraft): string {
   return line.part_name || line.material || line.raw_material || '未命名物料'
 }
 
-function materialDetail(line: PurchaseLineDraft): string {
-  return [...new Set([line.material, line.raw_material, line.specification, ...(isSampleSource.value ? [line.product_color] : [])].filter(Boolean))].join(' · ') || '规格未填写'
-}
-
 function purchaseLineKey(line: PurchaseLineDraft): string {
   return line.sample_line_key || line.bom_line_id || String(line.line_number)
 }
@@ -351,19 +349,21 @@ async function focusGridField(rowIndex: number, columnIndex: number): Promise<vo
   const field = formPage.value?.querySelector<HTMLElement>(
     `[data-grid-row="${rowIndex}"][data-grid-column="${columnIndex}"]`,
   )
-  const input = field?.querySelector<HTMLInputElement>('input:not([disabled])')
+  const input = field?.querySelector<HTMLInputElement | HTMLButtonElement>('input:not([disabled]), button[data-pipe-quantity-trigger]:not([disabled])')
   if (!field || !input) return
   field.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   input.focus({ preventScroll: true })
-  if (!input.readOnly) input.select()
+  if (input instanceof HTMLInputElement && !input.readOnly) input.select()
 }
 
 function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnIndex: number): void {
   if (event.altKey || event.ctrlKey || event.metaKey) return
   const input = event.target instanceof HTMLInputElement ? event.target : null
-  if (!input || input.disabled) return
+  const pipeTrigger = event.target instanceof HTMLButtonElement && event.target.hasAttribute('data-pipe-quantity-trigger') ? event.target : null
+  if ((!input && !pipeTrigger) || input?.disabled || pipeTrigger?.disabled) return
+  if (pipeTrigger && event.key === 'Enter') return
   const popupExpanded = Boolean(
-    input.closest('[data-grid-field]')?.querySelector('[aria-expanded="true"]'),
+    (input || pipeTrigger)?.closest('[data-grid-field]')?.querySelector('[aria-expanded="true"]'),
   )
   if (popupExpanded && !(columnIndex === 1 && ['ArrowDown', 'ArrowUp'].includes(event.key))) return
 
@@ -376,10 +376,10 @@ function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnInde
   } else if (event.key === 'ArrowUp') {
     targetRow -= 1
   } else if (event.key === 'ArrowLeft') {
-    if (input.selectionStart !== null && input.selectionStart > 0) return
+    if (input && input.selectionStart !== null && input.selectionStart > 0) return
     targetColumn -= 1
   } else if (event.key === 'ArrowRight') {
-    if (input.selectionEnd !== null && input.selectionEnd < input.value.length) return
+    if (input && input.selectionEnd !== null && input.selectionEnd < input.value.length) return
     targetColumn += 1
   } else {
     return
@@ -412,6 +412,18 @@ function pipeMetersLabel(line: PurchaseLineDraft): string {
   const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
   if (!meters) return '—'
   return `${meters} 米 · ${line.raw_bar_length_m} 米/根`
+}
+
+function pipeQuantitySummary(line: PurchaseLineDraft): string {
+  if (!line.actual_bar_count && !line.raw_bar_length_m) return '根/米'
+  const meters = pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
+  return `${line.actual_bar_count || '—'}根 / ${formatSuggestedQuantity(meters)}米`
+}
+
+function focusPipeQuantity(lineKey: string): void {
+  const editor = Array.from(document.querySelectorAll<HTMLElement>('[data-pipe-editor]'))
+    .find(element => element.dataset.pipeEditor === lineKey)
+  editor?.querySelector<HTMLInputElement>('input')?.focus()
 }
 
 function decimalParts(value: string): { digits: bigint; scale: number } | null {
@@ -713,7 +725,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
               <div class="task-select-option" :data-task-id="task.id">
                 <strong>{{ task.task_number }}</strong>
                 <ElTag class="purchase-source-tag" :class="{ 'is-sample': task.source_type === 'SAMPLE' }" effect="dark">{{ task.source_type === 'SAMPLE' ? '打样单' : '生产订单' }}</ElTag>
-                <small>{{ task.source_type === 'SAMPLE' ? `${task.demand_count || 0} 项采购需求` : `${task.product_count} 项产品` }} · 交期 {{ task.delivery_date || '—' }}</small>
+                <small>{{ task.source_type === 'SAMPLE' ? `${task.demand_count || 0} 项采购需求` : `${task.remaining_product_count ?? task.product_count} 项待采购产品` }} · 交期 {{ task.delivery_date || '—' }}</small>
                 <ElTag class="task-source-status" size="small" :type="task.can_create ? task.source_type === 'SAMPLE' ? 'warning' : 'success' : 'info'" effect="dark">{{ task.can_create ? task.source_type === 'SAMPLE' ? '待采购' : (task.source_status_display || '可采购') : (task.source_status_display || task.status_display) }}</ElTag>
               </div>
             </ElOption>
@@ -725,7 +737,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <div><dt>订单来源</dt><dd><ElTag class="purchase-source-tag" :class="{ 'is-sample': isSampleSource }" effect="dark">{{ sourceTypeLabel }}</ElTag></dd></div>
             <div><dt>客户</dt><dd>{{ selectedTask.customer_name }}</dd></div>
             <div><dt>交期</dt><dd>{{ selectedTask.delivery_date || '—' }}</dd></div>
-            <div><dt>{{ isSampleSource ? '采购需求' : '产品' }}</dt><dd>{{ isSampleSource ? selectedTask.demand_count : selectedTask.product_count }} 项</dd></div>
+            <div><dt>{{ isSampleSource ? '采购需求' : '待采购产品' }}</dt><dd>{{ isSampleSource ? selectedTask.demand_count : selectedProducts.length }} 项</dd></div>
           </dl>
           <section v-if="!isSampleSource" class="selected-product-section" data-testid="selected-production-product-list">
             <div v-if="selectedProducts.length" class="selected-product-list">
@@ -750,7 +762,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
                 <span :title="productBomOption(product.id)?.bom_status_display || '未建立'"><span class="bom-status" :class="{ 'is-ready': productBomOption(product.id)?.bom_status === 'VERIFIED' }">{{ productBomOption(product.id)?.bom_status_display || '未建立' }}</span></span>
               </div>
             </div>
-            <p v-else>该订单包含 {{ selectedTask.product_count }} 项产品，暂无可用产品明细。</p>
+            <p v-else>暂无待采购产品明细。</p>
             <p class="product-selection-caption" :class="{ 'is-blocked': sourceError || (selectedBom && !source?.can_create) }" role="status">
               {{ sourceError || (selectedBom ? `当前选择：第 ${selectedBom.product_line_number} 行 · ${selectedBom.product_color || selectedBom.product_name}` : '请选择本次采购的产品 BOM') }}
               <template v-if="selectedBom && !source?.can_create && !sourceError"> · {{ source?.blockers?.[0]?.message || '当前仅可预览，不能采购' }}</template>
@@ -815,10 +827,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           <ElTableColumn label="物料信息" width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
           </ElTableColumn>
-          <ElTableColumn v-if="isSampleSource" label="材质规格" width="220">
-            <template #default="{ row }"><ElTooltip :content="materialDetail(row)" placement="top" :show-after="200"><span class="material-detail">{{ materialDetail(row) }}</span></ElTooltip></template>
+          <ElTableColumn v-if="isSampleSource" label="材质" width="118" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.material || row.raw_material || '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-else label="规格" width="220">
+          <ElTableColumn v-if="isSampleSource" label="规格" prop="specification" width="220" show-overflow-tooltip />
+          <ElTableColumn v-if="isSampleSource" label="颜色" width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.product_color || '—' }}</template>
+          </ElTableColumn>
+          <ElTableColumn v-if="!isSampleSource" label="规格" width="220">
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="需求数量" width="104">
@@ -828,7 +844,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
           </ElTableColumn>
           <ElTableColumn :label="isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><template v-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong><small>采购填写根数与每根米数</small></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ row.suggested_purchase_meters }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
+            <template #default="{ row }"><div class="quantity-cell"><template v-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ row.suggested_purchase_meters }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
@@ -844,7 +860,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!source?.can_create" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
-            <template #default="{ row, $index }"><div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': isPipePurchaseLine(row) || row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)"><template v-if="isPipePurchaseLine(row)"><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="填写根数"><template #append>根</template></ElInput><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!source?.can_create" placeholder="每根米数"><template #append>米/根</template></ElInput></template><template v-else-if="row.raw_bar_length_m"><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="整根数"><template #append>根</template></ElInput></template><ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!source?.can_create" :placeholder="defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput></div></template>
+            <template #default="{ row, $index }">
+              <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
+                <ElPopover v-if="isPipePurchaseLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!source?.can_create" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
+                  <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!source?.can_create">{{ pipeQuantitySummary(row) }}</button></template>
+                  <div class="pipe-quantity-editor erp-table-editor" :data-pipe-editor="purchaseLineKey(row)">
+                    <label><span>采购根数</span><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="填写根数"><template #append>根</template></ElInput></label>
+                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!source?.can_create" placeholder="每根米数"><template #append>米/根</template></ElInput></label>
+                  </div>
+                </ElPopover>
+                <ElInput v-else-if="row.raw_bar_length_m" v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="整根数"><template #append>根</template></ElInput>
+                <ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!source?.can_create" :placeholder="defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
+              </div>
+            </template>
           </ElTableColumn>
           <ElTableColumn label="折算采购米数" width="180">
             <template #default="{ row }"><ElTooltip :content="pipeMetersLabel(row)" placement="top" :show-after="200"><span v-if="row.raw_bar_length_m" class="pipe-meters">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></ElTooltip></template>
@@ -1039,6 +1067,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 
 
 .pipe-meters { white-space: nowrap; }
+.pipe-quantity-trigger { width: 100%; height: 32px; padding: 0 8px; overflow: hidden; border: 1px solid var(--erp-input-border); border-radius: 5px; color: var(--erp-input-text); background: var(--erp-color-surface); font: inherit; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.pipe-quantity-trigger:hover:not(:disabled) { border-color: var(--erp-input-hover-border); }
+.pipe-quantity-trigger:focus-visible { outline: 2px solid var(--erp-color-focus); outline-offset: 2px; }
+.pipe-quantity-trigger:disabled { color: var(--erp-input-disabled-text); background: var(--erp-input-disabled-background); cursor: not-allowed; }
+.pipe-quantity-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pipe-quantity-editor label { min-width: 0; }
+.pipe-quantity-editor label > span { display: block; margin-bottom: 6px; color: var(--erp-color-text-secondary); font-size: 12px; }
+.pipe-quantity-editor :deep(.el-input__wrapper) { height: 32px; min-height: 32px; padding: 0 10px; }
+.pipe-quantity-editor :deep(.el-input-group__append) { padding: 0 8px; font-size: 12px; }
 .pipe-order-quantity { display: flex; flex-direction: column; align-items: stretch; height: auto; min-width: 0; width: 100%; gap: 4px; padding: 6px 0; white-space: normal; }
 .pipe-order-quantity small { display: block; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
 :deep(td .cell:has(.pipe-order-quantity)) { display: block !important; white-space: normal !important; text-overflow: clip; }

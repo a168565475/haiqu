@@ -229,7 +229,7 @@ onMounted(async () => {
           <el-table-column v-if="embedded" type="selection" width="48" />
           <el-table-column label="客诉编号" min-width="150"><template #default="{ row }"><button class="code-link" @click="openDetail(row)">{{ row.complaint_code }}</button></template></el-table-column>
           <el-table-column v-if="visibleColumns.customer" label="客户" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.customer.account_name }}</template></el-table-column>
-          <el-table-column v-if="visibleColumns.order" label="关联订单" min-width="150"><template #default="{ row }">{{ row.source_order_reference || '—' }}</template></el-table-column>
+          <el-table-column v-if="visibleColumns.order" label="关联订单" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ row.source_order_reference || '—' }}</template></el-table-column>
           <el-table-column v-if="visibleColumns.type" label="类型" min-width="116"><template #default="{ row }">{{ row.complaint_type.display_name }}</template></el-table-column>
           <el-table-column v-if="visibleColumns.severity" label="等级" width="96"><template #default="{ row }"><span class="solid-tag" :class="['erp-list-tag', `erp-list-tag--${severityClass(row.severity.item_code)}`]">{{ row.severity.display_name }}</span></template></el-table-column>
           <el-table-column v-if="visibleColumns.status" label="状态" min-width="120"><template #default="{ row }"><span class="solid-tag" :class="['erp-list-tag', `erp-list-tag--${statusClass(row)}`]">{{ row.status_label }}</span></template></el-table-column>

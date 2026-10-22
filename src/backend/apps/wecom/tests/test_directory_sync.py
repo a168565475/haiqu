@@ -83,7 +83,7 @@ class WeComDirectorySyncTests(TestCase):
         )
 
     def preview(self):
-        response = self.client.get(ROOT)
+        response = self.client.post(ROOT + "refresh/")
         self.assertEqual(response.status_code, 200, response.data)
         return response
 
@@ -140,7 +140,7 @@ class WeComDirectorySyncTests(TestCase):
 
     def test_anonymous_caller_is_rejected_before_upstream(self):
         self.client.logout()
-        self.assertEqual(self.client.get(ROOT).status_code, 401)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 401)
         self.directory_client.assert_not_called()
 
     def test_direct_permission_and_non_module_role_do_not_grant_management(self):
@@ -149,32 +149,32 @@ class WeComDirectorySyncTests(TestCase):
         employee.user.user_permissions.add(permission)
         self.grant(employee, scope="OWN")
         self.client.force_login(employee.user)
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.directory_client.assert_not_called()
 
     def test_wecom_manager_permission_does_not_grant_employee_sync(self):
         manager = self.employee()
         self.grant(manager, codename="manage_wecom")
         self.client.force_login(manager.user)
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.directory_client.assert_not_called()
 
     def test_other_superuser_has_no_implicit_management_access(self):
         account = get_user_model().objects.create_superuser("other_superuser", "", "test-password")
         Employee.objects.create(user=account, employee_code="DIRECTORY_OTHER_ADMIN", display_name="其他管理员")
         self.client.force_login(account)
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.directory_client.assert_not_called()
 
     def test_inactive_employee_cannot_manage_even_as_admin(self):
         self.admin_employee.status = "INACTIVE"
         self.admin_employee.save()
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.directory_client.assert_not_called()
 
     @override_settings(ACCESS_MANAGEMENT_ENABLED=False)
     def test_disabled_access_management_fails_closed(self):
-        self.assertEqual(self.client.get(ROOT).status_code, 503)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 503)
         self.directory_client.assert_not_called()
 
     def test_session_write_requires_csrf(self):
@@ -201,7 +201,7 @@ class WeComDirectorySyncTests(TestCase):
     def test_preview_requires_saved_enabled_readable_configuration(self):
         self.config.enabled = False
         self.config.save()
-        self.assertEqual(self.client.get(ROOT).status_code, 409)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 409)
         self.directory_client.assert_not_called()
 
     def test_normal_session_and_csrf_can_submit_selected_members(self):
@@ -212,7 +212,7 @@ class WeComDirectorySyncTests(TestCase):
             "username": "admin", "password": "test-password",
         }, format="json", HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value)
         self.assertEqual(login.status_code, 200, login.content)
-        preview = client.get(ROOT)
+        preview = client.post(ROOT + "refresh/", {}, format="json", HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value)
         self.assertEqual(preview.status_code, 200, preview.data)
         result = client.post(ROOT + "sync/", {
             "preview_token": preview.data["data"]["preview_token"], "user_ids": ["Member.One"],
@@ -223,14 +223,14 @@ class WeComDirectorySyncTests(TestCase):
     def test_unreadable_credentials_do_not_call_upstream_or_create_records(self):
         before = self.counts()
         with override_settings(WECOM_FERNET_KEYS=[Fernet.generate_key().decode()]):
-            response = self.client.get(ROOT)
+            response = self.client.post(ROOT + "refresh/")
         self.assertEqual(response.status_code, 409)
         self.directory_client.assert_not_called()
         self.assertEqual(self.counts(), before)
 
     def test_missing_configuration_is_not_created_by_preview(self):
         self.config.delete()
-        response = self.client.get(ROOT)
+        response = self.client.post(ROOT + "refresh/")
         self.assertEqual(response.status_code, 409)
         self.assertFalse(WeComConfig.objects.exists())
         self.directory_client.assert_not_called()
@@ -276,7 +276,11 @@ class WeComDirectorySyncTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"][0]["result"], "EXISTING")
         self.assertEqual(Employee.objects.values().get(pk=employee.pk), before_employee)
-        self.assertEqual(WeComBinding.objects.values().get(pk=binding.pk), before_binding)
+        after_binding = WeComBinding.objects.values().get(pk=binding.pk)
+        self.assertEqual(after_binding.pop("department_snapshot"), [{"id": 1, "name": "公司"}])
+        self.assertGreater(after_binding.pop("updated_at"), before_binding.pop("updated_at"))
+        before_binding.pop("department_snapshot")
+        self.assertEqual(after_binding, before_binding)
         self.assertEqual(get_user_model().objects.values().get(pk=employee.user_id), before_user)
 
     def test_sync_creates_employee_account_and_binding_without_roles_or_departments(self):
@@ -592,7 +596,7 @@ class WeComDirectorySyncTests(TestCase):
 
                 self.directory_client.return_value.read_directory.side_effect = read_and_revoke
                 if operation == "preview":
-                    response = self.client.get(ROOT)
+                    response = self.client.post(ROOT + "refresh/")
                 elif operation == "sync":
                     response = self.sync(preview)
                 else:

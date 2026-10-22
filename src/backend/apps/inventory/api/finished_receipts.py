@@ -1,15 +1,23 @@
 from django.db.models import Q, Sum, Count
 from django.db.models.functions import Coalesce, TruncDate
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.core.api.concurrency import etag_for_instance
 from apps.production_scheduling.selectors import schedule_items_for_category
-from ..assembly_receipts import load_context, confirm_assembly_receipt, assembly_progress_for_plans
+from ..assembly_receipts import (
+    load_context,
+    confirm_assembly_receipt,
+    confirm_pending_assembly_receipt,
+    assembly_progress_for_plans,
+    delete_pending_assembly_receipt,
+)
+from ..receipt_permissions import can_delete_pending_receipt
 from ..models import FinishedGoodsReceipt
 from ..selectors import receipt_batches
 from .serializers import FinishedGoodsReceiptSerializer, FinishedGoodsInventoryScopeSerializer
@@ -53,10 +61,11 @@ def record_queryset():
         business_date=Coalesce('assembly_source__receipt_date', TruncDate('received_at')))
 
 
-def record_payload(row):
+def record_payload(row, request=None):
     result = dict(FinishedGoodsReceiptSerializer(row).data)
     source = getattr(row,'assembly_source',None)
-    result.update(receipt_date=str(row.business_date), schedule_number='', received_before=None, received_after=None,
+    result.update(etag=etag_for_instance(row), can_delete=bool(source and can_delete_pending_receipt(request, row, 'ASSEMBLY')),
+        receipt_date=str(row.business_date), schedule_number='', received_before=None, received_after=None,
         maximum_receivable=None, source_type_display='生产入库' if row.source_type=='PRODUCTION_ORDER' else row.get_source_type_display())
     if source:
         result.update(source_type='ASSEMBLY',source_type_display='装配入库',
@@ -70,6 +79,14 @@ class AssemblyReceiptViewSet(viewsets.ViewSet):
     permission_classes=[IsAuthenticated,HasActiveEmployee,BusinessActionPermission]
     serializer_class=DataResponse
     action_permission_map={key:'inventory.add_finishedgoodsreceipt' for key in ['preview','create','candidates']}
+    action_permission_map['confirm'] = 'inventory.confirm_finishedgoodsreceipt'
+    action_permission_map['destroy'] = 'inventory.delete_finishedgoodsreceipt'
+
+    @extend_schema(request=None, parameters=[OpenApiParameter('If-Match', str, location='header', required=True)], responses={204: None})
+    def destroy(self, request, pk=None):
+        pk = serializers.UUIDField().run_validation(pk)
+        delete_pending_assembly_receipt(request, pk)
+        return Response(status=204)
 
     @action(detail=False,methods=['get'])
     def preview(self,request):
@@ -100,7 +117,14 @@ class AssemblyReceiptViewSet(viewsets.ViewSet):
     def create(self,request):
         data=read_data(AssemblyInput,request.data)
         receipt,replayed=confirm_assembly_receipt(request,data)
-        return Response({'data':{'id':str(receipt.pk),'receipt_number':receipt.receipt_number,'replayed':replayed}},status=200 if replayed else 201)
+        return Response({'data':{'id':str(receipt.pk),'receipt_number':receipt.receipt_number,
+                                 'status':receipt.status,'replayed':replayed}},status=200 if replayed else 201)
+
+    @action(detail=True, methods=['post'], url_path='confirm')
+    def confirm(self, request, pk=None):
+        receipt, replayed = confirm_pending_assembly_receipt(request, pk)
+        return Response({'data': {'id': str(receipt.pk), 'receipt_number': receipt.receipt_number,
+                                  'status': receipt.status, 'replayed': replayed}})
 
 
 class FinishedRecordViewSet(viewsets.ViewSet):
@@ -125,13 +149,13 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         if 'product_line_id' in data:
             rows=rows.filter(production_task_product_id=data['product_line_id'])
         total=rows.count();start=(data['page']-1)*data['page_size']
-        return Response({'data':{'items':[record_payload(r) for r in rows.order_by('-business_date','-received_at','-id')[start:start+data['page_size']]],'total':total}})
+        return Response({'data':{'items':[record_payload(r, request) for r in rows.order_by('-business_date','-received_at','-id')[start:start+data['page_size']]],'total':total}})
 
     def retrieve(self,request,pk=None):
         class Input(serializers.Serializer):
             id=serializers.UUIDField()
         data=read_data(Input,{'id':pk})
-        return Response({'data':record_payload(get_object_or_404(record_queryset(),pk=data['id']))})
+        return Response({'data':record_payload(get_object_or_404(record_queryset(),pk=data['id']), request)})
 
     @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     @action(detail=False,methods=['get'])
@@ -151,7 +175,8 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         data=read_data(Input,request.query_params)
         filters={f'{key}_snapshot':data[key] for key in ['product_number','product_code','product_name','item_number','specification','category']}
         rows=FinishedGoodsReceipt.objects.filter(**filters,production_task_product__product_id=data.get('product_id'),
-            unit_id=data['unit_id'],actual_color=data['actual_color'],location__zone_id=data['zone_id'],remaining_quantity__gt=0)
+            unit_id=data['unit_id'],actual_color=data['actual_color'],location__zone_id=data['zone_id'],
+            status='CONFIRMED', remaining_quantity__gt=0)
         if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
         if 'task_number' in data:rows=rows.filter(task_number_snapshot=data['task_number'])
         locations=rows.values('location_id','location__location_number').annotate(quantity=Sum('remaining_quantity'),slots=Sum('remaining_box_slots'),

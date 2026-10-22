@@ -1,21 +1,26 @@
 import json
+import time
 from collections import Counter
 from datetime import timedelta
 from uuid import UUID
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import close_old_connections
 from django.utils import timezone
 
-from apps.wecom.models import NotificationDelivery
+from apps.wecom.models import NotificationDelivery, WeComConfig
 from apps.wecom.notification_services import process_delivery, recover_abandoned_deliveries
+from apps.wecom.selectors import configuration_complete
 
 
 class Command(BaseCommand):
-    help = "预览已持久化的企业微信通知；仅 --execute 执行投递或回收。不会创建业务事件。"
+    help = "预览已持久化的企业微信通知；仅 --execute 执行投递或回收，--watch 常驻处理待发送记录。不会创建业务事件。"
 
     def add_arguments(self, parser):
         parser.add_argument("--limit", type=int, default=50, help="最多检查的投递记录数，范围 1..500。")
         parser.add_argument("--execute", action="store_true", help="执行发送或回收；省略时只读预览。")
+        parser.add_argument("--watch", action="store_true", help="常驻轮询 PENDING；必须配合 --execute，不自动重试失败或结果不明的记录。")
+        parser.add_argument("--interval", type=int, default=5, help="常驻轮询间隔秒数，范围 1..3600，默认 5。")
         parser.add_argument("--delivery-id", type=UUID, action="append", default=[],
                             help="限定投递记录 UUID，可重复指定。重试必须明确指定记录。")
         parser.add_argument("--retry-failed", action="store_true",
@@ -37,6 +42,42 @@ class Command(BaseCommand):
             raise CommandError("重试 FAILED / UNCERTAIN 必须通过 --delivery-id 明确指定记录，禁止全队列重试。")
         if len(delivery_ids) > limit:
             raise CommandError("指定的不同投递 ID 数量超过 --limit，请减少 ID 或明确提高限制。")
+        interval = options["interval"]
+        if not isinstance(interval, int) or isinstance(interval, bool) or not 1 <= interval <= 3600:
+            raise CommandError("--interval 必须为 1..3600 的整数。")
+        if options["watch"]:
+            if not options["execute"]:
+                raise CommandError("--watch 必须配合 --execute；只读预览请省略 --watch。")
+            if delivery_ids or options["retry_failed"] or options["retry_uncertain"]:
+                raise CommandError("--watch 仅处理 PENDING，不允许指定 ID 或自动重试 FAILED / UNCERTAIN。")
+            self._watch(options)
+            return
+        self._process_batch(options, delivery_ids=delivery_ids)
+
+    def _watch(self, options):
+        self.stdout.write(f"通知发送进程已启动，每 {options['interval']} 秒检查 PENDING；无收件人的历史事件不会补发。")
+        waiting_configuration = False
+        try:
+            while True:
+                close_old_connections()
+                config = WeComConfig.objects.first()
+                if config is None or not config.enabled or not configuration_complete(config):
+                    if not waiting_configuration:
+                        self.stdout.write("WAITING_CONFIGURATION：企业微信应用未配置、未启用或凭据不可用；保留待发送记录，不消耗发送次数。")
+                    waiting_configuration = True
+                else:
+                    if waiting_configuration:
+                        self.stdout.write("CONFIGURATION_READY：企业微信配置可用，恢复处理待发送记录。")
+                    waiting_configuration = False
+                    self._process_batch(options, delivery_ids=[], watch=True)
+                time.sleep(options["interval"])
+        except KeyboardInterrupt:
+            self.stdout.write("通知发送进程已停止。")
+        finally:
+            close_old_connections()
+
+    def _process_batch(self, options, *, delivery_ids, watch=False):
+        limit = options["limit"]
 
         statuses = [NotificationDelivery.Status.PENDING]
         if options["retry_failed"]:
@@ -90,6 +131,7 @@ class Command(BaseCommand):
                     row,
                     allow_uncertain=options["retry_uncertain"] and row.status == NotificationDelivery.Status.UNCERTAIN,
                     allow_failed=options["retry_failed"] and row.status == NotificationDelivery.Status.FAILED,
+                    defer_unconfigured=watch,
                 )
                 results[result.status] += 1
                 summary["checked_count"] += 1
@@ -97,7 +139,8 @@ class Command(BaseCommand):
         finally:
             # 异常继续向上抛出，同时保留已经完成的检查数量，避免报告整批成功。
             summary["result_status_counts"] = dict(results)
-            self.stdout.write(json.dumps(summary, ensure_ascii=False))
-            self.stdout.write("状态统计为各记录执行后返回状态；ACCEPTED 仅代表企微受理，不代表送达或已读。UNCERTAIN 须先核对，禁止盲目重发。")
-        if any(status != NotificationDelivery.Status.ACCEPTED for status in results):
+            if not watch or rows or summary["recovered_count"]:
+                self.stdout.write(json.dumps(summary, ensure_ascii=False))
+                self.stdout.write("状态统计为各记录执行后返回状态；ACCEPTED 仅代表企微受理，不代表送达或已读。UNCERTAIN 须先核对，禁止盲目重发。")
+        if not watch and any(status != NotificationDelivery.Status.ACCEPTED for status in results):
             raise CommandError("本次检查仍有未受理或待核对的投递，详情见 result_status_counts；未自动再次重试。")

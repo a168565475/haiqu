@@ -55,7 +55,10 @@ def templates(workshops):
         'inventory.receive_material', 'inventory.view_materialinbound', 'inventory.view_material_receipt',
         'inventory.view_materialstockbalance', 'inventory.view_semifinishedstockbalance',
         'inventory.view_warehouse', 'inventory.view_warehousezone', 'inventory.view_warehouselocation',
-        'inventory.view_internalsemifinishedreceipt', 'inventory.add_internalsemifinishedreceipt',
+        'inventory.view_internalsemifinishedreceipt', 'inventory.confirm_internalsemifinishedreceipt',
+        'inventory.delete_internalsemifinishedreceipt',
+        'inventory.view_finishedgoodsreceipt', 'inventory.confirm_finishedgoodsreceipt',
+        'inventory.delete_finishedgoodsreceipt',
         'material_issues.view_materialissue', 'material_issues.review_materialissue',
         'samples.view_samplerequest', 'samples.review_sample_materials',
         'samples.view_sampleinventoryline', 'samples.add_sampleinventoryreceipt',
@@ -70,6 +73,12 @@ def templates(workshops):
             'workshop_reporting.view_wagescheme', 'workshop_reporting.add_wagescheme',
             'workshop_reporting.change_wagescheme', 'workshop_reporting.submit_wagescheme',
             'workshop_reporting.view_workreport', 'workshop_reporting.add_workreport', 'workshop_reporting.change_workreport')]
+        if role in {'METAL_DIRECTOR', 'SEWING_DIRECTOR'}:
+            result[role] += module_rows('inventory.view_internalsemifinishedreceipt', 'inventory.add_internalsemifinishedreceipt',
+                                       'inventory.delete_internalsemifinishedreceipt')
+        if role == 'ASSEMBLY_DIRECTOR':
+            result[role] += module_rows('inventory.view_finishedgoodsreceipt', 'inventory.add_finishedgoodsreceipt',
+                                       'inventory.delete_finishedgoodsreceipt')
         if role != 'ASSEMBLY_DIRECTOR':
             result[role] += [{'permission': code, 'scope': 'WORKSHOP', 'resource_ids': ids} for code in (
                 'outsourcing.view_outsourcingorder', 'outsourcing.confirm_dispatch_outsourcingorder')]

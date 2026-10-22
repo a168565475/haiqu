@@ -3,7 +3,6 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 
-from apps.procurement.models import Supplier, SupplierType
 
 from ..models import (
     FinishedGoodsOutbound,
@@ -111,34 +110,6 @@ class FinishedGoodsInventoryScopeSerializer(serializers.Serializer):
     production_task_id = serializers.UUIDField(required=False, allow_null=True)
 
 
-class FinishedGoodsReceiptInputSerializer(serializers.Serializer):
-    production_task_product_id = serializers.UUIDField()
-    location_id = serializers.UUIDField()
-    supplier_id = serializers.PrimaryKeyRelatedField(
-        source="supplier",
-        queryset=Supplier.objects.filter(is_disabled=False, supplier_type=SupplierType.FINISHED, archived_at__isnull=True),
-        required=False,
-        allow_null=True,
-        default=None,
-    )
-    expected_received_total = serializers.IntegerField(min_value=0)
-    received_quantity = serializers.IntegerField(min_value=1)
-    quantity_per_box = serializers.IntegerField(min_value=1, required=False, allow_null=True, default=None)
-    unit_id = serializers.UUIDField()
-    actual_color = serializers.CharField(max_length=200, required=False, allow_blank=True, trim_whitespace=True, default="")
-    remark = serializers.CharField(max_length=3000, required=False, allow_blank=True, trim_whitespace=True, default="")
-
-
-class FinishedGoodsReceiptBatchInputSerializer(serializers.Serializer):
-    items = FinishedGoodsReceiptInputSerializer(many=True, allow_empty=False, max_length=100)
-
-    def validate_items(self, items):
-        line_ids = [item["production_task_product_id"] for item in items]
-        if len(line_ids) != len(set(line_ids)):
-            raise serializers.ValidationError("同一生产订单产品不能重复入库，请合并数量后提交。")
-        return items
-
-
 class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
     material_snapshot = serializers.SerializerMethodField()
 
@@ -146,6 +117,7 @@ class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
         return instance.material_snapshot or (instance.production_task_product.material_snapshot if instance.production_task_product_id else "")
 
     source_type_display = serializers.CharField(source="get_source_type_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
     supplier_name = serializers.CharField(source="supplier.supplier_name", allow_null=True, read_only=True)
     unit_code = serializers.CharField(source="unit.unit_code", read_only=True)
     unit_name = serializers.CharField(source="unit.unit_name", read_only=True)
@@ -156,18 +128,20 @@ class FinishedGoodsReceiptSerializer(serializers.ModelSerializer):
     zone_name = serializers.CharField(source="location.zone.zone_name", read_only=True)
     location_number = serializers.CharField(source="location.location_number", read_only=True)
     received_by_name = serializers.CharField(source="received_by_employee.display_name", read_only=True)
+    submitted_by_name = serializers.CharField(source="submitted_by_employee.display_name", allow_null=True, read_only=True)
+    confirmed_by_name = serializers.CharField(source="confirmed_by_employee.display_name", allow_null=True, read_only=True)
 
     class Meta:
         model = FinishedGoodsReceipt
         fields = [
-            "id", "receipt_number", "production_task_product_id", "source_type", "source_type_display",
+            "id", "receipt_number", "production_task_product_id", "source_type", "source_type_display", "status", "status_display",
             "source_document_number", "task_number_snapshot", "order_number_snapshot",
             "category_snapshot", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot",
             "item_number_snapshot", "specification_snapshot", "material_snapshot", "actual_color", "supplier_id", "supplier_name",
             "unit_id", "unit_code", "unit_name", "warehouse_id", "warehouse_number", "warehouse_name", "zone_id",
             "zone_name", "location_id", "location_number", "received_quantity", "remaining_quantity",
             "quantity_per_box", "box_count", "tail_quantity", "occupied_box_slots", "remaining_box_slots", "remark",
-            "received_by_name", "received_at", "created_at", "updated_at",
+            "received_by_name", "received_at", "submitted_by_name", "submitted_at", "confirmed_by_name", "confirmed_at", "created_at", "updated_at",
         ]
         read_only_fields = fields
 

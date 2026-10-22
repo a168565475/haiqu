@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Refresh, Setting } from '@element-plus/icons-vue'
 
 import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
+import ManualMaterialInboundDialog from '@/components/inventory/ManualMaterialInboundDialog.vue'
 import { fetchMaterialInventory, fetchMaterialFilterOptions } from '@/api/inventory'
 import searchIcon from '@/assets/crm-v2/search.svg'
 import { router } from '@/router'
@@ -12,6 +13,8 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialFilterOptions, MaterialInventoryRow } from '@/types/inventory'
 
+const props = defineProps<{ openInboundInitially?: boolean }>()
+const inboundOpen = ref(!!props.openInboundInitially)
 const auth = useAuthStore()
 const route = useRoute()
 const can = (permission: string) => auth.user?.is_superuser === true || auth.hasPermission(permission)
@@ -91,6 +94,11 @@ async function loadOptions() {
   catch (error) { ElMessage.error(apiMessage(error, '材料仓库配置加载失败。')) }
 }
 function refresh() { void Promise.all([loadRows(), loadOptions()]) }
+function closeInbound() {
+  inboundOpen.value = false
+  if (props.openInboundInitially) void router.replace({ name: 'material-inventory' })
+}
+function inboundSaved() { closeInbound(); if (canView.value) refresh() }
 function openConfig(kind: 'warehouse' | 'location') { void warehouseConfiguration.value?.open(kind) }
 function openMaterialDetail(row: MaterialInventoryRow, tab: 'issues' | 'purchases' = 'issues') {
   if (!row.stock_item_id) { ElMessage.warning('该库存行缺少稳定原料标识，暂不能查看订单追溯。'); return }
@@ -124,7 +132,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
             <template #dropdown><ElDropdownMenu><ElDropdownItem @click="openConfig('warehouse')">仓库信息</ElDropdownItem><ElDropdownItem @click="openConfig('location')">库区设置</ElDropdownItem></ElDropdownMenu></template>
           </ElDropdown>
           <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' && canReceiveTubeCoating" type="primary" :icon="Plus" @click="router.push({ name: 'inventory-tube-return' })">喷塑入库</ElButton>
-          <ElButton class="erp-button-motion" v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="router.push({ name: 'manual-material-inbound' })">材料入库</ElButton>
+          <ElButton class="erp-button-motion" v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="inboundOpen = true">材料入库</ElButton>
         </div>
       </header>
 
@@ -172,6 +180,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
       </section>
       <WarehouseConfigurationDialogs ref="warehouseConfiguration" warehouse-type="MATERIAL" @saved="loadOptions" />
     </template>
+    <ManualMaterialInboundDialog v-if="inboundOpen" @close="closeInbound" @saved="inboundSaved" />
   </section>
 </template>
 

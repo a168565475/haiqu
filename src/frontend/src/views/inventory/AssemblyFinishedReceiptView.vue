@@ -71,7 +71,7 @@ async function submit() {
  saving.value=true
  try{
   const result=await submitAssemblyReceipt(pending.value.payload,pending.value.etag)
-  pending.value=null;sessionStorage.removeItem(pendingKey);quantity.value='';ElMessage.success(`入库成功：${result.receipt_number}`);await load()
+  pending.value=null;sessionStorage.removeItem(pendingKey);quantity.value='';ElMessage.success(`已提交待入库：${result.receipt_number}`);await load()
  }catch(cause){
   const status=cause instanceof AxiosError?cause.response?.status:undefined
   const code=cause instanceof AxiosError?cause.response?.data?.error?.code:undefined
@@ -137,6 +137,6 @@ onMounted(()=>{
    </section>
   </template>
   <div v-else-if="!loading" class="fg-empty">未读取到订单入库信息，请刷新重试。</div>
-  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">确认入库后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'确认入库'}}</ElButton></footer>
+  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">提交后由仓库确认，确认后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'提交待入库'}}</ElButton></footer>
  </section>
 </template>

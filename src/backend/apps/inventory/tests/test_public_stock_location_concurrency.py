@@ -165,7 +165,7 @@ class PublicReceiptIssueConcurrencyTests(ConcurrentConnections, PublicIssueFixtu
             super().setUp()
 
     def source_receipt(self, *, quality_pending):
-        order = self.task.purchase_order
+        order = self.task.purchase_orders.get()
         purchase_line = PurchaseOrderLine.objects.create(purchase_order=order, line_number=1,
             bom=self.bom, bom_line=self.bom_line, source_bom_line_id_snapshot=self.bom_line.pk,
             product_line_id_snapshot=self.product_line.pk, bom_number_snapshot=self.bom.bom_number,

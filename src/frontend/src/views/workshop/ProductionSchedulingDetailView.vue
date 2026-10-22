@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
-import { Back } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { fetchSchedule, scheduleProductImageUrl, voidSchedule } from '@/api/productionScheduling'
@@ -10,6 +9,7 @@ import { fetchScheduleExecutionSummary } from '@/api/scheduleExecution'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import ScheduleExecutionOverview from '@/components/productionScheduling/ScheduleExecutionOverview.vue'
+import ProductionTimeline from '@/components/productionScheduling/ProductionTimeline.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { ProductionSchedule, ScheduleProduct } from '@/types/productionScheduling'
 import type { ScheduleExecutionSummary } from '@/types/scheduleExecution'
@@ -21,6 +21,7 @@ const auth = useAuthStore()
 const scheduleId = computed(() => String(route.params.scheduleId || ''))
 const loading = ref(true)
 const schedule = ref<ProductionSchedule | null>(null)
+const activeProductId = ref('')
 const etag = ref('')
 const errorMessage = ref('')
 const executionSummary = ref<ScheduleExecutionSummary | null>(null)
@@ -29,17 +30,6 @@ const executionError = ref('')
 let loadSequence = 0
 let executionSequence = 0
 const executionByProduct = computed(() => new Map(executionSummary.value?.products.map(product => [product.schedule_product_id, product]) || []))
-const amountSummaryReason = computed(() => {
-  if (!executionSummary.value) return ''
-  if (executionSummary.value.totals.reason) return executionSummary.value.totals.reason
-  const totals = executionSummary.value.totals
-  if (executionSummary.value.products.length && executionSummary.value.products.every(product => !product.internal_plans.length)
-    && totals.estimated_wage === null && totals.reported_amount === null) {
-    return `本排产没有内部作业计划，报工金额不适用。${totals.outsourcing_planned_amount === null ? '关联外发金额暂不可用。' : ''}`
-  }
-  return [totals.estimated_wage, totals.reported_amount, totals.outsourcing_planned_amount].some(value => value === null)
-    ? '部分金额因工价、计价基数或查看权限暂不可用，缺值显示“—”，不以部分数据代替总额。' : ''
-})
 const voidDialogVisible = ref(false)
 const voidReason = ref('')
 const voidReasonError = ref('')
@@ -128,23 +118,38 @@ async function submitVoid() {
     voiding.value = false
   }
 }
+watch(() => schedule.value?.products, products => {
+  if (!products?.some(product => product.id === activeProductId.value)) {
+    activeProductId.value = products?.[0]?.id || ''
+  }
+})
 watch(scheduleId, () => { void load() }, { immediate: true })
 </script>
 
 <template>
   <section v-loading="loading" class="schedule-page schedule-detail erp-glass-detail" data-testid="production-scheduling-detail">
-    <header class="schedule-heading detail-heading"><div><ElButton :icon="Back" @click="router.push('/workshop/scheduling')">返回</ElButton><h1>排产计划详情</h1></div><div><ElButton v-if="canVoid" @click="openVoidDialog">整单作废</ElButton><ElButton v-if="canEdit" type="primary" @click="router.push(`/workshop/scheduling/${scheduleId}/edit`)">编辑排产</ElButton></div></header>
+    <header class="schedule-heading detail-heading"><div><h1>排产计划详情</h1></div><div><ElButton v-if="canVoid" @click="openVoidDialog">整单作废</ElButton><ElButton v-if="canEdit" type="primary" @click="router.push(`/workshop/scheduling/${scheduleId}/edit`)">编辑排产</ElButton></div></header>
     <ElAlert v-if="errorMessage" type="error" :title="errorMessage" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
     <template v-if="schedule">
-      <section class="schedule-section detail-basic"><header><h2>基本信息</h2></header><dl><div><dt>排产计划号</dt><dd>{{ schedule.schedule_number }}</dd></div><div><dt>生产任务单</dt><dd>{{ schedule.source.task_number }}</dd></div><div><dt>创建日期</dt><dd>{{ formatDate(schedule.created_at) }}</dd></div><div><dt>创建人</dt><dd>{{ schedule.created_by.name }}</dd></div><div><dt>交货日期</dt><dd>{{ formatDate(schedule.source.delivery_date) }}</dd></div><div><dt>版本</dt><dd>V{{ schedule.version }}</dd></div><div><dt>状态</dt><dd><span class="erp-list-tag" :class="schedule.record_status === 'ACTIVE' ? 'erp-list-tag--info' : 'erp-list-tag--neutral'">{{ schedule.record_status_display }}</span></dd></div></dl></section>
-      <section class="schedule-section schedule-amount-summary" aria-label="本排产金额汇总">
-        <header><h2>本排产金额汇总</h2></header>
-        <dl><div><dt>报工总价（预计）</dt><dd data-testid="schedule-estimated-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.estimated_wage) }}</dd></div><div><dt>已报工金额</dt><dd data-testid="schedule-reported-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.reported_amount) }}</dd></div><div><dt>可见关联外发计划金额</dt><dd data-testid="schedule-outsourcing-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.outsourcing_planned_amount) }}</dd><p class="schedule-amount-summary__scope">按下方关联记录合计，含取消记录；不代表结算金额</p></div></dl>
-        <p v-if="!executionLoading && amountSummaryReason" class="schedule-amount-summary__reason">{{ amountSummaryReason }}</p>
+      <section class="schedule-section detail-basic">
+        <header><h2>基本信息</h2></header>
+        <dl>
+          <div><dt>排产计划号</dt><dd>{{ schedule.schedule_number }}</dd></div>
+          <div><dt>生产任务单</dt><dd>{{ schedule.source.task_number }}</dd></div>
+          <div><dt>创建日期</dt><dd>{{ formatDate(schedule.created_at) }}</dd></div>
+          <div><dt>创建人</dt><dd>{{ schedule.created_by.name }}</dd></div>
+          <div><dt>交货日期</dt><dd>{{ formatDate(schedule.source.delivery_date) }}</dd></div>
+          <div><dt>状态</dt><dd><span class="erp-list-tag" :class="schedule.record_status === 'ACTIVE' ? 'erp-list-tag--info' : 'erp-list-tag--neutral'">{{ schedule.record_status_display }}</span></dd></div>
+          <div class="detail-basic__amount"><dt>报工总价（预计）</dt><dd data-testid="schedule-estimated-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.estimated_wage) }}</dd></div>
+          <div class="detail-basic__amount"><dt>已报工金额</dt><dd data-testid="schedule-reported-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.reported_amount) }}</dd></div>
+          <div class="detail-basic__amount"><dt>可见关联外发计划金额</dt><dd data-testid="schedule-outsourcing-total">{{ executionLoading ? '加载中…' : formatScheduleMoney(executionSummary?.totals.outsourcing_planned_amount) }}</dd></div>
+        </dl>
         <ElAlert v-if="executionError" type="warning" :title="executionError" show-icon :closable="false"><ElButton link type="primary" @click="loadExecutionSummary">重试关联信息</ElButton></ElAlert>
       </section>
       <section class="schedule-section detail-products"><header><h2>产品排产明细 <span>共 {{ schedule.products.length }} 个产品</span></h2></header>
-        <article v-for="product in schedule.products" :key="product.id" class="schedule-product-card" :data-schedule-product-id="product.id">
+        <ElTabs v-if="schedule.products.length" v-model="activeProductId" type="card" class="detail-product-tabs" :class="{ 'is-single-product': schedule.products.length === 1 }">
+          <ElTabPane v-for="product in schedule.products" :key="product.id" :name="product.id" :label="`${product.product.product_name || '未命名产品'}${product.product.color_name ? ` · ${product.product.color_name}` : ''}`" lazy>
+        <article v-if="activeProductId === product.id" class="schedule-product-card" :data-schedule-product-id="product.id">
           <div class="schedule-product-card__body">
             <div class="detail-product-main"><img :src="product.image_file_id ? scheduleProductImageUrl(schedule.production_task_id, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" /><dl><div><dt>产品号</dt><dd>{{ product.product.item_number || product.product.product_number || '—' }}</dd></div><div><dt>产品名称</dt><dd>{{ product.product.product_name || '未命名产品' }}</dd></div><div><dt>规格</dt><dd data-field="specification">{{ (product.product.specification_display ?? product.product.specification) || '—' }}</dd></div><div><dt>颜色</dt><dd data-field="color">{{ product.product.color_name || '—' }}</dd></div><div><dt>材质</dt><dd data-field="material">{{ product.product.material || '—' }}</dd></div></dl></div>
             <dl class="detail-quantities"><div><dt>订单数量</dt><dd>{{ product.source_quantity.toLocaleString('zh-CN') }} {{ product.unit_name }}</dd></div><div><dt>排产数量</dt><dd>{{ product.planned_quantity.toLocaleString('zh-CN') }} {{ product.unit_name }}</dd></div></dl>
@@ -153,7 +158,10 @@ watch(scheduleId, () => { void load() }, { immediate: true })
           </div>
           <ScheduleExecutionOverview :schedule-id="schedule.id" :production-task-id="schedule.production_task_id" :product-line-id="product.product_line_id" :summary="executionByProduct.get(product.id) || null" :loading="executionLoading" :failed="Boolean(executionError)" :active="schedule.record_status === 'ACTIVE'" />
         </article>
+          </ElTabPane>
+        </ElTabs>
       </section>
+      <ProductionTimeline :schedule-id="schedule.id" :revision="schedule.version" />
     </template>
     <AppWindowDialog v-model="voidDialogVisible" title="整单作废" :width="520" :height="300" class="schedule-void-dialog" destroy-on-close :close-on-click-modal="!voiding" :close-on-press-escape="!voiding" :show-close="!voiding">
       <p>作废后该计划保留历史，可为同一生产任务单重新建立有效计划。</p>

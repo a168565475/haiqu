@@ -12,6 +12,11 @@ const routes: Record<string, [string, string?]> = {
   PURCHASE_ORDER_COMPLETED: ['purchase-order-detail', 'id'],
   PRODUCTION_PLAN_CREATED: ['workshop-scheduling-detail', 'scheduleId'],
   MATERIAL_ISSUE_SUBMITTED: ['material-issue-detail', 'issueId'],
+  INTERNAL_SEMI_RECEIPT_CONFIRMED: ['semi-receipt-records'],
+  SEMI_FINISHED_RECEIPT_SUBMITTED: ['semi-receipt-records'],
+  ASSEMBLY_FINISHED_RECEIPT_SUBMITTED: ['finished-goods-inventory'],
+  ASSEMBLY_FINISHED_RECEIPT_CONFIRMED: ['finished-goods-inventory'],
+  FINISHED_GOODS_OUTBOUND_CONFIRMED: ['finished-goods-outbound-detail', 'outboundId'],
   WAGE_SCHEME_SUBMITTED: ['wage-scheme-detail', 'schemeId'],
   WAGE_SCHEME_DECIDED: ['wage-scheme-detail', 'schemeId'],
   WORK_REPORT_SAVED: ['work-report-day-detail', 'productionDate'],
@@ -34,16 +39,19 @@ const routes: Record<string, [string, string?]> = {
   SAMPLE_INVENTORY_RECEIVED: ['sample-inventory-receipt-detail', 'receiptId'],
 }
 
-export function notificationRoute(eventCode: string, target: NotificationTarget): { name: string; params: Record<string, string> } {
+export function notificationRoute(eventCode: string, target: NotificationTarget): { name: string; params: Record<string, string>; query?: Record<string, string> } {
   const allowed = Object.hasOwn(routes, eventCode) ? routes[eventCode] : undefined
   if (!allowed || !target || typeof target.object_id !== 'string' || !uuid.test(target.object_id)
-    || target.route_name !== allowed[0] || !target.params || typeof target.params !== 'object' || Array.isArray(target.params)) {
+    || target.route_name !== allowed[0] || !target.params || typeof target.params !== 'object' || Array.isArray(target.params)
+    || Object.hasOwn(target, 'query')) {
     throw new Error('通知跳转目标不受支持，请刷新消息。')
   }
   const parameter = allowed[1]
   const keys = Object.keys(target.params)
   if (!parameter) {
     if (keys.length) throw new Error('通知跳转参数无效。')
+    // 只由此已登记事件构造现有记录页签；后端/消息输入不支持任意query。
+    if (['SEMI_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_SUBMITTED', 'ASSEMBLY_FINISHED_RECEIPT_CONFIRMED'].includes(eventCode)) return { name: allowed[0], params: {}, query: { tab: 'records' } }
     return { name: allowed[0], params: {} }
   }
   const value = target.params[parameter]

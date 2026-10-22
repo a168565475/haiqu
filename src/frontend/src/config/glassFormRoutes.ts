@@ -14,6 +14,6 @@ export const glassFormRouteNames = [
   'workshop-scheduling-new', 'workshop-scheduling-edit',
   'wage-scheme-new', 'wage-scheme-change', 'work-report-new', 'work-report-edit',
   'workshop-outsourcing-new', 'workshop-outsourcing-tube-new',
-  'sample-new', 'sample-director-review', 'sample-materials',
+  'sample-new', 'sample-edit', 'sample-director-review', 'sample-materials',
   'sample-warehouse-review', 'sample-material-issue', 'sample-material-issue-confirm',
 ] as const

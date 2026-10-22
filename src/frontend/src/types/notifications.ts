@@ -14,6 +14,7 @@ export interface NotificationRule {
   body_template: string
   allowed_variables: string[]
   required_variables: string[]
+  variable_definitions?: NotificationVariable[]
   supported_scopes: NotificationScope[]
   scope_labels: Record<string, string>
   recipient_role_codes: string[]
@@ -54,6 +55,38 @@ export interface NotificationPreview {
   will_send: boolean
   recipient_note?: string
   warnings?: string[]
+  preview_token?: string
+  preview_id?: string
+  expires_at?: string
+}
+
+export interface NotificationVariable { name: string; label: string; example: string }
+export interface NotificationPreviewRecipient { binding_id: string; employee_code: string; employee_name: string }
+export interface NotificationPreviewRecipients {
+  data: NotificationPreviewRecipient[]
+  count: number
+  page: number
+  page_size: number
+  available: boolean
+  schema_ready: boolean
+  config_etag: string
+  message: string
+}
+export type NotificationPreviewDraft = NotificationRuleWrite & { variables: Record<string, string> }
+export interface NotificationPreviewSend {
+  preview_token: string
+  binding_id: string
+  config_etag: string
+  draft: NotificationPreviewDraft
+}
+export interface NotificationPreviewAttempt {
+  id: string
+  preview_id: string
+  status: 'PROCESSING' | 'ACCEPTED' | 'FAILED' | 'UNCERTAIN'
+  message: string
+  recipient_name: string
+  created_at: string
+  finished_at: string | null
 }
 
 export interface NotificationTarget {

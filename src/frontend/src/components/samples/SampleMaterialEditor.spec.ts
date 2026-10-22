@@ -37,6 +37,7 @@ describe('用料需求复用 BOM 编辑交互', () => {
     await wrapper.get('[aria-label="放大编辑当前行"]').trigger('click')
     expect(wrapper.findComponent(Drawer).props('line').key).toBe('fabric-1')
     expect(wrapper.findAll('.section-sidebar button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.find('.action-cell .row-delete').exists()).toBe(true)
     wrapper.findComponent(Drawer).vm.$emit('update:modelValue', false); await flushPromises()
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     await wrapper.get('[aria-label="删除当前行"]').trigger('click'); await flushPromises()

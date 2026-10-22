@@ -5,14 +5,15 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { beforeEach, expect, it, vi } from 'vitest'
 import * as api from '@/api/inventory'
+import { router } from '@/router'
 import MaterialInventoryView from './MaterialInventoryView.vue'
 import MaterialInboundDetailView from './MaterialInboundDetailView.vue'
-import ManualMaterialInboundView from './ManualMaterialInboundView.vue'
+import ManualMaterialInboundDialog from '@/components/inventory/ManualMaterialInboundDialog.vue'
 import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
 
 const routeState = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
 vi.mock('@/router', () => ({ router: { push: vi.fn(), replace: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRoute: () => routeState }))
+vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/api/inventory', async importOriginal => {
   const original = await importOriginal<typeof api>()
@@ -42,10 +43,24 @@ it('三个库存读取页面仅加载筛选选项，明细和空列表可独立�
   expect(api.fetchInventoryOptions).not.toHaveBeenCalled()
 })
 it('手工入库只取材料仓和库区，未填写时不能提交', async () => {
-  const wrapper = shallowMount(ManualMaterialInboundView, { global: { plugins: [ElementPlus] } }); await flushPromises()
+  const wrapper = shallowMount(ManualMaterialInboundDialog, { global: { plugins: [ElementPlus] } }); await flushPromises()
   expect(api.fetchMaterialReceivingOptions).toHaveBeenCalledOnce()
   expect((wrapper.vm as unknown as { ready: boolean }).ready).toBe(false)
   expect(api.createManualMaterialReceipt).not.toHaveBeenCalled(); wrapper.unmount()
+})
+it('材料入库在列表弹出，关闭不跳页，成功刷新当前库存', async () => {
+  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
+  const vm = wrapper.vm as unknown as { inboundOpen: boolean }
+  vm.inboundOpen = true; await flushPromises()
+  wrapper.findComponent(ManualMaterialInboundDialog).vm.$emit('close'); await flushPromises()
+  expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
+  expect(router.push).not.toHaveBeenCalled(); expect(router.replace).not.toHaveBeenCalled()
+  vm.inboundOpen = true; await flushPromises()
+  vi.mocked(api.fetchMaterialInventory).mockClear()
+  wrapper.findComponent(ManualMaterialInboundDialog).vm.$emit('saved'); await flushPromises()
+  expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
+  expect(api.fetchMaterialInventory).toHaveBeenCalledOnce()
+  wrapper.unmount()
 })
 it('材料库存旧响应和卸载后的响应失效', async () => {
   const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
@@ -84,21 +99,13 @@ it('半成品库存入口从路由读取库存性质并传递加工状态筛选'
   expect(source).toContain('processing_status_label')
   wrapper.unmount()
 })
-it('成品入库打开时重新读取完整操作选项', async () => {
-  vi.mocked(api.fetchInventoryOptions).mockResolvedValue({ ...filters, locations: [], suppliers: [], product_colors: [], production_orders: [] })
-  vi.mocked(api.fetchEligibleProducts).mockResolvedValue([])
+it('成品库存出库入口仅传递选中批次，由出库页面加载操作选项', async () => {
   const wrapper = shallowMount(FinishedGoodsInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
-  await (wrapper.vm as unknown as { openInbound: () => Promise<void> }).openInbound()
-  expect(api.fetchInventoryOptions).toHaveBeenCalledOnce(); expect(api.fetchEligibleProducts).toHaveBeenCalledOnce(); wrapper.unmount()
-})
-it('出库辅助选项失败不阻塞批次，重新打开不会残留旧批次', async () => {
-  vi.mocked(api.fetchInventoryOptions).mockRejectedValue(new Error('选项失败'))
-  vi.mocked(api.fetchOutboundBatches).mockResolvedValue([{ id: 'new', remaining_quantity: 3, quantity_per_box: 1 }] as never)
-  const wrapper = shallowMount(FinishedGoodsInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
-  const vm = wrapper.vm as unknown as { selectedRows: unknown[]; outboundBatches: { id: string }[]; openOutbound: () => Promise<void>; submitOutbound: () => Promise<void> }
-  vm.selectedRows = [{ receipt_ids: ['new'] }]; vm.outboundBatches = [{ id: 'old' }]
-  await vm.openOutbound(); await flushPromises(); expect(vm.outboundBatches.map(x => x.id)).toEqual(['new'])
-  vi.mocked(api.fetchOutboundBatches).mockRejectedValueOnce(new Error('批次失败'))
-  await vm.openOutbound(); expect(vm.outboundBatches).toEqual([]); await vm.submitOutbound()
+  const vm = wrapper.vm as unknown as { selectedRows: unknown[]; openOutbound: () => Promise<void> }
+  vm.selectedRows = [{ task_number: 'TASK-1', receipt_ids: ['new'] }]
+  await vm.openOutbound(); await flushPromises()
+  expect(router.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-new', query: { receipt_ids: 'new' } })
+  expect(api.fetchInventoryOptions).not.toHaveBeenCalled()
+  expect(api.fetchOutboundBatches).not.toHaveBeenCalled()
   expect(api.createFinishedGoodsOutbound).not.toHaveBeenCalled(); wrapper.unmount()
 })

@@ -36,6 +36,27 @@ def active_purchase_orders():
     return PurchaseOrder.objects.filter(archived_at__isnull=True)
 
 
+def purchase_orders_by_product(orders):
+    """按采购时保存的产品标识匹配，BOM 换版不释放重复采购限制。"""
+    result = {}
+    for order in orders:
+        lines = list(order.lines.all())
+        if not lines:
+            result.setdefault(None, order)
+        for line in lines:
+            result.setdefault(line.product_line_id_snapshot, order)
+    return result
+
+
+def purchase_orders_with_product_ids(queryset=None):
+    if queryset is None:
+        queryset = PurchaseOrder.objects.all()
+    return queryset.prefetch_related(Prefetch(
+        "lines",
+        queryset=PurchaseOrderLine.objects.only("id", "purchase_order_id", "product_line_id_snapshot"),
+    ))
+
+
 def purchase_return_amount(record):
     """按本次退货数量和原采购单价汇总，沿用采购金额四位小数规则。"""
     lines = list(record.lines.all())
@@ -145,5 +166,6 @@ def production_tasks_with_purchase_sources(queryset=None):
         .prefetch_related(Prefetch("boms", queryset=boms, to_attr="purchase_source_boms"))
     )
     return queryset.select_related("customer_account").prefetch_related(
-        Prefetch("products", queryset=products, to_attr="purchase_source_products")
+        Prefetch("products", queryset=products, to_attr="purchase_source_products"),
+        Prefetch("purchase_orders", queryset=purchase_orders_with_product_ids(), to_attr="purchase_source_orders"),
     )

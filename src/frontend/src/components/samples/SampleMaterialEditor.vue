@@ -133,7 +133,7 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
               <td><ElInput :model-value="line.quantity" :disabled="disabled" :aria-label="`第${index + 1}项需求数量`" inputmode="decimal" placeholder="数量" @update:model-value="updateLine(line.key, 'quantity', $event)" /></td>
               <td><span v-if="line.category === 'tube'">米</span><ElSelect v-else :model-value="line.unitId" :disabled="disabled" :aria-label="`第${index + 1}项单位`" filterable placeholder="单位" @update:model-value="updateLine(line.key, 'unitId', $event)"><ElOption v-for="unit in units" :key="unit.id" :label="unit.label" :value="unit.id" /></ElSelect></td>
               <td><ElInput :model-value="line.notes" :disabled="disabled" :aria-label="`第${index + 1}项备注`" maxlength="2000" placeholder="填写备注" @update:model-value="updateLine(line.key, 'notes', $event)" /></td>
-              <td><ElButton link :icon="Delete" :disabled="disabled" aria-label="删除当前行" @click="removeLine(line)" /></td>
+              <td class="action-cell"><ElButton class="row-delete" link :icon="Delete" :disabled="disabled" aria-label="删除当前行" @click="removeLine(line)" /></td>
             </tr>
             <tr v-if="!visibleLines.length" class="empty-row"><td colspan="9">{{ unavailableMessage || '当前分区暂无材料，请添加本次需要的材料。' }}</td></tr>
           </tbody>
@@ -161,16 +161,18 @@ h2 { width: 140px; flex: none; margin: 0; font-family: token.$crm-font-display; 
 .material-table { display: flex; min-width: 0; flex-direction: column; }
 .table-scroll { min-width: 0; overflow: visible; }
 table { width: 100%; min-width: 0; border-spacing: 0; table-layout: fixed; }
-.col-number { width: 7%; } .col-name { width: 15%; } .col-spec { width: 17%; } .col-material { width: 13%; } .col-color { width: 14%; } .col-quantity { width: 10%; } .col-unit { width: 8%; } .col-notes { width: 11%; } .col-actions { width: 5%; }
+.col-number { width: 7%; } .col-name { width: 15%; } .col-spec { width: 17%; } .col-material { width: 13%; } .col-color { width: 14%; } .col-quantity { width: 10%; } .col-unit { width: 8%; } .col-notes { width: 11%; } .col-actions { width: 56px; }
 .row-tools { display: flex; align-items: center; gap: 6px; }
 .material-editor td :deep(.row-expand) { width: 28px; height: 28px; font-size: 16px; }
 .reference-error { color: token.$crm-danger; font-size: 12px; }
-th { height: 44px; padding: 0 16px !important; background: token.$crm-color-page; text-align: left; vertical-align: middle; font-size: 11px !important; font-weight: 500; line-height: 16px !important; white-space: nowrap; }
+th { height: 44px; padding: 0 16px !important; color: var(--erp-table-header-text); background: var(--erp-table-header-background); text-align: left; vertical-align: middle; font-size: 11px !important; font-weight: 500; line-height: 16px !important; white-space: nowrap; }
 td { height: auto !important; min-height: 40px; padding: 4px 16px !important; border-bottom: 1px solid token.$crm-border-subtle; font-size: 12px !important; line-height: 18px !important; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 td :deep(.el-input), td :deep(.el-select), td :deep(.el-cascader) { width: 100%; }
-td :deep(.el-input__wrapper), td :deep(.el-select__wrapper), td :deep(.el-cascader .el-input__wrapper) { box-sizing: border-box; height: 32px !important; min-height: 32px !important; padding: 1px 7px; border-radius: 5px; background: var(--erp-input-background); box-shadow: 0 0 0 1px var(--erp-input-border) inset; }
-td :deep(.el-input__wrapper:hover), td :deep(.el-input__wrapper.is-focus), td :deep(.el-select__wrapper:hover), td :deep(.el-select__wrapper.is-focused), td :deep(.el-cascader .el-input__wrapper:hover), td :deep(.el-cascader .el-input__wrapper.is-focus) { background: var(--erp-input-background); box-shadow: 0 0 0 1px var(--erp-input-focus-border) inset; }
+td :deep(.el-input__wrapper), td :deep(.el-select__wrapper), td :deep(.el-cascader .el-input__wrapper) { box-sizing: border-box; height: 32px !important; min-height: 32px !important; padding: 0 8px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; font-size: 12px; }
+td :deep(.el-input__wrapper:hover), td :deep(.el-input__wrapper.is-focus), td :deep(.el-select__wrapper:hover), td :deep(.el-select__wrapper.is-focused), td :deep(.el-cascader .el-input__wrapper:hover), td :deep(.el-cascader .el-input__wrapper.is-focus) { background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 td :deep(.el-input__inner::placeholder), td :deep(.el-select__placeholder) { color: var(--erp-table-text); }
+.action-cell { overflow: visible; padding: 4px 8px !important; text-align: center; text-overflow: clip; }
+td.action-cell :deep(.row-delete) { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; flex: none; }
 .empty-row td { height: auto !important; min-height: 0; padding: 48px 16px !important; color: token.$crm-text-secondary; text-align: center; }
 .material-editor .material-table :deep(.add-row) { width: 100%; height: 32px; min-height: 32px; flex: none; border-color: token.$crm-border-subtle; background: var(--erp-table-background); font-size: 13px; }
 .material-count { display: flex; height: 22px; flex: none; justify-content: space-between; color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; }

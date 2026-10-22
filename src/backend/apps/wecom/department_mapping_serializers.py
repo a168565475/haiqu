@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from .directory_serializers import DirectorySnapshotSerializer
+
 class DepartmentMappingWriteSerializer(serializers.Serializer):
     preview_token = serializers.CharField(max_length=5000, trim_whitespace=False)
     organization_unit_id = serializers.UUIDField(allow_null=True)
@@ -47,7 +49,9 @@ class DepartmentMappingPreviewSerializer(serializers.Serializer):
     corp_id = serializers.CharField()
     departments = SourceDepartmentSerializer(many=True)
     organizations = OrganizationOptionSerializer(many=True)
-    preview_token = serializers.CharField()
+    preview_token = serializers.CharField(allow_blank=True)
+    can_save_mapping = serializers.BooleanField()
+    snapshot = DirectorySnapshotSerializer()
 
 
 class DepartmentMappingPreviewResponseSerializer(serializers.Serializer):

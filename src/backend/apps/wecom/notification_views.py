@@ -8,16 +8,19 @@ from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 
-from apps.access_control.permissions import CanManageNotifications
+from apps.access_control.permissions import CanManageNotifications, CanManageWeCom
 from apps.core.api.permissions import HasActiveEmployee
 from apps.core.auth import active_employee_for
 from . import notification_selectors as selectors, notification_services as services
+from . import notification_preview_selectors as preview_selectors, notification_preview_services as preview_services
+from .models import NotificationPreviewAttempt
 from .notification_catalog import get_event
 from .notification_serializers import (
     NotificationListSerializer, NotificationPreviewResponseSerializer,
     NotificationPreviewSerializer, NotificationReadSerializer, NotificationRuleListSerializer,
     NotificationRuleResponseSerializer, NotificationRuleWriteSerializer, NotificationUnreadSerializer,
     NotificationQuerySerializer, NotificationDeliveryQuerySerializer, NotificationDeliveryListSerializer,
+    NotificationPreviewSendSerializer, NotificationPreviewRecipientQuerySerializer,
 )
 from .views import IF_MATCH
 
@@ -65,10 +68,51 @@ class NotificationRulePreviewView(NotificationManagementView):
         variables.is_valid(raise_exception=True)
         rule = selectors.rules_queryset().filter(event_code=event_code).first()
         source = selectors.rule_payload(rule) if rule else selectors.default_rule_payload(event)
+        if request.headers.get("If-Match"):
+            services.require_etag(request.headers["If-Match"], source["etag"])
         rule_payload = {key: source[key] for key in services.RULE_FIELDS}
         rule_payload.update({key: value for key, value in variables.validated_data.items() if key != "variables"})
         payload = services.preview_rule(event_code, rule_payload, variables.validated_data["variables"])
+        payload = preview_services.signed_preview(request, event_code,
+            {**rule_payload, "variables": variables.validated_data["variables"]}, source["etag"], payload)
         return Response(NotificationPreviewResponseSerializer({"data": payload}).data)
+
+
+class NotificationPreviewManagementView(NotificationManagementView):
+    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageNotifications, CanManageWeCom]
+
+
+class NotificationPreviewRecipientsView(NotificationPreviewManagementView):
+    @extend_schema(parameters=[NotificationPreviewRecipientQuerySerializer], responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        query = NotificationPreviewRecipientQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        return Response(preview_selectors.recipient_options(**query.validated_data))
+
+
+class NotificationPreviewSendView(NotificationPreviewManagementView):
+    @extend_schema(request=NotificationPreviewSendSerializer, responses=OpenApiTypes.OBJECT)
+    def post(self, request, event_code):
+        try:
+            get_event(event_code)
+        except ValueError:
+            raise NotFound("通知规则不存在。") from None
+        preview_services.require_preview_schema()
+        serializer = NotificationPreviewSendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        attempt = preview_services.send_preview(request, event_code, serializer.validated_data)
+        return Response({"data": preview_selectors.attempt_payload(attempt)})
+
+
+class NotificationPreviewAttemptView(NotificationPreviewManagementView):
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request, preview_id):
+        preview_services.require_preview_schema()
+        attempt = NotificationPreviewAttempt.objects.filter(preview_id=preview_id,
+            requested_by_employee=active_employee_for(request.user)).first()
+        if attempt is None:
+            raise NotFound("尚未找到本次发送记录，请稍后再次查询；不要重复发送。")
+        return Response({"data": preview_selectors.attempt_payload(attempt)})
 
 
 @method_decorator(never_cache, name="dispatch")

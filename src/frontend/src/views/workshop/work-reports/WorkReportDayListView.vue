@@ -359,13 +359,13 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
             highlight-current-row
             @row-click="selectReport"
           >
-            <ElTableColumn label="报工单 / 报工时间" min-width="152">
+            <ElTableColumn label="报工单" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
-                <div class="wr-report-list-entry">
-                  <b :title="row.report_number">{{ row.report_number }}</b>
-                  <span>{{ reportTimeText(row.created_at) }}</span>
-                </div>
+                <b class="wr-report-number" :title="row.report_number">{{ row.report_number }}</b>
               </template>
+            </ElTableColumn>
+            <ElTableColumn label="报工时间" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }"><span class="wr-report-time">{{ reportTimeText(row.created_at) }}</span></template>
             </ElTableColumn>
             <ElTableColumn prop="line_count" label="工序数" width="76" align="center" />
             <ElTableColumn label="金额" width="90" align="right"><template #default="{ row }"><strong>{{ formatWageMoney(row.total_amount) }}</strong></template></ElTableColumn>
@@ -459,16 +459,8 @@ onBeforeUnmount(() => { contextRequest += 1; reportRequest += 1 })
 <style lang="scss">@use '@/styles/workshopReporting.scss';</style>
 
 <style scoped lang="scss">
-.wr-report-list-entry {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px 0;
-
-  b { overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-  span { color: var(--erp-color-text-secondary); font-size: 11px; white-space: nowrap; }
-}
+.wr-report-number { font-size: 12px; font-weight: 500; white-space: nowrap; }
+.wr-report-time { color: var(--erp-color-text-secondary); font-size: 12px; white-space: nowrap; }
 
 .wr-report-list-panel {
   .erp-list-footer { flex-wrap: wrap; gap: 8px; }

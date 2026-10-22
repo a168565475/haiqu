@@ -118,6 +118,10 @@ def prohibit_self_approval(actor, submitter_id):
     if submitter_id is None:
         raise PermissionDenied('该申请缺少可核实的提交人，请由申请人重新提交后再审批。')
     if getattr(actor, 'pk', None) == submitter_id:
+        user = getattr(actor, 'user', None)
+        if (actor.status == 'ACTIVE' and actor.archived_at is None
+                and user is not None and user.is_active and user.is_superuser):
+            return
         raise PermissionDenied('提交人不能审批自己提交的申请。')
 
 

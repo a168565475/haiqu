@@ -82,12 +82,12 @@ class AssemblyReportingLimitTests(AssemblyFixture, APITestCase):
         data = self.preview()
         self.assertFalse(data['reporting_basis_ready']); self.assertEqual(data['maximum_receivable'], 0)
 
-    def test_legacy_receipt_entry_cannot_bypass_reporting_limit(self):
+    def test_removed_legacy_receipt_entry_cannot_bypass_reporting_limit(self):
         data = dict(production_task_product_id=str(self.line.pk), expected_received_total=0,
             received_quantity=601, quantity_per_box=None, location_id=self.location_id,
             unit_id=str(self.line.unit_id), actual_color='黑色')
         response = self.client.post('/api/v1/finished-goods-inventory/receipts/', data, format='json')
-        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.status_code, 403, response.data)
         self.assertFalse(FinishedGoodsReceipt.objects.exists())
 
     def test_preview_revision_changes_with_reported_amount(self):
@@ -95,7 +95,11 @@ class AssemblyReportingLimitTests(AssemblyFixture, APITestCase):
         self.assertEqual(self.post(self.payload(received_quantity=500), etag).status_code, 412)
 
     def test_edit_below_received_rolls_back_entire_report(self):
-        self.assertEqual(self.post(self.payload(received_quantity=600)).status_code, 201)
+        receipt = self.post(self.payload(received_quantity=600))
+        self.assertEqual(receipt.status_code, 201)
+        self.assertEqual(self.client.post(
+            f"/api/v1/assembly-finished-receipts/{receipt.data['data']['id']}/confirm/", format='json',
+        ).status_code, 200)
         before = list(self.report.lines.order_by('id').values('id', 'quantity'))
         response = self.edit_report([800, 700, 500])
         self.assertEqual(response.status_code, 400, response.data)
@@ -104,14 +108,22 @@ class AssemblyReportingLimitTests(AssemblyFixture, APITestCase):
         self.report.refresh_from_db(); self.assertEqual(self.report.revision, 1)
 
     def test_edit_to_received_boundary_allowed(self):
-        self.assertEqual(self.post(self.payload(received_quantity=600)).status_code, 201)
+        receipt = self.post(self.payload(received_quantity=600))
+        self.assertEqual(receipt.status_code, 201)
+        self.assertEqual(self.client.post(
+            f"/api/v1/assembly-finished-receipts/{receipt.data['data']['id']}/confirm/", format='json',
+        ).status_code, 200)
         response = self.edit_report([650, 700, 600])
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self.preview()['reported_minimum'], 600)
 
     @override_settings(WORK_REPORT_DELETION_ENABLED=True)
     def test_delete_cannot_bypass_reduction_guard(self):
-        self.assertEqual(self.post(self.payload(received_quantity=600)).status_code, 201)
+        receipt = self.post(self.payload(received_quantity=600))
+        self.assertEqual(receipt.status_code, 201)
+        self.assertEqual(self.client.post(
+            f"/api/v1/assembly-finished-receipts/{receipt.data['data']['id']}/confirm/", format='json',
+        ).status_code, 200)
         url = f'/api/v1/workshop-reporting/work-reports/{self.report.pk}/'
         detail = self.client.get(url)
         response = self.client.delete(url, {'reason': '测试删除不得绕过入库保护'}, format='json', HTTP_IF_MATCH=detail['ETag'])
@@ -121,7 +133,7 @@ class AssemblyReportingLimitTests(AssemblyFixture, APITestCase):
         self.assertFalse(WorkReportHistory.objects.filter(deleted_at__isnull=False).exists())
 
     def test_outbound_does_not_restore_receipt_capacity(self):
-        self.assertEqual(self.post(self.payload(received_quantity=600)).status_code, 201)
+        self.confirm(self.post(self.payload(received_quantity=600)))
         FinishedGoodsReceipt.objects.update(remaining_quantity=0)
         self.assertEqual(self.preview()['remaining_receivable'], 0)
 

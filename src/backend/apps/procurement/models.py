@@ -186,11 +186,11 @@ class PurchaseOrder(ArchivableModel):
         regex=r"^CGDD(?:[0-9]{6}[0-9]{3,40}|[0-9]{8}[0-9]{2,38})$",
         message="采购订单号必须是 CGDD 加 6 位日期和至少 3 位流水，兼容历史 8 位日期和至少 2 位流水，总长不超过 50 位。",
     )])
-    production_task = models.OneToOneField(
+    production_task = models.ForeignKey(
         "production_tasks.ProductionTask",
         null=True, blank=True,
         on_delete=models.PROTECT,
-        related_name="purchase_order",
+        related_name="purchase_orders",
     )
     production_task_number_snapshot = models.CharField(max_length=50)
     sales_order_number_snapshot = models.CharField(max_length=100)

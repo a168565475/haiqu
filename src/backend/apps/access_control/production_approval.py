@@ -3,6 +3,10 @@ from .module_policy import prohibit_audit_self_approval
 
 def check_production_approval(actor, task):
     from .selectors import current_assignments
+    user = getattr(actor, 'user', None)
+    if (actor is not None and actor.status == 'ACTIVE' and actor.archived_at is None
+            and user is not None and user.is_active and user.is_superuser):
+        return
     # 仅有效行政角色且持有任务确认动作时允许此流程自确认。
     if actor is not None and actor.status == 'ACTIVE' and actor.archived_at is None and current_assignments(actor).filter(
         role_profile__role_code='ADMINISTRATION',

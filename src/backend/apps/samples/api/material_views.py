@@ -97,3 +97,19 @@ class SampleMaterialActionsMixin:
             sample = save_warehouse(sample_id=sample.pk, data=serializer.validated_data, request=request)
         result = warehouse_response(sample, request)
         return Response({'data': result}, headers={'ETag': result.get('etag', '')})
+
+    @extend_schema(responses=MaterialResponseSerializer)
+    @action(detail=True, methods=['get'], url_path='warehouse-inventory')
+    def warehouse_inventory(self, request, pk=None):
+        from rest_framework.exceptions import PermissionDenied
+        from apps.access_control.module_policy import can_sample
+        from apps.core.api.exceptions import Conflict
+        from ..models import SampleMaterialRequest
+        from ..warehouse_stock import inventory_candidates
+        sample = self.get_object()
+        if not can_sample(request, sample, 'samples.review_sample_materials'):
+            raise PermissionDenied('当前账号没有此样品的仓库核对权限。')
+        record = SampleMaterialRequest.objects.filter(sample_request=sample).first()
+        if not record or not record.submitted_at or record.no_materials:
+            raise Conflict('没有已提交的用料需求可查询库存。')
+        return Response({'data': inventory_candidates(record)})

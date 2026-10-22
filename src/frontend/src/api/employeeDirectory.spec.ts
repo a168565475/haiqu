@@ -2,7 +2,7 @@ import { AxiosError } from 'axios'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './request'
 import {
-  employeeDirectoryError, getDepartmentMappings, getEmployeeDirectoryPreview,
+  employeeDirectoryError, getDepartmentMappings, getEmployeeDirectoryPreview, refreshDepartmentMappings, refreshEmployeeDirectory,
   matchEmployeeDirectory, saveDepartmentMapping, syncEmployeeDirectory,
 } from './employeeDirectory'
 
@@ -18,6 +18,14 @@ describe('统一员工通讯录 API', () => {
     })
   })
 
+  it('可信副本保留独立can_submit/can_refresh及签名，不因配置不可用丢弃保存预览', async () => {
+    const data = { snapshot: { status: 'CONFIG_UNAVAILABLE', can_submit: true, can_refresh: false }, corp_id: 'corp', departments: [], members: [], preview_token: 'saved-source-token', apply_departments: false }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data }, headers: { etag: '"saved-source-v1"' } })
+    const post = vi.spyOn(apiClient, 'post')
+    await expect(getEmployeeDirectoryPreview()).resolves.toEqual({ data, etag: '"saved-source-v1"' })
+    expect(get).toHaveBeenCalledOnce(); expect(post).not.toHaveBeenCalled()
+  })
+
   it('只有显式启用时才预览部门补充', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { apply_departments: true } }, headers: { etag: '"v1"' } })
     await getEmployeeDirectoryPreview(true)
@@ -28,6 +36,15 @@ describe('统一员工通讯录 API', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: {} }, headers: { etag } })
     await expect(getEmployeeDirectoryPreview()).rejects.toThrow('预览版本缺失')
     await expect(getDepartmentMappings()).rejects.toThrow('预览版本缺失')
+  })
+
+  it('主动刷新使用POST，员工模式与部门空JSON准确传递', async () => {
+    const data = { snapshot: { status: 'MISSING', can_submit: false }, preview_token: '' }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { data }, headers: { etag: '"v1"' } })
+    await expect(refreshEmployeeDirectory(true)).resolves.toEqual({ data, etag: '"v1"' })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/wecom/employee-directory/refresh/', { apply_departments: true }, { timeout: 120000 })
+    await refreshDepartmentMappings()
+    expect(post).toHaveBeenLastCalledWith('/api/v1/wecom/department-mappings/refresh/', {}, { timeout: 120000 })
   })
 
   it('同步原样提交选择与预览版本，不替用户添加重名新建确认', async () => {
@@ -61,10 +78,16 @@ describe('统一员工通讯录 API', () => {
   })
 
   it('部门映射预览保留来源、ERP 候选、签名和独立 ETag', async () => {
-    const data = { corp_id: 'corp', departments: [{ id: 1, parentid: 0, name: '部门', mapping: null, candidates: [] }], organizations: [], preview_token: 'mapping-preview' }
+    const data = { can_save_mapping: true, corp_id: 'corp', departments: [{ id: 1, parentid: 0, name: '部门', mapping: null, candidates: [] }], organizations: [], preview_token: 'mapping-preview' }
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data }, headers: { etag: '"mapping-v1"' } })
     await expect(getDepartmentMappings()).resolves.toEqual({ data, etag: '"mapping-v1"' })
     expect(get).toHaveBeenCalledWith('/api/v1/wecom/department-mappings/', { timeout: 120000 })
+  })
+
+  it('保留独立映射能力，不因通用快照不可提交丢弃签名预览', async () => {
+    const data = { can_save_mapping: true, snapshot: { status: 'CONFIG_UNAVAILABLE', can_submit: false }, preview_token: 'mapping-preview' }
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data }, headers: { etag: '"mapping-v1"' } })
+    await expect(getDepartmentMappings()).resolves.toEqual({ data, etag: '"mapping-v1"' })
   })
 
   it('保存映射携带部门版本，清除映射显式提交 null 且不要求目标版本', async () => {

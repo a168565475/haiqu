@@ -55,6 +55,35 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
     def receive(self, quantity=100, payload=None, etag=None):
         return self.client.post(self.url,payload or self.payload(quantity),format='json',HTTP_IF_MATCH=etag or self.preview()['etag'])
 
+    def test_submit_is_pending_until_warehouse_confirmation(self):
+        payload, etag = self.payload(100), self.preview()['etag']
+        response = self.client.post(self.url, payload, format='json', HTTP_IF_MATCH=etag)
+        self.assertEqual(response.status_code, 201, response.data)
+        result = response.data['data']
+        self.assertEqual(result['status'], 'PENDING')
+        receipt = InternalSemiFinishedReceipt.objects.get(pk=result['receipt_id'])
+        line = InternalSemiFinishedReceiptLine.objects.get(receipt=receipt)
+        self.assertEqual(receipt.status, 'PENDING')
+        self.assertIsNotNone(receipt.submitted_by_employee_id)
+        self.assertIsNotNone(receipt.submitted_at)
+        self.assertIsNone(receipt.confirmed_by_employee_id)
+        self.assertIsNone(line.stock_movement_id)
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').exists())
+
+        confirmed = self.client.post(
+            f'{self.url}{receipt.pk}/confirm/', {}, format='json',
+            HTTP_IF_MATCH=etag,
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data['data']['status'], 'CONFIRMED')
+        receipt.refresh_from_db()
+        line.refresh_from_db()
+        self.assertEqual(receipt.status, 'CONFIRMED')
+        self.assertIsNotNone(receipt.confirmed_by_employee_id)
+        self.assertIsNotNone(receipt.confirmed_at)
+        self.assertIsNotNone(line.stock_movement_id)
+        self.assertEqual(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').count(), 1)
+
     def test_receipt_credits_public_inventory_and_consumes_processing_quota(self):
         preview = self.preview()
         self.assertEqual(Decimal(preview['lines'][0]['can_receive']),1000)

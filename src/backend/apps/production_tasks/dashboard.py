@@ -178,7 +178,8 @@ def plan_metrics(request, plans, permissions, production_date):
     receipts = {}
     if permissions["receipts"] and plans:
         for row in record_queryset().filter(
-            source_type="PRODUCTION_ORDER", production_task_product_id__in=[plan.product_line_id for plan in plans],
+            source_type="PRODUCTION_ORDER", status="CONFIRMED",
+            production_task_product_id__in=[plan.product_line_id for plan in plans],
         ).order_by().values("production_task_product_id", "unit_id").annotate(
             cumulative=Sum("received_quantity"), today=Sum("received_quantity", filter=Q(business_date=production_date)),
         ):
@@ -351,7 +352,7 @@ def outsourcing_section(request, filters, today):
 
 
 def receipts_section(request, filters, today, permissions):
-    receipts = record_queryset().filter(source_type="PRODUCTION_ORDER")
+    receipts = record_queryset().filter(source_type="PRODUCTION_ORDER", status="CONFIRMED")
     daily = receipts.filter(business_date=filters["production_date"])
     total = daily.count()
     quantities = [{"quantity": str(row["quantity"]), "unit": row["unit__unit_name"],

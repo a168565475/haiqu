@@ -974,6 +974,17 @@ try {
     ) | Out-Null
     Write-StartupLog '数据库增量迁移检查完成。' 'OK'
 
+    Write-StartupLog '启动业务通知自动发送进程。'
+    Invoke-Docker -Arguments @(
+        'compose', '-f', $ComposeFile,
+        'up', '-d', '--no-deps', 'notification-worker'
+    ) | Out-Null
+    $notificationWorkerState = Get-ContainerHealth -ContainerName 'haiqu-notification-worker'
+    if ($notificationWorkerState -notin @('running', 'healthy')) {
+        throw "通知发送进程未运行：$notificationWorkerState"
+    }
+    Write-StartupLog '通知发送进程已运行；缺少企业微信配置时自动等待配置。' 'OK'
+
     Assert-DataMount -ContainerName 'haiqu-postgres' -Destination '/var/lib/postgresql/data' -ExpectedHostPath (Join-Path $ProjectRoot 'data\postgres')
     Assert-DataMount -ContainerName 'haiqu-redis' -Destination '/data' -ExpectedHostPath (Join-Path $ProjectRoot 'data\redis')
 

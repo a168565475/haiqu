@@ -12,6 +12,7 @@ from .department_mapping_serializers import (
     DepartmentMappingPreviewResponseSerializer, DepartmentMappingResponseSerializer, DepartmentMappingWriteSerializer,
 )
 from .views import IF_MATCH, ManagementView
+from .directory_serializers import StrictSerializer
 
 
 ERROR_RESPONSES = {
@@ -41,7 +42,18 @@ class DepartmentMappingsView(DepartmentMappingManagementView):
     @extend_schema(responses={200: DepartmentMappingPreviewResponseSerializer, **ERROR_RESPONSES})
     @sensitive_variables()
     def get(self, request):
-        data, etag = services.preview_mappings(request)
+        data, etag = services.preview_mappings(request, refresh=False)
+        return Response(DepartmentMappingPreviewResponseSerializer({"data": data}).data, headers={"ETag": etag})
+
+
+class DepartmentMappingsRefreshView(DepartmentMappingManagementView):
+    @extend_schema(request=StrictSerializer,
+                   responses={200: DepartmentMappingPreviewResponseSerializer, **ERROR_RESPONSES})
+    @sensitive_variables()
+    def post(self, request):
+        serializer = StrictSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data, etag = services.preview_mappings(request, refresh=True)
         return Response(DepartmentMappingPreviewResponseSerializer({"data": data}).data, headers={"ETag": etag})
 
 

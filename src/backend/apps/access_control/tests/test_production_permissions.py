@@ -159,6 +159,24 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         attendance = {row['permission'] for row in rows['ADMINISTRATION'] if row['permission'].startswith('attendance.')}
         self.assertEqual(attendance, {'attendance.view_attendance'})
 
+    def test_warehouse_template_can_read_pending_and_confirmed_finished_receipts(self):
+        ids = dict(Workshop.objects.values_list('name', 'pk'))
+        rows = {row['permission'] for row in templates(ids)['WAREHOUSE_KEEPER']}
+        self.assertIn('inventory.view_internalsemifinishedreceipt', rows)
+        self.assertIn('inventory.view_finishedgoodsreceipt', rows)
+
+    def test_pending_receipt_deletion_grants_follow_confirmed_roles(self):
+        ids = dict(Workshop.objects.values_list('name', 'pk'))
+        rows = templates(ids)
+        for code, expected in (
+            ('inventory.delete_internalsemifinishedreceipt',
+             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'METAL_DIRECTOR', 'SEWING_DIRECTOR'}),
+            ('inventory.delete_finishedgoodsreceipt',
+             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'ASSEMBLY_DIRECTOR'}),
+        ):
+            actual = {role for role, grants in rows.items() if any(row['permission'] == code for row in grants)}
+            self.assertEqual(actual, expected)
+
     def test_administration_self_confirmation_exception_is_role_and_action_bound(self):
         from apps.access_control.production_approval import check_production_approval
         from apps.core.audit import write_audit_log

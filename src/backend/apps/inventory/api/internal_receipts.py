@@ -13,8 +13,10 @@ from rest_framework.response import Response
 from apps.core.api.permissions import HasActiveEmployee, BusinessActionPermission
 from apps.production_tasks.selectors import accessible_production_tasks
 from ..internal_receipt_quantities import ReceiptQuantityError
-from ..internal_receipt_services import load_receipt_context, preview_data, confirm_receipt
-from ..models import PublicStockMovement, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine
+from ..internal_receipt_services import load_receipt_context, preview_data, submit_receipt, confirm_receipt, delete_pending_receipt
+from ..receipt_permissions import can_delete_pending_receipt
+from ..models import (InternalReceiptStatus, PublicStockMovement, InternalSemiFinishedReceipt,
+                      InternalSemiFinishedReceiptLine)
 
 
 class ReceiptLineInput(serializers.Serializer):
@@ -108,14 +110,79 @@ def record_data(row):
         receipt_date=str(row.business_date),status='已出库' if outgoing else '已入库',
         warehouse=row.balance.zone.warehouse.warehouse_name,zone=row.balance.zone.zone_name,
         actor=row.actor_employee.display_name if row.actor_employee_id else '',
-        remark=snapshot.get('remark',''))
+        remark=snapshot.get('remark',''), can_delete=False)
+
+
+def pending_record_data(receipt, request=None):
+    line = receipt.lines.select_related('unit').order_by('id').first()
+    attributes = (line.attribute_snapshot if line else {}) or {}
+    quantity = sum((item.quantity for item in receipt.lines.all()), 0)
+    return dict(
+        id=str(receipt.pk), receipt_number=receipt.receipt_number, direction='IN', source='INTERNAL',
+        source_display='厂内入库（待确认）', production_order=receipt.source_snapshot.get('production_order', ''),
+        product=receipt.source_snapshot.get('product', ''), attributes=attributes,
+        stage=STAGES.get(attributes.get('completed_craft', {}).get('code'), '厂内半成品'),
+        quantity=str(quantity), unit=line.unit.unit_name if line else attributes.get('unit_name', ''),
+        receipt_date=str(receipt.receipt_date), status=receipt.status,
+        warehouse=receipt.zone.warehouse.warehouse_name, zone=receipt.zone.zone_name,
+        actor=receipt.actor_employee.display_name if receipt.actor_employee_id else '', remark=receipt.remark,
+        submitted_by=receipt.submitted_by_employee.display_name if receipt.submitted_by_employee_id else '',
+        submitted_at=receipt.submitted_at.isoformat() if receipt.submitted_at else None,
+        confirmed_by=None, confirmed_at=None,
+        receipt_id=str(receipt.pk), etag=f'"{receipt.source_revision_hash}"',
+        can_delete=can_delete_pending_receipt(request, receipt, receipt.plan_category),
+        source_detail={**receipt.source_snapshot, 'source_number': receipt.receipt_number,
+                       'workshop': receipt.completed_craft.name, 'status': receipt.status,
+                       'remark': receipt.remark},
+    )
+
+
+def receipt_result(receipt, *, replayed=False):
+    return {
+        'receipt_id': str(receipt.pk),
+        'receipt_number': receipt.receipt_number,
+        'status': receipt.status,
+        'submitted_at': receipt.submitted_at.isoformat() if receipt.submitted_at else None,
+        'confirmed_at': receipt.confirmed_at.isoformat() if receipt.confirmed_at else None,
+        'replayed': replayed,
+        'record_ids': [str(value) for value in receipt.lines.values_list('stock_movement_id', flat=True) if value],
+    }
+
+
+def pending_data(receipt, request=None):
+    return {
+        **receipt_result(receipt),
+        'etag': f'"{receipt.source_revision_hash}"',
+        'can_delete': can_delete_pending_receipt(request, receipt, receipt.plan_category),
+        'schedule_product_id': str(receipt.schedule_product_id),
+        'plan_category': receipt.plan_category,
+        'production_order': receipt.schedule_product.schedule.production_task.task_number,
+        'receipt_date': str(receipt.receipt_date),
+        'zone': receipt.zone.zone_name,
+        'submitted_by': receipt.submitted_by_employee.display_name if receipt.submitted_by_employee_id else
+            receipt.actor_employee.display_name,
+        'lines': [
+            {'id': str(line.pk), 'bom_line_id': str(line.bom_line_id), 'component_identity': str(line.component_identity),
+             'quantity': str(line.quantity), 'input_quantity': str(line.input_quantity) if line.input_quantity is not None else None}
+            for line in receipt.lines.all()
+        ],
+    }
 
 
 class InternalReceiptViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated, HasActiveEmployee, BusinessActionPermission]
     serializer_class = ReceiptInput
-    action_permission_map = {key:'inventory.view_internalsemifinishedreceipt' for key in ['preview','list','retrieve','by_request']}
+    action_permission_map = {key:'inventory.view_internalsemifinishedreceipt' for key in
+                             ['preview','list','retrieve','by_request','pending']}
     action_permission_map['create'] = 'inventory.add_internalsemifinishedreceipt'
+    action_permission_map['confirm'] = 'inventory.confirm_internalsemifinishedreceipt'
+    action_permission_map['destroy'] = 'inventory.delete_internalsemifinishedreceipt'
+
+    @extend_schema(request=None, parameters=[OpenApiParameter('If-Match', str, location='header', required=True)], responses={204: None})
+    def destroy(self, request, pk=None):
+        pk = serializers.UUIDField().run_validation(pk)
+        delete_pending_receipt(request, pk)
+        return Response(status=204)
 
     @extend_schema(parameters=[PreviewInput], responses={200:ReceiptResponse})
     @action(detail=False, methods=['get'])
@@ -138,11 +205,30 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         serializer = input_type(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
-            receipt, replay = confirm_receipt(request,serializer.validated_data)
+            receipt, replay = submit_receipt(request,serializer.validated_data)
         except ReceiptQuantityError as error:
             raise ValidationError({'detail':str(error),'code':error.code})
-        return Response({'data':{'receipt_id':str(receipt.pk),'receipt_number':receipt.receipt_number,'replayed':replay,
-            'record_ids':[str(value) for value in receipt.lines.values_list('stock_movement_id',flat=True)]}},status=200 if replay else 201)
+        return Response({'data':receipt_result(receipt, replayed=replay)}, status=200 if replay else 201)
+
+    @extend_schema(request=None, responses={200:ReceiptResponse})
+    @action(detail=True, methods=['post'], url_path='confirm')
+    def confirm(self, request, pk=None):
+        pk = serializers.UUIDField().run_validation(pk)
+        try:
+            receipt, replay = confirm_receipt(request, pk)
+        except ReceiptQuantityError as error:
+            raise ValidationError({'detail':str(error),'code':error.code})
+        return Response({'data':receipt_result(receipt, replayed=replay)})
+
+    @extend_schema(responses={200:ReceiptResponse})
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending(self, request):
+        receipts = InternalSemiFinishedReceipt.objects.filter(
+            status=InternalReceiptStatus.PENDING,
+            schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
+        ).select_related('schedule_product__schedule__production_task', 'completed_craft',
+                         'zone', 'submitted_by_employee', 'actor_employee').prefetch_related('lines').order_by('-submitted_at', '-id')
+        return Response({'data': {'total': receipts.count(), 'items': [pending_data(receipt, request) for receipt in receipts]}})
 
     @action(detail=False, methods=['get'], url_path=r'by-request/(?P<request_id>[^/.]+)')
     def by_request(self, request, request_id=None):
@@ -193,12 +279,40 @@ class InternalReceiptViewSet(viewsets.ViewSet):
             rows = rows.filter(business_date__gte=params['date_from'])
         if params.get('date_to'):
             rows = rows.filter(business_date__lte=params['date_to'])
+        if params['direction'] == 'IN':
+            pending = InternalSemiFinishedReceipt.objects.filter(
+                status=InternalReceiptStatus.PENDING,
+                schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
+            ).select_related('zone__warehouse', 'completed_craft', 'actor_employee', 'submitted_by_employee').prefetch_related('lines__unit')
+            if params['source'] == 'EXTERNAL':
+                pending = pending.none()
+            if params.get('product_line_id'):
+                pending = pending.filter(schedule_product__product_line_id=params['product_line_id'])
+            if params.get('date_from'):
+                pending = pending.filter(receipt_date__gte=params['date_from'])
+            if params.get('date_to'):
+                pending = pending.filter(receipt_date__lte=params['date_to'])
+            pending_items = [pending_record_data(item, request) for item in pending]
+            if params.get('search'):
+                value = params['search'].lower()
+                pending_items = [item for item in pending_items if value in ' '.join([
+                    item['receipt_number'], item['production_order'], item['product'], item['source_display']]).lower()]
+            confirmed_items = [record_data(row) for row in rows]
+            items = sorted([*confirmed_items, *pending_items], key=lambda item: item['receipt_date'], reverse=True)
+            start = (params['page'] - 1) * params['page_size']
+            return Response({'data': {'total': len(items), 'items': items[start:start + params['page_size']]}})
         start = (params['page']-1)*params['page_size']
         return Response({'data':{'total':rows.count(),'items':[record_data(row) for row in rows[start:start+params['page_size']]]}})
 
     @extend_schema(responses={200:ReceiptResponse})
     def retrieve(self,request,pk=None):
         pk = serializers.UUIDField().run_validation(pk)
+        pending = InternalSemiFinishedReceipt.objects.filter(
+            pk=pk, status=InternalReceiptStatus.PENDING,
+            schedule_product__schedule__production_task_id__in=accessible_production_tasks(request).values('id'),
+        ).select_related('zone__warehouse', 'completed_craft', 'actor_employee', 'submitted_by_employee').prefetch_related('lines__unit').first()
+        if pending is not None:
+            return Response({'data': pending_record_data(pending, request)})
         row = get_object_or_404(self.records(request),pk=pk)
         data = record_data(row)
         if row.direction == 'OUT':

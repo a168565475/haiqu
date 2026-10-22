@@ -52,15 +52,47 @@ describe('材料交接页面的真实保存与并发边界', () => {
     expect(api.push).toHaveBeenCalledWith({ name: 'sample-warehouse-review', params: { sampleId: 'sample' } })
     expect(w.find('.save-action').exists()).toBe(false)
   })
-  it('仓库只提交人工可供数量，不展示系统库存参考', async () => {
+  it('仓库供料数量禁止手填，取消查询保留原数，应用关联后按来源提交', async () => {
     const w = await render(WarehousePage)
-    await w.find('input[aria-label="圆管本次可供数量"]').setValue('5')
-    expect(w.text()).not.toContain('系统库存')
-    expect(w.text()).toContain('刷新库存')
+    const supplyInput = w.get('input[aria-label="圆管本次可供数量"]')
+    expect(supplyInput.attributes('disabled')).toBeDefined()
+    expect((supplyInput.element as HTMLInputElement).value).toBe('2')
+    await w.get('button[aria-label="圆管 25mm 查看库存"]').trigger('click')
+    const lookup = w.findComponent({ name: 'SampleInventoryLookup' })
+    expect(lookup.props()).toMatchObject({ modelValue: true, activeLineKey: 'k', sampleId: 'sample' })
+    lookup.vm.$emit('update:modelValue', false)
+    await flushPromises()
+    expect((w.get('input[aria-label="圆管本次可供数量"]').element as HTMLInputElement).value).toBe('2')
+    expect(w.text()).not.toContain('刷新库存')
+    expect(w.text()).not.toContain('全屏核对')
+    const inventoryAllocations = [{ balanceId: 'balance', stockMode: 'PUBLIC_V2', quantity: '1', rawBarLengthM: '5' }]
+    lookup.vm.$emit('apply', [{ ...line, supplyQuantity: '5', inventoryAllocations }])
+    await flushPromises()
+    expect((w.get('input[aria-label="圆管本次可供数量"]').element as HTMLInputElement).value).toBe('5')
+    expect(w.get('input[aria-label="圆管本次可供数量"]').attributes('disabled')).toBeDefined()
     api.saveWarehouse.mockResolvedValue({ ...state(), draft: { ...state().draft, lines: [{ ...line, supplyQuantity: '5' }] } })
     await w.find('.submit-action').trigger('click')
     await flushPromises()
-    expect(api.saveWarehouse).toHaveBeenCalledWith(expect.objectContaining({ etag: 'v1', draft: expect.objectContaining({ lines: [expect.objectContaining({ supplyQuantity: '5' })] }) }))
+    expect(api.saveWarehouse).toHaveBeenCalledWith(expect.objectContaining({ etag: 'v1', draft: expect.objectContaining({ lines: [expect.objectContaining({ supplyQuantity: '5', inventoryAllocations })] }) }))
+  })
+  it('仓库默认显示全部材料，分类切换保留关联数量且全部缺料筛选跨分类', async () => {
+    api.warehouse.mockResolvedValue({ ...state(), draft: { lines: [
+      { ...line, supplyQuantity: '12' },
+      { ...line, key: 'fabric', category: 'fabric', name: '面料', supplyQuantity: '5' },
+    ], notes: '' } })
+    const w = await render(WarehousePage)
+    const tab = (label: string) => w.findAll('.warehouse-tabs button').find(button => button.text() === label)!
+    expect(tab('全部 2').attributes('aria-pressed')).toBe('true')
+    expect(w.findAll('.supply-field input')).toHaveLength(2)
+    expect(w.get('input[aria-label="面料本次可供数量"]').attributes('disabled')).toBeDefined()
+    await tab('管材类 1').trigger('click')
+    expect(w.findAll('.supply-field input')).toHaveLength(1)
+    await tab('全部 2').trigger('click')
+    expect((w.find('input[aria-label="面料本次可供数量"]').element as HTMLInputElement).value).toBe('5')
+    await w.find('.warehouse-tabs input[type="checkbox"]').setValue(true)
+    expect(w.findAll('.supply-field input')).toHaveLength(1)
+    expect(w.find('input[aria-label="面料本次可供数量"]').exists()).toBe(true)
+    expect(api.saveWarehouse).not.toHaveBeenCalled()
   })
   it('仓库加载失败时保持不可操作，已提交记录只读', async () => {
     api.warehouse.mockRejectedValueOnce(new Error('failure'))

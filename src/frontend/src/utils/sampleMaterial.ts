@@ -37,7 +37,9 @@ export function validateSampleMaterials(draft: SampleMaterialDraft, units: Sampl
     if (!sampleMaterialCategories.some(category => category.key === line.category)) return `${prefix}请选择材料分区。`
     if (!line.name.trim() || !line.specification.trim()) return `${prefix}请填写材料名称和规格。`
     if (!line.rawMaterialId) return `${prefix}请选择对应分类的库存原材料。`
-    const unit = units.find(item => item.id === line.unitId)
+    // 后端保存总米数管材时清空单位编号，固定使用“米”和 4 位小数。
+    const savedMeterPipe = line.category === 'tube' && line.pipeInputMode === 'TOTAL_METERS' && line.unitLabel === '米' && !line.unitId
+    const unit = savedMeterPipe ? { label: '米', decimalPlaces: 4 } : units.find(item => item.id === line.unitId)
     if (!unit) return `${prefix}请选择有效单位。`
     const value = line.quantity.trim()
     if (!/^\d{1,14}(\.\d{1,4})?$/.test(value)) return `${prefix}数量最多 14 位整数、4 位小数。`

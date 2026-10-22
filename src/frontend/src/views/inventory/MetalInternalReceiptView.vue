@@ -155,7 +155,7 @@ function clearPending(): boolean {
 }
 async function saved(result: InternalReceiptResult) {
   const cleared = clearPending()
-  dialog.value = ''; ElMessage.success({ message: `入库成功，单号：${result.receipt_number}`, duration: 4500 })
+  dialog.value = ''; ElMessage.success({ message: `已提交待入库，单号：${result.receipt_number}`, duration: 4500 })
   if (cleared) { rows.value.forEach(row => { row.quantity = '' }); await load(false) }
 }
 async function postPending(recovering = false) {
@@ -291,7 +291,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
       <ElEmpty v-else-if="forbidden || !canReceive" description="当前账号没有半成品入库权限，请联系管理员" />
       <template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton v-if="!storageError" :icon="Refresh" @click="load(true)">重新加载</ElButton></template>
     </div>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>确认后增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '确认入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>提交后由仓库确认，确认后增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 
   <AppWindowDialog :model-value="dialog === 'basis'" :title="`${selectedPart?.part || ''} · 加工完成依据`" :width="960" modal-class="metal-receipt-dialog" @update:model-value="closeDialog">
@@ -316,7 +316,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
       <MetalReceiptTable :columns="confirmColumns" :rows="entered" class="d1-confirm-lines"><template #cell-available="{ row }">{{ format(capacity(row)) }}</template><template #cell-quantity="{ row }"><strong class="brand">{{ format(row.quantity) }}</strong></template></MetalReceiptTable>
       <p v-if="remark" class="d1-confirm-remark"><span class="muted">入库备注：</span>{{ remark }}</p>
       <div class="d1-confirm-total">本次入库 <strong class="brand">{{ format(total) }}</strong> 支 · {{ entered.length }} 个部位</div>
-      <p class="muted d1-basis-note">确认后增加未喷塑公共半成品库存，已领原料不重复扣减。</p>
+      <p class="muted d1-basis-note">提交后由仓库确认，确认后增加未喷塑公共半成品库存，已领原料不重复扣减。</p>
     </div>
     <template #footer><ElButton :disabled="saving" @click="dialog = ''">返回修改</ElButton><ElButton type="primary" :loading="saving" @click="save">确认入库</ElButton></template>
   </AppWindowDialog>

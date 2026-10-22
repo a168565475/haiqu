@@ -18,7 +18,8 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.customers.selectors import accessible_customers
 from apps.boms.models import Bom, BomStatus
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
-from apps.procurement.models import PurchaseOrderStatus
+from apps.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
+from apps.procurement.selectors import purchase_orders_by_product
 from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_tasks_with_context
 from apps.sales_orders.presentation import specification_display
@@ -39,6 +40,7 @@ from .completion_serializers import (
     ScheduleCompleteSerializer, ScheduleCompleteResponseSerializer, ScheduleCompletionPreviewResponseSerializer,
 )
 from .permissions import ScheduleCompletePermission
+from ..timeline import TimelineQuerySerializer, TimelineResponseSerializer
 
 
 def _uuid(value, field):
@@ -84,6 +86,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
         "list": "production_scheduling.view_productionschedule",
         "retrieve": "production_scheduling.view_productionschedule",
         "detail_summary": "production_scheduling.view_productionschedule",
+        "timeline": "production_scheduling.view_productionschedule",
         "task_candidates": "production_scheduling.view_productionschedule",
         "task_candidate_detail": "production_scheduling.view_productionschedule",
         "task_file": "production_scheduling.view_productionschedule",
@@ -132,8 +135,10 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
 
     def list(self, request):
         page = self.paginate_queryset(self._filtered())
+        from ..list_amounts import schedule_list_amounts
+        amounts = schedule_list_amounts(request, page)
         return self.get_paginated_response(
-            ScheduleReadSerializer(page, many=True, context={"include_audit": False}).data
+            ScheduleReadSerializer(page, many=True, context={"include_audit": False, "list_amounts": amounts}).data
         )
 
     def retrieve(self, request, pk=None):
@@ -156,6 +161,15 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
 
         schedule = self.get_object()
         return Response({"data": schedule_detail_summary(request, schedule)})
+
+    @extend_schema(parameters=[TimelineQuerySerializer], responses=TimelineResponseSerializer)
+    @action(detail=True, methods=["get"], url_path="timeline")
+    def timeline(self, request, pk=None):
+        from ..timeline import TimelineQuerySerializer, production_timeline, timeline_page
+        query = TimelineQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        schedule = self.get_object()
+        return Response(timeline_page(production_timeline(request, schedule), query.validated_data))
 
     def create(self, request):
         serializer = ScheduleCreateSerializer(data=request.data)
@@ -248,17 +262,27 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             production_task_id=OuterRef("pk"),
         ).annotate(
             latest_bom_status=Subquery(latest_bom_status),
-        ).exclude(latest_bom_status=BomStatus.VERIFIED)
+            purchase_completed=Exists(PurchaseOrderLine.objects.filter(
+                product_line_id_snapshot=OuterRef("pk"),
+                purchase_order__production_task_id=OuterRef("production_task_id"),
+                purchase_order__archived_at__isnull=True,
+                purchase_order__status=PurchaseOrderStatus.COMPLETED,
+            )),
+        ).exclude(latest_bom_status=BomStatus.VERIFIED, purchase_completed=True)
         queryset = production_tasks_with_context(
             accessible_production_tasks(request).filter(status=ProductionTaskStatus.READY, archived_at__isnull=True)
         ).prefetch_related("products__sales_order_delivery_batch_line__sales_order_line__product_image").exclude(
             production_schedules__record_status=ScheduleStatus.ACTIVE
         ).annotate(
             has_unready_product=Exists(unready_product_lines),
+            has_pending_purchase=Exists(PurchaseOrder.objects.filter(
+                production_task_id=OuterRef("pk"), archived_at__isnull=True,
+            ).exclude(status=PurchaseOrderStatus.COMPLETED)),
         ).filter(
             has_unready_product=False,
-            purchase_order__status=PurchaseOrderStatus.COMPLETED,
-            purchase_order__archived_at__isnull=True,
+            has_pending_purchase=False,
+            purchase_orders__status=PurchaseOrderStatus.COMPLETED,
+            purchase_orders__archived_at__isnull=True,
         ).distinct().order_by("-created_at", "-id")
         keyword = request.query_params.get("search", "").strip()
         if len(keyword) > 200:
@@ -300,7 +324,7 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             production_tasks_with_context(
                 accessible_production_tasks(request), include_progress=True
             ).prefetch_related(
-                "purchase_order__lines", "products__sales_order_delivery_batch_line__sales_order_line__product_image",
+                "products__sales_order_delivery_batch_line__sales_order_line__product_image",
             ).filter(
                 status=ProductionTaskStatus.READY, archived_at__isnull=True
             ), pk=task_id,
@@ -350,20 +374,14 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
     def _task_payload(task, existing_schedule_id, include_products):
         products = list(task.products.all())
         latest_bom_by_product = {}
-        purchase_order = None
-        purchase_order_product_ids = set()
-        purchase_order_bom_ids = set()
+        purchase_orders = []
+        purchase_by_product = {}
         purchase_request_by_bom = {}
         if include_products:
             for bom in getattr(task, "_active_boms_for_status", []):
                 latest_bom_by_product.setdefault(bom.product_line_id, bom)
-            purchase_order = getattr(task, "purchase_order", None)
-            if purchase_order is not None and purchase_order.archived_at is None:
-                for purchase_line in purchase_order.lines.all():
-                    if purchase_line.product_line_id_snapshot:
-                        purchase_order_product_ids.add(purchase_line.product_line_id_snapshot)
-                    if purchase_line.bom_id:
-                        purchase_order_bom_ids.add(purchase_line.bom_id)
+            purchase_orders = getattr(task, "_active_purchase_orders_for_status", [])
+            purchase_by_product = purchase_orders_by_product(purchase_orders)
             purchase_request_by_bom = {
                 item.bom_id: item
                 for item in getattr(task, "_active_purchase_requests_for_status", [])
@@ -375,15 +393,15 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             for line in products
         )
         purchase_completed = (
-            purchase_order is not None
-            and purchase_order.archived_at is None
-            and purchase_order.status == PurchaseOrderStatus.COMPLETED
+            bool(purchase_orders)
+            and all(line.pk in purchase_by_product for line in products)
+            and all(order.status == PurchaseOrderStatus.COMPLETED for order in purchase_orders)
         )
         scheduling_blockers = []
         if include_products and not all_boms_verified:
             scheduling_blockers.append("生产任务单内所有产品的 BOM 必须已确认")
         if include_products and not purchase_completed:
-            scheduling_blockers.append("采购订单必须为“已完成采购”")
+            scheduling_blockers.append("所有产品的采购订单必须为“已完成采购”")
         selectable = existing_schedule_id is None and (not include_products or not scheduling_blockers)
         unselectable_reason = ""
         if existing_schedule_id:
@@ -403,15 +421,8 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                 bom_status = "PENDING_CONFIRMATION"
                 bom_status_display = "待确认"
 
-            if (
-                purchase_order is not None
-                and purchase_order.archived_at is None
-                and (
-                    purchase_order.status == PurchaseOrderStatus.COMPLETED
-                    or line.pk in purchase_order_product_ids
-                    or (bom is not None and bom.pk in purchase_order_bom_ids)
-                )
-            ):
+            purchase_order = purchase_by_product.get(line.pk)
+            if purchase_order is not None:
                 purchase_status = f"ORDER_{purchase_order.status}"
                 purchase_status_display = purchase_order.get_status_display()
             elif bom is not None and bom.pk in purchase_request_by_bom:

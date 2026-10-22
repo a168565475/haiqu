@@ -193,14 +193,50 @@ $inverse: crm.$crm-text-inverse;
   .schedule-section > header h2 { font-size: 16px; line-height: 24px; }
 
   .detail-basic {
-    dl { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 14px 16px 16px; }
+    dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin: 0; padding: 14px 16px 16px; }
     dl > div { min-width: 0; }
     dt { margin-bottom: 4px; color: $secondary; font-size: 13px; line-height: 18px; }
     dd { margin: 0; color: $primary; line-height: 20px; overflow-wrap: anywhere; }
+    .detail-basic__amount { grid-column: span 2; }
+    .detail-basic__amount dd { font-weight: 600; font-variant-numeric: tabular-nums; }
   }
   .detail-products { padding: 0 16px 16px; }
-  .detail-products > header { margin: 0 0 14px; padding-right: 0; padding-left: 0; }
+  .detail-products > header { margin: 0 0 6px; padding-right: 0; padding-left: 0; }
   .detail-products > header h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; }
+  .detail-product-tabs {
+    --el-tabs-header-height: 32px;
+    min-width: 0;
+    > .el-tabs__header {
+      margin: 0;
+      border-bottom: 0;
+      .el-tabs__nav-wrap { margin-bottom: 0; }
+      .el-tabs__nav-wrap::after, .el-tabs__active-bar { display: none; }
+      .el-tabs__nav-scroll { display: flex; }
+      .el-tabs__nav-scroll::after { content: ''; flex: 1; border-bottom: 1px solid $border; }
+      .el-tabs__nav { display: flex; flex-shrink: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+      .el-tabs__item.is-top {
+        box-sizing: border-box;
+        height: 32px;
+        margin-top: 0;
+        padding: 0 12px;
+        border: 1px solid $border;
+        border-radius: 4px 4px 0 0;
+        background: var(--erp-glass-inner-background);
+        color: $secondary;
+        font-size: 13px;
+        line-height: 30px;
+        font-weight: 500;
+        & + .el-tabs__item { border-left: 0; }
+        &:hover { color: $brand; }
+        &.is-active { border-bottom: 0; color: $brand; background: #fff; font-weight: 600; }
+      }
+      .el-tabs__nav-prev, .el-tabs__nav-next { box-sizing: border-box; height: 32px; border-bottom: 1px solid $border; line-height: 31px; }
+    }
+    > .el-tabs__content { min-width: 0; border: 1px solid $border; border-top: 0; border-radius: 0 0 4px 4px; background: #fff; }
+    .schedule-product-card { border: 0; border-radius: 0; background: transparent; }
+    &.is-single-product > .el-tabs__header { display: none; }
+    &.is-single-product > .el-tabs__content { border-top: 1px solid $border; border-radius: 4px; }
+  }
   .schedule-product-card {
     @include detail.inset;
     & + .schedule-product-card { margin-top: 14px; }
@@ -216,7 +252,7 @@ $inverse: crm.$crm-text-inverse;
     gap: 14px;
     padding: 16px;
     img, > .image-empty { width: 150px; height: 184px; flex: 0 0 150px; border-radius: var(--erp-radius-control); object-fit: contain; }
-    dl { min-width: 0; display: grid; gap: 8px; margin: 0; }
+    dl { min-width: 0; flex: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 0; }
     dl > div { min-width: 0; }
     dt { color: $secondary; font-size: 12px; line-height: 18px; }
     dd { margin: 2px 0 0; color: $primary; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
@@ -274,7 +310,8 @@ $inverse: crm.$crm-text-inverse;
   }
 }
 @container (max-width: 1400px) {
-  .schedule-detail .detail-basic dl { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .schedule-detail .detail-basic dl { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .schedule-detail .detail-basic .detail-basic__amount { grid-column: auto; }
   .schedule-detail .schedule-product-card__body { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .schedule-detail .detail-product-main img { width: 120px; height: 148px; flex-basis: 120px; }
   .schedule-detail .detail-dates { border-left: 0; border-top: 1px solid $subtle; }

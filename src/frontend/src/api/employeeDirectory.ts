@@ -7,7 +7,7 @@ import type {
 } from '@/types/employeeDirectory'
 
 const root = '/api/v1/wecom/'
-// 预览与提交都会串行重读来源；超时不代表写入失败，不自动重试。
+// GET恢复已保存副本；刷新与保存独立授权，超时不自动重试。
 const options = (etag?: string) => ({ timeout: 120000, ...(etag ? { headers: { 'If-Match': etag } } : {}) })
 
 function previewResult<T>(response: { data: { data: T }; headers: Record<string, unknown> }): { data: T; etag: string } {
@@ -22,6 +22,12 @@ export async function getEmployeeDirectoryPreview(applyDepartments = false): Pro
   }))
 }
 
+export async function refreshEmployeeDirectory(applyDepartments = false): Promise<EmployeeDirectoryPreviewResponse> {
+  return previewResult(await apiClient.post<{ data: EmployeeDirectoryPreview }>(root + 'employee-directory/refresh/', {
+    apply_departments: applyDepartments,
+  }, options()))
+}
+
 export async function syncEmployeeDirectory(data: EmployeeDirectorySyncInput, etag: string): Promise<EmployeeDirectoryResult[]> {
   return (await apiClient.post<{ data: EmployeeDirectoryResult[] }>(root + 'employee-directory/sync/', data, options(etag))).data.data
 }
@@ -32,6 +38,14 @@ export async function matchEmployeeDirectory(data: EmployeeDirectoryMatchInput, 
 
 export async function getDepartmentMappings(): Promise<DepartmentMappingPreviewResponse> {
   return previewResult(await apiClient.get<{ data: DepartmentMappingPreview }>(root + 'department-mappings/', options()))
+}
+
+export async function refreshDepartmentMappings(): Promise<DepartmentMappingPreviewResponse> {
+  return previewResult(await apiClient.post<{ data: DepartmentMappingPreview }>(root + 'department-mappings/refresh/', {}, options()))
+}
+
+export function directoryAccessDenied(error: unknown): boolean {
+  return isAxiosError(error) && [401, 403].includes(error.response?.status || 0)
 }
 
 export async function saveDepartmentMapping(departmentId: number, data: DepartmentMappingInput, etag: string): Promise<DepartmentMapping> {

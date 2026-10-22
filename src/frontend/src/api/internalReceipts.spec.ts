@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './request'
-import { confirmInternalReceipt, fetchMetalReceiptPreview, fetchReceiptPreview, fetchSemiReceiptRecord, fetchSemiReceiptRecords, findInternalReceipt } from './internalReceipts'
+import { confirmInternalReceipt, confirmInternalReceiptRecord, deleteInternalReceiptRecord, fetchMetalReceiptPreview, fetchReceiptPreview, fetchSemiReceiptRecord, fetchSemiReceiptRecords, findInternalReceipt } from './internalReceipts'
 import type { ReceiptPayload } from '@/types/internalReceipt'
-vi.mock('./request',()=>({apiClient:{get:vi.fn(),post:vi.fn()}}))
+vi.mock('./request',()=>({apiClient:{get:vi.fn(),post:vi.fn(),delete:vi.fn()}}))
 describe('厂内半成品入库接口契约',()=>{
   beforeEach(()=>vi.clearAllMocks())
   it('确认携带原请求编号和页面版本，超时不自动重发',async()=>{
@@ -17,7 +17,7 @@ describe('厂内半成品入库接口契约',()=>{
     await fetchSemiReceiptRecords({page:2,source:'INTERNAL'})
     expect(apiClient.get).toHaveBeenCalledTimes(1)
     await fetchSemiReceiptRecord('movement-1')
-    expect(apiClient.get).toHaveBeenLastCalledWith('/api/v1/semi-finished-receipts/movement-1/',{timeout:15000})
+    expect(apiClient.get).toHaveBeenLastCalledWith('/api/v1/semi-finished-receipts/movement-1/',{params:{direction:'IN'},timeout:15000})
   })
   it('预览只带计划和工序，不提交采购批次或自算可入数量',async()=>{
     vi.mocked(apiClient.get).mockResolvedValueOnce({data:{data:{lines:[]}}})
@@ -33,6 +33,17 @@ describe('厂内半成品入库接口契约',()=>{
     vi.mocked(apiClient.get).mockResolvedValueOnce({data:{data:{receipt_number:'RK-real'}}})
     expect(await findInternalReceipt('request-1')).toEqual({receipt_number:'RK-real'})
     expect(apiClient.get).toHaveBeenCalledWith('/api/v1/semi-finished-receipts/by-request/request-1/',{timeout:15000})
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+  it('仓管确认现有待入库记录使用独立确认动作', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ data: { data: { receipt_id: 'receipt-1', receipt_number: 'RK-001', status: 'CONFIRMED', replayed: false, record_ids: ['movement-1'] } } })
+    await expect(confirmInternalReceiptRecord('receipt-1')).resolves.toMatchObject({ status: 'CONFIRMED' })
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/semi-finished-receipts/receipt-1/confirm/', undefined, { headers: undefined, timeout: 30000 })
+  })
+  it('删除待入库单携带版本并接受204空响应，不转换成确认动作', async () => {
+    vi.mocked(apiClient.delete).mockResolvedValueOnce({ status: 204 })
+    await expect(deleteInternalReceiptRecord('receipt-1', '"v1"')).resolves.toBeUndefined()
+    expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/semi-finished-receipts/receipt-1/', { headers: { 'If-Match': '"v1"' }, timeout: 30000 })
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 })

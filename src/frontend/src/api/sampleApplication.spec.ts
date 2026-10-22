@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { submitSampleApplication, reviewSampleApplication } from './sampleApplication'
-import type { SampleApplicationDraft } from '@/types/sampleApplication'
+import { submitSampleApplication, reviewSampleApplication, completeSampleApplicationProducts } from './sampleApplication'
+import type { SampleApplicationBasicInput, SampleApplicationDraft } from '@/types/sampleApplication'
 const post = vi.hoisted(() => vi.fn())
-vi.mock('./request', () => ({ apiClient: { post } }))
+const patch = vi.hoisted(() => vi.fn())
+vi.mock('./request', () => ({ apiClient: { post, patch } }))
 
 describe('申请提交和厂长审核接口', () => {
   const draft: SampleApplicationDraft = {
@@ -11,7 +12,29 @@ describe('申请提交和厂长审核接口', () => {
     orderDate: '', dueDate: '', productName: '折叠椅', specification: '黑色', lengthCm: '50', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
     requirements: '包装要求', quantity: 2, referenceImage: null,
   }
-  beforeEach(() => { post.mockReset() })
+  beforeEach(() => { post.mockReset(); patch.mockReset() })
+  it('基础字段与产品及图片使用同一版本原子提交', async () => {
+    patch.mockResolvedValue({ data: { data: { id: 'sample', etag: 'v2' } }, headers: { etag: 'v2' } })
+    const basic: SampleApplicationBasicInput = { source_type: null, source_id: null, customer_account_id: 'customer', customer_contact_id: null, owner_employee_id: 'owner', sample_type: 'PRE_SALES', shipping_method: 'MAIL', delivery_batch: 'SINGLE', is_repeat_order: false, order_date: null, sample_due_date: null }
+    await completeSampleApplicationProducts('sample', 'v1', [], '要求', undefined, basic)
+    expect(patch.mock.calls[0]![1].basic).toEqual(basic)
+    await completeSampleApplicationProducts('sample', 'v2', [], '要求', new File(['png'], 'reference.png', { type: 'image/png' }), basic)
+    expect(JSON.parse(patch.mock.calls[1]![1].get('payload')).basic).toEqual(basic)
+    expect(patch.mock.calls[1]![2].headers).toEqual({ 'If-Match': 'v2' })
+  })
+  it('产品完善无图保留JSON，有图同PATCH发送multipart及If-Match，不使用创建接口', async () => {
+    patch.mockResolvedValue({ data: { data: { id: 'sample', etag: 'v2' } }, headers: { etag: 'v2' } })
+    await completeSampleApplicationProducts('sample', 'v1', [], '要求')
+    expect(patch.mock.calls[0]).toEqual(['/api/v1/sample-requests/sample/application-products/', { products: [], purpose: '要求' }, { headers: { 'If-Match': 'v1' } }])
+    const image = new File(['png'], 'reference.png', { type: 'image/png' })
+    await completeSampleApplicationProducts('sample', 'v1', [], '要求', image)
+    const [url, body, config] = patch.mock.calls[1]!
+    expect(url).toBe('/api/v1/sample-requests/sample/application-products/')
+    expect(body.get('reference_image')).toBe(image)
+    expect(JSON.parse(body.get('payload'))).toEqual({ products: [], purpose: '要求' })
+    expect(config).toEqual({ headers: { 'If-Match': 'v1' }, timeout: 60000 })
+    expect(post).not.toHaveBeenCalled()
+  })
   it('提交全部原型字段、参考图片和稳定的提交标识，使用真实返回编号', async () => {
     const image = new File(['png'], 'reference.png', { type: 'image/png' })
     post.mockResolvedValue({ data: { data: { id: 'created', etag: 'v1', status: 'DIRECTOR_REVIEW' } }, headers: { etag: 'v1' } })

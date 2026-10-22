@@ -16,11 +16,13 @@ from apps.core.api.concurrency import PreconditionFailed, etag_for_instance
 from apps.core.api.exceptions import Conflict
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from . import department_mapping_selectors as department_selectors
+from . import directory_snapshots
 from .department_assignment_selectors import department_plan
 from .department_mapping_services import require_schema as require_department_schema
 from .directory_client import WeComDirectoryClient
 from .directory_selectors import directory_plan, employee_summary, member_rejection
-from .models import WeComBinding, WeComConfig
+from .employee_department_snapshots import department_snapshot
+from .models import WeComBinding, WeComConfig, WeComDirectorySnapshot
 from .selectors import config_etag, configuration_complete, get_config
 from .services import _create_binding, _existing_binding, _locked_employee_and_user, _new_user, audit, require_etag
 
@@ -56,13 +58,45 @@ def read_source(config):
 
 
 @sensitive_variables()
-def preview_directory(request, *, apply_departments=False):
+def employee_source(config):
+    snapshot, directory, metadata = directory_snapshots.load(config)
+    imported = directory_snapshots.read_only_import_metadata(snapshot)
+    imported_visible = bool(config._state.adding and imported and directory.get("_local_import") == imported
+                            and directory.get("corp_id") == config.corp_id)
+    can_submit = metadata["can_submit"] or bool(imported_visible and snapshot.expires_at > timezone.now())
+    can_refresh = bool(not config._state.adding and config.enabled and configuration_complete(config))
+    metadata = {**metadata, "can_submit": can_submit, "can_refresh": can_refresh}
+    if imported_visible:
+        capability = "可保存为统一员工及无密码账号" if can_submit else "副本已过期，不能保存员工"
+        metadata["message"] = f"线上副本来自 {imported['source_origin']}；{capability}。"
+        metadata["message"] += "不自动授予角色；本地未配置企业微信，不能重新读取。"
+    return snapshot, directory, metadata, "IMPORTED" if imported_visible else "CONFIGURED"
+
+
+@sensitive_variables()
+def require_directory_source(config, preview):
+    snapshot, directory, metadata, mode = employee_source(config)
+    if (not metadata["can_submit"] or preview.get("corp_id") != config.corp_id
+            or preview.get("source_mode") != mode or preview.get("snapshot_version") != etag_for_instance(snapshot)
+            or preview["directory"] != digest(directory)):
+        raise PreconditionFailed("员工来源副本已变化、失效或过期，请重新预览。")
+    return directory
+
+
+@sensitive_variables()
+def preview_directory(request, *, apply_departments=False, refresh=False):
     require_access(request)
     if apply_departments:
         require_organization_manager(request)
         require_department_schema()
     config = get_config()
-    directory = read_source(config)
+    if refresh:
+        def recheck_access(current_request):
+            require_access(current_request)
+            if apply_departments:
+                require_organization_manager(current_request)
+        directory_snapshots.refresh(request, config, read_source, recheck_access)
+    snapshot, directory, metadata, mode = employee_source(config)
     require_access(request)
     if apply_departments:
         require_organization_manager(request)
@@ -71,9 +105,11 @@ def preview_directory(request, *, apply_departments=False):
     rows = directory_plan(directory, mappings=mappings)
     source_digest = digest(directory)
     version = {
-        "actor": str(request.user.pk), "config": config_etag(config), "directory": source_digest,
+        "actor": str(request.user.pk), "corp_id": config.corp_id, "source_mode": mode,
+        "config": config_etag(config), "directory": source_digest,
         "plans": {row["userid"].lower(): plan_digest(row) for row in rows if row["action"] in ("CREATE", "REVIEW")},
         "apply_departments": apply_departments,
+        "snapshot_version": etag_for_instance(snapshot) if metadata["can_submit"] else None,
     }
     if apply_departments:
         version["department_version"] = digest(mappings)
@@ -82,8 +118,9 @@ def preview_directory(request, *, apply_departments=False):
             "employee_id": row["employee"]["id"] if row["employee"] else None,
             "employee_etag": row["employee"]["etag"] if row["employee"] else None,
         } for row in rows}
-    token = signing.dumps(version, salt=PREVIEW_SALT, compress=True)
-    return {**directory, "members": rows, "preview_token": token, "apply_departments": apply_departments}, f'"{source_digest}"'
+    token = signing.dumps(version, salt=PREVIEW_SALT, compress=True) if metadata["can_submit"] else ""
+    return {**directory, "members": rows, "preview_token": token, "apply_departments": apply_departments,
+            "snapshot": metadata}, f'"{source_digest}"'
 
 
 @sensitive_variables()
@@ -103,18 +140,36 @@ def prepare_submission(request, data):
     require_etag(request.headers.get("If-Match"), f'"{preview["directory"]}"')
     config = get_config()
     require_etag(preview["config"], config_etag(config))
-    directory = read_source(config)
-    if digest(directory) != preview["directory"]:
-        raise PreconditionFailed("企业微信通讯录已变化，请重新预览。")
+    directory = require_directory_source(config, preview)
+    if preview["source_mode"] != "IMPORTED":
+        directory = read_source(config)
+        if digest(directory) != preview["directory"]:
+            raise PreconditionFailed("企业微信通讯录已变化，请重新预览。")
     return config, directory, preview
 
 
-def lock_configuration(request, config):
-    # 与 OAuth 首次建档及原人工绑定共用同一行锁，统一外部身份的并发入口。
-    locked = WeComConfig.objects.select_for_update().get(pk=config.pk)
+def lock_configuration(request, config, preview):
+    # 已配置链与 OAuth/人工绑定共用配置行锁；无配置链与导入/映射共用互斥。
+    if preview["source_mode"] == "IMPORTED":
+        directory_snapshots.lock_read_only_import()
+        locked = get_config()
+        if not locked._state.adding or locked.corp_id != config.corp_id:
+            raise PreconditionFailed("本地企业微信配置已变化，请重新预览。")
+    else:
+        locked = WeComConfig.objects.select_for_update().filter(pk=config.pk).first()
+    if locked is None:
+        raise PreconditionFailed("企业微信配置已变化，请重新预览。")
     require_etag(config_etag(config), config_etag(locked))
     actor = require_access(request)
+    require_directory_source(locked, preview)
     return locked, actor
+
+
+def lock_source_snapshot(config, preview):
+    # 如需补部门，先取得根组织锁再锁来源；前序已持有配置/导入互斥。
+    if preview["source_mode"] == "IMPORTED":
+        WeComDirectorySnapshot.objects.select_for_update().filter(corp_id=config.corp_id).first()
+    require_directory_source(config, preview)
 
 
 def result_for(binding, result):
@@ -130,6 +185,7 @@ def lock_department_context(request, config, preview):
         raise Conflict("ERP 根组织未就绪，请先维护组织结构。")
     require_access(request)
     require_organization_manager(request)
+    require_directory_source(config, preview)
     mappings = department_selectors.mapping_snapshot(config.corp_id)
     if digest(mappings) != preview["department_version"]:
         raise PreconditionFailed("部门映射或目标部门已变化，请重新预览。")
@@ -162,6 +218,9 @@ def fill_departments(request, binding, member, preview, mappings, actor, result)
         for unit in targets
     ):
         raise PreconditionFailed("目标部门已变化，请重新预览。")
+    require_directory_source(get_config(), preview)
+    actor = require_access(request)
+    require_organization_manager(request)
     now = timezone.now()
     for row in plan["assignments"]:
         EmployeeOrganizationAssignment.objects.create(
@@ -175,7 +234,12 @@ def fill_departments(request, binding, member, preview, mappings, actor, result)
     return {**plan, "status": "APPLIED", "reason": "已补充部门归属，未授予角色。"}
 
 
-def directory_result(request, binding, member, result, preview, mappings, actor):
+def directory_result(request, binding, member, result, preview, mappings, actor, directory):
+    # 来源已按企业、预览版本和有效期核验，列表只使用持久化副本。
+    departments = department_snapshot(directory, member)
+    if binding.department_snapshot != departments:
+        binding.department_snapshot = departments
+        binding.save(update_fields=["department_snapshot", "updated_at"])
     payload = result_for(binding, result)
     if mappings is not None:
         plan = fill_departments(request, binding, member, preview, mappings, actor, result)
@@ -189,8 +253,9 @@ def sync_directory(request, data):
     selected = {value.lower() for value in data["user_ids"]}
     confirmed = {value.lower() for value in data["confirmed_new_user_ids"]}
     with transaction.atomic():
-        locked, actor = lock_configuration(request, config)
+        locked, actor = lock_configuration(request, config, preview)
         mappings = lock_department_context(request, locked, preview)
+        lock_source_snapshot(locked, preview)
         rows = {row["userid"].lower(): row for row in directory_plan(directory)}
         if not selected.issubset(rows):
             raise ValidationError({"user_ids": "只能选择当前预览中的成员。"})
@@ -208,8 +273,10 @@ def sync_directory(request, data):
             row = rows[key]
             existing = _existing_binding(locked.corp_id, row["userid"])
             if existing:
-                results.append(directory_result(request, existing, row, "EXISTING", preview, mappings, actor))
+                results.append(directory_result(request, existing, row, "EXISTING", preview, mappings, actor, directory))
                 continue
+            require_directory_source(locked, preview)
+            actor = require_access(request)
             user = _new_user(row["name"])
             employee = Employee.objects.create(
                 user=user, employee_code="WECOM-" + uuid.uuid4().hex.upper(), display_name=row["name"],
@@ -218,7 +285,11 @@ def sync_directory(request, data):
             audit(request, binding, "DIRECTORY_CONFIRM_NEW" if key in confirmed else "DIRECTORY_CREATE",
                   actor=actor, user_id=binding.user_id, employee_name=employee.display_name,
                   message="通讯录建档：创建员工及无密码账号，未分配角色。")
-            results.append(directory_result(request, binding, row, "CREATED", preview, mappings, actor))
+            results.append(directory_result(request, binding, row, "CREATED", preview, mappings, actor, directory))
+        require_directory_source(locked, preview)
+        require_access(request)
+        if preview.get("apply_departments", False):
+            require_organization_manager(request)
         return results
 
 
@@ -231,8 +302,9 @@ def match_directory_employee(request, data):
     if reason := member_rejection(member):
         raise Conflict(reason)
     with transaction.atomic():
-        locked, actor = lock_configuration(request, config)
+        locked, actor = lock_configuration(request, config, preview)
         mappings = lock_department_context(request, locked, preview)
+        lock_source_snapshot(locked, preview)
         employee, user = _locked_employee_and_user(data["employee_id"])
         if employee.status != "ACTIVE" or employee.archived_at is not None or (user and not user.is_active):
             raise Conflict("只能匹配在职、未归档员工及启用的账号。")
@@ -241,11 +313,18 @@ def match_directory_employee(request, data):
         existing = _existing_binding(locked.corp_id, member["userid"])
         if existing:
             if existing.employee_id == employee.pk:
-                return directory_result(request, existing, member, "EXISTING", preview, mappings, actor)
+                result = directory_result(request, existing, member, "EXISTING", preview, mappings, actor, directory)
+                require_directory_source(locked, preview)
+                require_access(request)
+                if preview.get("apply_departments", False):
+                    require_organization_manager(request)
+                return result
             raise Conflict("此企业微信成员已关联其他员工，不能覆盖或自动合并。")
         require_etag(data["employee_etag"], etag_for_instance(employee))
         if WeComBinding.objects.filter(employee=employee).exists():
             raise Conflict("所选员工已关联企业微信成员，不能覆盖。")
+        require_directory_source(locked, preview)
+        actor = require_access(request)
         created_account = user is None
         if created_account:
             employee.user = _new_user(employee.display_name)
@@ -253,4 +332,9 @@ def match_directory_employee(request, data):
         binding = _create_binding(locked, member, employee, source="MANUAL", created_account=created_account, actor=actor)
         audit(request, binding, "DIRECTORY_MATCH", actor=actor, user_id=binding.user_id,
               employee_name=employee.display_name, message="管理员确认成员身份并关联已有员工，保留 ERP 资料和权限。")
-        return directory_result(request, binding, member, "MATCHED", preview, mappings, actor)
+        result = directory_result(request, binding, member, "MATCHED", preview, mappings, actor, directory)
+        require_directory_source(locked, preview)
+        require_access(request)
+        if preview.get("apply_departments", False):
+            require_organization_manager(request)
+        return result

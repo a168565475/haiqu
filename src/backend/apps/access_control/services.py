@@ -113,6 +113,31 @@ def replace_grants(request, pk, rows):
 
 
 @transaction.atomic
+def add_module_grant(request, pk, permission_code):
+    """单项追加MODULE授权，保留既有授权及资源记录；已有同项时不重复审计。"""
+    require_manager(request)
+    role = locked_role(pk, request)
+    if role.archived_at:
+        raise Conflict("请先启用角色，再修改授权。")
+    permission, scope = validate_grants([{"permission": permission_code, "scope": "MODULE"}])[0]
+    existing = list(RoleActionGrant.objects.filter(role=role, permission=permission))
+    if existing:
+        if len(existing) == 1 and existing[0].scope == scope:
+            return role, False
+        raise Conflict("该动作已有其他范围授权，请先审阅，不能直接扩大范围。")
+    before = role_snapshot(role)
+    grant = RoleActionGrant.objects.create(role=role, permission=permission, scope=scope)
+    role.auth_group.permissions.add(*projected_permission_ids([(permission, scope)]))
+    role.save(update_fields=["updated_at"])
+    audit(request, role, "ROLE_GRANT_ADD", before, {
+        **role_snapshot(role), "added_grant": {"permission": permission_code, "scope": scope,
+            "resource_ids": [], "grant_id": str(grant.pk)},
+    })
+    assert_managed_projection(role)
+    return role, True
+
+
+@transaction.atomic
 def copy_role(request, pk, data):
     require_manager(request)
     source = locked_role(pk, request)

@@ -36,7 +36,7 @@ const preview: MetalReceiptPreview = {
   lines: [line, anotherLine('rear', '后腿管'), anotherLine('arm', '扶手管')],
   metal_processing: { as_of: '2026-09-29', blockers: [], future_blockers: [] },
 }
-const result: InternalReceiptResult = { receipt_id: 'receipt-real', receipt_number: 'RK-real-response', record_ids: ['record-real'], replayed: false }
+const result: InternalReceiptResult = { receipt_id: 'receipt-real', receipt_number: 'RK-real-response', record_ids: ['record-real'], status: 'PENDING', replayed: false }
 const httpError = (status: number) => Object.assign(new AxiosError('接口错误'), { response: { status, data: { error: { message: `状态 ${status}` } } } })
 interface ViewModel {
   rows: Array<MetalReceiptLine & { quantity: string }>; remark: string; dialog: string; error: string

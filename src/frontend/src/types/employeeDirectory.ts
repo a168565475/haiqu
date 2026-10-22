@@ -41,7 +41,20 @@ export interface EmployeeDirectoryMember {
   department_plan?: EmployeeDirectoryDepartmentPlan
 }
 
+export interface DirectorySnapshot {
+  status: 'MISSING' | 'VALID' | 'EXPIRED' | 'CONFIG_CHANGED' | 'CONFIG_UNAVAILABLE'
+  message: string
+  can_submit: boolean
+  fetched_at: string | null
+  expires_at: string | null
+}
+
+export interface EmployeeDirectorySnapshot extends DirectorySnapshot {
+  can_refresh: boolean
+}
+
 export interface EmployeeDirectoryPreview {
+  snapshot: EmployeeDirectorySnapshot
   corp_id: string
   departments: EmployeeDirectoryDepartment[]
   members: EmployeeDirectoryMember[]
@@ -103,6 +116,8 @@ export interface DepartmentMappingSourceDepartment extends EmployeeDirectoryDepa
 }
 
 export interface DepartmentMappingPreview {
+  snapshot: DirectorySnapshot
+  can_save_mapping: boolean
   corp_id: string
   departments: DepartmentMappingSourceDepartment[]
   organizations: DepartmentMappingOrganization[]

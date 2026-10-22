@@ -50,7 +50,7 @@ def schedules_with_context(queryset=None, request=None):
     return queryset.select_related(
         "production_task", "production_task__customer_account", "created_by_employee", "updated_by_employee",
         "voided_by_employee",
-    ).prefetch_related(Prefetch("products", queryset=active_products, to_attr="active_products"))
+    ).prefetch_related(Prefetch("products", queryset=active_products, to_attr="active_products"), "production_task__followers")
 
 
 def schedule_items_for_category(request, category):

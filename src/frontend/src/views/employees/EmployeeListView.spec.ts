@@ -39,7 +39,34 @@ describe('员工主列表', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(4)
     expect(wrapper.text()).toContain('EMP-1'); expect(wrapper.text()).toContain('EMP-2')
     expect(wrapper.findComponent({ name: 'EmployeeDirectoryDialog' }).attributes('modelvalue')).toBe('false')
-    expect(wrapper.text()).toContain('账号已启用也不代表已获得 ERP 访问权限')
+    expect(wrapper.text()).not.toContain('统一员工档案供账号、考勤与车间配置使用。')
+    expect(wrapper.text()).not.toContain('部门归属不会自动分配角色')
+    expect(wrapper.find('.employee-filters.access-box').exists()).toBe(true)
+    expect(wrapper.findAll('th').map(cell => cell.text())).toContain('企业微信部门')
+    expect(wrapper.findAll('.employee-wecom-department').map(cell => cell.text())).toEqual(['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN'])
+  })
+  it.each<{ departments: AccessEmployee['wecom_departments']; expected: string }>([
+    { departments: undefined, expected: 'UNKNOWN' },
+    { departments: null, expected: 'UNKNOWN' },
+    { departments: [], expected: '未分配' },
+    { departments: [{ id: 5, name: '生产部' }], expected: '生产部（5）' },
+    { departments: [{ id: 9, name: null }], expected: 'UNKNOWN（9）' },
+    { departments: [{ id: 5, name: '生产部' }, { id: 12, name: '技术支持' }, { id: 9, name: null }], expected: '生产部（5）、技术支持（12）、UNKNOWN（9）' },
+  ])('企业微信部门按来源字段显示$expected，未取得来源时不使用ERP部门替代', async ({ departments, expected }) => {
+    api.getEmployees.mockResolvedValueOnce([employee(1, { department: 'ERP归属部门', wecom_departments: departments })])
+    const { wrapper } = await render()
+    const cell = wrapper.get('.employee-wecom-department')
+    expect(cell.text()).toBe(expected)
+    expect(cell.attributes('title')).toBe(expected)
+    expect(wrapper.get('tbody').text()).toContain('ERP归属部门')
+  })
+  it('完整保留生成账号与悬停内容，没有账号时显示占位符', async () => {
+    const username = 'wecom_0123456789abcdef0123456789abcdef'
+    api.getEmployees.mockResolvedValueOnce([employee(1, { username }), employee(2, { username: null, account_active: null })])
+    const { wrapper } = await render()
+    const cells = wrapper.findAll('.employee-account')
+    expect(cells.map(cell => cell.text())).toEqual([username, '—'])
+    expect(cells.map(cell => cell.attributes('title'))).toEqual([username, '—'])
   })
   it('查询员工编码并按员工/账号状态筛选，空结果明确显示', async () => {
     const { wrapper } = await render()

@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.workshop_reporting.models import WageScheme, WorkReportLine
-from .models import FinishedGoodsReceipt
+from .models import FinishedGoodsReceipt, FinishedGoodsReceiptStatus
 
 
 def assembly_reporting_limits(product_lines):
@@ -74,7 +74,10 @@ def is_assembly_report(report):
 
 def assert_reports_cover_receipts(product_line):
     """调用者已持有订单产品锁；编辑/删除失败时整个报工事务回滚。"""
-    received = FinishedGoodsReceipt.objects.filter(production_task_product_id=product_line.pk).aggregate(
+    received = FinishedGoodsReceipt.objects.filter(
+        production_task_product_id=product_line.pk,
+        status=FinishedGoodsReceiptStatus.CONFIRMED,
+    ).aggregate(
         total=Sum('received_quantity'))['total'] or 0
     if not received:
         return

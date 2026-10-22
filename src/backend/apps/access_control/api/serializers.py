@@ -79,10 +79,11 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
     account_protected = serializers.SerializerMethodField()
     team_id = serializers.SerializerMethodField()
     department = serializers.SerializerMethodField()
+    wecom_departments = serializers.JSONField(source="wecom_binding.department_snapshot", read_only=True, default=None, allow_null=True)
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_code", "display_name", "status", "username", "account_active", "account_protected", "team_id", "department", "role_ids", "etag"]
+        fields = ["id", "employee_code", "display_name", "status", "username", "account_active", "account_protected", "team_id", "department", "wecom_departments", "role_ids", "etag"]
 
     def get_role_ids(self, obj) -> list[str]:
         return [str(pk) for pk in current_assignments(obj).values_list("role_profile_id", flat=True)]

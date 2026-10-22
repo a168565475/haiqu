@@ -100,7 +100,7 @@ class WeComDirectoryDepartmentTests(TestCase):
         return role
 
     def preview(self, apply_departments=True):
-        response = self.client.get(ROOT, {"apply_departments": "true" if apply_departments else "false"})
+        response = self.client.post(ROOT + "refresh/", {"apply_departments": "true" if apply_departments else "false"})
         self.assertEqual(response.status_code, 200, response.data)
         return response
 
@@ -276,7 +276,11 @@ class WeComDirectoryDepartmentTests(TestCase):
         self.assertEqual(response.data["data"][0]["result"], "EXISTING")
         self.assertEqual(response.data["data"][0]["department_status"], "APPLIED")
         self.assertEqual(employee.organization_assignments.get().organization_unit_id, self.unit.pk)
-        self.assertEqual(WeComBinding.objects.values().get(pk=binding.pk), before_binding)
+        after_binding = WeComBinding.objects.values().get(pk=binding.pk)
+        self.assertEqual(after_binding.pop("department_snapshot"), [{"id": 1, "name": "企业微信公司"}])
+        self.assertGreater(after_binding.pop("updated_at"), before_binding.pop("updated_at"))
+        before_binding.pop("department_snapshot")
+        self.assertEqual(after_binding, before_binding)
         self.assertEqual(get_user_model().objects.values().get(pk=employee.user_id), before_user)
         employee.refresh_from_db()
         self.assertEqual(employee.display_name, "ERP 维护姓名")
@@ -368,7 +372,7 @@ class WeComDirectoryDepartmentTests(TestCase):
 
     def test_default_sync_does_not_query_new_mapping_table_or_add_department_status(self):
         with patch(SCHEMA_GATE, return_value=False), CaptureQueriesContext(connection) as queries:
-            preview = self.client.get(ROOT)
+            preview = self.client.post(ROOT + "refresh/")
             self.assertEqual(preview.status_code, 200, preview.data)
             response = self.client.post(ROOT + "sync/", {
                 "preview_token": preview.data["data"]["preview_token"], "user_ids": ["Member.One"],
@@ -392,7 +396,7 @@ class WeComDirectoryDepartmentTests(TestCase):
         manager = self.employee("DIRECTORY_DEPT_MANAGER")
         self.grant(manager, [("access_control", "manage_accounts")])
         self.client.force_login(manager.user)
-        response = self.client.get(ROOT, {"apply_departments": "true"})
+        response = self.client.post(ROOT + "refresh/", {"apply_departments": "true"})
         self.assertEqual(response.status_code, 403, response.data)
         self.directory_client.assert_not_called()
         self.preview(False)
@@ -401,7 +405,7 @@ class WeComDirectoryDepartmentTests(TestCase):
         manager = self.employee("DIRECTORY_DEPT_ORG_ONLY")
         self.grant(manager, [("organizations", "manage_organization")])
         self.client.force_login(manager.user)
-        response = self.client.get(ROOT, {"apply_departments": "true"})
+        response = self.client.post(ROOT + "refresh/", {"apply_departments": "true"})
         self.assertEqual(response.status_code, 403, response.data)
         self.directory_client.assert_not_called()
 
@@ -485,7 +489,7 @@ class WeComDirectoryDepartmentTests(TestCase):
         preview = self.preview()
         before = self.counts()
         with patch(SCHEMA_GATE, return_value=False):
-            self.assertEqual(self.client.get(ROOT, {"apply_departments": "true"}).status_code, 503)
+            self.assertEqual(self.client.post(ROOT + "refresh/", {"apply_departments": "true"}).status_code, 503)
             self.assertEqual(self.sync(preview).status_code, 503)
             self.assertEqual(self.match(preview, employee).status_code, 503)
             self.preview(False)

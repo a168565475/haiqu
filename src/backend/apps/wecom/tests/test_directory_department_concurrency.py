@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import timedelta
 from threading import Barrier, Event
 from unittest.mock import patch
 
@@ -8,16 +9,17 @@ from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection, connections, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.test import RequestFactory, TransactionTestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access_control.organization_services import replace_employee_departments
 from apps.audit.models import AuditLog
-from apps.core.api.concurrency import etag_for_instance
+from apps.core.api.concurrency import PreconditionFailed, etag_for_instance
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from apps.wecom import directory_services
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.directory_services import preview_directory, sync_directory
-from apps.wecom.models import WeComBinding, WeComConfig, WeComDepartmentMapping
+from apps.wecom.models import WeComBinding, WeComConfig, WeComDepartmentMapping, WeComDirectorySnapshot
 
 
 ROOT = "/api/v1/wecom/employee-directory/"
@@ -51,7 +53,7 @@ class DirectoryDepartmentConcurrencyTests(TransactionTestCase):
         self.upstream = client_patch.start().return_value
         self.addCleanup(client_patch.stop)
         self.upstream.read_directory.side_effect = lambda: deepcopy(self.directory)
-        self.preview, self.etag = preview_directory(self.request(), apply_departments=True)
+        self.preview, self.etag = preview_directory(self.request(), apply_departments=True, refresh=True)
 
     def request(self, etag=None):
         request = RequestFactory().post(ROOT + "sync/", HTTP_IF_MATCH=etag or getattr(self, "etag", ""))
@@ -104,7 +106,7 @@ class DirectoryDepartmentConcurrencyTests(TransactionTestCase):
             corp_id=self.config.corp_id, user_id=self.member["userid"], member_name=self.member["name"],
             employee=employee, source="MANUAL", created_account=False,
         )
-        self.preview, self.etag = preview_directory(self.request(), apply_departments=True)
+        self.preview, self.etag = preview_directory(self.request(), apply_departments=True, refresh=True)
         entering_root_lock = Event()
         original_lock = directory_services.lock_department_context
 
@@ -131,6 +133,31 @@ class DirectoryDepartmentConcurrencyTests(TransactionTestCase):
         self.assertEqual(get_user_model().objects.count(), 2)
         self.assertEqual(AuditLog.objects.filter(action="EMPLOYEE_DEPARTMENTS_REPLACE").count(), 1)
         self.assertFalse(AuditLog.objects.filter(action="DIRECTORY_DEPARTMENTS_FILL").exists())
+
+    def test_snapshot_expiring_while_waiting_for_root_lock_rejects_all_writes(self):
+        entered = Event()
+        original = directory_services.lock_department_context
+
+        def wait_for_root(*args):
+            entered.set()
+            return original(*args)
+
+        with patch.object(directory_services, "lock_department_context", side_effect=wait_for_root):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with transaction.atomic():
+                    OrganizationUnit.objects.select_for_update().get(pk=self.root.pk)
+                    future = pool.submit(self.thread_run, lambda: sync_directory(self.request(), self.sync_data()))
+                    self.assertTrue(entered.wait(timeout=15), "提交未到达组织锁等待点")
+                    WeComDirectorySnapshot.objects.update(
+                        fetched_at=timezone.now() - timedelta(days=2), expires_at=timezone.now() - timedelta(days=1),
+                    )
+                with self.assertRaises(PreconditionFailed):
+                    future.result(timeout=40)
+        self.assertEqual(Employee.objects.count(), 1)
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertFalse(WeComBinding.objects.exists())
+        self.assertFalse(EmployeeOrganizationAssignment.objects.exists())
+        self.assertFalse(AuditLog.objects.filter(action__startswith="DIRECTORY_").exists())
 
     def test_actual_pre_mapping_schema_allows_default_sync_and_blocks_department_mode(self):
         executor = MigrationExecutor(connection)

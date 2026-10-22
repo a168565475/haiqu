@@ -112,11 +112,6 @@ async function loadPage() {
   }
 }
 
-function openEdit() {
-  if (!sample.value || !materialResult.value?.canEdit) return
-  void router.push({ name: 'sample-materials', params: { sampleId: sample.value.id } })
-}
-
 function openPurchase() {
   const procurementId = materialResult.value?.procurementRequest?.id
   if (!procurementId) return
@@ -139,7 +134,6 @@ onMounted(loadPage)
       <div class="material-detail-heading-actions">
         <ElButton @click="router.push({ name: 'samples' })">返回列表</ElButton>
         <ElButton v-if="canCreatePurchase" type="primary" @click="openPurchase">去创建采购单</ElButton>
-        <ElButton v-if="materialResult?.canEdit" type="primary" @click="openEdit">编辑需求</ElButton>
       </div>
     </header>
 

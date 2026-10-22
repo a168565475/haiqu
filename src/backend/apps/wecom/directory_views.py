@@ -40,7 +40,18 @@ class DirectoryPreviewView(DirectoryManagementView):
     def get(self, request):
         query = DirectoryPreviewQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        data, etag = directory_services.preview_directory(request, **query.validated_data)
+        data, etag = directory_services.preview_directory(request, refresh=False, **query.validated_data)
+        return Response(DirectoryPreviewResponseSerializer({"data": data}).data, headers={"ETag": etag})
+
+
+class DirectoryRefreshView(DirectoryManagementView):
+    @extend_schema(request=DirectoryPreviewQuerySerializer,
+                   responses={200: DirectoryPreviewResponseSerializer, **ERROR_RESPONSES})
+    @sensitive_variables()
+    def post(self, request):
+        serializer = DirectoryPreviewQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data, etag = directory_services.preview_directory(request, refresh=True, **serializer.validated_data)
         return Response(DirectoryPreviewResponseSerializer({"data": data}).data, headers={"ETag": etag})
 
 

@@ -74,7 +74,7 @@ async function render(permissions: string[] = []) {
 }
 
 describe('SampleInventoryView', () => {
-  it('以真实月数量绘制同尺度四柱，移除旧说明、路由栏及外部标签', async () => {
+  it('以四项数字展示真实月数量，移除柱图和旧说明', async () => {
     apiMocks.summary.mockResolvedValueOnce({
       month: '2026-10', current_available: 20, borrowed: 5, inbound_today: 0, outbound_today: 0,
       inbound_this_month: 40, outbound_this_month: 10, loaned_this_month: 5,
@@ -82,7 +82,8 @@ describe('SampleInventoryView', () => {
     const wrapper = await render()
     expect(wrapper.find('.sample-monthly-stat__heading').text()).toContain('本月样品 · 10月')
     expect(wrapper.findAll('.sample-monthly-stat__value').map(item => item.text())).toEqual(['40', '10', '5', '20'])
-    expect(wrapper.findAll('.sample-monthly-stat__bar').map(item => Number(item.attributes('height')))).toEqual([26, 6.5, 3.25, 13])
+    expect(wrapper.find('.sample-monthly-stat svg').exists()).toBe(false)
+    expect(wrapper.findAll('.sample-monthly-stat__label').map(item => item.text())).toEqual(['入库', '出库', '借出', '当前库存'])
     expect(wrapper.text()).not.toContain('统一管理样品库存、出库与借出记录')
     expect(wrapper.find('.inventory-tabs').exists()).toBe(false)
     expect(wrapper.find('.stats-grid').exists()).toBe(false)
@@ -167,9 +168,14 @@ describe('SampleInventoryView', () => {
       params: { receiptId: 'receipt-1' },
     })
 
-    const deleteButton = wrapper.findAll('button').find((item) => item.text().trim() === '删除')
+    expect(wrapper.findAll('.el-table__body-wrapper .el-table__row').at(0)?.findAll('td').at(-1)?.text()).toBe('更多')
+    await wrapper.findAll('button').find(item => item.text() === '更多')!.trigger('click')
+    await flushPromises()
+    const menuItems = wrapper.findAllComponents({ name: 'ElDropdownItem' })
+    expect(menuItems.map(item => item.text())).toEqual(['查看', '删除'])
+    const deleteButton = menuItems.find((item) => item.text().trim() === '删除')
     expect(deleteButton).toBeDefined()
-    await deleteButton?.trigger('click')
+    await deleteButton?.get('[role="menuitem"]').trigger('click')
     await flushPromises()
     expect(apiMocks.deleteReceipt).toHaveBeenCalledWith('receipt-1')
   })
@@ -189,7 +195,9 @@ describe('SampleInventoryView', () => {
     const wrapper = await render()
     expect(wrapper.findAll('.heading-actions button').every(item => item.attributes('disabled') !== undefined)).toBe(true)
     expect(wrapper.find('.inventory-tabs').exists()).toBe(false)
-    expect(wrapper.findAll('button').some(item => item.text() === '删除')).toBe(false)
+    await wrapper.findAll('button').find(item => item.text() === '更多')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).map(item => item.text())).toEqual(['查看'])
     expect(wrapper.findComponent({ name: 'SampleInventoryReceiptDialog' }).exists()).toBe(false)
   })
 
@@ -251,8 +259,10 @@ describe('SampleInventoryView', () => {
     let cancel!: (reason: string) => void
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockImplementation(() => new Promise((_, reject) => { cancel = reject }))
     const wrapper = await render(['samples.delete_sampleinventoryreceipt'])
-    const button = wrapper.findAll('button').find(item => item.text() === '删除')!
-    await button.trigger('click'); await button.trigger('click')
+    await wrapper.findAll('button').find(item => item.text() === '更多')!.trigger('click')
+    await flushPromises()
+    const button = wrapper.findAllComponents({ name: 'ElDropdownItem' }).find(item => item.text() === '删除')!
+    await button.get('[role="menuitem"]').trigger('click'); await button.get('[role="menuitem"]').trigger('click')
     expect(confirm).toHaveBeenCalledTimes(1)
     cancel('cancel'); await flushPromises()
     expect(apiMocks.deleteReceipt).not.toHaveBeenCalled()

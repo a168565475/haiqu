@@ -448,7 +448,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
               </div>
               <div v-else class="cell-stack order-summary" data-testid="purchase-order-basic-info"
                 :title="`生产单号：${row.production_task_number || '—'}\n交期：${row.delivery_date || '—'}`">
-                <span>{{ row.is_historical_unlinked ? '历史未关联' : row.production_task_number || '—' }}</span>
+                <span>{{ row.production_task_number || '—' }}</span>
               </div>
             </template>
           </ElTableColumn>

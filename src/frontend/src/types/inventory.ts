@@ -26,7 +26,7 @@ export interface FinishedGoodsInventoryRow {
   zone_name: string; batch_count: number; occupied_box_slots: number; latest_inbound_time: string; receipt_ids: string[]
 }
 export interface FinishedGoodsReceipt {
-  id: string; receipt_number: string; production_task_product_id: string | null; source_type: 'PRODUCTION_ORDER' | 'SAMPLE_INVENTORY'
+  id: string; receipt_number: string; production_task_product_id: string | null; source_type: 'PRODUCTION_ORDER' | 'SAMPLE_INVENTORY'; status?: 'PENDING' | 'CONFIRMED'
   source_type_display: string; source_document_number: string; task_number_snapshot: string
   order_number_snapshot: string; category_snapshot: string; product_number_snapshot: string; product_code_snapshot: string
   product_name_snapshot: string; item_number_snapshot: string; specification_snapshot: string; material_snapshot?: string; actual_color: string
@@ -36,8 +36,6 @@ export interface FinishedGoodsReceipt {
   quantity_per_box: number | null; box_count: number | null; tail_quantity: number | null; occupied_box_slots: number | null
   remaining_box_slots: number | null; remark: string; received_by_name: string; received_at: string
 }
-export interface EligibleProduct { product_id: string; product_number: string; product_code: string; product_name: string; item_number: string; specification: string; pinyin_search: string }
-export interface EligibleOrder { production_task_product_id: string; task_number: string; order_number: string; order_quantity: string; maximum_receivable: number; received_total: number; remaining_receivable: number; actual_color_default: string; unit_id: string; unit_code: string; unit_name: string }
 export interface InventoryOptions {
   warehouses: Warehouse[]
   zones: WarehouseZone[]

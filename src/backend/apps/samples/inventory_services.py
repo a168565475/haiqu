@@ -91,19 +91,19 @@ def create_sample_inventory_receipt(*, items, finished_goods_destination, actor_
         received_by_item[line.sample_item_id] += line.received_quantity
 
     from .inventory_selectors import eligible_sample_items_for_inventory
-    eligible_ids = set(eligible_sample_items_for_inventory().filter(pk__in=item_ids).values_list('pk', flat=True))
+    eligible_quantities = dict(eligible_sample_items_for_inventory().filter(pk__in=item_ids).values_list('pk', 'remaining_quantity'))
 
     validated_lines = []
     for submitted_item in items:
         sample_item = locked_items[submitted_item["sample_item_id"]]
-        eligible = sample_item.pk in eligible_ids
+        eligible = sample_item.pk in eligible_quantities
         if not eligible:
             raise Conflict("所选样品已不符合入库条件，请刷新后重新选择。")
 
         cumulative_received = received_by_item[sample_item.pk]
         if cumulative_received != submitted_item["expected_cumulative_received"]:
             raise Conflict("样品入库数量已变化，请刷新可选列表后重试。")
-        remaining_quantity = sample_item.sample_quantity - cumulative_received
+        remaining_quantity = eligible_quantities[sample_item.pk]
         if remaining_quantity <= 0:
             raise Conflict("所选样品已经全部入库，请刷新后重新选择。")
         if submitted_item["received_quantity"] > remaining_quantity:

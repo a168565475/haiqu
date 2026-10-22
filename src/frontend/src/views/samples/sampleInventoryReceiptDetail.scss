@@ -2,5 +2,16 @@
 
 .receipt-detail-page {
   @include document.page;
+  .detail-heading { margin-top: 0; }
+  .lines-card { height: auto; padding: 0 14px 14px; }
+  .lines-card .card-title { padding: 0 2px; border-bottom: 0; }
+  .lines-table { height: auto; border: 1px solid var(--erp-table-frame-border); border-radius: 5px; background: var(--erp-table-background); color: var(--erp-table-text); }
   .lines-table-head, .lines-table-row { grid-template-columns: 170px 120px 160px 190px 90px 100px 100px 260px 210px minmax(0, 1fr); min-width: 1432px; }
+  .lines-table-head, .lines-table-row { padding: 0; box-sizing: border-box; font-size: 12px; line-height: 18px; border-bottom-color: var(--erp-table-border); }
+  .lines-table-head { height: 44px; color: var(--erp-table-header-text); background: var(--erp-table-header-background); }
+  .lines-table-row { height: 34px; color: var(--erp-table-text); }
+  .lines-table-row:last-child { border-bottom: 0; }
+  .lines-table-row:hover { background: var(--erp-table-hover); }
+  .lines-table-head > span, .lines-table-row > span, .lines-table-row > button { padding: 0 16px; }
+  .lines-table-row .source-link { color: var(--erp-table-text); font-size: 12px; font-weight: 400; }
 }

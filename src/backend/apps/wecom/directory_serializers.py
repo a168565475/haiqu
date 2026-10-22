@@ -91,12 +91,25 @@ class DirectoryMemberSerializer(serializers.Serializer):
     department_plan = DepartmentPlanSerializer(required=False)
 
 
+class DirectorySnapshotSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["MISSING", "VALID", "EXPIRED", "CONFIG_CHANGED", "CONFIG_UNAVAILABLE"])
+    message = serializers.CharField()
+    can_submit = serializers.BooleanField()
+    fetched_at = serializers.DateTimeField(allow_null=True)
+    expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class EmployeeDirectorySnapshotSerializer(DirectorySnapshotSerializer):
+    can_refresh = serializers.BooleanField()
+
+
 class DirectoryPreviewSerializer(serializers.Serializer):
     corp_id = serializers.CharField()
     departments = DirectoryDepartmentSerializer(many=True)
     members = DirectoryMemberSerializer(many=True)
-    preview_token = serializers.CharField()
+    preview_token = serializers.CharField(allow_blank=True)
     apply_departments = serializers.BooleanField()
+    snapshot = EmployeeDirectorySnapshotSerializer()
 
 
 class DirectoryPreviewResponseSerializer(serializers.Serializer):

@@ -119,6 +119,8 @@ class ScheduleReadSerializer(serializers.Serializer):
             "record_status_display": instance.get_record_status_display(),
             "version": instance.version,
             "source": source,
+            "list_amounts": self.context.get("list_amounts", {}).get(str(instance.pk)),
+            "factory_follower_names": [employee.display_name for employee in instance.production_task.followers.all()],
             "source_revision_hash": instance.source_revision_hash,
             "source_current_status": instance.production_task.status,
             "source_current_status_display": instance.production_task.get_status_display(),

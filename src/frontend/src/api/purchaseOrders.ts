@@ -101,6 +101,8 @@ export async function updatePurchaseOrder(
     is_mailed: boolean | null
     lines: Array<{
       id: string
+      actual_bar_count?: number | string | null
+      raw_bar_length_m?: string | null
       supplier_id: string | null
       delivery_date: string | null
       actual_purchase_quantity: string | null

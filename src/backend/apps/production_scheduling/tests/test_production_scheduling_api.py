@@ -20,7 +20,7 @@ from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.core.api.exceptions import Conflict
 from apps.files.models import BusinessFile, FileScanStatus
 from apps.organizations.models import Employee
-from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus
+from apps.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
 from apps.products.models import ProductInformation
 from apps.production_tasks.models import (
     DeliveryMethod, OrderSource, ProductionTask, ProductionTaskProduct, ProductionTaskProductImage, ProductionTaskStatus,
@@ -103,6 +103,10 @@ def make_schedule_prerequisites(*, task, line, employee):
         created_by_employee=employee,
         completed_by_employee=employee,
         completed_at=timezone.now(),
+    )
+    PurchaseOrderLine.objects.create(
+        purchase_order=purchase_order, line_number=1, bom=bom,
+        product_line_id_snapshot=line.pk, quantity_parse_status="READY",
     )
     return bom, purchase_order
 

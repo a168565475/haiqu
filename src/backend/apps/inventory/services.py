@@ -33,6 +33,7 @@ from .models import (
     FinishedGoodsOutboundAttachment,
     FinishedGoodsReceipt,
     FinishedGoodsReceiptSource,
+    FinishedGoodsReceiptStatus,
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
@@ -93,7 +94,7 @@ def _location_snapshot(instance):
 
 def _active_stock_for_warehouse(warehouse):
     return FinishedGoodsReceipt.objects.filter(
-        location__zone__warehouse=warehouse, remaining_quantity__gt=0
+        location__zone__warehouse=warehouse, status=FinishedGoodsReceiptStatus.CONFIRMED, remaining_quantity__gt=0
     ).exists() or MaterialInboundLine.objects.filter(zone__warehouse=warehouse).exists() or PublicStockBalance.objects.filter(
         zone__warehouse=warehouse, quantity__gt=0,
     ).exists() or SemiFinishedStockBalance.objects.filter(zone__warehouse=warehouse, quantity__gt=0).exists()
@@ -101,7 +102,7 @@ def _active_stock_for_warehouse(warehouse):
 
 def _active_stock_for_zone(zone):
     return FinishedGoodsReceipt.objects.filter(
-        location__zone=zone, remaining_quantity__gt=0
+        location__zone=zone, status=FinishedGoodsReceiptStatus.CONFIRMED, remaining_quantity__gt=0
     ).exists() or MaterialInboundLine.objects.filter(zone=zone).exists() or PublicStockBalance.objects.filter(
         zone=zone, quantity__gt=0,
     ).exists() or SemiFinishedStockBalance.objects.filter(zone=zone, quantity__gt=0).exists()
@@ -109,7 +110,7 @@ def _active_stock_for_zone(zone):
 
 def _active_stock_for_location(location):
     return FinishedGoodsReceipt.objects.filter(
-        location=location, remaining_quantity__gt=0
+        location=location, status=FinishedGoodsReceiptStatus.CONFIRMED, remaining_quantity__gt=0
     ).exists() or MaterialInboundLine.objects.filter(location=location).exists()
 
 
@@ -180,7 +181,8 @@ def save_location(*, instance, validated_data, actor_employee, request):
     before = _location_snapshot(target) if current else None
     occupied = 0
     if current:
-        occupied = FinishedGoodsReceipt.objects.filter(location=current, remaining_quantity__gt=0).aggregate(
+        occupied = FinishedGoodsReceipt.objects.filter(location=current, status=FinishedGoodsReceiptStatus.CONFIRMED,
+            remaining_quantity__gt=0).aggregate(
             total=Sum("remaining_box_slots")
         )["total"] or 0
     capacity = validated_data.get("capacity_box_slots", target.capacity_box_slots)
@@ -217,8 +219,19 @@ def lock_finished_goods_locations(location_ids):
     return {str(location.pk): location for location in locations}
 
 
+def _validate_finished_goods_location(location):
+    if (
+        location.status != RecordStatus.ACTIVE
+        or location.zone.status != RecordStatus.ACTIVE
+        or location.zone.warehouse.status != RecordStatus.ACTIVE
+        or location.zone.warehouse.warehouse_type != WarehouseType.FINISHED
+    ):
+        raise Conflict("入库库位必须属于正常的成品仓、正常库区和正常库位。")
+
+
 @transaction.atomic
 def create_finished_goods_receipt(*, validated_data, actor_employee, request):
+    """装配提交仅登记待入库，库存余额由仓管确认时写入。"""
     task_id = ProductionTaskProduct.objects.filter(pk=validated_data['production_task_product_id']).values_list('production_task_id', flat=True).first()
     if task_id is None:
         raise ValidationError({'production_task_product_id': '生产订单产品不存在。'})
@@ -254,13 +267,6 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     location = lock_finished_goods_locations([validated_data["location_id"]]).get(str(validated_data["location_id"]))
     if location is None:
         raise ValidationError({"location_id": "入库库位不存在。"})
-    if (
-        location.status != RecordStatus.ACTIVE
-        or location.zone.status != RecordStatus.ACTIVE
-        or location.zone.warehouse.status != RecordStatus.ACTIVE
-        or location.zone.warehouse.warehouse_type != WarehouseType.FINISHED
-    ):
-        raise Conflict("入库库位必须属于正常的成品仓、正常库区和正常库位。")
 
     supplier = validated_data.get("supplier")
     if supplier and (supplier.is_disabled or supplier.supplier_type != SupplierType.FINISHED):
@@ -271,24 +277,14 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     box_count, tail_quantity, occupied_box_slots = packaging_values(
         quantity, validated_data["quantity_per_box"]
     )
-    occupied_now = FinishedGoodsReceipt.objects.filter(location=location, remaining_quantity__gt=0).aggregate(
-        total=Sum("remaining_box_slots")
-    )["total"] or 0
-    if (
-        occupied_box_slots is not None
-        and location.capacity_box_slots is not None
-        and occupied_now + occupied_box_slots > location.capacity_box_slots
-    ):
-        raise ValidationError(
-            {"received_quantity": f"库位剩余 {location.capacity_box_slots - occupied_now} 个箱位，本次需要 {occupied_box_slots} 个。"}
-        )
-
+    _validate_finished_goods_location(location)
     product = line.product
     category_name = getattr(product.category, "category_name", "")
     receipt = FinishedGoodsReceipt.objects.create(
         receipt_number=next_business_number("FINISHED_GOODS_RECEIPT"),
         production_task_product=line,
         source_document_number=line.production_task.task_number,
+        status=FinishedGoodsReceiptStatus.PENDING,
         location=location,
         supplier=supplier,
         task_number_snapshot=line.production_task.task_number,
@@ -304,44 +300,66 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
         material_snapshot=line.material_snapshot,
         unit_id=validated_data["unit_id"],
         received_quantity=quantity,
-        remaining_quantity=quantity,
+        remaining_quantity=0,
         quantity_per_box=validated_data["quantity_per_box"],
         box_count=box_count,
         tail_quantity=tail_quantity,
         occupied_box_slots=occupied_box_slots,
-        remaining_box_slots=occupied_box_slots,
+        remaining_box_slots=0,
         remark=validated_data.get("remark", ""),
         received_by_employee=actor_employee,
+        submitted_by_employee=actor_employee,
+        submitted_at=timezone.now(),
     )
     write_audit_log(
         object_type="FINISHED_GOODS_RECEIPT", object_id=receipt.pk, action="CREATED",
         context_type="PRODUCTION_TASK", context_id=line.production_task_id, actor_employee=actor_employee,
-        after_data={"receipt_number": receipt.receipt_number, "quantity": quantity, "location_id": str(location.pk)},
+        after_data={"receipt_number": receipt.receipt_number, "quantity": quantity, "location_id": str(location.pk),
+                    "status": receipt.status},
         request=request,
     )
     return receipt
 
 
 @transaction.atomic
-def create_finished_goods_receipts(*, items, actor_employee, request):
-    line_ids = sorted({item["production_task_product_id"] for item in items}, key=str)
-    location_ids = sorted({item["location_id"] for item in items}, key=str)
-    task_ids = ProductionTaskProduct.objects.filter(pk__in=line_ids).values('production_task_id')
-    list(ProductionTask.objects.select_for_update().filter(pk__in=task_ids).order_by('id'))
-    list(ProductionTaskProduct.objects.select_for_update().filter(pk__in=line_ids).order_by("id"))
-    locations = lock_finished_goods_locations(location_ids)
-    if len(locations) != len(location_ids):
+def confirm_finished_goods_receipt(*, receipt_id, actor_employee, request):
+    receipt = FinishedGoodsReceipt.objects.select_for_update().select_related(
+        "location", "location__zone", "location__zone__warehouse",
+    ).filter(pk=receipt_id).first()
+    if receipt is None:
+        raise FinishedGoodsReceipt.DoesNotExist
+    if receipt.status == FinishedGoodsReceiptStatus.CONFIRMED:
+        return receipt, True
+    if receipt.status != FinishedGoodsReceiptStatus.PENDING:
+        raise Conflict("当前成品入库单状态不能确认。")
+    location = lock_finished_goods_locations([receipt.location_id]).get(str(receipt.location_id))
+    if location is None:
         raise ValidationError({"location_id": "入库库位不存在。"})
-    receipts = []
-    for item in items:
-        receipts.append(
-            create_finished_goods_receipt(
-                validated_data=item,
-                actor_employee=actor_employee,
-                request=request,
-            )
-        )
-    return receipts
+    _validate_finished_goods_location(location)
+    occupied_now = FinishedGoodsReceipt.objects.filter(
+        location=location, status=FinishedGoodsReceiptStatus.CONFIRMED, remaining_quantity__gt=0,
+    ).exclude(pk=receipt.pk).aggregate(total=Sum("remaining_box_slots"))["total"] or 0
+    if (
+        receipt.occupied_box_slots is not None
+        and location.capacity_box_slots is not None
+        and occupied_now + receipt.occupied_box_slots > location.capacity_box_slots
+    ):
+        raise ValidationError({"receipt": f"库位剩余 {location.capacity_box_slots - occupied_now} 个箱位，无法确认本次入库。"})
+    receipt.status = FinishedGoodsReceiptStatus.CONFIRMED
+    receipt.remaining_quantity = receipt.received_quantity
+    receipt.remaining_box_slots = receipt.occupied_box_slots
+    receipt.confirmed_by_employee = actor_employee
+    receipt.confirmed_at = timezone.now()
+    receipt.save(update_fields=["status", "remaining_quantity", "remaining_box_slots", "confirmed_by_employee", "confirmed_at", "updated_at"])
+    write_audit_log(
+        object_type="FINISHED_GOODS_RECEIPT", object_id=receipt.pk, action="CONFIRMED",
+        context_type="PRODUCTION_TASK", context_id=receipt.production_task_product.production_task_id,
+        actor_employee=actor_employee,
+        after_data={"receipt_number": receipt.receipt_number, "quantity": receipt.received_quantity,
+                    "location_id": str(receipt.location_id), "status": receipt.status},
+        request=request,
+    )
+    return receipt, False
 
 
 @transaction.atomic
@@ -351,7 +369,7 @@ def create_finished_goods_outbound(*, items, receiver_name, used_for_order_numbe
     locked_receipts = list(
         FinishedGoodsReceipt.objects.select_for_update(of=("self",))
         .select_related("location", "production_task_product")
-        .filter(pk__in=receipt_ids)
+        .filter(pk__in=receipt_ids, status=FinishedGoodsReceiptStatus.CONFIRMED)
         .order_by("id")
     )
     if len(locked_receipts) != len(receipt_ids):
@@ -434,6 +452,8 @@ def create_finished_goods_outbound(*, items, receiver_name, used_for_order_numbe
                     "shipment_date": str(shipment_date), "loading_fee": str(loading_fee), "other_fee": str(other_fee)},
         request=request,
     )
+    from .notification_events import finished_outbound_confirmed
+    finished_outbound_confirmed(outbound, actor_employee)
     return outbound
 
 

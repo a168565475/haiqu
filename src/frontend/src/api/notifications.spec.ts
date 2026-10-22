@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getNotificationRules, notificationError, previewNotificationRule, saveNotificationRule } from './notifications'
+import { getNotificationRules, notificationError, previewNotificationRule, saveNotificationRule, getNotificationPreviewRecipients, sendNotificationPreview, getNotificationPreviewAttempt, notificationPreviewError } from './notifications'
 import type { NotificationRuleWrite } from '@/types/notifications'
 
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
@@ -40,4 +40,23 @@ describe('通知规则 API 契约', () => {
     const serverError = new AxiosError('server', undefined, undefined, undefined, { status: 500, data: { error: { code: 'VALIDATION_ERROR', message: '内部堆栈' } } } as never)
     expect(notificationError(serverError, '服务暂不可用')).toBe('服务暂不可用')
   })
+  it('试发仅传当前凭证与一个绑定ID，查询不重复POST', async () => {
+    client.get.mockResolvedValueOnce({ data: { data: [], available: false } })
+    await getNotificationPreviewRecipients('员工', 2)
+    expect(client.get).toHaveBeenCalledWith('/api/v1/notifications/preview-recipients/', { timeout: 20000, params: { search: '员工', page: 2 } })
+    const data = { preview_token: 'signed', binding_id: 'binding', config_etag: 'config-v1', draft: { ...payload, variables: { document_no: '示例' } } }
+    const result = { preview_id: 'preview', status: 'UNCERTAIN' }
+    client.post.mockResolvedValueOnce({ data: { data: result } })
+    await sendNotificationPreview('EVENT', data)
+    expect(client.post).toHaveBeenCalledWith('/api/v1/notifications/rules/EVENT/preview-send/', data, { timeout: 20000 })
+    client.get.mockResolvedValueOnce({ data: { data: result } })
+    expect(await getNotificationPreviewAttempt('preview')).toEqual(result)
+    expect(client.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('发送权限错误明确区分两项管理权', () => {
+    const error = new AxiosError('forbidden', undefined, undefined, undefined, { status: 403 } as never)
+    expect(notificationPreviewError(error, '失败')).toContain('两项管理权限')
+  })
+
 })

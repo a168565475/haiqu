@@ -3,18 +3,14 @@ import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type { MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchase, MaterialReceivingOptions, MaterialFilterOptions } from '@/types/inventory'
 import type { SampleMaterialReceivingPayload } from '@/types/inventory'
-import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, EligibleOrder, EligibleProduct, FinishedGoodsOutbound, FinishedGoodsOutboundDetail, FinishedGoodsReceipt, InventoryOptions, ManualMaterialOptions, MaterialInbound, MaterialInventoryOptions, PaginatedInventory, PaginatedMaterialInventory, ProcurementInboundOrder, Warehouse, WarehouseLocation, WarehouseZone } from '@/types/inventory'
+import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, FinishedGoodsOutbound, FinishedGoodsOutboundDetail, FinishedGoodsReceipt, InventoryOptions, ManualMaterialOptions, MaterialInbound, MaterialInventoryOptions, PaginatedInventory, PaginatedMaterialInventory, ProcurementInboundOrder, Warehouse, WarehouseLocation, WarehouseZone } from '@/types/inventory'
 
 const root = '/api/v1/'
 function versioned<T>(response: AxiosResponse<DataResponse<T>>) { return { data: response.data.data, etag: String(response.headers.etag || '') } }
 export async function fetchFinishedGoodsInventory(params: Record<string, unknown>) { const { data } = await apiClient.get<PaginatedInventory>(`${root}finished-goods-inventory/`, { params }); return data }
 export async function fetchInventoryOptions() { const { data } = await apiClient.get<DataResponse<InventoryOptions>>(`${root}finished-goods-inventory/options/`); return data.data }
-export async function fetchEligibleProducts() { const { data } = await apiClient.get<DataResponse<EligibleProduct[]>>(`${root}finished-goods-inventory/eligible-products/`); return data.data }
-export async function fetchEligibleOrders(productId: string) { const { data } = await apiClient.get<DataResponse<EligibleOrder[]>>(`${root}finished-goods-inventory/eligible-orders/`, { params: { product_id: productId } }); return data.data }
 export async function fetchReceipts(receiptIds?: string[]) { const { data } = await apiClient.get<DataResponse<FinishedGoodsReceipt[]>>(`${root}finished-goods-inventory/receipts/`, { params: receiptIds?.length ? { receipt_ids: receiptIds.join(',') } : {} }); return data.data }
 export async function fetchOutboundBatches(receiptIds: string[]) { const { data } = await apiClient.get<DataResponse<FinishedGoodsReceipt[]>>(`${root}finished-goods-inventory/outbound-batches/`, { params: { receipt_ids: receiptIds.join(',') } }); return data.data }
-export async function createFinishedGoodsReceipt(payload: Record<string, unknown>) { const { data } = await apiClient.post<DataResponse<FinishedGoodsReceipt>>(`${root}finished-goods-inventory/receipts/`, payload); return data.data }
-export async function createFinishedGoodsReceipts(items: Record<string, unknown>[]) { const { data } = await apiClient.post<DataResponse<FinishedGoodsReceipt[]>>(`${root}finished-goods-inventory/batch-receipts/`, { items }); return data.data }
 export async function createFinishedGoodsOutbound(payload: Record<string, unknown>, loadingImages: File[] = []) {
   if (!loadingImages.length) {
     const { data } = await apiClient.post<DataResponse<FinishedGoodsOutboundDetail>>(`${root}finished-goods-inventory/outbounds/`, payload)

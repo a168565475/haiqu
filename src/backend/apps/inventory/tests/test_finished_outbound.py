@@ -2,12 +2,14 @@ import copy
 import json
 import uuid
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
@@ -23,11 +25,21 @@ from .test_inventory_api import FinishedGoodsInventoryApiTests as Fixtures
 
 
 class FinishedOutboundTests(APITestCase):
-    setUp = Fixtures.setUp
     receipt_payload = Fixtures.receipt_payload
     create_receipt = Fixtures.create_receipt
     create_second_line = Fixtures.create_second_line
     url = '/api/v1/finished-goods-inventory/outbounds/'
+
+    def setUp(self):
+        # 此任务专用父目录已登记；每项测试独立上传并清理自己的文件。
+        media_root = Path(settings.BASE_DIR) / '.tmp' / 'finished_direct_receipt_removal_20261022_d7b4_media'
+        media_root.mkdir(parents=True, exist_ok=True)
+        media_directory = TemporaryDirectory(prefix='outbound-', dir=media_root)
+        self.addCleanup(media_directory.cleanup)
+        media_settings = override_settings(MEDIA_ROOT=media_directory.name)
+        media_settings.enable()
+        self.addCleanup(media_settings.disable)
+        Fixtures.setUp(self)
 
     def payload(self, receipt=None, **changes):
         receipt = receipt or self.create_receipt()

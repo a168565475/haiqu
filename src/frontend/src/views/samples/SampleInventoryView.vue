@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
-import { computed, onMounted, reactive, ref, useId, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -72,7 +72,6 @@ const canDeleteReceipt = computed(() => (
 const canCreateReceipt = computed(() => authStore.hasPermission('samples.add_sampleinventoryreceipt'))
 const canViewOutbound = computed(() => authStore.hasPermission('samples.view_sampleinventoryoutboundline'))
 const canViewLoans = computed(() => authStore.hasPermission('samples.view_sampleinventoryloanline'))
-const monthGradientId = `sample-monthly-${useId()}`
 const monthlyMetrics = [
   { key: 'inbound_this_month', label: '当月入库', shortLabel: '入库' },
   { key: 'outbound_this_month', label: '当月出库', shortLabel: '出库' },
@@ -84,16 +83,14 @@ function isInventoryCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-const monthlyBars = computed(() => {
+const monthlyValues = computed(() => {
   const values = monthlyMetrics.map(metric => summaryLoading.value ? undefined : summary.value?.[metric.key])
-  const maximum = Math.max(0, ...values.filter(isInventoryCount))
   return monthlyMetrics.map((metric, index) => {
     const value = values[index]
     const known = isInventoryCount(value)
     return {
       ...metric,
       value: known ? value : null,
-      height: known && maximum > 0 ? value / maximum * 26 : 0,
     }
   })
 })
@@ -103,7 +100,7 @@ const monthlyTitle = computed(() => {
     ? `本月样品 · ${Number(month.slice(5))}月`
     : '本月样品'
 })
-const monthlyDescription = computed(() => monthlyBars.value
+const monthlyDescription = computed(() => monthlyValues.value
   .map(metric => `${metric.label}：${metric.value ?? '未知'}件`).join('；'))
 
 function getErrorMessage(error: unknown): string {
@@ -328,20 +325,12 @@ onMounted(() => {
         <span>{{ monthlyTitle }}</span>
         <span>{{ summaryLoading ? '加载中' : '件' }}</span>
       </div>
-      <svg class="sample-monthly-stat__chart" viewBox="0 0 288 52" aria-hidden="true" focusable="false">
-        <defs>
-          <linearGradient :id="monthGradientId" x1="0" y1="0" x2="0" y2="1">
-            <stop class="sample-monthly-stat__gradient-start" offset="0%" />
-            <stop class="sample-monthly-stat__gradient-end" offset="100%" />
-          </linearGradient>
-        </defs>
-        <g v-for="(metric, index) in monthlyBars" :key="metric.key" :data-monthly-metric="metric.key">
-          <text class="sample-monthly-stat__value" :x="36 + index * 72" y="9">{{ metric.value ?? '—' }}</text>
-          <rect v-if="metric.height > 0" class="sample-monthly-stat__bar" :x="21 + index * 72" :y="38 - metric.height" width="30" :height="metric.height" rx="3" :fill="`url(#${monthGradientId})`" />
-          <text class="sample-monthly-stat__label" :x="36 + index * 72" y="51">{{ metric.shortLabel }}</text>
-        </g>
-        <line class="sample-monthly-stat__divider" x1="216" y1="12" x2="216" y2="38" />
-      </svg>
+      <div class="sample-monthly-stat__metrics">
+        <div v-for="metric in monthlyValues" :key="metric.key" class="sample-monthly-stat__metric" :data-monthly-metric="metric.key">
+          <strong class="sample-monthly-stat__value">{{ metric.value ?? '—' }}</strong>
+          <span class="sample-monthly-stat__label">{{ metric.shortLabel }}</span>
+        </div>
+      </div>
       <div v-if="summaryError" class="sample-monthly-stat__error" role="alert">
         <span>{{ summaryError }}</span><ElButton link @click="loadSummary">重试统计</ElButton>
       </div>
@@ -397,15 +386,15 @@ onMounted(() => {
         <ElTableColumn prop="location" label="入库位置" width="120" align="center" show-overflow-tooltip />
         <ElTableColumn label="操作" width="110" align="center" fixed="right">
           <template #default="{ row }">
-            <ElButton link type="primary" :disabled="deletingReceiptIds.has(row.receipt_id)" @click="openReceiptDetail(row.receipt_id)">查看</ElButton>
-            <ElButton
-              v-if="canDeleteReceipt"
-              link
-              type="danger"
-              :loading="deletingReceiptIds.has(row.receipt_id)"
-              :disabled="loading || deletingReceiptIds.has(row.receipt_id)"
-              @click="deleteReceipt(row)"
-            >删除</ElButton>
+            <ElDropdown trigger="click">
+              <ElButton link :disabled="deletingReceiptIds.has(row.receipt_id)">更多</ElButton>
+              <template #dropdown>
+                <ElDropdownMenu>
+                  <ElDropdownItem :disabled="deletingReceiptIds.has(row.receipt_id)" @click="openReceiptDetail(row.receipt_id)">查看</ElDropdownItem>
+                  <ElDropdownItem v-if="canDeleteReceipt" divided :disabled="loading || deletingReceiptIds.has(row.receipt_id)" @click="deleteReceipt(row)">删除</ElDropdownItem>
+                </ElDropdownMenu>
+              </template>
+            </ElDropdown>
           </template>
         </ElTableColumn>
       </ElTable>

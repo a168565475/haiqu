@@ -164,6 +164,19 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
                                        object_version=context.get("object_version")):
             continue
         selected.setdefault(employee.pk, {"employee": employee, "roles": []})["roles"].append(assignment.role_profile.role_code)
+    # 超级管理员也可能是实际提交人；回执只给该人，不扩展按角色发送的范围。
+    submitter_id = context.get("submitter_id")
+    if rule.recipient_scope == "SUBMITTER" and submitter_id and (
+        employee_id is None or str(employee_id) == str(submitter_id)
+    ):
+        submitter = Employee.objects.select_related("user").filter(
+            pk=submitter_id, status="ACTIVE", archived_at__isnull=True,
+            user__is_active=True, user__is_superuser=True,
+        ).first()
+        if submitter is not None and event_object_accessible(
+            event["event_code"], object_id, submitter.user, object_version=context.get("object_version"),
+        ):
+            selected.setdefault(submitter.pk, {"employee": submitter, "roles": []})
     return list(selected.values())
 
 
@@ -236,6 +249,15 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         actual_submitter = str(sample.requested_by_employee_id) if sample.requested_by_employee_id else None
         if context.get('submitter_id') != actual_submitter:
             raise Conflict("打样事件必须使用本单真实原申请人关系。")
+    from apps.inventory.notification_events import INVENTORY_EVENTS, current_inventory_object, inventory_event_submitter_id
+    if event_code in INVENTORY_EVENTS:
+        obj = current_inventory_object(event_code, object_id, object_version)
+        if obj is None or object_type != obj._meta.label:
+            raise Conflict("入出库事件必须引用当前真实成功单据及对应版本。")
+        if event_code in {"INTERNAL_SEMI_RECEIPT_CONFIRMED", "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED"}:
+            actual_submitter = inventory_event_submitter_id(event_code, obj)
+            if context.get("submitter_id") != actual_submitter:
+                raise Conflict("入库完成通知必须使用原提交人关系。")
     context["_request_hash"] = request_hash
     rule = NotificationRule.objects.filter(event_code=event_code).first()
     recipients = []
@@ -282,7 +304,7 @@ def _fail_delivery(delivery, code):
     return delivery
 
 
-def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False):
+def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, defer_unconfigured=False):
     if connection.in_atomic_block:
         raise RuntimeError("外部通知只能在业务事务提交后执行。")
     allowed = {"PENDING"} | ({"UNCERTAIN"} if allow_uncertain else set()) | ({"FAILED"} if allow_failed else set())
@@ -307,6 +329,9 @@ def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False):
             return _fail_delivery(locked, "NO_WECOM_BINDING")
         config = WeComConfig.objects.first()
         if config is None or not config.enabled or not configuration_complete(config):
+            # 常驻进程等待管理员补齐配置；不把尚未尝试发送的正常队列转成失败。
+            if defer_unconfigured and locked.status == "PENDING":
+                return locked
             return _fail_delivery(locked, "CONFIGURATION_ERROR")
         if binding.corp_id != config.corp_id:
             return _fail_delivery(locked, "CORPORATION_MISMATCH")

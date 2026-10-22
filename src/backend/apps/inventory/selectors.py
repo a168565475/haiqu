@@ -1,9 +1,10 @@
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal
 from types import SimpleNamespace
 
 from django.contrib.postgres.aggregates import ArrayAgg
 from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Sum, Value, Subquery
 from django.db.models.functions import Coalesce
+from apps.production_tasks.models import ProductionTaskProduct
 
 from apps.procurement.models import (
     PurchaseOrder,
@@ -12,7 +13,6 @@ from apps.procurement.models import (
     PurchaseReturnLine,
     PurchaseReturnStatus,
 )
-from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
 from apps.boms.models import Bom
 from apps.sales_orders.presentation import specification_display
 from apps.samples.models import SampleItem
@@ -21,6 +21,7 @@ from .models import (
     FinishedGoodsOutbound,
     FinishedGoodsOutboundLine,
     FinishedGoodsReceipt,
+    FinishedGoodsReceiptStatus,
     MaterialInbound,
     MaterialInboundLine,
     MaterialInboundStatus,
@@ -74,7 +75,10 @@ def warehouses_with_usage(queryset=None):
         occupied_box_slots=Coalesce(
             Sum(
                 "zones__locations__finished_goods_receipts__remaining_box_slots",
-                filter=Q(zones__locations__finished_goods_receipts__remaining_quantity__gt=0),
+                filter=Q(
+                    zones__locations__finished_goods_receipts__status=FinishedGoodsReceiptStatus.CONFIRMED,
+                    zones__locations__finished_goods_receipts__remaining_quantity__gt=0,
+                ),
             ),
             Value(0),
         ),
@@ -90,7 +94,10 @@ def zones_with_usage(queryset=None):
         occupied_box_slots=Coalesce(
             Sum(
                 "locations__finished_goods_receipts__remaining_box_slots",
-                filter=Q(locations__finished_goods_receipts__remaining_quantity__gt=0),
+                filter=Q(
+                    locations__finished_goods_receipts__status=FinishedGoodsReceiptStatus.CONFIRMED,
+                    locations__finished_goods_receipts__remaining_quantity__gt=0,
+                ),
             ),
             Value(0),
         ),
@@ -104,7 +111,10 @@ def locations_with_usage(queryset=None):
         occupied_box_slots=Coalesce(
             Sum(
                 "finished_goods_receipts__remaining_box_slots",
-                filter=Q(finished_goods_receipts__remaining_quantity__gt=0),
+                filter=Q(
+                    finished_goods_receipts__status=FinishedGoodsReceiptStatus.CONFIRMED,
+                    finished_goods_receipts__remaining_quantity__gt=0,
+                ),
             ),
             Value(0),
         )
@@ -112,7 +122,10 @@ def locations_with_usage(queryset=None):
 
 
 def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", category="", production_task_id="", exclude_sample=False):
-    queryset = FinishedGoodsReceipt.objects.filter(remaining_quantity__gt=0)
+    queryset = FinishedGoodsReceipt.objects.filter(
+        status=FinishedGoodsReceiptStatus.CONFIRMED,
+        remaining_quantity__gt=0,
+    )
     if exclude_sample:
         queryset = queryset.exclude(source_type="SAMPLE_INVENTORY")
     if production_task_id:
@@ -475,56 +488,5 @@ def receipt_batches(queryset=None):
         "supplier",
         "unit",
         "received_by_employee",
+        "confirmed_by_employee",
     )
-
-
-def eligible_products():
-    return (
-        ProductionTaskProduct.objects.filter(
-            production_task__status=ProductionTaskStatus.IN_PRODUCTION,
-            production_task__archived_at__isnull=True,
-        )
-        .select_related("product", "product__category", "product__product_item", "unit", "production_task")
-        .order_by("product_number_snapshot", "id")
-    )
-
-
-def eligible_product_lines_with_remaining():
-    lines = list(eligible_products())
-    from .assembly_reporting_limits import assembly_reporting_limits
-    reporting = assembly_reporting_limits(lines)
-    receipt_totals = dict(
-        FinishedGoodsReceipt.objects.filter(production_task_product__in=lines)
-        .values_list("production_task_product_id")
-        .annotate(total=Sum("received_quantity"))
-    )
-    result = []
-    for line in lines:
-        tolerance = Decimal(line.production_task.order_tolerance_percent) / Decimal("100")
-        maximum = (Decimal(line.quantity) * (Decimal("1") + tolerance)).to_integral_value(rounding=ROUND_FLOOR)
-        maximum = min(maximum, reporting[line.pk]['reported_minimum'])
-        if Decimal(receipt_totals.get(line.pk, 0)) < maximum:
-            result.append(line)
-    return result
-
-
-def eligible_orders_for_product(product_id):
-    rows = list(eligible_products().filter(product_id=product_id).select_related("production_task"))
-    from .assembly_reporting_limits import assembly_reporting_limits
-    reporting = assembly_reporting_limits(rows)
-    receipt_totals = dict(
-        FinishedGoodsReceipt.objects.filter(production_task_product__in=rows)
-        .values_list("production_task_product_id")
-        .annotate(total=Sum("received_quantity"))
-    )
-    result = []
-    for line in rows:
-        tolerance = Decimal(line.production_task.order_tolerance_percent) / Decimal("100")
-        maximum = (Decimal(line.quantity) * (Decimal("1") + tolerance)).to_integral_value(rounding=ROUND_FLOOR)
-        maximum = min(maximum, reporting[line.pk]['reported_minimum'])
-        received = Decimal(receipt_totals.get(line.pk, 0))
-        remaining = max(maximum - received, Decimal("0"))
-        if remaining <= 0:
-            continue
-        result.append((line, int(maximum), int(received), int(remaining)))
-    return result

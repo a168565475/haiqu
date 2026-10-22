@@ -155,13 +155,17 @@ def _validated_source(production_task_id, items, expected_revision="", allowed_s
     ]
     if unverified_lines:
         raise Conflict("生产任务单内所有产品的 BOM 必须已确认后才能排产。")
-    purchase_order = (
+    from apps.procurement.selectors import purchase_orders_by_product, purchase_orders_with_product_ids
+    purchase_orders = list(purchase_orders_with_product_ids(
         PurchaseOrder.objects.select_for_update(of=("self",))
         .filter(production_task=task, archived_at__isnull=True)
-        .first()
-    )
-    if purchase_order is None or purchase_order.status != PurchaseOrderStatus.COMPLETED:
-        raise Conflict("采购订单必须为“已完成采购”后才能排产。")
+        .order_by("id")
+    ))
+    purchased_ids = purchase_orders_by_product(purchase_orders)
+    if (any(line.pk not in purchased_ids for line in all_lines)
+            or not purchase_orders
+            or any(order.status != PurchaseOrderStatus.COMPLETED for order in purchase_orders)):
+        raise Conflict("所有产品的采购订单必须为“已完成采购”后才能排产。")
     current_revision = source_revision(task, all_lines)
     accepted_revisions = {current_revision}
     if task.status == ProductionTaskStatus.IN_PRODUCTION:
@@ -322,7 +326,7 @@ def create_schedule(*, validated_data, actor_employee, request=None):
         actor_employee=actor_employee,
         before_data={"status": task_status_before},
         after_data={"status": task.status, "schedule_id": str(schedule.pk)},
-        context_type="SALES_ORDER" if task.sales_order_id else "CUSTOMER_ACCOUNT",
+        context_type="SALES_ORDER" if task.sales_order_id else ("CUSTOMER_ACCOUNT" if task.customer_account_id else ""),
         context_id=task.sales_order_id or task.customer_account_id,
         request=request,
     )
@@ -455,7 +459,7 @@ def void_schedule(*, schedule_id, reason, actor_employee, request):
             actor_employee=actor_employee,
             before_data={"status": task_status_before, "schedule_id": str(schedule.pk)},
             after_data={"status": task.status},
-            context_type="SALES_ORDER" if task.sales_order_id else "CUSTOMER_ACCOUNT",
+            context_type="SALES_ORDER" if task.sales_order_id else ("CUSTOMER_ACCOUNT" if task.customer_account_id else ""),
             context_id=task.sales_order_id or task.customer_account_id,
             request=request,
         )

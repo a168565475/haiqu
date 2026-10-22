@@ -35,16 +35,16 @@ def _read_request(request, permission):
     return result
 
 
-def _sources(request, task_id, product_ids):
+def _sources_for_tasks(request, task_ids, product_ids):
     external_request = _read_request(request, OUTSOURCING_PERMISSION)
     metal_request = _read_request(request, METAL_PERMISSION)
     regular = accessible_outsourcing_orders(external_request, permission=OUTSOURCING_PERMISSION).filter(
-        schedule__production_task_id=task_id,
+        schedule__production_task_id__in=task_ids,
         products__schedule_product__product_line_id__in=product_ids,
     ) if request.user.has_perm(OUTSOURCING_PERMISSION) else OutsourcingOrder.objects.none()
     if request.user.has_perm(METAL_PERMISSION):
         lines = processing_lines(metal_request, permission=METAL_PERMISSION).filter(
-            issue__production_task_id=task_id, issue__product_line_id__in=product_ids)
+            issue__production_task_id__in=task_ids, issue__product_line_id__in=product_ids)
         handoffs = scoped_records(MetalProcessingOriginalHandoff.objects.filter(source__issue_line__in=lines),
             metal_request, METAL_PERMISSION, "original_order__craft_id")
         reworks = scoped_records(MetalProcessingExternalOrder.objects.filter(source__issue_line__in=lines),
@@ -56,7 +56,7 @@ def _sources(request, task_id, product_ids):
     ).annotate(unified_access=Case(When(pk__in=regular.values("pk"), then=Value("REGULAR")),
         default=Value("METAL"), output_field=CharField()))
     tubes = saved_orders_for_permission(external_request, permission=OUTSOURCING_PERMISSION).filter(
-        schedule_product__schedule__production_task_id=task_id,
+        schedule_product__schedule__production_task_id__in=task_ids,
     ) if request.user.has_perm(OUTSOURCING_PERMISSION) and getattr(settings, "TUBE_OUTSOURCING_ENABLED", False) else TubeOutsourcingOrder.objects.none()
     return originals, reworks, tubes, metal_request
 
@@ -77,6 +77,7 @@ def _record(order, kind, *, identity, part_name, factory_name, unit, quantity, p
     return {
         "id": f"{kind}:{identity}", "order_id": str(order.pk), "order_kind": kind,
         "order_number": order.order_number, "craft_name": getattr(order, "craft_name_snapshot", order.craft.name),
+        "craft_code": getattr(order, "craft_code_snapshot", "") or order.craft.outsourcing_code or "",
         "part_name": part_name, "factory_name": factory_name,
         "planned_quantity": _quantity(quantity), "quantity_unit": unit,
         "dispatched_quantity": None, "dispatched_unit": None,
@@ -148,9 +149,9 @@ def _regular_records(orders, product_ids):
     return result
 
 
-def _projected_records(request, orders, task_id, product_ids):
+def _projected_records(request, orders, task_ids, product_ids):
     sources = processing_lines(request, permission=METAL_PERMISSION).filter(
-        issue__production_task_id=task_id, issue__product_line_id__in=product_ids)
+        issue__production_task_id__in=task_ids, issue__product_line_id__in=product_ids)
     handoffs = scoped_records(MetalProcessingOriginalHandoff.objects.filter(
         original_order__in=orders.filter(unified_access="METAL"), source__issue_line__in=sources,
     ), request, METAL_PERMISSION, "original_order__craft_id").select_related(
@@ -243,10 +244,10 @@ def related_summary(request, schedule, products):
         return result
     product_ids = {product.product_line_id: str(product.pk) for product in products}
     if outsourcing_allowed:
-        originals, reworks, tubes, metal_request = _sources(request, schedule.production_task_id, product_ids)
+        originals, reworks, tubes, metal_request = _sources_for_tasks(request, [schedule.production_task_id], product_ids)
         rows = [*_regular_records(originals, product_ids), *_tube_records(tubes, product_ids), *_p4_records(reworks, product_ids)]
         if request.user.has_perm(METAL_PERMISSION):
-            rows.extend(_projected_records(metal_request, originals, schedule.production_task_id, product_ids))
+            rows.extend(_projected_records(metal_request, originals, [schedule.production_task_id], product_ids))
         rows.sort(key=lambda item: (item[1]["_updated_at"], item[1]["id"]), reverse=True)
         for product_id, row in rows:
             row.pop("_updated_at")

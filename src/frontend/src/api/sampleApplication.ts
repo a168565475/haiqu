@@ -1,16 +1,27 @@
-import type { SampleApplicationDraft } from '@/types/sampleApplication'
+import type { SampleApplicationBasicInput, SampleApplicationDraft } from '@/types/sampleApplication'
 import { apiClient } from './request'
-import type { SampleDetail } from '@/types/sample'
+import type { SampleDetail, SampleFormContext } from '@/types/sample'
 import type { SampleProductEdit, SampleProductCandidate } from '@/types/sampleEditor'
+
+export async function fetchSampleApplicationSourceContext(sampleId: string, sourceType: 'inquiry' | 'quotation', sourceId: string): Promise<SampleFormContext> {
+  return (await apiClient.get<{ data: SampleFormContext }>(`/api/v1/sample-requests/${sampleId}/application-source-context/`, { params: { sourceType, sourceId } })).data.data
+}
 
 export async function fetchSampleApplicationProductOptions(sampleId: string, query: string): Promise<SampleProductCandidate[]> {
   if (!sampleId) throw new Error('缺少申请编号。')
   return (await apiClient.get<{ data: SampleProductCandidate[] }>(`/api/v1/sample-requests/${sampleId}/application-product-options/`, { params: { q: query.trim() } })).data.data
 }
 
-export async function completeSampleApplicationProducts(sampleId: string, etag: string, products: SampleProductEdit[], purpose: string): Promise<{ data: SampleDetail; etag: string }> {
+export async function completeSampleApplicationProducts(sampleId: string, etag: string, products: SampleProductEdit[], purpose: string, referenceImage?: File, basic?: SampleApplicationBasicInput): Promise<{ data: SampleDetail; etag: string }> {
   if (!sampleId || !etag) throw new Error('缺少申请或数据版本，请重新加载。')
-  const response = await apiClient.patch<{ data: SampleDetail }>(`/api/v1/sample-requests/${sampleId}/application-products/`, { products: products.map(product => ({ ...product, product_id: product.product_id || null })), purpose }, { headers: { 'If-Match': etag } })
+  const payload = { products: products.map(product => ({ ...product, product_id: product.product_id || null })), purpose, ...(basic ? { basic } : {}) }
+  let body: typeof payload | FormData = payload
+  if (referenceImage) {
+    body = new FormData()
+    body.append('payload', JSON.stringify(payload))
+    body.append('reference_image', referenceImage)
+  }
+  const response = await apiClient.patch<{ data: SampleDetail }>(`/api/v1/sample-requests/${sampleId}/application-products/`, body, { headers: { 'If-Match': etag }, ...(referenceImage ? { timeout: 60000 } : {}) })
   return { data: response.data.data, etag: response.headers.etag || response.data.data.etag }
 }
 

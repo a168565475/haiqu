@@ -198,6 +198,23 @@ describe('全局悬停侧栏', () => {
     expect(panel().get('[data-menu-key="customers"]').attributes('aria-current')).toBe('page')
   })
 
+  it('长菜单切换短菜单时清除背景几何，避免透明背景撑出滚动范围', async () => {
+    await setup()
+    await group('customer').trigger('focus')
+    const row = panel().get('[data-menu-key="complaints"]')
+    Object.defineProperties(row.element, {
+      offsetTop: { configurable: true, value: 216 },
+      offsetHeight: { configurable: true, value: 44 },
+    })
+    await row.trigger('mouseenter')
+    expect((panel().get('[data-sidebar-hover-plate]').element as HTMLElement).style.transform).toBe('translateY(216px)')
+    await group('procurement').trigger('focus')
+    const plate = panel().get('[data-sidebar-hover-plate]')
+    expect((plate.element as HTMLElement).style.transform).toBe('translateY(0px)')
+    expect((plate.element as HTMLElement).style.height).toBe('0px')
+    expect(plate.isVisible()).toBe(false)
+  })
+
   it('切换分组、离开二级菜单和关闭浮层均清理共享背景', async () => {
     await setup()
     await group('customer').trigger('focus')

@@ -1,6 +1,7 @@
 import { apiClient } from './request'
 import { isAxiosError } from 'axios'
 import type { NotificationInboxResponse, NotificationItem, NotificationTarget, NotificationPreview, NotificationRule, NotificationRuleResponse, NotificationRuleWrite, NotificationRulesResponse } from '@/types/notifications'
+import type { NotificationPreviewRecipients, NotificationPreviewSend, NotificationPreviewAttempt } from '@/types/notifications'
 
 const root = '/api/v1/notifications/'
 const ruleRoot = `${root}rules/`
@@ -18,13 +19,32 @@ export async function saveNotificationRule(eventCode: string, data: Notification
   return { data: response.data.data, etag: next }
 }
 
-export async function previewNotificationRule(eventCode: string, data: NotificationRuleWrite & { variables: Record<string, string> }): Promise<NotificationPreview> {
-  return (await apiClient.post<{ data: NotificationPreview }>(`${ruleRoot}${encodeURIComponent(eventCode)}/preview/`, data, options())).data.data
+export async function previewNotificationRule(eventCode: string, data: NotificationRuleWrite & { variables: Record<string, string> }, etag?: string): Promise<NotificationPreview> {
+  return (await apiClient.post<{ data: NotificationPreview }>(`${ruleRoot}${encodeURIComponent(eventCode)}/preview/`, data, options(etag))).data.data
+}
+
+export async function getNotificationPreviewRecipients(search = '', page = 1): Promise<NotificationPreviewRecipients> {
+  return (await apiClient.get<NotificationPreviewRecipients>(`${root}preview-recipients/`, { ...options(), params: { search, page } })).data
+}
+
+export async function sendNotificationPreview(eventCode: string, data: NotificationPreviewSend): Promise<NotificationPreviewAttempt> {
+  return (await apiClient.post<{ data: NotificationPreviewAttempt }>(`${ruleRoot}${encodeURIComponent(eventCode)}/preview-send/`, data, options())).data.data
+}
+
+export async function getNotificationPreviewAttempt(previewId: string): Promise<NotificationPreviewAttempt> {
+  return (await apiClient.get<{ data: NotificationPreviewAttempt }>(`${root}preview-attempts/${encodeURIComponent(previewId)}/`, options())).data.data
+}
+
+export function notificationPreviewError(error: unknown, fallback: string): string {
+  if (isAxiosError(error) && error.response?.status === 403) return '试发需要通知规则和企业微信两项管理权限。'
+  if (isAxiosError(error) && error.response?.status === 412) return '规则或企业微信配置已变化，请刷新后重新预览。'
+  return notificationError(error, fallback)
 }
 
 const fieldLabels: Record<string, string> = {
   name: '模板名称', title_template: '标题', body_template: '正文', recipient_role_codes: '接收角色',
   recipient_scope: '接收范围', enabled: '启用状态', variables: '示例变量', non_field_errors: '提交内容',
+  preview_token: '预览凭证', binding_id: '接收员工', config_etag: '应用配置版本', draft: '当前草稿',
 }
 const knownErrorCodes = new Set(['VALIDATION_ERROR', 'AUTHENTICATION_REQUIRED', 'PERMISSION_DENIED', 'NOT_FOUND', 'CONFLICT', 'PRECONDITION_FAILED', 'PRECONDITION_REQUIRED', 'WECOM_UNAVAILABLE'])
 

@@ -12,10 +12,10 @@
 .sample-type-label { padding: 4px 10px; border-radius: 4px; color: token.$crm-text-regular; background: token.$crm-color-subtle; font-size: 12px; line-height: 16px; }
 .identity-block p { margin: 3px 0 0; color: token.$crm-text-secondary; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .refresh-error { margin-bottom: 16px; }
-.status-flow { @include detail.surface; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); min-height: 92px; margin-bottom: 14px; padding: 16px 18px; }
+.status-flow { @include detail.surface; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(140px, 1fr); overflow-x: auto; min-height: 92px; margin-bottom: 14px; padding: 16px 18px; }
 .status-step { display: flex; min-width: 0; align-items: center; gap: 8px; color: token.$crm-text-muted; font-size: 13px; }
 .status-step span { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border: 1px solid token.$crm-border-default; border-radius: 50%; font-size: 12px; }
-.status-step strong { font-weight: 500; line-height: 22px; }
+.status-step strong { font-weight: 500; line-height: 22px; white-space: nowrap; }
 .status-step:not(:last-child)::after { content: ''; flex: 1; min-width: 8px; height: 1px; margin-right: 8px; background: token.$crm-border-default; }
 .status-step.done::after { background: token.$crm-success; }
 .status-step.done { color: token.$crm-success; }
@@ -26,6 +26,8 @@
 .main-column, .side-column { display: grid; min-width: 0; align-content: start; gap: 14px; }
 .sample-detail-page .detail-card { @include detail.surface; padding: 14px 16px; overflow: hidden; }
 .sample-detail-page :deep(.material-application-info) { @include detail.surface; }
+.sample-detail-page :deep(.material-application-info .field-value),
+.sample-detail-page :deep(.material-application-info .summary-content p) { border-radius: var(--erp-radius-control); }
 .sample-detail-page :deep(.sample-material-progress) { @include detail.surface; }
 .sample-detail-page :deep(.material-application-info .sample-section) { @include detail.inset; }
 .sample-detail-page :deep(.parameter-panel) { @include detail.inset; }
@@ -137,7 +139,7 @@
 @media (max-width: 800px) {
   .page-header { align-items: flex-start; flex-wrap: wrap; }
   .detail-actions { flex-wrap: wrap; }
-  .status-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .status-flow { gap: 14px; }
   .side-column, .parameter-list { grid-template-columns: minmax(0, 1fr); }
   .basic-grid, .product-grid, .record-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .special-note { grid-column: 1 / -1; }

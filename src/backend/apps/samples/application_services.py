@@ -32,6 +32,7 @@ def application_actions(sample, request):
     return {
         **material_actions(sample, request),
         'is_application': bool(sample.application_payload_hash),
+        'can_edit_products': bool(active and sample.application_payload_hash and can_sample(request, sample, 'samples.complete_sample_requirements')),
         'can_director_review': bool(active and sample.status == SampleRequestStatus.DIRECTOR_REVIEW and can_sample(request, sample, 'samples.review_sample_application')),
         'can_resubmit': bool(can_resubmit),
     }

@@ -110,6 +110,31 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  notification-worker:
+    image: haiqu-erp-backend
+    pull_policy: never
+    container_name: haiqu-notification-worker
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      TUBE_OUTSOURCING_ENABLED: "True"
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+        read_only: true
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: ["python", "manage.py", "process_notification_deliveries", "--execute", "--watch", "--interval", "5", "--recover-processing"]
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     build:
       context: ./src/frontend

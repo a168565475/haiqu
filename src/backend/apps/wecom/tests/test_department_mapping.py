@@ -70,7 +70,7 @@ class WeComDepartmentMappingTests(TestCase):
         )
 
     def preview(self):
-        response = self.client.get(ROOT)
+        response = self.client.post(ROOT + "refresh/")
         self.assertEqual(response.status_code, 200, response.data)
         return response
 
@@ -90,6 +90,7 @@ class WeComDepartmentMappingTests(TestCase):
         employee_count = Employee.objects.count()
         audit_count = AuditLog.objects.count()
         preview = self.preview()
+        self.assertTrue(preview.data["data"]["can_save_mapping"])
         source = next(row for row in preview.data["data"]["departments"] if row["id"] == 2)
         self.assertIsNone(source["mapping"])
         self.assertEqual(source["candidates"][0]["id"], str(self.unit.pk))
@@ -116,9 +117,9 @@ class WeComDepartmentMappingTests(TestCase):
 
     def test_anonymous_and_unauthorized_callers_fail_before_upstream(self):
         self.client.logout()
-        self.assertEqual(self.client.get(ROOT).status_code, 401)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 401)
         self.client.force_login(self.employee().user)
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.assertEqual(self.client.put(ROOT + "2/", {}, format="json").status_code, 403)
         self.upstream.assert_not_called()
 
@@ -128,7 +129,7 @@ class WeComDepartmentMappingTests(TestCase):
                 employee = self.employee(code=f"MAP_{code.upper()}")
                 self.grant(employee, app="access_control", codename=code)
                 self.client.force_login(employee.user)
-                self.assertEqual(self.client.get(ROOT).status_code, 403)
+                self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.upstream.assert_not_called()
 
     def test_direct_permission_and_own_scope_do_not_grant_organization_management(self):
@@ -136,13 +137,13 @@ class WeComDepartmentMappingTests(TestCase):
         self.grant(employee, scope="OWN")
         employee.user.user_permissions.add(Permission.objects.get(content_type__app_label="organizations", codename="manage_organization"))
         self.client.force_login(employee.user)
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.upstream.assert_not_called()
 
     def test_disabled_employee_is_rejected(self):
         self.actor.status = "INACTIVE"
         self.actor.save()
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.upstream.assert_not_called()
 
     def test_permission_is_rechecked_after_slow_upstream(self):
@@ -171,25 +172,25 @@ class WeComDepartmentMappingTests(TestCase):
             return deepcopy(self.source)
 
         self.upstream.return_value.read_directory.side_effect = revoke_permission
-        self.assertEqual(self.client.get(ROOT).status_code, 403)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
 
     def test_missing_mapping_migration_is_reported_before_querying_new_table(self):
         with patch("apps.wecom.department_mapping_selectors.schema_is_ready", return_value=False):
-            self.assertEqual(self.client.get(ROOT).status_code, 503)
+            self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 503)
             self.assertEqual(self.client.put(ROOT + "2/", {}, format="json").status_code, 503)
         self.upstream.assert_not_called()
 
     def test_missing_or_disabled_configuration_is_conflict(self):
         self.config.enabled = False
         self.config.save()
-        self.assertEqual(self.client.get(ROOT).status_code, 409)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 409)
         self.config.delete()
-        self.assertEqual(self.client.get(ROOT).status_code, 409)
+        self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 409)
         self.upstream.assert_not_called()
 
     def test_upstream_error_is_safe_and_never_writes(self):
         self.upstream.return_value.read_directory.side_effect = WeComError("PRIVATE", "不可泄露上游数据")
-        response = self.client.get(ROOT)
+        response = self.client.post(ROOT + "refresh/")
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("不可泄露上游数据", str(response.data))
         self.assertFalse(WeComDepartmentMapping.objects.exists())

@@ -87,7 +87,7 @@ def _whole_bar_quantities(groups, meters):
     return dict(zip(lengths, chosen))
 
 
-def plan_pipe_issue(*, raw_material, warehouse_quantity, arrivals=(), lock=False, planned=None, pending_arrivals=None):
+def plan_pipe_issue(*, raw_material, warehouse_quantity, arrivals=(), lock=False, planned=None, pending_arrivals=None, warehouse_allocations=None):
     """只分配本单到货根数及核库数量；不把同料号的全部库存当作本单材料。"""
     public = public_flow_enabled()
     model = PublicStockBalance if public else MaterialStockBalance
@@ -145,13 +145,31 @@ def plan_pipe_issue(*, raw_material, warehouse_quantity, arrivals=(), lock=False
     for balance in balances:
         available = max(free[balance.pk] - protected.get(balance.pk, Decimal("0")), Decimal("0"))
         groups[balance.raw_bar_length_m] = groups.get(balance.raw_bar_length_m, Decimal("0")) + available
-    quantities = _whole_bar_quantities(groups, warehouse_quantity)
-    for balance in balances:
-        available = max(free[balance.pk] - protected.get(balance.pk, Decimal("0")), Decimal("0"))
-        bars = min(quantities.get(balance.raw_bar_length_m, 0), available)
-        if bars > 0:
+    if warehouse_allocations is not None:
+        total, selected_ids = Decimal('0'), set()
+        for selected in warehouse_allocations:
+            balance = by_id.get(UUID(str(selected['balanceId'])))
+            bars = Decimal(selected['quantity'])
+            if (selected['stockMode'] != ('PUBLIC_V2' if public else 'LEGACY') or not balance
+                    or balance.pk in selected_ids or bars <= 0 or bars != bars.to_integral_value()):
+                raise Conflict('关联的管材库存已失效，请重新核对来源；本次未扣库存。')
+            selected_ids.add(balance.pk)
+            if max(free[balance.pk] - protected.get(balance.pk, Decimal('0')), Decimal('0')) < bars:
+                raise Conflict(f'关联库区{balance.zone.zone_name}的管材库存不足或已被预留；本次未扣库存。')
+            if Decimal(selected['rawBarLengthM']) != balance.raw_bar_length_m:
+                raise Conflict('关联库存的单根长度已变化，请重新核对；本次未扣库存。')
             allocate(balance, bars)
-            quantities[balance.raw_bar_length_m] -= bars
+            total += bars * balance.raw_bar_length_m
+        if total != warehouse_quantity:
+            raise Conflict('关联库存的根米合计与核库可供米数不一致；本次未扣库存。')
+    else:
+        quantities = _whole_bar_quantities(groups, warehouse_quantity)
+        for balance in balances:
+            available = max(free[balance.pk] - protected.get(balance.pk, Decimal("0")), Decimal("0"))
+            bars = min(quantities.get(balance.raw_bar_length_m, 0), available)
+            if bars > 0:
+                allocate(balance, bars)
+                quantities[balance.raw_bar_length_m] -= bars
     result = list(allocations.values())
     for entry in result:
         balance = entry["balance"]

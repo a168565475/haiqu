@@ -90,8 +90,8 @@ def _unfinished_samples(queryset):
     ]
 
 
-def resolve_form_source(*, request, source_type, source_id):
-    customers = accessible_customers(request, "add_samplerequest").filter(archived_at__isnull=True)
+def resolve_form_source(*, request, source_type, source_id, customer_permission="add_samplerequest", for_creation=True):
+    customers = accessible_customers(request, customer_permission).filter(archived_at__isnull=True)
     if source_type == "inquiry":
         try:
             inquiry = (
@@ -102,11 +102,11 @@ def resolve_form_source(*, request, source_type, source_id):
             )
         except Inquiry.DoesNotExist as exc:
             raise NotFound("来源询盘不存在或当前账号无权访问。") from exc
-        if inquiry.status in INELIGIBLE_INQUIRY_STATUSES:
+        if for_creation and inquiry.status in INELIGIBLE_INQUIRY_STATUSES:
             raise ValidationError({"sourceId": "当前询盘状态不能创建样品需求。"})
         if inquiry.owner_employee_id is None:
             raise ValidationError({"sourceId": "来源询盘尚未分配业务员。"})
-        if not inquiry.items.exists():
+        if for_creation and not inquiry.items.exists():
             raise ValidationError({"sourceId": "来源询盘没有产品，不能创建样品需求。"})
         return {
             "source_type": "inquiry",
@@ -169,12 +169,12 @@ def resolve_form_source(*, request, source_type, source_id):
         .values_list("id", flat=True)
         .first()
     )
-    if version.status != QuotationVersionStatus.SENT or latest_version_id != version.pk:
+    if for_creation and (version.status != QuotationVersionStatus.SENT or latest_version_id != version.pk):
         raise ValidationError({"sourceId": "只能从当前已发送且未作废的报价版本创建样品需求。"})
     quotation = version.quotation
     if quotation.owner_employee_id is None:
         raise ValidationError({"sourceId": "来源报价尚未分配业务员。"})
-    if not version.lines.exists():
+    if for_creation and not version.lines.exists():
         raise ValidationError({"sourceId": "来源报价版本没有产品，不能创建样品需求。"})
     contact = quotation.source_inquiry.customer_contact if quotation.source_inquiry_id else None
     if contact is None and version.contact_snapshot.get("id"):

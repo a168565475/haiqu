@@ -222,16 +222,16 @@ onMounted(load)
 @use '@/styles/workshopReporting.scss';
 
 .wr-report-form-page { gap: 14px; }
-.wr-report-form-page .wr-form-heading { min-height: 50px; }
+.wr-report-form-page .wr-form-heading { min-height: 44px; margin-bottom: 0; }
 .wr-report-basic-card { padding: 16px 20px 10px; }
 .wr-report-basic-card > h2 { margin: 0 0 14px; }
 .wr-report-basic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .wr-report-basic-grid > div { min-width: 0; padding: 0 20px; border-right: 1px solid var(--erp-color-border); }
 .wr-report-basic-grid > div:first-child { padding-left: 0; }
 .wr-report-basic-grid > div:last-child { padding-right: 0; border-right: 0; }
-.wr-report-basic-grid .el-form-item { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; margin-bottom: 12px; }
+.wr-report-basic-grid .el-form-item { display: grid; grid-template-columns: 112px minmax(0, 220px); align-items: center; margin-bottom: 12px; }
 .wr-report-basic-grid .el-form-item__label { width: auto !important; justify-content: flex-start; }
-.wr-report-basic-grid :where(.el-select, .el-date-editor) { width: 100%; }
+.wr-report-basic-grid .el-form-item__content > :is(.el-input, .el-select, .el-date-editor) { width: 100%; }
 .wr-report-detail-card { padding: 0; }
 .wr-report-detail-card .wr-card-title { min-height: 36px; margin-bottom: 0; padding: 0 12px; }
 .wr-work-report-table { width: 100%; }

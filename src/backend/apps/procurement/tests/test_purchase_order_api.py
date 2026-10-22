@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
-from django.db import IntegrityError, connection
+from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
@@ -33,7 +33,6 @@ from apps.production_tasks.models import (
 from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 
 from ..models import PurchaseOrder, Supplier, SupplierPurchaseSheet
-from ..api.views import is_purchase_task_uniqueness_error
 
 
 class PurchaseOrderApiTests(APITestCase):
@@ -547,17 +546,6 @@ class PurchaseOrderApiTests(APITestCase):
 
         self.assertEqual(second_source.status_code, 200, second_source.data)
         self.assertEqual(second_source.data["data"]["source_revision"], original_revision)
-
-    def test_integrity_error_mapping_only_accepts_production_task_uniqueness(self):
-        task_unique = IntegrityError(
-            "UNIQUE constraint failed: procurement_purchase_order.production_task_id"
-        )
-        number_unique = IntegrityError(
-            "UNIQUE constraint failed: procurement_purchase_order.order_number"
-        )
-
-        self.assertTrue(is_purchase_task_uniqueness_error(task_unique))
-        self.assertFalse(is_purchase_task_uniqueness_error(number_unique))
 
     def test_create_recalculates_amount_and_list_filters_and_stats(self):
         task = self.make_task("CREATE")

@@ -19,7 +19,6 @@ import SampleListView from '@/views/samples/SampleListView.vue'
 import SampleDetailView from '@/views/samples/SampleDetailView.vue'
 import SampleApplicationCreateView from '@/views/samples/SampleApplicationCreateView.vue'
 import SampleDirectorReviewView from '@/views/samples/SampleDirectorReviewView.vue'
-import SampleMaterialRequestView from '@/views/samples/SampleMaterialRequestView.vue'
 import SampleMaterialDetailView from '@/views/samples/SampleMaterialDetailView.vue'
 import SampleWarehouseReviewView from '@/views/samples/SampleWarehouseReviewView.vue'
 import SampleMaterialIssueView from '@/views/samples/SampleMaterialIssueView.vue'
@@ -868,7 +867,7 @@ export const router = createRouter({
     {
       path: '/samples/:sampleId/materials',
       name: 'sample-materials',
-      component: SampleMaterialRequestView,
+      redirect: to => ({ name: 'sample-edit', params: to.params, query: { ...to.query, tab: 'materials' } }),
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'samples',
         headerTitle: '样品跟进 / 填写材料需求',

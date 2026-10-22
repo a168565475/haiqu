@@ -57,5 +57,5 @@ export interface SampleMaterialProgress {
   }>
 }
 export type SampleMaterialLoadResult =
-  | { available: true; noMaterials?: boolean; progress?: SampleMaterialProgress; procurementRequest?: { id: string; submittedAt: string } | null; draft: SampleMaterialDraft; etag: string; canEdit: boolean; status: import('./sample').SampleStatus; statusLabel: string; submittedAt: string | null }
+  | { available: true; noMaterials?: boolean; progress?: SampleMaterialProgress; procurementRequest?: { id: string; submittedAt: string } | null; draft: SampleMaterialDraft; etag: string; canEdit: boolean; canSubmit?: boolean; isRevision?: boolean; status: import('./sample').SampleStatus; statusLabel: string; submittedAt: string | null }
   | { available: false; reason: string }

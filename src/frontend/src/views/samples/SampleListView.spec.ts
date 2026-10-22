@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import SampleListView from './SampleListView.vue'
 import { useAuthStore } from '@/stores/auth'
+import type { SampleListItem } from '@/types/sample'
 
 const api = vi.hoisted(() => ({ rows: vi.fn(), options: vi.fn(), stats: vi.fn(), push: vi.fn(), query: {} as Record<string, string> }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: api.query }), useRouter: () => ({ push: api.push }) }))
@@ -204,16 +205,132 @@ it('新版申请尚未完善需求时开放编辑入口', async () => {
   api.rows.mockResolvedValue({ ...data, data: [{
     ...data.data[0],
     status: 'MATERIALS_PENDING',
-    application_actions: { is_application: true, can_resubmit: false },
+    application_actions: { is_application: true, can_resubmit: false, can_edit_products: true },
     edit_capabilities: { mode: 'COMPLETE', can_full_edit: true, can_report_edit: true, can_complete: true, can_cancel: false },
   }] })
   const wrapper = render('employee', ['samples.complete_sample_requirements'])
   await flushPromises()
   await wrapper.find('.row-actions button').trigger('click')
-  await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).some(item => item.text() === '编辑需求')).toBe(true))
-  const edit = wrapper.findAllComponents({ name: 'ElDropdownItem' }).find(item => item.text() === '编辑需求')!
+  await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).some(item => item.text() === '编辑')).toBe(true))
+  const edit = wrapper.findAllComponents({ name: 'ElDropdownItem' }).find(item => item.text() === '编辑')!
   expect(edit.props('disabled')).toBe(false)
   edit.vm.$emit('click')
   await flushPromises()
-  expect(api.push).toHaveBeenCalledWith({ name: 'sample-detail', params: { sampleId: 'WAITING-REQUIREMENTS' } })
+  expect(api.push).toHaveBeenCalledWith({ name: 'sample-edit', params: { sampleId: 'WAITING-REQUIREMENTS' } })
+})
+
+async function renderMenu(overrides: Partial<SampleListItem> & { allowed_permissions?: string[] }, permissions: string[] = [], scoped = false) {
+  const row = {
+    ...result('MENU-REQUEST').data[0], status: 'MATERIALS_PENDING',
+    application_actions: { is_application: true, can_director_review: false, can_resubmit: false },
+    ...overrides,
+  }
+  api.rows.mockResolvedValue({ data: [row], meta: { total: 1 } })
+  const wrapper = render('employee', permissions)
+  if (scoped) useAuthStore().user!.module_access_enabled = true
+  await flushPromises()
+  await wrapper.get('.row-actions button').trigger('click')
+  await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).length).toBeGreaterThan(1))
+  return { wrapper, items: wrapper.findAllComponents({ name: 'ElDropdownItem' }) }
+}
+
+describe('编辑/查看分流与阶段入口', () => {
+  const complete = { mode: 'COMPLETE', can_complete: true, can_full_edit: true, can_report_edit: false, can_cancel: false } as const
+  const readonly = { ...complete, mode: 'READ_ONLY', can_complete: false } as const
+  const application = { is_application: true, can_director_review: false, can_resubmit: false, can_edit_products: true, can_edit_materials: true }
+
+  it.each([
+    ['PENDING_COMPLETION', complete, application, ['samples.complete_sample_requirements'], true],
+    ['MATERIALS_PENDING', complete, application, ['samples.edit_sample_materials'], true],
+    ['MATERIALS_PENDING', complete, application, ['samples.complete_sample_requirements'], true],
+    ['MATERIALS_PENDING', readonly, application, ['samples.edit_sample_materials'], true],
+    ['MATERIALS_PENDING', readonly, application, ['samples.complete_sample_requirements'], true],
+    ['MATERIALS_PENDING', readonly, { ...application, can_edit_materials: false }, ['samples.edit_sample_materials'], false],
+    ['MATERIALS_PENDING', complete, { ...application, can_edit_products: false }, ['samples.complete_sample_requirements'], false],
+    ['MATERIALS_PENDING', { ...complete, can_complete: false }, application, ['samples.complete_sample_requirements'], true],
+    ['MATERIALS_PENDING', { ...complete, can_complete: false }, application, ['samples.edit_sample_materials'], true],
+    ['FINISHED', readonly, application, ['samples.edit_sample_materials'], true],
+    ['FINISHED', readonly, application, ['samples.complete_sample_requirements'], true],
+    ['PROCUREMENT_PENDING', readonly, application, ['samples.edit_sample_materials'], true],
+    ['WAREHOUSE_PENDING', readonly, application, ['samples.complete_sample_requirements'], true],
+    ['PRODUCTION_PENDING', readonly, application, ['samples.change_samplerequest'], false],
+    ['DIRECTOR_REVIEW', readonly, application, ['samples.complete_sample_requirements'], true],
+    ['MATERIALS_PENDING', complete, { ...application, is_application: false }, ['samples.complete_sample_requirements', 'samples.edit_sample_materials'], false],
+    ['MATERIALS_PENDING', complete, application, ['samples.view_samplerequest'], false],
+    ['MATERIALS_PENDING', complete, { is_application: true, can_director_review: false, can_resubmit: false }, ['samples.complete_sample_requirements', 'samples.edit_sample_materials'], false],
+  ] as const)('%s：按产品/材料能力分别判断编辑（%#）', async (status, capabilities, actions, permissions, enabled) => {
+    const { wrapper, items } = await renderMenu({ status, edit_capabilities: capabilities, application_actions: actions }, [...permissions])
+    expect(items.slice(0, 2).map(item => item.text())).toEqual(['编辑', '查看'])
+    expect(items[0]!.props('disabled')).toBe(!enabled)
+    items[0]!.vm.$emit('click')
+    await flushPromises()
+    if (enabled) expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-edit', params: { sampleId: 'MENU-REQUEST' } })
+    else expect(api.push).not.toHaveBeenCalled()
+    items[1]!.vm.$emit('click')
+    await flushPromises()
+    expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-detail', params: { sampleId: 'MENU-REQUEST' } })
+    await wrapper.get('.sample-link').trigger('click')
+    expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-detail', params: { sampleId: 'MENU-REQUEST' } })
+  })
+
+  it.each([true, false])('启用模块数据范围时以本记录授权决定编辑：%s', async allowed => {
+    const { items } = await renderMenu({ status: 'FINISHED', edit_capabilities: readonly, application_actions: application, allowed_permissions: allowed ? ['samples.complete_sample_requirements'] : [] }, ['samples.complete_sample_requirements'], true)
+    expect(items[0]!.props('disabled')).toBe(!allowed)
+  })
+
+  it.each([true, false])('采购阶段材料能力独立服从本记录授权：%s', async allowed => {
+    const { items } = await renderMenu({
+      status: 'PROCUREMENT_PENDING', edit_capabilities: readonly, application_actions: application,
+      allowed_permissions: allowed ? ['samples.edit_sample_materials'] : [],
+    }, ['samples.edit_sample_materials', 'samples.complete_sample_requirements'], true)
+    expect(items[0]!.props('disabled')).toBe(!allowed)
+    items[0]!.vm.$emit('click')
+    await flushPromises()
+    if (allowed) expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-edit', params: { sampleId: 'MENU-REQUEST' } })
+    else expect(api.push).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['DIRECTOR_REVIEW', '厂长确认', 'sample-director-review', []],
+    ['APPLICATION_RETURNED', '查看退回原因', 'sample-director-review', []],
+    ['WAREHOUSE_PENDING', '仓库核对', 'sample-warehouse-review', []],
+    ['PROCUREMENT_PENDING', '查看采购进度', 'sample-warehouse-review', []],
+    ['MATERIALS_READY', '查看供料进度', 'sample-warehouse-review', []],
+    ['MATERIAL_ISSUE_PENDING', '发起样品领料', 'sample-material-issue', ['samples.edit_sample_materials']],
+    ['MATERIAL_ISSUE_REVIEW', '确认实际领料', 'sample-material-issue-confirm', ['samples.review_sample_materials']],
+    ['METALWORK_PENDING', '查看', 'sample-detail', []],
+    ['CUTTING_PENDING', '查看', 'sample-detail', []],
+    ['PRODUCTION_PENDING', '查看', 'sample-detail', []],
+  ] as const)('%s 保留原办理入口', async (status, label, name, permissions) => {
+    const { items } = await renderMenu({ status }, [...permissions])
+    const action = items.find(item => item.text() === label)!
+    expect(action).toBeDefined()
+    action.vm.$emit('click')
+    await flushPromises()
+    expect(api.push).toHaveBeenLastCalledWith({ name, params: { sampleId: 'MENU-REQUEST' } })
+    expect(items.some(item => item.text() === '查看用料需求')).toBe(true)
+  })
+
+  it('材料阶段移除重复填写入口，保留编辑与查看用料需求', async () => {
+    const { items } = await renderMenu({ edit_capabilities: complete, application_actions: application }, ['samples.edit_sample_materials'])
+    expect(items.slice(0, 2).map(item => item.text())).toEqual(['编辑', '查看'])
+    expect(items.some(item => /填写.*需求/.test(item.text()))).toBe(false)
+    expect(items.some(item => item.text() === '查看用料需求')).toBe(true)
+    items[0]!.vm.$emit('click')
+    await flushPromises()
+    expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-edit', params: { sampleId: 'MENU-REQUEST' } })
+  })
+
+  it.each([true, false])('退回重提保留独立入口并遵守服务端能力：%s', async canResubmit => {
+    const { items } = await renderMenu({ status: 'APPLICATION_RETURNED', application_actions: { ...application, can_resubmit: canResubmit }, edit_capabilities: readonly })
+    expect(items.slice(0, 2).map(item => item.text())).toEqual(['编辑', '查看'])
+    expect(items[0]!.props('disabled')).toBe(true)
+    const resubmit = items.find(item => item.text() === '补充并重提')
+    expect(Boolean(resubmit)).toBe(canResubmit)
+    if (resubmit) {
+      resubmit.vm.$emit('click')
+      await flushPromises()
+      expect(api.push).toHaveBeenLastCalledWith({ path: '/samples/new', query: { editApplication: 'MENU-REQUEST' } })
+    }
+  })
 })

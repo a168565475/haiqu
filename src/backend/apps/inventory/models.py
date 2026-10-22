@@ -127,6 +127,11 @@ class FinishedGoodsReceiptSource(models.TextChoices):
     SAMPLE_INVENTORY = "SAMPLE_INVENTORY", "样品入库"
 
 
+class FinishedGoodsReceiptStatus(models.TextChoices):
+    PENDING = "PENDING", "待仓库确认"
+    CONFIRMED = "CONFIRMED", "已确认入库"
+
+
 class FinishedGoodsReceipt(TimeStampedModel):
     receipt_number = models.CharField(max_length=50, unique=True, validators=[uppercase_code_validator])
     production_task_product = models.ForeignKey(
@@ -140,6 +145,11 @@ class FinishedGoodsReceipt(TimeStampedModel):
         max_length=30,
         choices=FinishedGoodsReceiptSource.choices,
         default=FinishedGoodsReceiptSource.PRODUCTION_ORDER,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=FinishedGoodsReceiptStatus.choices,
+        default=FinishedGoodsReceiptStatus.CONFIRMED,
     )
     source_document_number = models.CharField(max_length=100, blank=True)
     source_sample_inventory_line = models.OneToOneField(
@@ -178,14 +188,31 @@ class FinishedGoodsReceipt(TimeStampedModel):
         "organizations.Employee", on_delete=models.PROTECT, related_name="finished_goods_receipts"
     )
     received_at = models.DateTimeField(default=timezone.now)
+    submitted_by_employee = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="submitted_finished_goods_receipts",
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by_employee = models.ForeignKey(
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="confirmed_finished_goods_receipts",
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "inventory_finished_goods_receipt"
         ordering = ["-received_at", "-id"]
+        permissions = (
+            ("confirm_finishedgoodsreceipt", "确认装配成品入库"),
+        )
         constraints = [
             models.CheckConstraint(
                 condition=Q(source_type__in=FinishedGoodsReceiptSource.values),
                 name="inv_receipt_source_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=FinishedGoodsReceiptStatus.values),
+                name="inv_receipt_status_valid",
             ),
             models.CheckConstraint(condition=Q(received_quantity__gt=0), name="inv_receipt_qty_positive"),
             models.CheckConstraint(
@@ -198,6 +225,7 @@ class FinishedGoodsReceipt(TimeStampedModel):
         indexes = [
             models.Index(fields=["production_task_product", "received_at"], name="inv_receipt_product_idx"),
             models.Index(fields=["location", "remaining_quantity"], name="inv_receipt_location_idx"),
+            models.Index(fields=["status", "location"], name="inv_fg_status_loc_idx"),
         ]
 
 
@@ -835,5 +863,6 @@ class PublicStockCutoverControl(TimeStampedModel):
         ]
 
 # 厂内入库记录模型由 Django 统一注册，库存仍使用 PublicStockBalance。
-from .internal_receipt_models import InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine  # noqa: F401,E402
+from .internal_receipt_models import (InternalReceiptStatus, InternalSemiFinishedReceipt,
+                                      InternalSemiFinishedReceiptLine)  # noqa: F401,E402
 from .assembly_receipt_models import AssemblyReceiptSource  # noqa: F401,E402

@@ -20,10 +20,13 @@ export interface SemiReceiptRecord {
   production_order: string; product: string; attributes: ReceiptAttributes; stage: string
   quantity: string; unit: string; receipt_date: string; status: string; warehouse: string; zone: string; actor: string; remark: string
   source_detail?: Record<string, string | null>
+  submitted_by?: string; submitted_at?: string | null; confirmed_by?: string; confirmed_at?: string | null
+  stock_movement_id?: string | null
+  receipt_id?: string; etag?: string; can_delete?: boolean
 }
 
 export interface InternalReceiptResult {
-  receipt_id: string; record_ids: string[]; receipt_number: string; replayed: boolean
+  receipt_id: string; record_ids: string[]; receipt_number: string; status: string; replayed: boolean
 }
 
 export interface MetalReceiptOperation {

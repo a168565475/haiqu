@@ -8,9 +8,16 @@ export async function fetchReceiptPreview(scheduleProductId: string, category: s
   return response.data.data
 }
 export async function confirmInternalReceipt(payload: ReceiptPayload | MetalReceiptPayload, etag: string) {
-  const response = await apiClient.post<{ data: { receipt_id: string; record_ids: string[]; receipt_number: string; replayed: boolean } }>(root, payload,
+  const response = await apiClient.post<{ data: { receipt_id: string; record_ids: string[]; receipt_number: string; status: string; replayed: boolean } }>(root, payload,
     { headers: { 'If-Match': etag }, timeout: 30000 })
   return response.data.data
+}
+export async function confirmInternalReceiptRecord(id: string, etag?: string) {
+  const response = await apiClient.post<{ data: { receipt_id: string; record_ids: string[]; receipt_number: string; status: string; replayed: boolean } }>(`${root}${encodeURIComponent(id)}/confirm/`, undefined, { headers: etag ? { 'If-Match': etag } : undefined, timeout: 30000 })
+  return response.data.data
+}
+export async function deleteInternalReceiptRecord(id: string, etag: string): Promise<void> {
+  await apiClient.delete(`${root}${encodeURIComponent(id)}/`, { headers: { 'If-Match': etag }, timeout: 30000 })
 }
 export async function fetchSemiReceiptRecords(params: Record<string, unknown>) {
   const response = await apiClient.get<{ data: { items: SemiReceiptRecord[]; total: number } }>(root, { params, timeout: 15000 })

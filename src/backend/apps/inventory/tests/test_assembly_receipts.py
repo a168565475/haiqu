@@ -8,6 +8,7 @@ from apps.workshop_config.models import Craft, Workshop
 from apps.inventory.models import FinishedGoodsReceipt, AssemblyReceiptSource, WarehouseLocation
 from apps.inventory.assembly_receipts import assembly_progress_for_plans
 from .test_inventory_api import FinishedGoodsInventoryApiTests
+from .finished_receipt_fixture import historical_finished_receipt
 
 
 class AssemblyFixture:
@@ -52,12 +53,71 @@ class AssemblyFixture:
         return self.client.post('/api/v1/assembly-finished-receipts/',data or self.payload(),format='json',
             HTTP_IF_MATCH=etag or self.preview()['etag'])
 
+    def confirm(self, response):
+        self.assertEqual(response.status_code, 201, response.data)
+        confirmed = self.client.post(
+            f"/api/v1/assembly-finished-receipts/{response.data['data']['id']}/confirm/", format='json')
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        return confirmed
+
 
 class AssemblyReceiptTests(AssemblyFixture,APITestCase):
     def setUp(self):self.prepare()
 
+    def test_submission_stays_pending_and_is_not_inventory_or_progress(self):
+        response=self.post()
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(response.data['data']['status'],'PENDING')
+        receipt=FinishedGoodsReceipt.objects.get(pk=response.data['data']['id'])
+        self.assertEqual(receipt.status,'PENDING')
+        self.assertEqual(receipt.remaining_quantity,0)
+        self.assertEqual(assembly_progress_for_plans([self.plan])[str(self.plan.pk)]['received'],0)
+        inventory=self.client.get('/api/v1/finished-goods-inventory/',{'page_size':100})
+        self.assertEqual(inventory.status_code,200,inventory.data)
+        self.assertEqual(inventory.data['count'],0)
+
+    def test_confirm_activates_inventory_and_is_idempotent(self):
+        response=self.post(self.payload(quantity_per_box=5))
+        self.assertEqual(response.status_code,201,response.data)
+        receipt_id=response.data['data']['id']
+        confirm=self.client.post(f'/api/v1/assembly-finished-receipts/{receipt_id}/confirm/',format='json')
+        self.assertEqual(confirm.status_code,200,confirm.data)
+        self.assertEqual(confirm.data['data']['status'],'CONFIRMED')
+        receipt=FinishedGoodsReceipt.objects.get(pk=receipt_id)
+        self.assertEqual(receipt.status,'CONFIRMED')
+        self.assertEqual(receipt.remaining_quantity,10)
+        self.assertEqual(receipt.remaining_box_slots,2)
+        self.assertEqual(receipt.confirmed_by_employee_id,self.employee.pk)
+        self.assertIsNotNone(receipt.confirmed_at)
+        self.assertEqual(assembly_progress_for_plans([self.plan])[str(self.plan.pk)]['received'],10)
+        replay=self.client.post(f'/api/v1/assembly-finished-receipts/{receipt_id}/confirm/',format='json')
+        self.assertEqual(replay.status_code,200,replay.data)
+        self.assertTrue(replay.data['data']['replayed'])
+        receipt.refresh_from_db()
+        self.assertEqual((receipt.remaining_quantity,receipt.remaining_box_slots),(10,2))
+        from apps.wecom.models import NotificationEvent
+        from apps.inventory.notification_events import current_inventory_object
+        event = NotificationEvent.objects.get(
+            event_code='ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', object_id=receipt.pk,
+        )
+        self.assertIsNotNone(current_inventory_object(event.event_code, receipt.pk, event.object_version))
+
+    def test_confirm_rechecks_location_capacity(self):
+        response=self.post(self.payload(quantity_per_box=5))
+        self.assertEqual(response.status_code,201,response.data)
+        receipt_id=response.data['data']['id']
+        WarehouseLocation.objects.filter(pk=self.location_id).update(capacity_box_slots=1)
+        confirm=self.client.post(f'/api/v1/assembly-finished-receipts/{receipt_id}/confirm/',format='json')
+        self.assertEqual(confirm.status_code,400,confirm.data)
+        receipt=FinishedGoodsReceipt.objects.get(pk=receipt_id)
+        self.assertEqual(receipt.status,'PENDING')
+        self.assertEqual(receipt.remaining_quantity,0)
+
     def test_receipt_without_issue_and_net_complete_then_tolerance(self):
         response=self.post();self.assertEqual(response.status_code,201,response.data)
+        self.assertFalse(assembly_progress_for_plans([self.plan])[str(self.plan.pk)]['complete'])
+        confirm=self.client.post(f"/api/v1/assembly-finished-receipts/{response.data['data']['id']}/confirm/",format='json')
+        self.assertEqual(confirm.status_code,200,confirm.data)
         self.assertTrue(assembly_progress_for_plans([self.plan])[str(self.plan.pk)]['complete'])
         self.assertEqual(self.preview()['remaining_receivable'],1)
         extra=self.post(self.payload(received_quantity=1));self.assertEqual(extra.status_code,201,extra.data)
@@ -73,26 +133,28 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         self.assertEqual(self.post(payload,etag).status_code,409)
         self.assertEqual(AssemblyReceiptSource.objects.count(),1)
 
-    def test_stale_preview_and_legacy_entry_share_limit(self):
+    def test_stale_preview_and_historical_receipt_share_limit(self):
         etag=self.preview()['etag']
-        legacy=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=6,quantity_per_box=None)
-        response=self.client.post('/api/v1/finished-goods-inventory/receipts/',legacy,format='json')
-        self.assertEqual(response.status_code,201,response.data)
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=6, quantity_per_box=None)
         self.assertEqual(self.post(self.payload(received_quantity=5),etag).status_code,412)
         self.assertEqual(self.post(self.payload(received_quantity=5)).status_code,201)
-        legacy.update(expected_received_total=11,received_quantity=1)
-        self.assertEqual(self.client.post('/api/v1/finished-goods-inventory/receipts/',legacy,format='json').status_code,400)
+        self.assertEqual(self.post(self.payload(received_quantity=1)).status_code,400)
 
     def test_outbound_balance_does_not_reopen_quota(self):
-        self.assertEqual(self.post().status_code,201)
+        self.confirm(self.post())
         FinishedGoodsReceipt.objects.update(remaining_quantity=0)
         self.assertEqual(self.preview()['remaining_receivable'],1)
         self.assertEqual(self.preview()['received_total'],10)
 
     def test_capacity_failure_rolls_back_source(self):
         response=self.post(self.payload(quantity_per_box=1))
-        self.assertEqual(response.status_code,400)
-        self.assertFalse(FinishedGoodsReceipt.objects.exists());self.assertFalse(AssemblyReceiptSource.objects.exists())
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(self.client.post(
+            f"/api/v1/assembly-finished-receipts/{response.data['data']['id']}/confirm/", format='json',
+        ).status_code,400)
+        self.assertEqual(FinishedGoodsReceipt.objects.count(),1)
+        self.assertEqual(AssemblyReceiptSource.objects.count(),1)
 
     def test_date_source_records_pagination_and_detail(self):
         response=self.post(self.payload(received_quantity=4));self.assertEqual(response.status_code,201,response.data)
@@ -150,8 +212,8 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         self.assertEqual(self.post(self.payload(received_quantity=1),etag).status_code,404)
 
     def test_location_details_and_inventory_pagination(self):
-        self.assertEqual(self.post(self.payload(received_quantity=4)).status_code,201)
-        self.assertEqual(self.post(self.payload(received_quantity=3,actual_color='白色')).status_code,201)
+        self.confirm(self.post(self.payload(received_quantity=4)))
+        self.confirm(self.post(self.payload(received_quantity=3,actual_color='白色')))
         response=self.client.get('/api/v1/finished-goods-inventory/',{'page_size':1})
         self.assertEqual(response.status_code,200,response.data)
         self.assertEqual(response.data['count'],2);self.assertEqual(len(response.data['results']),1)
@@ -170,9 +232,8 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
         self.assertFalse(FinishedGoodsReceipt.objects.exists())
 
     def test_original_production_and_sample_sources_remain_queryable(self):
-        payload=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=4,quantity_per_box=None)
-        response=self.client.post('/api/v1/finished-goods-inventory/receipts/',payload,format='json')
-        self.assertEqual(response.status_code,201,response.data)
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=4, quantity_per_box=None)
         records=self.client.get('/api/v1/finished-goods-records/',{'source':'PRODUCTION_ORDER'})
         self.assertEqual(records.data['data']['total'],1)
         original=records.data['data']['items'][0]
@@ -187,12 +248,11 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
     def test_records_exclude_samples_before_count_and_pagination(self):
         assembly=self.post(self.payload(received_quantity=2))
         self.assertEqual(assembly.status_code,201,assembly.data)
-        payload=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=2,quantity_per_box=None,expected_received_total=2)
-        production=self.client.post('/api/v1/finished-goods-inventory/receipts/',payload,format='json')
-        self.assertEqual(production.status_code,201,production.data)
-        sample=self.client.post('/api/v1/finished-goods-inventory/receipts/',{**payload,'expected_received_total':4},format='json')
-        self.assertEqual(sample.status_code,201,sample.data)
-        FinishedGoodsReceipt.objects.filter(pk=sample.data['data']['id']).update(
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=2, quantity_per_box=None)
+        sample=historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                          location_id=self.location_id, quantity=2, quantity_per_box=None)
+        FinishedGoodsReceipt.objects.filter(pk=sample.pk).update(
             source_type='SAMPLE_INVENTORY',production_task_product=None,source_document_number='SYGJ-EXCLUDE-TEST')
         url='/api/v1/finished-goods-records/'
         self.assertEqual(self.client.get(url).data['data']['total'],3)
@@ -215,15 +275,12 @@ class AssemblyReceiptTests(AssemblyFixture,APITestCase):
     def test_inventory_excludes_samples_before_aggregation_and_pagination(self):
         for quantity in [2,1]:
             response=self.post(self.payload(received_quantity=quantity))
-            self.assertEqual(response.status_code,201,response.data)
-        payload=FinishedGoodsInventoryApiTests.receipt_payload(self,received_quantity=2,quantity_per_box=None,
-            expected_received_total=3,actual_color='白色')
-        response=self.client.post('/api/v1/finished-goods-inventory/receipts/',payload,format='json')
-        self.assertEqual(response.status_code,201,response.data)
-        sample=self.client.post('/api/v1/finished-goods-inventory/receipts/',
-            {**payload,'expected_received_total':5,'actual_color':'黑色'},format='json')
-        self.assertEqual(sample.status_code,201,sample.data)
-        sample_id=sample.data['data']['id']
+            self.confirm(response)
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=2, quantity_per_box=None, actual_color='白色')
+        sample=historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                          location_id=self.location_id, quantity=2, quantity_per_box=None, actual_color='黑色')
+        sample_id=sample.pk
         # 保留相同汇总键，验证样品批次不会混入正式批次的数量、批次数和详情。
         FinishedGoodsReceipt.objects.filter(pk=sample_id).update(source_type='SAMPLE_INVENTORY')
         sample_only=FinishedGoodsReceipt.objects.get(pk=sample_id)

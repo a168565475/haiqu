@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient, APITestCase
 
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType, BomStatus
@@ -37,7 +38,10 @@ from ..models import (
     MaterialStockMovement,
     WarehouseLocation,
 )
-from ..services import packaging_values
+from ..services import packaging_values, create_finished_goods_receipt
+from ..api.serializers import FinishedGoodsReceiptSerializer
+from ..selectors import receipt_batches
+from .finished_receipt_fixture import historical_finished_receipt
 
 
 class FinishedGoodsInventoryApiTests(APITestCase):
@@ -107,9 +111,16 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         return values
 
     def create_receipt(self):
-        response = self.client.post("/api/v1/finished-goods-inventory/receipts/", self.receipt_payload(), format="json")
-        self.assertEqual(response.status_code, 201, response.data)
-        return response.data["data"]
+        # 历史批次用于库存查询与出库测试，不代表新入库业务已经完成。
+        receipt = historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                               location_id=self.location_id)
+        return FinishedGoodsReceiptSerializer(receipt_batches().get(pk=receipt.pk)).data
+
+    def create_pending_receipt(self, **changes):
+        data = self.receipt_payload(**changes)
+        for key in ('production_task_product_id', 'location_id', 'unit_id'):
+            data[key] = uuid.UUID(str(data[key]))
+        return create_finished_goods_receipt(validated_data=data, actor_employee=self.employee, request=None)
 
     def create_second_line(self):
         return ProductionTaskProduct.objects.create(
@@ -139,12 +150,8 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         self.assertEqual(row["task_number"], self.task.task_number)
 
     def test_inventory_separates_production_tasks_and_receipts_keep_sources(self):
-        first = self.client.post(
-            "/api/v1/finished-goods-inventory/receipts/",
-            self.receipt_payload(received_quantity=2, quantity_per_box=None),
-            format="json",
-        )
-        self.assertEqual(first.status_code, 201, first.data)
+        historical_finished_receipt(product_line=self.line, actor=self.employee,
+                                    location_id=self.location_id, quantity=2, quantity_per_box=None)
 
         second_task = copy.copy(self.task)
         second_task.pk = uuid.uuid4()
@@ -157,16 +164,8 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         second_line.production_task = second_task
         second_line.line_number = 1
         second_line.save(update_fields=["production_task", "line_number", "updated_at"])
-        second = self.client.post(
-            "/api/v1/finished-goods-inventory/receipts/",
-            self.receipt_payload(
-                production_task_product_id=str(second_line.pk),
-                received_quantity=3,
-                quantity_per_box=None,
-            ),
-            format="json",
-        )
-        self.assertEqual(second.status_code, 201, second.data)
+        historical_finished_receipt(product_line=second_line, actor=self.employee,
+                                    location_id=self.location_id, quantity=3, quantity_per_box=None)
 
         inventory = self.client.get("/api/v1/finished-goods-inventory/")
         self.assertEqual(inventory.status_code, 200, inventory.data)
@@ -181,48 +180,49 @@ class FinishedGoodsInventoryApiTests(APITestCase):
             {"ORDER-INV-001", "ORDER-INV-002"},
         )
 
-    def test_inbound_allows_empty_packaging_and_capacity_usage(self):
+    def test_pending_receipt_allows_empty_packaging_without_inventory(self):
+        receipt = self.create_pending_receipt(quantity_per_box=None)
+        self.assertEqual(receipt.status, 'PENDING')
+        self.assertEqual(receipt.remaining_quantity, 0)
+        self.assertEqual(receipt.remaining_box_slots, 0)
+        self.assertIsNone(receipt.confirmed_at)
+        self.assertIsNone(receipt.quantity_per_box)
+        self.assertIsNone(receipt.box_count)
+        self.assertIsNone(receipt.tail_quantity)
+        self.assertIsNone(receipt.occupied_box_slots)
+        self.assertEqual(self.client.get('/api/v1/finished-goods-inventory/').data['count'], 0)
+
+    def test_pending_service_keeps_packaging_but_does_not_credit_stock(self):
+        receipt = self.create_pending_receipt()
+        self.assertEqual(receipt.status, 'PENDING')
+        self.assertEqual((receipt.received_quantity, receipt.occupied_box_slots), (6, 2))
+        self.assertEqual((receipt.remaining_quantity, receipt.remaining_box_slots), (0, 0))
+        self.assertIsNotNone(receipt.submitted_at)
+        self.assertIsNone(receipt.confirmed_by_employee_id)
+        self.assertEqual(self.client.get('/api/v1/finished-goods-inventory/').data['count'], 0)
+
+    def test_legacy_batch_receipt_entry_is_removed(self):
+        response = self.client.post(
+            "/api/v1/finished-goods-inventory/batch-receipts/",
+            {"items": [self.receipt_payload()]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(FinishedGoodsReceipt.objects.exists())
+
+    def test_legacy_single_receipt_entry_is_read_only(self):
         response = self.client.post(
             "/api/v1/finished-goods-inventory/receipts/",
-            self.receipt_payload(quantity_per_box=None),
+            self.receipt_payload(),
             format="json",
         )
-        self.assertEqual(response.status_code, 201, response.data)
-        receipt = response.data["data"]
-        self.assertIsNone(receipt["quantity_per_box"])
-        self.assertIsNone(receipt["box_count"])
-        self.assertIsNone(receipt["tail_quantity"])
-        self.assertIsNone(receipt["occupied_box_slots"])
-
-    def test_batch_inbound_creates_all_rows_in_one_request(self):
-        second_line = self.create_second_line()
-        first = self.receipt_payload(received_quantity=1, quantity_per_box=1)
-        second = self.receipt_payload(
-            production_task_product_id=str(second_line.pk), received_quantity=1, quantity_per_box=1,
-        )
-        response = self.client.post(
-            "/api/v1/finished-goods-inventory/batch-receipts/",
-            {"items": [first, second]},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(len(response.data["data"]), 2)
-        self.assertEqual(FinishedGoodsReceipt.objects.count(), 2)
-
-    def test_batch_inbound_rolls_back_every_row_when_one_row_fails(self):
-        second_line = self.create_second_line()
-        first = self.receipt_payload(received_quantity=1, quantity_per_box=1)
-        invalid = self.receipt_payload(
-            production_task_product_id=str(second_line.pk), received_quantity=1, quantity_per_box=1,
-            unit_id=str(self.currency.pk),
-        )
-        response = self.client.post(
-            "/api/v1/finished-goods-inventory/batch-receipts/",
-            {"items": [first, invalid]},
-            format="json",
-        )
-        self.assertEqual(response.status_code, 400, response.data)
+        # 已移除的写动作先被业务权限门禁拒绝，不能创建记录。
+        self.assertEqual(response.status_code, 403, response.data)
         self.assertEqual(FinishedGoodsReceipt.objects.count(), 0)
+        receipt = self.create_receipt()
+        history = self.client.get('/api/v1/finished-goods-inventory/receipts/')
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(history.data['data'][0]['id'], receipt['id'])
 
     def test_options_use_procurement_supplier_and_production_color(self):
         response = self.client.get("/api/v1/finished-goods-inventory/options/")
@@ -231,12 +231,11 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         self.assertIn(str(self.supplier.pk), {str(item["id"]) for item in data["suppliers"]})
         self.assertIn(str(self.color.pk), {str(item["id"]) for item in data["product_colors"]})
 
-    def test_inbound_rejects_tolerance_limit_and_capacity(self):
+    def test_pending_service_rejects_tolerance_limit_without_extra_record(self):
         self.create_receipt()
-        over_limit = self.client.post("/api/v1/finished-goods-inventory/receipts/", self.receipt_payload(expected_received_total=6, received_quantity=6), format="json")
-        self.assertEqual(over_limit.status_code, 400, over_limit.data)
-        capacity = self.client.post("/api/v1/finished-goods-inventory/receipts/", self.receipt_payload(expected_received_total=6, received_quantity=1, quantity_per_box=1), format="json")
-        self.assertEqual(capacity.status_code, 400, capacity.data)
+        with self.assertRaises(ValidationError):
+            self.create_pending_receipt(expected_received_total=6, received_quantity=6)
+        self.assertEqual(FinishedGoodsReceipt.objects.count(), 1)
 
     def test_partial_outbound_recalculates_slots_and_stale_stock_returns_409(self):
         receipt = self.create_receipt()
@@ -286,31 +285,11 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         blocked = self.client.patch(f"/api/v1/warehouse-locations/{self.location_id}/", {"status": "DISABLED"}, format="json", HTTP_IF_MATCH=detail["ETag"])
         self.assertEqual(blocked.status_code, 409, blocked.data)
 
-    def test_status_flow_exposes_only_in_production_products(self):
-        self.receipt_payload()  # 建立已报工的装配来源，仍需满足订单状态门禁。
-        self.task.status = ProductionTaskStatus.IN_PRODUCTION
-        self.task.save(update_fields=["status", "updated_at"])
-        eligible = self.client.get("/api/v1/finished-goods-inventory/eligible-products/")
-        self.assertEqual(eligible.status_code, 200, eligible.data)
-        self.assertIn(str(self.product.pk), {str(item["product_id"]) for item in eligible.data["data"]})
-
-    def test_eligible_products_use_product_master_and_hide_fully_received_product(self):
-        self.receipt_payload()
-        self.line.product_name_snapshot = "旧生产单品名"
-        self.line.save(update_fields=["product_name_snapshot", "updated_at"])
-        eligible = self.client.get("/api/v1/finished-goods-inventory/eligible-products/")
-        self.assertEqual(eligible.status_code, 200, eligible.data)
-        item = next(item for item in eligible.data["data"] if str(item["product_id"]) == str(self.product.pk))
-        self.assertEqual(item["product_name"], self.product.product_name)
-
-        receipt = self.client.post(
-            "/api/v1/finished-goods-inventory/receipts/",
-            self.receipt_payload(received_quantity=11, quantity_per_box=11),
-            format="json",
-        )
-        self.assertEqual(receipt.status_code, 201, receipt.data)
-        after = self.client.get("/api/v1/finished-goods-inventory/eligible-products/")
-        self.assertNotIn(str(self.product.pk), {str(row["product_id"]) for row in after.data["data"]})
+    def test_legacy_candidate_routes_are_removed(self):
+        for path in ('eligible-products', 'eligible-orders'):
+            with self.subTest(path=path):
+                response = self.client.get(f'/api/v1/finished-goods-inventory/{path}/')
+                self.assertEqual(response.status_code, 404)
 
 
 class MaterialInventoryApiTests(APITestCase):

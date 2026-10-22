@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Refresh } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 
 import { fetchMaterialInventorySummary, fetchMaterialOrderIssues, fetchMaterialOrderPurchases } from '@/api/inventory'
@@ -34,7 +34,7 @@ onMounted(load)
 
 <template>
   <section v-loading="loading" class="material-issue-page material-stock-detail erp-glass-detail" data-testid="material-inventory-detail">
-    <header class="mi-page-head"><div><ElButton link :icon="ArrowLeft" @click="router.push({ name: 'material-inventory' })">返回材料库存</ElButton><h1>{{ summary?.material_number || '材料库存详情' }} · {{ summary?.material_name || '' }}</h1><p>{{ summary?.category }} · {{ summary?.specification || '无规格' }} · {{ summary?.color || '无颜色' }}</p></div><ElButton :icon="Refresh" @click="load">刷新</ElButton></header>
+    <header class="mi-page-head"><div><h1>{{ summary?.material_number || '材料库存详情' }} · {{ summary?.material_name || '' }}</h1><p>{{ summary?.category }} · {{ summary?.specification || '无规格' }} · {{ summary?.color || '无颜色' }}</p></div><ElButton :icon="Refresh" @click="load">刷新</ElButton></header>
     <section v-if="summary" class="stock-cards"><article><span>当前合格库存</span><strong>{{ numberText(summary.current_quantity) }}</strong><small v-if="summary.measurement_kind === 'PIPE'">根 / {{ summary.meter_quantity }} 米</small><small v-else>{{ summary.unit }}</small></article><article><span>公共可用库存</span><strong>{{ numberText(summary.available_quantity) }}</strong><small>{{ summary.unit }}</small></article><article><span>累计入库</span><strong>{{ numberText(summary.cumulative_inbound_quantity) }}</strong><small>{{ summary.unit }}</small></article><article><span>累计确认发料</span><strong>{{ numberText(summary.cumulative_issued_quantity) }}</strong><small>{{ summary.unit }}</small></article></section>
     <section class="mi-surface stock-tabs"><ElTabs v-model="activeTab">
       <ElTabPane label="订单领用" name="issues"><ElTable :data="issues" empty-text="暂无已确认领料记录"><ElTableColumn prop="issue_number" label="领料单号" width="170"><template #default="{ row }"><ElButton link type="primary" @click="router.push({ name: 'material-issue-detail', params: { issueId: row.material_issue_id } })">{{ row.issue_number }}</ElButton></template></ElTableColumn><ElTableColumn prop="production_task_number" label="生产订单" width="160" /><ElTableColumn prop="workshop" label="车间" width="120" /><ElTableColumn prop="recipient" label="领料人" width="110" /><ElTableColumn label="确认数量" width="120" align="right"><template #default="{ row }">{{ numberText(row.issued_quantity) }} {{ row.unit }}</template></ElTableColumn><ElTableColumn prop="reviewer" label="仓库确认人" width="120" /><ElTableColumn label="确认时间" min-width="180"><template #default="{ row }">{{ dateText(row.reviewed_at) }}</template></ElTableColumn></ElTable></ElTabPane>

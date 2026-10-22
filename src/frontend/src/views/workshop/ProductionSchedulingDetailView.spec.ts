@@ -29,7 +29,7 @@ function summary(id = 'schedule-1'): ScheduleExecutionSummary {
 const wrappers: ReturnType<typeof mount>[] = []
 async function createView() {
   const wrapper = mount(ProductionSchedulingDetailView, {
-    global: { plugins: [ElementPlus], stubs: { ScheduleExecutionOverview: true, AppWindowDialog: { template: '<div><slot /><slot name="footer" /></div>' } } },
+    global: { plugins: [ElementPlus], stubs: { ProductionTimeline: true, ScheduleExecutionOverview: true, AppWindowDialog: { template: '<div><slot /><slot name="footer" /></div>' } } },
   })
   wrappers.push(wrapper)
   await flushPromises()
@@ -61,7 +61,8 @@ describe('排产详情执行汇总接入', () => {
     api.summary.mockResolvedValue(value)
     const wrapper = await createView()
     expect(wrapper.get('[data-testid="schedule-estimated-total"]').text()).toBe('—')
-    expect(wrapper.text()).toContain('部分车间无查看权限')
+    // 用户此前已要求移除汇总提示；缺值仍保持未知。
+    expect(wrapper.text()).not.toContain('部分车间无查看权限')
     expect(wrapper.get('[data-testid="schedule-outsourcing-total"]').text()).toBe('—')
   })
   it('规格清理后为空时显示缺值，不回退原拼接规格', async () => {

@@ -33,7 +33,10 @@ from .models import (
     SupplierPurchaseSheetSealImage,
 )
 from .material_attribute_snapshot import build_material_attribute_snapshot
-from .selectors import production_tasks_with_purchase_sources, purchase_orders_with_context
+from .selectors import (
+    production_tasks_with_purchase_sources, purchase_orders_with_context,
+    purchase_orders_by_product, purchase_orders_with_product_ids,
+)
 from .source_access import purchase_order_access
 
 
@@ -530,14 +533,15 @@ def evaluate_purchase_source(task, bom_id=None):
             )
         )
 
-    existing = PurchaseOrder.objects.filter(production_task=task).values("id", "order_number").first()
-    if existing:
+    orders = getattr(task, "purchase_source_orders", None)
+    if orders is None:
+        orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task))
+    existing_by_product = purchase_orders_by_product(orders)
+    if None in existing_by_product:
         global_blockers.append(
             _blocker(
-                "PURCHASE_ORDER_EXISTS",
-                "该生产订单已建立采购订单。",
-                existing_purchase_order_id=str(existing["id"]),
-                existing_purchase_order_number=existing["order_number"],
+                "PURCHASE_PRODUCT_UNKNOWN",
+                "已有采购单缺少可核实的产品明细，请先核实原单据。",
             )
         )
 
@@ -555,6 +559,13 @@ def evaluate_purchase_source(task, bom_id=None):
     for product in products:
         latest_bom = _latest_bom_for_product(product)
         bom_blockers, bom_lines = _bom_source_details(product, latest_bom)
+        existing = existing_by_product.get(product.pk)
+        if existing is not None:
+            bom_blockers.append(_blocker(
+                "PURCHASE_ORDER_EXISTS", "该产品已建立采购订单。", product=product, bom=latest_bom,
+                existing_purchase_order_id=str(existing.pk),
+                existing_purchase_order_number=existing.order_number,
+            ))
         unavailable_blockers.extend(bom_blockers)
         option = _bom_option(product, latest_bom, bom_blockers, len(bom_lines), global_blockers)
         bom_options.append(option)
@@ -572,6 +583,7 @@ def evaluate_purchase_source(task, bom_id=None):
         selected_bom_id = available_bom_ids[0]
 
     selected_product = product_by_bom_id.get(selected_bom_id)
+    existing = existing_by_product.get(selected_product.pk) if selected_product is not None else None
     selected_blockers = []
     selected_lines = []
     if selected_bom_id:
@@ -597,9 +609,10 @@ def evaluate_purchase_source(task, bom_id=None):
         "selected_bom_id": selected_bom_id,
         "requires_bom_selection": requires_bom_selection,
         "has_creatable_bom": any(option["can_create"] for option in bom_options),
-        "existing_purchase_order_id": str(existing["id"]) if existing else None,
-        "existing_purchase_order_number": existing["order_number"] if existing else None,
+        "existing_purchase_order_id": str(existing.pk) if existing else None,
+        "existing_purchase_order_number": existing.order_number if existing else None,
         "product_count": len(products),
+        "remaining_product_count": sum(product.pk not in existing_by_product for product in products),
         "source_revision": _purchase_source_revision(task, revision_products),
     }
 

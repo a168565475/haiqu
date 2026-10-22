@@ -1,9 +1,8 @@
-"""成品颜色选填，覆盖装配、原入库入口与批量入库。"""
+"""装配成品颜色选填，提交和确认均保留实际颜色。"""
 from rest_framework.test import APITestCase
 
 from apps.inventory.models import FinishedGoodsReceipt
 from apps.inventory.tests import test_assembly_receipts as assembly_fixtures
-from apps.inventory.tests import test_inventory_api as inventory_fixtures
 
 
 class FinishedReceiptOptionalColorTests(assembly_fixtures.AssemblyFixture, APITestCase):
@@ -22,6 +21,9 @@ class FinishedReceiptOptionalColorTests(assembly_fixtures.AssemblyFixture, APITe
         self.assertEqual(replay.status_code, 200, replay.data)
         receipt = FinishedGoodsReceipt.objects.get()
         self.assertEqual(receipt.actual_color, "")
+        self.assertEqual(receipt.remaining_quantity, 0)
+        self.confirm(response)
+        receipt.refresh_from_db()
         self.assertEqual(receipt.remaining_quantity, 2)
         record = self.client.get(f"/api/v1/finished-goods-records/{receipt.pk}/")
         self.assertEqual(record.status_code, 200, record.data)
@@ -35,17 +37,6 @@ class FinishedReceiptOptionalColorTests(assembly_fixtures.AssemblyFixture, APITe
             response = self.post(payload)
             self.assertEqual(response.status_code, 201, response.data)
             self.assertEqual(FinishedGoodsReceipt.objects.get(pk=response.data["data"]["id"]).actual_color, expected)
-
-    def test_original_single_and_batch_entries_allow_blank_colors(self):
-        payload = inventory_fixtures.FinishedGoodsInventoryApiTests.receipt_payload(
-            self, actual_color="", received_quantity=2, quantity_per_box=None,
-        )
-        response = self.client.post('/api/v1/finished-goods-inventory/receipts/', payload, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        payload.update(expected_received_total=2, actual_color="   ")
-        response = self.client.post('/api/v1/finished-goods-inventory/batch-receipts/', {"items": [payload]}, format='json')
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(list(FinishedGoodsReceipt.objects.values_list('actual_color', flat=True)), ["", ""])
 
     def test_optional_color_does_not_relax_quantity_or_length_validation(self):
         for changes in [{"actual_color": "", "received_quantity": 0}, {"actual_color": "", "received_quantity": 12}, {"actual_color": "色" * 201}]:

@@ -121,32 +121,27 @@ function openCreate() {
 }
 
 function openDetail(sampleId: string) {
-  const row = rows.value.find(item => item.id === sampleId)
-  const name = row?.application_actions?.is_application && !['PENDING_COMPLETION', 'METALWORK_PENDING', 'CUTTING_PENDING', 'PRODUCTION_PENDING', 'FINISHED'].includes(row.status) ? row.status === 'MATERIALS_PENDING' ? 'sample-materials' : ['WAREHOUSE_PENDING', 'PROCUREMENT_PENDING', 'MATERIALS_READY'].includes(row.status) ? 'sample-warehouse-review' : 'sample-director-review' : 'sample-detail'
-  void router.push({ name, params: { sampleId } })
+  void router.push({ name: 'sample-detail', params: { sampleId } })
 }
 
 function openEdit(sampleId: string) {
   const row = rows.value.find((item) => item.id === sampleId)
-  if (!row || !canEditRow(row)) return
-  if (row.application_actions?.can_resubmit) {
-    void router.push({ path: '/samples/new', query: { editApplication: sampleId } })
-    return
-  }
-  void router.push({ name: 'sample-detail', params: { sampleId } })
+  if (!row || !canEditRow(row) || mutationPending.value) return
+  void router.push({ name: 'sample-edit', params: { sampleId } })
 }
 
 function canEditRow(row: SampleListItem) {
-  if (row.application_actions?.can_resubmit) return true
-  if (row.edit_capabilities?.mode === 'COMPLETE') return authStore.moduleCan('samples.complete_sample_requirements', undefined, row)
-  if (row.application_actions?.is_application) return false
-  if (row.edit_capabilities?.mode === 'REPORT_ONLY') return ['productionreport_sample','metalreport_sample','cuttingreport_sample'].some(code=>authStore.moduleCan('access_control.'+code,'samples.change_samplerequest',row))
-  return authStore.moduleCan('samples.change_samplerequest', undefined, row) && !['FINISHED', 'CONFIRMED', 'COMPLETED', 'REJECTED', 'CANCELLED'].includes(row.status)
+  if (!row.application_actions?.is_application) return false
+  const canEditProducts = row.application_actions.can_edit_products
+    && authStore.moduleCan('samples.complete_sample_requirements', undefined, row)
+  const canEditMaterials = row.application_actions.can_edit_materials
+    && authStore.moduleCan('samples.edit_sample_materials', undefined, row)
+  return Boolean(canEditProducts || canEditMaterials)
 }
 
-function editLabel(row: SampleListItem) {
-  if (row.application_actions?.can_resubmit) return '补充并重提'
-  return row.status === 'PENDING_COMPLETION' ? '完善需求' : '编辑需求'
+function resubmitApplication(row: SampleListItem) {
+  if (!row.application_actions?.can_resubmit || mutationPending.value) return
+  void router.push({ path: '/samples/new', query: { editApplication: row.id } })
 }
 
 function rowClassName({ row }: { row: SampleListItem }) {
@@ -234,8 +229,21 @@ onBeforeUnmount(() => { rowsRequest++ })
         <ElTableColumn label="业务员" width="88" show-overflow-tooltip><template #default="{ row }">{{ row.owner?.display_name || '—' }}</template></ElTableColumn>
         <ElTableColumn label="期望完成" width="110"><template #default="{ row }">{{ row.requested_due_at?.slice(0, 10) || row.sample_due_date || '—' }}</template></ElTableColumn>
         <ElTableColumn label="当前环节" width="128"><template #default="{ row }"><SampleStatusTag :status="row.status" :label="row.status_display" /></template></ElTableColumn>
-        <ElTableColumn label="材料情况" width="120"><template #default="{ row }"><SampleStatusTag v-if="row.material_summary" :status="row.material_summary.status" :label="row.material_summary.label" /><span v-else class="muted">—</span></template></ElTableColumn>
-        <ElTableColumn label="操作" width="72" align="center" fixed="right"><template #default="{ row }"><div class="row-actions"><ElDropdown :persistent="false" trigger="click"><ElButton link>更多</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem @click="openDetail(row.id)">查看</ElDropdownItem><ElDropdownItem v-if="row.application_actions?.is_application" @click="router.push({ name: 'sample-material-detail', params: { sampleId: row.id } })">查看用料需求</ElDropdownItem><ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_PENDING' && authStore.moduleCan('samples.edit_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue', params: { sampleId: row.id } })">发起样品领料</ElDropdownItem><ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_REVIEW' && authStore.moduleCan('samples.review_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue-confirm', params: { sampleId: row.id } })">确认实际领料</ElDropdownItem><ElDropdownItem :disabled="!canEditRow(row) || mutationPending" @click="openEdit(row.id)">{{ editLabel(row) }}</ElDropdownItem><ElDropdownItem v-if="canDelete && authStore.moduleCan('samples.delete_samplerequest', undefined, row)" :disabled="mutationPending || loading" divided @click="deleteSampleRow(row)">永久删除</ElDropdownItem></ElDropdownMenu></template></ElDropdown></div></template></ElTableColumn>
+        <ElTableColumn label="材料情况" width="160"><template #default="{ row }"><SampleStatusTag v-if="row.material_summary" :status="row.material_summary.status" :label="row.material_summary.label" /><span v-else class="muted">—</span></template></ElTableColumn>
+        <ElTableColumn label="操作" width="72" align="center" fixed="right"><template #default="{ row }"><div class="row-actions">
+          <ElDropdown :persistent="false" trigger="click"><ElButton link>更多</ElButton><template #dropdown><ElDropdownMenu>
+            <ElDropdownItem :disabled="!canEditRow(row) || mutationPending" @click="openEdit(row.id)">编辑</ElDropdownItem>
+            <ElDropdownItem @click="openDetail(row.id)">查看</ElDropdownItem>
+            <ElDropdownItem v-if="row.application_actions?.can_resubmit" :disabled="mutationPending" @click="resubmitApplication(row)">补充并重提</ElDropdownItem>
+            <ElDropdownItem v-if="row.application_actions?.is_application && row.status === 'DIRECTOR_REVIEW'" @click="router.push({ name: 'sample-director-review', params: { sampleId: row.id } })">厂长确认</ElDropdownItem>
+            <ElDropdownItem v-if="row.application_actions?.is_application && row.status === 'APPLICATION_RETURNED'" @click="router.push({ name: 'sample-director-review', params: { sampleId: row.id } })">查看退回原因</ElDropdownItem>
+            <ElDropdownItem v-if="row.application_actions?.is_application && ['WAREHOUSE_PENDING', 'PROCUREMENT_PENDING', 'MATERIALS_READY'].includes(row.status)" @click="router.push({ name: 'sample-warehouse-review', params: { sampleId: row.id } })">{{ row.status === 'WAREHOUSE_PENDING' ? '仓库核对' : row.status === 'PROCUREMENT_PENDING' ? '查看采购进度' : '查看供料进度' }}</ElDropdownItem>
+            <ElDropdownItem v-if="row.application_actions?.is_application" @click="router.push({ name: 'sample-material-detail', params: { sampleId: row.id } })">查看用料需求</ElDropdownItem>
+            <ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_PENDING' && authStore.moduleCan('samples.edit_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue', params: { sampleId: row.id } })">发起样品领料</ElDropdownItem>
+            <ElDropdownItem v-if="row.status === 'MATERIAL_ISSUE_REVIEW' && authStore.moduleCan('samples.review_sample_materials', undefined, row)" @click="router.push({ name: 'sample-material-issue-confirm', params: { sampleId: row.id } })">确认实际领料</ElDropdownItem>
+            <ElDropdownItem v-if="canDelete && authStore.moduleCan('samples.delete_samplerequest', undefined, row)" :disabled="mutationPending || loading" divided @click="deleteSampleRow(row)">永久删除</ElDropdownItem>
+          </ElDropdownMenu></template></ElDropdown>
+        </div></template></ElTableColumn>
         <template #empty><div class="data-state"><strong>{{ loading ? '正在加载打样申请…' : hasFilters ? '没有符合条件的打样申请' : '暂无打样申请' }}</strong><template v-if="!loading"><p>{{ hasFilters ? '调整筛选条件后重试。' : '创建第一份打样申请，开始跟进样品。' }}</p><ElButton class="erp-button-motion" v-if="hasFilters" @click="resetFilters">重置筛选</ElButton><ElButton class="erp-button-motion" v-else-if="canCreate" type="primary" @click="openCreate">申请打样</ElButton></template></div></template>
       </ElTable>
       </div>

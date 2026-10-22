@@ -98,24 +98,33 @@ def _available_rows(sample, *, require_available=True):
 
 def _pipe_plans(record, rows, *, lock=False):
     plans, blockers, planned = {}, [], {}
+    from .warehouse_stock import plan_other_issue
+    linked = {line['key']: line.get('inventoryAllocations') for line in record.warehouse_draft.get('lines', [])}
+    planned_other = {}
     arrivals = {str(item["row"]["key"]): pipe_arrivals(record, item["row"]["key"])
                 for item in rows if item["row"].get("category") == "tube"}
     pending_arrivals = pipe_arrival_reservations([arrival for batch in arrivals.values() for arrival in batch])
     for item in sorted(rows, key=lambda value: (str(value["material"].pk), str(value["row"]["key"]))):
         row = item["row"]
-        if row.get("category") != "tube":
-            continue
         try:
+            if row.get('category') != 'tube':
+                if linked.get(str(row['key'])) is not None:
+                    plans[str(row['key'])] = plan_other_issue(
+                        row, linked[str(row['key'])], item['warehouse'], item['arrived'],
+                        planned=planned_other, lock=lock,
+                    )
+                continue
             if row.get("unitLabel") != "米":
                 raise Conflict("历史管材需求按支记录，请先核对米数后再全部领料。")
             plan = plan_pipe_issue(
                 raw_material=item["material"], warehouse_quantity=item["warehouse"],
                 arrivals=arrivals[str(row["key"])], lock=lock, planned=planned, pending_arrivals=pending_arrivals,
+                warehouse_allocations=linked.get(str(row['key'])),
             )
             if sum((entry["bars"] * entry["balance"].raw_bar_length_m for entry in plan["allocations"]), Decimal("0")) != item["available"]:
                 raise Conflict("打样到货米数与真实入库根米不一致，请先核对来源。")
             plans[str(row["key"])] = plan
-        except Conflict as error:
+        except (Conflict, ValidationError) as error:
             blockers.append(f'{row.get("name", "管材")}：{error.detail}')
     return plans, blockers
 
@@ -123,7 +132,7 @@ def _pipe_plans(record, rows, *, lock=False):
 def _issue_etag(sample, plans):
     if not plans:
         return etag_for_instance(sample)
-    payload = {key: [(str(row["balance"].pk), row["balance"].version, str(row["bars"]))
+    payload = {key: [(str(row["balance"].pk), row["balance"].version, str(row.get('bars', row.get('quantity'))))
                      for row in plan["allocations"]] for key, plan in plans.items()}
     digest = hashlib.sha256((etag_for_instance(sample) + json.dumps(payload, sort_keys=True)).encode()).hexdigest()
     return f'"{digest}"'
@@ -209,7 +218,7 @@ def issue_response(sample, request):
     for line in lines:
         key = line["lineKey"]
         line["procurementQuantity"] = str(procurement_quantities.get(key, "0"))
-        batches = pipe_plan_payload(plans[key]) if key in plans else []
+        batches = pipe_plan_payload(plans[key]) if key in plans and line['category'] == 'tube' else []
         if issue and issue.status == SampleMaterialIssueStatus.ISSUED and line["category"] == "tube":
             batches = issued_pipe_payload(issue, issued_lines[key])
         line["pipeBatches"] = batches
@@ -336,6 +345,10 @@ def confirm_sample_material_issue(*, sample_id, data, request):
             if line.category == "tube":
                 debit_pipe_plan(plan=plans[str(line.line_key)], source_id=issue.id, source_line_id=line.id,
                                 actor_employee=request.employee, snapshot=snapshot)
+            elif str(line.line_key) in plans:
+                from .warehouse_stock import debit_other_plan
+                debit_other_plan(plan=plans[str(line.line_key)], source_id=issue.id, source_line_id=line.id,
+                                 actor_employee=request.employee, snapshot=snapshot)
             else:
                 debit_material_stock(raw_material=line.raw_material, unit=line.unit, quantity=quantity,
                                      source_type="SAMPLE_MATERIAL_ISSUE", source_id=issue.id,

@@ -1,3 +1,4 @@
+import { ElSelect } from 'element-plus'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { AxiosError } from 'axios'
@@ -6,17 +7,18 @@ import NotificationRulesView from './NotificationRulesView.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { NotificationPreview, NotificationRule, NotificationRulesResponse } from '@/types/notifications'
 
-const api = vi.hoisted(() => ({ getNotificationRules: vi.fn(), saveNotificationRule: vi.fn(), previewNotificationRule: vi.fn() }))
+const api = vi.hoisted(() => ({ getNotificationRules: vi.fn(), saveNotificationRule: vi.fn(), previewNotificationRule: vi.fn(), getNotificationPreviewRecipients: vi.fn(), sendNotificationPreview: vi.fn(), getNotificationPreviewAttempt: vi.fn() }))
 vi.mock('@/api/notifications', async original => ({ ...await original<object>(), ...api }))
 const rule: NotificationRule = {
   event_code: 'PRODUCTION_TASK_CONFIRMED', display_name: '生产任务确认', name: '任务通知',
   title_template: '生产任务', body_template: '{{document_no}} 已由 {{operator}} 于 {{occurred_at}} 确认。',
   allowed_variables: ['document_no', 'operator', 'occurred_at'], required_variables: ['document_no', 'operator', 'occurred_at'],
+  variable_definitions: [{ name: 'document_no', label: '单据编号', example: '示例单号' }, { name: 'operator', label: '操作人', example: '示例操作人' }, { name: 'occurred_at', label: '操作时间', example: '示例时间' }],
   supported_scopes: ['ROLE_MEMBERS'], scope_labels: { ROLE_MEMBERS: '所选角色的合法成员' },
   recipient_role_codes: ['TECHNICAL'], recipient_roles: [{ role_code: 'TECHNICAL', display_name: '技术', archived: false }],
   recipient_scope: 'ROLE_MEMBERS', enabled: true, version: 0, updated_at: null, updated_by: '', etag: 'server-v0', target_key: 'production-task-detail',
 }
-const sample: NotificationPreview = { event_code: rule.event_code, title: '生产任务示例', body: '示例单号已确认', recipient_scope: 'ROLE_MEMBERS', scope_label: '所选角色的合法成员', recipient_role_codes: ['TECHNICAL'], will_send: false }
+const sample: NotificationPreview = { event_code: rule.event_code, title: '生产任务示例', body: '示例单号已确认', recipient_scope: 'ROLE_MEMBERS', scope_label: '所选角色的合法成员', recipient_role_codes: ['TECHNICAL'], will_send: false, preview_token: 'signed-preview', preview_id: 'preview-1', expires_at: '2099-01-01T00:00:00Z' }
 const wrappers: ReturnType<typeof mount>[] = []
 function result(): NotificationRulesResponse { return { data: [{ ...rule }], roles: [...rule.recipient_roles] } }
 function button(label: string) { return new DOMWrapper(Array.from(document.querySelectorAll('button')).find(item => item.textContent?.trim() === label)!) }
@@ -28,7 +30,9 @@ beforeEach(() => {
   vi.resetAllMocks(); setActivePinia(createPinia())
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '管理员', is_superuser: true, employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, permissions: [], data_scope: 'ALL' } })
   api.getNotificationRules.mockImplementation(async () => result())
-  api.previewNotificationRule.mockResolvedValue({ ...sample })
+  api.previewNotificationRule.mockResolvedValue({ ...sample, expires_at: new Date(Date.now() + 600000).toISOString() })
+  api.getNotificationPreviewRecipients.mockResolvedValue({ data: [{ binding_id: 'binding-1', employee_code: 'E1', employee_name: '已绑定员工' }], count: 1, page: 1, page_size: 50, available: true, schema_ready: true, config_etag: 'config-v1', message: '' })
+  api.sendNotificationPreview.mockResolvedValue({ id: 'attempt-1', preview_id: 'preview-1', status: 'ACCEPTED', recipient_name: '已绑定员工', message: '企业微信已受理，不代表员工已读。' })
   api.saveNotificationRule.mockImplementation(async (_code, data) => ({ data: { ...rule, ...data, version: 1, etag: 'server-v1' }, etag: 'server-v1' }))
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks() })
@@ -69,7 +73,7 @@ describe('通知规则页面', () => {
     await edit()
     await input('#notification-title').setValue('新标题')
     await button('生成预览').trigger('click'); await flushPromises()
-    expect(api.previewNotificationRule).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({ title_template: '新标题', variables: { document_no: '示例单号', operator: '示例操作人', occurred_at: '示例时间' } }))
+    expect(api.previewNotificationRule).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({ title_template: '新标题', variables: { document_no: '示例单号', operator: '示例操作人', occurred_at: '示例时间' } }), 'server-v0')
     expect(document.querySelector('.preview-message')?.textContent).toContain('示例单号已确认')
     await input('#notification-title').setValue('再次修改')
     expect(document.querySelector('.preview-message')).toBeNull()
@@ -144,4 +148,108 @@ describe('通知规则页面', () => {
     expect(wrapper.text()).not.toContain('任务通知')
     expect(wrapper.text()).toContain('没有通知规则管理权限')
   })
+  it('中文名称与变量在右侧分组，生成后消息位于变量下面', async () => {
+    await edit()
+    const right = document.querySelector('.preview')!
+    expect(right.querySelector('[aria-label="必要变量"]')?.textContent).toContain('单据编号')
+    expect(right.querySelector('[aria-label="必要变量"]')?.textContent).toContain('{{document_no}}')
+    expect(document.querySelector('.editor')?.textContent).not.toContain('可用变量：')
+    expect(right.querySelector('.preview-message')).toBeNull()
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(right.querySelector('.variable-group')!.compareDocumentPosition(right.querySelector('.preview-message')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('手选一个绑定人后只发送当前预览凭证，重复点击不重发', async () => {
+    const wrapper = await edit()
+    expect(button('发送预览').attributes('disabled')).toBeDefined()
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1')
+    await flushPromises()
+    await button('发送预览').trigger('click'); await flushPromises()
+    expect(api.sendNotificationPreview).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({ preview_token: 'signed-preview', binding_id: 'binding-1', config_etag: 'config-v1', draft: expect.objectContaining({ title_template: rule.title_template }) }))
+    expect(document.body.textContent).toContain('不代表员工已读')
+    await button('发送预览').trigger('click')
+    expect(api.sendNotificationPreview).toHaveBeenCalledTimes(1)
+  })
+
+  it('试发表未就绪不影响原来的编辑与生成预览', async () => {
+    api.getNotificationPreviewRecipients.mockResolvedValue({ data: [], count: 0, page: 1, page_size: 50, available: false, schema_ready: false, config_etag: '', message: '预览试发尚未启用' })
+    await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(document.querySelector('.preview-message')).not.toBeNull()
+    expect(document.body.textContent).toContain('尚未启用')
+    expect(button('发送预览').attributes('disabled')).toBeDefined()
+    expect(button('保存').attributes('disabled')).toBeUndefined()
+  })
+
+  it('发送超时只查询原尝试，不自动发送或重新生成凭证', async () => {
+    api.sendNotificationPreview.mockRejectedValue(new Error('timeout'))
+    api.getNotificationPreviewAttempt.mockResolvedValue({ id: 'attempt-1', preview_id: 'preview-1', status: 'UNCERTAIN', recipient_name: '已绑定员工', message: '结果待核对' })
+    const wrapper = await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    await button('发送预览').trigger('click'); await flushPromises()
+    expect(button('生成预览').attributes('disabled')).toBeDefined()
+    await button('查询本次结果').trigger('click'); await flushPromises()
+    expect(api.getNotificationPreviewAttempt).toHaveBeenCalledWith('preview-1')
+    expect(api.sendNotificationPreview).toHaveBeenCalledTimes(1)
+  })
+
+  it('只有试发权限被服务端拒绝时保留规则编辑器', async () => {
+    api.getNotificationPreviewRecipients.mockRejectedValue(new AxiosError('forbidden', undefined, undefined, undefined, { status: 403 } as never))
+    await edit()
+    expect(document.querySelector('#notification-name')).not.toBeNull()
+    expect(document.body.textContent).toContain('两项管理权限')
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(document.querySelector('.preview-message')).not.toBeNull()
+  })
+
+  it('预览A的迟到查询不得填入预览B', async () => {
+    let finish!: (value: unknown) => void
+    api.getNotificationPreviewAttempt.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    await button('发送预览').trigger('click'); await flushPromises()
+    await button('查询本次结果').trigger('click')
+    api.previewNotificationRule.mockResolvedValue({ ...sample, title: '新预览B', preview_id: 'preview-2', preview_token: 'token-2', expires_at: new Date(Date.now() + 600000).toISOString() })
+    await button('生成预览').trigger('click'); await flushPromises()
+    finish({ id: 'attempt-1', preview_id: 'preview-1', status: 'UNCERTAIN', recipient_name: '旧接收人A', message: '旧结果' })
+    await flushPromises()
+    expect(document.querySelector('.preview-message')?.textContent).toContain('新预览B')
+    expect(document.body.textContent).not.toContain('旧接收人A')
+    expect(document.body.textContent).not.toContain('旧结果')
+  })
+
+  it('企微管理权撤销再恢复仍丢弃旧发送和查询响应', async () => {
+    const auth = useAuthStore()
+    const grant = { scopes: ['MODULE' as const], sources: [{ type: 'ROLE', scope: 'MODULE' as const }] }
+    auth.user!.effective_access = { active: true, is_superuser: false, roles: [], actions: { 'access_control.manage_notifications': grant, 'access_control.manage_wecom': grant }, legacy_sources: [], version: 'test' }
+    auth.user!.is_superuser = false
+    let finishSend!: (value: unknown) => void
+    api.sendNotificationPreview.mockImplementationOnce(() => new Promise(resolve => { finishSend = resolve }))
+    const wrapper = await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    await button('发送预览').trigger('click')
+    delete auth.user!.effective_access!.actions['access_control.manage_wecom']; await flushPromises()
+    expect(document.querySelector('#notification-name')).not.toBeNull()
+    auth.user!.effective_access!.actions['access_control.manage_wecom'] = grant; await flushPromises()
+    finishSend({ id: 'old', preview_id: 'preview-1', status: 'ACCEPTED', recipient_name: '撤权前接收人', message: '旧发送结果' }); await flushPromises()
+    expect(document.body.textContent).not.toContain('撤权前接收人')
+    expect(document.body.textContent).not.toContain('旧发送结果')
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    await button('发送预览').trigger('click'); await flushPromises()
+    let finishQuery!: (value: unknown) => void
+    api.getNotificationPreviewAttempt.mockImplementationOnce(() => new Promise(resolve => { finishQuery = resolve }))
+    await button('查询本次结果').trigger('click')
+    delete auth.user!.effective_access!.actions['access_control.manage_wecom']; await flushPromises()
+    expect(document.body.textContent).not.toContain('企业微信已受理')
+    auth.user!.effective_access!.actions['access_control.manage_wecom'] = grant; await flushPromises()
+    finishQuery({ id: 'old', preview_id: 'preview-1', status: 'UNCERTAIN', recipient_name: '旧查询接收人', message: '旧查询结果' }); await flushPromises()
+    expect(document.body.textContent).not.toContain('旧查询接收人')
+    expect(document.body.textContent).not.toContain('旧查询结果')
+  })
+
 })

@@ -1,5 +1,5 @@
-from django.db.models import Exists, ExpressionWrapper, F, IntegerField, OuterRef, Prefetch, Subquery, Sum, Value, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Case, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Prefetch, Subquery, Sum, Value, Q, When
+from django.db.models.functions import Coalesce, Least
 
 from .models import (
     SampleInventoryLine,
@@ -127,8 +127,14 @@ def eligible_sample_items_for_inventory(queryset=None):
                    has_metalwork_parameters=True, has_cutting_parameters=True)
                    & (Q(sample_has_no_materials=True) | Q(has_sample_material_issue=True))))
         .annotate(
+            # 新版需求可持续修改，入库额度仍由两个工序的实际报工共同限定。
+            receivable_quantity=Case(
+                When(sample_request__application_payload_hash='', then=F('sample_quantity')),
+                default=Least('sample_quantity', 'cutting_reported_quantity', 'metalwork_reported_quantity'),
+                output_field=IntegerField(),
+            ),
             remaining_quantity=ExpressionWrapper(
-                F("sample_quantity") - F("cumulative_received"),
+                F("receivable_quantity") - F("cumulative_received"),
                 output_field=IntegerField(),
             )
         )

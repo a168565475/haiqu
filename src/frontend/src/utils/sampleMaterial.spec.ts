@@ -27,6 +27,23 @@ describe('材料需求校验与接口边界', () => {
 
 
 describe('打样管材总米数', () => {
+  it('保存后返回的总米数管材没有单位编号，仍可重新提交', () => {
+    const input = draft('12.3456', '')
+    Object.assign(input.lines[0]!, { category: 'tube', unitLabel: '米', pipeInputMode: 'TOTAL_METERS' })
+    expect(validateSampleMaterials(input, units)).toBe('')
+    expect(validateSampleMaterials(input, [])).toBe('')
+    input.lines[0]!.quantity = '0'
+    expect(validateSampleMaterials(input, units)).toContain('必须大于 0')
+    input.lines[0]!.quantity = '12.34567'
+    expect(validateSampleMaterials(input, units)).toContain('4 位小数')
+  })
+  it('不将普通材料的空单位或旧支数管材误认为总米数', () => {
+    const input = draft('12', '')
+    Object.assign(input.lines[0]!, { unitLabel: '米', pipeInputMode: 'TOTAL_METERS' })
+    expect(validateSampleMaterials(input, units)).toContain('有效单位')
+    Object.assign(input.lines[0]!, { category: 'tube', unitLabel: '支', pipeInputMode: undefined })
+    expect(validateSampleMaterials(input, units)).toContain('有效单位')
+  })
   it('按总米数校验、单位必须为米且必须选择原材料身份', () => {
     const input = draft('20', 'meter')
     Object.assign(input.lines[0]!, { category: 'tube', rawMaterialId: 'raw' })

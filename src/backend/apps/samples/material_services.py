@@ -20,7 +20,9 @@ from .procurement_status import sample_status_display
 def material_actions(sample, request):
     active = bool(request and getattr(request, 'employee', None) and sample.application_payload_hash and sample.archived_at is None and sample.customer_account.archived_at is None)
     return {
-        'can_edit_materials': bool(active and sample.status == SampleRequestStatus.MATERIALS_PENDING and can_sample(request, sample, 'samples.edit_sample_materials')),
+        # 产品资料和材料需求允许在申请生命周期内持续修订；状态推进仍由提交动作负责。
+        'can_edit_materials': bool(active and can_sample(request, sample, 'samples.edit_sample_materials')),
+        'can_submit_materials': bool(active and sample.status == SampleRequestStatus.MATERIALS_PENDING and can_sample(request, sample, 'samples.edit_sample_materials')),
         'can_review_materials': bool(active and sample.status == SampleRequestStatus.WAREHOUSE_PENDING and can_sample(request, sample, 'samples.review_sample_materials')),
     }
 
@@ -46,11 +48,14 @@ def material_response(sample, request):
         return {'available': False, 'reason': '历史申请不使用新版材料交接流程。'}
     record = _record(sample)
     procurement = SampleMaterialProcurementRequest.objects.filter(material_request=record).first() if record else None
-    return {'available': True, 'draft': deepcopy(record.draft) if record else {'lines': [], 'notes': ''},
+    current_draft = record.draft.get('currentDraft', record.draft) if record else {}
+    actions = material_actions(sample, request)
+    return {'available': True, 'draft': {'lines': deepcopy(current_draft.get('lines', [])), 'notes': current_draft.get('notes', '')},
             'noMaterials': bool(record and record.no_materials), 'progress': material_progress(sample),
             'procurementRequest': {'id': str(procurement.pk), 'submittedAt': procurement.created_at.isoformat()} if procurement else None,
             'etag': etag_for_instance(sample), 'status': sample.status, 'statusLabel': sample_status_display(sample),
-            'canEdit': material_actions(sample, request)['can_edit_materials'],
+            'canEdit': actions['can_edit_materials'], 'canSubmit': actions['can_submit_materials'],
+            'isRevision': bool(record and (record.submitted_at or record.no_materials)),
             'submittedAt': record.submitted_at.isoformat() if record and record.submitted_at else None}
 
 
@@ -61,8 +66,8 @@ def warehouse_response(sample, request):
         return {'available': False, 'reason': '打样部已确认无需用料，无需仓库核对。'}
     if not sample.application_payload_hash or not record or not record.submitted_at:
         return {'available': False, 'reason': '打样部尚未提交材料需求。'}
-    supply = {line['key']: line['supplyQuantity'] for line in record.warehouse_draft.get('lines', [])}
-    lines = [{**line, 'supplyQuantity': supply.get(line['key'], '')} for line in deepcopy(record.draft['lines'])]
+    supply = {line['key']: line for line in record.warehouse_draft.get('lines', [])}
+    lines = [{**line, **deepcopy(supply.get(line['key'], {'supplyQuantity': ''}))} for line in deepcopy(record.draft['lines'])]
     procurement = SampleMaterialProcurementRequest.objects.filter(material_request=record).first()
     return {'available': True, 'draft': {'lines': lines, 'notes': record.warehouse_draft.get('notes', '')},
             'progress': material_progress(sample),
@@ -88,6 +93,8 @@ def save_materials(*, sample_id, data, request):
     sample = _locked_sample(sample_id, request, 'edit_sample_materials', 'can_edit_materials')
     before = model_snapshot(sample, SAMPLE_FIELDS)
     draft, submit = deepcopy(data['draft']), data['submit']
+    if submit and not material_actions(sample, request)['can_submit_materials']:
+        raise Conflict('当前阶段只允许保存材料资料，不能重新提交仓库。')
     keys = [str(line['key']) for line in draft['lines']]
     if len(keys) != len(set(keys)):
         raise ValidationError('材料行标识重复，请重新加载。')
@@ -119,13 +126,20 @@ def save_materials(*, sample_id, data, request):
             # 提交仓库前发现缺失关联，避免进入采购后才发现无法入库。
             sample_material_snapshot(sample, line)
     record, _ = SampleMaterialRequest.objects.get_or_create(sample_request=sample)
-    record.draft = draft
+    if record.submitted_at or record.no_materials:
+        # 已提交的顶层需求继续作为仓库、采购和领料来源，修订稿不改写执行快照。
+        record.draft = {**record.draft, 'currentDraft': draft}
+    else:
+        record.draft = draft
     if submit:
         record.submitted_at = timezone.now()
         record.submitted_by = request.employee
-        sample.status = SampleRequestStatus.WAREHOUSE_PENDING
     record.save()
-    sample.save(update_fields=['status', 'updated_at'])
+    update_fields = ['updated_at']
+    if submit and sample.status == SampleRequestStatus.MATERIALS_PENDING:
+        sample.status = SampleRequestStatus.WAREHOUSE_PENDING
+        update_fields.insert(0, 'status')
+    sample.save(update_fields=update_fields)
     _write_sample_records(sample_request=sample, action='MATERIALS_SUBMITTED' if submit else 'MATERIALS_DRAFT_SAVED', actor_employee=request.employee, request=request, before_data=before, note='材料需求已提交仓库。' if submit else '保存材料需求草稿。')
     return sample
 
@@ -142,7 +156,7 @@ def save_warehouse(*, sample_id, data, request):
     keys = [str(line['key']) for line in draft['lines']]
     if len(keys) != len(set(keys)) or set(keys) != set(required):
         raise ValidationError('仓库材料行必须与已提交需求一致，不能新增、删除或重复。')
-    shortages = []
+    shortages, planned = [], {}
     for line in draft['lines']:
         line['key'] = str(line['key'])
         supply = quantity_value(line['supplyQuantity'], allow_blank=not submit)
@@ -154,6 +168,11 @@ def save_warehouse(*, sample_id, data, request):
         need = Decimal(required[line['key']]['quantity'])
         if supply is not None and supply > need:
             raise ValidationError('本次可供数量不能超过需求数量。')
+        if 'inventoryAllocations' in line:
+            from .warehouse_stock import validate_allocations
+            line['inventoryAllocations'] = validate_allocations(
+                required[line['key']], line['inventoryAllocations'], supply, planned=planned,
+            )
         if supply is not None and need > supply:
             shortages.append({**required[line['key']], 'supplyQuantity': line['supplyQuantity'], 'shortageQuantity': format(need - supply, 'f')})
     if submit:
@@ -175,7 +194,7 @@ def save_warehouse(*, sample_id, data, request):
 
 @transaction.atomic
 def confirm_no_materials(*, sample_id, request):
-    sample = _locked_sample(sample_id, request, 'edit_sample_materials', 'can_edit_materials')
+    sample = _locked_sample(sample_id, request, 'edit_sample_materials', 'can_submit_materials')
     before = model_snapshot(sample, SAMPLE_FIELDS)
     record, _ = SampleMaterialRequest.objects.get_or_create(sample_request=sample)
     # 保留原草稿以便追溯；显式标识无需用料，不把草稿中的材料当作已提交需求。

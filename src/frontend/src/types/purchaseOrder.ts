@@ -47,6 +47,7 @@ export interface PurchaseOrderProductionTaskOption {
   order_number: string
   customer_name: string
   product_count: number
+  remaining_product_count?: number
   delivery_date: string
   status: string
   status_display: string

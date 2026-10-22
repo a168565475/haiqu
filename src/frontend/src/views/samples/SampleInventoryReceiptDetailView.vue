@@ -95,7 +95,7 @@ onBeforeUnmount(() => { detailRequest++ })
 
 <template>
   <section v-loading="loading" class="receipt-detail-page" data-figma-node="816:8933" aria-labelledby="receipt-detail-title">
-    <div class="breadcrumb">样品管理 / 样品库 / 入库单详情</div>
+
 
     <header class="detail-heading">
       <div class="heading-title">
@@ -117,20 +117,6 @@ onBeforeUnmount(() => { detailRequest++ })
           <div class="info-field status-field"><span>状态</span><strong>{{ detail.status_display }}</strong></div>
         </div>
         <SampleStatusTag class="completed-tag" :status="detail.status" :label="detail.status_display" />
-      </section>
-
-      <section class="detail-card operation-card" aria-labelledby="receipt-operation-title">
-        <h2 id="receipt-operation-title" class="card-title">操作信息</h2>
-        <div class="operation-grid">
-          <div class="info-field">
-            <span>操作说明</span>
-            <strong>支持同一样品分批、多次入库；入库位置按明细保存。</strong>
-          </div>
-          <div class="info-field">
-            <span>数量规则</span>
-            <strong>累计入库不得超过打样数量</strong>
-          </div>
-        </div>
       </section>
 
       <section class="detail-card lines-card" aria-labelledby="receipt-lines-title">
@@ -158,31 +144,16 @@ onBeforeUnmount(() => { detailRequest++ })
               </button>
               <span>{{ line.product_category || '—' }}</span>
               <span>{{ line.product_name || '—' }}</span>
-              <span>{{ specificationAndColor(line.specification, line.color) }}</span>
+              <span :title="specificationAndColor(line.specification, line.color)">{{ specificationAndColor(line.specification, line.color) }}</span>
               <span>{{ line.sampling_quantity }}</span>
               <span>{{ line.received_quantity }}</span>
               <span>{{ line.cumulative_received }}</span>
               <span :title="inventoryLocations(line)">{{ inventoryLocations(line) }}</span>
-              <span>{{ line.flow_condition }}</span>
+              <span :title="line.flow_condition">{{ line.flow_condition }}</span>
               <span aria-hidden="true"></span>
             </div>
             <div v-if="!detail.lines.length" class="detail-empty">暂无入库明细</div>
           </div>
-        </div>
-      </section>
-
-      <section class="detail-card source-card" aria-labelledby="receipt-source-title">
-        <h2 id="receipt-source-title" class="card-title">来源样品跟进单</h2>
-        <div class="source-list">
-          <div v-for="line in detail.lines" :key="`source-${line.id}`" class="source-row">
-            <button type="button" class="source-link" :disabled="!canViewSample || !line.sample_request_id" @click="openSampleRequest(line.sample_request_id)">
-              {{ line.sample_request_number }}
-            </button>
-            <span>{{ line.product_name || '—' }}</span>
-            <CustomerActivityTag class="source-status" tone="success" label="已入库" />
-            <span class="source-flow" :title="`成品入库单：${line.finished_goods_receipt_number || '—'}；${line.flow_condition || '已入库'}`">成品入库单：{{ line.finished_goods_receipt_number || '—' }}；{{ line.flow_condition || '已入库' }}</span>
-          </div>
-          <div v-if="!detail.lines.length" class="detail-empty">暂无来源样品</div>
         </div>
       </section>
 

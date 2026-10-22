@@ -18,6 +18,11 @@ const query = ref(''), appliedQuery = ref(''), status = ref('all'), account = re
 const directoryOpen = ref(false), mappingOpen = ref(false)
 const departmentEmployee = ref<AccessEmployee>(), departments = ref<AccessDepartment[]>([]), departmentLoading = ref(false)
 const statusNames: Record<string, string> = { ACTIVE: '在职', INACTIVE: '停用', LEFT: '离职' }
+function wecomDepartmentNames(departments: AccessEmployee['wecom_departments']) {
+  if (departments == null) return 'UNKNOWN'
+  if (!departments.length) return '未分配'
+  return departments.map(department => `${department.name?.trim() || 'UNKNOWN'}（${department.id}）`).join('、')
+}
 let loadSequence = 0, departmentSequence = 0
 const filtered = computed(() => {
   const search = appliedQuery.value.trim().toLocaleLowerCase()
@@ -70,15 +75,15 @@ onBeforeUnmount(() => { loadSequence++; departmentSequence++ })
 <template>
   <div class="access-page employee-page" data-testid="employee-list">
     <header class="access-title">
-      <div><h1>员工</h1><p>统一员工档案供账号、考勤与车间配置使用。</p></div>
+      <div><h1>员工</h1></div>
       <div v-if="permitted" class="access-actions">
         <button v-if="canOrganization" :disabled="directoryOpen || !!departmentEmployee" @click="mappingOpen = true">部门映射</button>
         <button v-if="canAccounts" class="primary" :disabled="mappingOpen || !!departmentEmployee" @click="directoryOpen = true">从企业微信读取</button>
       </div>
     </header>
     <div v-if="!permitted" class="access-state">没有员工目录查看权限。</div>
-    <section v-else class="access-box access-widebox">
-      <div class="access-toolbar">
+    <template v-else>
+      <div class="access-toolbar access-box employee-filters">
         <div class="access-actions">
           <input v-model="query" aria-label="搜索员工" placeholder="姓名、员工编码、账号或部门" @keyup.enter="appliedQuery = query">
           <button @click="appliedQuery = query">查询</button>
@@ -87,13 +92,13 @@ onBeforeUnmount(() => { loadSequence++; departmentSequence++ })
         </div>
         <button :disabled="loading" @click="load">刷新员工</button>
       </div>
-      <p class="access-notice">部门归属不会自动分配角色；账号已启用也不代表已获得 ERP 访问权限。</p>
+    <section class="access-box access-widebox">
       <div v-if="error" class="access-warning" role="alert">{{ error }}</div>
       <div v-if="loading" class="access-empty" role="status">正在读取员工…</div>
       <div v-else class="access-tablewrap employee-tablewrap">
-        <table><colgroup><col style="width:140px"><col style="width:150px"><col><col style="width:90px"><col style="width:160px"><col style="width:100px"><col v-if="canOrganization || canAccess || canAccounts" style="width:190px"></colgroup>
-          <thead><tr><th>员工编码</th><th>姓名</th><th>部门</th><th>员工状态</th><th>账号</th><th>账号状态</th><th v-if="canOrganization || canAccess || canAccounts">操作</th></tr></thead>
-          <tbody><tr v-for="employee in rows" :key="employee.id" :data-employee-id="employee.id"><td>{{ employee.employee_code }}</td><td>{{ employee.display_name }}</td><td>{{ employee.department || '未分配' }}</td><td>{{ statusNames[employee.status] || employee.status }}</td><td>{{ employee.username || '—' }}</td><td>{{ !employee.username ? '未建账号' : employee.account_active ? '已启用' : '已停用' }}</td>
+        <table><colgroup><col style="width:360px"><col style="width:220px"><col><col style="width:230px"><col style="width:90px"><col style="width:360px"><col style="width:100px"><col v-if="canOrganization || canAccess || canAccounts" style="width:170px"></colgroup>
+          <thead><tr><th>员工编码</th><th>姓名</th><th>部门</th><th>企业微信部门</th><th>员工状态</th><th>账号</th><th>账号状态</th><th v-if="canOrganization || canAccess || canAccounts">操作</th></tr></thead>
+          <tbody><tr v-for="employee in rows" :key="employee.id" :data-employee-id="employee.id"><td class="employee-code">{{ employee.employee_code }}</td><td :title="employee.display_name">{{ employee.display_name }}</td><td :title="employee.department || '未分配'">{{ employee.department || '未分配' }}</td><td class="employee-wecom-department" :title="wecomDepartmentNames(employee.wecom_departments)">{{ wecomDepartmentNames(employee.wecom_departments) }}</td><td>{{ statusNames[employee.status] || employee.status }}</td><td class="employee-account" :title="employee.username || '—'">{{ employee.username || '—' }}</td><td>{{ !employee.username ? '未建账号' : employee.account_active ? '已启用' : '已停用' }}</td>
             <td v-if="canOrganization || canAccess || canAccounts"><div class="access-actions access-row-actions"><button v-if="canOrganization" class="text-button" :disabled="departmentLoading || directoryOpen || mappingOpen || employee.status !== 'ACTIVE'" @click="editDepartments(employee)">部门管理</button><button v-if="canAccess || canAccounts" class="text-button" @click="openAccess(employee)">{{ canAccess ? '权限管理' : '账号管理' }}</button></div></td>
           </tr></tbody>
         </table>
@@ -101,6 +106,7 @@ onBeforeUnmount(() => { loadSequence++; departmentSequence++ })
       </div>
       <footer class="access-pagination"><span>共 {{ filtered.length }} 人</span><div class="access-actions"><button :disabled="page <= 1 || loading" @click="page--">上一页</button><span>{{ page }} / {{ pages }}</span><button :disabled="page >= pages || loading" @click="page++">下一页</button></div></footer>
     </section>
+    </template>
     <EmployeeDirectoryDialog v-if="canAccounts" v-model="directoryOpen" @saved="load" />
     <DepartmentMappingDialog v-if="canOrganization" v-model="mappingOpen" />
     <EmployeeDepartmentsDialog v-if="canOrganization" :employee="departmentEmployee" :departments="departments" @close="departmentEmployee = undefined" @saved="departmentsSaved" />
@@ -110,7 +116,9 @@ onBeforeUnmount(() => { loadSequence++; departmentSequence++ })
 <style lang="scss" src="@/styles/accessManagement.scss"></style>
 <style scoped lang="scss">
 .employee-page .access-title { margin-bottom: 16px; flex-wrap: wrap; gap: 14px; }
+.employee-page .employee-filters { margin-bottom: 14px; }
 .employee-page .access-toolbar input { width: 260px; max-width: 100%; }
 .employee-page .access-warning { margin: 12px 16px 0; }
-.employee-tablewrap { margin-top: 14px; table { min-width: 850px; } td { overflow-wrap: anywhere; } }
+.employee-tablewrap { margin-top: 14px; table { min-width: 1690px; } th, td { white-space: nowrap; overflow-wrap: normal; overflow: hidden; text-overflow: ellipsis; } .access-row-actions { flex-wrap: nowrap; } }
+.employee-wecom-department { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

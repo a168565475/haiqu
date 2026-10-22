@@ -215,6 +215,7 @@ function updatePayload() {
       delivery_date: line.delivery_date || null,
       actual_purchase_quantity: line.raw_bar_length_m ? null : line.actual_purchase_quantity || null,
       ...(line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : {}),
+      ...(order.value?.source_type === 'SAMPLE' && line.raw_bar_length_m ? { raw_bar_length_m: line.raw_bar_length_m } : {}),
       unit_price: line.unit_price === '' ? null : line.unit_price,
     })),
   }

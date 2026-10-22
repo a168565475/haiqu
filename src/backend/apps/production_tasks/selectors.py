@@ -206,8 +206,14 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
 
     from apps.boms.models import Bom
     from apps.procurement.models import PurchaseRequest
+    from apps.procurement.selectors import active_purchase_orders, purchase_orders_with_product_ids
 
-    return queryset.select_related("purchase_order").prefetch_related(
+    return queryset.prefetch_related(
+        Prefetch(
+            "purchase_orders",
+            queryset=purchase_orders_with_product_ids(active_purchase_orders()),
+            to_attr="_active_purchase_orders_for_status",
+        ),
         Prefetch(
             "boms",
             queryset=Bom.objects.filter(archived_at__isnull=True).order_by(

@@ -58,12 +58,13 @@ describe('样品用料需求详情', () => {
     expect(wrapper.find('.material-detail-tabs button.active').text()).toContain('管材类')
   })
 
-  it('可从详情返回材料填写页', async () => {
+  it('即使材料可编辑也不显示重复填写按钮，只读详情仍可返回列表', async () => {
     const wrapper = mount(MaterialDetailPage, { global: { plugins: [ElementPlus, createPinia()] } })
     await flushPromises()
-    await wrapper.find('button[type="button"]').trigger('click')
-    await wrapper.findAll('button').find((button) => button.text() === '编辑需求')!.trigger('click')
-    expect(api.push).toHaveBeenCalledWith({ name: 'sample-materials', params: { sampleId: 'sample-1' } })
+    expect(wrapper.text()).not.toContain('编辑需求')
+    expect(wrapper.findAll('input, textarea')).toHaveLength(0)
+    await wrapper.findAll('button').find((button) => button.text() === '返回列表')!.trigger('click')
+    expect(api.push).toHaveBeenCalledWith({ name: 'samples' })
   })
 
   it.each(['2', '4'])('到货%s个后仍显示冻结采购需求，不混用未到货和未领缺口', async arrivedQuantity => {

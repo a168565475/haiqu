@@ -32,6 +32,7 @@ class WeComBinding(TimeStampedModel):
     corp_id = models.CharField(max_length=100)
     user_id = models.CharField(max_length=64)
     member_name = models.CharField(max_length=150)
+    department_snapshot = models.JSONField(null=True, blank=True, default=None)
     employee = models.OneToOneField("organizations.Employee", on_delete=models.PROTECT, related_name="wecom_binding")
     source = models.CharField(max_length=10, choices=[("AUTO", "自动建档"), ("MANUAL", "管理员绑定")])
     created_account = models.BooleanField(default=False)
@@ -64,6 +65,21 @@ class WeComDepartmentMapping(TimeStampedModel):
             models.CheckConstraint(condition=Q(wecom_department_id__gte=1, wecom_department_id__lt=4294967296),
                                    name="wecom_department_uint32"),
         ]
+
+
+class WeComDirectorySnapshot(TimeStampedModel):
+    """最近一次完整读取成功的来源副本，不保存 ERP 判重或授权结果。"""
+
+    corp_id = models.CharField(max_length=100, unique=True)
+    config_etag = models.CharField(max_length=100)
+    directory = models.JSONField(default=dict)
+    fetched_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "wecom_directory_snapshot"
+        constraints = [models.CheckConstraint(condition=Q(expires_at__gt=models.F("fetched_at")),
+                                              name="wecom_directory_expiry_valid")]
 
 
 class OAuthState(TimeStampedModel):
@@ -124,6 +140,35 @@ class WeComMessageAttempt(TimeStampedModel):
         constraints = [models.CheckConstraint(condition=Q(status__in=["PROCESSING", "ACCEPTED", "FAILED", "UNCERTAIN"]),
                                               name="wecom_msg_attempt_status")]
         indexes = [models.Index(fields=["payload_hash", "status"], name="wecom_msg_pending_idx")]
+
+
+class NotificationPreviewAttempt(TimeStampedModel):
+    """人工单人试发，不属于业务事件或站内收件。"""
+
+    preview_id = models.UUIDField(unique=True)
+    event_code = models.CharField(max_length=80)
+    requested_by_employee = models.ForeignKey("organizations.Employee", on_delete=models.PROTECT,
+                                              related_name="notification_preview_attempts")
+    binding = models.ForeignKey(WeComBinding, on_delete=models.PROTECT, related_name="notification_preview_attempts")
+    request_hash = models.CharField(max_length=64)
+    payload_hash = models.CharField(max_length=64)
+    recipient_name = models.CharField(max_length=150)
+    corp_id = models.CharField(max_length=100)
+    agent_id = models.CharField(max_length=30)
+    user_id = models.CharField(max_length=64)
+    rendered_title = models.CharField(max_length=200)
+    rendered_body = models.TextField()
+    status = models.CharField(max_length=20, choices=WeComMessageAttempt.Status.choices, default="PROCESSING")
+    error_code = models.CharField(max_length=80, blank=True)
+    msgid = models.CharField(max_length=512, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "wecom_notification_preview_attempt"
+        default_permissions = ()
+        constraints = [models.CheckConstraint(condition=Q(status__in=["PROCESSING", "ACCEPTED", "FAILED", "UNCERTAIN"]),
+                                              name="wecom_notify_preview_status")]
+        indexes = [models.Index(fields=["payload_hash", "status"], name="wecom_notify_preview_pending")]
 
 
 class NotificationRule(TimeStampedModel):

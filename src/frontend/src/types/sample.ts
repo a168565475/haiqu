@@ -193,7 +193,7 @@ export interface SampleListItem {
     can_complete: boolean
     can_cancel: boolean
   }
-  application_actions?: { is_application: boolean; can_director_review: boolean; can_resubmit: boolean }
+  application_actions?: { is_application: boolean; can_director_review: boolean; can_resubmit: boolean; can_edit_products?: boolean; can_edit_materials?: boolean; can_submit_materials?: boolean }
   material_summary?: { label: string; status: SampleStatus } | null
   id: string
   request_number: string

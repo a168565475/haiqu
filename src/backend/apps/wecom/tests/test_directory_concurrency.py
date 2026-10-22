@@ -37,7 +37,7 @@ class DirectoryConcurrencyTests(TransactionTestCase):
         self.upstream = self.patch.start().return_value
         self.addCleanup(self.patch.stop)
         self.upstream.read_directory.side_effect = lambda: deepcopy(self.directory)
-        self.preview, self.etag = preview_directory(self.request())
+        self.preview, self.etag = preview_directory(self.request(), refresh=True)
 
     def request(self):
         request = RequestFactory().post("/api/v1/wecom/employee-directory/sync/",

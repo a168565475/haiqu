@@ -18,7 +18,6 @@ from apps.wecom.notification_services import RULE_FIELDS, _lock_key, _validate_r
 DISABLED_REASONS = {
     'BOM_CONFIRMED': '旧单BOM事件仅兼容；当前生产链采用任务BOM全部确认。',
     'SUPPLIER_PURCHASE_SHEET_PUBLISHED': '用户明确要求此节点不通知。',
-    'SEMI_FINISHED_RECEIPT_SUBMITTED': '申请对象NOT_READY；用户暂缓新增流程。',
     'SAMPLE_INVENTORY_RECEIVED': '入库后通知为未确认建议，未新增业务触发。',
 }
 

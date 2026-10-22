@@ -96,7 +96,7 @@ class AccessEmployeeViewSet(EmployeeDepartmentActions, mixins.ListModelMixin, Ac
             return [IsAuthenticated(), HasActiveEmployee(), CanManageAccounts()]
         return super().get_permissions()
 
-    queryset = Employee.objects.filter(archived_at__isnull=True).select_related("user").order_by("employee_code")
+    queryset = Employee.objects.filter(archived_at__isnull=True).select_related("user", "wecom_binding").order_by("employee_code")
     serializer_class = AccessEmployeeSerializer
 
     def respond(self, employee):

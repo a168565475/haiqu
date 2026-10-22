@@ -30,6 +30,25 @@ describe('通知命名路由白名单', () => {
     expect(() => notificationRoute('SEMI_FINISHED_RECEIPT_SUBMITTED', target)).toThrow()
     expect(() => notificationRoute('__proto__', target)).toThrow()
   })
+  it('入库成功指向真实记录列表，装配事件由前端固定构造记录页签', () => {
+    const semi = { ...target, route_name: 'semi-receipt-records', params: {} }
+    expect(notificationRoute('INTERNAL_SEMI_RECEIPT_CONFIRMED', semi)).toEqual({ name: semi.route_name, params: {} })
+    const assembly = { ...target, route_name: 'finished-goods-inventory', params: {} }
+    expect(notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', assembly)).toEqual({ name: assembly.route_name, params: {}, query: { tab: 'records' } })
+    expect(() => notificationRoute('INTERNAL_SEMI_RECEIPT_CONFIRMED', { ...semi, params: { receiptId: id } })).toThrow()
+    expect(() => notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', { ...assembly, params: { receiptId: id } })).toThrow()
+    expect(() => notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', { ...assembly, object_id: 'not-a-uuid' })).toThrow()
+    expect(() => notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', semi)).toThrow()
+  })
+  it('出库成功只接受真实出库详情；所有消息输入均不得附加query', () => {
+    const outbound = { ...target, route_name: 'finished-goods-outbound-detail', params: { outboundId: id } }
+    expect(notificationRoute('FINISHED_GOODS_OUTBOUND_CONFIRMED', outbound)).toEqual({ name: outbound.route_name, params: { outboundId: id } })
+    expect(() => notificationRoute('FINISHED_GOODS_OUTBOUND_CONFIRMED', { ...outbound, params: { receiptId: id } })).toThrow()
+    const forgedBom = { ...target, query: { tab: 'records' } }
+    const forgedAssembly = { ...target, route_name: 'finished-goods-inventory', params: {}, query: { tab: 'records' } }
+    expect(() => notificationRoute('BOM_CONFIRMED', forgedBom)).toThrow()
+    expect(() => notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', forgedAssembly)).toThrow()
+  })
   it.each([
     ['SAMPLE_EFFECTIVE', 'sample-detail'], ['SAMPLE_RETURNED', 'sample-detail'],
     ['SAMPLE_REQUIREMENTS_COMPLETED', 'sample-material-detail'], ['SAMPLE_MATERIALS_SUBMITTED', 'sample-warehouse-review'],

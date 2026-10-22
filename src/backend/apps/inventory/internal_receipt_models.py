@@ -1,4 +1,4 @@
-"""厂内入库原单与明细。只保存已确认记录，不建立第二套库存余额。"""
+"""厂内入库原单与明细。待确认原单确认后才建立公共库存流水。"""
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -8,9 +8,14 @@ from django.db.models.functions import Floor
 from apps.core.models import TimeStampedModel
 
 
+class InternalReceiptStatus(models.TextChoices):
+    PENDING = 'PENDING', '待仓库确认'
+    CONFIRMED = 'CONFIRMED', '已入库'
+
+
 class InternalReceiptQuerySet(models.QuerySet):
     def delete(self):
-        raise ValidationError('已确认入库记录不允许批量删除，须保留来源及库存流水。')
+        raise ValidationError('厂内半成品入库原单不允许批量删除，须保留来源及库存流水。')
 
 
 class InternalSemiFinishedReceipt(TimeStampedModel):
@@ -18,6 +23,8 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
     receipt_number = models.CharField(max_length=50, unique=True)
     request_id = models.UUIDField(unique=True)
     request_payload_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=20, choices=InternalReceiptStatus.choices,
+                              default=InternalReceiptStatus.CONFIRMED)
     schedule_product = models.ForeignKey('production_scheduling.ProductionScheduleProduct',
                                          on_delete=models.PROTECT, related_name='internal_receipts')
     completed_craft = models.ForeignKey('workshop_config.Craft', on_delete=models.PROTECT,
@@ -28,6 +35,14 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
                             related_name='internal_semi_receipts')
     actor_employee = models.ForeignKey('organizations.Employee', on_delete=models.PROTECT,
                                       related_name='internal_semi_receipts')
+    submitted_by_employee = models.ForeignKey('organizations.Employee', null=True, blank=True,
+                                             on_delete=models.PROTECT,
+                                             related_name='submitted_internal_semi_receipts')
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by_employee = models.ForeignKey('organizations.Employee', null=True, blank=True,
+                                             on_delete=models.PROTECT,
+                                             related_name='confirmed_internal_semi_receipts')
+    confirmed_at = models.DateTimeField(null=True, blank=True)
     source_revision_hash = models.CharField(max_length=64)
     source_snapshot = models.JSONField()
     remark = models.TextField(blank=True)
@@ -35,14 +50,19 @@ class InternalSemiFinishedReceipt(TimeStampedModel):
     class Meta:
         db_table = 'inventory_internal_semi_receipt'
         ordering = ['-receipt_date','-created_at','-id']
-        default_permissions = ('add','view')
+        default_permissions = ('add','view','delete')
+        permissions = (
+            ('confirm_internalsemifinishedreceipt', '确认厂内半成品入库'),
+        )
         constraints = [models.CheckConstraint(condition=Q(plan_category__in=['METAL','SEWING']),
-                                               name='inv_internal_receipt_stage')]
+                                               name='inv_internal_receipt_stage'),
+                       models.CheckConstraint(condition=Q(status__in=InternalReceiptStatus.values),
+                                               name='inv_internal_receipt_status')]
         indexes = [models.Index(fields=['schedule_product','plan_category'],name='inv_int_receipt_plan'),
                    models.Index(fields=['-receipt_date','-id'],name='inv_int_receipt_date')]
 
     def delete(self, *args, **kwargs):
-        raise ValidationError('已确认入库记录不允许直接删除，须保留来源及库存流水。')
+        raise ValidationError('厂内半成品入库原单不允许直接删除，须保留来源及库存流水。')
 
 
 class InternalSemiFinishedReceiptLine(TimeStampedModel):
@@ -63,8 +83,8 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
     received_before = models.DecimalField(max_digits=18, decimal_places=4)
     received_after = models.DecimalField(max_digits=18, decimal_places=4)
     # 强制一条实际入库明细对应一条公共库存流水，不另建余额字段。
-    stock_movement = models.OneToOneField('inventory.PublicStockMovement', on_delete=models.PROTECT,
-                                        related_name='internal_receipt_line')
+    stock_movement = models.OneToOneField('inventory.PublicStockMovement', null=True, blank=True,
+                                        on_delete=models.PROTECT, related_name='internal_receipt_line')
     attribute_snapshot = models.JSONField()
     input_snapshot = models.JSONField()
 
@@ -93,4 +113,4 @@ class InternalSemiFinishedReceiptLine(TimeStampedModel):
                    models.Index(fields=['input_requirement','receipt'],name='inv_int_receipt_input_use')]
 
     def delete(self, *args, **kwargs):
-        raise ValidationError('已确认入库明细不允许直接删除，须保留投入及库存流水。')
+        raise ValidationError('厂内半成品入库明细不允许直接删除，须保留投入及库存流水。')

@@ -3,7 +3,9 @@ import type { AssemblyPayload,AssemblyPreview,AssemblyCandidate,FinishedRecord,F
 import type { FinishedGoodsInventoryRow } from '@/types/inventory'
 const root='/api/v1/'
 export async function fetchAssemblyPreview(id:string) { return (await apiClient.get<{data:AssemblyPreview}>(root+'assembly-finished-receipts/preview/',{params:{schedule_product_id:id},timeout:15000})).data.data }
-export async function submitAssemblyReceipt(payload:AssemblyPayload,etag:string) { return (await apiClient.post<{data:{id:string;receipt_number:string;replayed:boolean}}>(root+'assembly-finished-receipts/',payload,{headers:{'If-Match':etag},timeout:30000})).data.data }
+export async function submitAssemblyReceipt(payload:AssemblyPayload,etag:string) { return (await apiClient.post<{data:{id:string;receipt_number:string;status:string;replayed:boolean}}>(root+'assembly-finished-receipts/',payload,{headers:{'If-Match':etag},timeout:30000})).data.data }
+export async function confirmAssemblyReceiptRecord(id:string) { return (await apiClient.post<{data:{id:string;receipt_number:string;status:string;replayed:boolean}}>(root+`assembly-finished-receipts/${encodeURIComponent(id)}/confirm/`,undefined,{timeout:30000})).data.data }
+export async function deleteAssemblyReceiptRecord(id:string,etag:string):Promise<void> { await apiClient.delete(root+`assembly-finished-receipts/${encodeURIComponent(id)}/`,{headers:{'If-Match':etag},timeout:30000}) }
 export async function fetchAssemblyCandidates(params:Record<string,unknown>) { return (await apiClient.get<{data:{items:AssemblyCandidate[];total:number}}>(root+'assembly-finished-receipts/candidates/',{params,timeout:15000})).data.data }
 export async function fetchFinishedRecords(params:Record<string,unknown>) { return (await apiClient.get<{data:{items:FinishedRecord[];total:number}}>(root+'finished-goods-records/',{params,timeout:15000})).data.data }
 export async function fetchFinishedRecord(id:string) { return (await apiClient.get<{data:FinishedRecord}>(root+`finished-goods-records/${id}/`,{timeout:15000})).data.data }

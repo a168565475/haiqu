@@ -13,3 +13,8 @@ export interface AccessDepartment { id: string; unit_code: string; unit_name: st
 export interface EmployeeDepartmentInput { department_id: string; is_primary: boolean; position_title: string }
 export interface EmployeeDepartmentAssignment extends EmployeeDepartmentInput { id: string; department_name: string; effective_from: string; effective_to: string | null }
 export interface EmployeeDepartments { employee_id: string; etag: string; departments: EmployeeDepartmentAssignment[] }
+export type DeletionKind = 'employees' | 'roles' | 'departments'
+export interface DeletionItem { id: string; etag: string }
+export interface DeletionRow { id: string; name: string; mode: 'ARCHIVE' | 'DELETE'; reason: string; account: string | null }
+export interface DeletionPreview { rows: DeletionRow[]; token: string; etag: string }
+export interface DeletionResult { rows: DeletionRow[]; self_deleted: boolean }

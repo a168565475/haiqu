@@ -8,19 +8,38 @@ import { vHorizontalOverflow } from '@/directives/horizontalOverflow'
 import PermissionCell from '@/components/access/PermissionCell.vue'
 import DepartmentMaintenanceDialog from '@/components/access/DepartmentMaintenanceDialog.vue'
 import EmployeeDepartmentsDialog from '@/components/access/EmployeeDepartmentsDialog.vue'
+import EmployeeDirectoryDialog from '@/views/employees/EmployeeDirectoryDialog.vue'
+import DepartmentMappingDialog from '@/views/employees/DepartmentMappingDialog.vue'
+import DeleteManagementDialog from '@/components/access/DeleteManagementDialog.vue'
+import type { DeletionKind, DeletionItem } from '@/types/access'
 import { useAuthStore } from '@/stores/auth'
 import { createClientUuid } from '@/utils/clientUuid'
 import * as api from '@/api/access'
 import type { AccessAudit, AccessEmployee, AccessRole, AccessScope, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
 import type { AccessDepartment } from '@/types/access'
 
+const props = defineProps<{ employeesOnly?: boolean }>()
 const auth = useAuthStore()
 const route = useRoute(), router = useRouter()
 const permitted = computed(() => auth.canReadAccessDirectory)
 const canManageAccess = computed(() => auth.managementCan('access_control.manage_access'))
 const canManageAccounts = computed(() => auth.managementCan('access_control.manage_accounts'))
 const canManageOrganization = computed(() => auth.managementCan('organizations.manage_organization'))
-const tab = ref('roles')
+const tab = ref(props.employeesOnly ? 'employees' : 'roles')
+const directoryOpen = ref(false), mappingOpen = ref(false), employeeStatus = ref('all')
+const fillDepartmentMode = ref(false), selectedEmployees = ref<string[]>([])
+const deleteKind = ref<DeletionKind>('employees'), deleteItems = ref<DeletionItem[]>([])
+function requestDeletion(kind: DeletionKind, items: DeletionItem[]) { deleteKind.value = kind; deleteItems.value = items.map(item => ({ id: item.id, etag: item.etag })) }
+async function deleted(selfDeleted: boolean) {
+  selectedEmployees.value = []; deleteItems.value = []
+  if (selfDeleted) { await auth.initialize(true); await router.replace('/login'); return }
+  await load(true)
+}
+function readEmployees(fill = false) { fillDepartmentMode.value = fill; directoryOpen.value = true }
+function selectPage(checked: boolean) {
+  const ids = employeeRows.value.map(employee => employee.id)
+  selectedEmployees.value = checked ? [...new Set([...selectedEmployees.value, ...ids])] : selectedEmployees.value.filter(id => !ids.includes(id))
+}
 const tabs = computed(() => [{id:'roles',name:'角色与权限'},{id:'employees',name:'员工与账号'},
   ...(canManageAccess.value ? [{id:'teams',name:'销售团队'},{id:'history',name:'授权记录'}] : [])])
 const roles = ref<AccessRole[]>([]), employees = ref<AccessEmployee[]>([]), teams = ref<SalesTeam[]>([]), catalog = ref<CatalogEntry[]>([])
@@ -79,9 +98,16 @@ const groups = computed(() => {
 const visibleGroups = computed(() => groups.value.filter(g => (moduleGroup.value === 'all' || g.module === moduleGroup.value) && (g.name+g.moduleName).includes(moduleFilter.value)))
 const moduleOptions = computed(() => [...new Map(catalog.value.map(c => [c.module,c.module_name])).entries()])
 const specialEntries = computed(() => groups.value.find(g => g.key === specialResource.value)?.entries.filter(e => e.action === 'special') || [])
-const filteredEmployees = computed(() => employees.value.filter(e => (e.display_name+' '+(e.username||'')).includes(employeeFilter.value) && (accountFilter.value === 'all' || (accountFilter.value === 'none' ? !e.username : accountFilter.value === 'active' ? e.account_active : e.username && !e.account_active))))
+const filteredEmployees = computed(() => employees.value.filter(e => `${e.display_name} ${e.employee_code} ${e.username || ''} ${e.department}`.toLocaleLowerCase().includes(employeeFilter.value.trim().toLocaleLowerCase()) && (employeeStatus.value === 'all' || e.status === employeeStatus.value) && (accountFilter.value === 'all' || (accountFilter.value === 'none' ? !e.username : accountFilter.value === 'active' ? e.account_active : e.username && !e.account_active))))
 const employeePages = computed(() => Math.max(1,Math.ceil(filteredEmployees.value.length/15)))
 const employeeRows = computed(() => filteredEmployees.value.slice((employeePage.value-1)*15,employeePage.value*15))
+const pageSelected = computed(() => employeeRows.value.length > 0 && employeeRows.value.every(employee => selectedEmployees.value.includes(employee.id)))
+watch([employeeFilter, accountFilter, employeeStatus], () => { employeePage.value = 1 }, { flush: 'sync' })
+watch(employeePages, value => { employeePage.value = Math.min(employeePage.value, value) })
+function wecomDepartmentNames(employee: AccessEmployee) {
+  if (employee.wecom_departments == null) return 'UNKNOWN'
+  return employee.wecom_departments.map(item => `${item.name?.trim() || 'UNKNOWN'}（${item.id}）`).join('、') || '未分配'
+}
 const teamMembers = computed(() => employees.value.filter(e => team.value?.member_ids.includes(e.id)))
 const selectableEmployees = computed(() => employees.value.filter(e => e.status === 'ACTIVE'))
 const changes = computed(() => {
@@ -145,7 +171,7 @@ function locateEmployeeFromRoute() {
   tab.value = 'employees'
   if (employeeId === undefined) return
   close()
-  employeeQuery.value = ''; employeeFilter.value = ''; accountFilter.value = 'all'; employeePage.value = 1
+  employeeQuery.value = ''; employeeFilter.value = ''; accountFilter.value = 'all'; employeeStatus.value = 'all'; employeePage.value = 1
   // 员工目标只消费一次，保存后的列表刷新和浏览器刷新都不重复打开分配弹窗。
   const query: LocationQuery = { ...route.query, tab: 'employees' }
   delete query.employee_id
@@ -167,6 +193,18 @@ watch(() => [route.query.tab, route.query.employee_id], () => {
   }
   else locateEmployeeFromRoute()
 })
+watch(permitted, value => {
+  if (value) void load()
+  else {
+    loadRequest++; effectiveRequest++; employeesLoaded = false; loading.value = false
+    employees.value = []; roles.value = []; teams.value = []; catalog.value = []; departments.value = []
+    grants.value = []; selectedEmployees.value = []; deleteItems.value = []; dialog.value = ''
+    directoryOpen.value = false; mappingOpen.value = false; departmentEmployee.value = undefined
+  }
+})
+watch(canManageAccounts, value => { if (!value) { directoryOpen.value = false; selectedEmployees.value = []; if (deleteKind.value === 'employees') deleteItems.value = [] } })
+watch(canManageAccess, value => { if (!value && deleteKind.value === 'roles') deleteItems.value = [] })
+watch(canManageOrganization, value => { if (!value) { mappingOpen.value = false; departmentEmployee.value = undefined; departmentMaintenance.value = false } })
 async function load(refreshAuth = false) {
   if (!permitted.value) return
   const request = ++loadRequest
@@ -177,6 +215,7 @@ async function load(refreshAuth = false) {
     if (request !== loadRequest) return
     scopeOptions.value=options
     roles.value=r;employees.value=e;teams.value=t;catalog.value=c;departments.value=d;employeesLoaded=true
+    selectedEmployees.value = selectedEmployees.value.filter(id => e.some(employee => employee.id === id))
     if (!['all','unclassified'].includes(departmentId.value) && !d.some(item => item.id === departmentId.value)) departmentId.value='all'
     const id=visibleRoles.value.some(x=>x.id===roleId.value)?roleId.value:visibleRoles.value[0]?.id||''
     roleId.value=id;grants.value=copyGrants(role.value?.grants);stale.value=false
@@ -255,12 +294,12 @@ onBeforeUnmount(()=>{loadRequest++;window.removeEventListener('beforeunload',lea
 
 <template>
   <div class="access-page">
-    <div class="access-title"><div><div class="access-title-line"><h1>权限管理</h1><span>{{ roles.length }} 个角色</span></div></div>
-      <button v-if="permitted && !error && (tab === 'employees' ? canManageAccounts : canManageAccess)" class="primary" :disabled="loading||saving||dirty" @click="open(tab==='roles'?'newRole':tab==='employees'?'account':'newTeam')" v-show="tab!=='history'">{{ tab==='roles'?'＋ 新建角色':tab==='employees'?'＋ 关联员工并创建账号':'＋ 新建团队' }}</button>
+    <div v-if="!employeesOnly" class="access-title"><div><div class="access-title-line"><h1>权限管理</h1><span>{{ roles.length }} 个角色</span></div></div>
+      <button v-if="permitted && !error && canManageAccess && (tab === 'roles' || tab === 'teams')" class="primary" :disabled="loading||saving||dirty" @click="open(tab==='roles'?'newRole':'newTeam')">{{ tab==='roles'?'＋ 新建角色':'＋ 新建团队' }}</button>
     </div>
     <div v-if="!permitted" class="access-state"><h2>无权限管理权限</h2><p>当前账号不能查看或维护授权，请联系 admin。</p></div>
     <template v-else>
-      <nav class="access-tabs" aria-label="权限管理分区"><button v-for="item in tabs" :key="item.id" :class="{active:tab===item.id}" :disabled="loading||saving" @click="changeTab(item.id)">{{ item.name }}</button></nav>
+      <nav v-if="!employeesOnly" class="access-tabs" aria-label="权限管理分区"><button v-for="item in tabs" :key="item.id" :class="{active:tab===item.id}" :disabled="loading||saving" @click="changeTab(item.id)">{{ item.name }}</button></nav>
       <div v-if="loading" class="access-state" role="status">正在加载权限配置…</div>
       <div v-else-if="error" class="access-state" role="alert"><h2>暂时无法加载权限管理</h2><p>{{ error }}</p><button @click="load()">重新加载</button></div>
       <template v-else>
@@ -269,20 +308,58 @@ onBeforeUnmount(()=>{loadRequest++;window.removeEventListener('beforeunload',lea
           <aside class="access-box access-role-list access-department-list"><div class="access-boxhead"><b>部门</b><button :disabled="dirty||saving||!canManageOrganization" @click="departmentMaintenance=true">维护</button></div><div class="access-role-scroll"><button class="access-role" :class="{current:departmentId==='all'}" @click="chooseDepartment('all')">全部部门 <small>{{ roles.length }}</small></button><button v-for="item in departmentList" :key="item.id" class="access-role" :class="{current:departmentId===item.id}" @click="chooseDepartment(item.id)"><span>{{ item.unit_name }}<small v-if="item.status==='INACTIVE'">（停用）</small></span><small>{{ roles.filter(r=>r.department_id===item.id).length }}</small></button><button class="access-role" :class="{current:departmentId==='unclassified'}" @click="chooseDepartment('unclassified')">未分类 <small>{{ roles.filter(r=>!r.department_id).length }}</small></button></div><footer>部门只做分类，不自动授予权限。车间与工序范围保持独立。</footer></aside>
           <aside class="access-box access-role-list"><div class="access-boxhead"><b>岗位角色</b></div><input v-model="roleQuery" aria-label="搜索角色" placeholder="搜索角色，回车确认" @keyup.enter="roleFilter=roleQuery"><div class="access-role-scroll"><button v-for="item in visibleRoles" :key="item.id" class="access-role" :class="{current:roleId===item.id}" @click="chooseRole(item.id)"><span>{{ item.display_name }}</span><small v-if="item.archived">已停用</small></button><p v-if="!visibleRoles.length" class="muted">{{ roleFilter ? '没有匹配的角色' : '此部门暂无角色' }}</p></div><footer>新角色默认未分类且无权限，分类不会改变原授权。</footer></aside>
           <section v-if="role" class="access-box access-editor">
-            <div class="access-editorhead"><div><h2>{{ role.display_name }} <span class="access-tag" :class="{neutral:role.archived}">{{ role.archived?'已停用':'已启用' }}</span></h2><p class="muted">{{ departmentName(role.department_id) }} · {{ role.description || '逐项配置此角色可以执行的操作与数据范围。' }}</p></div><div class="access-actions"><button :disabled="dirty||!canManageAccess" @click="open('editRole')">修改资料</button><button :disabled="dirty||!canManageOrganization" @click="open('roleDepartment')">调整部门</button><button :disabled="dirty||role.archived||!canManageAccess" @click="open('copyRole')">复制为新角色</button><button :disabled="dirty||!canManageAccess" @click="open('archiveRole')">{{ role.archived?'启用角色':'停用角色' }}</button></div></div>
+            <div class="access-editorhead"><div><h2>{{ role.display_name }} <span class="access-tag" :class="{neutral:role.archived}">{{ role.archived?'已停用':'已启用' }}</span></h2><p class="muted">{{ departmentName(role.department_id) }} · {{ role.description || '逐项配置此角色可以执行的操作与数据范围。' }}</p></div><div class="access-actions"><button :disabled="dirty||!canManageAccess" @click="open('editRole')">修改资料</button><button :disabled="dirty||!canManageOrganization" @click="open('roleDepartment')">调整部门</button><button :disabled="dirty||role.archived||!canManageAccess" @click="open('copyRole')">复制为新角色</button><button :disabled="dirty||!canManageAccess" @click="open('archiveRole')">{{ role.archived?'启用角色':'停用角色' }}</button><button :disabled="dirty||!canManageAccess" @click="requestDeletion('roles', [role])">删除角色</button></div></div>
             <div class="access-notice">数据范围跟随每项操作。允许查看团队订单，不代表允许编辑团队订单。</div>
             <div class="access-toolbar"><select v-model="moduleGroup" aria-label="业务分区"><option value="all">全部模块</option><option v-for="[value,label] in moduleOptions" :key="value" :value="value">{{ label }}</option></select><input v-model="moduleQuery" aria-label="搜索模块" placeholder="搜索模块，回车确认" @keyup.enter="moduleFilter=moduleQuery"></div>
             <div v-horizontal-overflow class="access-tablewrap scroll-actions-container"><table class="access-matrix"><colgroup><col><col v-for="column in operationColumns" :key="column.key" style="width:160px"><col style="width:88px"></colgroup><thead><tr><th>业务模块</th><th v-for="column in operationColumns" :key="column.key">{{ column.label }}</th><th class="scroll-actions-cell">专项操作</th></tr></thead><tbody><tr v-for="group in visibleGroups" :key="group.key"><td class="access-main-cell">{{ group.name }}<small>{{ group.moduleName }}</small></td><td v-for="column in operationColumns" :key="column.key"><PermissionCell v-if="basic(group.entries,column.key)" :entry="basic(group.entries,column.key)!" :grants="grants" :disabled="role.archived||saving||stale||!canManageAccess" @change="updateGrant" @configure="configureScope"/><span v-else class="muted">—</span></td><td class="scroll-actions-cell"><button v-if="specialCount(group.entries)" class="text-button" @click="specialResource=group.key;open('special')">配置 {{ specialCount(group.entries) }}</button><span v-else class="muted">—</span></td></tr></tbody></table><p v-if="!visibleGroups.length" class="access-empty">没有匹配的业务模块</p></div>
             <footer class="access-editorfoot"><span class="muted">{{ dirty?`有 ${changes.length} 项未保存变更`:'当前配置已保存' }}</span><div class="access-actions"><button :disabled="!dirty||saving" @click="resetDraft">撤销修改</button><button class="primary" :disabled="!dirty||role.archived||saving||stale||!canManageAccess" @click="open('review')">查看变更并保存</button></div></footer>
           </section><div v-else class="access-box access-empty">此部门暂无角色，可新建角色后调整所属部门。</div>
         </section>
-        <section v-if="tab==='employees'" class="access-box access-widebox access-employee-list"><div class="access-toolbar"><div class="access-actions"><input v-model="employeeQuery" aria-label="搜索员工" placeholder="姓名 / 账号，回车确认" @keyup.enter="employeeFilter=employeeQuery;employeePage=1"><select v-model="accountFilter" aria-label="账号状态" @change="employeePage=1"><option value="all">全部状态</option><option value="active">启用</option><option value="inactive">停用</option><option value="none">未开通</option></select></div><span class="muted">{{ filteredEmployees.length }} 名员工</span></div><div v-horizontal-overflow class="access-tablewrap scroll-actions-container"><table><colgroup><col style="width:12%"><col style="width:18%"><col style="width:19%"><col style="width:10%"><col style="width:6%"><col style="width:6%"><col style="width:5%"><col style="width:5%"><col style="width:19%"></colgroup><thead><tr><th>姓名</th><th>员工编码</th><th>登录账号</th><th>已分配角色</th><th>部门</th><th>销售团队</th><th>账号状态</th><th>登录方式</th><th class="scroll-actions-cell">操作</th></tr></thead><tbody><tr v-for="employee in employeeRows" :key="employee.id"><td :title="employee.display_name">{{ employee.display_name }}</td><td :title="employee.employee_code">{{ employee.employee_code }}</td><td :title="employee.username||'未开通'">{{ employee.username||'未开通' }}</td><td class="access-role-tags" :title="roleNames(employee).join('、')||'未分配角色'"><span v-for="name in roleNames(employee)" :key="name" class="access-tag neutral">{{ name }}</span><span v-if="!roleNames(employee).length" class="muted">未分配角色</span></td><td :title="employee.department||'未分配'">{{ employee.department||'未分配' }}</td><td :title="teamName(employee.team_id)">{{ teamName(employee.team_id) }}</td><td><span class="access-tag" :class="{neutral:!employee.account_active}">{{ !employee.username?'未开通':employee.account_active?'启用':'停用' }}</span></td><td>{{ employee.username?'账号密码':'—' }}</td><td class="scroll-actions-cell"><div class="access-actions access-row-actions"><button class="text-button" :disabled="!canManageOrganization" @click="departmentEmployee=employee">部门管理</button><button class="text-button" @click="showEffective(employee)">有效权限</button><button class="text-button" :disabled="employee.status!=='ACTIVE'||!canManageAccess" @click="open('assign',employee)">分配角色</button><template v-if="employee.username"><button class="text-button" :disabled="employee.account_protected||!canManageAccounts" @click="open('password',employee)">重置密码</button><button class="text-button" :disabled="employee.account_protected||!canManageAccounts" @click="open('status',employee)">{{ employee.account_active?'停用':'启用' }}</button></template><button v-else class="text-button" :disabled="employee.status!=='ACTIVE'||!canManageAccounts" @click="open('account',employee)">创建账号</button></div></td></tr></tbody></table><p v-if="!employeeRows.length" class="access-empty">没有匹配的员工</p></div><footer class="access-pagination"><span>账号沿用员工档案，后续可绑定企业微信。</span><div class="access-actions"><button :disabled="employeePage<=1" @click="employeePage--">上一页</button><span>{{ employeePage }} / {{ employeePages }}</span><button :disabled="employeePage>=employeePages" @click="employeePage++">下一页</button></div></footer></section>
+        <template v-if="tab==='employees'">
+          <section class="access-box employee-filters" data-testid="employee-filters">
+            <header class="access-title"><h1>员工</h1><div class="access-actions">
+              <button v-if="canManageOrganization" @click="mappingOpen=true">部门映射</button>
+              <button v-if="canManageAccounts && canManageOrganization" @click="readEmployees(true)">按映射补充部门</button>
+              <button v-if="canManageAccounts" @click="open('account')">创建账号</button>
+              <button v-if="canManageAccounts" class="primary" @click="readEmployees()">从企业微信读取</button>
+            </div></header>
+            <div class="access-toolbar"><div class="access-actions">
+              <input v-model="employeeQuery" aria-label="搜索员工" placeholder="姓名、员工编码、账号或部门" @keyup.enter="employeeFilter=employeeQuery">
+              <button @click="employeeFilter=employeeQuery">查询</button>
+              <select v-model="employeeStatus" aria-label="员工状态筛选"><option value="all">全部员工状态</option><option value="ACTIVE">在职</option><option value="INACTIVE">停用</option><option value="LEFT">离职</option></select>
+              <select v-model="accountFilter" aria-label="账号状态"><option value="all">全部账号状态</option><option value="active">已启用</option><option value="inactive">已停用</option><option value="none">未建账号</option></select>
+              <button v-if="canManageAccounts" :disabled="!selectedEmployees.length" @click="requestDeletion('employees', employees.filter(employee => selectedEmployees.includes(employee.id)))">删除所选（{{ selectedEmployees.length }}）</button>
+            </div><button @click="load()">刷新员工</button></div>
+          </section>
+          <section class="access-box access-widebox access-employee-list" data-testid="employee-list">
+            <div v-horizontal-overflow class="access-tablewrap scroll-actions-container"><table>
+              <colgroup><col v-if="canManageAccounts" style="width:42px"><col style="width:140px"><col style="width:300px"><col style="width:270px"><col style="width:170px"><col style="width:150px"><col style="width:200px"><col style="width:120px"><col style="width:90px"><col style="width:100px"><col style="width:110px"><col style="width:480px"></colgroup>
+              <thead><tr><th v-if="canManageAccounts" class="employee-select"><input type="checkbox" aria-label="选择本页员工" :checked="pageSelected" @change="selectPage(($event.target as HTMLInputElement).checked)"></th><th>姓名</th><th>员工编码</th><th>登录账号</th><th>已分配角色</th><th>部门</th><th>企业微信部门</th><th>销售团队</th><th>员工状态</th><th>账号状态</th><th>登录方式</th><th class="scroll-actions-cell">操作</th></tr></thead>
+              <tbody><tr v-for="employee in employeeRows" :key="employee.id" :data-employee-id="employee.id">
+                <td v-if="canManageAccounts"><input v-model="selectedEmployees" type="checkbox" :value="employee.id" :aria-label="'选择员工 '+employee.employee_code"></td>
+                <td :title="employee.display_name">{{ employee.display_name }}</td><td :title="employee.employee_code">{{ employee.employee_code }}</td><td class="employee-account" :title="employee.username||'未开通'">{{ employee.username||'未开通' }}</td>
+                <td class="access-role-tags" :title="roleNames(employee).join('、')||'未分配角色'"><span v-for="name in roleNames(employee)" :key="name" class="access-tag neutral">{{ name }}</span><span v-if="!roleNames(employee).length" class="muted">未分配角色</span></td>
+                <td :title="employee.department||'未分配'">{{ employee.department||'未分配' }}</td><td class="employee-wecom-department" :title="wecomDepartmentNames(employee)">{{ wecomDepartmentNames(employee) }}</td><td :title="teamName(employee.team_id)">{{ teamName(employee.team_id) }}</td>
+                <td>{{ { ACTIVE:'在职', INACTIVE:'停用', LEFT:'离职' }[employee.status] || employee.status }}</td><td>{{ !employee.username?'未开通':employee.account_active?'启用':'停用' }}</td><td>{{ employee.username?'账号密码':'—' }}</td>
+                <td class="scroll-actions-cell"><div class="access-actions access-row-actions">
+                  <button class="text-button" :disabled="!canManageOrganization || employee.status!=='ACTIVE'" @click="departmentEmployee=employee">部门管理</button><button class="text-button" @click="showEffective(employee)">有效权限</button><button class="text-button" :disabled="employee.status!=='ACTIVE'||!canManageAccess" @click="open('assign',employee)">分配角色</button>
+                  <template v-if="employee.username"><button class="text-button" :disabled="employee.account_protected||!canManageAccounts" @click="open('password',employee)">重置密码</button><button class="text-button" :disabled="employee.account_protected||!canManageAccounts" @click="open('status',employee)">{{ employee.account_active?'停用':'启用' }}</button></template><button v-else class="text-button" :disabled="employee.status!=='ACTIVE'||!canManageAccounts" @click="open('account',employee)">创建账号</button>
+                  <button v-if="canManageAccounts" class="text-button" @click="requestDeletion('employees', [employee])">删除</button>
+                </div></td>
+              </tr></tbody></table><p v-if="!employeeRows.length" class="access-empty">没有符合条件的员工</p>
+            </div>
+            <footer class="access-pagination"><span>共 {{ filteredEmployees.length }} 人</span><div class="access-actions"><button :disabled="employeePage<=1" @click="employeePage--">上一页</button><span>{{ employeePage }} / {{ employeePages }}</span><button :disabled="employeePage>=employeePages" @click="employeePage++">下一页</button></div></footer>
+          </section>
+        </template>
         <section v-if="tab==='teams'" class="access-team-layout"><aside class="access-box access-role-list"><div class="access-boxhead"><b>销售团队</b></div><div class="access-role-scroll"><button v-for="item in teams" :key="item.id" class="access-role" :class="{current:teamId===item.id}" @click="teamId=item.id">{{ item.name }}<small v-if="!item.is_active">已停用</small></button><p v-if="!teams.length" class="muted">暂无团队</p></div><footer>成员可跨部门，一人只加入一个团队。</footer></aside><section v-if="team" class="access-box access-widebox"><div class="access-editorhead"><div><h2>{{ team.name }} <span class="access-tag" :class="{neutral:!team.is_active}">{{ team.is_active?'已启用':'已停用' }}</span></h2><p class="muted">客户经理：{{ team.manager_name }} · {{ team.member_ids.length }} 位成员</p></div><div class="access-actions"><button @click="open('editTeam')">修改名称</button><button @click="open('teamStatus')">{{ team.is_active?'停用团队':'启用团队' }}</button><button :disabled="!team.is_active" @click="open('members')">＋ 添加未分组成员</button></div></div><div class="access-toolbar muted">查看范围取自团队成员的业务归属，编辑、删除及审批需在角色中另外授权。</div><div class="access-tablewrap"><table><colgroup><col><col style="width:250px"><col style="width:350px"><col style="width:110px"></colgroup><thead><tr><th>成员</th><th>所属部门</th><th>角色</th><th>状态</th></tr></thead><tbody><tr v-for="member in teamMembers" :key="member.id"><td>{{ member.display_name }}</td><td>{{ member.department||'未分配部门' }}</td><td>{{ roleNames(member).join('、')||'未分配角色' }}</td><td><span class="access-tag" :class="{neutral:member.status!=='ACTIVE'}">{{ member.status==='ACTIVE'?'在职':'非在职' }}</span></td></tr></tbody></table><p v-if="!teamMembers.length" class="access-empty">暂无成员，请添加尚未分组的员工。</p></div><footer class="access-pagination">当前不提供成员换团队流程。</footer></section><div v-else class="access-box access-empty">暂无团队，请新建销售团队。</div></section>
         <section v-if="tab==='history'" class="access-box access-widebox"><div class="access-toolbar"><b>授权变更记录</b><span class="muted">记录变更前后内容与操作者</span></div><div class="access-tablewrap"><table><colgroup><col style="width:240px"><col style="width:180px"><col style="width:220px"><col><col style="width:100px"></colgroup><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>对象</th><th>详情</th></tr></thead><tbody><tr v-for="log in logs" :key="log.id"><td>{{ new Date(log.occurred_at).toLocaleString('zh-CN',{hour12:false}) }}</td><td>{{ log.actor_name_snapshot }}</td><td>{{ auditNames[log.action]||'授权变更' }}</td><td>{{ log.after_data.display_name||log.after_data.name||log.after_data.username||employees.find(e=>e.id===log.object_id)?.display_name||roles.find(r=>r.id===log.object_id)?.display_name||'授权对象' }}</td><td><button class="text-button" @click="auditDetail=log;open('audit')">查看详情</button></td></tr></tbody></table><p v-if="!logs.length" class="access-empty">暂无授权变更记录</p></div><footer class="access-pagination"><span>授权日志只读；不记录密码正文。</span><div class="access-actions"><button :disabled="auditPage<=1" @click="loadHistory(auditPage-1).catch(e=>error=api.accessError(e))">上一页</button><span>{{ auditPage }} / {{ auditPages }}</span><button :disabled="auditPage>=auditPages" @click="loadHistory(auditPage+1).catch(e=>error=api.accessError(e))">下一页</button></div></footer></section>
       </template>
     </template>
 
     <DepartmentMaintenanceDialog v-model="departmentMaintenance" :departments="departments" @saved="load(true)" />
+    <EmployeeDirectoryDialog v-if="canManageAccounts" v-model="directoryOpen" :initial-apply-departments="fillDepartmentMode" @saved="load(true)" />
+    <DepartmentMappingDialog v-if="canManageOrganization" v-model="mappingOpen" @apply-departments="readEmployees(true)" />
+    <DeleteManagementDialog v-if="deleteItems.length" :kind="deleteKind" :items="deleteItems" @close="deleteItems = []" @deleted="deleted" />
     <EmployeeDepartmentsDialog :employee="departmentEmployee" :departments="departments" @close="departmentEmployee=undefined" @saved="load(true)" />
     <AppWindowDialog :model-value="!!dialog" :title="dialog==='resources'?'选择操作范围':titles[dialog]||'权限管理'" :width="dialog==='effective'?900:720" :before-close="beforeClose" destroy-on-close @update:model-value="value=>{if(!value)close()}">
       <div class="access-dialog">
@@ -312,8 +389,14 @@ onBeforeUnmount(()=>{loadRequest++;window.removeEventListener('beforeunload',lea
 
 <style scoped lang="scss">
 .access-employee-list {
-  table { min-width: 1740px; }
+  table { min-width: 2280px; }
   th, td { padding: 0 12px; white-space: nowrap; overflow-wrap: normal; overflow: hidden; text-overflow: ellipsis; }
   .access-row-actions { flex-wrap: nowrap; gap: 12px; }
 }
+.employee-filters { margin-bottom: 14px; flex: none; }
+.employee-filters .access-title { margin: 0; padding: 14px 16px 0; gap: 12px; flex-wrap: wrap; }
+.employee-filters .access-title h1 { font-size: 18px; line-height: 28px; }
+.employee-filters .access-toolbar, .employee-filters .access-actions { flex-wrap: wrap; }
+.employee-filters .access-toolbar input { width: 260px; }
+.access-employee-list .employee-select { width: 42px; }
 </style>

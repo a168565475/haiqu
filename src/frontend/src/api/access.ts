@@ -2,9 +2,12 @@ import { isAxiosError } from 'axios'
 import { apiClient } from './request'
 import type { AccessAudit, AccessEmployee, AccessPage, AccessRole, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
 import type { AccessDepartment, EmployeeDepartmentInput, EmployeeDepartments } from '@/types/access'
+import type { DeletionKind, DeletionItem, DeletionPreview, DeletionResult } from '@/types/access'
 
 const root = '/api/v1/access/'
 const options = (etag?: string) => ({ timeout: 20000, ...(etag ? {headers: {'If-Match': etag}} : {}) })
+export const previewDeletion = async (kind: DeletionKind, items: DeletionItem[]) => (await apiClient.post<DeletionPreview>(root + `${kind}/delete-preview/`, { items }, { ...options(), timeout: 120000 })).data
+export const deleteSelected = async (kind: DeletionKind, items: DeletionItem[], preview: DeletionPreview) => (await apiClient.post<DeletionResult>(root + `${kind}/delete-selected/`, { items, token: preview.token, confirmed: true }, { ...options(preview.etag), timeout: 120000 })).data
 async function all<T>(path: string): Promise<T[]> {
   const out: T[] = []
   let page = 1

@@ -27,6 +27,11 @@ const hasTableSnapshot = ref(false), scopeDialog = ref(false), scheduleDialog = 
 const calendarMember = ref({ user_id: '', name: '' })
 const syncRun = ref<SyncRun | null>(null), syncBusy = ref(false), syncActive = ref(false), syncError = ref(''), syncNotice = ref('')
 const syncProgressVisible = ref(false)
+const syncPercentage = computed(() => {
+  const run = syncRun.value
+  if (run?.status === 'SUCCESS') return 100
+  return run && run.total_steps > 0 ? Math.min(99, Math.max(0, Math.floor(run.completed_steps / run.total_steps * 100))) : 0
+})
 const pageCount = computed(() => Math.max(1, Math.ceil(count.value / pageSize.value)))
 const rowsCount = computed(() => tab.value === 'monthly' ? monthly.value.length : tab.value === 'daily' ? daily.value.length : raw.value.length)
 const tabLabels: Record<AttendanceTab, string> = { monthly: '成员月报', daily: '成员日报', raw: '原始打卡明细' }
@@ -211,7 +216,7 @@ onBeforeUnmount(() => { disposed = true; clearSensitive() })
           <ElButton data-testid="refresh" :disabled="tableLoading || overviewLoading" @click="refresh">刷新数据</ElButton>
         </div>
         <section v-if="syncProgressVisible" class="sync-progress" data-testid="sync-progress" aria-live="polite">
-          <div><strong>{{ syncRun ? syncStatus : syncBusy ? '正在创建同步批次…' : '同步状态' }}</strong><p v-if="syncRun">{{ phaseLabel }} · 已完成 {{ syncRun.completed_steps }} / {{ syncRun.total_steps }} 步 · 本轮扫描 {{ syncRun.scanned_members }} 人</p><p v-if="syncError" class="error" role="alert">{{ syncError }}</p><p v-if="syncNotice">{{ syncNotice }}</p><small>关闭页面会暂停后续批次，当前单步仍可完成；全部成功后才切换本月数据，失败保留旧版。</small></div>
+          <div class="sync-progress-detail"><strong>{{ syncRun ? syncStatus : syncBusy ? '正在创建同步批次…' : '同步状态' }}</strong><div class="sync-progress-meter"><progress aria-label="同步进度" :value="syncRun ? syncPercentage : undefined" max="100" /><span v-if="syncRun">{{ syncPercentage }}%</span></div><p v-if="syncRun">{{ phaseLabel }} · 已读取 {{ syncRun.scanned_members }} 人</p><p v-if="syncError" class="error" role="alert">{{ syncError }}</p><p v-if="syncNotice">{{ syncNotice }}</p></div>
           <ElButton v-if="syncActive && canSync" data-testid="pause-sync" @click="pauseSync">暂停后续批次</ElButton><ElButton v-else-if="resumeAvailable && canSync" data-testid="resume-sync" :disabled="syncBusy" @click="synchronize(true)">{{ syncRun?.status === 'FAILED' ? '读取进度并重试' : '继续同步' }}</ElButton>
         </section>
         <p v-if="applied.user_id" class="member-filter">企业微信账号：{{ applied.user_id }}<ElButton link @click="clearMemberFilter">查看全部人员</ElButton></p>
@@ -320,7 +325,9 @@ onBeforeUnmount(() => { disposed = true; clearSensitive() })
 .sync-progress { display: flex; flex: none; align-items: start; justify-content: space-between; gap: 16px; padding: 8px 12px; margin-bottom: 8px; border-radius: 8px; background: var(--erp-color-info-soft); }
 .sync-progress strong { font-size: 13px; color: var(--erp-color-brand); }
 .sync-progress p { margin: 5px 0; font-size: 12px; }
-.sync-progress small { display: block; font-size: 11px; line-height: 1.8; color: var(--erp-color-text-secondary); }
+.sync-progress-detail { flex: 1; min-width: 0; width: 100%; }
+.sync-progress-meter { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; }
+.sync-progress-meter progress { width: 100%; height: 10px; accent-color: var(--erp-color-brand); }
 .table-card.erp-list-data { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; padding: 0 16px; overflow: hidden; }
 .table-top { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 26px; align-self: stretch; }

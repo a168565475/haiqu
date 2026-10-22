@@ -6,8 +6,9 @@ import EmployeeListView from './EmployeeListView.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { AccessEmployee } from '@/types/access'
 
-const api = vi.hoisted(() => ({ getEmployees: vi.fn(), getDepartments: vi.fn(), getRoles: vi.fn() }))
+const api = vi.hoisted(() => ({ getEmployees: vi.fn(), getDepartments: vi.fn(), getRoles: vi.fn(), getTeams: vi.fn(), getCatalog: vi.fn() }))
 vi.mock('@/api/access', async original => ({ ...await original<object>(), ...api }))
+vi.mock('@/directives/horizontalOverflow', () => ({ vHorizontalOverflow: {} }))
 const wrappers: ReturnType<typeof mount>[] = []
 let pinia: ReturnType<typeof createPinia>
 function employee(index: number, overrides: Partial<AccessEmployee> = {}): AccessEmployee {
@@ -20,7 +21,7 @@ function grant(...permissions: string[]) {
 async function render() {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/employees', component: EmployeeListView }, { path: '/settings/access', name: 'access-management', component: { template: '<div>账号</div>' } }] })
   await router.push('/employees'); await router.isReady()
-  const wrapper = mount(EmployeeListView, { global: { plugins: [pinia, router], stubs: { EmployeeDirectoryDialog: true, DepartmentMappingDialog: true, EmployeeDepartmentsDialog: true } } })
+  const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router], stubs: { EmployeeDirectoryDialog: true, DepartmentMappingDialog: true, EmployeeDepartmentsDialog: true, DeleteManagementDialog: true, AppWindowDialog: { props: ['modelValue', 'title'], template: '<section v-if="modelValue" role="dialog"><h2>{{ title }}</h2><slot /><slot name="footer" /></section>' } } } })
   wrappers.push(wrapper); await flushPromises(); return { wrapper, router }
 }
 function button(wrapper: ReturnType<typeof mount>, label: string) { return wrapper.findAll('button').find(element => element.text() === label)! }
@@ -28,20 +29,20 @@ beforeEach(() => {
   vi.resetAllMocks(); pinia = createPinia(); setActivePinia(pinia)
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '管理员', is_superuser: true, employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, permissions: [], data_scope: 'ALL' } })
   api.getEmployees.mockResolvedValue([employee(1), employee(2), employee(3, { status: 'LEFT', account_active: false }), employee(4, { username: null, account_active: null })])
-  api.getDepartments.mockResolvedValue([])
+  api.getDepartments.mockResolvedValue([]); api.getRoles.mockResolvedValue([]); api.getTeams.mockResolvedValue([]); api.getCatalog.mockResolvedValue([])
 })
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('员工主列表', () => {
-  it('仅加载ERP员工，同名保留编码，无角色全量读取或自动企微预览', async () => {
+  it('使用统一员工列表，标题位于筛选卡片内，不自动读取企微', async () => {
     const { wrapper } = await render()
-    expect(api.getEmployees).toHaveBeenCalledOnce(); expect(api.getRoles).not.toHaveBeenCalled(); expect(api.getDepartments).not.toHaveBeenCalled()
+    expect(api.getEmployees).toHaveBeenCalledOnce(); expect(api.getRoles).toHaveBeenCalledOnce(); expect(api.getDepartments).toHaveBeenCalledOnce()
     expect(wrapper.findAll('tbody tr')).toHaveLength(4)
     expect(wrapper.text()).toContain('EMP-1'); expect(wrapper.text()).toContain('EMP-2')
     expect(wrapper.findComponent({ name: 'EmployeeDirectoryDialog' }).attributes('modelvalue')).toBe('false')
     expect(wrapper.text()).not.toContain('统一员工档案供账号、考勤与车间配置使用。')
     expect(wrapper.text()).not.toContain('部门归属不会自动分配角色')
-    expect(wrapper.find('.employee-filters.access-box').exists()).toBe(true)
+    expect(wrapper.get('.employee-filters.access-box h1').text()).toBe('员工')
     expect(wrapper.findAll('th').map(cell => cell.text())).toContain('企业微信部门')
     expect(wrapper.findAll('.employee-wecom-department').map(cell => cell.text())).toEqual(['UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'UNKNOWN'])
   })
@@ -65,8 +66,8 @@ describe('员工主列表', () => {
     api.getEmployees.mockResolvedValueOnce([employee(1, { username }), employee(2, { username: null, account_active: null })])
     const { wrapper } = await render()
     const cells = wrapper.findAll('.employee-account')
-    expect(cells.map(cell => cell.text())).toEqual([username, '—'])
-    expect(cells.map(cell => cell.attributes('title'))).toEqual([username, '—'])
+    expect(cells.map(cell => cell.text())).toEqual([username, '未开通'])
+    expect(cells.map(cell => cell.attributes('title'))).toEqual([username, '未开通'])
   })
   it('查询员工编码并按员工/账号状态筛选，空结果明确显示', async () => {
     const { wrapper } = await render()
@@ -89,31 +90,35 @@ describe('员工主列表', () => {
     await button(wrapper, '刷新员工').trigger('click'); await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(true); expect(wrapper.findAll('tbody tr')).toHaveLength(0)
   })
-  it('只有组织权限时可维护部门，点击前不加载部门选项', async () => {
+  it('只有组织权限时可维护部门，不提供员工读取和删除', async () => {
     grant('organizations.manage_organization')
     const { wrapper } = await render()
     expect(button(wrapper, '从企业微信读取')).toBeUndefined(); expect(button(wrapper, '权限管理')).toBeUndefined()
-    expect(api.getDepartments).not.toHaveBeenCalled()
+    expect(api.getDepartments).toHaveBeenCalledOnce()
     await button(wrapper, '部门管理').trigger('click'); await flushPromises()
     expect(api.getDepartments).toHaveBeenCalledOnce()
     expect(wrapper.findComponent({ name: 'EmployeeDepartmentsDialog' }).props('employee')).toEqual(employee(1))
   })
-  it('权限管理员按员工ID进入现有授权页，账号管理员仅进入账号页', async () => {
-    grant('access_control.manage_access')
-    const first = await render()
-    await button(first.wrapper, '权限管理').trigger('click'); await flushPromises()
-    expect(first.router.currentRoute.value.query).toEqual({ tab: 'employees', employee_id: 'employee-1' })
-    first.wrapper.unmount(); wrappers.splice(wrappers.indexOf(first.wrapper), 1)
-    grant('access_control.manage_accounts')
-    const second = await render()
-    expect(button(second.wrapper, '权限管理')).toBeUndefined()
-    await button(second.wrapper, '账号管理').trigger('click'); await flushPromises()
-    expect(second.router.currentRoute.value.query).toEqual({ tab: 'employees' })
+  it('两个入口使用相同操作：就地分配角色，管理员也能选择和删除', async () => {
+    const { wrapper, router } = await render()
+    await button(wrapper, '分配角色').trigger('click'); await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('分配员工角色')
+    expect(router.currentRoute.value.path).toBe('/employees')
+    await button(wrapper, '取消').trigger('click')
+    await wrapper.get('[aria-label="选择本页员工"]').setValue(true)
+    await button(wrapper, '删除所选（4）').trigger('click')
+    expect(wrapper.findComponent({ name: 'DeleteManagementDialog' }).props('items')).toHaveLength(4)
+    expect(wrapper.findComponent({ name: 'DeleteManagementDialog' }).props('kind')).toBe('employees')
+  })
+  it('补部门入口打开已勾选映射模式，普通读取保持不勾选', async () => {
+    const { wrapper } = await render()
+    await button(wrapper, '按映射补充部门').trigger('click')
+    expect(wrapper.findComponent({ name: 'EmployeeDirectoryDialog' }).props('initialApplyDepartments')).toBe(true)
   })
   it('没有目录权限不读员工；权限被撤回清除旧名单与弹窗', async () => {
     grant()
     const { wrapper } = await render()
-    expect(api.getEmployees).not.toHaveBeenCalled(); expect(wrapper.text()).toContain('没有员工目录查看权限')
+    expect(api.getEmployees).not.toHaveBeenCalled(); expect(wrapper.text()).toContain('无权限管理权限')
     grant('access_control.manage_accounts'); await flushPromises()
     await button(wrapper, '从企业微信读取').trigger('click')
     grant(); await flushPromises()

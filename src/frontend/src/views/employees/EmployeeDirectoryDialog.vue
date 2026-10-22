@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { AccessEmployee } from '@/types/access'
 import type { EmployeeDirectoryMember, EmployeeDirectoryPreviewResponse, EmployeeDirectoryResult } from '@/types/employeeDirectory'
 
-const props = defineProps<{ modelValue: boolean }>()
+const props = defineProps<{ modelValue: boolean; initialApplyDepartments?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
 const auth = useAuthStore()
 const permitted = computed(() => auth.managementCan('access_control.manage_accounts'))
@@ -48,12 +48,12 @@ const columns = computed(() => [
 function memberDepartments(member: EmployeeDirectoryMember) {
   return (member.department || []).map(id => {
     const name = preview.value?.data.departments.find(item => item.id === id)?.name || `部门 #${id}`
-    return name + (member.main_department === id ? '（主）' : '')
+    return name + (member.main_department === id ? '（主部门）' : '')
   }).join('；') || '—'
 }
 function cells(member: EmployeeDirectoryMember) {
   return [member.name || '姓名缺失', memberDepartments(member), member.userid, member.status_label, actionNames[member.action], member.employee?.display_name || '—', member.employee?.employee_code || '—', member.candidates.map(item => item.display_name).join('；') || '—', member.candidates.map(item => item.employee_code).join('；') || '—', member.candidates.map(item => item.archived ? '已归档' : { ACTIVE: '在职', INACTIVE: '停用', LEFT: '离职' }[item.status]).join('；') || '—',
-    ...(applyDepartments.value ? [member.department_plan ? { READY: '可补充', PENDING: '待核对', PRESERVED: '保留原归属' }[member.department_plan.status] : '—', member.department_plan?.reason || '—', member.department_plan?.assignments.map(item => item.department_name + (item.is_primary ? '（主）' : '')).join('；') || '—'] : [])]
+    ...(applyDepartments.value ? [member.department_plan ? { READY: '可补充', PENDING: '待核对', PRESERVED: '保留原归属' }[member.department_plan.status] : '—', member.department_plan?.reason || '—', member.department_plan?.assignments.map(item => item.department_name + (item.is_primary ? '（主部门）' : '')).join('；') || '—'] : [])]
 }
 watch([query, action], () => { page.value = 1 })
 watch(targetId, () => { confirmedSame.value = false })
@@ -142,7 +142,7 @@ async function submit(kind: 'sync' | 'match') {
   } finally { saving.value = false }
 }
 watch(() => props.modelValue, value => {
-  sequence++; invalidate(); error.value = ''; results.value = []; applyDepartments.value = false; query.value = ''; action.value = 'all'; tab.value = 'members'; loading.value = false
+  sequence++; invalidate(); error.value = ''; results.value = []; applyDepartments.value = !!props.initialApplyDepartments && canDepartments.value; query.value = ''; action.value = 'all'; tab.value = 'members'; loading.value = false
   if (value && permitted.value) void load()
 }, { immediate: true })
 watch(permitted, value => { if (!value) { sequence++; clearSensitive(); emit('update:modelValue', false) } })
@@ -157,7 +157,9 @@ onBeforeUnmount(() => { sequence++; candidateSequence++; window.clearInterval(cl
         <label v-if="canDepartments"><input v-model="applyDepartments" type="checkbox" :disabled="saving || loading" @change="changeDepartmentMode">按已确认映射补充空白部门归属</label>
         <button :disabled="loading || saving || !canRefresh" @click="load(true)">{{ preview?.data.snapshot.fetched_at ? '重新读取预览' : '首次读取员工' }}</button><button v-if="error && (!preview || blocked)" :disabled="loading || saving" @click="load()">{{ preview ? '重新核对名单' : '重试恢复' }}</button>
       </div>
-      <div v-if="error" class="access-warning" role="alert">{{ error }}</div><p v-if="loading" role="status">正在读取员工，请稍候…</p>
+      <div v-if="error" class="access-warning" role="alert">{{ error }}</div>
+      <div v-else-if="preview && !loading && !valid" class="access-warning" role="alert">{{ !preview.data.snapshot.can_submit ? preview.data.snapshot.message : '当前预览已过期或失效，请重新核对名单后保存。' }}</div>
+      <div v-if="loading || saving" class="directory-progress" role="status"><span>{{ saving ? '正在保存员工…' : '正在读取员工…' }}</span><progress :aria-label="saving ? '员工保存进度' : '员工读取进度'" /></div>
       <div class="directory-tabs" role="tablist" aria-label="员工读取结果"><button role="tab" :aria-selected="tab === 'members'" @click="tab = 'members'">员工名单</button><button role="tab" :aria-selected="tab === 'results'" @click="tab = 'results'">本次同步结果（{{ results.length }}）</button></div>
       <template v-if="tab === 'members'">
         <div class="directory-toolbar"><input v-model="query" aria-label="搜索企业微信成员" placeholder="姓名或 UserID"><select v-model="action" aria-label="同步分类"><option value="all">全部分类</option><option v-for="(label, key) in actionNames" :key="key" :value="key">{{ label }}</option></select><span>共 {{ filtered.length }} 人，已选 {{ selected.length }} 人</span><button :disabled="saving || loading || !filteredSelectable.length" @click="selectMembers(filteredSelectable, true)">全选可保存（{{ filteredSelectable.length }}）</button><button :disabled="saving || loading || !selected.length" @click="selected = []">取消全选</button></div>
@@ -185,11 +187,14 @@ onBeforeUnmount(() => { sequence++; candidateSequence++; window.clearInterval(cl
 </template>
 
 <style scoped lang="scss">
-:global(.employee-directory-window > .app-window-dialog__body) { display: flex; flex-direction: column; overflow: hidden; }
+:global(.employee-directory-window > .app-window-dialog__body) { display: flex; flex-direction: column; overflow: hidden; padding-top: 12px; }
 .directory-dialog { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; color: #111; }
 .directory-dialog > p, .directory-dialog > .access-warning { flex: none; }
 .directory-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; flex: none; }
 .directory-toolbar { margin: 14px 0; label { display: flex; align-items: center; gap: 6px; } }
+.directory-toolbar:first-child { margin-top: 0; }
+.directory-progress { display: flex; flex: none; align-items: center; gap: 12px; margin-bottom: 14px; }
+.directory-progress progress { flex: 1; height: 10px; accent-color: var(--erp-color-brand); }
 .directory-tabs { display: flex; gap: 16px; flex: none; button[aria-selected='true'] { background: #d9e8f6; } }
 .directory-dialog .directory-table { overflow: auto; min-height: 0; flex: 0 1 auto; border: 1px solid rgba(255,255,255,.72); border-radius: 5px; background: #eff7fc; margin-bottom: 14px;
   table { min-width: 1700px; border: 0; border-radius: 0; }

@@ -2,12 +2,14 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import DeleteManagementDialog from './DeleteManagementDialog.vue'
 import * as api from '@/api/access'
 import type { AccessDepartment } from '@/types/access'
 
 const props = defineProps<{ modelValue: boolean; departments: AccessDepartment[] }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
 const selectedId = ref(''), saving = ref(false), error = ref('')
+const deleting = ref(false)
 const options = computed(() => props.departments.filter(d => d.unit_code !== 'HAIQU'))
 const selected = computed(() => options.value.find(d => d.id === selectedId.value))
 const form = reactive({ code: '', name: '', sort: 0, status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE' })
@@ -17,7 +19,7 @@ function reset() {
   error.value = ''
 }
 watch(selectedId, reset)
-watch(() => props.modelValue, value => { if (value) { selectedId.value = ''; reset() } })
+watch(() => props.modelValue, value => { deleting.value = false; if (value) { selectedId.value = ''; reset() } })
 function close() { if (!saving.value) emit('update:modelValue', false) }
 async function save() {
   if (saving.value) return
@@ -46,6 +48,7 @@ async function save() {
       <label v-if="selected">状态<select v-model="form.status" :disabled="saving"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label>
       <p class="muted">部门只做组织分类，不自动授予角色权限。存在角色、下级或有效员工关系时不能停用；历史记录保留。</p>
     </div>
-    <template #footer><div class="access-actions access-dialog-footer"><button :disabled="saving" @click="close">取消</button><button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存部门' }}</button></div></template>
+    <template #footer><div class="access-actions access-dialog-footer"><button v-if="selected" :disabled="saving" @click="deleting = true">删除部门</button><button :disabled="saving" @click="close">取消</button><button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存部门' }}</button></div></template>
   </AppWindowDialog>
+  <DeleteManagementDialog v-if="deleting && selected" kind="departments" :items="[{ id: selected.id, etag: selected.etag }]" @close="deleting = false" @deleted="deleting = false; close(); emit('saved')" />
 </template>

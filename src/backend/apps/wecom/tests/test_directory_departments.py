@@ -235,16 +235,19 @@ class WeComDirectoryDepartmentTests(TestCase):
         self.assertEqual(response.data["data"][0]["department_status"], "PENDING")
         self.assertFalse(EmployeeOrganizationAssignment.objects.exists())
 
-    def test_two_source_departments_mapped_to_same_target_require_review(self):
+    def test_two_source_departments_mapped_to_same_target_merge_and_preserve_primary(self):
         self.multiple_departments()
         self.mapping()
         self.mapping(2, self.unit)
         preview = self.preview()
-        self.assert_plan(preview, "PENDING")
+        plan = self.assert_plan(preview, "READY")
+        self.assertEqual(plan["assignments"], [{"department_id": str(self.unit.pk), "department_name": self.unit.unit_name, "is_primary": True}])
         response = self.sync(preview)
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["data"][0]["department_status"], "PENDING")
-        self.assertFalse(EmployeeOrganizationAssignment.objects.exists())
+        self.assertEqual(response.data["data"][0]["department_status"], "APPLIED")
+        assignment = EmployeeOrganizationAssignment.objects.get()
+        self.assertEqual(assignment.organization_unit_id, self.unit.pk)
+        self.assertTrue(assignment.is_primary)
 
     def test_inactive_or_archived_target_is_not_assigned(self):
         self.mapping()

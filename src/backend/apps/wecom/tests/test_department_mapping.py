@@ -22,6 +22,7 @@ from apps.organizations.models import (
 from apps.wecom.client import WeComError
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.department_mapping_selectors import mapping_snapshot
+from apps.wecom.department_mapping_services import require_mapping_source
 from apps.wecom.models import WeComBinding, WeComConfig, WeComDepartmentMapping
 
 
@@ -146,19 +147,20 @@ class WeComDepartmentMappingTests(TestCase):
         self.assertEqual(self.client.post(ROOT + "refresh/").status_code, 403)
         self.upstream.assert_not_called()
 
-    def test_permission_is_rechecked_after_slow_upstream(self):
+    def test_permission_is_rechecked_after_source_validation(self):
         employee = self.employee()
         assignment = self.grant(employee)
         self.client.force_login(employee.user)
         preview = self.preview()
 
-        def revoke_permission():
+        def revoke_permission(*args):
+            directory = require_mapping_source(*args)
             assignment.effective_to = timezone.now()
             assignment.save()
-            return deepcopy(self.source)
+            return directory
 
-        self.upstream.return_value.read_directory.side_effect = revoke_permission
-        self.assertEqual(self.update(preview).status_code, 403)
+        with patch("apps.wecom.department_mapping_services.require_mapping_source", side_effect=revoke_permission):
+            self.assertEqual(self.update(preview).status_code, 403)
         self.assertFalse(WeComDepartmentMapping.objects.exists())
 
     def test_permission_is_rechecked_before_preview_returns(self):
@@ -237,6 +239,7 @@ class WeComDepartmentMappingTests(TestCase):
     def test_source_change_including_member_changes_invalidates_preview(self):
         preview = self.preview()
         self.source["members"][0]["name"] = "来源变化"
+        self.preview()  # 主动刷新来源后，旧预览版本不能继续保存。
         self.assertEqual(self.update(preview).status_code, 412)
         self.assertFalse(WeComDepartmentMapping.objects.exists())
 
@@ -249,14 +252,24 @@ class WeComDepartmentMappingTests(TestCase):
     def test_config_change_while_reading_source_invalidates_submission(self):
         preview = self.preview()
 
-        def change_config():
+        def change_config(*args):
+            directory = require_mapping_source(*args)
             self.config.enabled = False
             self.config.save()
-            return deepcopy(self.source)
+            return directory
 
-        self.upstream.return_value.read_directory.side_effect = change_config
-        self.assertEqual(self.update(preview).status_code, 412)
+        with patch("apps.wecom.department_mapping_services.require_mapping_source", side_effect=change_config):
+            self.assertEqual(self.update(preview).status_code, 412)
         self.assertFalse(WeComDepartmentMapping.objects.exists())
+
+    def test_binding_uses_valid_snapshot_without_another_network_read(self):
+        preview = self.preview()
+        self.upstream.reset_mock()
+        self.upstream.return_value.read_directory.side_effect = AssertionError("绑定不应重新读取通讯录")
+        response = self.update(preview)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.upstream.assert_not_called()
+        self.assertEqual(WeComDepartmentMapping.objects.get().organization_unit_id, self.unit.pk)
 
     def test_mapping_change_invalidates_preview(self):
         preview = self.preview()

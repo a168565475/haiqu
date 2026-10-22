@@ -102,7 +102,7 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
         from django.db.models import Q
         from django.utils import timezone
         now = timezone.now()
-        assignments = obj.organization_assignments.filter(effective_from__lte=now).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now))
+        assignments = obj.organization_assignments.filter(effective_from__lte=now, organization_unit__archived_at__isnull=True, organization_unit__status="ACTIVE").filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now))
         return "、".join(assignments.values_list("organization_unit__unit_name", flat=True))
 
 

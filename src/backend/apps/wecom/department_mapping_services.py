@@ -145,10 +145,8 @@ def update_mapping(request, department_id, data):
     require_etag(preview["config"], config_etag(config))
     directory = require_mapping_source(config, preview)
     imported = preview["source_mode"] == "IMPORTED"
-    if not imported:
-        directory = read_source(config)
-        if digest(directory) != preview["directory"]:
-            raise PreconditionFailed("企业微信通讯录已变化，请重新预览。")
+    # 绑定的是管理员刚核对的来源副本，不在每次选部门时重读全部成员。
+    # 副本有效期、配置、映射及目标组织版本仍在加锁后再次核对。
     source = next((row for row in directory["departments"] if row["id"] == department_id), None)
     if source is None:
         raise NotFound("企业微信部门不在当前完整预览中。")

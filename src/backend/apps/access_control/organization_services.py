@@ -83,6 +83,8 @@ def set_role_department(request, pk, department_id):
     require_organization_manager(request)
     OrganizationUnit.objects.select_for_update().get(unit_code="HAIQU")
     role = get_object_or_404(RoleProfile.objects.select_for_update(), pk=pk)
+    if role.archive_reason == "管理页面删除（保留历史）":
+        raise Conflict("角色已删除，请刷新列表。")
     require_matching_etag(request, role)
     if department_id:
         lock_departments([department_id])

@@ -45,6 +45,8 @@ def assert_managed_projection(role):
 
 def locked_role(pk, request):
     role = get_object_or_404(RoleProfile.objects.select_for_update(), pk=pk)
+    if role.archive_reason == "管理页面删除（保留历史）":
+        raise Conflict("角色已删除，请刷新列表。")
     require_matching_etag(request, role)
     assert_managed_projection(role)
     return role

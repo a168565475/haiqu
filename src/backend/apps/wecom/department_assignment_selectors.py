@@ -21,11 +21,13 @@ def department_plan(member, mappings, *, employee=None, has_history=False, rejec
             return pending("来源部门尚未全部映射，请先确认部门对应关系。")
         if not mapping["organization_active"]:
             return pending("映射目标部门已停用或归档，请先核对。")
-        assignments.append({"department_id": mapping["organization_unit_id"],
-                            "department_name": mapping["organization_name"],
-                            "is_primary": source_id == member["main_department"]})
-    if len({row["department_id"] for row in assignments}) != len(assignments):
-        return pending("成员的多个来源部门映射到同一 ERP 部门，请人工核对。")
+        existing = next((row for row in assignments if row["department_id"] == mapping["organization_unit_id"]), None)
+        if existing:
+            existing["is_primary"] = existing["is_primary"] or source_id == member["main_department"]
+        else:
+            assignments.append({"department_id": mapping["organization_unit_id"],
+                                "department_name": mapping["organization_name"],
+                                "is_primary": source_id == member["main_department"]})
     if sum(row["is_primary"] for row in assignments) != 1:
         return pending("来源主部门不在成员部门范围内，请人工核对。")
     return {"status": "READY", "reason": "可为归属空白的员工补充部门，不授予角色。", "assignments": assignments}

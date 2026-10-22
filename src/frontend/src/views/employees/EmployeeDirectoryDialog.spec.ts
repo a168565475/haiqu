@@ -64,7 +64,7 @@ describe('企业微信员工同步弹窗', () => {
     api.getEmployeeDirectoryPreview.mockResolvedValueOnce(data)
     const wrapper = await render()
     expect(wrapper.findAll('th').slice(1, 4).map(cell => cell.text())).toEqual(['姓名', '企业微信部门', 'UserID'])
-    expect(wrapper.get('[data-userid="source"]').findAll('td')[2]!.text()).toBe('生产部；销售部（主）；部门 #99')
+    expect(wrapper.get('[data-userid="source"]').findAll('td')[2]!.text()).toBe('生产部；销售部（主部门）；部门 #99')
     expect(wrapper.text()).not.toContain('拟分配ERP部门')
   })
   it.each([false, true])('部门列表为空或未返回%s时显示破折号，不猜测主部门', async missing => {
@@ -284,7 +284,7 @@ describe('企业微信员工同步弹窗', () => {
   })
   it.each(['capability', 'token', 'etag', 'expiry', 'mode'] as const)('可信副本缺少有效%s也不能保存或全选', async missing => {
     const data = preview(); data.data.snapshot.status = 'CONFIG_UNAVAILABLE'; data.data.snapshot.can_refresh = false
-    if (missing === 'capability') data.data.snapshot.can_submit = false
+    if (missing === 'capability') { data.data.snapshot.can_submit = false; data.data.snapshot.message = '副本已过期，不能保存员工' }
     if (missing === 'token') data.data.preview_token = ''
     if (missing === 'etag') data.etag = ''
     if (missing === 'expiry') data.data.snapshot.expires_at = '2000-01-01T00:00:00Z'
@@ -293,6 +293,7 @@ describe('企业微信员工同步弹窗', () => {
     const wrapper = await render()
     expect(wrapper.get('[aria-label="选择成员 new"]').attributes('disabled')).toBeDefined()
     expect(button(wrapper, '全选可保存（0）').attributes('disabled')).toBeDefined()
+    if (missing === 'capability') expect(wrapper.get('[role="alert"]').text()).toContain('副本已过期，不能保存员工')
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(api.syncEmployeeDirectory).not.toHaveBeenCalled()
   })

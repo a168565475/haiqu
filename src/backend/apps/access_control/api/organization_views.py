@@ -12,6 +12,7 @@ from .. import organization_services as services
 from ..permissions import CanManageOrganization, CanReadAccessDirectory
 from .serializers import RoleSerializer, StrictSerializer
 from .base import AccessViewSet, IF_MATCH
+from .deletion_views import DeletionActions
 
 
 class DepartmentCreateSerializer(StrictSerializer):
@@ -72,7 +73,8 @@ class EmployeeDepartmentsResponseSerializer(serializers.Serializer):
 ORGANIZATION_PERMISSIONS = [IsAuthenticated, HasActiveEmployee, CanManageOrganization]
 
 
-class DepartmentViewSet(mixins.ListModelMixin, AccessViewSet):
+class DepartmentViewSet(DeletionActions, mixins.ListModelMixin, AccessViewSet):
+    deletion_kind = "departments"
     def get_permissions(self):
         if self.action in {'list', 'retrieve'}:
             return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]

@@ -12,6 +12,8 @@ from ..models import SalesTeam
 from ..catalog import catalog
 from .base import AccessViewSet, IF_MATCH
 from .organization_views import RoleDepartmentActions, EmployeeDepartmentActions
+from .deletion_views import DeletionActions
+from ..deletion_services import DELETED_REASON
 from ..selectors import business_scope_enforcement, effective_access
 from ..permissions import CanManageAccounts, CanReadAccessDirectory
 from apps.core.api.permissions import HasActiveEmployee
@@ -43,13 +45,14 @@ class CatalogViewSet(AccessViewSet):
     create=extend_schema(request=RoleCreateSerializer, responses={201: RoleSerializer}),
     partial_update=extend_schema(request=RoleUpdateSerializer, responses=RoleSerializer, parameters=[IF_MATCH]),
 )
-class RoleViewSet(RoleDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+class RoleViewSet(DeletionActions, RoleDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+    deletion_kind = "roles"
     def get_permissions(self):
         if self.action in {'list', 'retrieve', 'grants'}:
             return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]
         return super().get_permissions()
 
-    queryset = RoleProfile.objects.select_related("auth_group").order_by("role_code")
+    queryset = RoleProfile.objects.exclude(archive_reason=DELETED_REASON).select_related("auth_group").order_by("role_code")
     serializer_class = RoleSerializer
 
     def respond(self, role, status=200):
@@ -88,11 +91,12 @@ class RoleViewSet(RoleDepartmentActions, mixins.ListModelMixin, AccessViewSet):
         return self.respond(services.copy_role(request, pk, serializer.validated_data), status=201)
 
 
-class AccessEmployeeViewSet(EmployeeDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+class AccessEmployeeViewSet(DeletionActions, EmployeeDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+    deletion_kind = "employees"
     def get_permissions(self):
         if self.action in {'list', 'roles', 'effective'}:
             return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]
-        if self.action in {'account', 'account_status', 'reset_password'}:
+        if self.action in {'account', 'account_status', 'reset_password', 'delete_preview', 'delete_selected'}:
             return [IsAuthenticated(), HasActiveEmployee(), CanManageAccounts()]
         return super().get_permissions()
 

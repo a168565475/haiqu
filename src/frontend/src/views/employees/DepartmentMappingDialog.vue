@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { DepartmentMappingPreviewResponse, DepartmentMappingSourceDepartment } from '@/types/employeeDirectory'
 
 const props = defineProps<{ modelValue: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: []; 'apply-departments': [] }>()
 const auth = useAuthStore()
 const permitted = computed(() => auth.managementCan('organizations.manage_organization'))
 const preview = ref<DepartmentMappingPreviewResponse>(), loading = ref(false), saving = ref(false)
@@ -105,7 +105,7 @@ onBeforeUnmount(() => { sequence++; closeLoadingMessage(); window.clearInterval(
       </div>
       <template v-if="preview && !preview.data.departments.length"><h3>本地 ERP 部门</h3><div class="mapping-table local-table"><table aria-label="本地ERP部门"><thead><tr><th>名称</th><th>编码</th><th>状态</th></tr></thead><tbody><tr v-for="item in preview.data.organizations" :key="item.id"><td><ElTooltip :trigger="['hover', 'focus']" :content="item.unit_name"><span tabindex="0" class="cell-text">{{ item.unit_name }}</span></ElTooltip></td><td><ElTooltip :trigger="['hover', 'focus']" :content="item.unit_code"><span tabindex="0" class="cell-text">{{ item.unit_code }}</span></ElTooltip></td><td>{{ item.archived ? '已归档' : item.status === 'ACTIVE' ? '启用' : '停用' }}</td></tr></tbody></table><p v-if="!preview.data.organizations.length">无可用本地部门。</p></div></template>
     </div>
-    <template #footer><div class="access-actions access-dialog-footer"><button :disabled="saving" @click="close">关闭</button></div></template>
+    <template #footer><div class="access-actions access-dialog-footer"><button v-if="auth.managementCan('access_control.manage_accounts')" :disabled="saving || loading || !valid" @click="close(); emit('apply-departments')">按映射补充员工部门</button><button :disabled="saving" @click="close">关闭</button></div></template>
   </AppWindowDialog>
 </template>
 

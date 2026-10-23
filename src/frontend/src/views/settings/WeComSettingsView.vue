@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { isAxiosError } from 'axios'
-import { ElButton } from 'element-plus'
+import { ElButton, ElMessage, ElMessageBox } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import WeComMessagePanel from './WeComMessagePanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import * as api from '@/api/wecom'
 import type { WeComAudit, WeComConfig, WeComConfigResponse, WeComConfigWrite } from '@/types/wecom'
 
+const props = defineProps<{ embedded?: boolean }>()
 const auth = useAuthStore()
 const router = useRouter()
 const permitted = computed(() => auth.managementCan('access_control.manage_wecom'))
 const tab = ref<'config' | 'messages'>('config')
 const messagesOpened = ref(false)
+const messagePanel = ref<InstanceType<typeof WeComMessagePanel>>()
 const config = ref<WeComConfig>()
 const etag = ref('')
 const loading = ref(false), saving = ref(false), checking = ref(false), stale = ref(false)
@@ -111,8 +113,21 @@ function openAudits() { auditDialog.value = true; void loadAudits() }
 function formatTime(value: string | null) { if (!value) return '尚未检查'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false }) }
 function auditAction(action: string) { return ({ MANUAL_BIND: '管理员绑定', AUTO_CREATE: '首次登录建档', CONFIG_UPDATE: '配置变更', CONFIG_CHECK: '连接检查', OAUTH_LOGIN: '企业微信登录', DIRECTORY_CREATE: '通讯录新建员工', DIRECTORY_CONFIRM_NEW: '确认新建员工', DIRECTORY_MATCH: '人工核对员工', DIRECTORY_DEPARTMENTS_FILL: '补充员工部门', DEPARTMENT_MAPPING_UPDATE: '调整部门映射' } as Record<string, string>)[action] || '企业微信操作' }
 function auditResult(result: string) { return ({ SUCCESS: '成功', FAILED: '失败', CONFLICT: '冲突拒绝', REJECTED: '已拒绝' } as Record<string, string>)[result] || '已记录' }
-onMounted(() => { void loadConfig() })
-onBeforeUnmount(() => { disposed = true; clearCredentials(); config.value = undefined; etag.value = ''; auditRequest++ })
+async function canClose() {
+  if (saving.value || checking.value) { ElMessage.warning('配置正在保存或检查连接，请稍候再关闭。'); return false }
+  if (dirty.value) {
+    try { await ElMessageBox.confirm('企业微信配置有未保存的修改，确定放弃并离开吗？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }) }
+    catch (action) { if (action === 'cancel' || action === 'close') return false; throw action }
+  }
+  return messagePanel.value?.canClose() ?? true
+}
+function leaving(event: BeforeUnloadEvent) {
+  if (dirty.value || saving.value || checking.value || messagePanel.value?.hasPendingChanges) { event.preventDefault(); event.returnValue = '' }
+}
+defineExpose({ canClose })
+onBeforeRouteLeave(() => props.embedded ? true : canClose())
+onMounted(() => { void loadConfig(); window.addEventListener('beforeunload', leaving) })
+onBeforeUnmount(() => { disposed = true; clearCredentials(); config.value = undefined; etag.value = ''; auditRequest++; window.removeEventListener('beforeunload', leaving) })
 </script>
 
 <template>
@@ -123,14 +138,14 @@ onBeforeUnmount(() => { disposed = true; clearCredentials(); config.value = unde
         <div class="heading-line"><div class="heading-info"><h1>企业微信管理</h1><span class="tag" :class="{ success: config?.enabled }">{{ config?.enabled ? '已启用' : '未启用' }}</span></div>
           <div v-if="tab === 'config'" class="heading-actions"><button @click="openAudits">操作记录</button><button :disabled="busy || !config?.has_secret || config?.secret === null || !config?.encryption_ready || dirty || stale || !!loadError" @click="checkConnection">{{ checking ? '正在检查…' : '检查连接' }}</button><button class="primary" :disabled="busy || !config || stale || !!loadError" @click="saveConfig">{{ saving ? '正在保存…' : '保存配置' }}</button></div>
         </div>
-        <p class="heading-copy">管理工作台登录与应用消息。员工同步与身份核对请进入员工管理，角色仍由权限管理分配。<button v-if="auth.canReadAccessDirectory" class="text-button" @click="router.push({ name: 'employee-list' })">进入员工管理 →</button><button v-if="auth.hasPermission('attendance.view_attendance')" class="text-button" @click="router.push({ name: 'wecom-attendance' })">进入考勤管理 →</button></p>
+        <p v-if="!props.embedded" class="heading-copy">管理工作台登录与应用消息。员工同步与身份核对请进入员工管理，角色仍由权限管理分配。<button v-if="auth.canReadAccessDirectory" class="text-button" @click="router.push({ name: 'employee-list' })">进入员工管理 →</button><button v-if="auth.hasPermission('attendance.view_attendance')" class="text-button" @click="router.push({ name: 'wecom-attendance' })">进入考勤管理 →</button></p>
         <div class="tabs" role="tablist" aria-label="企业微信管理功能" @keydown="tabKey">
           <button id="wecom-tab-config" class="tab" role="tab" :aria-selected="tab === 'config'" aria-controls="wecom-config-panel" :tabindex="tab === 'config' ? 0 : -1" @click="selectTab('config')">接入配置</button>
           <button id="wecom-tab-messages" class="tab" role="tab" :aria-selected="tab === 'messages'" aria-controls="wecom-messages-panel" :tabindex="tab === 'messages' ? 0 : -1" @click="selectTab('messages')">消息模板</button>
         </div>
       </header>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-      <section v-if="messagesOpened" v-show="tab === 'messages'" id="wecom-messages-panel" role="tabpanel" aria-labelledby="wecom-tab-messages"><WeComMessagePanel :erp-origin="config?.erp_origin || ''" /></section>
+      <section v-if="messagesOpened" v-show="tab === 'messages'" id="wecom-messages-panel" role="tabpanel" aria-labelledby="wecom-tab-messages"><WeComMessagePanel ref="messagePanel" :erp-origin="config?.erp_origin || ''" /></section>
       <section v-show="tab === 'config'" id="wecom-config-panel" role="tabpanel" aria-labelledby="wecom-tab-config">
         <div v-if="loading" class="glass state-panel" role="status">正在读取企业微信配置…</div>
         <div v-else-if="loadError" class="glass state-panel" role="alert"><div><h2>暂时无法加载配置</h2><p>{{ loadError }}</p><button @click="loadConfig">重新加载配置</button></div></div>
@@ -175,6 +190,7 @@ onBeforeUnmount(() => { disposed = true; clearCredentials(); config.value = unde
 <style scoped lang="scss">
 .wecom-page { display: flex; flex-direction: column; gap: 14px; min-width: 0; color: var(--erp-color-text-primary); font: 13px/1.5 var(--erp-font-body); }
 .wecom-page, .wecom-dialog-content { h1, h2, p { margin: 0; } h2 { font-size: 16px; line-height: 24px; font-weight: 600; } }
+.wecom-page h1 { font: 700 36px/44px var(--erp-font-body); }
 // 外层容器强制标题尺寸，旧设置主题另设宋体；仅在本页恢复已确认的标题样式。
 #erp-main-content .wecom-page h1 { font: 700 36px/44px var(--erp-font-body) !important; }
 .glass { border: 1px solid var(--erp-glass-border); border-radius: 16px; background: var(--erp-glass-surface); box-shadow: var(--erp-glass-shadow); backdrop-filter: var(--erp-glass-backdrop); }
@@ -198,5 +214,5 @@ onBeforeUnmount(() => { disposed = true; clearCredentials(); config.value = unde
 .error-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; margin-bottom: 14px; border: 1px solid var(--erp-color-danger-border); border-radius: 8px; background: var(--erp-color-danger-soft); font-size: 12px; }.state-panel { min-height: 300px; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; }.state-panel p { margin: 8px 0 18px; }.wecom-dialog-content { display: flex; flex-direction: column; gap: 16px; font: 13px/1.5 var(--erp-font-body); }.audit-entry + .audit-entry { border-top: 1px solid var(--erp-color-border); padding-top: 14px; }.audit-entry header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }.audit-entry p { overflow-wrap: anywhere; }
 @media (min-width: 1700px) { .config-grid { grid-template-columns: minmax(0, 1fr) 350px; }.content-card { padding: 22px 24px; }.form-grid { gap: 22px 24px; }.address-row { padding: 13px 0; } }
 @media (max-width: 1050px) { .config-grid { grid-template-columns: 1fr; }.content-card { padding: 16px; }.heading-actions { flex-wrap: wrap; justify-content: flex-end; } }
-@media (max-width: 640px) { .wecom-page { gap: 10px; }.heading-line { align-items: flex-start; flex-direction: column; gap: 10px; }#erp-main-content .wecom-page h1 { font-size: 28px !important; line-height: 38px !important; }.heading-info { gap: 10px; }.form-grid { grid-template-columns: 1fr; gap: 14px; }.address-row { grid-template-columns: minmax(0, 1fr) 40px; gap: 4px 10px; }.address-row > .muted { grid-column: 1/-1; }.section-heading { align-items: flex-start; }.section-heading small { max-width: 150px; text-align: right; }.error-banner { flex-wrap: wrap; }.callback-card > .section-heading { flex-direction: column; gap: 8px; }.callback-summary { justify-content: flex-start; gap: 6px 12px; } }
+@media (max-width: 640px) { .wecom-page { gap: 10px; }.wecom-page h1 { font-size: 28px; line-height: 38px; }.heading-line { align-items: flex-start; flex-direction: column; gap: 10px; }#erp-main-content .wecom-page h1 { font-size: 28px !important; line-height: 38px !important; }.heading-info { gap: 10px; }.form-grid { grid-template-columns: 1fr; gap: 14px; }.address-row { grid-template-columns: minmax(0, 1fr) 40px; gap: 4px 10px; }.address-row > .muted { grid-column: 1/-1; }.section-heading { align-items: flex-start; }.section-heading small { max-width: 150px; text-align: right; }.error-banner { flex-wrap: wrap; }.callback-card > .section-heading { flex-direction: column; gap: 8px; }.callback-summary { justify-content: flex-start; gap: 6px 12px; } }
 </style>

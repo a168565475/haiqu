@@ -1,3 +1,4 @@
+from apps.organizations.models import Employee
 from ..selectors import reporting_source_products
 from apps.access_control.resource_scopes import has_resource_grant
 from datetime import date
@@ -8,6 +9,7 @@ from uuid import UUID
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Max, Sum
+from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -24,7 +26,7 @@ from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from apps.production_scheduling.selectors import accessible_production_schedules
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft, ScheduleStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_task_product_image
-from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Operation, PlanCategory, RecordStatus, Workshop
 from apps.workshop_config.selectors import active_employees
 
 from ..models import (
@@ -123,7 +125,7 @@ class ReportingContextView(generics.GenericAPIView):
             craft_ids = schedule_product.crafts.filter(removed_at__isnull=True).values("craft_id")
             crafts = crafts.filter(pk__in=craft_ids)
         operations = Operation.objects.filter(status=RecordStatus.ACTIVE, craft__in=crafts).select_related("craft", "reporting_unit")
-        employees = active_employees(WorkshopEmployee.objects.filter(
+        employees = active_employees(Employee.objects.filter(
             workshop__in=workshops
         )).select_related("workshop")
         bom_items = (
@@ -169,7 +171,7 @@ class ReportingContextView(generics.GenericAPIView):
                 "unit_name": item.reporting_unit.unit_name if item.reporting_unit_id else None,
             } for item in operations],
             "bom_items": bom_items,
-            "employees": [{"id": str(item.pk), "name": item.name, "workshop_id": str(item.workshop_id)} for item in employees],
+            "employees": [{"id": str(item.pk), "name": item.display_name, "workshop_id": str(item.workshop_id)} for item in employees],
         }})
 
 
@@ -666,7 +668,7 @@ class WorkReportViewSet(viewsets.GenericViewSet):
                 report__in=visible_reports,
                 report__schedule_product_id=schedule_product_id,
                 report__scheme__scope_craft_id=craft_id,
-                workshop_employee__in=active_employees(WorkshopEmployee.objects.all()),
+                workshop_employee__in=active_employees(Employee.objects.all()),
             ).order_by("-report__updated_at", "-line_number", "-id").values(
                 "work_item_id", "workshop_employee_id"
             )
@@ -757,7 +759,7 @@ class WorkReportDayListView(generics.GenericAPIView):
         if date_to: queryset = queryset.filter(production_date__lte=date_to)
         rows = queryset.values("production_date").annotate(
             report_count=Count("id", distinct=True), order_count=Count("product_line__production_task_id", distinct=True),
-            product_count=Count("product_line_id", distinct=True), employee_count=Count("lines__workshop_employee_id", distinct=True),
+            product_count=Count("product_line_id", distinct=True), employee_count=Count(Coalesce("lines__workshop_employee_id", "lines__legacy_employee_id"), distinct=True),
             line_count=Count("lines__id", distinct=True), total_amount=Sum("lines__amount"), last_saved_at=Max("updated_at"),
         ).order_by("-production_date")
         page = self.paginate_queryset(rows)

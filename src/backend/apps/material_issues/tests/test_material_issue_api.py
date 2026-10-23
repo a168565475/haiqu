@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import uuid
 import threading
 import time
@@ -34,7 +35,6 @@ from apps.workshop_config.models import (
     PlanCategory,
     RecordStatus,
     Workshop,
-    WorkshopEmployee,
     WorkshopEmployeeStatus,
 )
 
@@ -185,7 +185,7 @@ class MaterialIssueApiTests(APITestCase):
         )
         self.workshop = Workshop.objects.filter(status=RecordStatus.ACTIVE, name="金工车间").first()
         self.assertIsNotNone(self.workshop)
-        self.recipient = WorkshopEmployee.objects.create(
+        self.recipient = production_employee(
             workshop=self.workshop,
             position="领料员",
             name="领料测试人",
@@ -292,7 +292,7 @@ class MaterialIssueApiTests(APITestCase):
     def test_create_rejects_material_outside_workshop_scope(self):
         requirement = self._requirements()
         sewing_workshop = Workshop.objects.get(name="车缝车间")
-        sewing_recipient = WorkshopEmployee.objects.create(
+        sewing_recipient = production_employee(
             workshop=sewing_workshop,
             position="领料员",
             name="车缝领料测试人",
@@ -329,7 +329,7 @@ class MaterialIssueApiTests(APITestCase):
             source_revision_hash="fabric-scope-test",
         )
         sewing_workshop = Workshop.objects.get(name="车缝车间")
-        sewing_recipient = WorkshopEmployee.objects.create(
+        sewing_recipient = production_employee(
             workshop=sewing_workshop,
             position="领料员",
             name="车缝面料越权测试人",
@@ -513,7 +513,7 @@ class MaterialIssueApiTests(APITestCase):
     def test_edit_cannot_change_scope_outside_original_work_plan(self):
         created = self._create_issue(quantity="1")
         sewing_workshop = Workshop.objects.get(name="车缝车间")
-        sewing_recipient = WorkshopEmployee.objects.create(
+        sewing_recipient = production_employee(
             workshop=sewing_workshop,
             position="领料员",
             name="编辑绕过测试领料人",

@@ -15,6 +15,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.organizations.selectors import active_department_employees, employee_filter_choices
 from apps.core.api.concurrency import require_matching_etag
 from apps.customers.hard_delete import permanently_delete_task
 from apps.core.api.permissions import HasActiveEmployee
@@ -185,7 +186,8 @@ class TaskViewSet(
             "task_types": [{"value": value, "label": label} for value, label in BusinessTask._meta.get_field("task_type").choices],
             "statuses": [{"value": value, "label": label} for value, label in BusinessTask._meta.get_field("status").choices],
             "priorities": [{"value": value, "label": "中" if value == "NORMAL" else label} for value, label in BusinessTask._meta.get_field("priority").choices],
-            "assignees": [{"id": str(employee.pk), "code": employee.employee_code, "name": employee.display_name} for employee in Employee.objects.filter(status="ACTIVE", archived_at__isnull=True).order_by("employee_code")],
+            "assignee_filters": [{"id": str(employee.pk), "code": employee.employee_code, "name": employee.display_name} for employee in employee_filter_choices(active_department_employees("DEPT_BUSINESS"), self.get_queryset().values("assignee_employee_id"))],
+            "assignees": [{"id": str(employee.pk), "code": employee.employee_code, "name": employee.display_name} for employee in active_department_employees("DEPT_BUSINESS").order_by("employee_code")],
             "customer_count": source_customers.count(),
             "selected_scope": scope,
         }})

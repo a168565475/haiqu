@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
-import { ElButton, ElInput, ElOption, ElSelect, ElSwitch, ElTag } from 'element-plus'
+import { ElButton, ElInput, ElMessage, ElOption, ElSelect, ElSwitch, ElTag } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import * as api from '@/api/notifications'
 import type { NotificationPreview, NotificationRule, NotificationRuleWrite, NotificationPreviewDraft, NotificationPreviewAttempt, NotificationPreviewRecipients } from '@/types/notifications'
 
+const props = defineProps<{ embedded?: boolean }>()
 const MANAGE_PERMISSION = 'access_control.manage_notifications'
 const auth = useAuthStore()
 const permitted = computed(() => auth.managementCan(MANAGE_PERMISSION))
@@ -38,7 +39,7 @@ const sentPreviewId = ref('')
 const sendForbidden = ref(false)
 const sendError = ref('')
 const attempt = ref<NotificationPreviewAttempt>()
-const canSend = computed(() => canManage.value && auth.managementCan('access_control.manage_wecom') && !sendForbidden.value)
+const canSend = computed(() => canManage.value && auth.user?.is_superuser === true && auth.managementCan('access_control.manage_wecom') && !sendForbidden.value)
 const busy = computed(() => saving.value || sending.value)
 const awaitingOutcome = computed(() => sendStarted.value && (!attempt.value || ['PROCESSING', 'UNCERTAIN'].includes(attempt.value.status)))
 const sendReady = computed(() => canSend.value && recipients.value?.available && bindingId.value && preview.value?.preview_token && previewDraft.value && !previewExpired.value && !busy.value && !sendStarted.value)
@@ -228,8 +229,22 @@ function scopeLabel(rule: NotificationRule): string { return rule.scope_labels[r
 function roleNames(rule: NotificationRule): string { return rule.recipient_role_codes.map(code => roleLabel.value.get(code) || code).join('、') || '未配置' }
 function closeDialog(done?: () => void): void { if (!busy.value) { clearEditor(); done?.() } }
 
+function canClose(): boolean {
+  if (busy.value || checking.value || previewing.value) {
+    ElMessage.warning('通知规则操作进行中，请稍候再关闭。')
+    return false
+  }
+  if (dialogVisible.value) {
+    ElMessage.warning('请先保存或取消当前通知规则编辑。')
+    return false
+  }
+  return true
+}
+
+defineExpose({ canClose })
+
 watch(form, clearPreview, { flush: 'sync' })
-watch(() => auth.managementCan('access_control.manage_wecom'), allowed => {
+watch(() => auth.user?.is_superuser === true && auth.managementCan('access_control.manage_wecom'), allowed => {
   clearSendState()
   recipientRequest++; recipients.value = undefined; bindingId.value = ''; sendForbidden.value = false
   if (allowed && dialogVisible.value) void loadRecipients()
@@ -244,7 +259,7 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
 
 <template>
   <div class="notification-rules-page">
-    <header class="page-heading">
+    <header v-if="!props.embedded" class="page-heading">
       <div><h1>通知规则</h1><p>配置已登记业务事件的 ERP 站内消息和企业微信接收范围。</p></div>
       <ElButton :disabled="!canManage || loading || saving" @click="loadRules">刷新</ElButton>
     </header>
@@ -254,7 +269,7 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
     <section v-else-if="!loadError" class="rules-card">
       <div v-if="loading" class="empty-state" role="status">正在读取通知规则…</div>
       <div v-else-if="!rules.length" class="empty-state">暂无已登记通知规则。</div>
-      <div v-else class="table-scroll" role="region" aria-label="通知规则列表" tabindex="0"><table class="rules-table"><thead><tr><th>业务环节</th><th>模板</th><th>接收角色</th><th>范围</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="rule in rules" :key="rule.event_code"><td><strong>{{ rule.display_name }}</strong><small>{{ rule.event_code }}</small></td><td><span>{{ rule.name }}</span><small>{{ rule.title_template }}</small></td><td>{{ roleNames(rule) }}<small v-for="warning in rule.warnings" :key="warning" class="rule-warning">{{ warning }}</small></td><td>{{ scopeLabel(rule) }}</td><td><ElTag :type="rule.enabled ? 'success' : 'info'">{{ rule.enabled ? '启用' : '停用' }}</ElTag></td><td>v{{ rule.version }}</td><td><ElButton link type="primary" @click="openEditor(rule)">编辑 / 预览</ElButton></td></tr></tbody></table></div>
+      <div v-else class="table-scroll" role="region" aria-label="通知规则列表" tabindex="0"><table class="rules-table"><thead><tr><th>业务环节</th><th>模板</th><th>接收角色</th><th>范围</th><th>状态</th><th v-if="!props.embedded">版本</th><th>操作</th></tr></thead><tbody><tr v-for="rule in rules" :key="rule.event_code"><td><strong>{{ rule.display_name }}</strong><small>{{ rule.event_code }}</small></td><td><span>{{ rule.name }}</span><small>{{ rule.title_template }}</small></td><td>{{ roleNames(rule) }}<small v-for="warning in rule.warnings" :key="warning" class="rule-warning">{{ warning }}</small></td><td>{{ scopeLabel(rule) }}</td><td><ElTag :type="rule.enabled ? 'success' : 'info'">{{ rule.enabled ? '启用' : '停用' }}</ElTag></td><td v-if="!props.embedded">v{{ rule.version }}</td><td><ElButton link type="primary" @click="openEditor(rule)">编辑</ElButton></td></tr></tbody></table></div>
     </section>
     <AppWindowDialog v-if="canManage" v-model="dialogVisible" title="编辑通知规则" :width="920" :min-width="280" :close-on-click-modal="false" :before-close="closeDialog" destroy-on-close>
       <template v-if="selected">

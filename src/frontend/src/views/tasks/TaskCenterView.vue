@@ -204,7 +204,7 @@ watch(() => [props.customerId, props.defaultScope] as const, async ([customerId,
         </template>
       </el-input>
       <el-select v-model="filters.assignee_employee_id" class="assignee-filter" clearable filterable placeholder="负责人：全部" @change="applyFilters">
-        <el-option v-for="item in options?.assignees" :key="item.id" :label="`${item.name}（${item.code}）`" :value="item.id" />
+        <el-option v-for="item in (options?.assignee_filters || options?.assignees)" :key="item.id" :label="`${item.name}（${item.code}）`" :value="item.id" />
       </el-select>
       <el-select v-model="filters.task_type" class="type-filter" clearable placeholder="任务类型：全部" @change="applyFilters">
         <el-option v-for="item in options?.task_types" :key="item.value" :label="item.label" :value="item.value" />

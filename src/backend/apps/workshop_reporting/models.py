@@ -339,7 +339,7 @@ class WorkReportLine(TimeStampedModel):
     scheme_line = models.ForeignKey(WageSchemeLine, on_delete=models.PROTECT, related_name="report_lines")
     work_item = models.ForeignKey(WorkItem, on_delete=models.PROTECT, related_name="report_lines")
     workshop_employee = models.ForeignKey(
-        "workshop_config.WorkshopEmployee", on_delete=models.PROTECT, related_name="work_report_lines"
+        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT, related_name="work_report_lines"
     )
     production_line = models.PositiveSmallIntegerField(null=True, blank=True)
     quantity = models.DecimalField(
@@ -353,7 +353,8 @@ class WorkReportLine(TimeStampedModel):
     craft_name_snapshot = models.CharField(max_length=100)
     operation_name_snapshot = models.CharField(max_length=150)
     unit_name_snapshot = models.CharField(max_length=80)
-    employee_name_snapshot = models.CharField(max_length=100)
+    employee_name_snapshot = models.CharField(max_length=150)
+    legacy_employee_id = models.UUIDField(null=True, blank=True, editable=False)
 
     class Meta:
         db_table = "workshop_work_report_line"

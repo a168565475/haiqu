@@ -200,7 +200,7 @@
     .el-table__empty-block { min-height: 120px; }
   }
 
-  .erp-list-footer {
+  @at-root .erp-glass-list .erp-list-footer, .access-page .erp-employee-pagination, .directory-dialog .erp-employee-pagination {
     box-sizing: border-box;
     display: flex;
     flex: none;

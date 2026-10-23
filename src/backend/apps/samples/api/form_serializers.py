@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.models import uppercase_code_validator
 from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
@@ -115,7 +116,7 @@ class SampleRequestFormSerializer(serializers.Serializer):
     )
     owner_employee_id = serializers.PrimaryKeyRelatedField(
         source="owner_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     shipping_method = serializers.ChoiceField(choices=SampleShippingMethod.choices)
     order_date = serializers.DateField()

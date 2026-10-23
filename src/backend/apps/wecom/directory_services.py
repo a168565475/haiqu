@@ -17,10 +17,11 @@ from apps.core.api.exceptions import Conflict
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from . import department_mapping_selectors as department_selectors
 from . import directory_snapshots
+from . import directory_progress
 from .department_assignment_selectors import department_plan
 from .department_mapping_services import require_schema as require_department_schema
 from .directory_client import WeComDirectoryClient
-from .directory_selectors import directory_plan, employee_summary, member_rejection
+from .directory_selectors import deleted_employee, directory_plan, employee_summary, member_rejection
 from .employee_department_snapshots import department_snapshot
 from .models import WeComBinding, WeComConfig, WeComDirectorySnapshot
 from .selectors import config_etag, configuration_complete, get_config
@@ -47,6 +48,7 @@ def digest(value):
 def plan_digest(row):
     return digest({"action": row["action"], "candidates": sorted(
         ((candidate["id"], candidate["etag"]) for candidate in row["candidates"])),
+        "replacement": row.get("_replacement"),
     })
 
 
@@ -97,17 +99,20 @@ def preview_directory(request, *, apply_departments=False, refresh=False):
                 require_organization_manager(current_request)
         directory_snapshots.refresh(request, config, read_source, recheck_access)
     snapshot, directory, metadata, mode = employee_source(config)
+    directory_progress.advance("核对员工与部门映射")
     require_access(request)
     if apply_departments:
         require_organization_manager(request)
     require_etag(config_etag(config), config_etag(get_config()))
     mappings = department_selectors.mapping_snapshot(config.corp_id) if apply_departments else None
     rows = directory_plan(directory, mappings=mappings)
+    directory_progress.advance("整理预览结果")
     source_digest = digest(directory)
     version = {
         "actor": str(request.user.pk), "corp_id": config.corp_id, "source_mode": mode,
         "config": config_etag(config), "directory": source_digest,
-        "plans": {row["userid"].lower(): plan_digest(row) for row in rows if row["action"] in ("CREATE", "REVIEW")},
+        "plans": {row["userid"].lower(): plan_digest(row) for row in rows if row["action"] in ("CREATE", "REVIEW", "RECREATE")},
+        "replacement_plans": {row["userid"].lower(): plan_digest(row) for row in rows if row["action"] == "RECREATE"},
         "apply_departments": apply_departments,
         "snapshot_version": etag_for_instance(snapshot) if metadata["can_submit"] else None,
     }
@@ -247,9 +252,32 @@ def directory_result(request, binding, member, result, preview, mappings, actor,
     return payload
 
 
+def replace_deleted_binding(request, row, employee, actor):
+    expected = row["_replacement"]
+    old_employee, old_user = _locked_employee_and_user(expected["employee_id"])
+    binding = WeComBinding.objects.select_for_update().get(pk=expected["binding_id"])
+    if (not deleted_employee(old_employee) or (old_user and old_user.is_active)
+            or etag_for_instance(old_employee) != expected["employee_etag"]
+            or str(binding.employee_id) != expected["employee_id"]
+            or etag_for_instance(binding) != expected["binding_etag"]):
+        raise PreconditionFailed("已删除员工或企业微信绑定发生变化，请重新预览。")
+    # 保留绑定主键及消息历史，仅将当前登录身份转给全新员工；旧业务仍引用原员工。
+    binding.employee = employee
+    binding.member_name = row["name"]
+    binding.source = "AUTO"
+    binding.created_account = True
+    binding.created_by_employee = actor
+    binding.save(update_fields=["employee", "member_name", "source", "created_account", "created_by_employee", "updated_at"])
+    audit(request, binding, "DIRECTORY_RECREATE", actor=actor, user_id=binding.user_id,
+          employee_name=employee.display_name, before={"employee_id": str(old_employee.pk)},
+          after={"employee_id": str(employee.pk)}, message="已删除员工重新建档并转移企微绑定，原员工及账号保持停用，未继承权限。")
+    return binding
+
+
 @sensitive_variables()
 def sync_directory(request, data):
     config, directory, preview = prepare_submission(request, data)
+    directory_progress.advance("保存员工")
     selected = {value.lower() for value in data["user_ids"]}
     confirmed = {value.lower() for value in data["confirmed_new_user_ids"]}
     with transaction.atomic():
@@ -263,6 +291,8 @@ def sync_directory(request, data):
         # 先校验整批，再开始写入；任何审计或写入失败仍由外层事务全量回滚。
         for key in sorted(selected):
             row = rows[key]
+            if key in preview.get("replacement_plans", {}) and preview["replacement_plans"][key] != plan_digest(row):
+                raise PreconditionFailed("重新建档对象已变化，请重新预览。")
             if row["action"] == "EXISTING":
                 continue
             if row["action"] == "SKIP" or (row["action"] == "REVIEW" and key not in confirmed):
@@ -272,8 +302,9 @@ def sync_directory(request, data):
         for key in sorted(selected):
             row = rows[key]
             existing = _existing_binding(locked.corp_id, row["userid"])
-            if existing:
+            if existing and row["action"] != "RECREATE":
                 results.append(directory_result(request, existing, row, "EXISTING", preview, mappings, actor, directory))
+                directory_progress.advance("保存员工")
                 continue
             require_directory_source(locked, preview)
             actor = require_access(request)
@@ -281,11 +312,15 @@ def sync_directory(request, data):
             employee = Employee.objects.create(
                 user=user, employee_code="WECOM-" + uuid.uuid4().hex.upper(), display_name=row["name"],
             )
-            binding = _create_binding(locked, row, employee, source="AUTO", created_account=True, actor=actor)
-            audit(request, binding, "DIRECTORY_CONFIRM_NEW" if key in confirmed else "DIRECTORY_CREATE",
-                  actor=actor, user_id=binding.user_id, employee_name=employee.display_name,
-                  message="通讯录建档：创建员工及无密码账号，未分配角色。")
+            if row["action"] == "RECREATE":
+                binding = replace_deleted_binding(request, row, employee, actor)
+            else:
+                binding = _create_binding(locked, row, employee, source="AUTO", created_account=True, actor=actor)
+                audit(request, binding, "DIRECTORY_CONFIRM_NEW" if key in confirmed else "DIRECTORY_CREATE",
+                      actor=actor, user_id=binding.user_id, employee_name=employee.display_name,
+                      message="通讯录建档：创建员工及无密码账号，未分配角色。")
             results.append(directory_result(request, binding, row, "CREATED", preview, mappings, actor, directory))
+            directory_progress.advance("保存员工")
         require_directory_source(locked, preview)
         require_access(request)
         if preview.get("apply_departments", False):

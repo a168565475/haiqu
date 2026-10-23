@@ -88,7 +88,8 @@ async function loadPage() {
     if (!canCreate.value) throw new Error('当前账号没有创建打样申请的权限。')
     options.value = await fetchSampleFormOptions()
     customerMatches.value = options.value.customers
-    form.ownerId = options.value.current_maker.id
+    form.ownerId = options.value.salespeople.some(person => person.id === options.value!.current_maker.id)
+      ? options.value.current_maker.id : ''
     const existing = editingId.value ? await fetchSample(editingId.value) : null
     if (existing && !existing.data.application_actions?.can_resubmit) throw new Error('该申请当前不允许修改重提。')
     const sourceType = existing ? existing.data.source_quotation_version ? 'quotation' : existing.data.source_inquiry ? 'inquiry' : null : route.query.sourceType

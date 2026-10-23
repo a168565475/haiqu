@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.organizations.models import Employee
 from apps.reference_data.models import ReferenceDictionary
@@ -350,7 +351,7 @@ class ContactBulkTaskSerializer(serializers.Serializer):
     assignee_mode = serializers.ChoiceField(choices=["CUSTOMER_OWNER", "SPECIFIC"], default="CUSTOMER_OWNER")
     assignee_employee_id = serializers.PrimaryKeyRelatedField(
         source="assignee_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
         required=False,
     )
 

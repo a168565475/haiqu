@@ -1,3 +1,4 @@
+from apps.organizations.models import Employee
 from apps.inventory.public_stock_cutover import stock_write_transaction
 import hashlib
 import json
@@ -32,7 +33,6 @@ from apps.workshop_config.models import (
     PlanCategory,
     RecordStatus,
     Workshop,
-    WorkshopEmployee,
 )
 from apps.workshop_config.selectors import active_employees, locked_active_employees
 
@@ -248,12 +248,13 @@ def _validate_relations(issue, *, require_complete=False, lock_employee=False):
     if require_complete and not issue.recipient_workshop_employee_id:
         raise ValidationError({"recipient_workshop_employee_id": "提交前必须选择领料人。"})
     if issue.recipient_workshop_employee_id:
-        candidates = WorkshopEmployee.objects.filter(pk=issue.recipient_workshop_employee_id)
+        candidates = Employee.objects.filter(pk=issue.recipient_workshop_employee_id)
         eligible = locked_active_employees(candidates) if lock_employee else list(active_employees(candidates))
         if not eligible:
             raise ValidationError({"recipient_workshop_employee_id": "领料人已停用、离职或关联员工不可用。"})
         recipient = eligible[0]
         issue.recipient_workshop_employee = recipient
+        issue.recipient_name_snapshot = recipient.display_name
         if recipient.workshop_id != issue.workshop_id:
             raise ValidationError({"recipient_workshop_employee_id": "领料人不属于所选车间。"})
     if require_complete and issue.issue_at is None:
@@ -265,7 +266,7 @@ def _apply_header(issue, data):
         "production_task_id": ProductionTask,
         "product_line_id": ProductionTaskProduct,
         "workshop_id": Workshop,
-        "recipient_workshop_employee_id": WorkshopEmployee,
+        "recipient_workshop_employee_id": Employee,
     }
     for field, model in relation_models.items():
         if field in data:
@@ -735,7 +736,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
     issue.production_task = ProductionTask.objects.select_for_update().get(pk=issue.production_task_id)
     issue.product_line = ProductionTaskProduct.objects.select_for_update().get(pk=issue.product_line_id)
     issue.workshop = Workshop.objects.select_for_update().get(pk=issue.workshop_id)
-    issue.recipient_workshop_employee = WorkshopEmployee.objects.select_for_update().get(
+    issue.recipient_workshop_employee = Employee.objects.select_for_update().get(
         pk=issue.recipient_workshop_employee_id
     )
     _validate_saved_plan(issue)
@@ -816,7 +817,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
                     "issue_number": issue.issue_number,
                     "component": line.material_name_snapshot,
                     "completed_craft": line.semi_finished_balance.completed_craft.name,
-                    "recipient": issue.recipient_workshop_employee.name,
+                    "recipient": issue.recipient_name_snapshot,
                     "workshop": issue.workshop.name,
                     **({"issued_pieces": str(line.requested_quantity), "raw_deducted_bar_count": "0",
                         "raw_deducted_meters": "0.00"} if pipe_semi else {}),
@@ -879,7 +880,7 @@ def _debit_ordinary_line(issue, line, actor_employee):
         snapshot={
             "issue_number": issue.issue_number,
             "material_number": line.material_number_snapshot,
-            "recipient": issue.recipient_workshop_employee.name,
+            "recipient": issue.recipient_name_snapshot,
             "workshop": issue.workshop.name,
         },
     )

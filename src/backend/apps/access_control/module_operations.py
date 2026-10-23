@@ -41,6 +41,33 @@ LEGACY_ALIASES.update({
 })
 
 ACTION_OVERRIDES = {
+    'ReceiptViewSet': {
+        'list': 'finance.view_receipt', 'retrieve': 'finance.view_receipt',
+        'create': 'finance.add_receipt', 'void': 'finance.void_receipt', 'attachment': 'finance.view_receipt',
+    },
+    'ReceiptUploadViewSet': {action: 'finance.add_receipt' for action in ('list', 'retrieve', 'create', 'destroy', 'content')},
+    'ReceiptAccountOptionsViewSet': {'list': 'finance.add_receipt'},
+    'ReceiptStatementViewSet': {'receipts': 'finance.view_receipt', 'available_deposits': 'finance.add_receipt'},
+    'AccountingSubjectViewSet': {
+        'list': 'finance.view_accountingsubject', 'retrieve': 'finance.view_accountingsubject',
+        'create': 'finance.add_accountingsubject', 'partial_update': 'finance.change_accountingsubject',
+        'destroy': 'finance.delete_accountingsubject',
+    },
+    'SubjectTreeViewSet': {'list': 'finance.view_accountingsubject'},
+    'ReceivableStatementViewSet': {
+        'list': 'finance.view_receivablestatement', 'retrieve': 'finance.view_receivablestatement',
+        'create': 'finance.add_receivablestatement', 'partial_update': 'finance.change_receivablestatement',
+        'void': 'finance.void_receivablestatement',
+    },
+    'FinanceSourceTaskViewSet': {
+        action: ['finance.view_receivablestatement', 'finance.add_receivablestatement',
+                 'finance.change_receivablestatement', 'finance.add_receipt'] for action in ('list', 'products')
+    },
+    'FinanceAccountViewSet': {
+        'list': 'finance.view_financeaccount', 'retrieve': 'finance.view_financeaccount',
+        'create': 'finance.add_financeaccount', 'partial_update': 'finance.change_financeaccount',
+        'destroy': 'finance.delete_financeaccount',
+    },
     'PurchaseRequestViewSet': {
         'list': 'procurement.view_purchaserequest', 'retrieve': 'procurement.view_purchaserequest',
         'options': 'procurement.view_purchaserequest', 'create': 'procurement.add_purchaserequest',

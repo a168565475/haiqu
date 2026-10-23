@@ -1,4 +1,5 @@
 from apps.access_control.sales_sources import require_file
+from apps.organizations.selectors import active_department_employees
 from apps.access_control import sales_policy
 from apps.access_control.sales_policy import SalesAccessSerializerMixin
 from functools import cached_property
@@ -1022,7 +1023,7 @@ class InquiryPrioritySerializer(serializers.Serializer):
 
 class InquiryAssignSerializer(serializers.Serializer):
     owner_employee_id = serializers.PrimaryKeyRelatedField(
-        source="owner_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        source="owner_employee", queryset=active_department_employees("DEPT_BUSINESS")
     )
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
@@ -1046,7 +1047,7 @@ class InquiryBulkSerializer(serializers.Serializer):
 
 class InquiryBulkAssignSerializer(InquiryBulkSerializer):
     owner_employee_id = serializers.PrimaryKeyRelatedField(
-        source="owner_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        source="owner_employee", queryset=active_department_employees("DEPT_BUSINESS")
     )
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
 

@@ -2,6 +2,7 @@ from django.contrib.auth.models import Permission
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.core.api.concurrency import etag_for_instance
 from apps.organizations.models import Employee
@@ -42,7 +43,7 @@ class CustomerTransferRequestSerializer(serializers.ModelSerializer):
 class CustomerTransferCreateSerializer(serializers.Serializer):
     customer_id = serializers.UUIDField()
     to_employee_id = serializers.PrimaryKeyRelatedField(
-        source="to_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        source="to_employee", queryset=active_department_employees("DEPT_BUSINESS")
     )
     reason = serializers.CharField(min_length=2, max_length=2000, trim_whitespace=True)
 

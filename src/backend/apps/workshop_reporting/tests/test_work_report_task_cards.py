@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import uuid
 from datetime import timedelta
 from decimal import Decimal
@@ -18,7 +19,7 @@ from apps.files.models import BusinessFile, FileScanStatus
 from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.production_scheduling.models import ProductionScheduleProductCraft, ScheduleStatus
 from apps.production_tasks.models import ProductionTaskProductImage
-from apps.workshop_config.models import Craft, CraftType, Operation, PlanCategory, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, CraftType, Operation, PlanCategory, Workshop
 
 from ..models import WageSchemeLine, WorkReport
 from . import test_work_report_task_selection as selection_tests
@@ -93,7 +94,7 @@ class WorkReportTaskCardTests(APITestCase):
             operation_number='CARD-ASSEMBLY', product_name='工价测试产品', craft=craft,
             name='卡片装配', reporting_unit=self.unit,
         )
-        worker = WorkshopEmployee.objects.create(
+        worker = production_employee(
             workshop=workshop, position='操作工', name='卡片装配员工', is_supervisor=False,
         )
         ProductionScheduleProductCraft.objects.create(

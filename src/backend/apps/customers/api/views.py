@@ -1,4 +1,5 @@
 from apps.access_control import sales_policy
+from apps.organizations.selectors import active_department_employees
 from apps.access_control.sales_sources import filter_activity
 import csv
 import uuid
@@ -501,7 +502,7 @@ class CustomerViewSet(
                 for item in grouped[category_code]
             ]
 
-        employees = Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        employees = active_department_employees("DEPT_BUSINESS")
         if keyword:
             employees = employees.filter(
                 Q(employee_code__icontains=keyword)

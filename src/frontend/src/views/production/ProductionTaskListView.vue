@@ -374,7 +374,7 @@ onBeforeUnmount(() => {
           <ElOption label="状态：已取消" value="cancelled" />
         </ElSelect>
         <ElSelect v-model="advancedFilters.salesperson_id" :loading="optionsLoading" clearable placeholder="业务员：全部" @change="search">
-          <ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" />
+          <ElOption v-for="item in options?.salespeople || []" :key="item.id" :label="item.display_name" :value="item.id" />
         </ElSelect>
         <ElSelect v-model="dueSoon" aria-label="交期筛选" @change="search">
           <ElOption label="交期：全部" :value="false" />
@@ -387,7 +387,7 @@ onBeforeUnmount(() => {
             <div class="advanced-filter-grid">
               <label><span>合同编号</span><ElInput v-model="advancedFilters.contract_number" clearable placeholder="输入合同编号" /></label>
               <label><span>产品</span><ElSelect v-model="advancedFilters.product_id" filterable clearable placeholder="全部产品"><ElOption v-for="item in options?.products || []" :key="item.id" :label="`${item.product_code} · ${item.item_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
-              <label><span>业务员</span><ElSelect v-model="advancedFilters.salesperson_id" filterable clearable placeholder="全部业务员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
+              <label><span>业务员</span><ElSelect v-model="advancedFilters.salesperson_id" filterable clearable placeholder="全部业务员"><ElOption v-for="item in options?.salespeople || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
               <label><span>跟单员</span><ElSelect v-model="advancedFilters.follower_id" filterable clearable placeholder="全部跟单员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
               <label class="delivery-range"><span>交期范围</span><ElDatePicker v-model="deliveryRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
               <label><span>订单来源</span><ElSelect v-model="advancedFilters.order_source" clearable placeholder="全部来源"><ElOption v-for="item in options?.order_sources || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>

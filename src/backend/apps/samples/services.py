@@ -764,7 +764,8 @@ def transition_sample_request(*, sample_request, action, note, actor_employee, r
 @transaction.atomic
 def confirm_sample_finance(*, sample_request, note, business_file, actor_employee, request):
     """财务通过备注或安全凭证完成确认，并把主流程交给 PMC。"""
-
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
     require_matching_etag(request, sample_request)
     if sample_request.status != SampleRequestStatus.PENDING:
@@ -868,7 +869,8 @@ def upload_sample_parameters(
     request,
 ):
     """上传一张金工或裁剪参数图片；两个工序可以任意顺序、多次补充。"""
-
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
     require_matching_etag(request, sample_request)
     configuration = {
@@ -1684,6 +1686,8 @@ def create_requotation_from_feedback(
 
 @transaction.atomic
 def link_sample_file(*, sample_request, business_file, file_role, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     sample_request = SampleRequest.objects.select_for_update().get(pk=sample_request.pk)
     require_matching_etag(request, sample_request)
     if sample_request.status in {

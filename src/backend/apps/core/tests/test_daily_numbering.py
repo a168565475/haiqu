@@ -31,7 +31,7 @@ class DailyBusinessNumberTests(TestCase):
             "PRODUCTION_SCHEDULE": "PC", "MATERIAL_INBOUND": "CLRK", "MATERIAL_ISSUE": "LL",
             "INTERNAL_SEMI_RECEIPT": "BNRK", "FINISHED_GOODS_RECEIPT": "CPRK", "FINISHED_GOODS_OUTBOUND": "CPCK",
             "OUTSOURCING_ORDER": "WF", "OUTSOURCING_DISPATCH": "FL", "OUTSOURCING_RETURN": "WH",
-            "TUBE_OUTSOURCING_RECEIPT": "WFHK", "WORK_REPORT": "BG",
+            "TUBE_OUTSOURCING_RECEIPT": "WFHK", "WORK_REPORT": "BG", "FINANCE_ACCOUNT": "ZH",
         }
         self.assertEqual(DAILY_NUMBER_RULES, expected_prefixes)
         for number_type, prefix in expected_prefixes.items():
@@ -46,7 +46,7 @@ class DailyBusinessNumberTests(TestCase):
         self.assertEqual(next_daily_business_number("WORK_REPORT", date(2028, 2, 29)), "BG280229001")
         self.assertEqual(next_daily_business_number("BOM", date(2000, 1, 1)), "BOM000101001")
 
-    def test_shared_entry_uses_the_same_daily_counter_for_all_fifteen_types(self):
+    def test_shared_entry_uses_the_same_daily_counter_for_all_confirmed_types(self):
         for number_type, prefix in DAILY_NUMBER_RULES.items():
             with self.subTest(number_type=number_type):
                 self.assertEqual(next_daily_business_number(number_type, self.number_date), f"{prefix}991220001")

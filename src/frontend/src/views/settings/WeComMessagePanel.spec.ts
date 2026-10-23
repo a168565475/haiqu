@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { AxiosError } from 'axios'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WeComSettingsView from './WeComSettingsView.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -20,6 +21,8 @@ async function renderMessages() {
 }
 beforeEach(() => {
   vi.resetAllMocks(); setActivePinia(createPinia())
+  vi.spyOn(ElMessage, 'warning').mockImplementation(() => ({ close: vi.fn() }))
+  vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '管理员', is_superuser: true, employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, permissions: [], data_scope: 'ALL' } })
   api.getWeComConfig.mockResolvedValue({ data: { corp_id: 'corp', agent_id: '1', erp_origin: 'https://erp.test', enabled: true, secret: '', callback_token: '', callback_aes_key: '', credential_read_errors: [], has_secret: true, has_callback_token: false, has_callback_aes_key: false, encryption_ready: true, configuration_complete: true, last_check_status: 'SUCCESS', last_check_message: '', last_checked_at: null, login_url: '', callback_url: '', trusted_domain: 'erp.test' }, etag: 'config-v1' })
   api.getWeComMessageTemplate.mockResolvedValue({ data: { ...template }, etag: 'template-v0' })
@@ -31,6 +34,19 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('企业微信消息模板', () => {
+  it('未编辑的默认模板可关闭，隐藏页签中的修改仍通过父级确认', async () => {
+    const wrapper = await renderMessages()
+    const view = wrapper.getComponent(WeComSettingsView).vm
+    expect(await view.canClose()).toBe(true)
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+    await wrapper.get('#wecom-message-body').setValue('保留我的模板修改')
+    await button(wrapper, '接入配置').trigger('click')
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+    expect(await view.canClose()).toBe(false)
+    expect((wrapper.get('#wecom-message-body').element as HTMLTextAreaElement).value).toBe('保留我的模板修改')
+    expect(await view.canClose()).toBe(true)
+    expect(api.saveWeComMessageTemplate).not.toHaveBeenCalled()
+  })
   it('仅打开页签才加载，默认模板未保存不能发送，唯一可用绑定自动选择', async () => {
     const wrapper = mount(WeComSettingsView); wrappers.push(wrapper); await flushPromises()
     expect(api.getWeComMessageTemplate).not.toHaveBeenCalled()
@@ -66,11 +82,14 @@ describe('企业微信消息模板', () => {
     await button(wrapper, '保存模板').trigger('click'); await flushPromises()
     await wrapper.get('#wecom-message-content').setValue('仅通知测试')
     await button(wrapper, '发送测试').trigger('click')
+    expect(await wrapper.getComponent(WeComSettingsView).vm.canClose()).toBe(false)
+    expect(ElMessage.warning).toHaveBeenLastCalledWith('消息模板正在保存、发送或查询结果，请稍候再关闭。')
     expect(button(wrapper, '正在发送…').attributes('disabled')).toBeDefined()
     await button(wrapper, '正在发送…').trigger('click')
     expect(api.sendWeComMessageTest).toHaveBeenCalledTimes(1)
     expect(api.sendWeComMessageTest.mock.calls[0]).toEqual([{ binding_id: 'binding-a', message_content: '仅通知测试', idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/i) }, 'template-v1'])
     finish(accepted); await flushPromises()
+    expect(await wrapper.getComponent(WeComSettingsView).vm.canClose()).toBe(true)
     expect(wrapper.text()).toContain('企业微信已受理')
     expect(wrapper.text()).toContain('不等于送达')
   })
@@ -82,6 +101,8 @@ describe('企业微信消息模板', () => {
     const key = api.sendWeComMessageTest.mock.calls[0]![0].idempotency_key
     expect(api.getWeComMessageAttempts).toHaveBeenLastCalledWith(expect.objectContaining({ idempotency_key: key }))
     expect(wrapper.text()).toContain('结果未确认')
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+    expect(await wrapper.getComponent(WeComSettingsView).vm.canClose()).toBe(false)
     expect(button(wrapper, '发送测试').attributes('disabled')).toBeDefined()
     api.getWeComMessageAttempts.mockResolvedValueOnce(page([{ ...accepted, idempotency_key: key }]))
     await button(wrapper, '查询发送结果').trigger('click'); await flushPromises()

@@ -4,6 +4,7 @@ from decimal import Decimal
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.customers.models import CustomerAccount, CustomerEntityAddress, CustomerTransactionEntity
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
@@ -571,12 +572,12 @@ class SalesOrderWriteSerializer(serializers.Serializer):
     )
     salesperson_id = serializers.PrimaryKeyRelatedField(
         source="salesperson",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
         write_only=True,
     )
     merchandiser_id = serializers.PrimaryKeyRelatedField(
         source="merchandiser",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
         required=False,
         allow_null=True,
         write_only=True,

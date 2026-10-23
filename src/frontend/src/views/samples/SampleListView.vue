@@ -198,7 +198,7 @@ onBeforeUnmount(() => { rowsRequest++ })
       </ElInput>
       <ElSelect v-model="filters.status" class="status-filter" aria-label="当前环节" clearable placeholder="当前环节：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
       <ElSelect v-model="filters.sample_type" class="type-filter" aria-label="样品类型" clearable placeholder="样品类型：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.sample_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
-      <ElSelect v-model="filters.owner_employee_id" class="owner-filter" aria-label="业务员" clearable filterable placeholder="业务员：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.owners" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
+      <ElSelect v-model="filters.owner_employee_id" class="owner-filter" aria-label="业务员" clearable filterable placeholder="业务员：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in (options?.owner_filters || options?.owners)" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
       <ElPopover popper-class="erp-list-filter-popover" v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="340" :teleported="false">
         <template #reference><ElButton class="erp-button-motion more-filters">更多筛选</ElButton></template>
         <ElForm label-position="top" @submit.prevent="() => { searchSamples(); moreFiltersVisible = false }">

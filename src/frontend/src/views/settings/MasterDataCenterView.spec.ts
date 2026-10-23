@@ -19,7 +19,7 @@ const fixtures = vi.hoisted(() => ({
   countries: [
     {
       id: 'country-cn', code: 'CN', alpha3_code: 'CHN', numeric_code: '156',
-      chinese_name: '中国', english_name: 'China', status: 'ACTIVE', sort_order: 0,
+      chinese_name: '中国', english_name: 'China', status: 'ACTIVE' as const, sort_order: 0,
       source_version: 'UN M49 2026-08-26 / ISO 3166-1', description: '',
       extra_data: { region_name: 'Asia' },
       created_at: '2026-08-26T00:00:00Z', updated_at: '2026-08-26T00:00:00Z', archived_at: null,
@@ -99,6 +99,27 @@ describe('MasterDataCenterView', () => {
     expect(fetchMasterDataSummary).not.toHaveBeenCalled()
   })
 
+  it('嵌入时移除筛选卡和导出，洲别按钮筛选整份国家资料并可恢复全部', async () => {
+    const { fetchAllMasterDataRecords } = await import('@/api/referenceData')
+    vi.mocked(fetchAllMasterDataRecords).mockResolvedValueOnce([
+      fixtures.countries[0]!,
+      { ...fixtures.countries[0]!, id: 'country-fr', code: 'FR', chinese_name: '法国', extra_data: { region_name: 'Europe' } },
+    ])
+    const wrapper = mount(MasterDataCenterView, { props: { embedded: true }, global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.find('[aria-label="基础资料筛选"]').exists()).toBe(false)
+    expect(wrapper.find('h1').exists()).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === '导出数据')).toBe(false)
+    const choices = wrapper.get('[aria-label="洲别筛选"]')
+    await choices.findAll('button').find(button => button.text() === '欧洲')!.trigger('click')
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).toContain('法国')
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).not.toContain('中国')
+    await choices.findAll('button').find(button => button.text() === '全部')!.trigger('click')
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).toContain('中国')
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).toContain('法国')
+    wrapper.unmount()
+  })
+
   it('汇率为空时区分生产人民币换算和公司本位币配置', async () => {
     const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
@@ -110,5 +131,18 @@ describe('MasterDataCenterView', () => {
     expect(wrapper.text()).toContain('暂无汇率历史')
     expect(wrapper.text()).toContain('可人工维护外币兑人民币汇率')
     expect(wrapper.text()).toContain('不影响生产任务的人民币换算')
+  })
+
+  it('嵌入配置窗口时不直接销毁尚未处理的基础资料编辑', async () => {
+    fixtures.granted.add('reference_data.add_country')
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus], stubs: { teleport: true, ElSelect: true, ElOption: true } } })
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(true)
+    await wrapper.findAll('button').find(button => button.text() === '新增资料')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(false)
+    await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click')
+    expect(wrapper.vm.canClose()).toBe(true)
+    wrapper.unmount()
   })
 })

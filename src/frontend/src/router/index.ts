@@ -122,13 +122,13 @@ export const router = createRouter({
       path: '/settings/wecom',
       name: 'wecom-settings',
       component: () => import('@/views/settings/WeComSettingsView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 企业微信管理', breadcrumbs: [{ label: '系统配置', to: '/settings/reference-data' }, { label: '企业微信管理' }], pageWidth: 'fluid' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 企业微信管理', breadcrumbs: [{ label: '系统配置', to: '/settings' }, { label: '企业微信管理' }], pageWidth: 'fluid' },
     },
     {
       path: '/settings/notifications',
       name: 'notification-rules',
       component: () => import('@/views/settings/NotificationRulesView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 通知规则', breadcrumbs: [{ label: '系统配置', to: '/settings/reference-data' }, { label: '通知规则' }], pageWidth: 'fluid' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 通知规则', breadcrumbs: [{ label: '系统配置', to: '/settings' }, { label: '通知规则' }], pageWidth: 'fluid' },
     },
     {
       path: '/employees',
@@ -1689,6 +1689,12 @@ export const router = createRouter({
       },
     },
     {
+      path: '/settings',
+      name: 'system-settings',
+      component: () => import('@/views/settings/SystemSettingsView.vue'),
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置', breadcrumbs: [{ label: '系统配置' }], pageWidth: 'fluid' },
+    },
+    {
       path: '/settings/email-accounts',
       name: 'email-account-settings',
       component: EmailAccountSettingsView,
@@ -1731,7 +1737,7 @@ export const router = createRouter({
       path: '/settings/access',
       name: 'access-management',
       component: AccessManagementView,
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 权限管理', breadcrumbs: [{label:'系统配置',to:'/settings/reference-data'},{label:'权限管理'}], pageWidth:'fluid', fitViewport:true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统配置 / 权限管理', breadcrumbs: [{label:'系统配置',to:'/settings'},{label:'权限管理'}], pageWidth:'fluid', fitViewport:true },
     },
     {
       path: '/settings/master-data',
@@ -1763,7 +1769,43 @@ export const router = createRouter({
       path: '/settings/inquiry-handling-time',
       name: 'inquiry-handling-settings',
       component: InquiryHandlingSettingsView,
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统设置 / 询盘处理时限', breadcrumbs: [{label:'系统设置',to:'/settings/reference-data'},{label:'询盘处理时限'}], pageWidth:'fluid' },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'settings', headerTitle: '系统设置 / 询盘处理时限', breadcrumbs: [{label:'系统设置',to:'/settings'},{label:'询盘处理时限'}], pageWidth:'fluid' },
+    },
+    {
+      path: '/finance/accounts',
+      name: 'finance-accounts',
+      component: () => import('@/views/finance/FinanceAccountsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-accounts', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '公司账户信息' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/subjects',
+      name: 'finance-subjects',
+      component: () => import('@/views/finance/FinanceSubjectsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-subjects', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '会计科目' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/statements',
+      name: 'finance-statements',
+      component: () => import('@/views/finance/FinanceStatementsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-statements', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '应收对账单' }], pageWidth: 'fluid',
+      },
+    },
+    {
+      path: '/finance/receipts',
+      name: 'finance-receipts',
+      component: () => import('@/views/finance/FinanceReceiptsView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'finance-receipts', headerTitle: '财务管理',
+        breadcrumbs: [{ label: '财务管理' }, { label: '收款确认' }], pageWidth: 'fluid',
+      },
     },
     {
       path: '/settings/number-rules',

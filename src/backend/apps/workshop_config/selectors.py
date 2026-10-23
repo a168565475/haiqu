@@ -1,63 +1,42 @@
 from django.db.models import Count, Q
 
 from apps.organizations.models import Employee
+from apps.organizations.selectors import active_department_employees
 
-from .models import RecordStatus, WorkshopEmployeeStatus
+from .models import RecordStatus
 
 
 def workshops_with_statistics(queryset):
+    eligible = active_department_employees("DEPT_PRODUCTION").values("pk")
     return queryset.annotate(
-        employee_count=Count("employees", distinct=True),
-        active_employee_count=Count(
-            "employees",
-            filter=Q(employees__status=WorkshopEmployeeStatus.ACTIVE),
-            distinct=True,
-        ),
-        active_supervisor_count=Count(
-            "employees",
-            filter=Q(
-                employees__status=WorkshopEmployeeStatus.ACTIVE,
-                employees__is_supervisor=True,
-            ),
-            distinct=True,
-        ),
+        employee_count=Count("production_employees", filter=Q(production_employees__in=eligible), distinct=True),
+        active_employee_count=Count("production_employees", filter=Q(
+            production_employees__in=eligible, production_employees__workshop_status="ACTIVE"), distinct=True),
+        active_supervisor_count=Count("production_employees", filter=Q(
+            production_employees__in=eligible, production_employees__workshop_status="ACTIVE",
+            production_employees__workshop_is_supervisor=True), distinct=True),
         craft_count=Count("crafts", distinct=True),
-        active_craft_count=Count(
-            "crafts",
-            filter=Q(crafts__status=RecordStatus.ACTIVE),
-            distinct=True,
-        ),
+        active_craft_count=Count("crafts", filter=Q(crafts__status=RecordStatus.ACTIVE), distinct=True),
         operation_count=Count("crafts__operations", distinct=True),
     )
 
 
 def employees_with_context(queryset):
-    return queryset.select_related("workshop", "employee", "created_by_employee", "updated_by_employee")
+    return queryset.select_related("workshop")
 
 
 def active_employees(queryset):
-    return queryset.filter(status=WorkshopEmployeeStatus.ACTIVE).filter(
-        Q(employee__isnull=True) | Q(employee__status="ACTIVE", employee__archived_at__isnull=True),
-    )
+    return queryset.filter(
+        pk__in=active_department_employees("DEPT_PRODUCTION").values("pk"),
+        workshop_status="ACTIVE", workshop__status=RecordStatus.ACTIVE,
+    ).exclude(workshop_position="")
 
 
 def locked_active_employees(queryset):
-    """仅在事务内调用；按车间记录、统一员工顺序锁定并复查可参与生产的人员。"""
+    """锁定统一员工，再复查部门、车间和任职状态。"""
     rows = list(queryset.select_related(None).order_by("pk").select_for_update(of=("self",)))
-    employees = {employee.pk: employee for employee in Employee.objects.select_for_update(no_key=True).filter(
-        pk__in={row.employee_id for row in rows if row.employee_id},
-    ).order_by("pk")}
-    active = []
-    for row in rows:
-        if row.status != WorkshopEmployeeStatus.ACTIVE:
-            continue
-        if row.employee_id:
-            employee = employees.get(row.employee_id)
-            if employee is None or employee.status != "ACTIVE" or employee.archived_at is not None:
-                continue
-            row.employee = employee
-        active.append(row)
-    return active
+    eligible_ids = set(active_employees(Employee.objects.filter(pk__in=[row.pk for row in rows])).values_list("pk", flat=True))
+    return [row for row in rows if row.pk in eligible_ids]
 
 
 def crafts_with_context(queryset):

@@ -27,6 +27,7 @@ from apps.customers.hard_delete import permanently_delete_inquiry
 from apps.customers.api.views import CustomerApiViewSetBase
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.files.uploads import save_scanned_image
+from apps.organizations.selectors import employee_filter_choices
 from apps.workflow.api.serializers import TaskListSerializer
 from apps.workflow.selectors import tasks_with_context
 
@@ -268,6 +269,7 @@ class InquiryViewSet(
                 }
                 for item in grouped["INQUIRY_SOURCE"]
             ],
+            "owner_filters": [{"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name} for employee in employee_filter_choices(assignable_employees(request), self.get_queryset().values("owner_employee_id"))],
             "owners": [{"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name} for employee in assignable_employees(request)],
             "countries": countries,
             "invalid_reason_codes": ["DUPLICATE", "SPAM", "UNPROCESSABLE", "OTHER"],

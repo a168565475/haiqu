@@ -24,6 +24,8 @@ class AccountTeamTests(APITestCase):
         self.admin_employee=Employee.objects.create(user=self.admin,employee_code='AT_ADMIN',display_name='管理员')
         self.employee=Employee.objects.create(employee_code='AT_SALES',display_name='业务员')
         self.manager=Employee.objects.create(employee_code='AT_MANAGER',display_name='客户经理')
+        dept, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
+        EmployeeOrganizationAssignment.objects.create(employee=self.manager, organization_unit=dept, effective_from=timezone.now()-timedelta(days=1))
         self.client.force_login(self.admin)
 
     def create_account(self):
@@ -95,9 +97,9 @@ class AccountTeamTests(APITestCase):
         self.employee.refresh_from_db();self.assertIsNone(self.employee.user_id)
         self.assertFalse(get_user_model().objects.filter(username='at_sales').exists())
 
-    def test_cross_department_members_and_unique_team(self):
-        for e,code in [(self.employee,'SALES_DEPT'),(self.manager,'SERVICE_DEPT')]:
-            dept=OrganizationUnit.objects.create(unit_code=code,unit_name=code)
+    def test_business_department_members_and_unique_team(self):
+        for e,code in [(self.employee,'DEPT_BUSINESS'),(self.manager,'SERVICE_DEPT')]:
+            dept, _=OrganizationUnit.objects.get_or_create(unit_code=code,defaults={'unit_name':code})
             EmployeeOrganizationAssignment.objects.create(employee=e,organization_unit=dept,effective_from=timezone.now()-timedelta(days=1))
         first=self.team();second=self.team('TEAM_B')
         payload={'employee_ids':[str(self.employee.pk)]}

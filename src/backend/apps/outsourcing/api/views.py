@@ -1,4 +1,5 @@
 from ..selectors import outsourcing_source_schedules
+from apps.organizations.selectors import active_department_employees
 from apps.access_control.resource_scopes import filter_crafts, require_craft, enabled
 from decimal import Decimal
 from pathlib import Path
@@ -497,10 +498,7 @@ class OutsourcingOrderViewSet(viewsets.GenericViewSet):
             warehouse__status=InventoryRecordStatus.ACTIVE,
             warehouse__warehouse_type=WarehouseType.DEFECTIVE,
         ).select_related("warehouse").order_by("warehouse__warehouse_name", "zone_name", "id")
-        receivers = Employee.objects.filter(
-            status=EmployeeStatus.ACTIVE,
-            archived_at__isnull=True,
-        ).order_by("employee_code", "id")
+        receivers = active_department_employees("DEPT_WAREHOUSE").order_by("employee_code", "id")
         return Response({"data": {
             "crafts": [
                 {"id": str(item.pk), "name": item.name, "outsourcing_code": item.outsourcing_code}

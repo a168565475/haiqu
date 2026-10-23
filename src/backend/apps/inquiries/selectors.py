@@ -5,6 +5,7 @@ from decimal import Decimal, localcontext
 from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.utils import timezone
 
+from apps.organizations.selectors import active_department_employees
 from apps.customers.models import AssignmentRole, CustomerAssignment
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
@@ -171,7 +172,7 @@ def inquiry_display_stage(inquiry):
 
 def assignable_employees(request):
     """主管只能分配本组织及下级组织的在职员工；无组织时仅本人。"""
-    base = Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+    base = active_department_employees("DEPT_BUSINESS")
     if request.user.is_superuser or request.user.has_perm("customers.view_all_customer"):
         return base.order_by("employee_code")
     actor = getattr(request, "employee", None)

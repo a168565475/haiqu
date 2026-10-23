@@ -12,12 +12,13 @@ from rest_framework.response import Response
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.organizations.models import Employee
+from apps.organizations.selectors import active_department_employees
 
 from ..constants import FIXED_WORKSHOP_NAMES
-from ..models import Craft, CraftType, Operation, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
+from ..models import Craft, CraftType, Operation, RecordStatus, Workshop
 from ..selectors import crafts_with_context, employees_with_context, operations_with_context, workshops_with_statistics
-from ..services import create_config, update_config
-from .serializers import CraftSerializer, OperationSerializer, WorkshopEmployeeOptionSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
+from ..services import create_config, update_config, update_employee_workshop
+from .serializers import CraftSerializer, OperationSerializer, WorkshopEmployeeSerializer, WorkshopSerializer
 
 
 def _parse_uuid(value, field_name):
@@ -132,62 +133,64 @@ class WorkshopViewSet(
 
 class WorkshopEmployeeViewSet(BaseConfigViewSet):
     serializer_class = WorkshopEmployeeSerializer
-    model_class = WorkshopEmployee
+    model_class = Employee
+    http_method_names = ["get", "patch", "put", "delete", "head", "options"]
     action_permission_map = {
         "list": "workshop_config.view_workshopemployee",
         "retrieve": "workshop_config.view_workshopemployee",
         "summary": "workshop_config.view_workshopemployee",
-        "create": "workshop_config.add_workshopemployee",
         "update": "workshop_config.change_workshopemployee",
         "partial_update": "workshop_config.change_workshopemployee",
-        "employee_options": ("workshop_config.add_workshopemployee", "workshop_config.change_workshopemployee"),
+        "destroy": "workshop_config.change_workshopemployee",
     }
 
     def get_queryset(self):
-        queryset = WorkshopEmployee.objects.all()
+        queryset = active_department_employees("DEPT_PRODUCTION")
         workshop_id = _parse_uuid(self.request.query_params.get("workshop", "").strip(), "workshop")
         if workshop_id:
             queryset = queryset.filter(workshop_id=workshop_id)
         status_value = self.request.query_params.get("status", "").strip().upper()
         if status_value:
-            if status_value not in WorkshopEmployeeStatus.values:
-                raise ValidationError({"status": "在职状态参数不正确。"})
-            queryset = queryset.filter(status=status_value)
+            if status_value not in {"ACTIVE", "LEFT"}:
+                raise ValidationError({"status": "车间任职状态不正确。"})
+            queryset = queryset.filter(workshop_status=status_value)
         supervisor_value = self.request.query_params.get("is_supervisor", "").strip().lower()
         if supervisor_value:
             if supervisor_value not in {"true", "false", "1", "0"}:
                 raise ValidationError({"is_supervisor": "是否主管参数必须为 true 或 false。"})
-            queryset = queryset.filter(is_supervisor=supervisor_value in {"true", "1"})
+            queryset = queryset.filter(workshop_is_supervisor=supervisor_value in {"true", "1"})
         position = self.request.query_params.get("position", "").strip()
         if position:
-            queryset = queryset.filter(position__icontains=position)
+            queryset = queryset.filter(workshop_position__icontains=position)
         keyword = self.request.query_params.get("q", "").strip()
         if keyword:
-            queryset = queryset.filter(Q(name__icontains=keyword) | Q(position__icontains=keyword)
-                                       | Q(employee__display_name__icontains=keyword) | Q(employee__employee_code__icontains=keyword))
-        return employees_with_context(queryset).order_by("workshop__name", "position", "name", "id")
+            queryset = queryset.filter(Q(display_name__icontains=keyword) | Q(employee_code__icontains=keyword)
+                                       | Q(workshop_position__icontains=keyword))
+        return employees_with_context(queryset).order_by("workshop__name", "workshop_position", "display_name", "id")
 
-    @action(detail=False, methods=["get"], url_path="employee-options", serializer_class=WorkshopEmployeeOptionSerializer)
-    def employee_options(self, request):
-        queryset = Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
-        keyword = request.query_params.get("q", "").strip()
-        if keyword:
-            queryset = queryset.filter(Q(employee_code__icontains=keyword) | Q(display_name__icontains=keyword))
-        page = self.paginate_queryset(queryset.order_by("employee_code", "id"))
-        return self.get_paginated_response(self.get_serializer(page, many=True).data)
+    def _update(self, request, *, partial):
+        current = self.get_object()
+        serializer = self.get_serializer(current, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        instance = update_employee_workshop(instance_id=current.pk, validated_data=serializer.validated_data,
+                                            actor_employee=self.actor_employee(), request=request)
+        return self._response_with_etag(instance)
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
-        counts = WorkshopEmployee.objects.aggregate(
+        counts = active_department_employees("DEPT_PRODUCTION").aggregate(
             total=Count("id"),
-            active=Count("id", filter=Q(status=WorkshopEmployeeStatus.ACTIVE)),
-            left=Count("id", filter=Q(status=WorkshopEmployeeStatus.LEFT)),
-            active_supervisors=Count(
-                "id",
-                filter=Q(status=WorkshopEmployeeStatus.ACTIVE, is_supervisor=True),
-            ),
+            active=Count("id", filter=Q(workshop__isnull=False, workshop_status="ACTIVE")),
+            left=Count("id", filter=Q(workshop_status="LEFT")),
+            active_supervisors=Count("id", filter=Q(workshop__isnull=False, workshop_status="ACTIVE", workshop_is_supervisor=True)),
         )
         return Response({"data": counts})
+
+    def destroy(self, request, *args, **kwargs):
+        current = self.get_object()
+        update_employee_workshop(instance_id=current.pk, actor_employee=self.actor_employee(), request=request,
+                                 validated_data={"workshop": None, "workshop_position": "", "workshop_is_supervisor": False, "workshop_status": "ACTIVE"})
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CraftViewSet(BaseConfigViewSet):

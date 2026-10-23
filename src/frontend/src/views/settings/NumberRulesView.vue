@@ -6,6 +6,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { fetchNumberRules } from '@/api/referenceData'
 import type { NumberRule } from '@/types/referenceData'
 
+const props = defineProps<{ embedded?: boolean }>()
 const loading = ref(false)
 const errorMessage = ref('')
 const rules = ref<NumberRule[]>([])
@@ -41,11 +42,11 @@ onMounted(loadRules)
 
 <template>
   <section class="number-rules-page system-settings-theme erp-glass-list">
-    <section v-glass-spotlight class="erp-list-filter"><header class="erp-list-heading">
+    <section v-if="!props.embedded" v-glass-spotlight class="erp-list-filter"><header class="erp-list-heading">
       <div><h1>编号规则</h1></div>
       <el-button class="erp-button-motion" :icon="Refresh" :loading="loading" @click="loadRules">刷新</el-button>
     </header></section>
-    <el-alert title="规则当前为只读登记" description="修改前缀、日期段或位数会影响新编号，必须另行完成并发与历史兼容评审；本页不会直接改写数据库序列。" type="warning" :closable="false" show-icon />
+    <el-alert v-if="!props.embedded" title="规则当前为只读登记" description="修改前缀、日期段或位数会影响新编号，必须另行完成并发与历史兼容评审；本页不会直接改写数据库序列。" type="warning" :closable="false" show-icon />
     <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"><template #default><el-button size="small" @click="loadRules">重试</el-button></template></el-alert>
     <section v-else class="table-card erp-list-data"><div class="erp-list-table-frame">
       <el-table height="100%" v-loading="loading" :data="rules" empty-text="暂无编号规则">

@@ -1,6 +1,8 @@
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { AxiosError } from 'axios'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onBeforeRouteLeave } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WeComSettingsView from './WeComSettingsView.vue'
 import viewSource from './WeComSettingsView.vue?raw'
@@ -15,10 +17,12 @@ const savedCredentials = { secret: 'fixture-secret', callback_token: 'fixturetok
 const credentialFields = { secret: '#wecom-secret', callback_token: '#wecom-token', callback_aes_key: '#wecom-aes' } as const
 const config: WeComConfig = { corp_id: 'corp', agent_id: '1', erp_origin: 'https://erp.test', enabled: false, ...savedCredentials, credential_read_errors: [], has_secret: true, has_callback_token: true, has_callback_aes_key: true, encryption_ready: true, configuration_complete: true, last_check_status: 'NOT_CHECKED', last_check_message: '', last_checked_at: null, login_url: 'https://erp.test/api/auth/wecom/start/', callback_url: 'https://erp.test/api/auth/wecom/callback/', trusted_domain: 'erp.test' }
 const wrappers: ReturnType<typeof mount>[] = []
-async function render() { const wrapper = mount(WeComSettingsView, { attachTo: document.body, global: { stubs: { WeComMessagePanel: { template: '<section data-testid="wecom-message-panel" />' } } } }); wrappers.push(wrapper); await flushPromises(); return wrapper }
+async function render(embedded = false) { const wrapper = mount(WeComSettingsView, { props: { embedded }, attachTo: document.body, global: { stubs: { WeComMessagePanel: { methods: { canClose: () => true }, template: '<section data-testid="wecom-message-panel" />' } } } }); wrappers.push(wrapper); await flushPromises(); return wrapper }
 function button(text: string) { return new DOMWrapper(Array.from(document.querySelectorAll('button')).find(item => item.textContent?.trim() === text)!) }
 beforeEach(() => {
   setActivePinia(createPinia()); vi.resetAllMocks()
+  vi.spyOn(ElMessage, 'warning').mockImplementation(() => ({ close: vi.fn() }))
+  vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '管理员', is_superuser: true, employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, permissions: [], data_scope: 'ALL' } })
   api.getWeComConfig.mockResolvedValue({ data: { ...config }, etag: 'v1' })
   api.saveWeComConfig.mockImplementation(async (payload: WeComConfigWrite) => ({ data: { ...config, ...payload }, etag: 'v2' }))
@@ -27,9 +31,43 @@ beforeEach(() => {
   api.getWeComEmployees.mockResolvedValue([{ id: 'employee', employee_code: 'EMP1', display_name: '已有员工', username: 'existing', etag: 'emp-v1' }])
   api.getWeComAudits.mockResolvedValue({ data: [], count: 0, page: 1, page_size: 20 })
 })
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = '' })
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks() })
 
 describe('企业微信管理页', () => {
+  it('外层关闭和独立路由离开都确认未保存配置，取消保留凭据草稿', async () => {
+    const wrapper = await render()
+    expect(await wrapper.vm.canClose()).toBe(true)
+    await wrapper.get('#wecom-secret').setValue('unsaved-fixture-secret')
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+    expect(await wrapper.vm.canClose()).toBe(false)
+    expect((wrapper.get('#wecom-secret').element as HTMLInputElement).value).toBe('unsaved-fixture-secret')
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls.at(-1)![0] as () => Promise<boolean>
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('close')
+    expect(await guard()).toBe(false)
+    expect(await wrapper.vm.canClose()).toBe(true)
+    expect(api.saveWeComConfig).not.toHaveBeenCalled()
+  })
+  it('嵌入时路由交给外层统一检查，公开关闭检查仍保护草稿', async () => {
+    const wrapper = await render(true)
+    await wrapper.get('#wecom-secret').setValue('unsaved-fixture-secret')
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls.at(-1)![0] as () => boolean
+    expect(guard()).toBe(true)
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+    expect(await wrapper.vm.canClose()).toBe(false)
+  })
+  it.each(['save', 'check'] as const)('%s进行中不能关闭，结束后解除保护', async operation => {
+    let finish!: (value: { data: WeComConfig; etag: string }) => void
+    const method = operation === 'save' ? api.saveWeComConfig : api.checkWeComConnection
+    method.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = await render()
+    await button(operation === 'save' ? '保存配置' : '检查连接').trigger('click')
+    expect(await wrapper.vm.canClose()).toBe(false)
+    expect(ElMessage.warning).toHaveBeenLastCalledWith('配置正在保存或检查连接，请稍候再关闭。')
+    finish({ data: { ...config }, etag: 'finished' }); await flushPromises()
+    expect(await wrapper.vm.canClose()).toBe(true)
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled()
+  })
   it('保留配置与消息标签，员工核对由独立员工管理入口承接', async () => {
     const wrapper = await render()
     expect(wrapper.findAll('[role="tab"]').map(item => item.text())).toEqual(['接入配置', '消息模板'])

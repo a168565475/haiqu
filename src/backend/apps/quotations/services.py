@@ -1432,6 +1432,8 @@ def quotation_snapshot_hash(version):
 
 @transaction.atomic
 def register_formal_document(*, version, business_file, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     version = QuotationVersion.objects.select_for_update().get(pk=version.pk)
     require_matching_etag(request, version)
     if version.status not in {QuotationVersionStatus.ISSUED, QuotationVersionStatus.SENT}:
@@ -1537,6 +1539,8 @@ def dispatch_version(
     enforce_etag=True,
     reconcile_external_result=False,
 ):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(validated_data.get("evidence_file"))
     version = QuotationVersion.objects.select_for_update().select_related("quotation").get(pk=version.pk)
     if enforce_etag:
         require_matching_etag(request, version)
@@ -1903,6 +1907,8 @@ def resolve_email_dispatch_attempt(*, attempt, result, note, actor_employee, req
 
 @transaction.atomic
 def set_line_product_image(*, line, business_file, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     version = QuotationVersion.objects.select_for_update().get(pk=line.quotation_version_id)
     require_matching_etag(request, version)
     _ensure_draft(version)

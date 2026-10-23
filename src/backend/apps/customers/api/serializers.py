@@ -6,6 +6,7 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.core.models import country_code_validator, uppercase_code_validator
 from apps.organizations.models import Employee
@@ -454,7 +455,7 @@ class CustomerCreateSerializer(serializers.ModelSerializer):
     primary_website_url = serializers.CharField(required=False, allow_blank=True, max_length=500)
     primary_owner_employee_id = serializers.PrimaryKeyRelatedField(
         source="primary_owner_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
         write_only=True,
         required=False,
     )
@@ -899,7 +900,7 @@ class ContactRoleSerializer(serializers.ModelSerializer):
 class CollaboratorCreateSerializer(serializers.Serializer):
     employee_id = serializers.PrimaryKeyRelatedField(
         source="employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     effective_from = serializers.DateTimeField(required=False)
     reason = serializers.CharField(max_length=500, required=False, allow_blank=True)

@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 """排产完结只依据四项真实进度，并保留生产数量及批次事实。"""
 import uuid
 from datetime import timedelta
@@ -23,7 +24,7 @@ from apps.sales_orders.models import (
     CollaborationEventStatus, CollaborationEventType, SalesOrder, SalesOrderCollaborationEvent,
     SalesOrderDeliveryBatch, SalesOrderDeliveryBatchLine, SalesOrderLine, SalesOrderStatus,
 )
-from apps.workshop_config.models import Craft, Operation, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Operation, Workshop
 from apps.workshop_reporting.models import (
     WageScheme, WageSchemeCraft, WageSchemeLine, WorkItem, WorkReport, WorkReportLine,
 )
@@ -171,7 +172,7 @@ class ScheduleCompleteApiTests(APITestCase):
             unit_name_snapshot=self.line.unit.unit_name, declared_price=1,
             order_quantity_snapshot=self.line.quantity, required_quantity_snapshot=self.line.quantity,
         )
-        worker = WorkshopEmployee.objects.create(
+        worker = production_employee(
             workshop=craft.workshop, position="测试", name=f"完结测试员{token}", is_supervisor=False,
         )
         report = WorkReport.objects.create(
@@ -186,7 +187,7 @@ class ScheduleCompleteApiTests(APITestCase):
             required_quantity_snapshot=self.line.quantity, unit_price_snapshot=1, amount=self.line.quantity,
             display_name_snapshot=item.display_name, craft_name_snapshot=craft.name,
             operation_name_snapshot=operation.name, unit_name_snapshot=self.line.unit.unit_name,
-            employee_name_snapshot=worker.name,
+            employee_name_snapshot=worker.display_name,
         )
 
     def seed_completed_progress(self):

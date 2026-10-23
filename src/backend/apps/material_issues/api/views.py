@@ -18,10 +18,10 @@ from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields, override_bom_attribute
 from apps.inventory.models import MaterialStockBalance, MaterialStockQuality, SemiFinishedStockBalance
 from apps.inventory.stock_services import available_stock
-from apps.organizations.models import EmployeeStatus
+from apps.organizations.models import Employee
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_task_source_image_ids
-from apps.workshop_config.models import RecordStatus, Workshop, WorkshopEmployee
+from apps.workshop_config.models import RecordStatus, Workshop
 from apps.workshop_config.selectors import active_employees
 
 from ..material_flow import pipe_requirement_rows
@@ -223,10 +223,10 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 name__in=WORKSHOP_MATERIAL_SECTION_CODES,
             ).order_by("name", "id").values("id", "name")
         )
-        employees = active_employees(WorkshopEmployee.objects.filter(
+        employees = active_employees(Employee.objects.filter(
             workshop__status=RecordStatus.ACTIVE,
             workshop__name__in=WORKSHOP_MATERIAL_SECTION_CODES,
-        )).select_related("workshop").order_by("workshop__name", "name", "id")
+        )).select_related("workshop").order_by("workshop__name", "display_name", "id")
         if ids is not None:
             workshops = [row for row in workshops if str(row['id']) in ids]
             employees = employees.filter(workshop_id__in=ids)
@@ -245,7 +245,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                     ],
                     "workshops": [{"id": str(item["id"]), "name": item["name"]} for item in workshops],
                     "recipients": [
-                        {"id": str(item.pk), "name": item.name, "workshop_id": str(item.workshop_id)}
+                        {"id": str(item.pk), "name": item.display_name, "workshop_id": str(item.workshop_id)}
                         for item in employees
                     ],
                 }

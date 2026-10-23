@@ -12,8 +12,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.db import connection
 from django.test import LiveServerTestCase, override_settings
+from django.utils import timezone
 
-from apps.organizations.models import Employee, EmployeeRoleAssignment
+from apps.organizations.models import Employee, EmployeeRoleAssignment, EmployeeOrganizationAssignment, OrganizationUnit
 
 from ..models import Workshop, WorkshopEmployee
 
@@ -61,6 +62,9 @@ class WorkshopEmployeeIdentityBrowserTests(LiveServerTestCase):
             accounts[key] = {"username": user.username, "password": password, "id": user.pk}
         first = Employee.objects.create(employee_code="QA_U5_SOURCE_A", display_name="单元五同名员工")
         second = Employee.objects.create(employee_code="QA_U5_SOURCE_B", display_name=first.display_name)
+        production, _ = OrganizationUnit.objects.get_or_create(unit_code="DEPT_PRODUCTION", defaults={"unit_name": "生产部"})
+        for source in (first, second):
+            EmployeeOrganizationAssignment.objects.create(employee=source, organization_unit=production, effective_from=timezone.now())
         workshop = Workshop.objects.get(name="装配车间")
         legacy = WorkshopEmployee.objects.create(
             workshop=workshop, position="单元五历史岗位", name="单元五历史姓名", is_supervisor=False,

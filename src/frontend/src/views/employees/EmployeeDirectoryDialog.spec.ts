@@ -1,10 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ElSelect, ElOption } from 'element-plus'
 import EmployeeDirectoryDialog from './EmployeeDirectoryDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { AccessEmployee } from '@/types/access'
-import type { EmployeeDirectoryMember, EmployeeDirectoryPreviewResponse } from '@/types/employeeDirectory'
+import type { EmployeeDirectoryMember, EmployeeDirectoryPreviewResponse, EmployeeDirectoryProgressObserver } from '@/types/employeeDirectory'
 
 const message = vi.hoisted(() => ({ success: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<object>(), ElMessage: message }))
@@ -27,11 +28,11 @@ function grant(...permissions: string[]) {
   const auth = useAuthStore()
   auth.user = { ...auth.user!, username: 'ordinary-manager', is_superuser: false, effective_access: { active: true, is_superuser: false, roles: [], legacy_sources: [], version: 'v1', actions: Object.fromEntries(permissions.map(permission => [permission, { scopes: ['MODULE'], sources: [{ type: 'ROLE', scope: 'MODULE' }] }])) } }
 }
-async function render(open = true) {
-  const wrapper = mount(EmployeeDirectoryDialog, { props: { modelValue: open }, global: { plugins: [pinia], stubs: { AppWindowDialog: dialog, ElTooltip: { inheritAttrs: false, template: '<slot />' } } } })
+async function render(open = true, initialApplyDepartments = false) {
+  const wrapper = mount(EmployeeDirectoryDialog, { props: { modelValue: open, initialApplyDepartments }, global: { plugins: [pinia], stubs: { AppWindowDialog: dialog, ElTooltip: { inheritAttrs: false, template: '<slot /><slot name="content" />' } } } })
   wrappers.push(wrapper); await flushPromises(); return wrapper
 }
-function button(wrapper: ReturnType<typeof mount>, label: string) { return wrapper.findAll('button').find(element => element.text() === label)! }
+function button(wrapper: ReturnType<typeof mount>, label: string) { return wrapper.findAll('button').find(element => element.text() === label || (label === '下一页' && element.classes().includes('btn-next')) || (label === '上一页' && element.classes().includes('btn-prev')))! }
 function saveButton(wrapper: ReturnType<typeof mount>) { return wrapper.findAll('button').find(element => element.text().startsWith('保存所选员工'))! }
 beforeEach(() => {
   vi.resetAllMocks(); pinia = createPinia(); setActivePinia(pinia)
@@ -43,11 +44,57 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('企业微信员工同步弹窗', () => {
+  it('已删除员工显示可重新建档并可选择保存，不提供覆盖已有员工入口', async () => {
+    api.getEmployeeDirectoryPreview.mockResolvedValueOnce(preview([member('deleted', 'RECREATE')]))
+    const wrapper = await render()
+    expect(wrapper.get('[data-userid="deleted"]').text()).toContain('可重新建档')
+    expect(wrapper.get('[data-userid="deleted"]').text()).toContain('重新建档并绑定')
+    expect(button(wrapper, '关联已有员工')).toBeUndefined()
+    await wrapper.get('[aria-label="选择成员 deleted"]').setValue(true)
+    await saveButton(wrapper).trigger('click'); await flushPromises()
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ user_ids: ['deleted'] }), '"preview-v1"', expect.any(Object))
+  })
+  it('读取入口启用映射时展示目标部门并随员工保存提交', async () => {
+    const wrapper = await render(true, true)
+    expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledWith(true, expect.any(Object))
+    expect(wrapper.get('input[type="checkbox"]').element).toHaveProperty('checked', true)
+    expect(wrapper.findAll('th').map(cell => cell.text())).toContain('目标部门')
+    await wrapper.get('[aria-label="选择成员 new"]').setValue(true)
+    await saveButton(wrapper).trigger('click'); await flushPromises()
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ apply_departments: true }), '"preview-v1"', expect.any(Object))
+  })
+  it('没有部门维护权限时默认映射不会越权请求', async () => {
+    grant('access_control.manage_accounts')
+    const wrapper = await render(true, true)
+    expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledWith(false, expect.any(Object))
+    expect(wrapper.text()).not.toContain('按已确认映射补充空白部门归属')
+    expect(wrapper.findAll('th').map(cell => cell.text())).not.toContain('目标部门')
+  })
+  it('只用服务端完成量推进进度，主请求确认前不显示100%，关闭后停止监听', async () => {
+    let resolve!: (value: EmployeeDirectoryPreviewResponse) => void
+    let observer!: EmployeeDirectoryProgressObserver
+    api.getEmployeeDirectoryPreview.mockImplementationOnce((_apply, value) => { observer = value; return new Promise(done => { resolve = done }) })
+    const wrapper = await render()
+    expect(wrapper.get('progress').attributes('value')).toBe('0')
+    observer.onProgress({ status: 'RUNNING', completed: 2, total: 8, phase: '读取部门员工' }); await flushPromises()
+    expect(wrapper.get('progress').attributes('value')).toBe('25')
+    observer.onProgress(null); await flushPromises()
+    expect(wrapper.get('progress').attributes('value')).toBe('25')
+    expect(wrapper.text()).toContain('暂时无法获取进度')
+    observer.onProgress({ status: 'SUCCESS', completed: 8, total: 8, phase: '已完成' }); await flushPromises()
+    expect(wrapper.get('progress').attributes('value')).toBe('99')
+    resolve(preview()); await flushPromises()
+    expect(wrapper.get('progress').attributes('value')).toBe('100')
+    expect(observer.signal.aborted).toBe(true)
+    await wrapper.setProps({ modelValue: false })
+    observer.onProgress({ status: 'RUNNING', completed: 1, total: 8, phase: '旧进度' })
+    expect(wrapper.find('progress').exists()).toBe(false)
+  })
   it('未打开不读来源，打开后默认不补部门、不选员工、不确认重名', async () => {
     const wrapper = await render(false)
     expect(api.getEmployeeDirectoryPreview).not.toHaveBeenCalled()
     await wrapper.setProps({ modelValue: true }); await flushPromises()
-    expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledExactlyOnceWith(false)
+    expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledExactlyOnceWith(false, expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(wrapper.findAll('input[type="checkbox"]').every(input => !(input.element as HTMLInputElement).checked)).toBe(true)
     expect(wrapper.get('[aria-label="选择成员 review"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[aria-label="选择成员 skip"]').attributes('disabled')).toBeDefined()
@@ -116,7 +163,7 @@ describe('企业微信员工同步弹窗', () => {
     await wrapper.get('[aria-label="选择成员 new"]').setValue(true)
     await wrapper.get('[aria-label="选择成员 existing"]').setValue(true)
     await saveButton(wrapper).trigger('click'); await flushPromises()
-    expect(api.syncEmployeeDirectory).toHaveBeenCalledExactlyOnceWith({ preview_token: 'preview-token', user_ids: ['new', 'existing'], confirmed_new_user_ids: [], apply_departments: false }, '"preview-v1"')
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledExactlyOnceWith({ preview_token: 'preview-token', user_ids: ['new', 'existing'], confirmed_new_user_ids: [], apply_departments: false }, '"preview-v1"', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledTimes(2)
     expect(wrapper.get('[aria-label="本次同步结果"]').text()).toContain('已新建')
     expect(saveButton(wrapper).text()).toBe('保存所选员工（0）'); expect(wrapper.emitted('saved')).toHaveLength(1)
@@ -144,7 +191,7 @@ describe('企业微信员工同步弹窗', () => {
     await wrapper.get('[aria-label="确认不同人员 review"]').setValue(true)
     await wrapper.get('[aria-label="选择成员 review"]').setValue(true)
     await saveButton(wrapper).trigger('click'); await flushPromises()
-    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ user_ids: ['review'], confirmed_new_user_ids: ['review'] }), '"preview-v1"')
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ user_ids: ['review'], confirmed_new_user_ids: ['review'] }), '"preview-v1"', expect.objectContaining({ onProgress: expect.any(Function) }))
     await button(wrapper, '员工名单').trigger('click')
     expect((wrapper.get('[aria-label="确认不同人员 review"]').element as HTMLInputElement).checked).toBe(false)
   })
@@ -156,16 +203,16 @@ describe('企业微信员工同步弹窗', () => {
     await wrapper.get('[data-userid="review"] button').trigger('click'); await flushPromises()
     expect((wrapper.get('[aria-label="确认不同人员 review"]').element as HTMLInputElement).checked).toBe(false)
     expect(saveButton(wrapper).text()).toBe('保存所选员工（0）')
-    const options = wrapper.get('[aria-label="选择关联员工"]').findAll('option')
-    expect(options.map(option => option.text())).toEqual(['请选择员工', '同名员工 · EMP-1 · 未分配部门', '同名员工 · EMP-2 · 未分配部门'])
-    await wrapper.get('[aria-label="选择关联员工"]').setValue('1')
+    const selector = wrapper.findAllComponents(ElSelect).find(c => c.props('ariaLabel') === '选择关联员工')!
+    expect(wrapper.findAllComponents(ElOption).map(option => option.props('label')).filter(label => String(label).startsWith('同名员工'))).toEqual(['同名员工 · EMP-1 · 未分配部门', '同名员工 · EMP-2 · 未分配部门'])
+    selector.vm.$emit('update:modelValue', '1'); await flushPromises()
     expect(button(wrapper, '确认关联此员工').attributes('disabled')).toBeDefined()
     await wrapper.get('[aria-label="确认是同一人"]').setValue(true)
-    await wrapper.get('[aria-label="选择关联员工"]').setValue('2')
+    selector.vm.$emit('update:modelValue', '2'); await flushPromises()
     expect((wrapper.get('[aria-label="确认是同一人"]').element as HTMLInputElement).checked).toBe(false)
     await wrapper.get('[aria-label="确认是同一人"]').setValue(true)
     await button(wrapper, '确认关联此员工').trigger('click'); await flushPromises()
-    expect(api.matchEmployeeDirectory).toHaveBeenCalledExactlyOnceWith({ preview_token: 'preview-token', apply_departments: false, user_id: 'review', employee_id: '2', employee_etag: '"employee-2"', confirmed: true }, '"preview-v1"')
+    expect(api.matchEmployeeDirectory).toHaveBeenCalledExactlyOnceWith({ preview_token: 'preview-token', apply_departments: false, user_id: 'review', employee_id: '2', employee_etag: '"employee-2"', confirmed: true }, '"preview-v1"', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(api.getEmployeeDirectoryPreview).toHaveBeenCalledTimes(2)
     expect(wrapper.find('[aria-label="人工关联员工"]').exists()).toBe(false)
   })
@@ -195,11 +242,11 @@ describe('企业微信员工同步弹窗', () => {
     const wrapper = await render()
     await wrapper.get('[aria-label="选择成员 new"]').setValue(true)
     await wrapper.get('.directory-toolbar input[type="checkbox"]').setValue(true); await flushPromises()
-    expect(api.getEmployeeDirectoryPreview).toHaveBeenLastCalledWith(true)
+    expect(api.getEmployeeDirectoryPreview).toHaveBeenLastCalledWith(true, expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(api.refreshEmployeeDirectory).not.toHaveBeenCalled()
     expect(saveButton(wrapper).text()).toBe('保存所选员工（0）')
     await wrapper.get('[aria-label="选择成员 new"]').setValue(true); await saveButton(wrapper).trigger('click'); await flushPromises()
-    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ apply_departments: true }), '"preview-v1"')
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ apply_departments: true }), '"preview-v1"', expect.objectContaining({ onProgress: expect.any(Function) }))
   })
   it('只有账号权限不能开启补部门，撤权后旧响应不恢复预览', async () => {
     grant('access_control.manage_accounts')
@@ -230,13 +277,13 @@ describe('企业微信员工同步弹窗', () => {
     await saveButton(wrapper).trigger('click'); await flushPromises()
     expect(api.syncEmployeeDirectory.mock.calls[0]![0].user_ids).toHaveLength(500)
   }, 20000)
-  it('固定50人分页，筛选后回到第一页', async () => {
+  it('默认50人分页，筛选后回到第一页', async () => {
     api.getEmployeeDirectoryPreview.mockResolvedValueOnce(preview(Array.from({ length: 51 }, (_, index) => member(`page-${index}`))))
     const wrapper = await render()
-    expect(wrapper.findAll('[data-userid]')).toHaveLength(50); expect(wrapper.text()).toContain('每页50人')
+    expect(wrapper.findAll('[data-userid]')).toHaveLength(50); expect(wrapper.get('.directory-pagination .el-select').text()).toContain('50')
     await button(wrapper, '下一页').trigger('click'); expect(wrapper.findAll('[data-userid]')).toHaveLength(1)
     await wrapper.get('[aria-label="搜索企业微信成员"]').setValue('page-0')
-    expect(wrapper.text()).toContain('1 / 1'); expect(wrapper.find('[data-userid="page-0"]').exists()).toBe(true)
+    expect(wrapper.get('.directory-pagination .el-pager .is-active').text()).toBe('1'); expect(wrapper.find('[data-userid="page-0"]').exists()).toBe(true)
   })
   it('刷新期间及失败保留旧名单，成功才替换并清空选择', async () => {
     let reject!: (error: unknown) => void
@@ -267,7 +314,7 @@ describe('企业微信员工同步弹窗', () => {
     expect(wrapper.get('[aria-label="选择成员 new"]').attributes('disabled')).toBeUndefined()
     expect(button(wrapper, '重新读取预览').attributes('disabled')).toBeDefined()
     await wrapper.get('[aria-label="选择成员 new"]').setValue(true); await saveButton(wrapper).trigger('click'); await flushPromises()
-    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ user_ids: ['new'], apply_departments: false }), '"preview-v1"')
+    expect(api.syncEmployeeDirectory).toHaveBeenCalledWith(expect.objectContaining({ user_ids: ['new'], apply_departments: false }), '"preview-v1"', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(api.refreshEmployeeDirectory).not.toHaveBeenCalled()
     expect(message.success).toHaveBeenCalledOnce()
   })
@@ -293,7 +340,7 @@ describe('企业微信员工同步弹窗', () => {
     const wrapper = await render()
     expect(wrapper.get('[aria-label="选择成员 new"]').attributes('disabled')).toBeDefined()
     expect(button(wrapper, '全选可保存（0）').attributes('disabled')).toBeDefined()
-    if (missing === 'capability') expect(wrapper.get('[role="alert"]').text()).toContain('副本已过期，不能保存员工')
+    if (missing === 'capability') expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
     expect(api.syncEmployeeDirectory).not.toHaveBeenCalled()
   })

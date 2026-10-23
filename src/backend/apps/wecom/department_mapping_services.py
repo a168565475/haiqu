@@ -70,9 +70,13 @@ def mapping_source(config):
 
 
 @sensitive_variables()
-def require_mapping_source(config, preview):
-    snapshot, directory, _, can_save, mode = mapping_source(config)
-    if (not can_save or preview.get("corp_id") != config.corp_id or preview.get("source_mode") != mode
+def require_mapping_source(config, preview, department_id=None):
+    snapshot, directory, metadata, can_save, mode = mapping_source(config)
+    saved_ids = preview.get("saved_mapping_ids", [])
+    # 过期副本仅支持本次预览已存在的映射；不能借维护入口新增绑定。
+    maintaining = (department_id in saved_ids and (mode == "IMPORTED" or metadata["status"] == "EXPIRED"))
+    if ((not can_save and not maintaining) or (saved_ids and department_id not in saved_ids)
+            or preview.get("corp_id") != config.corp_id or preview.get("source_mode") != mode
             or preview.get("snapshot_version") != etag_for_instance(snapshot)
             or preview["directory"] != digest(directory)):
         raise PreconditionFailed("部门来源副本已变化、失效或过期，请重新预览。")
@@ -114,18 +118,27 @@ def preview_mappings(request, *, refresh=False):
         snapshot, directory, metadata, can_save, mode = mapping_source(locked)
         mappings = selectors.mapping_snapshot(locked.corp_id)
         organizations = selectors.organization_snapshot()
+        source_ids = {row["id"] for row in directory["departments"]}
+        saved_ids = sorted(row["wecom_department_id"] for row in mappings["mappings"]
+                           if row["wecom_department_id"] in source_ids) if (
+            not can_save and (mode == "IMPORTED" or metadata["status"] == "EXPIRED")) else []
+        can_edit_saved = bool(saved_ids)
+        if can_edit_saved:
+            metadata = {**metadata, "message": "来源副本已过期；可更换或清除已有映射，新增绑定须重新读取。"}
         version = {"actor": str(request.user.pk), "corp_id": locked.corp_id, "source_mode": mode,
                    "config": config_etag(locked), "directory": digest(directory),
                    "mappings": digest(mappings), "organizations": digest(organizations),
-                   "snapshot_version": etag_for_instance(snapshot) if can_save else None}
-        token = signing.dumps(version, salt=PREVIEW_SALT, compress=True) if can_save else ""
+                   "snapshot_version": etag_for_instance(snapshot) if can_save or can_edit_saved else None,
+                   "saved_mapping_ids": saved_ids}
+        token = signing.dumps(version, salt=PREVIEW_SALT, compress=True) if can_save or can_edit_saved else ""
         by_source = {row["wecom_department_id"]: row for row in mappings["mappings"]}
         departments = [{**source, "mapping": by_source.get(source["id"]), "candidates": [
             unit for unit in organizations if unit["status"] == "ACTIVE" and not unit["archived"]
             and unit["unit_name"].strip().casefold() == source["name"].strip().casefold()
         ]} for source in directory["departments"]]
         return {"corp_id": locked.corp_id, "departments": departments, "organizations": organizations,
-                "preview_token": token, "can_save_mapping": can_save, "snapshot": metadata}, f'"{digest(version)}"'
+                "preview_token": token, "can_save_mapping": can_save,
+                "can_edit_saved_mappings": can_edit_saved, "snapshot": metadata}, f'"{digest(version)}"'
 
 
 @sensitive_variables()
@@ -143,7 +156,7 @@ def update_mapping(request, department_id, data):
     require_etag(request.headers.get("If-Match"), f'"{digest(preview)}"')
     config = get_config()
     require_etag(preview["config"], config_etag(config))
-    directory = require_mapping_source(config, preview)
+    directory = require_mapping_source(config, preview, department_id)
     imported = preview["source_mode"] == "IMPORTED"
     # 绑定的是管理员刚核对的来源副本，不在每次选部门时重读全部成员。
     # 副本有效期、配置、映射及目标组织版本仍在加锁后再次核对。
@@ -154,7 +167,7 @@ def update_mapping(request, department_id, data):
         locked = lock_configuration_and_root(config, imported=imported)
         actor = require_access(request)
         WeComDirectorySnapshot.objects.select_for_update().filter(corp_id=locked.corp_id).first()
-        require_mapping_source(locked, preview)
+        require_mapping_source(locked, preview, department_id)
         if digest(selectors.mapping_snapshot(locked.corp_id)) != preview["mappings"]:
             raise PreconditionFailed("部门映射或对应 ERP 部门已变化，请重新预览。")
         if digest(selectors.organization_snapshot()) != preview["organizations"]:
@@ -168,12 +181,14 @@ def update_mapping(request, department_id, data):
             if target.status != "ACTIVE" or target.archived_at is not None:
                 raise Conflict("只能映射到启用且未归档的 ERP 部门。")
         mapping = WeComDepartmentMapping.objects.filter(corp_id=locked.corp_id, wecom_department_id=department_id).first()
+        if preview.get("saved_mapping_ids") and mapping is None:
+            raise PreconditionFailed("原部门映射已不存在，请重新预览。")
         before = {"organization_unit_id": str(mapping.organization_unit_id) if mapping and mapping.organization_unit_id else None}
         if mapping is None:
             mapping = WeComDepartmentMapping(corp_id=locked.corp_id, wecom_department_id=department_id)
         mapping.wecom_department_name = source["name"]
         mapping.organization_unit = target
-        require_mapping_source(locked, preview)
+        require_mapping_source(locked, preview, department_id)
         actor = require_access(request)
         mapping.save()
         audit(request, mapping, "DEPARTMENT_MAPPING_UPDATE", actor=actor, before=before,

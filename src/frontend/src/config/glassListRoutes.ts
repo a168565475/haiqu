@@ -1,5 +1,9 @@
 // 仅独立列表接入公共骨架；详情、编辑和内嵌列表保留各自布局。
 export const glassListRouteNames = [
+  'finance-accounts',
+  'finance-subjects',
+  'finance-statements',
+  'finance-receipts',
   'inquiries', 'quotations', 'sales-orders', 'tasks',
   'contacts', 'complaints', 'samples', 'sample-inventory', 'sample-outbound', 'sample-loans',
   'products', 'raw-materials', 'product-catalog', 'material-catalog', 'boms',

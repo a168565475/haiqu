@@ -39,6 +39,20 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('创建打样申请客户查询', () => {
+  it('当前登录人不在业务部候选时留空，不把内部ID回显为业务员', async () => {
+    const wrapper = await render()
+    const owner = wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '业务员')!
+    expect(owner.props('modelValue')).toBe('')
+    expect(owner.text()).toContain('请选择业务员')
+  })
+  it('当前登录人在业务部候选中时默认选中本人并显示姓名', async () => {
+    const options = await api.options()
+    api.options.mockResolvedValue({ ...options, salespeople: [{ id: 'owner', display_name: '业务员甲' }] })
+    const wrapper = await render()
+    const owner = wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '业务员')!
+    expect(owner.props('modelValue')).toBe('owner')
+    expect(owner.text()).toContain('业务员甲')
+  })
   it.each([['PENDING_COMPLETION', 'sample-detail'], ['DIRECTOR_REVIEW', 'sample-director-review']])('以服务端%s状态进入真实下一阶段', async (status, name) => {
     vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: vi.fn() }))
     api.submit.mockResolvedValue({ id: 'created-sample', etag: 'v1', status })

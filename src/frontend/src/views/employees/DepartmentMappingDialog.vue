@@ -30,6 +30,10 @@ const valid = computed(() => {
   return permitted.value && !blocked.value && !!current?.etag && !!current.data.preview_token && current.data.can_save_mapping === true && !!snapshot?.expires_at && Date.parse(snapshot.expires_at) > now.value
 })
 const canRefresh = computed(() => permitted.value && preview.value?.data.snapshot.status !== 'CONFIG_UNAVAILABLE')
+function editable(row: DepartmentMappingSourceDepartment) {
+  return valid.value || (permitted.value && !blocked.value && !!preview.value?.etag && !!preview.value.data.preview_token
+    && preview.value.data.can_edit_saved_mappings === true && !!row.mapping?.id)
+}
 const columns = [['部门ID', 90], ['企业微信部门', 200], ['上级ID', 100], ['同名ERP部门', 180], ['同名部门编码', 160], ['已保存ERP编码', 130], ['映射状态', 120]] as const
 function cells(row: DepartmentMappingSourceDepartment) {
   const mapping = row.mapping
@@ -57,7 +61,7 @@ async function load(refresh = false, afterWrite = false, savedMessage = ''): Pro
 }
 async function save(row: DepartmentMappingSourceDepartment, value: string) {
   const current = preview.value, clearing = value === '__clear__', organization = options.value.find(item => item.id === value)
-  if (!valid.value || !current || loading.value || saving.value || (!clearing && !organization) || (clearing ? !row.mapping?.organization_unit_id : row.mapping?.organization_unit_id === value)) return
+  if (!editable(row) || !current || loading.value || saving.value || (!clearing && !organization) || (clearing ? !row.mapping?.organization_unit_id : row.mapping?.organization_unit_id === value)) return
   const request = sequence
   saving.value = true; savingId.value = row.id; error.value = ''; notice.value = ''
   try {
@@ -98,7 +102,7 @@ onBeforeUnmount(() => { sequence++; closeLoadingMessage(); window.clearInterval(
         <table v-if="preview.data.departments.length" aria-label="企业微信部门映射"><colgroup><col v-for="([label, width]) in columns" :key="label" :style="{ width: label === '企业微信部门' ? undefined : width + 'px' }"><col style="width:250px"></colgroup><thead><tr><th v-for="([label]) in columns" :key="label">{{ label }}</th><th class="fixed-right">绑定本地部门</th></tr></thead><tbody>
           <tr v-for="row in rows" :key="`${preview.data.corp_id}:${row.id}`" :data-department="row.id">
             <td v-for="(value, index) in cells(row)" :key="index"><ElTooltip :trigger="['hover', 'focus']" :content="value" :show-after="200"><span tabindex="0" class="cell-text" :class="{ 'name-cell': index === 1 }">{{ value }}</span></ElTooltip></td>
-            <td class="fixed-right"><ElSelect :model-value="row.mapping?.organization_unit_id || ''" :aria-label="`映射目标部门 ${row.id}`" filterable placeholder="选择本地部门" :disabled="saving || loading || !valid || !options.length" @change="value => save(row, String(value))"><ElOption v-if="row.mapping?.organization_unit_id" label="清除当前绑定" value="__clear__" /><ElOption v-if="row.mapping?.organization_unit_id && !options.some(item => item.id === row.mapping?.organization_unit_id)" :value="row.mapping.organization_unit_id" :label="`${row.mapping.organization_name || '历史部门'}（目标不可用）`" disabled /><ElOption v-for="item in options" :key="item.id" :value="item.id" :label="`${item.unit_name} · ${item.unit_code}`" /></ElSelect></td>
+            <td class="fixed-right"><ElSelect :model-value="row.mapping?.organization_unit_id || ''" :aria-label="`映射目标部门 ${row.id}`" filterable placeholder="选择本地部门" :disabled="saving || loading || !editable(row)" @change="value => save(row, String(value))"><ElOption v-if="row.mapping?.organization_unit_id" label="清除当前绑定" value="__clear__" /><ElOption v-if="row.mapping?.organization_unit_id && !options.some(item => item.id === row.mapping?.organization_unit_id)" :value="row.mapping.organization_unit_id" :label="`${row.mapping.organization_name || '历史部门'}（目标不可用）`" disabled /><ElOption v-for="item in options" :key="item.id" :value="item.id" :label="`${item.unit_name} · ${item.unit_code}`" /></ElSelect></td>
           </tr>
         </tbody></table>
         <p v-if="!preview.data.departments.length" class="mapping-empty">尚未保存读取结果</p><p v-else-if="!rows.length" class="mapping-empty">没有符合条件的来源部门。<button @click="query = ''">清空搜索</button></p>
@@ -110,11 +114,11 @@ onBeforeUnmount(() => { sequence++; closeLoadingMessage(); window.clearInterval(
 </template>
 
 <style scoped lang="scss">
-:global(.department-mapping-window > .app-window-dialog__body) { display: flex; flex-direction: column; overflow: hidden; }
+:global(.department-mapping-window > .app-window-dialog__body) { display: flex; flex-direction: column; overflow: hidden; padding-top: 12px; }
 .mapping-dialog { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; color: #111; }
 .mapping-dialog > p, .mapping-dialog > .access-warning, .mapping-dialog > h3 { flex: none; }
 .mapping-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; flex: none; }
-.mapping-toolbar { margin: 14px 0; }
+.mapping-toolbar { margin: 0 0 14px; }
 .mapping-dialog .mapping-table { overflow: auto; min-height: 0; flex: 0 1 auto; border: 1px solid rgba(255,255,255,.72); border-radius: 5px; background: #eff7fc; margin-bottom: 14px;
   table { min-width: 1230px; border: 0; border-radius: 0; }
   th, td { box-sizing: border-box; height: 34px; padding: 0 10px; white-space: nowrap; overflow-wrap: normal; color: #111; border-bottom: 1px solid #dcebf5; }

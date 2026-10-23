@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.generics import get_object_or_404
 
-from apps.core.api.concurrency import require_matching_etag
+from apps.core.api.concurrency import require_matching_etag, etag_for_instance, PreconditionFailed
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.auth import active_employee_for
@@ -104,11 +104,27 @@ def assignment_snapshot(employee):
 
 
 @transaction.atomic
-def replace_employee_departments(request, pk, rows):
+def rename_employee(request, pk, display_name):
+    require_organization_manager(request)
+    employee = get_object_or_404(Employee.objects.select_for_update(no_key=True), pk=pk, archived_at__isnull=True)
+    require_matching_etag(request, employee)
+    before = {"employee_name": employee.display_name}
+    if employee.display_name != display_name:
+        employee.display_name = display_name
+        employee.save(update_fields=["display_name", "updated_at"])
+        audit(request, employee, "EMPLOYEE_NAME_UPDATE", before, {"employee_name": employee.display_name})
+    return employee
+
+
+@transaction.atomic
+def replace_employee_departments(request, pk, rows, *, expected_etag=None):
     actor = require_organization_manager(request)
     OrganizationUnit.objects.select_for_update().get(unit_code="HAIQU")
     employee = get_object_or_404(Employee.objects.select_for_update(no_key=True), pk=pk, archived_at__isnull=True)
-    require_matching_etag(request, employee)
+    if expected_etag is None:
+        require_matching_etag(request, employee)
+    elif expected_etag != etag_for_instance(employee):
+        raise PreconditionFailed()
     if employee.status != "ACTIVE":
         raise Conflict("只能调整在职员工部门。")
     ids = [r["department_id"] for r in rows]

@@ -1,6 +1,9 @@
 from rest_framework import serializers
+from django.db.models import Count
 
 from apps.core.api.concurrency import etag_for_instance
+from apps.core.login_records import login_account_id
+from apps.audit.models import AuditLog
 from apps.core.models import uppercase_code_validator
 from apps.organizations.models import Employee, RoleProfile
 from ..models import AccessScope, SalesTeam, SalesTeamMembership
@@ -73,17 +76,31 @@ class RoleSerializer(serializers.ModelSerializer):
 
 class AccessEmployeeSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", default=None, read_only=True)
+    last_login = serializers.DateTimeField(source="user.last_login", default=None, allow_null=True, read_only=True)
+    login_count = serializers.SerializerMethodField(help_text="自统一登录记录启用后累计的成功登录次数；不含此前未记录的历史次数。")
     role_ids = serializers.SerializerMethodField()
     etag = serializers.SerializerMethodField()
     account_active = serializers.BooleanField(source="user.is_active", default=None, read_only=True)
     account_protected = serializers.SerializerMethodField()
     team_id = serializers.SerializerMethodField()
     department = serializers.SerializerMethodField()
+    department_ids = serializers.SerializerMethodField()
     wecom_departments = serializers.JSONField(source="wecom_binding.department_snapshot", read_only=True, default=None, allow_null=True)
 
     class Meta:
         model = Employee
-        fields = ["id", "employee_code", "display_name", "status", "username", "account_active", "account_protected", "team_id", "department", "wecom_departments", "role_ids", "etag"]
+        fields = ["id", "employee_code", "display_name", "status", "username", "last_login", "login_count", "account_active", "account_protected", "team_id", "department", "department_ids", "wecom_departments", "role_ids", "etag"]
+
+    def get_login_count(self, obj) -> int | None:
+        if not obj.user_id:
+            return None
+        if not hasattr(self, "_login_counts"):
+            # 按当前页一次聚合，避免为每名员工单独查询审计表。
+            employees = self.parent.instance if isinstance(self.parent, serializers.ListSerializer) else [obj]
+            ids = [login_account_id(employee.user_id) for employee in employees if employee.user_id]
+            rows = AuditLog.objects.filter(object_type="AUTH_ACCOUNT", action="LOGIN_SUCCESS", object_id__in=ids).values("object_id").annotate(total=Count("id"))
+            self._login_counts = {row["object_id"]: row["total"] for row in rows}
+        return self._login_counts.get(login_account_id(obj.user_id), 0)
 
     def get_role_ids(self, obj) -> list[str]:
         return [str(pk) for pk in current_assignments(obj).values_list("role_profile_id", flat=True)]
@@ -99,11 +116,22 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
         return str(membership.team_id) if membership else None
 
     def get_department(self, obj) -> str:
+        return "、".join(name for _, name in self.department_rows(obj))
+
+    def get_department_ids(self, obj) -> list[str]:
+        return [str(pk) for pk, _ in self.department_rows(obj)]
+
+    def department_rows(self, obj):
         from django.db.models import Q
         from django.utils import timezone
+        if not hasattr(self, "_department_rows"):
+            self._department_rows = {}
+        if obj.pk in self._department_rows:
+            return self._department_rows[obj.pk]
         now = timezone.now()
         assignments = obj.organization_assignments.filter(effective_from__lte=now, organization_unit__archived_at__isnull=True, organization_unit__status="ACTIVE").filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now))
-        return "、".join(assignments.values_list("organization_unit__unit_name", flat=True))
+        self._department_rows[obj.pk] = list(assignments.values_list("organization_unit_id", "organization_unit__unit_name"))
+        return self._department_rows[obj.pk]
 
 
 class AccountCreateSerializer(StrictSerializer):

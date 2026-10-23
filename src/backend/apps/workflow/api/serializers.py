@@ -4,6 +4,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.serializers import EmployeeSummarySerializer
 from apps.customers.models import CustomerContact
 from apps.files.models import USABLE_FILE_SCAN_STATUSES
@@ -245,7 +246,7 @@ class TaskCreateSerializer(serializers.ModelSerializer):
 
     assignee_employee_id = serializers.PrimaryKeyRelatedField(
         source="assignee_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     source_type = serializers.ChoiceField(choices=TASK_SOURCE_TYPES, required=False)
     source_id = serializers.UUIDField(required=False)
@@ -315,7 +316,7 @@ class TaskActionSerializer(serializers.Serializer):
 class TaskReassignSerializer(serializers.Serializer):
     assignee_employee_id = serializers.PrimaryKeyRelatedField(
         source="assignee_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     reason = serializers.CharField(max_length=500, trim_whitespace=True)
 
@@ -349,7 +350,7 @@ class TaskBatchSerializer(serializers.Serializer):
 class TaskBulkReassignSerializer(TaskBatchSerializer):
     assignee_employee_id = serializers.PrimaryKeyRelatedField(
         source="assignee_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
 
 

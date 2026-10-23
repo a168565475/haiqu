@@ -4,6 +4,8 @@ from django.views.decorators.debug import sensitive_variables
 from drf_spectacular.utils import extend_schema
 from rest_framework.response import Response
 
+from apps.access_control.permissions import SuperadministratorOnly
+
 from . import message_selectors as selectors, message_services as services
 from .message_serializers import (
     MessageAttemptListSerializer, MessageAttemptQuerySerializer, MessageAttemptResponseSerializer,
@@ -38,6 +40,8 @@ class MessageTemplateView(MessageManagementView):
 
 
 class MessageTestView(MessageManagementView):
+    permission_classes = [*MessageManagementView.permission_classes, SuperadministratorOnly]
+
     @extend_schema(request=MessageTestSerializer, responses=MessageAttemptResponseSerializer, parameters=[IF_MATCH])
     @sensitive_variables()
     def post(self, request):

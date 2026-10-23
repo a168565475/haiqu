@@ -77,6 +77,41 @@ class ImportedMappingFixture:
 @override_settings(WECOM_FERNET_KEYS=[Fernet.generate_key().decode()], ACCESS_MANAGEMENT_ENABLED=True,
                    DEV_AUTO_LOGIN_ENABLED=False, PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class ImportedDepartmentMappingTests(ImportedMappingFixture, TestCase):
+    def test_expired_copy_allows_existing_mapping_changes_but_not_new_bindings(self):
+        self.assertEqual(self.update(self.preview()).status_code, 200)
+        counts = [model.objects.count() for model in (Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, WeComBinding)]
+        WeComDirectorySnapshot.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+        preview = self.preview()
+        self.assertFalse(preview.data["data"]["can_save_mapping"])
+        self.assertTrue(preview.data["data"]["can_edit_saved_mappings"])
+        self.assertEqual(self.update(preview, source_id=1).status_code, 412)
+        response = self.update(preview, organization_unit_id=str(self.root.pk), organization_etag=etag_for_instance(self.root))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(WeComDepartmentMapping.objects.get().organization_unit_id, self.root.pk)
+        response = self.update(self.preview(), organization_unit_id=None, organization_etag=None)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(WeComDepartmentMapping.objects.get().organization_unit_id)
+        self.assertEqual(self.update(self.preview()).status_code, 200)
+        self.assertEqual(WeComDepartmentMapping.objects.count(), 1)
+        self.assertEqual(AuditLog.objects.filter(action="DEPARTMENT_MAPPING_UPDATE").count(), 4)
+        self.assertEqual([model.objects.count() for model in (Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, WeComBinding)], counts)
+        employee = self.client.get(EMPLOYEES).data["data"]
+        self.assertFalse(employee["snapshot"]["can_submit"])
+        self.assertEqual(employee["preview_token"], "")
+
+    def test_expired_mapping_preview_still_rejects_changed_config_or_mapping(self):
+        self.assertEqual(self.update(self.preview()).status_code, 200)
+        WeComDirectorySnapshot.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+        preview = self.preview()
+        mapping = WeComDepartmentMapping.objects.get()
+        mapping.organization_unit = self.root
+        mapping.save()
+        self.assertEqual(self.update(preview).status_code, 412)
+        preview = self.preview()
+        WeComConfig.objects.create(enabled=False)
+        self.assertEqual(self.update(preview).status_code, 412)
+        self.assertFalse(self.preview().data["data"]["can_edit_saved_mappings"])
+
     def test_department_and_employee_capabilities_use_separate_tokens(self):
         data = self.preview().data["data"]
         self.assertTrue(data["can_save_mapping"])

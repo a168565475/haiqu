@@ -25,7 +25,7 @@ export interface Workshop {
 
 export interface WorkshopEmployee {
   id: string
-  workshop: string
+  workshop: string | null
   workshop_name: string
   position: string
   name: string
@@ -84,22 +84,8 @@ export type WorkshopConfigRecord = Workshop | WorkshopEmployee | Craft | Operati
 export interface WorkshopEmployeeInput {
   workshop: string
   position: string
-  employee?: string
   is_supervisor: boolean
   status: WorkshopEmployeeStatus
-}
-
-export interface WorkshopEmployeeOption {
-  id: string
-  employee_code: string
-  display_name: string
-  status: string
-  etag: string
-}
-
-export interface WorkshopEmployeeOptions {
-  data: WorkshopEmployeeOption[]
-  meta: PageMeta
 }
 
 export interface CraftInput {

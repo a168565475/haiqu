@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from .auth import can_access_erp
+from .login_records import record_successful_login
 from .serializers import AuthenticationStateSerializer, HealthResponseSerializer, LoginSerializer
 
 
@@ -99,12 +100,16 @@ def auth_login(request):
     # Serialize session creation with account suspension; suspension deletes all
     # existing DB sessions while holding this same user lock.
     with transaction.atomic():
+        from apps.organizations.models import Employee
+        # 登录审计会引用员工，沿用员工→账号锁顺序，避免与删除/停用互相等待。
+        Employee.objects.select_for_update(no_key=True).filter(user_id=user.pk).first()
         backend = user.backend
         user = get_user_model().objects.select_for_update().get(pk=user.pk)
         if not can_access_erp(user) or not user.check_password(serializer.validated_data["password"]):
             return Response({"detail": "用户名或密码错误"}, status=status.HTTP_400_BAD_REQUEST)
         django_login(request, user, backend=backend)
         request.session.save()
+        record_successful_login(request, user, "PASSWORD")
     return Response({"authenticated": True, "user": user_payload(user)})
 
 

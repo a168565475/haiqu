@@ -16,7 +16,31 @@ defineProps<{ name: string }>()
     stroke-linejoin="round"
     style="stroke:var(--icon-ink,#283133);fill:none"
   >
-    <g v-if="name === 'employee-list'">
+    <g v-if="name === 'finance-accounts'">
+      <title>公司账户信息</title>
+      <path d="m3 8 9-5 9 5H3Z" class="finance-bank-roof"/>
+      <path d="M3 21h18M5 10v8m5-8v8m4-8v8m5-8v8"/>
+      <path d="M7 21h10" class="accent part" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-subjects'">
+      <title>会计科目</title>
+      <path d="M5 3v15h5M5 7h5m4 0h5m-5 11h5"/>
+      <rect x="10" y="4" width="4" height="6" rx="1" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <rect x="10" y="15" width="4" height="6" rx="1" class="accent part" style="stroke:var(--icon-accent,var(--erp-menu-accent));fill:var(--erp-menu-selected-background)"/>
+    </g>
+    <g v-else-if="name === 'finance-statements'">
+      <title>应收对账单</title>
+      <path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Z" class="finance-statement-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M8 7h8m-8 4h8" class="finance-statement-lines"/>
+      <path d="m8 15 2 2 5-4" class="accent part finance-statement-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+    </g>
+    <g v-else-if="name === 'finance-receipts'">
+      <title>收款确认单</title>
+      <rect x="3" y="4" width="18" height="16" rx="2" class="finance-receipt-body" style="fill:var(--icon-muted,var(--erp-menu-icon-muted))"/>
+      <path d="M3 9h18m-5 5 2 2-2 2M9 16h9" class="accent part finance-receipt-lines" style="stroke:var(--icon-accent,var(--erp-menu-accent))"/>
+      <path d="M6 6.5h3" class="finance-receipt-lines"/>
+    </g>
+    <g v-else-if="name === 'employee-list'">
       <title>员工管理</title>
       <circle cx="9" cy="7" r="3" style="fill:var(--icon-muted,#e7e9e4)" />
       <path d="M3 20v-3a6 6 0 0 1 12 0v3" />
@@ -311,4 +335,9 @@ defineProps<{ name: string }>()
   height: 100%;
   flex: none;
 }
+:global(.app-sidebar__flyout-link.is-active .finance-bank-roof) { fill: var(--erp-menu-accent); }
+:global(.app-sidebar__flyout-link.is-active .finance-statement-body) { fill: var(--erp-menu-accent) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-statement-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-receipt-body) { fill: var(--erp-menu-accent) !important; }
+:global(.app-sidebar__flyout-link.is-active .finance-receipt-lines) { stroke: var(--erp-menu-icon-selected-muted) !important; }
 </style>

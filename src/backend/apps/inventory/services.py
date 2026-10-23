@@ -1,5 +1,6 @@
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from .pipe_receipts import receipt_pipe_values, quality_pipe_quantities
+from apps.organizations.selectors import active_department_employees
 from apps.procurement.pipe_purchase import pipe_meters
 from collections import defaultdict
 from decimal import Decimal, ROUND_FLOOR
@@ -388,7 +389,7 @@ def create_finished_goods_outbound(*, items, receiver_name, used_for_order_numbe
     list(WarehouseLocation.objects.select_for_update().filter(pk__in=location_ids).order_by("id"))
 
     from apps.organizations.models import Employee
-    responsible = Employee.objects.filter(pk=responsible_employee_id, status="ACTIVE", archived_at__isnull=True).first() if responsible_employee_id else None
+    responsible = active_department_employees("DEPT_WAREHOUSE").filter(pk=responsible_employee_id).first() if responsible_employee_id else None
     if responsible_employee_id and responsible is None:
         raise ValidationError({"responsible_employee_id": "负责人不存在或已停用。"})
     outbound = FinishedGoodsOutbound.objects.create(

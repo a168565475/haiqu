@@ -23,6 +23,7 @@ from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
+from apps.organizations.selectors import active_department_employees, employee_filter_choices
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
 from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
@@ -437,7 +438,12 @@ class ProductionTaskViewSet(
         if scope not in {"full", "filters"}:
             raise ValidationError({"scope": "选项范围必须是 full 或 filters。"})
         customers = self._customer_references().filter(archived_at__isnull=True).order_by("account_name", "account_code")[:500]
-        employees = Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True).order_by("employee_code")[:500]
+        employees = active_department_employees("DEPT_PRODUCTION").order_by("employee_code")
+        salespeople = active_department_employees("DEPT_BUSINESS").order_by("employee_code")
+        if scope == "filters":
+            visible = self.get_queryset()
+            employees = employee_filter_choices(employees, visible.values("followers__pk"))
+            salespeople = employee_filter_choices(salespeople, visible.values("salesperson_id"))
         products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related(
             "unit", "product_item"
         ).filter(category__item_type=ProductItemType.FINISHED, category__status=ReferenceStatus.ACTIVE,
@@ -451,6 +457,7 @@ class ProductionTaskViewSet(
             "statuses": [{"value": value, "label": label} for value, label in ProductionTaskStatus.choices],
             "customers": [{"id": str(item.pk), "account_code": item.account_code, "account_name": item.account_name} for item in customers],
             "employees": [{"id": str(item.pk), "employee_code": item.employee_code, "display_name": item.display_name} for item in employees],
+            "salespeople": [{"id": str(item.pk), "employee_code": item.employee_code, "display_name": item.display_name} for item in salespeople],
             "products": [{
                 "id": str(item.pk), "product_number": item.product_number, "product_code": item.product_code,
                 "item_number": item.product_item.item_number, "product_name": item.product_name,

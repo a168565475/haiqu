@@ -69,3 +69,10 @@ class CanManageOrganization(BasePermission):
         if not settings.ACCESS_MANAGEMENT_ENABLED:
             raise AccessManagementUnavailable()
         return True
+
+
+class SuperadministratorOnly(BasePermission):
+    message = "仅超级管理员可进行此操作。"
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_active and request.user.is_superuser)

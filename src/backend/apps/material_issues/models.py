@@ -207,12 +207,13 @@ class MaterialIssue(TimeStampedModel):
         related_name="material_issues",
     )
     recipient_workshop_employee = models.ForeignKey(
-        "workshop_config.WorkshopEmployee",
+        "organizations.Employee",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
         related_name="material_issues",
     )
+    recipient_name_snapshot = models.CharField(max_length=150, blank=True)
     issue_at = models.DateTimeField(null=True, blank=True)
     remark = models.TextField(blank=True)
     status = models.CharField(max_length=30, choices=MaterialIssueStatus.choices, default=MaterialIssueStatus.DRAFT)

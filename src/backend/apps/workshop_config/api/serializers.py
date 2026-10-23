@@ -1,10 +1,9 @@
 from rest_framework import serializers
 
-from apps.core.api.concurrency import etag_for_instance
 from apps.organizations.models import Employee
 
 from ..constants import METAL_WORKSHOP_NAME
-from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
+from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop
 
 
 def _normalized_text(value, label):
@@ -37,54 +36,40 @@ class WorkshopSerializer(serializers.ModelSerializer):
 
 
 class WorkshopEmployeeSerializer(serializers.ModelSerializer):
-    workshop_name = serializers.CharField(source="workshop.name", read_only=True)
-    status_display = serializers.CharField(source="get_status_display", read_only=True)
-    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all(), required=False, allow_null=True)
-    employee_code = serializers.CharField(source="employee.employee_code", read_only=True, default=None)
-    employee_name = serializers.CharField(source="employee.display_name", read_only=True, default=None)
-    employee_status = serializers.CharField(source="employee.status", read_only=True, default=None)
-    employee_archived = serializers.SerializerMethodField()
+    name = serializers.CharField(source="display_name", read_only=True)
+    employee = serializers.UUIDField(source="pk", read_only=True)
+    employee_name = serializers.CharField(source="display_name", read_only=True)
+    employee_status = serializers.CharField(source="status", read_only=True)
+    employee_archived = serializers.BooleanField(read_only=True, default=False)
+    workshop_name = serializers.CharField(source="workshop.name", read_only=True, default="未安排")
+    position = serializers.CharField(source="workshop_position", allow_blank=True, required=False)
+    is_supervisor = serializers.BooleanField(source="workshop_is_supervisor", required=False)
+    status = serializers.ChoiceField(source="workshop_status", choices=["ACTIVE", "LEFT"], required=False)
+    status_display = serializers.CharField(source="get_workshop_status_display", read_only=True)
 
     class Meta:
-        model = WorkshopEmployee
+        model = Employee
         fields = [
             "id", "workshop", "workshop_name", "position", "name", "is_supervisor", "status",
             "employee", "employee_code", "employee_name", "employee_status", "employee_archived",
             "status_display", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "name", "workshop_name", "status_display", "created_at", "updated_at"]
-        # 历史姓名只读；服务在事务内按最终身份校验两类条件唯一约束。
-        validators = []
-
-    def validate_position(self, value):
-        return _normalized_text(value, "岗位")
-
-    def get_employee_archived(self, obj) -> bool:
-        return bool(obj.employee_id and obj.employee.archived_at is not None)
+        read_only_fields = ["id", "employee_code", "created_at", "updated_at"]
 
     def validate(self, attrs):
-        attrs = super().validate(attrs)
-        if "name" in self.initial_data:
-            raise serializers.ValidationError({"name": "姓名来自统一员工档案，不能在车间配置中修改。"})
-        if self.instance is None and attrs.get("employee") is None:
-            raise serializers.ValidationError({"employee": "请选择统一员工档案。"})
-        workshop = attrs.get("workshop", getattr(self.instance, "workshop", None))
-        status = attrs.get("status", getattr(self.instance, "status", WorkshopEmployeeStatus.ACTIVE))
-        if status == WorkshopEmployeeStatus.ACTIVE and workshop and workshop.status != RecordStatus.ACTIVE:
-            raise serializers.ValidationError({"workshop": "在职员工不能关联已停用车间。"})
+        if "name" in self.initial_data or "employee" in self.initial_data:
+            raise serializers.ValidationError({"employee": "员工直接使用行政档案，不能在此新增或更换。"})
+        workshop = attrs.get("workshop", self.instance.workshop)
+        position = attrs.get("workshop_position", self.instance.workshop_position).strip()
+        if workshop and workshop.status != RecordStatus.ACTIVE:
+            raise serializers.ValidationError({"workshop": "请选择启用的车间。"})
+        if bool(workshop) != bool(position):
+            raise serializers.ValidationError({"position": "车间和岗位必须同时填写或同时清空。"})
+        if "workshop_position" in attrs:
+            attrs["workshop_position"] = position
+        if not workshop:
+            attrs["workshop_is_supervisor"] = False
         return attrs
-
-
-class WorkshopEmployeeOptionSerializer(serializers.ModelSerializer):
-    etag = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Employee
-        fields = ["id", "employee_code", "display_name", "status", "etag"]
-        read_only_fields = fields
-
-    def get_etag(self, obj) -> str:
-        return etag_for_instance(obj)
 
 
 class CraftSerializer(serializers.ModelSerializer):

@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from django.db.models import Exists, OuterRef
 
 from apps.core.api.concurrency import etag_for_instance
+from apps.access_control.deletion_services import DELETED_REASON
 from apps.organizations.models import Employee, EmployeeOrganizationAssignment
 from .department_assignment_selectors import department_plan
 from .models import WeComBinding
@@ -35,6 +36,10 @@ def employee_summary(employee):
     }
 
 
+def deleted_employee(employee):
+    return employee.archived_at is not None and employee.archive_reason == DELETED_REASON and employee.status == "INACTIVE"
+
+
 def directory_plan(directory, *, mappings=None):
     employees = Employee.objects.select_related("user").only(
         "id", "employee_code", "display_name", "status", "archived_at", "updated_at", "user_id",
@@ -53,9 +58,15 @@ def directory_plan(directory, *, mappings=None):
     rows = []
     for member in directory["members"]:
         binding = bindings.get(member["userid"].lower())
+        replacement = binding if binding and deleted_employee(binding.employee) else None
         candidates = []
-        employee = employee_summary(binding.employee) if binding else None
-        if binding:
+        employee = employee_summary(binding.employee) if binding and not replacement else None
+        if replacement:
+            if reason := member_rejection(member):
+                action = "SKIP"
+            else:
+                action, reason = "RECREATE", "原员工已删除；保存后重新建档并转移企业微信绑定，不恢复原账号或权限。"
+        elif binding:
             action, reason = "EXISTING", "已关联 ERP 员工，保留现有资料、账号及权限。"
             if (employee["status"] != "ACTIVE" or employee["archived"]
                     or not employee["account_active"]):
@@ -71,8 +82,11 @@ def directory_plan(directory, *, mappings=None):
                 action, reason = "CREATE", "可新增员工及无密码账号，后续由管理员分配权限。"
         row = {**member, "action": action, "reason": reason,
                "employee": employee, "candidates": candidates}
+        if replacement:
+            row["_replacement"] = {"binding_id": str(binding.pk), "binding_etag": etag_for_instance(binding),
+                                   "employee_id": str(binding.employee_id), "employee_etag": etag_for_instance(binding.employee)}
         if mappings is not None:
             row["department_plan"] = department_plan(member, mappings, employee=employee,
-                has_history=bool(binding and binding.has_department_history), rejection=member_rejection(member))
+                has_history=bool(binding and not replacement and binding.has_department_history), rejection=member_rejection(member))
         rows.append(row)
     return rows

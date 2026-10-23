@@ -2,6 +2,7 @@ import math
 from datetime import timedelta
 
 from django.db import transaction
+from apps.organizations.selectors import active_department_employees
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -64,6 +65,8 @@ def create_complaint(*, validated_data, actor_employee, request):
     collaborators = validated_data.pop("collaborator_employees", [])
     customer = validated_data["customer_account"]
     owner = validated_data.pop("owner_employee", None) or actor_employee
+    if not active_department_employees("DEPT_BUSINESS").filter(pk=owner.pk).exists():
+        raise ValidationError({"owner_employee_id": "请选择业务部的在职员工。"})
     sla = calculate_complaint_sla(
         validated_data["complaint_type_item"],
         validated_data["severity_item"],

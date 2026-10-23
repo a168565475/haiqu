@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 """隔离 PostgreSQL 中验证车缝报工与首次产出共用额度，不操作真实业务库。"""
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,7 @@ from rest_framework.exceptions import ValidationError
 from apps.core.api.concurrency import PreconditionFailed
 from apps.outsourcing.models import OutsourcingFactory, TubeOutsourcingLine, TubeOutsourcingOrder
 from apps.reference_data.models import ProductionUnit
-from apps.workshop_config.models import Craft, Operation, WorkshopEmployee
+from apps.workshop_config.models import Craft, Operation
 from apps.workshop_reporting.models import WageScheme, WageSchemeCraft, WageSchemeLine, WorkItem, WorkReport, WorkReportLine
 from ..sewing_processing_services import (
     assert_sewing_quantity_available, assert_sewing_reports_cover_usage, sewing_component_limits,
@@ -30,7 +31,7 @@ class SewingProcessingFixture(sewing_fixture.SewingFixture):
         self.today = timezone.localdate()
         self.component = str(self.parts[0].component_identity)
         self.sewing_workshop = self.sewing_plan_craft.workshop
-        self.worker = WorkshopEmployee.objects.create(workshop=self.sewing_workshop, position='车缝工', name='裁片测试员工',
+        self.worker = production_employee(workshop=self.sewing_workshop, position='车缝工', name='裁片测试员工',
             is_supervisor=False)
         self.sheet_unit, _ = ProductionUnit.objects.get_or_create(unit_name='片', defaults={'unit_code':'SEW-PIECE'})
         self.items = []
@@ -80,7 +81,7 @@ class SewingProcessingFixture(sewing_fixture.SewingFixture):
                     required_quantity_snapshot=line.required_quantity_snapshot, unit_price_snapshot=1, amount=quantity,
                     display_name_snapshot=line.display_name_snapshot, craft_name_snapshot=line.craft_name_snapshot,
                     operation_name_snapshot=line.operation_name_snapshot, unit_name_snapshot=line.unit_name_snapshot,
-                    employee_name_snapshot=self.worker.name)
+                    employee_name_snapshot=self.worker.display_name)
         return report
 
     def direct(self, quantity, *, status='PENDING_DISPATCH'):

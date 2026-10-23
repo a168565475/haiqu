@@ -266,7 +266,7 @@ def related_summary(request, schedule, products):
             result[product_ids[issue.product_line_id]]["material_issues"]["records"].append({
                 "id": str(issue.pk), "issue_number": issue.issue_number,
                 "workshop_name": issue.workshop.name if issue.workshop_id else "",
-                "recipient_name": issue.recipient_workshop_employee.name if issue.recipient_workshop_employee_id else "",
+                "recipient_name": issue.recipient_name_snapshot,
                 "line_count": issue.detail_line_count, "issue_at": issue.issue_at, "issued_at": issue.issued_at,
                 "status": issue.status, "status_display": issue.get_status_display(),
             })

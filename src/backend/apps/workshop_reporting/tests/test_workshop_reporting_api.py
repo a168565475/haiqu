@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -21,7 +22,7 @@ from apps.production_scheduling.models import (
 )
 from apps.production_tasks.models import DeliveryMethod, OrderSource, ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.reference_data.models import Currency, NumberRule, ProductCategory, ProductColor, ProductItem, ProductionUnit
-from apps.workshop_config.models import Craft, CraftType, Operation, PlanCategory, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, CraftType, Operation, PlanCategory, Workshop
 
 from ..models import (
     WageScheme, WageSchemeLine, WageSchemeStatus, WorkReport, WorkReportLine,
@@ -96,7 +97,7 @@ class WorkshopReportingApiTests(APITestCase):
             operation_number="WG-OP-001", product_name="工价测试产品", craft=self.craft,
             name="切管", reporting_unit=self.unit,
         )
-        self.worker = WorkshopEmployee.objects.create(
+        self.worker = production_employee(
             workshop=self.workshop, position="操作工", name="计件员工甲", is_supervisor=False,
         )
         self.schedule = ProductionSchedule.objects.create(

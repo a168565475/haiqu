@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import copy
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +18,7 @@ from apps.outsourcing.tests.test_material_flow import MaterialFlowFixture
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductCategory, ProductionUnit
-from apps.workshop_config.models import Craft, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Workshop
 from apps.workshop_reporting.models import WorkReport, WorkReportLine
 from ..models import MaterialIssue, MaterialIssueLine, MetalProcessingClosure, MetalProcessingCompletion, MetalProcessingSource, OrderMaterialRequirement
 
@@ -37,7 +38,7 @@ class ProcessingFixture(MaterialFlowFixture):
         f.hardware.raw_values = {"source_inventory_material_id": str(hardware.pk)}
         f.hardware.save()
         self.workshop, _ = Workshop.objects.get_or_create(name="金工车间", defaults={"status": "ACTIVE"})
-        self.recipient = WorkshopEmployee.objects.create(workshop=self.workshop, name="金工领料测试", position="领料员",
+        self.recipient = production_employee(workshop=self.workshop, name="金工领料测试", position="领料员",
                                                          is_supervisor=False, status="ACTIVE")
         craft = Craft.objects.create(craft_type="INTERNAL", name="金工完成测试", workshop=self.workshop,
                                       plan_category="METAL", status="ACTIVE", created_by_employee=f.employee,

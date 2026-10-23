@@ -199,6 +199,7 @@ const permissionDenied = ref(false)
 const keyword = ref('')
 const statusFilter = ref<ReferenceStatus | ''>('')
 const sourceFilter = ref('')
+const props = defineProps<{ embedded?: boolean }>()
 const continentFilter = ref('')
 const compactViewport = ref(window.innerWidth < 1600)
 
@@ -381,6 +382,21 @@ async function exportRecords(): Promise<void> {
 
 const dialogVisible = ref(false)
 const saving = ref(false)
+const pendingActions = ref(0)
+
+function canClose(): boolean {
+  if (saving.value || pendingActions.value) {
+    ElMessage.warning('基础资料操作进行中，请稍候再关闭。')
+    return false
+  }
+  if (dialogVisible.value) {
+    ElMessage.warning('请先保存或取消当前基础资料编辑。')
+    return false
+  }
+  return true
+}
+
+defineExpose({ canClose })
 const editingId = ref('')
 const currentEtag = ref('')
 const correctionMode = ref(false)
@@ -602,6 +618,7 @@ async function changeStatus(row: MasterDataRecord): Promise<void> {
   if (!canChangeSelected.value || isExchangeRate.value) return
   const target = row.status === 'ACTIVE' ? 'deactivate' : 'activate'
   const actionLabel = target === 'deactivate' ? '停用' : '启用'
+  pendingActions.value++
   try {
     const detail = await fetchMasterDataRecord(selectedCategory.value.resource, row.id)
     const result = await ElMessageBox.prompt(
@@ -630,11 +647,14 @@ async function changeStatus(row: MasterDataRecord): Promise<void> {
     } else {
       ElMessage.error(apiMessage(error, `${actionLabel}失败`))
     }
+  } finally {
+    pendingActions.value--
   }
 }
 
 async function archiveRecord(row: MasterDataRecord): Promise<void> {
   if (!canChangeSelected.value || isExchangeRate.value) return
+  pendingActions.value++
   try {
     const detail = await fetchMasterDataRecord(selectedCategory.value.resource, row.id)
     const result = await ElMessageBox.prompt('归档后默认列表不再显示该资料，请输入归档原因。', '归档资料', {
@@ -655,6 +675,8 @@ async function archiveRecord(row: MasterDataRecord): Promise<void> {
     } else {
       ElMessage.error(apiMessage(error, '归档失败'))
     }
+  } finally {
+    pendingActions.value--
   }
 }
 
@@ -677,7 +699,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
     </div>
 
     <template v-else>
-      <section v-glass-spotlight class="erp-list-filter">
+      <section v-if="!props.embedded" v-glass-spotlight class="erp-list-filter">
       <header class="page-heading erp-list-heading">
         <div>
           <h1>基础资料中心</h1>
@@ -720,9 +742,13 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
           <section class="data-card erp-list-data" v-loading="loading">
             <div class="data-card__header erp-list-toolbar">
         <div class="page-heading__actions">
-          <el-button class="erp-button-motion" :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
+          <el-button v-if="!props.embedded" class="erp-button-motion" :icon="Download" :disabled="!canViewSelected" @click="exportRecords">导出数据</el-button>
           <el-button class="erp-button-motion" v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增资料</el-button>
         </div>
+              <div v-if="props.embedded && selectedCategory.key === 'country'" class="continent-buttons" aria-label="洲别筛选">
+                <el-button :type="continentFilter === '' ? 'primary' : 'default'" :aria-pressed="continentFilter === ''" @click="continentFilter = ''">全部</el-button>
+                <el-button v-for="continent in continentOptions" :key="continent" :type="continentFilter === continent ? 'primary' : 'default'" :aria-pressed="continentFilter === continent" @click="continentFilter = continent">{{ continent }}</el-button>
+              </div>
               <div><h2>{{ selectedCategory.title }}</h2><span>共 {{ visibleRecords.length }} 项</span></div>
             </div>
 
@@ -769,8 +795,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                     <span v-else-if="!(selectedCategory.key === 'country' && ['chinese_name', 'continent'].includes(column.key))">{{ cellValue(row, column.key) }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column v-if="canChangeSelected" label="操作" width="150" fixed="right">
+                <el-table-column v-if="canChangeSelected" label="操作" width="150" fixed="right" align="center" header-align="center">
                   <template #default="{ row }">
+                    <span class="master-row-actions">
                     <el-button link :icon="Edit" @click="openEdit(row)">{{ isExchangeRate ? '更正' : '编辑' }}</el-button>
                     <el-dropdown v-if="!isExchangeRate" trigger="click">
                       <el-button link>更多</el-button>
@@ -781,6 +808,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
                         </el-dropdown-menu>
                       </template>
                     </el-dropdown>
+                    </span>
                   </template>
                 </el-table-column>
               </el-table></div>
@@ -852,6 +880,9 @@ onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
 
 <style scoped lang="scss">
 .page-heading__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.continent-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.continent-buttons .el-button + .el-button { margin-left: 0; }
+.master-row-actions { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .page-grid { display: grid; flex: 1; min-height: 0; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; }
 .category-card { min-height: 0; overflow-y: auto; }
 .category-card h2 { margin: 0 5px 10px; font-size: 14px; font-weight: 600; }

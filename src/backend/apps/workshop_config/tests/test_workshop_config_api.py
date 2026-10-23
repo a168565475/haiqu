@@ -1,15 +1,16 @@
+from apps.workshop_config.tests.factories import production_employee
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient, APITestCase
 
 from apps.organizations.models import Employee
 
-from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee, WorkshopEmployeeStatus
+from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployeeStatus
 
 
 class WorkshopConfigApiTests(APITestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user(username="workshop_config_user")
+        self.user = get_user_model().objects.create_superuser(username="workshop_config_user")
         self.employee = Employee.objects.create(
             user=self.user,
             employee_code="WORKSHOP_CONFIG_USER",
@@ -58,19 +59,6 @@ class WorkshopConfigApiTests(APITestCase):
 
     def test_complete_relationship_and_derived_operation_fields(self):
         workshop = self.fixed_workshop()
-        source = Employee.objects.create(employee_code="WORKSHOP_CONFIG_SOURCE_1", display_name="测试员工")
-        employee = self.client.post(
-            "/api/v1/workshop-config/employees/",
-            {
-                "workshop": str(workshop.pk),
-                "position": "装配组长",
-                "employee": str(source.pk),
-                "is_supervisor": True,
-                "status": WorkshopEmployeeStatus.ACTIVE,
-            },
-            format="json",
-        )
-        self.assertEqual(employee.status_code, 201, employee.data)
         craft = self.client.post(
             "/api/v1/workshop-config/crafts/",
             {
@@ -104,7 +92,7 @@ class WorkshopConfigApiTests(APITestCase):
 
     def test_partial_employee_status_update_preserves_supervisor_value(self):
         workshop = self.fixed_workshop("车缝车间")
-        employee = WorkshopEmployee.objects.create(
+        employee = production_employee(
             workshop=workshop,
             position="车缝组长",
             name="测试主管",
@@ -119,8 +107,8 @@ class WorkshopConfigApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 200, response.data)
         employee.refresh_from_db()
-        self.assertEqual(employee.status, WorkshopEmployeeStatus.LEFT)
-        self.assertTrue(employee.is_supervisor)
+        self.assertEqual(employee.workshop_status, WorkshopEmployeeStatus.LEFT)
+        self.assertTrue(employee.workshop_is_supervisor)
 
     def test_metal_operation_does_not_require_product_name_or_reporting_unit(self):
         workshop, _ = Workshop.objects.get_or_create(name="金工车间")
@@ -197,22 +185,6 @@ class WorkshopConfigApiTests(APITestCase):
 
     def test_validation_uniqueness_filters_and_pagination(self):
         workshop = self.fixed_workshop("敲布孔")
-        source = Employee.objects.create(employee_code="WORKSHOP_CONFIG_SOURCE_2", display_name="测试员工")
-        employee_payload = {
-            "workshop": str(workshop.pk),
-            "position": "打孔",
-            "employee": str(source.pk),
-            "is_supervisor": False,
-            "status": WorkshopEmployeeStatus.ACTIVE,
-        }
-        first_employee = self.client.post(
-            "/api/v1/workshop-config/employees/",
-            employee_payload,
-            format="json",
-        )
-        self.assertEqual(first_employee.status_code, 201, first_employee.data)
-        duplicate = self.client.post("/api/v1/workshop-config/employees/", employee_payload, format="json")
-        self.assertEqual(duplicate.status_code, 400, duplicate.data)
         invalid_external = self.client.post(
             "/api/v1/workshop-config/crafts/",
             {

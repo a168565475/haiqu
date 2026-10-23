@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from apps.organizations.selectors import active_department_employees
 from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
@@ -11,7 +12,7 @@ from ..models import SampleDeliveryBatch, SampleShippingMethod, SampleType
 class SampleApplicationSerializer(serializers.Serializer):
     customer_account_id = serializers.PrimaryKeyRelatedField(source="customer_account", queryset=CustomerAccount.objects.none())
     customer_contact_id = serializers.PrimaryKeyRelatedField(source="customer_contact", queryset=CustomerContact.objects.none(), allow_null=True)
-    owner_employee_id = serializers.PrimaryKeyRelatedField(source="owner_employee", queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True))
+    owner_employee_id = serializers.PrimaryKeyRelatedField(source="owner_employee", queryset=active_department_employees("DEPT_BUSINESS"))
     source_type = serializers.ChoiceField(choices=["inquiry", "quotation"], allow_null=True)
     source_id = serializers.UUIDField(allow_null=True)
     source_product_id = serializers.UUIDField(allow_null=True)

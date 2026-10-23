@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   width?: number | string
   height?: number | string
   fullscreen?: boolean
+  edgeToEdge?: boolean
   withHeader?: boolean
   minWidth?: number
   minHeight?: number
@@ -35,6 +36,7 @@ const props = withDefaults(defineProps<{
   width: 680,
   height: 'auto',
   fullscreen: false,
+  edgeToEdge: false,
   withHeader: true,
   minWidth: 360,
   minHeight: 180,
@@ -195,11 +197,12 @@ const windowStyle = computed(() => {
     }
   }
   if (state.value === 'maximized') {
+    const padding = props.edgeToEdge ? 0 : viewport.padding
     return {
-      left: `${viewport.padding}px`,
-      top: `${viewport.padding}px`,
-      width: `${viewport.width - viewport.padding * 2}px`,
-      height: `${viewport.height - viewport.padding * 2}px`,
+      left: `${padding}px`,
+      top: `${padding}px`,
+      width: `${viewport.width - padding * 2}px`,
+      height: `${viewport.height - padding * 2}px`,
     }
   }
   if (rect.value) {

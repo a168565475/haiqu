@@ -5,6 +5,7 @@ from rest_framework.generics import get_object_or_404
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.organizations.models import Employee
+from apps.organizations.selectors import active_department_employees
 from .models import SalesTeam, SalesTeamMembership
 from .services import audit, require_manager
 
@@ -22,6 +23,8 @@ def snapshot(team):
 def create_team(request, data):
     require_manager(request)
     manager = active_employee(data["manager_id"])
+    if not active_department_employees("DEPT_BUSINESS").filter(pk=manager.pk).exists():
+        raise ValidationError({"manager_id": "请选择业务部的在职员工。"})
     try:
         with transaction.atomic():
             team = SalesTeam.objects.create(code=data["code"], name=data["name"], manager=manager)
@@ -57,6 +60,8 @@ def add_members(request, pk, employee_ids):
     employees = list(Employee.objects.select_for_update(no_key=True).filter(pk__in=employee_ids, status="ACTIVE", archived_at__isnull=True).order_by("id"))
     if len(employees) != len(employee_ids):
         raise ValidationError({"employee_ids": "存在无效员工。"})
+    if active_department_employees("DEPT_BUSINESS").filter(pk__in=employee_ids).count() != len(employee_ids):
+        raise ValidationError({"employee_ids": "只能添加业务部的在职员工。"})
     if SalesTeamMembership.objects.filter(employee_id__in=employee_ids).exists():
         raise Conflict("包含已分组员工；本次不支持成员换团队。")
     before = snapshot(team)

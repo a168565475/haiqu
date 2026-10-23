@@ -398,6 +398,8 @@ def update_inquiry_item(*, item, validated_data, actor_employee, request):
 
 @transaction.atomic
 def set_inquiry_item_product_image(*, item, business_file, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     inquiry = Inquiry.objects.select_for_update().get(pk=item.inquiry_id)
     require_matching_etag(request, inquiry)
     _ensure_draft(inquiry)
@@ -857,6 +859,8 @@ def mark_inquiry_invalid(*, inquiry, reason_code, reason_detail="", actor_employ
 
 @transaction.atomic
 def link_inquiry_file(*, inquiry, business_file, file_role, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     inquiry = Inquiry.objects.select_for_update().get(pk=inquiry.pk)
     require_matching_etag(request, inquiry)
     if inquiry.status in {InquiryStatus.CLOSED, InquiryStatus.CANCELLED}:

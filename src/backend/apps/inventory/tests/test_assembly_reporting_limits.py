@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import copy
 import uuid
 from datetime import timedelta
@@ -7,7 +8,6 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 from apps.production_scheduling.api.serializers import ScheduleItemReadSerializer
 from apps.workshop_reporting.models import WorkReport, WorkReportLine, WorkshopPlanExecution, WorkReportHistory
-from apps.workshop_config.models import WorkshopEmployee
 from apps.inventory.models import FinishedGoodsReceipt
 from apps.inventory.assembly_reporting_limits import assembly_reporting_limit, assembly_reporting_limits
 from .test_assembly_receipts import AssemblyFixture
@@ -61,7 +61,7 @@ class AssemblyReportingLimitTests(AssemblyFixture, APITestCase):
         new_report.report_number += '-2'; new_report.client_request_id = uuid.uuid4()
         new_report.production_date -= timedelta(days=1)
         new_report.save(force_insert=True)
-        worker = WorkshopEmployee.objects.create(workshop=self.assembly_scheme.workshop, name='第二位装配员', position='装配', is_supervisor=False)
+        worker = production_employee(workshop=self.assembly_scheme.workshop, name='第二位装配员', position='装配', is_supervisor=False)
         row = copy.copy(original); row.pk = uuid.uuid4(); row._state.adding = True
         row.report = new_report; row.quantity = 50; row.workshop_employee = worker; row.production_line = 2
         row.save(force_insert=True)

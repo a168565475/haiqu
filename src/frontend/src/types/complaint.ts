@@ -108,6 +108,7 @@ export interface ComplaintOptions {
   complaint_types: ComplaintDictionaryItem[]
   severities: ComplaintDictionaryItem[]
   statuses: Array<{ value: ComplaintStatus; label: string }>
+  employee_filters?: ComplaintEmployee[]
   employees: ComplaintEmployee[]
 }
 

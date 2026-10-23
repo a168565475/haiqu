@@ -10,7 +10,7 @@ from apps.core.models import uppercase_code_validator
 from apps.organizations.models import Employee, OrganizationUnit
 from .. import organization_services as services
 from ..permissions import CanManageOrganization, CanReadAccessDirectory
-from .serializers import RoleSerializer, StrictSerializer
+from .serializers import AccessEmployeeSerializer, RoleSerializer, StrictSerializer
 from .base import AccessViewSet, IF_MATCH
 from .deletion_views import DeletionActions
 
@@ -52,6 +52,10 @@ class EmployeeDepartmentRowSerializer(StrictSerializer):
 
 class EmployeeDepartmentsSerializer(StrictSerializer):
     departments = EmployeeDepartmentRowSerializer(many=True, max_length=100)
+
+
+class EmployeeNameSerializer(StrictSerializer):
+    display_name = serializers.CharField(max_length=150)
 
 
 class EmployeeDepartmentHistorySerializer(serializers.Serializer):
@@ -116,6 +120,15 @@ class RoleDepartmentActions:
 
 
 class EmployeeDepartmentActions:
+    @extend_schema(request=EmployeeNameSerializer, responses=AccessEmployeeSerializer, parameters=[IF_MATCH])
+    @action(detail=True, methods=["patch"], url_path="name", permission_classes=ORGANIZATION_PERMISSIONS)
+    def rename(self, request, pk=None):
+        pk = serializers.UUIDField().run_validation(pk)
+        serializer = EmployeeNameSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        employee = services.rename_employee(request, pk, serializer.validated_data["display_name"])
+        return self.respond(employee)
+
     @extend_schema(responses=EmployeeDepartmentsResponseSerializer)
     @action(detail=True, methods=["get"], permission_classes=ORGANIZATION_PERMISSIONS)
     def departments(self, request, pk=None):

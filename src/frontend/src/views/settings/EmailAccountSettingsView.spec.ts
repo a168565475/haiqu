@@ -93,4 +93,19 @@ describe('EmailAccountSettingsView', () => {
     const saveButton = wrapper.findAll('button').find((button) => button.text() === '保存')
     expect(saveButton?.attributes('disabled')).toBeDefined()
   })
+
+  it('嵌入配置窗口时保留未处理的邮件账户编辑，显式取消后允许关闭', async () => {
+    api.fetchEmailAccounts.mockResolvedValueOnce([])
+    const wrapper = mount(EmailAccountSettingsView, {
+      global: { plugins: [ElementPlus], stubs: { teleport: true, ElSelect: true, ElOption: true } },
+    })
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(true)
+    await wrapper.get('[data-testid="create-email-account"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(false)
+    await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click')
+    expect(wrapper.vm.canClose()).toBe(true)
+    wrapper.unmount()
+  })
 })

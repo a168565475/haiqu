@@ -1,5 +1,6 @@
 from apps.access_control import resource_scopes
 from .p4_access import require_record, scoped_records, require_external_destination, can_record
+from apps.organizations.selectors import active_department_employees
 from apps.inventory.public_stock_cutover import stock_write_transaction
 """P4 管材退回、重新加工、新外发和合格回货服务。
 
@@ -110,7 +111,7 @@ def _source_for_request(request, line_id, *, lock=True):
 
 
 def _active_employee(employee_id, field="received_by_employee_id"):
-    employee = Employee.objects.filter(
+    employee = active_department_employees("DEPT_WAREHOUSE").filter(
         pk=employee_id, status=EmployeeStatus.ACTIVE, archived_at__isnull=True,
     ).first()
     if employee is None:

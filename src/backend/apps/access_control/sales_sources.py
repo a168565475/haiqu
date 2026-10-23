@@ -2,6 +2,7 @@
 from django.apps import apps
 from django.db.models import Q
 from rest_framework.exceptions import PermissionDenied
+from apps.files.reference_guards import FINANCE_RECEIPT_FOLDER, require_non_finance_receipt_file
 
 from . import sales_policy as policy
 
@@ -10,7 +11,7 @@ def readable_files(request):
     from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
     from apps.customers.selectors import accessible_customers
     from apps.sales_orders.selectors import accessible_sales_orders
-    files = BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES)
+    files = BusinessFile.objects.filter(archived_at__isnull=True, scan_status__in=USABLE_FILE_SCAN_STATUSES).exclude(storage_key__startswith=FINANCE_RECEIPT_FOLDER)
     if not policy.enabled():
         return files
     if not policy.access_for(request)["active"]:
@@ -41,6 +42,7 @@ def readable_files(request):
 
 
 def require_file(request, business_file):
+    require_non_finance_receipt_file(business_file)
     from apps.files.models import USABLE_FILE_SCAN_STATUSES
     if business_file and business_file.scan_status not in USABLE_FILE_SCAN_STATUSES:
         raise PermissionDenied("文件尚未通过安全扫描，不能复用该文件。")

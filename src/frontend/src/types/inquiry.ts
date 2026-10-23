@@ -53,6 +53,7 @@ export interface InquiryOptions {
   priorities?: Array<{ code: 'HIGH' | 'MEDIUM' | 'LOW'; display_name: string }>
   statuses: Array<{ code: string; display_name: string }>
   sources: Array<{ item_code: string; display_name: string; sort_order: number; disabled?: boolean }>
+  owner_filters?: InquiryEmployee[]
   owners: InquiryEmployee[]; countries: string[]; invalid_reason_codes: string[]
 }
 

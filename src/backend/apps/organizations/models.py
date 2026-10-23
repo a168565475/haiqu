@@ -85,6 +85,15 @@ class Employee(ArchivableModel):
         choices=EmployeeStatus.choices,
         default=EmployeeStatus.ACTIVE,
     )
+    workshop = models.ForeignKey(
+        "workshop_config.Workshop", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="production_employees",
+    )
+    workshop_position = models.CharField(max_length=100, blank=True)
+    workshop_is_supervisor = models.BooleanField(default=False)
+    workshop_status = models.CharField(
+        max_length=20, choices=[("ACTIVE", "任职中"), ("LEFT", "已离岗")], default="ACTIVE",
+    )
     hired_at = models.DateField(null=True, blank=True)
     left_at = models.DateField(null=True, blank=True)
 

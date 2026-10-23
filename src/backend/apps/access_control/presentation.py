@@ -1,5 +1,9 @@
 """Human labels and matrix grouping, independent of persisted permission identities."""
 RESOURCE_NAMES = dict(item.split(":", 1) for item in (
+    "financeaccount:公司账户",
+    "accountingsubject:会计科目",
+    "receivablestatement:应收对账单",
+    "receipt:收款确认单",
     "workshop:车间",
     "productcatalog:产品管理",
     "materialcatalog:原料管理",
@@ -52,6 +56,13 @@ def presentation(code, permission, module):
                 "action": action, "action_name": name, "label": f"企业微信考勤 · {name}"}
     codename = code.split(".", 1)[1]
     model = permission.content_type.model if permission else ""
+    # 新模块代码先部署、迁移尚未执行时，目录仍可显示为不可用。
+    if code in {f"finance.{action}_financeaccount" for action in ("view", "add", "change", "delete")}:
+        model = "financeaccount"
+    if code in {f"finance.{action}_accountingsubject" for action in ("view", "add", "change", "delete")}:
+        model = "accountingsubject"
+    if code in {f"finance.{action}_receivablestatement" for action in ("view", "add", "change", "void", "delete")}:
+        model = "receivablestatement"
     if code.startswith("access_control."):
         model = codename.split("_reference_", 1)[-1] if "_reference_" in codename else codename.split("_", 1)[1]
     model = {'samplefee': 'samplefeerecord', 'sample': 'samplerequest', 'purchasesheets': 'supplierpurchasesheet', 'bomquantity': 'bom'}.get(model, model)

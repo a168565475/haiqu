@@ -8,6 +8,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
 from apps.organizations.models import Employee, EmployeeRoleAssignment, EmployeeStatus, RoleProfile
+from apps.audit.models import AuditLog
+from apps.core.login_records import login_account_id
 
 
 class AuthenticationApiTests(APITestCase):
@@ -113,6 +115,11 @@ class AuthenticationApiTests(APITestCase):
         self.assertEqual(login_response.data["user"]["display_name"], "测试 管理员")
         self.assertFalse(login_response.data["user"]["is_superuser"])
         self.assertEqual(login_response.data["user"]["employee"]["status"], EmployeeStatus.ACTIVE)
+        log = AuditLog.objects.get(object_type="AUTH_ACCOUNT", object_id=login_account_id(self.user.pk))
+        self.assertEqual(log.action, "LOGIN_SUCCESS")
+        self.assertEqual(log.after_data, {"user_id": self.user.pk, "username": self.user.username, "method": "PASSWORD"})
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.last_login)
 
         me_response = self.client.get("/api/auth/me/")
         self.assertEqual(me_response.status_code, 200)
@@ -128,6 +135,26 @@ class AuthenticationApiTests(APITestCase):
 
         anonymous_response = self.client.get("/api/auth/me/")
         self.assertEqual(anonymous_response.data, {"authenticated": False, "user": None})
+        self.assertEqual(AuditLog.objects.filter(object_type="AUTH_ACCOUNT").count(), 1)
+
+    def test_each_explicit_successful_login_is_counted_once(self):
+        for expected in (1, 2):
+            response = self.client.post("/api/auth/login/", {"username": self.user.username, "password": "StrongTestPassword123!"},
+                format="json", HTTP_X_CSRFTOKEN=self.csrf_token())
+            self.assertEqual(response.status_code, 200)
+            self.client.get("/api/auth/me/")
+            self.assertEqual(AuditLog.objects.filter(object_type="AUTH_ACCOUNT", object_id=login_account_id(self.user.pk)).count(), expected)
+
+    def test_login_record_failure_rolls_back_last_login_and_session(self):
+        from unittest.mock import patch
+        with patch("apps.core.views.record_successful_login", side_effect=RuntimeError("audit unavailable")):
+            with self.assertRaisesMessage(RuntimeError, "audit unavailable"):
+                self.client.post("/api/auth/login/", {"username": self.user.username, "password": "StrongTestPassword123!"},
+                    format="json", HTTP_X_CSRFTOKEN=self.csrf_token())
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.last_login)
+        self.assertFalse(AuditLog.objects.filter(object_type="AUTH_ACCOUNT").exists())
+        self.assertFalse(Session.objects.exists())
 
     def test_login_rejects_wrong_password_and_inactive_user(self):
         token = self.csrf_token()
@@ -146,6 +173,7 @@ class AuthenticationApiTests(APITestCase):
                 )
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(response.data, {"detail": "用户名或密码错误"})
+        self.assertFalse(AuditLog.objects.filter(object_type="AUTH_ACCOUNT").exists())
 
     def test_login_rejects_user_without_active_employee(self):
         user_model = get_user_model()
@@ -208,6 +236,7 @@ class AuthenticationApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["authenticated"])
         self.assertIsNone(response.data["user"]["employee"])
+        self.assertIsNone(AuditLog.objects.get(object_type="AUTH_ACCOUNT", object_id=login_account_id(superuser.pk)).actor_employee_id)
 
     def test_existing_session_is_revoked_when_employee_becomes_inactive(self):
         token = self.csrf_token()

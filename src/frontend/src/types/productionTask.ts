@@ -48,6 +48,7 @@ export interface ProductionTaskOptions {
   boolean_options: ValueOption<boolean>[]
   customers: CustomerOption[]
   employees: EmployeeOption[]
+  salespeople: EmployeeOption[]
   products: ProductOption[]
   currencies: CurrencyOption[]
   units: UnitOption[]
@@ -56,7 +57,7 @@ export interface ProductionTaskOptions {
 }
 
 export type ProductionTaskFilterOptions = Pick<ProductionTaskOptions,
-  'order_sources' | 'delivery_methods' | 'statuses' | 'customers' | 'employees' | 'products'>
+  'order_sources' | 'delivery_methods' | 'statuses' | 'customers' | 'employees' | 'salespeople' | 'products'>
 
 export interface ProductionTaskDetailInput {
   client_key: string

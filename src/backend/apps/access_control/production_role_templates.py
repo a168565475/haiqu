@@ -2,8 +2,6 @@
 from .catalog import PERMISSION_CODES, scopes_for
 
 PENDING = {
-    'FINANCE': '职责待确认：建议先明确需读取的采购/库存报表，不推定记账或付款权限。',
-    'CASHIER': '职责待确认：项目无已确认出纳收付款流程，暂不授业务权限。',
     'MERCHANDISER': '职责待确认：建议确认仅生产进度读取还是参与计划，不推定销售职责。',
     'PMC': '职责待确认：建议确认计划只读/调整；生产确认已明确由行政办理。',
     'OUTSOURCING': '职责待确认：建议明确制单、对账、完结及工艺范围，发料按来源分工。',
@@ -26,6 +24,11 @@ def full_permissions():
 
 def templates(workshops):
     result = {code: [] for code in PENDING}
+    result.update({code: module_rows(*(f'finance.{action}_{resource}' for resource in ('financeaccount', 'accountingsubject') for action in ('view', 'add', 'change', 'delete')))
+                   for code in ('FINANCE', 'CASHIER')})
+    for code in ('FINANCE', 'CASHIER'):
+        result[code].extend(module_rows(*(f'finance.{action}_receivablestatement' for action in ('view', 'add', 'change', 'void', 'delete'))))
+        result[code].extend(module_rows(*(f'finance.{action}_receipt' for action in ('view', 'add', 'void', 'delete'))))
     result.update({code: full_permissions() for code in ('FACTORY_MANAGER', 'GENERAL_MANAGER')})
     result['ADMINISTRATION'] = module_rows(
         'production_tasks.view_productiontask', 'production_tasks.add_productiontask',

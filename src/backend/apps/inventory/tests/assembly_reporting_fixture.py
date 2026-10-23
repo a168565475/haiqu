@@ -1,9 +1,10 @@
+from apps.workshop_config.tests.factories import production_employee
 """测试专用：已批准装配工价和历史报工，支持库存原有回归场景。"""
 import uuid
 from decimal import Decimal, ROUND_FLOOR
 from django.utils import timezone
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft
-from apps.workshop_config.models import Workshop, Craft, Operation, WorkshopEmployee
+from apps.workshop_config.models import Workshop, Craft, Operation
 from apps.workshop_reporting.models import WageScheme, WageSchemeCraft, WageSchemeLine, WorkItem, WorkReport, WorkReportLine
 
 
@@ -46,7 +47,7 @@ def seed_reported_assembly(product, actor, plan=None, quantity=None, operations=
         operation_product_name_snapshot=product.product_name_snapshot, created_by_employee=actor,
         updated_by_employee=actor, approved_by_employee=actor, approved_at=timezone.now())
     WageSchemeCraft.objects.create(scheme=scheme, craft=craft)
-    worker = WorkshopEmployee.objects.create(workshop=workshop, position='装配', name='测试装配员'+token, is_supervisor=False)
+    worker = production_employee(workshop=workshop, position='装配', name='测试装配员'+token, is_supervisor=False)
     maximum = int((Decimal(product.quantity)*(1+Decimal(product.production_task.order_tolerance_percent)/100)).to_integral_value(rounding=ROUND_FLOOR))
     quantity = maximum if quantity is None else quantity
     report = WorkReport.objects.create(report_number='QA-BG-'+token, production_date=today, product_line=product,
@@ -68,5 +69,5 @@ def seed_reported_assembly(product, actor, plan=None, quantity=None, operations=
                 workshop_employee=worker, production_line=1, quantity=quantity, order_quantity_snapshot=product.quantity,
                 required_quantity_snapshot=line.required_quantity_snapshot, unit_price_snapshot=1, amount=quantity,
                 display_name_snapshot=item.display_name, craft_name_snapshot=craft.name, operation_name_snapshot=op.name,
-                unit_name_snapshot=product.unit.unit_name, employee_name_snapshot=worker.name)
+                unit_name_snapshot=product.unit.unit_name, employee_name_snapshot=worker.display_name)
     return scheme

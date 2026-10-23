@@ -13,9 +13,10 @@ from ..catalog import catalog
 from .base import AccessViewSet, IF_MATCH
 from .organization_views import RoleDepartmentActions, EmployeeDepartmentActions
 from .deletion_views import DeletionActions
+from .employee_batch_views import EmployeeBatchActions
 from ..deletion_services import DELETED_REASON
 from ..selectors import business_scope_enforcement, effective_access
-from ..permissions import CanManageAccounts, CanReadAccessDirectory
+from ..permissions import CanManageAccounts, CanReadAccessDirectory, SuperadministratorOnly
 from apps.core.api.permissions import HasActiveEmployee
 from rest_framework.permissions import IsAuthenticated
 from .serializers import (
@@ -91,9 +92,11 @@ class RoleViewSet(DeletionActions, RoleDepartmentActions, mixins.ListModelMixin,
         return self.respond(services.copy_role(request, pk, serializer.validated_data), status=201)
 
 
-class AccessEmployeeViewSet(DeletionActions, EmployeeDepartmentActions, mixins.ListModelMixin, AccessViewSet):
+class AccessEmployeeViewSet(DeletionActions, EmployeeDepartmentActions, EmployeeBatchActions, mixins.ListModelMixin, AccessViewSet):
     deletion_kind = "employees"
     def get_permissions(self):
+        if self.action == 'account':
+            return [IsAuthenticated(), HasActiveEmployee(), CanManageAccounts(), SuperadministratorOnly()]
         if self.action in {'list', 'roles', 'effective'}:
             return [IsAuthenticated(), HasActiveEmployee(), CanReadAccessDirectory()]
         if self.action in {'account', 'account_status', 'reset_password', 'delete_preview', 'delete_selected'}:

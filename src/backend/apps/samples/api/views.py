@@ -19,6 +19,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
+from apps.organizations.selectors import active_department_employees, active_role_employees, employee_filter_choices
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.customers.hard_delete import permanently_delete_sample
 from apps.customers.api.views import CustomerApiViewSetBase
@@ -567,9 +568,10 @@ class SampleRequestViewSet(
                         {"id": str(customer.pk), "account_code": customer.account_code, "account_name": customer.account_name}
                         for customer in customers.order_by("account_name", "account_code")[:100]
                     ],
+                    "owner_filters": [{"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name} for employee in employee_filter_choices(active_department_employees("DEPT_BUSINESS"), self.get_queryset().values("owner_employee_id"))],
                     "owners": [
                         {"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name}
-                        for employee in Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+                        for employee in active_department_employees("DEPT_BUSINESS")
                         .order_by("employee_code")[:100]
                     ],
                     "fee_decisions": [
@@ -590,7 +592,7 @@ class SampleRequestViewSet(
                     ],
                     "fee_approvers": [
                         {"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name}
-                        for employee in Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+                        for employee in active_role_employees("FACTORY_MANAGER")
                         .order_by("employee_code")[:100]
                     ],
                 }
@@ -653,7 +655,7 @@ class SampleRequestViewSet(
                             "employee_code": employee.employee_code,
                             "display_name": employee.display_name,
                         }
-                        for employee in Employee.objects.filter(status="ACTIVE", archived_at__isnull=True).order_by(
+                        for employee in active_department_employees("DEPT_BUSINESS").order_by(
                             "employee_code"
                         )[:500]
                     ],

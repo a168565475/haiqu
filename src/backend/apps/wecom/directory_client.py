@@ -2,6 +2,7 @@
 from django.views.decorators.debug import sensitive_variables
 
 from .client import WeComClient, WeComError, _check_result, _error, _valid_text
+from . import directory_progress
 
 
 MEMBER_STATUS_LABELS = {1: "已激活", 2: "已禁用", 4: "未激活", 5: "退出企业"}
@@ -95,6 +96,9 @@ class WeComDirectoryClient(WeComClient):
                     raise _scope_error()
                 seen.add(current)
                 current = departments[current]["parentid"]
+        # 已取得完整部门数，才确定总工作量；随后按真实上游响应推进。
+        directory_progress.add_work(len(departments) * 2 + 2)
+        directory_progress.advance("读取部门详情", 2)
         for department_id, department in departments.items():
             result = self._authenticated_get("department/get", {"id": department_id})
             _check_result(result)
@@ -106,6 +110,7 @@ class WeComDirectoryClient(WeComClient):
             ):
                 raise _source_error()
             department["name"] = detail["name"].strip()
+            directory_progress.advance("读取部门详情")
         return sorted(departments.values(), key=lambda department: department["id"])
 
     @sensitive_variables()
@@ -148,6 +153,7 @@ class WeComDirectoryClient(WeComClient):
                     members[key] = member
                     observed_departments[key] = set()
                 observed_departments[key].add(department["id"])
+            directory_progress.advance("读取部门员工")
         if not members:
             raise WeComError("EMPTY_DIRECTORY", "企业微信未返回成员，本次读取未完成，不能据此停用或删除员工。")
         for key, member in members.items():

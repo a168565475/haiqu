@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import copy
 import uuid
 from decimal import Decimal
@@ -11,7 +12,7 @@ from apps.outsourcing.tests.test_material_flow import MaterialFlowFixture
 from apps.products.models import RawMaterialInformation
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.reference_data.models import ProductCategory, ProductionUnit
-from apps.workshop_config.models import Workshop, WorkshopEmployee, Craft
+from apps.workshop_config.models import Workshop, Craft
 from ..models import MaterialIssue, OrderMaterialRequirement
 from ..scopes import material_section_codes_for_workshop
 
@@ -22,7 +23,7 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         f = self.f
         f.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="material_issues"))
         self.workshop, _ = Workshop.objects.get_or_create(name="金工车间", defaults={"status": "ACTIVE"})
-        self.recipient = WorkshopEmployee.objects.create(workshop=self.workshop, name="S7 领料员", position="领料员", is_supervisor=False, status="ACTIVE")
+        self.recipient = production_employee(workshop=self.workshop, name="S7 领料员", position="领料员", is_supervisor=False, status="ACTIVE")
         craft = Craft.objects.create(craft_type="INTERNAL", name="S7 金工", workshop=self.workshop, plan_category="METAL",
             status="ACTIVE", created_by_employee=f.employee, updated_by_employee=f.employee)
         self.plan = ProductionScheduleProductCraft.objects.create(schedule_product=f.schedule_product, craft=craft,
@@ -241,7 +242,7 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         balance = SemiFinishedStockBalance.objects.get(quality='AVAILABLE')
         # 半成品在装配计划领用；金工计划只允许管材和五金原料。
         assembly, _ = Workshop.objects.get_or_create(name='装配车间', defaults={'status': 'ACTIVE'})
-        recipient = WorkshopEmployee.objects.create(workshop=assembly, name='S7 装配领料员',
+        recipient = production_employee(workshop=assembly, name='S7 装配领料员',
             position='领料员', is_supervisor=False, status='ACTIVE')
         craft = Craft.objects.create(craft_type='INTERNAL', name='S7 装配', workshop=assembly,
             plan_category='ASSEMBLY', status='ACTIVE', created_by_employee=self.f.employee,

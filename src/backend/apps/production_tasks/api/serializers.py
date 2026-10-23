@@ -4,6 +4,7 @@ from decimal import Decimal
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.customers.models import CustomerAccount
 from apps.audit.models import AuditLog
 from apps.inquiries.rich_text import sanitize_rich_text
@@ -154,11 +155,11 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
     delivery_date = serializers.DateField()
     salesperson_id = serializers.PrimaryKeyRelatedField(
         source="salesperson",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     follower_ids = serializers.PrimaryKeyRelatedField(
         source="followers",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_PRODUCTION"),
         many=True,
         allow_empty=False,
     )
@@ -192,7 +193,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
     production_priority = serializers.ChoiceField(choices=ProductionPriority.choices, default=ProductionPriority.NORMAL)
     production_batch_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
     planner_id = serializers.PrimaryKeyRelatedField(
-        source="planner", queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        source="planner", queryset=active_department_employees("DEPT_PRODUCTION"),
         required=False, allow_null=True,
     )
     products = ProductionTaskProductInputSerializer(many=True, allow_empty=False)
@@ -991,7 +992,7 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
         error_messages={"invalid": "生产任务单号必须为 HT 加数字，可用连字符连接数字。"},
     )
     follower_ids = serializers.PrimaryKeyRelatedField(
-        source="followers", queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        source="followers", queryset=active_department_employees("DEPT_PRODUCTION"),
         many=True, allow_empty=False,
     )
     delivery_date = serializers.DateField()
@@ -1031,7 +1032,7 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
     production_batch_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
     planner_id = serializers.PrimaryKeyRelatedField(
         source="planner",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_PRODUCTION"),
         required=False,
         allow_null=True,
     )
@@ -1106,7 +1107,7 @@ class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["CONFIRM", "RETURN"])
     follower_ids = serializers.PrimaryKeyRelatedField(
         source="followers",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_PRODUCTION"),
         many=True,
         allow_empty=False,
         required=False,
@@ -1125,7 +1126,7 @@ class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
     production_batch_number = serializers.CharField(max_length=100, required=False, allow_blank=True)
     planner_id = serializers.PrimaryKeyRelatedField(
         source="planner",
-        queryset=Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_PRODUCTION"),
         required=False,
         allow_null=True,
     )

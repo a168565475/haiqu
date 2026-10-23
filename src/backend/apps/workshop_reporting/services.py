@@ -1,3 +1,4 @@
+from apps.organizations.models import Employee
 from apps.access_control.resource_scopes import require_workshop
 import hashlib
 import json
@@ -21,7 +22,7 @@ from apps.production_scheduling.models import (
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.workshop_config.constants import METAL_WORKSHOP_NAME
 from apps.workshop_config.models import (
-    Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop, WorkshopEmployee,
+    Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop,
 )
 
 from apps.workshop_config.selectors import locked_active_employees
@@ -758,7 +759,7 @@ def _validated_work_report_lines(*, schedule_product, requested_scheme, data, ex
         item.pk: item for item in scheme.lines.select_for_update().select_related("work_item")
         .filter(status=WageSchemeLineStatus.ACTIVE)
     }
-    employees = {item.pk: item for item in locked_active_employees(WorkshopEmployee.objects.filter(
+    employees = {item.pk: item for item in locked_active_employees(Employee.objects.filter(
         pk__in=[row["workshop_employee_id"] for row in data["lines"]], workshop=scheme.workshop,
     ))}
     if len(employees) != len(set(row["workshop_employee_id"] for row in data["lines"])):
@@ -843,7 +844,7 @@ def _work_report_line_instances(*, report, schedule_product, built):
             display_name_snapshot=scheme_line.display_name_snapshot,
             craft_name_snapshot=scheme_line.craft_name_snapshot,
             operation_name_snapshot=scheme_line.operation_name_snapshot,
-            unit_name_snapshot=scheme_line.unit_name_snapshot, employee_name_snapshot=employee.name,
+            unit_name_snapshot=scheme_line.unit_name_snapshot, employee_name_snapshot=employee.display_name,
         )
 
     return [

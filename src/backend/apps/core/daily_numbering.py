@@ -9,6 +9,9 @@ from .models import DailyBusinessNumberCounter
 
 
 DAILY_NUMBER_RULES = {
+    "FINANCE_ACCOUNT": "ZH",
+    "RECEIVABLE_STATEMENT": "YSDZD",
+    "FINANCE_RECEIPT": "SKQRD",
     "BOM": "BOM",
     "PURCHASE_ORDER": "CGDD",
     "PURCHASE_REQUEST": "PR",

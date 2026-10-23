@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElInputNumber, ElMessage } from 'element-plus'
+import ElementPlus, { ElInputNumber, ElMessage, ElMessageBox } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import InquiryHandlingSettingsView from './InquiryHandlingSettingsView.vue'
@@ -27,6 +27,32 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('询盘时限规则设置', () => {
+  it('嵌入配置窗口时未修改直接关闭，修改后支持继续编辑与明确放弃', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel').mockResolvedValueOnce('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+    const wrapper = await render()
+    expect(await wrapper.vm.canClose()).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    await wrapper.find('input[aria-label="下午开始"]').setValue('14:00')
+    expect(await wrapper.vm.canClose()).toBe(false)
+    expect((wrapper.find('input[aria-label="下午开始"]').element as HTMLInputElement).value).toBe('14:00')
+    expect(await wrapper.vm.canClose()).toBe(true)
+    expect(api.save).not.toHaveBeenCalled()
+  })
+
+  it('保存进行中阻止父窗口关闭，保存成功后不再提示未保存', async () => {
+    let finish!: (value: unknown) => void
+    api.save.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const confirm = vi.spyOn(ElMessageBox, 'confirm')
+    const wrapper = await render()
+    await wrapper.find('input[aria-label="下午开始"]').setValue('14:00')
+    await saveButton(wrapper).trigger('click')
+    expect(await wrapper.vm.canClose()).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
+    finish({ data: api.save.mock.calls[0]![0], etag: 'v2' }); await flushPromises()
+    expect(await wrapper.vm.canClose()).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
   it('展示八个环节和已确认日历，保存改动时携带版本', async () => {
     const wrapper = await render()
     expect(wrapper.findAllComponents(ElInputNumber)).toHaveLength(8)

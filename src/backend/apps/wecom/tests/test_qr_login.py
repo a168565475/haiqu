@@ -11,6 +11,8 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.test import APIClient
 
 from apps.access_control.models import RoleActionGrant
+from apps.audit.models import AuditLog
+from apps.core.login_records import login_account_id
 from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.models import OAuthState, WeComBinding, WeComConfig
@@ -145,6 +147,8 @@ class WeComQRLoginTests(TestCase):
         self.assertFalse(employee.user.is_superuser)
         self.assertTrue(self.client.get("/api/auth/me/").data["user"]["waiting_for_role"])
         self.assertEqual(self.client.get("/api/v1/").status_code, 403)
+        record = AuditLog.objects.get(object_type="AUTH_ACCOUNT", object_id=login_account_id(employee.user_id))
+        self.assertEqual(record.after_data["method"], "WECOM")
 
     @patch("apps.wecom.services.WeComClient")
     def test_existing_member_reuses_account_and_returns_to_validated_business_path(self, client_class):
@@ -162,6 +166,7 @@ class WeComQRLoginTests(TestCase):
         self.assertEqual(int(self.client.session["_auth_user_id"]), employee.user_id)
         self.assertTrue(employee.user.check_password("original-password"))
         self.assertIn("reason=STATE_INVALID", self.callback(state).url)
+        self.assertEqual(AuditLog.objects.filter(object_type="AUTH_ACCOUNT", object_id=login_account_id(employee.user_id)).count(), 1)
 
     @patch("apps.wecom.services.WeComClient")
     def test_expired_or_reconfigured_challenge_does_not_contact_upstream(self, client_class):

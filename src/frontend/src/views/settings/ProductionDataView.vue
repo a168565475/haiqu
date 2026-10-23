@@ -31,6 +31,8 @@ import type {
   ProductionDataSummary,
 } from '@/types/productionData'
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 interface CategoryDefinition {
   key:
     | 'category' | 'unit' | 'color' | 'item'
@@ -152,6 +154,7 @@ let inventoryRawMaterialsLoaded = false
 let inventoryRawMaterialsRequest: Promise<void> | null = null
 const dialogVisible = ref(false)
 const saving = ref(false)
+const pendingActions = ref(0)
 const editingId = ref('')
 const currentEtag = ref('')
 const fileInputKey = ref(0)
@@ -184,6 +187,20 @@ const form = reactive({
 })
 
 const dialogTitle = computed(() => `${editingId.value ? '编辑' : '新增'}${selectedCategory.value.title}`)
+
+function canClose(): boolean {
+  if (saving.value || pendingActions.value) {
+    ElMessage.warning('生产资料操作进行中，请稍候再关闭。')
+    return false
+  }
+  if (dialogVisible.value) {
+    ElMessage.warning('请先保存或取消当前生产资料编辑。')
+    return false
+  }
+  return true
+}
+
+defineExpose({ canClose })
 
 function errorMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response
@@ -518,6 +535,7 @@ function markImageForClear(): void {
 async function changeStatus(row: ProductionDataRecord): Promise<void> {
   const targetAction = row.status === 'ACTIVE' ? 'deactivate' : 'activate'
   const label = targetAction === 'deactivate' ? '停用' : '启用'
+  pendingActions.value++
   try {
     const detail = await fetchProductionDataRecord(selectedCategory.value.resource, row.id)
     const result = await ElMessageBox.prompt(`请输入${label}原因`, `${label}${selectedCategory.value.title}`, {
@@ -530,6 +548,8 @@ async function changeStatus(row: ProductionDataRecord): Promise<void> {
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     ElMessage.error(errorMessage(error, `${label}失败。`))
+  } finally {
+    pendingActions.value--
   }
 }
 
@@ -567,8 +587,8 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <section v-glass-spotlight class="erp-list-filter">
-      <header class="page-heading erp-list-heading">
-        <div>
+      <header v-if="!props.embedded || !hasSelectedCategory" class="page-heading erp-list-heading">
+        <div v-if="!props.embedded">
           <h1>生产维护</h1>
         </div>
         <div v-if="!hasSelectedCategory" class="page-heading__actions">

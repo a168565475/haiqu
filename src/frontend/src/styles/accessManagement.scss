@@ -7,10 +7,10 @@
   p { margin: 4px 0; }
 }
 .access-page, .access-dialog, .access-dialog-footer {
-  button, input:not([type='checkbox']), select { height: 32px; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; color: t.$crm-text-primary; padding: 0 12px; font: 13px t.$crm-font-body; }
-  button { cursor: pointer; white-space: nowrap; &:hover {background: t.$crm-color-selected;} }
-  button:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
-  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {outline: 2px solid t.$crm-focus; outline-offset: 2px;}
+  button:not(:where(.el-tag__close)), input:not([type='checkbox']):not(.el-select__input), select { height: 32px; border: 1px solid t.$crm-border-default; border-radius: 5px; background: t.$crm-color-surface; color: t.$crm-text-primary; padding: 0 12px; font: 13px t.$crm-font-body; }
+  button:not(:where(.el-tag__close)) { cursor: pointer; white-space: nowrap; &:hover {background: t.$crm-color-selected;} }
+  button:not(:where(.el-tag__close)):disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  button:not(:where(.el-tag__close)):focus-visible, input:not(.el-select__input):focus-visible, select:focus-visible, textarea:focus-visible {outline: 2px solid t.$crm-focus; outline-offset: 2px;}
   .primary { background: t.$crm-primary; border-color: t.$crm-primary; color: var(--erp-button-primary-text); &:hover {background: t.$crm-primary-hover;} }
   input[type='checkbox'] {width:14px;height:14px;padding:0;margin:0;vertical-align:middle;accent-color:t.$crm-primary;flex:none;}
   input::placeholder {color:t.$crm-text-muted;}
@@ -63,7 +63,7 @@
 .access-audit-value {white-space:pre-line;overflow-wrap:anywhere;border-bottom:1px solid t.$crm-border-default;padding:8px 0;color:t.$crm-text-regular;}
 
 .access-page {
-  input:not([type='checkbox']), select {
+  input:not([type='checkbox']):not(.el-select__input), select {
     border-color: var(--erp-input-border);
     border-radius: var(--erp-radius-control);
     background: var(--erp-input-surface);
@@ -71,7 +71,7 @@
     &:hover { border-color: var(--erp-input-hover-border); }
     &:disabled { background: var(--erp-input-disabled-background); box-shadow: none; }
   }
-  button:not(.access-role, .text-button):not(:where(.access-tabs *)) {
+  button:not(.access-role, .text-button, .el-tag__close):not(:where(.access-tabs *)) {
     @include workbench.secondary-button;
     &.primary {
       color: var(--erp-button-primary-text);

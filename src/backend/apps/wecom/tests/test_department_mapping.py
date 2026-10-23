@@ -35,6 +35,21 @@ TEST_KEY = Fernet.generate_key().decode()
     PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"],
 )
 class WeComDepartmentMappingTests(TestCase):
+    def test_expired_configured_source_allows_only_saved_mapping_maintenance(self):
+        from apps.wecom.models import WeComDirectorySnapshot
+        self.assertEqual(self.update(self.preview()).status_code, 200)
+        WeComDirectorySnapshot.objects.update(fetched_at=timezone.now() - timedelta(days=2),
+                                              expires_at=timezone.now() - timedelta(days=1))
+        preview = self.client.get(ROOT)
+        self.assertTrue(preview.data["data"]["can_edit_saved_mappings"])
+        self.assertFalse(preview.data["data"]["can_save_mapping"])
+        self.assertEqual(self.update(preview, department_id=1).status_code, 412)
+        self.upstream.reset_mock()
+        response = self.update(preview, organization_unit_id=None, organization_etag=None)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.upstream.assert_not_called()
+        self.assertIsNone(WeComDepartmentMapping.objects.get().organization_unit_id)
+
     def setUp(self):
         self.admin = get_user_model().objects.create_superuser("admin", "", "test-password")
         self.actor = Employee.objects.create(user=self.admin, employee_code="MAPPING_ADMIN", display_name="映射管理员")

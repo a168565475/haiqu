@@ -5,6 +5,7 @@ import ConfirmedSidebarIcon from './ConfirmedSidebarIcon.vue'
 import ConfirmedSecondarySidebarIcon from './ConfirmedSecondarySidebarIcon.vue'
 import '@icon-park/vue-next/styles/index.css'
 import { useAuthStore } from '@/stores/auth'
+import { systemSettings, canOpenSystemSetting } from '@/config/systemSettings'
 import type { WorkbenchMode } from '@/types/workbench'
 import { resolveWorkbenchMode } from '@/utils/workbench'
 
@@ -114,6 +115,17 @@ const menuItems: MenuItem[] = [
     children: [
       { key: 'finished-goods-inventory', label: '成品库存', to: { name: 'finished-goods-inventory' }, permission: 'inventory.view_finishedgoodsreceipt' },
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
+    ],
+  },
+  {
+    key: 'finance-management',
+    label: '财务',
+    defaultChildKey: 'finance-accounts',
+    children: [
+      { key: 'finance-accounts', label: '公司账户信息', to: { name: 'finance-accounts' }, permission: 'finance.view_financeaccount' },
+      { key: 'finance-subjects', label: '会计科目', to: { name: 'finance-subjects' }, permission: 'finance.view_accountingsubject' },
+      { key: 'finance-statements', label: '应收对账单', to: { name: 'finance-statements' }, permission: 'finance.view_receivablestatement' },
+      { key: 'finance-receipts', label: '收款确认', to: { name: 'finance-receipts' }, permission: 'finance.view_receipt' },
     ],
   },
   {
@@ -275,32 +287,8 @@ watch(displayedGroup, group => {
 })
 onBeforeUnmount(cancelTimers)
 
-const systemPermissions = [
-  'reference_data.view_dictionarytype',
-  'reference_data.view_referencedictionary',
-  'reference_data.view_systemparameterdefinition',
-  'reference_data.view_country',
-  'reference_data.view_currency',
-  'reference_data.view_exchangerate',
-  'reference_data.view_unit',
-  'reference_data.view_incoterm',
-  'reference_data.view_paymentmethod',
-  'reference_data.view_transportmethod',
-  'reference_data.view_port',
-  'reference_data.view_courier',
-  'reference_data.view_numberrule',
-  'workflow.view_slapolicy',
-]
-const canManageOwnEmailAccounts = computed(() => authStore.user?.employee !== null && authStore.user?.employee !== undefined)
-const canViewSystemSettings = computed(() => canManageOwnEmailAccounts.value || authStore.user?.is_superuser || authStore.hasAnyPermission(systemPermissions))
-const canViewReferenceSettings = computed(() => authStore.user?.is_superuser || authStore.hasAnyPermission(systemPermissions.slice(0, 3)))
-const systemEntryRoute = computed(() => {
-  if (canViewReferenceSettings.value) return 'reference-data-settings'
-  if (authStore.hasPermission('workflow.view_slapolicy')) return 'inquiry-handling-settings'
-  if (canManageOwnEmailAccounts.value) return 'email-account-settings'
-  return 'master-data-center'
-})
-const settingsActive = computed(() => activeMenu.value === 'settings' && route.name !== 'access-management' && route.name !== 'theme-settings' && route.name !== 'wecom-settings')
+const canViewSystemSettings = computed(() => systemSettings.some(entry => canOpenSystemSetting(authStore, entry.key)))
+const settingsActive = computed(() => activeMenu.value === 'settings')
 </script>
 <template>
   <nav ref="navigation" class="app-sidebar" aria-label="ERP 主导航"
@@ -333,31 +321,13 @@ const settingsActive = computed(() => activeMenu.value === 'settings' && route.n
     </div>
 
     <div class="app-sidebar__footer" @mouseenter="scheduleClose">
-      <RouterLink v-if="authStore.canReadAccessDirectory"
-        :to="{ name: 'access-management' }" class="app-sidebar__footer-link"
-        :class="{ 'is-active': route.name === 'access-management' }"
-        :aria-current="route.name === 'access-management' ? 'page' : undefined"
-        data-menu-key="access-management" title="权限管理" @focus="closePanel">
-        <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true">
-          <ConfirmedSidebarIcon name="access-management" />
-        </span>
-        <span class="app-sidebar__menu-label">权限</span>
-      </RouterLink>
-      <RouterLink v-if="canViewSystemSettings" :to="{ name: systemEntryRoute }" class="app-sidebar__footer-link"
+      <RouterLink v-if="canViewSystemSettings" :to="{ name: 'system-settings' }" class="app-sidebar__footer-link"
         :class="{ 'is-active': settingsActive }" :aria-current="settingsActive ? 'page' : undefined"
         data-menu-key="settings" title="系统配置" @focus="closePanel">
         <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true">
           <ConfirmedSidebarIcon name="settings" />
         </span>
         <span class="app-sidebar__menu-label">配置</span>
-      </RouterLink>
-      <RouterLink v-if="authStore.managementCan('access_control.manage_wecom')"
-        :to="{ name: 'wecom-settings' }" class="app-sidebar__footer-link"
-        :class="{ 'is-active': route.name === 'wecom-settings' }"
-        :aria-current="route.name === 'wecom-settings' ? 'page' : undefined"
-        data-menu-key="wecom-settings" title="系统配置 / 企业微信管理" @focus="closePanel">
-        <span class="app-sidebar__footer-icon" data-primary-icon-wrapper aria-hidden="true"><ConfirmedSidebarIcon name="settings" /></span>
-        <span class="app-sidebar__menu-label">企微</span>
       </RouterLink>
     </div>
 

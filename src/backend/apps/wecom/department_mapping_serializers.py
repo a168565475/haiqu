@@ -51,6 +51,7 @@ class DepartmentMappingPreviewSerializer(serializers.Serializer):
     organizations = OrganizationOptionSerializer(many=True)
     preview_token = serializers.CharField(allow_blank=True)
     can_save_mapping = serializers.BooleanField()
+    can_edit_saved_mappings = serializers.BooleanField()
     snapshot = DirectorySnapshotSerializer()
 
 

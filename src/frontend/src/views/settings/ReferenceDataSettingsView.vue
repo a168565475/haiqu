@@ -65,6 +65,10 @@ interface SortRow {
   sortOrder: number
 }
 
+const props = withDefaults(defineProps<{
+  section?: 'all' | 'dictionary' | 'parameters'
+}>(), { section: 'all' })
+
 const authStore = useAuthStore()
 const referenceOptionsStore = useReferenceOptionsStore()
 
@@ -123,7 +127,12 @@ function can(permission: string): boolean {
   return isSuperuser.value || authStore.hasPermission(permission)
 }
 
-const canViewPage = computed(() => [permissions.viewType, permissions.viewItem, permissions.viewParameter].some(can))
+const canViewPage = computed(() => {
+  if (props.section === 'parameters') return can(permissions.viewParameter)
+  if (props.section === 'dictionary') return [permissions.viewType, permissions.viewItem].some(can)
+  return [permissions.viewType, permissions.viewItem, permissions.viewParameter].some(can)
+})
+const pageTitle = computed(() => props.section === 'parameters' ? '业务参数' : props.section === 'dictionary' ? '字典配置' : '字典与业务参数')
 const canViewMasterData = computed(() => [
   'reference_data.view_country',
   'reference_data.view_currency',
@@ -286,6 +295,7 @@ const managedType = ref<DictionaryType | null>(null)
 const itemRows = ref<DictionaryItem[]>([])
 const itemDialogVisible = ref(false)
 const itemSaving = ref(false)
+const itemActionPending = ref(false)
 const itemEditing = ref(false)
 const itemEtag = ref('')
 const itemFormRef = ref<FormInstance>()
@@ -381,6 +391,8 @@ function canArchiveItem(): boolean {
   return authStore.user?.module_access_enabled ? can('access_control.archive_reference_referencedictionary') : can(permissions.changeItem)
 }
 async function changeItemStatus(row: DictionaryItem): Promise<void> {
+  if (itemActionPending.value) return
+  itemActionPending.value = true
   const action = row.status === 'ACTIVE' ? 'deactivate' : 'activate'
   const actionLabel = action === 'deactivate' ? '停用' : '启用'
   try {
@@ -408,6 +420,8 @@ async function changeItemStatus(row: DictionaryItem): Promise<void> {
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     await handleWriteError(error, `${actionLabel}失败`)
+  } finally {
+    itemActionPending.value = false
   }
 }
 
@@ -420,6 +434,8 @@ async function archiveItem(row: DictionaryItem): Promise<void> {
     )
     return
   }
+  if (itemActionPending.value) return
+  itemActionPending.value = true
   try {
     const prompt = await ElMessageBox.prompt('归档后该字典项不再出现在管理列表，请填写原因。', '归档字典项', {
       type: 'warning', confirmButtonText: '确认归档', cancelButtonText: '取消',
@@ -432,6 +448,8 @@ async function archiveItem(row: DictionaryItem): Promise<void> {
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     await handleWriteError(error, '归档失败')
+  } finally {
+    itemActionPending.value = false
   }
 }
 
@@ -590,6 +608,20 @@ async function handleWriteError(error: unknown, fallback: string): Promise<void>
   ElMessage.error(apiMessage(error, fallback))
 }
 
+function canClose(): boolean {
+  if (typeSaving.value || itemSaving.value || itemActionPending.value || parameterSaving.value || publishSaving.value || sortSaving.value) {
+    ElMessage.warning('正在处理配置变更，请稍后再关闭。')
+    return false
+  }
+  if (typeDialogVisible.value || itemDialogVisible.value || parameterDialogVisible.value || publishDialogVisible.value || sortDialogVisible.value) {
+    ElMessage.warning('请先保存或取消当前编辑，再关闭配置窗口。')
+    return false
+  }
+  return true
+}
+
+defineExpose({ canClose })
+
 onMounted(loadPage)
 </script>
 
@@ -602,10 +634,10 @@ onMounted(loadPage)
     </div>
 
     <template v-else>
-      <section v-glass-spotlight class="erp-list-filter">
+      <section v-if="section !== 'parameters'" v-glass-spotlight class="erp-list-filter">
       <header class="page-heading erp-list-heading">
         <div>
-          <h1>字典与业务参数</h1>
+          <h1>{{ pageTitle }}</h1>
         </div>
 
       </header>
@@ -631,6 +663,20 @@ onMounted(loadPage)
 
       <el-skeleton v-else-if="loading" :rows="10" animated class="loading-card" />
 
+      <section v-else-if="section === 'parameters'" class="parameter-card card-shell erp-list-data" data-testid="parameters-section">
+        <div class="section-heading erp-list-toolbar">
+          <div><h2>全部业务参数</h2><span>共 {{ systemParameters.length }} 项</span></div>
+          <el-button class="erp-button-motion" :icon="Download" @click="exportConfiguration">导出配置</el-button>
+          <el-button v-if="summary.pending_changes > 0 && can(permissions.publishRelease)" class="erp-button-motion" type="primary" @click="openPublishDialog">发布配置</el-button>
+        </div>
+        <div class="erp-list-table-frame"><el-table :data="systemParameters" height="100%" table-layout="fixed">
+          <el-table-column prop="chinese_name" label="参数" min-width="170" />
+          <el-table-column label="当前草稿值" min-width="130"><template #default="{ row }">{{ formatParameterValue(row) }}</template></el-table-column>
+          <el-table-column prop="code" label="编码" min-width="200" show-overflow-tooltip />
+          <el-table-column label="操作" width="76" fixed="right"><template #default="{ row }"><el-button v-if="can(permissions.changeParameter)" link type="primary" @click="openParameterEditor(row)">编辑</el-button></template></el-table-column>
+        </el-table></div>
+      </section>
+
       <div v-else class="settings-layout">
         <aside class="category-panel card-shell erp-list-filter erp-list-catalog-nav">
           <div class="category-panel__title">配置分类</div>
@@ -651,6 +697,7 @@ onMounted(loadPage)
           <section class="dictionary-card card-shell erp-list-data">
             <div class="section-heading erp-list-toolbar">
         <div class="page-heading__actions">
+          <template v-if="section === 'all'">
           <el-button v-if="canViewProductionData" class="page-heading__link erp-button-motion" tag="a" href="/settings/production-data">生产维护</el-button>
           <el-button class="page-heading__link erp-button-motion" tag="a" href="/settings/email-accounts">邮件账户</el-button>
           <el-button v-if="authStore.hasPermission('workflow.view_slapolicy')" class="page-heading__link erp-button-motion" tag="a" href="/settings/inquiry-handling-time">询盘处理时限</el-button>
@@ -659,6 +706,7 @@ onMounted(loadPage)
           <el-button v-if="authStore.managementCan('access_control.manage_notifications')" class="page-heading__link erp-button-motion" tag="a" href="/settings/notifications">通知规则</el-button>
           <el-button class="page-heading__link erp-button-motion" tag="a" href="/settings/theme">界面主题</el-button>
           <el-button v-if="can(permissions.viewParameter)" class="page-heading__link erp-button-motion" data-testid="open-parameters" @click="parameterDrawerVisible = true">业务参数</el-button>
+          </template>
           <el-button class="erp-button-motion" :icon="Download" @click="exportConfiguration">导出配置</el-button>
           <el-button class="erp-button-motion" v-if="summary.pending_changes > 0 && can(permissions.publishRelease)" type="primary" @click="openPublishDialog">发布配置</el-button>
           <el-button class="erp-button-motion" v-if="can(permissions.addItem)" type="primary" :icon="Plus" @click="openCreateItem()">新增字典项</el-button>
@@ -768,7 +816,7 @@ onMounted(loadPage)
       <template #footer><el-button @click="itemDialogVisible = false">取消</el-button><el-button type="primary" :loading="itemSaving" @click="saveItem">保存草稿</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="parameterDrawerVisible" title="全部业务参数" width="680px" class="system-settings-dialog">
+    <el-dialog v-if="section === 'all'" v-model="parameterDrawerVisible" title="全部业务参数" width="680px" class="system-settings-dialog">
       <el-table :data="systemParameters">
         <el-table-column prop="chinese_name" label="参数" min-width="170" />
         <el-table-column label="当前草稿值" min-width="130"><template #default="{ row }">{{ formatParameterValue(row) }}</template></el-table-column>

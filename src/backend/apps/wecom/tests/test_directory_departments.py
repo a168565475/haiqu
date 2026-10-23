@@ -12,6 +12,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access_control.models import RoleActionGrant
+from apps.access_control.deletion_services import DELETED_REASON
 from apps.access_control.selectors import effective_access
 from apps.audit.models import AuditLog
 from apps.core.api.concurrency import etag_for_instance
@@ -138,6 +139,86 @@ class WeComDirectoryDepartmentTests(TestCase):
         self.assertEqual(plan["assignments"], [{
             "department_id": str(self.unit.pk), "department_name": self.unit.unit_name, "is_primary": True,
         }])
+        self.assertEqual(self.counts(), before)
+
+    def deleted_binding(self):
+        old = self.employee()
+        old.status, old.archived_at, old.archive_reason = "INACTIVE", timezone.now(), DELETED_REASON
+        old.save()
+        old.user.is_active = False
+        old.user.save()
+        binding = self.binding(old)
+        self.mapping()
+        return old, binding
+
+    def test_deleted_employee_recreated_with_mapped_department_and_no_old_permissions(self):
+        old, binding = self.deleted_binding()
+        role = self.grant(old, [("access_control", "manage_accounts")])
+        history = EmployeeOrganizationAssignment.objects.create(employee=old, organization_unit=self.other_unit,
+            is_primary=True, effective_from=timezone.now() - timedelta(days=1))
+        preview = self.preview()
+        self.assertEqual(preview.data["data"]["members"][0]["action"], "RECREATE")
+        self.assertIsNone(preview.data["data"]["members"][0]["employee"])
+        self.assert_plan(preview, "READY")
+        result = self.sync(preview)
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["data"][0]["department_status"], "APPLIED")
+        binding.refresh_from_db(); old.refresh_from_db(); old.user.refresh_from_db()
+        self.assertNotEqual(binding.employee_id, old.pk)
+        self.assertEqual(old.status, "INACTIVE"); self.assertIsNotNone(old.archived_at)
+        self.assertFalse(old.user.is_active)
+        new = binding.employee
+        self.assertNotEqual(new.user_id, old.user_id)
+        self.assertFalse(new.user.has_usable_password())
+        self.assertEqual(new.organization_assignments.get().organization_unit_id, self.unit.pk)
+        self.assertFalse(EmployeeRoleAssignment.objects.filter(employee=new).exists())
+        self.assertFalse(new.user.groups.exists()); self.assertFalse(new.user.user_permissions.exists())
+        self.assertTrue(EmployeeRoleAssignment.objects.filter(employee=old, role_profile=role).exists())
+        self.assertTrue(EmployeeOrganizationAssignment.objects.filter(pk=history.pk, employee=old).exists())
+        self.assertTrue(AuditLog.objects.filter(action="DIRECTORY_RECREATE", before_data__employee_id=str(old.pk), after_data__employee_id=str(new.pk)).exists())
+        count = Employee.objects.count()
+        self.assertEqual(self.sync(preview).status_code, 412)
+        self.assertEqual(Employee.objects.count(), count)
+
+    def test_deleted_employee_change_or_rebind_invalidates_recreation_preview(self):
+        old, binding = self.deleted_binding()
+        preview = self.preview()
+        old.display_name = "变更后的姓名"
+        old.save()
+        before = self.counts()
+        self.assertEqual(self.sync(preview).status_code, 412)
+        self.assertEqual(self.counts(), before)
+        preview = self.preview()
+        binding.employee = self.employee(code="OTHER_BINDING")
+        binding.save()
+        before = self.counts()
+        self.assertEqual(self.sync(preview).status_code, 412)
+        self.assertEqual(self.counts(), before)
+
+    def test_recreation_does_not_restore_inactive_or_other_archived_employees(self):
+        old, binding = self.deleted_binding()
+        old.archive_reason = "人工离职归档"
+        old.save()
+        preview = self.preview()
+        self.assertEqual(preview.data["data"]["members"][0]["action"], "EXISTING")
+        self.assert_plan(preview, "PENDING")
+        count = Employee.objects.count()
+        self.assertEqual(self.sync(preview).status_code, 200)
+        self.assertEqual(Employee.objects.count(), count)
+        binding.refresh_from_db(); self.assertEqual(binding.employee_id, old.pk)
+
+    def test_recreation_rejects_invalid_source_and_rolls_back_on_audit_failure(self):
+        old, binding = self.deleted_binding()
+        self.source["members"][0]["status"] = 2
+        self.assertEqual(self.preview().data["data"]["members"][0]["action"], "SKIP")
+        self.source["members"][0]["status"] = 1
+        preview = self.preview()
+        before = self.counts()
+        with patch("apps.wecom.directory_services.audit", side_effect=RuntimeError("audit failure")):
+            with self.assertRaisesMessage(RuntimeError, "audit failure"):
+                self.sync(preview)
+        binding.refresh_from_db()
+        self.assertEqual(binding.employee_id, old.pk)
         self.assertEqual(self.counts(), before)
 
     def test_new_employee_receives_mapped_department_without_role_or_permission(self):

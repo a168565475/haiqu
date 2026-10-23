@@ -339,6 +339,8 @@ def oauth_login(request, state, code):
             request.session["wecom_qr_redirects"] = redirects
         django_login(request, user, backend="apps.core.auth.ErpModelBackend")
         request.session.save()
+        from apps.core.login_records import record_successful_login
+        record_successful_login(request, user, "WECOM")
         audit(request, binding, "OAUTH_LOGIN", user_id=binding.user_id, employee_name=employee.display_name, message="企业微信身份登录成功。")
         return "/auth/waiting-role" if waiting_for_role(user) else return_path
 

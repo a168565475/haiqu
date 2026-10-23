@@ -211,6 +211,19 @@ describe('ProductionDataView', () => {
     expect(wrapper.text()).not.toContain('data_id')
   })
 
+  it('嵌入配置窗口时要求先处理生产资料编辑，取消后允许关闭', async () => {
+    const wrapper = mount(ProductionDataView, { global: { plugins: [createPinia(), ElementPlus], stubs: { teleport: true, ElSelect: true, ElOption: true } } })
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(true)
+    await wrapper.findAll('button').find(button => button.text() === '新增产品类别')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(false)
+    expect(wrapper.findComponent(AppWindowDialog).props('modelValue')).toBe(true)
+    await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click')
+    expect(wrapper.vm.canClose()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('面料维护显示材质规格门幅并读取导入数据', async () => {
     const wrapper = mount(ProductionDataView, { global: { plugins: [createPinia(), ElementPlus] } })
     await flushPromises()

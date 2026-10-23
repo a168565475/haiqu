@@ -166,11 +166,27 @@ const emailProviderGuides: EmailProviderGuide[] = [
 ]
 
 const accounts = ref<EmailAccount[]>([])
+const props = defineProps<{ embedded?: boolean }>()
 const loading = ref(false)
 const saving = ref(false)
+const pendingActions = ref(0)
 const errorMessage = ref('')
 const editorVisible = ref(false)
 const testingVisible = ref(false)
+
+function canClose(): boolean {
+  if (saving.value || pendingActions.value) {
+    ElMessage.warning('邮件账户操作进行中，请稍候再关闭。')
+    return false
+  }
+  if (editorVisible.value || testingVisible.value) {
+    ElMessage.warning('请先完成或取消当前邮件账户编辑或测试发送。')
+    return false
+  }
+  return true
+}
+
+defineExpose({ canClose })
 const editingId = ref<string | null>(null)
 const formRef = ref<FormInstance>()
 const testFormRef = ref<FormInstance>()
@@ -320,6 +336,7 @@ async function saveAccount() {
 
 async function setDefault(account: EmailAccount) {
   if (account.is_default) return
+  pendingActions.value++
   try {
     await ElMessageBox.confirm(`将“${account.display_name}”设为本账户报价邮件的默认发件邮箱？`, '设为默认', {
       type: 'warning',
@@ -332,10 +349,13 @@ async function setDefault(account: EmailAccount) {
     await loadAccounts()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(apiMessage(error, '默认邮件账户设置失败。'))
+  } finally {
+    pendingActions.value--
   }
 }
 
 async function toggleEnabled(account: EmailAccount) {
+  pendingActions.value++
   try {
     const current = await fetchEmailAccount(account.id)
     await updateEmailAccount(account.id, { is_enabled: !account.is_enabled }, current.etag)
@@ -343,10 +363,13 @@ async function toggleEnabled(account: EmailAccount) {
     await loadAccounts()
   } catch (error) {
     ElMessage.error(apiMessage(error, '邮件账户状态更新失败。'))
+  } finally {
+    pendingActions.value--
   }
 }
 
 async function removeAccount(account: EmailAccount) {
+  pendingActions.value++
   try {
     await ElMessageBox.confirm(`删除“${account.display_name}”后无法恢复，是否继续？`, '删除邮件账户', {
       type: 'warning',
@@ -359,6 +382,8 @@ async function removeAccount(account: EmailAccount) {
     await loadAccounts()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(apiMessage(error, '邮件账户删除失败。'))
+  } finally {
+    pendingActions.value--
   }
 }
 
@@ -416,7 +441,7 @@ onMounted(loadAccounts)
 
 <template>
   <section class="email-account-settings system-settings-theme erp-glass-list" data-testid="email-account-settings-page">
-    <section v-glass-spotlight class="erp-list-filter"><header class="erp-list-heading">
+    <section v-if="!props.embedded" v-glass-spotlight class="erp-list-filter"><header class="erp-list-heading">
       <div>
         <h1>邮件账户</h1>
       </div>
@@ -427,6 +452,7 @@ onMounted(loadAccounts)
     </header></section>
 
     <el-alert
+      v-if="!props.embedded"
       title="安全提示"
       description="请填写邮箱服务商提供的 SMTP 授权码或应用专用密码。密码会加密保存且不会再次显示。"
       type="info"
@@ -591,4 +617,4 @@ onMounted(loadAccounts)
   </section>
 </template>
 
-<style scoped lang="scss"> .table-card b,.table-card small{display:block;color:var(--erp-table-text)}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid var(--erp-color-brand-light-7);border-radius:8px;background:var(--erp-color-info-soft)}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:var(--erp-color-text-regular);font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:var(--erp-color-text-regular);font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:var(--erp-color-warning);font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:var(--erp-color-surface)}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--erp-color-border-subtle)}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:var(--erp-color-text-muted);font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:var(--erp-color-text-muted);font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:var(--erp-color-text-regular);line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}} </style>
+<style scoped lang="scss"> .table-card b,.table-card small{display:inline;color:var(--erp-table-text)}.table-card small{margin-left:8px}.table-card :deep(.cell){white-space:nowrap}.tag-gap{margin-left:6px}.provider-guide{margin-bottom:20px;padding:16px;border:1px solid var(--erp-color-brand-light-7);border-radius:8px;background:var(--erp-color-info-soft)}.provider-guide-heading h3,.form-section-title{margin:0;font-size:16px}.provider-guide-heading p{margin:6px 0 0;color:var(--erp-color-text-regular);font-size:13px;line-height:1.6}.provider-options{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.provider-options .el-button{margin-left:0}.provider-guide-content{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:18px;margin-top:14px}.provider-steps h4{margin:0 0 8px;font-size:14px}.provider-steps ol{margin:0 0 10px;padding-left:20px;color:var(--erp-color-text-regular);font-size:13px;line-height:1.75}.provider-notice{margin:8px 0;color:var(--erp-color-warning);font-size:12px;line-height:1.6}.provider-parameters{margin:0;padding:12px 14px;border-radius:6px;background:var(--erp-color-surface)}.provider-parameters div{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--erp-color-border-subtle)}.provider-parameters div:last-child{border-bottom:0}.provider-parameters dt{color:var(--erp-color-text-muted);font-size:12px}.provider-parameters dd{overflow-wrap:anywhere;margin:0;text-align:right;font-size:12px;font-weight:600}.form-section-title{margin-bottom:14px}.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 16px}.field-help{margin:5px 0 0;color:var(--erp-color-text-muted);font-size:12px;line-height:1.5}.full-width{width:100%}.dialog-hint{margin:0 0 16px;color:var(--erp-color-text-regular);line-height:1.6}:global(.email-account-editor-dialog){display:flex;flex-direction:column;max-height:calc(100vh - 32px);overflow:hidden}:global(.email-account-editor-dialog .el-dialog__header),:global(.email-account-editor-dialog .el-dialog__footer){flex:0 0 auto}:global(.email-account-editor-dialog .el-dialog__body){flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}@media(max-width:760px){.provider-parameters{order:-1}.table-card{overflow-x:auto}:global(.email-account-editor-dialog){max-height:calc(100vh - 16px)}} </style>

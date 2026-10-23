@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { useAuthStore } from '@/stores/auth'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { isAxiosError } from 'axios'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api/wecom'
 import type { WeComBinding, WeComMessageAttempt, WeComMessageTemplate, WeComMessageTemplateResponse, WeComMessageTestWrite } from '@/types/wecom'
 
 const props = defineProps<{ erpOrigin: string }>()
+const auth = useAuthStore()
 const saved = ref<WeComMessageTemplate>(), etag = ref('')
 const name = ref(''), body = ref(''), bodyInput = ref<HTMLTextAreaElement>()
 const loading = ref(false), saving = ref(false), stale = ref(false)
@@ -19,6 +22,8 @@ const previewTime = new Date().toLocaleString('sv-SE', { hour12: false })
 let disposed = false, templateRequest = 0, recipientRequest = 0, recordRequest = 0
 const selectedRecipient = computed(() => recipients.value.find(item => item.id === recipientId.value))
 const dirty = computed(() => !saved.value?.is_saved || name.value !== saved.value.name || body.value !== saved.value.body)
+const templateEdited = computed(() => !!saved.value && (name.value !== saved.value.name || body.value !== saved.value.body))
+const hasPendingChanges = computed(() => templateEdited.value || saving.value || sending.value || querying.value || !!pendingRequest.value)
 const busy = computed(() => loading.value || saving.value || sending.value)
 const validationError = computed(() => {
   if (!name.value.trim()) return '请填写模板名称。'
@@ -37,7 +42,7 @@ const renderedBody = computed(() => {
 })
 const byteCount = computed(() => new TextEncoder().encode(renderedBody.value).length)
 const canSave = computed(() => !!saved.value && !!etag.value && !busy.value && !stale.value && !validationError.value && !pendingRequest.value)
-const canSend = computed(() => canSave.value && !dirty.value && !!selectedRecipient.value && !recipientLoading.value && !recipientError.value && !!messageContent.value.trim() && byteCount.value <= 2048 && !!props.erpOrigin)
+const canSend = computed(() => auth.user?.is_superuser === true && canSave.value && !dirty.value && !!selectedRecipient.value && !recipientLoading.value && !recipientError.value && !!messageContent.value.trim() && byteCount.value <= 2048 && !!props.erpOrigin)
 const recordPages = computed(() => Math.max(1, Math.ceil(recordCount.value / 20)))
 const statusLabels: Record<WeComMessageAttempt['status'], string> = { PROCESSING: '正在处理', ACCEPTED: '企业微信已受理', FAILED: '发送失败', UNCERTAIN: '结果未确认' }
 function formatTime(value: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—' }
@@ -144,6 +149,14 @@ async function insertVariable(variable: typeof variables[number]) {
   body.value = body.value.slice(0, start) + value + body.value.slice(end)
   await nextTick(); input.focus(); input.setSelectionRange(start + value.length, start + value.length)
 }
+async function canClose() {
+  if (saving.value || sending.value || querying.value) { ElMessage.warning('消息模板正在保存、发送或查询结果，请稍候再关闭。'); return false }
+  if (!templateEdited.value && !pendingRequest.value) return true
+  const message = pendingRequest.value ? '发送结果尚未确认。离开后请先查看最近发送记录，避免重复发送。确定离开吗？' : '消息模板有未保存的修改，确定放弃并离开吗？'
+  try { await ElMessageBox.confirm(message, pendingRequest.value ? '发送结果未确认' : '未保存的修改', { confirmButtonText: '仍然离开', cancelButtonText: '继续处理', type: 'warning' }); return true }
+  catch (action) { if (action === 'cancel' || action === 'close') return false; throw action }
+}
+defineExpose({ canClose, hasPendingChanges })
 onMounted(() => { void loadTemplate(); void loadRecipients(); void loadRecords() })
 onBeforeUnmount(() => { disposed = true; templateRequest++; recipientRequest++; recordRequest++; saved.value = undefined; pendingRequest.value = undefined; name.value = ''; body.value = ''; messageContent.value = ''; recipients.value = []; attempts.value = [] })
 </script>

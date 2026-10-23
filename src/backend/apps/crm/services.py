@@ -29,6 +29,9 @@ COMMUNICATION_FIELDS = [
 
 @transaction.atomic
 def create_communication(*, validated_data, actor_employee, request):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    for business_file in validated_data.get("business_files", []):
+        require_non_finance_receipt_file(business_file)
     participant_employees = validated_data.pop("participant_employees", [])
     participant_contacts = validated_data.pop("participant_contacts", [])
     inquiry = validated_data.pop("inquiry", None)
@@ -152,4 +155,3 @@ def update_communication(*, communication, validated_data, actor_employee, reque
         actor_employee=actor_employee,
     )
     return communication
-

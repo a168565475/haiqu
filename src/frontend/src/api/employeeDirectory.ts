@@ -1,14 +1,44 @@
 import { isAxiosError } from 'axios'
 import { apiClient } from './request'
+import { createClientUuid } from '@/utils/clientUuid'
 import type {
   DepartmentMapping, DepartmentMappingInput, DepartmentMappingPreview, DepartmentMappingPreviewResponse,
   EmployeeDirectoryMatchInput, EmployeeDirectoryPreview, EmployeeDirectoryPreviewResponse,
   EmployeeDirectoryResult, EmployeeDirectorySyncInput,
+  EmployeeDirectoryProgress, EmployeeDirectoryProgressObserver,
 } from '@/types/employeeDirectory'
 
 const root = '/api/v1/wecom/'
 // GET恢复已保存副本；刷新与保存独立授权，超时不自动重试。
-const options = (etag?: string) => ({ timeout: 120000, ...(etag ? { headers: { 'If-Match': etag } } : {}) })
+const options = (etag?: string, progressId?: string) => ({ timeout: 120000,
+  ...(etag || progressId ? { headers: { ...(etag ? { 'If-Match': etag } : {}), ...(progressId ? { 'X-Directory-Progress': progressId } : {}) } } : {}),
+})
+
+async function withProgress<T>(observer: EmployeeDirectoryProgressObserver | undefined, request: (id?: string) => Promise<T>): Promise<T> {
+  if (!observer) return request()
+  const id = createClientUuid()
+  let finished = false, timer: ReturnType<typeof setTimeout> | undefined
+  const controller = new AbortController()
+  const stop = () => { finished = true; clearTimeout(timer); controller.abort() }
+  observer.signal.addEventListener('abort', stop, { once: true })
+  if (observer.signal.aborted) stop()
+  const poll = async () => {
+    if (finished) return
+    try {
+      const response = await apiClient.get<{ data: EmployeeDirectoryProgress }>(root + `employee-directory/progress/${id}/`, { timeout: 10000, signal: controller.signal })
+      const data = response.data.data
+      if (!Number.isInteger(data.completed) || !Number.isInteger(data.total) || data.total < 1 || data.completed < 0 || data.completed > data.total
+        || !['RUNNING', 'SUCCESS', 'FAILED'].includes(data.status) || typeof data.phase !== 'string') throw new Error('进度数据无效')
+      if (!finished) observer.onProgress(data)
+    } catch (error) {
+      // 主请求刚发出时缓存可能尚未建立；其他读取故障明确标记，不推进百分比。
+      if (!finished && !(isAxiosError(error) && error.response?.status === 404)) observer.onProgress(null)
+    } finally { if (!finished) timer = setTimeout(poll, 1000) }
+  }
+  timer = setTimeout(poll, 300)
+  try { return await request(id) }
+  finally { stop(); observer.signal.removeEventListener('abort', stop) }
+}
 
 function previewResult<T>(response: { data: { data: T }; headers: Record<string, unknown> }): { data: T; etag: string } {
   const etag = response.headers.etag
@@ -16,24 +46,24 @@ function previewResult<T>(response: { data: { data: T }; headers: Record<string,
   return { data: response.data.data, etag }
 }
 
-export async function getEmployeeDirectoryPreview(applyDepartments = false): Promise<EmployeeDirectoryPreviewResponse> {
-  return previewResult(await apiClient.get<{ data: EmployeeDirectoryPreview }>(root + 'employee-directory/', {
-    ...options(), params: { apply_departments: applyDepartments },
-  }))
+export async function getEmployeeDirectoryPreview(applyDepartments = false, observer?: EmployeeDirectoryProgressObserver): Promise<EmployeeDirectoryPreviewResponse> {
+  return withProgress(observer, async id => previewResult(await apiClient.get<{ data: EmployeeDirectoryPreview }>(root + 'employee-directory/', {
+    ...options(undefined, id), params: { apply_departments: applyDepartments },
+  })))
 }
 
-export async function refreshEmployeeDirectory(applyDepartments = false): Promise<EmployeeDirectoryPreviewResponse> {
-  return previewResult(await apiClient.post<{ data: EmployeeDirectoryPreview }>(root + 'employee-directory/refresh/', {
+export async function refreshEmployeeDirectory(applyDepartments = false, observer?: EmployeeDirectoryProgressObserver): Promise<EmployeeDirectoryPreviewResponse> {
+  return withProgress(observer, async id => previewResult(await apiClient.post<{ data: EmployeeDirectoryPreview }>(root + 'employee-directory/refresh/', {
     apply_departments: applyDepartments,
-  }, options()))
+  }, options(undefined, id))))
 }
 
-export async function syncEmployeeDirectory(data: EmployeeDirectorySyncInput, etag: string): Promise<EmployeeDirectoryResult[]> {
-  return (await apiClient.post<{ data: EmployeeDirectoryResult[] }>(root + 'employee-directory/sync/', data, options(etag))).data.data
+export async function syncEmployeeDirectory(data: EmployeeDirectorySyncInput, etag: string, observer?: EmployeeDirectoryProgressObserver): Promise<EmployeeDirectoryResult[]> {
+  return withProgress(observer, async id => (await apiClient.post<{ data: EmployeeDirectoryResult[] }>(root + 'employee-directory/sync/', data, options(etag, id))).data.data)
 }
 
-export async function matchEmployeeDirectory(data: EmployeeDirectoryMatchInput, etag: string): Promise<EmployeeDirectoryResult> {
-  return (await apiClient.post<{ data: EmployeeDirectoryResult }>(root + 'employee-directory/match/', data, options(etag))).data.data
+export async function matchEmployeeDirectory(data: EmployeeDirectoryMatchInput, etag: string, observer?: EmployeeDirectoryProgressObserver): Promise<EmployeeDirectoryResult> {
+  return withProgress(observer, async id => (await apiClient.post<{ data: EmployeeDirectoryResult }>(root + 'employee-directory/match/', data, options(etag, id))).data.data)
 }
 
 export async function getDepartmentMappings(): Promise<DepartmentMappingPreviewResponse> {

@@ -10,7 +10,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.access_control.permissions import CanManageWeCom
+from apps.access_control.permissions import CanManageWeCom, SuperadministratorOnly
 from apps.core.api.exceptions import Conflict
 from apps.core.api.permissions import HasActiveEmployee
 from . import selectors, services
@@ -148,6 +148,8 @@ def paginated_response(queryset, parameters, payload, serializer_class):
 
 
 class BindingsView(ManagementView):
+    permission_classes = [*ManagementView.permission_classes, SuperadministratorOnly]
+
     @extend_schema(parameters=[BindingQuerySerializer], responses=BindingListSerializer)
     def get(self, request):
         query = BindingQuerySerializer(data=request.query_params)
@@ -165,6 +167,8 @@ class BindingsView(ManagementView):
 
 
 class EmployeesView(ManagementView):
+    permission_classes = [*ManagementView.permission_classes, SuperadministratorOnly]
+
     @extend_schema(parameters=[EmployeeQuerySerializer], responses=EmployeeListSerializer)
     def get(self, request):
         query = EmployeeQuerySerializer(data=request.query_params)

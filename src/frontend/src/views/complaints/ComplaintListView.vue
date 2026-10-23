@@ -209,7 +209,7 @@ onMounted(async () => {
         <el-select v-model="filters.complaint_type_item_id" clearable placeholder="客诉类型：全部"><el-option v-for="item in complaintTypes" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.severity_item_id" clearable placeholder="严重程度：全部"><el-option v-for="item in severities" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.status" clearable placeholder="处理状态：全部"><el-option v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></el-select>
-        <el-select v-model="filters.owner_employee_id" clearable placeholder="负责人：全部"><el-option v-for="item in options?.employees" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
+        <el-select v-model="filters.owner_employee_id" clearable placeholder="负责人：全部"><el-option v-for="item in (options?.employee_filters || options?.employees)" :key="item.id" :label="item.display_name" :value="item.id" /></el-select>
         <el-select v-model="filters.sla_status" clearable placeholder="SLA：全部"><el-option label="正常" value="NORMAL" /><el-option label="即将到期" value="AT_RISK" /><el-option label="已超时" value="OVERDUE" /><el-option label="已结束" value="COMPLETED" /></el-select>
         <div class="erp-list-filter-actions"><el-button class="erp-button-motion" @click="resetFilters">重置</el-button><el-button class="erp-button-motion" type="primary" @click="applyFilters">应用筛选</el-button></div>
       </section>

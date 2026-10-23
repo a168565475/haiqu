@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import threading
 import uuid
 from decimal import Decimal
@@ -22,7 +23,7 @@ from apps.production_scheduling.services import create_schedule
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.procurement.models import PurchaseOrder
 from apps.reference_data.models import ProductionUnit
-from apps.workshop_config.models import Craft, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Workshop
 
 from ..material_flow import pipe_specs
 from ..models import MaterialIssue, MaterialIssueBatchAllocation, MaterialIssuePublicStockAllocation
@@ -48,7 +49,7 @@ class PublicIssueFixture(PipeFixture):
         self.semi_identity = build_semi_finished_identity(bom_line=self.bom_line, completed_craft=self.coating, unit=self.piece_unit)
         self.public_semi = self.credit(self.semi_identity, self.semi_zone, 100).balance
         self.assembly = Workshop.objects.get(name="装配车间")
-        self.assembly_recipient = WorkshopEmployee.objects.create(workshop=self.assembly, position="领料员", name="公共半成品领料员", status="ACTIVE", is_supervisor=False)
+        self.assembly_recipient = production_employee(workshop=self.assembly, position="领料员", name="公共半成品领料员", status="ACTIVE", is_supervisor=False)
         self.assembly_craft, _ = Craft.objects.get_or_create(plan_category="ASSEMBLY", defaults={"name": "公共装配", "craft_type": "INTERNAL", "workshop": self.assembly})
         ProductionScheduleProductCraft.objects.get_or_create(schedule_product=self.schedule_product, craft=self.assembly_craft,
             defaults={"craft_type_snapshot": "INTERNAL", "craft_name_snapshot": self.assembly_craft.name, "plan_category": "ASSEMBLY"})

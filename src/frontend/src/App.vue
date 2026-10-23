@@ -54,7 +54,7 @@ onBeforeUnmount(() => {
 const quotationRoutes = ['quotations', 'quotation-edit', 'quotation-preview', 'quotation-versions', 'quotation-packaging', 'quotation-price-history']
 const quotationRoute = computed(() => quotationRoutes.includes(String(route.name || '')))
 const wageSchemeRoute = computed(() => ['wage-schemes', 'wage-scheme-new', 'wage-scheme-change', 'wage-scheme-detail'].includes(String(route.name || '')))
-const settingsRoutes = ['wecom-settings', 'notification-rules', 'access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
+const settingsRoutes = ['system-settings', 'wecom-settings', 'notification-rules', 'access-management', 'email-account-settings', 'reference-data-settings', 'theme-settings', 'master-data-center', 'production-data', 'inquiry-handling-settings', 'number-rules']
 const settingsRoute = computed(() => settingsRoutes.includes(String(route.name || '')))
 const fastReadLoadingRoute = computed(() => [
   'contacts', 'customer-duplicates',

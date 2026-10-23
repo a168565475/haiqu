@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { AxiosError } from 'axios'
 import { fetchInquiryHandlingSettings, saveInquiryHandlingSettings, type InquiryHandlingSettings } from '@/api/inquiryHandlingSettings'
 import { useAuthStore } from '@/stores/auth'
 import { handlingStageLabel, handlingTargetLabel } from '@/views/inquiries/inquiryWorktime'
 
+const props=defineProps<{ embedded?: boolean }>()
 const auth=useAuthStore()
 const loading=ref(false), saving=ref(false), error=ref(''), etag=ref('')
 const settings=ref<InquiryHandlingSettings | null>(null)
@@ -13,6 +14,17 @@ const canEdit=computed(()=>auth.hasPermission('workflow.manage_sla_policy'))
 const stages=['ASSIGNMENT','FIRST_RESPONSE','REQUIREMENT_CONFIRMATION','QUOTE_CREATION','QUOTE_DELIVERY','CUSTOMER_FOLLOW_UP','POST_ACCEPTANCE','SAMPLE_FOLLOW_UP']
 const notes=['提交后未分配时开始，与首次回复同时计时','提交询盘后开始，转交不重置','首次回复完成后开始','确认需求后开始','创建报价后开始，正式发送后结束','每次实际跟进完成后开始下一轮','接受报价后，提交样品申请或创建订单','提交样品后持续跟进，移交订单后结束']
 const times=reactive({morningStart:'',morningEnd:'',afternoonStart:'',afternoonEnd:''})
+let savedSnapshot=''
+function formSnapshot() { return JSON.stringify({settings:settings.value,times}) }
+async function canClose():Promise<boolean> {
+  if(saving.value){ElMessage.warning('询盘时限规则正在保存，请稍候再关闭。');return false}
+  if(!settings.value||formSnapshot()===savedSnapshot)return true
+  try{
+    await ElMessageBox.confirm('询盘时限规则有未保存的修改，关闭后将丢弃这些修改。','确认关闭',{type:'warning',confirmButtonText:'放弃修改',cancelButtonText:'继续编辑'})
+    return true
+  }catch(value){if(value==='cancel'||value==='close')return false;throw value}
+}
+defineExpose({canClose})
 function timeText(value:number) { return `${String(Math.floor(value/60)).padStart(2,'0')}:${String(value%60).padStart(2,'0')}` }
 function minutes(value:string) { if(!/^\d{2}:\d{2}$/.test(value))return NaN;const [h,m]=value.split(':').map(Number);return h!*60+m! }
 function errorText(value:unknown) {
@@ -30,6 +42,7 @@ async function load() {
     const [morning,afternoon]=result.data.work_calendar.periods
     if(!morning||!afternoon)throw new Error('工作日历不完整，请联系管理员。')
     Object.assign(times,{morningStart:timeText(morning[0]),morningEnd:timeText(morning[1]),afternoonStart:timeText(afternoon[0]),afternoonEnd:timeText(afternoon[1])})
+    savedSnapshot=formSnapshot()
   }catch(value){settings.value=null;error.value=errorText(value)}finally{loading.value=false}
 }
 async function save() {
@@ -45,6 +58,7 @@ async function save() {
   try{
     const payload={...settings.value,work_calendar:{...settings.value.work_calendar,periods}}
     const result=await saveInquiryHandlingSettings(payload,etag.value);settings.value=result.data;etag.value=result.etag
+    savedSnapshot=formSnapshot()
     ElMessage.success('规则已保存，之后新开始的环节使用新规则。')
   }catch(value){error.value=errorText(value)}finally{saving.value=false}
 }
@@ -52,10 +66,10 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="inquiry-settings" v-loading="loading">
-    <header><div><h1>询盘处理时限</h1></div><div><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></div></header>
+  <section class="inquiry-settings" :class="{ 'is-embedded': props.embedded }" v-loading="loading">
+    <header v-if="!props.embedded"><div><h1>询盘处理时限</h1></div><div><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></div></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <el-alert title="新规则仅用于之后新开始的环节" description="正在计时和历史记录保留原规则、原截止时间；保存操作会记录修改前后内容。" type="info" :closable="false" show-icon />
+    <el-alert v-if="!props.embedded" title="新规则仅用于之后新开始的环节" description="正在计时和历史记录保留原规则、原截止时间；保存操作会记录修改前后内容。" type="info" :closable="false" show-icon />
     <div v-if="settings" class="settings-columns">
       <el-card shadow="never"><template #header><b>各环节处理时长</b><span class="unit-note">按工作分钟填写</span></template>
         <el-table class="erp-table-editor" :data="stages.map((stage,index)=>({stage,note:notes[index]}))">
@@ -73,6 +87,7 @@ onMounted(load)
         <p>报价后跟进、样品进度跟进按左侧分钟数逐轮计算。</p>
       </el-form></el-card>
     </div>
+    <footer v-if="props.embedded" class="inquiry-actions"><el-button :disabled="loading||saving" @click="load">重新加载</el-button><el-button type="primary" :disabled="!settings||!canEdit||loading" :loading="saving" @click="save">保存规则</el-button></footer>
   </section>
 </template>
 
@@ -80,6 +95,9 @@ onMounted(load)
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail';
 .inquiry-settings {
+  &.is-embedded { min-height: 100%; display: flex; flex-direction: column; }
+  .inquiry-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 14px; }
+  .inquiry-actions .el-button + .el-button { margin-left: 0; }
   min-width: 0;
   color: token.$crm-text-primary;
   font-family: var(--erp-font-body);

@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import threading
 import uuid
 from decimal import Decimal
@@ -16,7 +17,7 @@ from apps.material_issues.scopes import filter_blockers_for_scope
 from apps.material_issues.tests import test_material_issue_api as issue_test_fixture
 from apps.reference_data.models import ProductionUnit, ProductCategory
 from apps.products.models import RawMaterialInformation
-from apps.workshop_config.models import Workshop, WorkshopEmployee
+from apps.workshop_config.models import Workshop
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialStockBalance, MaterialStockMovement
 from apps.inventory.pipe_stock_services import credit_pipe_inbound, issue_pipe_material
 from apps.inventory.stock_services import available_stock, debit_material_stock
@@ -188,7 +189,7 @@ class PipeStockFoundationTests(PipeFixture, TestCase):
             total_purchase_quantity="100", raw_values={"source_raw_material_id": str(fabric.pk)})
         stock = MaterialStockBalance.objects.create(raw_material=fabric, unit=meters, zone=self.zone, quantity=100)
         workshop = Workshop.objects.get(name="车缝车间")
-        recipient = WorkshopEmployee.objects.create(workshop=workshop, position="领料员", name="S3车缝领料", status="ACTIVE", is_supervisor=False)
+        recipient = production_employee(workshop=workshop, position="领料员", name="S3车缝领料", status="ACTIVE", is_supervisor=False)
         choices = self.client.get("/api/v1/material-issues/requirements/", {
             "production_task_id": str(self.task.pk), "product_line_id": str(self.product_line.pk), "workshop_id": str(workshop.pk)})
         self.assertEqual(choices.status_code, 200, choices.data)

@@ -1,4 +1,5 @@
 from apps.access_control.module_policy import can_sample, enabled as module_access_enabled
+from apps.organizations.selectors import active_department_employees, active_role_employees
 from apps.access_control.module_policy import ModuleAccessSerializerMixin
 from decimal import Decimal
 
@@ -149,12 +150,12 @@ class SampleFeeRecordCreateSerializer(serializers.ModelSerializer):
     payment_due_at = serializers.DateTimeField(required=False, allow_null=True)
     free_confirmed_by_employee_id = serializers.PrimaryKeyRelatedField(
         source="free_confirmed_by_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_role_employees("FACTORY_MANAGER"),
         required=False,
         allow_null=True,
     )
     approver_employee_id = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_role_employees("FACTORY_MANAGER"),
         required=False,
         allow_null=True,
         write_only=True,
@@ -1014,7 +1015,7 @@ class SampleRequestWritableSerializer(serializers.ModelSerializer):
     )
     owner_employee_id = serializers.PrimaryKeyRelatedField(
         source="owner_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     source_inquiry_id = serializers.PrimaryKeyRelatedField(
         source="source_inquiry",
@@ -1273,7 +1274,7 @@ class SampleBatchSelectionSerializer(serializers.Serializer):
 class SampleBulkTransferSerializer(SampleBatchSelectionSerializer):
     owner_employee_id = serializers.PrimaryKeyRelatedField(
         source="owner_employee",
-        queryset=Employee.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        queryset=active_department_employees("DEPT_BUSINESS"),
     )
     note = serializers.CharField(max_length=500, trim_whitespace=True)
 

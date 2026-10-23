@@ -17,6 +17,17 @@ class DirectoryPreviewQuerySerializer(StrictSerializer):
     apply_departments = serializers.BooleanField(default=False)
 
 
+class DirectoryProgressSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["RUNNING", "SUCCESS", "FAILED"])
+    completed = serializers.IntegerField(min_value=0)
+    total = serializers.IntegerField(min_value=1)
+    phase = serializers.CharField()
+
+
+class DirectoryProgressResponseSerializer(serializers.Serializer):
+    data = DirectoryProgressSerializer()
+
+
 def user_id_field():
     return serializers.RegexField(r"^[A-Za-z0-9_.@-]{1,64}$", trim_whitespace=False)
 
@@ -84,7 +95,7 @@ class DirectoryMemberSerializer(serializers.Serializer):
     main_department = serializers.IntegerField(allow_null=True)
     status = serializers.IntegerField(allow_null=True)
     status_label = serializers.CharField()
-    action = serializers.ChoiceField(choices=["CREATE", "EXISTING", "REVIEW", "SKIP"])
+    action = serializers.ChoiceField(choices=["CREATE", "RECREATE", "EXISTING", "REVIEW", "SKIP"])
     reason = serializers.CharField()
     employee = DirectoryEmployeeSerializer(allow_null=True)
     candidates = DirectoryEmployeeSerializer(many=True)

@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.generics import get_object_or_404
 
-from apps.core.api.concurrency import require_matching_etag
+from apps.core.api.concurrency import require_matching_etag, etag_for_instance, PreconditionFailed
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.auth import active_employee_for
@@ -160,11 +160,14 @@ def copy_role(request, pk, data):
 
 
 @transaction.atomic
-def replace_employee_roles(request, pk, role_ids):
+def replace_employee_roles(request, pk, role_ids, *, expected_etag=None):
     actor = require_manager(request)
     # Audit actor FKs can take KEY SHARE concurrently without a lock-order cycle.
     employee = get_object_or_404(Employee.objects.select_for_update(no_key=True), pk=pk)
-    require_matching_etag(request, employee)
+    if expected_etag is None:
+        require_matching_etag(request, employee)
+    elif expected_etag != etag_for_instance(employee):
+        raise PreconditionFailed()
     if employee.archived_at or employee.status != "ACTIVE":
         raise Conflict("只能为有效员工分配角色。")
     if len(set(role_ids)) != len(role_ids):

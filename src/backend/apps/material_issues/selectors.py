@@ -69,5 +69,5 @@ def search_material_issues(queryset, keyword):
         | Q(production_task__task_number__icontains=keyword)
         | Q(production_task__order_number__icontains=keyword)
         | Q(product_line__product_name_snapshot__icontains=keyword)
-        | Q(recipient_workshop_employee__name__icontains=keyword)
+        | Q(recipient_name_snapshot__icontains=keyword)
     ).distinct()

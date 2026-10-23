@@ -24,7 +24,7 @@ function result(): NotificationRulesResponse { return { data: [{ ...rule }], rol
 function button(label: string) { return new DOMWrapper(Array.from(document.querySelectorAll('button')).find(item => item.textContent?.trim() === label)!) }
 function input(selector: string) { return new DOMWrapper(document.querySelector(selector)!) }
 async function render() { const wrapper = mount(NotificationRulesView, { attachTo: document.body }); wrappers.push(wrapper); await flushPromises(); return wrapper }
-async function edit() { const wrapper = await render(); await button('编辑 / 预览').trigger('click'); await flushPromises(); return wrapper }
+async function edit() { const wrapper = await render(); await button('编辑').trigger('click'); await flushPromises(); return wrapper }
 
 beforeEach(() => {
   vi.resetAllMocks(); setActivePinia(createPinia())
@@ -38,6 +38,25 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks() })
 
 describe('通知规则页面', () => {
+  it('嵌入配置窗口时保留通知编辑及发送中的窗口，完成并取消后允许关闭', async () => {
+    let finish!: (value: unknown) => void
+    api.sendNotificationPreview.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const wrapper = await edit()
+    await input('#notification-title').setValue('未保存的通知标题')
+    expect(wrapper.vm.canClose()).toBe(false)
+    expect((input('#notification-title').element as HTMLInputElement).value).toBe('未保存的通知标题')
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    await button('发送预览').trigger('click')
+    expect(wrapper.vm.canClose()).toBe(false)
+    expect(button('取消').attributes('disabled')).toBeDefined()
+    finish({ id: 'attempt-1', preview_id: 'preview-1', status: 'ACCEPTED', recipient_name: '已绑定员工', message: '已受理' })
+    await flushPromises()
+    await button('取消').trigger('click'); await flushPromises()
+    expect(wrapper.vm.canClose()).toBe(true)
+    expect(api.saveNotificationRule).not.toHaveBeenCalled()
+  })
+
   it('无管理权限时不读取规则，授权后重新读取', async () => {
     useAuthStore().user!.is_superuser = false
     const wrapper = await render()
@@ -64,7 +83,7 @@ describe('通知规则页面', () => {
     await button('保存').trigger('click'); await flushPromises()
     expect(api.saveNotificationRule).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({ name: '修改名称', recipient_role_codes: ['TECHNICAL'] }), 'server-v0')
     expect(document.body.textContent).toContain('通知规则已保存')
-    await button('编辑 / 预览').trigger('click'); await flushPromises()
+    await button('编辑').trigger('click'); await flushPromises()
     await button('保存').trigger('click'); await flushPromises()
     expect(api.saveNotificationRule.mock.calls[1]![2]).toBe('server-v1')
   })
@@ -221,20 +240,20 @@ describe('通知规则页面', () => {
     expect(document.body.textContent).not.toContain('旧结果')
   })
 
-  it('企微管理权撤销再恢复仍丢弃旧发送和查询响应', async () => {
+  it('超级管理员身份撤销再恢复仍丢弃旧发送和查询响应', async () => {
     const auth = useAuthStore()
     const grant = { scopes: ['MODULE' as const], sources: [{ type: 'ROLE', scope: 'MODULE' as const }] }
     auth.user!.effective_access = { active: true, is_superuser: false, roles: [], actions: { 'access_control.manage_notifications': grant, 'access_control.manage_wecom': grant }, legacy_sources: [], version: 'test' }
-    auth.user!.is_superuser = false
+    auth.user!.is_superuser = true
     let finishSend!: (value: unknown) => void
     api.sendNotificationPreview.mockImplementationOnce(() => new Promise(resolve => { finishSend = resolve }))
     const wrapper = await edit()
     await button('生成预览').trigger('click'); await flushPromises()
     wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
     await button('发送预览').trigger('click')
-    delete auth.user!.effective_access!.actions['access_control.manage_wecom']; await flushPromises()
+    auth.user!.is_superuser = false; await flushPromises()
     expect(document.querySelector('#notification-name')).not.toBeNull()
-    auth.user!.effective_access!.actions['access_control.manage_wecom'] = grant; await flushPromises()
+    auth.user!.is_superuser = true; await flushPromises()
     finishSend({ id: 'old', preview_id: 'preview-1', status: 'ACCEPTED', recipient_name: '撤权前接收人', message: '旧发送结果' }); await flushPromises()
     expect(document.body.textContent).not.toContain('撤权前接收人')
     expect(document.body.textContent).not.toContain('旧发送结果')
@@ -244,9 +263,9 @@ describe('通知规则页面', () => {
     let finishQuery!: (value: unknown) => void
     api.getNotificationPreviewAttempt.mockImplementationOnce(() => new Promise(resolve => { finishQuery = resolve }))
     await button('查询本次结果').trigger('click')
-    delete auth.user!.effective_access!.actions['access_control.manage_wecom']; await flushPromises()
+    auth.user!.is_superuser = false; await flushPromises()
     expect(document.body.textContent).not.toContain('企业微信已受理')
-    auth.user!.effective_access!.actions['access_control.manage_wecom'] = grant; await flushPromises()
+    auth.user!.is_superuser = true; await flushPromises()
     finishQuery({ id: 'old', preview_id: 'preview-1', status: 'UNCERTAIN', recipient_name: '旧查询接收人', message: '旧查询结果' }); await flushPromises()
     expect(document.body.textContent).not.toContain('旧查询接收人')
     expect(document.body.textContent).not.toContain('旧查询结果')

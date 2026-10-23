@@ -86,7 +86,7 @@ class ExternalOrderPriceApiTests(PublicProcessingFixture, APITestCase):
             workshop_employee=self.recipient, quantity=12, order_quantity_snapshot=f.product_line.quantity,
             required_quantity_snapshot=required, unit_price_snapshot=1, amount=12,
             display_name_snapshot=item.display_name, craft_name_snapshot=craft.name,
-            operation_name_snapshot=operation.name, unit_name_snapshot="支", employee_name_snapshot=self.recipient.name)
+            operation_name_snapshot=operation.name, unit_name_snapshot="支", employee_name_snapshot=self.recipient.display_name)
         basis = metal_component_limits(f.product_line)["components"][str(f.profile.component_identity)]
         self.assertTrue(basis["basis_ready"], basis["blockers"])
         self.assertEqual((basis["issued"], basis["allowance"]["reported_minimum"],

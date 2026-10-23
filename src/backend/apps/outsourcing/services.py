@@ -1,4 +1,5 @@
 from apps.access_control.resource_scopes import require_craft, require_order_craft
+from apps.organizations.selectors import active_department_employees
 from apps.boms.material_attributes import bom_attribute_fields, spray_color_value
 from apps.inventory.public_stock_cutover import stock_write_transaction
 import hashlib
@@ -971,7 +972,7 @@ def confirm_return(
         raise ValidationError({"good_zone_id": "合格品只能进入半成品仓库区。"})
     if defective_zone and defective_zone.warehouse.warehouse_type != WarehouseType.DEFECTIVE:
         raise ValidationError({"defective_zone_id": "不良品只能进入不良品仓库区。"})
-    received_by = Employee.objects.filter(
+    received_by = active_department_employees("DEPT_WAREHOUSE").filter(
         pk=received_by_employee_id,
         status=EmployeeStatus.ACTIVE,
         archived_at__isnull=True,

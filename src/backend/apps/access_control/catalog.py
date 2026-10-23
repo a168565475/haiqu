@@ -20,6 +20,7 @@ PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES
 
 SALES_APPS = {"customers", "inquiries", "quotations", "sales_orders", "crm"}
 MODULE_NAMES = {
+    "finance": "财务管理",
     "access_control": "账号与授权管理",
     "organizations": "部门与组织",
     "attendance": "考勤管理",

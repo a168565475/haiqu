@@ -268,6 +268,8 @@ def _line_identity(values, product, quote_line):
     unit_input = values.pop("product_unit", None)
     color_input = values.pop("product_color", None)
     image_input = values.pop("product_image", None)
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(image_input or getattr(quote_line, "product_image", None))
     material_input = values.pop("material", None)
     quotation_color = str(getattr(quote_line, "color_snapshot", None) or "").strip()
 
@@ -327,6 +329,9 @@ def _line_identity(values, product, quote_line):
 
 
 def _replace_children(order, lines, batches, evidence_files, actor_employee):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    for business_file in evidence_files:
+        require_non_finance_receipt_file(business_file)
     SalesOrderDeliveryBatchLine.objects.filter(delivery_batch__sales_order=order).delete()
     SalesOrderDeliveryBatch.objects.filter(sales_order=order).delete()
     SalesOrderPriceException.objects.filter(sales_order_line__sales_order=order).delete()
@@ -500,6 +505,8 @@ def update_sales_order(*, order, validated_data, actor_employee, request=None):
 @transaction.atomic
 def set_sales_order_line_product_image(*, order, line, business_file, actor_employee, request=None):
     """为草稿销售订单行保存产品主图，并记录订单级审计。"""
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(business_file)
     order = SalesOrder.objects.select_for_update().get(pk=order.pk)
     require_matching_etag(request, order)
     if order.status != SalesOrderStatus.DRAFT:
@@ -738,6 +745,9 @@ def _update_confirmed_children_in_place(order, lines, batches):
 
 @transaction.atomic
 def change_confirmed_sales_order(*, order, validated_data, actor_employee, request=None):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    for business_file in validated_data.get("order", {}).get("evidence_files", []):
+        require_non_finance_receipt_file(business_file)
     order = SalesOrder.objects.select_for_update().get(pk=order.pk)
     require_matching_etag(request, order)
     if order.status not in {SalesOrderStatus.CONFIRMED, SalesOrderStatus.FULFILLING, SalesOrderStatus.PAUSED}:
@@ -983,6 +993,8 @@ def add_collaboration_event(*, order, validated_data, actor_employee, request=No
 
 @transaction.atomic
 def cancel_delivery_batch(*, order, delivery_batch, reason, evidence_file, actor_employee, request=None):
+    from apps.files.reference_guards import require_non_finance_receipt_file
+    require_non_finance_receipt_file(evidence_file)
     order = SalesOrder.objects.select_for_update().get(pk=order.pk)
     require_matching_etag(request, order)
     if order.status not in {SalesOrderStatus.CONFIRMED, SalesOrderStatus.FULFILLING}:

@@ -3,6 +3,7 @@ import { apiClient } from './request'
 import type { AccessAudit, AccessEmployee, AccessPage, AccessRole, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
 import type { AccessDepartment, EmployeeDepartmentInput, EmployeeDepartments } from '@/types/access'
 import type { DeletionKind, DeletionItem, DeletionPreview, DeletionResult } from '@/types/access'
+import type { EmployeeBatchAdjustment } from '@/types/access'
 
 const root = '/api/v1/access/'
 const options = (etag?: string) => ({ timeout: 20000, ...(etag ? {headers: {'If-Match': etag}} : {}) })
@@ -28,6 +29,8 @@ export const setRoleDepartment = async (role: AccessRole, department_id: string 
 export const getEmployeeDepartments = async (employee: AccessEmployee) => (await apiClient.get<EmployeeDepartments>(root + `employees/${employee.id}/departments/`, options())).data
 export const assignDepartments = async (employee: AccessEmployee, departments: EmployeeDepartmentInput[], etag: string) => (await apiClient.put<EmployeeDepartments>(root + `employees/${employee.id}/departments/`, {departments}, options(etag))).data
 export const getEmployees = () => all<AccessEmployee>('employees/')
+export const renameEmployee = async (employee: AccessEmployee, display_name: string) => (await apiClient.patch<AccessEmployee>(root + `employees/${employee.id}/name/`, {display_name}, options(employee.etag))).data
+export const adjustEmployees = async (data: EmployeeBatchAdjustment) => (await apiClient.post<{ updated_count: number }>(root + 'employees/adjust-selected/', data, { ...options(), timeout: 120000 })).data
 export const getTeams = () => all<SalesTeam>('sales-teams/')
 export const getAudit = async (page = 1) => (await apiClient.get<AccessPage<AccessAudit>>(root + 'audit-events/', {...options(), params: {page}})).data
 export const createRole = async (data: {role_code: string; display_name: string; description: string}) => (await apiClient.post<AccessRole>(root + 'roles/', data, options())).data

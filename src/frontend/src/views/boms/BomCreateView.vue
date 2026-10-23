@@ -202,7 +202,7 @@ async function loadOptions() {
   try {
     options.value = await fetchBomOptions()
     productionOptions.value = {
-      order_sources: [], delivery_methods: [], statuses: [], boolean_options: [], customers: [], employees: [],
+      order_sources: [], delivery_methods: [], statuses: [], boolean_options: [], customers: [], employees: [], salespeople: [],
       products: options.value.products, currencies: options.value.currencies, units: options.value.units,
       colors: options.value.colors, detail_template: options.value.detail_template,
     }

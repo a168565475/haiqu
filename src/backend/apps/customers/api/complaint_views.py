@@ -13,6 +13,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.organizations.selectors import active_department_employees, employee_filter_choices
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.files.models import USABLE_FILE_SCAN_STATUSES
@@ -220,13 +221,14 @@ class ComplaintViewSet(
             ]
         types = complaint_dictionary_options(COMPLAINT_TYPE_CATEGORY)
         severities = complaint_dictionary_options(COMPLAINT_SEVERITY_CATEGORY)
-        employees = Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True)
+        employees = active_department_employees("DEPT_BUSINESS")
         return Response(
             {
                 "data": {
                     "complaint_types": types,
                     "severities": severities,
                     "statuses": [{"value": value, "label": label} for value, label in ComplaintStatus.choices],
+                    "employee_filters": [{"id": str(employee.pk), "employee_code": employee.employee_code, "display_name": employee.display_name} for employee in employee_filter_choices(active_department_employees("DEPT_BUSINESS"), self.get_queryset().values("owner_employee_id"))],
                     "employees": ComplaintEmployeeSerializer(employees, many=True).data,
                 }
             }

@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "apps.email_accounts",
     "apps.wecom",
     "apps.attendance",
+    "apps.finance",
 ]
 
 MIDDLEWARE = [
@@ -87,7 +88,8 @@ MIDDLEWARE = [
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "filters": {"wecom_access": {"()": "apps.core.logging.WeComAccessLogFilter"}},
+    "filters": {"wecom_access": {"()": "apps.core.logging.WeComAccessLogFilter"},
+                "finance_access": {"()": "apps.finance.logging.FinanceAccessLogFilter"}},
     "formatters": {
         "django.server": {
             "()": "django.utils.log.ServerFormatter", "format": "[{server_time}] {message}", "style": "{",
@@ -96,7 +98,7 @@ LOGGING = {
     "handlers": {
         "django.server": {
             "class": "logging.StreamHandler", "level": "INFO", "formatter": "django.server",
-            "filters": ["wecom_access"],
+            "filters": ["wecom_access", "finance_access"],
         },
     },
     "loggers": {"django.server": {"handlers": ["django.server"], "level": "INFO", "propagate": False}},

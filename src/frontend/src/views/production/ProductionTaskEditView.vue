@@ -463,7 +463,7 @@ onMounted(() => { void load() })
             <div class="info-grid">
               <label class="info-wide readonly-field"><span>生产任务单号</span><ElInput :model-value="task.task_number" readonly aria-label="生产任务单号" /></label>
               <label class="info-wide readonly-field"><span>来源订单</span><ElInput :model-value="task.source_sales_order_number || '手动创建（未关联销售订单）'" readonly aria-label="来源订单" /></label>
-              <label><span>业务员 <i>*</i></span><ElSelect v-model="form.salesperson_id" aria-label="业务员" filterable :disabled="sourceLocked || isTerminal"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
+              <label><span>业务员 <i>*</i></span><ElSelect v-model="form.salesperson_id" aria-label="业务员" filterable :disabled="sourceLocked || isTerminal"><ElOption v-for="employee in options?.salespeople || []" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
               <label><span>跟单员 <i>*</i></span><ElSelect v-model="form.follower_ids" aria-label="跟单员" multiple filterable collapse-tags collapse-tags-tooltip :disabled="isTerminal"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
               <label><span>下单日期 <i>*</i></span><ElDatePicker v-model="form.order_date" aria-label="下单日期" type="date" value-format="YYYY-MM-DD" :disabled="sourceLocked || isTerminal" /></label>
               <label><span>预计交期 <i>*</i></span><ElDatePicker v-model="form.delivery_date" aria-label="预计交期" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>

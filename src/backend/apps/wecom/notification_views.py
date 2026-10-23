@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
 from rest_framework.views import APIView
 
-from apps.access_control.permissions import CanManageNotifications, CanManageWeCom
+from apps.access_control.permissions import CanManageNotifications, CanManageWeCom, SuperadministratorOnly
 from apps.core.api.permissions import HasActiveEmployee
 from apps.core.auth import active_employee_for
 from . import notification_selectors as selectors, notification_services as services
@@ -79,7 +79,7 @@ class NotificationRulePreviewView(NotificationManagementView):
 
 
 class NotificationPreviewManagementView(NotificationManagementView):
-    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageNotifications, CanManageWeCom]
+    permission_classes = [IsAuthenticated, HasActiveEmployee, CanManageNotifications, CanManageWeCom, SuperadministratorOnly]
 
 
 class NotificationPreviewRecipientsView(NotificationPreviewManagementView):

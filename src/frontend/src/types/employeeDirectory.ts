@@ -9,6 +9,18 @@ export interface EmployeeDirectoryEmployee {
   etag: string
 }
 
+export interface EmployeeDirectoryProgress {
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED'
+  completed: number
+  total: number
+  phase: string
+}
+
+export interface EmployeeDirectoryProgressObserver {
+  onProgress: (progress: EmployeeDirectoryProgress | null) => void
+  signal: AbortSignal
+}
+
 export interface EmployeeDirectoryDepartment {
   id: number
   parentid: number
@@ -34,7 +46,7 @@ export interface EmployeeDirectoryMember {
   main_department: number | null
   status: number | null
   status_label: string
-  action: 'CREATE' | 'EXISTING' | 'REVIEW' | 'SKIP'
+  action: 'CREATE' | 'RECREATE' | 'EXISTING' | 'REVIEW' | 'SKIP'
   reason: string
   employee: EmployeeDirectoryEmployee | null
   candidates: EmployeeDirectoryEmployee[]
@@ -118,6 +130,7 @@ export interface DepartmentMappingSourceDepartment extends EmployeeDirectoryDepa
 export interface DepartmentMappingPreview {
   snapshot: DirectorySnapshot
   can_save_mapping: boolean
+  can_edit_saved_mappings?: boolean
   corp_id: string
   departments: DepartmentMappingSourceDepartment[]
   organizations: DepartmentMappingOrganization[]

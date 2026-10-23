@@ -23,6 +23,13 @@ defineProps<{ name: string }>()
       <rect class="icon-muted" x="27" y="27" width="14" height="14" rx="2.5" />
     </g>
 
+    <g v-else-if="name === 'finance-management'" class="finance-primary-icon">
+      <rect x="6" y="5" width="29" height="38" rx="4" class="icon-muted finance-ledger"/>
+      <path d="M14 14h13M14 21h8M14 28h6" class="finance-ledger-lines"/>
+      <circle cx="34" cy="32" r="10" class="icon-accent-stroke finance-coin"/>
+      <path d="m29 27 5 6 5-6m-5 6v5m-5-5h10m-9 4h8" class="icon-accent-stroke"/>
+    </g>
+
     <g v-else-if="name === 'customer-management'">
       <path class="icon-muted" d="M30 10.5c4-2.5 10 .1 10 5.5 0 4-2.8 7-6.5 7.5C41 25 44 31 44 38h-4" />
       <circle class="icon-warm" cx="17" cy="17" r="7.5" />
@@ -150,4 +157,8 @@ defineProps<{ name: string }>()
 .icon-no-stroke {
   stroke: none;
 }
+.finance-coin { fill: var(--erp-menu-selected-background); }
+:global(.app-sidebar__menu-item.is-active) .finance-ledger { fill: var(--erp-menu-accent); }
+:global(.app-sidebar__menu-item.is-active) .finance-ledger-lines { stroke: var(--erp-menu-icon-selected-muted); }
+:global(.app-sidebar__menu-item.is-active) .finance-coin { fill: var(--erp-menu-icon-selected-muted); }
 </style>

@@ -51,6 +51,7 @@ export interface TaskOptions {
   task_types: Array<{ value: string; label: string }>
   statuses: Array<{ value: TaskStatus; label: string }>
   priorities: Array<{ value: TaskPriority; label: string }>
+  assignee_filters?: Array<{ id: string; code: string; name: string }>
   assignees: Array<{ id: string; code: string; name: string }>
 }
 

@@ -2,7 +2,7 @@ from django.urls import path
 
 from .views import AuditsView, BindingsView, ConfigCheckView, ConfigView, EmployeesView
 from .message_views import MessageAttemptsView, MessageTemplateView, MessageTestView
-from .directory_views import DirectoryMatchView, DirectoryPreviewView, DirectoryRefreshView, DirectorySyncView
+from .directory_views import DirectoryMatchView, DirectoryPreviewView, DirectoryRefreshView, DirectorySyncView, DirectoryProgressView
 from .department_mapping_views import DepartmentMappingDetailView, DepartmentMappingsRefreshView, DepartmentMappingsView
 
 
@@ -15,6 +15,7 @@ urlpatterns = [
     path("employee-directory/refresh/", DirectoryRefreshView.as_view(), name="wecom-directory-refresh"),
     path("employee-directory/sync/", DirectorySyncView.as_view(), name="wecom-directory-sync"),
     path("employee-directory/match/", DirectoryMatchView.as_view(), name="wecom-directory-match"),
+    path("employee-directory/progress/<uuid:progress_id>/", DirectoryProgressView.as_view(), name="wecom-directory-progress"),
     path("department-mappings/", DepartmentMappingsView.as_view(), name="wecom-department-mappings"),
     path("department-mappings/refresh/", DepartmentMappingsRefreshView.as_view(), name="wecom-department-mappings-refresh"),
     path("department-mappings/<int:department_id>/", DepartmentMappingDetailView.as_view(), name="wecom-department-mapping-detail"),

@@ -1,4 +1,6 @@
 from django.core.exceptions import ValidationError
+from apps.organizations.models import Employee
+
 from django.db import models
 from django.db.models import Q
 
@@ -15,6 +17,7 @@ class RecordStatus(models.TextChoices):
 class WorkshopEmployeeStatus(models.TextChoices):
     ACTIVE = "ACTIVE", "在职"
     LEFT = "LEFT", "离职"
+    DELETED = "DELETED", "已删除"
 
 
 class CraftType(models.TextChoices):
@@ -77,59 +80,11 @@ class Workshop(NoPhysicalDeleteModel):
         return self.name
 
 
-class WorkshopEmployee(NoPhysicalDeleteModel):
-    workshop = models.ForeignKey(Workshop, on_delete=models.PROTECT, related_name="employees")
-    employee = models.ForeignKey(
-        "organizations.Employee", null=True, blank=True, on_delete=models.PROTECT,
-        related_name="workshop_assignments",
-    )
-    position = models.CharField(max_length=100)
-    name = models.CharField(max_length=100)
-    is_supervisor = models.BooleanField()
-    status = models.CharField(
-        max_length=20,
-        choices=WorkshopEmployeeStatus.choices,
-        default=WorkshopEmployeeStatus.ACTIVE,
-    )
-    created_by_employee = models.ForeignKey(
-        "organizations.Employee",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="created_workshop_config_employees",
-    )
-    updated_by_employee = models.ForeignKey(
-        "organizations.Employee",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="updated_workshop_config_employees",
-    )
-
+# 保留现有车间员工权限名称；代理模型使用 employee 表，不创建第二份员工资料。
+class WorkshopEmployee(Employee):
     class Meta:
-        db_table = "workshop_config_employee"
-        ordering = ["workshop__name", "position", "name", "id"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["workshop", "position", "name"], condition=Q(employee__isnull=True),
-                name="workshop_emp_unlinked_unique",
-            ),
-            models.UniqueConstraint(
-                fields=["workshop", "position", "employee"], condition=Q(employee__isnull=False),
-                name="workshop_emp_linked_unique",
-            ),
-            models.CheckConstraint(
-                condition=Q(status__in=WorkshopEmployeeStatus.values),
-                name="workshop_employee_status_valid",
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["workshop", "status", "is_supervisor"], name="workshop_emp_lookup_idx"),
-            models.Index(fields=["name"], name="workshop_emp_name_idx"),
-        ]
-
-    def __str__(self):
-        return f"{self.workshop.name} - {self.position} - {self.name}"
+        proxy = True
+        default_permissions = ("view", "change")
 
 
 class Craft(NoPhysicalDeleteModel):

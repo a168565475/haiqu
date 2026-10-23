@@ -2,6 +2,7 @@ from apps.access_control import sales_policy
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.organizations.selectors import active_department_employees
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.reference_data.models import ReferenceDictionary
 from apps.reference_data.services import published_dictionary_item_id_is_active
@@ -22,7 +23,7 @@ COMPLAINT_SEVERITY_CATEGORY = "COMPLAINT_SEVERITY"
 
 
 def active_employees():
-    return Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True)
+    return active_department_employees("DEPT_BUSINESS")
 
 
 class ComplaintDictionarySerializer(serializers.ModelSerializer):

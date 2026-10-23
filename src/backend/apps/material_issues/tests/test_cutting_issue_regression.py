@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 import uuid
 from decimal import Decimal
 
@@ -9,7 +10,7 @@ from apps.inventory.models import MaterialStockBalance, MaterialStockMovement, P
 from apps.production_scheduling.models import ProductionScheduleProductCraft
 from apps.production_scheduling.tests.test_production_scheduling_api import ensure_schedule_test_references
 from apps.reference_data.models import ProductCategory, ProductionUnit
-from apps.workshop_config.models import Craft, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Workshop
 
 from ..models import MaterialIssue, OrderMaterialRequirement
 from . import test_material_issue_api as ordinary_fixture
@@ -40,7 +41,7 @@ class CuttingIssueRegressionTests(APITestCase):
         self.bom_line.total_purchase_quantity = "500"
         self.bom_line.save()
         self.workshop = Workshop.objects.get(name="车缝车间")
-        self.recipient = WorkshopEmployee.objects.create(
+        self.recipient = production_employee(
             workshop=self.workshop, position="领料员", name="裁剪测试领料员", is_supervisor=False, status="ACTIVE",
         )
         craft = Craft.objects.create(

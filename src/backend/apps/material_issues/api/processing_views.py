@@ -6,6 +6,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 
 from ..processing_selectors import processing_lines, readable_processing_lines, source_data
@@ -105,7 +106,7 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
         ).distinct())
         zones = WarehouseZone.objects.filter(status="ACTIVE", warehouse__status="ACTIVE",
             warehouse__warehouse_type=WarehouseType.SEMI_FINISHED).select_related("warehouse")
-        receivers = Employee.objects.filter(status="ACTIVE", archived_at__isnull=True)
+        receivers = active_department_employees("DEPT_WAREHOUSE")
         orders = accessible_outsourcing_orders(request).filter(craft__in=crafts).exclude(status="CANCELLED")
         return Response({"data": {
             "crafts": [{"id": str(row.pk), "name": row.name, "outsourcing_code": row.outsourcing_code} for row in crafts],

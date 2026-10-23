@@ -6,9 +6,46 @@ import {
   matchEmployeeDirectory, saveDepartmentMapping, syncEmployeeDirectory,
 } from './employeeDirectory'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('统一员工通讯录 API', () => {
+  it('进度只采用后端计数，关闭观察后不再轮询且不取消主请求', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: any) => void
+    const post = vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data: { status: 'RUNNING', completed: 2, total: 8, phase: '读取部门员工' } } })
+    const controller = new AbortController(), onProgress = vi.fn()
+    const request = refreshEmployeeDirectory(false, { signal: controller.signal, onProgress })
+    const id = post.mock.calls[0]?.[2]?.headers?.['X-Directory-Progress']
+    expect(id).toEqual(expect.any(String))
+    await vi.advanceTimersByTimeAsync(300)
+    expect(get).toHaveBeenCalledWith(`/api/v1/wecom/employee-directory/progress/${id}/`, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(onProgress).toHaveBeenLastCalledWith({ status: 'RUNNING', completed: 2, total: 8, phase: '读取部门员工' })
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(get).toHaveBeenCalledTimes(1)
+    finish({ data: { data: {} }, headers: { etag: '"v1"' } })
+    await expect(request).resolves.toEqual({ data: {}, etag: '"v1"' })
+    expect(onProgress).toHaveBeenCalledTimes(1)
+  })
+
+  it('进度读取失败不伪造百分比，主请求失败后停止查询并保留错误', async () => {
+    vi.useFakeTimers()
+    let fail!: (reason: Error) => void
+    vi.spyOn(apiClient, 'post').mockImplementation(() => new Promise((_, reject) => { fail = reject }))
+    const get = vi.spyOn(apiClient, 'get').mockRejectedValue(new Error('network'))
+    const onProgress = vi.fn()
+    const request = refreshEmployeeDirectory(false, { signal: new AbortController().signal, onProgress })
+    const rejected = expect(request).rejects.toThrow('upstream')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onProgress).toHaveBeenCalledWith(null)
+    fail(new Error('upstream'))
+    await rejected
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(onProgress).toHaveBeenCalledTimes(1)
+  })
+
   it('预览默认不补部门，保留完整来源与带引号的版本', async () => {
     const data = { corp_id: 'corp', departments: [], members: [], preview_token: 'preview', apply_departments: false }
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { data }, headers: { etag: '"directory-v1"' } })

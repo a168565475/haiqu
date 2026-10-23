@@ -47,6 +47,50 @@ class OrganizationApiTests(APITestCase):
     def row(self, unit=None, primary=True, title=""):
         return {"department_id": str((unit or self.unit).pk), "is_primary": primary, "position_title": title}
 
+    def test_employee_department_ids_only_include_current_active_departments(self):
+        now = timezone.now()
+        second = OrganizationUnit.objects.create(unit_code="SECOND", unit_name="兼岗部门", parent=self.root)
+        for unit in (self.unit, second):
+            EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=unit,
+                effective_from=now - timedelta(days=1), is_primary=unit == self.unit)
+        for code, status, start, end in [
+            ("ENDED", "ACTIVE", now - timedelta(days=3), now - timedelta(days=1)),
+            ("FUTURE", "ACTIVE", now + timedelta(days=1), None),
+            ("INACTIVE", "INACTIVE", now - timedelta(days=1), None),
+            ("ARCHIVED", "ACTIVE", now - timedelta(days=1), None),
+        ]:
+            unit = OrganizationUnit.objects.create(unit_code=code, unit_name=code, parent=self.root,
+                status=status, archived_at=now if code == "ARCHIVED" else None)
+            EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=unit,
+                effective_from=start, effective_to=end)
+        response = self.client.get(ROOT + f"employees/{self.employee.pk}/roles/")
+        self.assertEqual(response.status_code, 200)
+        self.assertCountEqual(response.data["department_ids"], [str(self.unit.pk), str(second.pk)])
+        self.assertCountEqual(response.data["department"].split("、"), [self.unit.unit_name, second.unit_name])
+
+    def test_employee_login_summary_counts_only_successful_account_records(self):
+        from apps.core.login_records import record_successful_login
+        from apps.access_control.api.serializers import AccessEmployeeSerializer
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from types import SimpleNamespace
+        request = SimpleNamespace(META={})
+        record_successful_login(request, self.user, "PASSWORD")
+        record_successful_login(request, self.user, "WECOM")
+        record_successful_login(request, self.admin, "PASSWORD")
+        self.user.last_login = timezone.now(); self.user.save(update_fields=["last_login"])
+        self.employee.refresh_from_db()
+        data = AccessEmployeeSerializer(self.employee).data
+        self.assertEqual(data["login_count"], 2)
+        self.assertIsNotNone(data["last_login"])
+        unregistered = Employee.objects.create(employee_code="NO_LOGIN_ACCOUNT", display_name="无账号")
+        self.assertIsNone(AccessEmployeeSerializer(unregistered).data["login_count"])
+        self.assertIsNone(AccessEmployeeSerializer(unregistered).data["last_login"])
+        with CaptureQueriesContext(connection) as queries:
+            rows = AccessEmployeeSerializer(Employee.objects.select_related("user").order_by("id"), many=True).data
+        self.assertEqual(len([q for q in queries if '"audit_log"' in q["sql"]]), 1)
+        self.assertEqual(next(row for row in rows if row["id"] == str(self.employee.pk))["login_count"], 2)
+
     def test_departments_create_duplicates_invalid_references_and_no_delete(self):
         data = {"unit_code": "NEW_DEP", "unit_name": "新增部门", "parent_id": str(self.root.pk)}
         self.assertEqual(self.client.post(ROOT + "departments/", data, format="json").status_code, 201)

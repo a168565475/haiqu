@@ -7,7 +7,7 @@ import ProductionTaskListView from './ProductionTaskListView.vue'
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), deleteProductionTask: vi.fn(), fetchProductionTasks: vi.fn(), fetchProductionTaskOptions: vi.fn(), fetchProductionTaskFilterOptions: vi.fn() }))
-const options = { employees: [], products: [], customers: [], order_sources: [], delivery_methods: [], statuses: [] }
+const options = { employees: [], salespeople: [], products: [], customers: [], order_sources: [], delivery_methods: [], statuses: [] }
 const mount = () => shallowMount(ProductionTaskListView, { global: { plugins: [ElementPlus] } })
 
 describe('生产任务列表分区加载', () => {

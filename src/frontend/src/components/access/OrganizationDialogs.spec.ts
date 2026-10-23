@@ -1,12 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ElSelect } from 'element-plus'
 import DepartmentMaintenanceDialog from './DepartmentMaintenanceDialog.vue'
 import EmployeeDepartmentsDialog from './EmployeeDepartmentsDialog.vue'
 import * as api from '@/api/access'
 import type { AccessDepartment, AccessEmployee } from '@/types/access'
 
 vi.mock('@/api/access', () => ({ createDepartment: vi.fn(), updateDepartment: vi.fn(), getEmployeeDepartments: vi.fn(), assignDepartments: vi.fn(), accessError: () => '版本已变化，请重新读取' }))
-vi.mock('element-plus', () => ({ ElMessage: { success: vi.fn() } }))
+vi.mock('element-plus', async original => ({ ...await original<object>(), ElMessage: { success: vi.fn() } }))
 const stub = { props:['modelValue'], template:'<section v-if="modelValue" role="dialog"><slot/><slot name="footer"/></section>' }
 const global = { stubs:{AppWindowDialog:stub} }
 const departments: AccessDepartment[] = [
@@ -28,9 +29,9 @@ describe('部门维护及员工历史', () => {
     const wrapper = mount(DepartmentMaintenanceDialog,{props:{modelValue:true,departments},global})
     await button(wrapper,'保存部门').trigger('click')
     expect(api.createDepartment).not.toHaveBeenCalled()
-    await wrapper.get('select').setValue('production')
-    expect(wrapper.findAll('input')[0]!.attributes('disabled')).toBeDefined()
-    await wrapper.findAll('input')[1]!.setValue('生产组织')
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'production'); await flushPromises()
+    expect(wrapper.get('input[maxlength="50"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('input[maxlength="200"]').setValue('生产组织')
     await button(wrapper,'保存部门').trigger('click'); await flushPromises()
     expect(api.updateDepartment).toHaveBeenCalledWith(expect.objectContaining({id:'production',etag:'dep-v1'}),{unit_name:'生产组织',sort_order:40,status:'ACTIVE'})
     wrapper.unmount()

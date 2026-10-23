@@ -16,8 +16,9 @@ async function setup(isSuperuser: boolean, permissions: string[]) {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { name: 'home', path: '/', component: { template: '<div />' } },
     { name: 'work-report-days', path: '/workshop/work-reports', component: { template: '<div />' } },
-    { name: 'reference-data-settings', path: '/settings/reference-data', component: { template: '<div />' } },
-    { name: 'theme-settings', path: '/settings/theme', component: { template: '<div />' } },
+    { name: 'system-settings', path: '/settings', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
+    { name: 'reference-data-settings', path: '/settings/reference-data', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
+    { name: 'theme-settings', path: '/settings/theme', component: { template: '<div />' }, meta: { activeMenu: 'settings' } },
     ...['workshop-scheduling', 'workshop-metalworking-plan', 'workshop-outsourcing', 'material-issues', 'wage-schemes', 'workshop-configuration']
       .map(name => ({ name, path: `/${name}`, component: { template: '<div />' } })),
   ] })

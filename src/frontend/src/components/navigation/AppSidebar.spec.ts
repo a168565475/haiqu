@@ -18,7 +18,21 @@ const boardEntries = [
 const sidebarIconKeys = [
   'workbench', 'customer-management', 'sample-management', 'product-management',
   'production-management', 'procurement-management', 'workshop-management', 'warehouse-management',
-  'employee-management', 'boards', 'access-management', 'settings',
+  'employee-management', 'boards', 'settings',
+] as const
+
+const settingsEntries = [
+  ['system-settings', '/settings'],
+  ['access-management', '/settings/access'],
+  ['reference-data-settings', '/settings/reference-data'],
+  ['theme-settings', '/settings/theme'],
+  ['wecom-settings', '/settings/wecom'],
+  ['email-account-settings', '/settings/email-accounts'],
+  ['notification-rules', '/settings/notifications'],
+  ['master-data-center', '/settings/master-data'],
+  ['production-data', '/settings/production-data'],
+  ['inquiry-handling-settings', '/settings/inquiry-handling-time'],
+  ['number-rules', '/settings/number-rules'],
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
@@ -38,7 +52,7 @@ const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
   'purchase-inbounds', 'purchase-returns', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
-  'material-inventory', 'access-management', 'reference-data-settings', 'theme-settings', 'wecom-settings', 'email-account-settings', 'employee-list', 'wecom-attendance',
+  'material-inventory', 'employee-list', 'wecom-attendance', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
 
@@ -56,8 +70,8 @@ async function setup() {
       'inventory.view_finishedgoodsreceipt', 'inventory.view_materialinbound', 'attendance.view_attendance',
     ] }
   const router = createRouter({ history: createMemoryHistory(), routes: routeNames.map(name => ({
-    name, path: boardEntries.find(([boardName]) => boardName === name)?.[1] || `/${name}`, component: { template: '<div />' },
-    meta: { activeMenu: name === 'workshop-metalworking-plan' ? 'workshop-internal-plan' : name === 'wecom-attendance' ? 'attendance' : name },
+    name, path: settingsEntries.find(([settingName]) => settingName === name)?.[1] || boardEntries.find(([boardName]) => boardName === name)?.[1] || `/${name}`, component: { template: '<div />' },
+    meta: { activeMenu: settingsEntries.some(([settingName]) => settingName === name) ? 'settings' : name === 'workshop-metalworking-plan' ? 'workshop-internal-plan' : name === 'wecom-attendance' ? 'attendance' : name },
   })) })
   await router.push('/workshop-metalworking-plan')
   await router.isReady()
@@ -77,9 +91,9 @@ afterEach(() => {
 })
 
 describe('全局悬停侧栏', () => {
-  it('主题移到顶栏后，其余一级菜单仍渲染对应的确认图标', async () => {
+  it('底部合并为配置入口，其余一级菜单仍渲染对应的确认图标', async () => {
     await setup()
-    expect(wrapper.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(sidebarIconKeys.length + 1)
+    expect(wrapper.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(sidebarIconKeys.length)
     for (const key of sidebarIconKeys) {
       const entry = wrapper.get(`[data-menu-key="${key}"]`)
       expect(entry.findAll('[data-confirmed-sidebar-icon]')).toHaveLength(1)
@@ -96,16 +110,12 @@ describe('全局悬停侧栏', () => {
     expect(group('workshop').classes()).not.toContain('is-active')
     expect(group('customer').find('[data-confirmed-sidebar-icon="customer-management"]').exists()).toBe(true)
 
-    router.getRoutes().find(route => route.name === 'reference-data-settings')!.meta.activeMenu = 'settings'
-    for (const [route, key] of [
-      ['access-management', 'access-management'],
-      ['reference-data-settings', 'settings'],
-    ]) {
-      await router.push(`/${route}`)
-      const entry = wrapper.get(`[data-menu-key="${key}"]`)
+    for (const [name] of settingsEntries) {
+      await router.push({ name })
+      const entry = wrapper.get('[data-menu-key="settings"]')
       expect(entry.classes()).toContain('is-active')
       expect(entry.attributes('aria-current')).toBe('page')
-      expect(entry.find(`[data-confirmed-sidebar-icon="${key}"]`).exists()).toBe(true)
+      expect(entry.find('[data-confirmed-sidebar-icon="settings"]').exists()).toBe(true)
       expect(wrapper.findAll('.app-sidebar__footer-link.is-active')).toHaveLength(1)
       expect(group('customer').classes()).not.toContain('is-active')
     }
@@ -450,7 +460,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     expect(panel().exists()).toBe(false)
     expect(wrapper.findAll('.app-sidebar__menu-label').map(item => item.text())).toEqual(
-      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '行政', '看板', '权限', '配置', '企微'],
+      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '行政', '看板', '配置'],
     )
     expect(group('workshop').classes()).toContain('is-active')
   })
@@ -517,19 +527,24 @@ describe('全局悬停侧栏', () => {
     expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(false)
     expect(panel().exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="access-management"]').exists()).toBe(false)
-    expect(wrapper.find('[data-menu-key="settings"]').exists()).toBe(true) // 有效员工保留个人邮箱配置入口。
+    expect(wrapper.find('[data-menu-key="settings"]').exists()).toBe(true) // 已登录用户仍可进入界面主题及个人邮箱配置。
   })
 
-  it('企业微信管理入口仅显示给在职admin超级管理员', async () => {
+  it('权限和企微不再独立占用侧栏，唯一配置入口进入卡片首页', async () => {
     const { auth, router } = await setup()
-    auth.user!.employee!.status = 'INACTIVE'; await nextTick()
+    expect(wrapper.findAll('.app-sidebar__footer-link')).toHaveLength(1)
+    expect(wrapper.find('[data-menu-key="access-management"]').exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
-    auth.user!.employee = { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }
+    expect(wrapper.get('[data-menu-key="settings"]').attributes('href')).toBe('/settings')
+    await wrapper.get('[data-menu-key="settings"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('system-settings')
+    expect(wrapper.get('[data-menu-key="settings"]').attributes('aria-current')).toBe('page')
+
+    auth.user = { ...auth.user!, is_superuser: false, permissions: [] }
     await nextTick()
-    expect(wrapper.get('[data-menu-key="wecom-settings"]').attributes('href')).toBe('/wecom-settings')
-    await router.push('/wecom-settings'); await nextTick()
-    expect(wrapper.get('[data-menu-key="wecom-settings"]').attributes('aria-current')).toBe('page')
-    auth.user!.is_superuser = false; await nextTick()
+    expect(wrapper.findAll('.app-sidebar__footer-link')).toHaveLength(1)
+    expect(wrapper.find('[data-menu-key="access-management"]').exists()).toBe(false)
     expect(wrapper.find('[data-menu-key="wecom-settings"]').exists()).toBe(false)
   })
 
@@ -606,5 +621,14 @@ describe('员工考勤入口兼容', () => {
     expect(resolved.meta.activeMenu).toBe(activeMenu)
     expect(createPageTab(resolved)?.title).toBe(title)
     expect(createPageTab(resolved)?.fullPath).toBe(path)
+  })
+})
+
+describe('系统配置路由兼容', () => {
+  it.each(settingsEntries)('%s 保留真实地址 %s 并选中唯一配置菜单', (name, path) => {
+    const resolved = applicationRouter.resolve(path)
+    expect(resolved.name).toBe(name)
+    expect(resolved.meta.requiresAuth).toBe(true)
+    expect(resolved.meta.activeMenu).toBe('settings')
   })
 })

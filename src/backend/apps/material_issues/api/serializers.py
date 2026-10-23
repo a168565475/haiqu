@@ -259,10 +259,10 @@ class MaterialIssueReadSerializer(serializers.Serializer):
             ),
             "recipient": (
                 {
-                    "id": str(issue.recipient_workshop_employee_id),
-                    "name": issue.recipient_workshop_employee.name,
+                    "id": str(issue.recipient_workshop_employee_id) if issue.recipient_workshop_employee_id else None,
+                    "name": issue.recipient_name_snapshot,
                 }
-                if issue.recipient_workshop_employee_id
+                if issue.recipient_workshop_employee_id or issue.recipient_name_snapshot
                 else None
             ),
             "issue_at": issue.issue_at,

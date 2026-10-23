@@ -421,7 +421,7 @@ def workshop_section(request, filters, today, permissions):
 
 def reports_section(request, filters):
     queryset = accessible_work_reports(request, permission=REPORT_PERMISSION).filter(production_date=filters["production_date"])
-    counts = queryset.aggregate(report_count=Count("pk", distinct=True), employee_count=Count("lines__workshop_employee_id", distinct=True))
+    counts = queryset.aggregate(report_count=Count("pk", distinct=True), employee_count=Count(Coalesce("lines__workshop_employee_id", "lines__legacy_employee_id"), distinct=True))
     items = [{"id": str(report.pk), "number": report.report_number, "task_number": report.task_number_snapshot,
               "workshop_name": report.workshop.name, "production_date": report.production_date,
               "lines": [{"operation": line.operation_name_snapshot or line.display_name_snapshot,

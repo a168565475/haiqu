@@ -187,7 +187,7 @@ class TubeProcessingFixture:
                     amount=Decimal(quantity) * line.declared_price,
                     display_name_snapshot=line.display_name_snapshot, craft_name_snapshot=self.craft.name,
                     operation_name_snapshot=line.operation_name_snapshot, unit_name_snapshot="支",
-                    employee_name_snapshot=self.worker.name)
+                    employee_name_snapshot=self.worker.display_name)
         return report
 
     def receive(self, quantity, *, plan=None):

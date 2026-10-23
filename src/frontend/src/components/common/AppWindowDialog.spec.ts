@@ -108,6 +108,23 @@ describe('AppWindowDialog', () => {
     wrapper.unmount()
   })
 
+  it('配置窗口可铺满视口并还原后再最大化', async () => {
+    const wrapper = mount(AppWindowDialog, {
+      attachTo: document.body,
+      props: { modelValue: true, title: '配置窗口', width: 520, height: 360, fullscreen: true, edgeToEdge: true },
+    })
+    await nextTick()
+    const dialog = document.querySelector<HTMLElement>('.app-window-dialog')!
+    expect([dialog.style.left, dialog.style.top, dialog.style.width, dialog.style.height])
+      .toEqual(['0px', '0px', `${window.innerWidth}px`, `${window.innerHeight}px`])
+    await new DOMWrapper(document.querySelector('[aria-label="还原"]') as Element).trigger('click')
+    expect([dialog.style.width, dialog.style.height]).toEqual(['520px', '360px'])
+    await new DOMWrapper(document.querySelector('[aria-label="最大化"]') as Element).trigger('click')
+    expect([dialog.style.left, dialog.style.top, dialog.style.width, dialog.style.height])
+      .toEqual(['0px', '0px', `${window.innerWidth}px`, `${window.innerHeight}px`])
+    wrapper.unmount()
+  })
+
   it('兼容抽屉迁移的 header 插槽，并支持无标题栏的详情窗口', async () => {
     const wrapper = mount(AppWindowDialog, {
       attachTo: document.body,

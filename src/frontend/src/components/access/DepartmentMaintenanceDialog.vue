@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElSelect, ElOption } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import DeleteManagementDialog from './DeleteManagementDialog.vue'
 import * as api from '@/api/access'
@@ -41,11 +41,11 @@ async function save() {
   <AppWindowDialog :model-value="modelValue" title="部门维护" :width="640" :before-close="done => { if (!saving) done() }" destroy-on-close @update:model-value="value => { if (!value) close() }">
     <div class="access-dialog">
       <p v-if="error" class="access-warning" role="alert">{{ error }}</p>
-      <label>选择部门<select v-model="selectedId" :disabled="saving"><option value="">＋ 新建部门</option><option v-for="item in options" :key="item.id" :value="item.id">{{ item.unit_name }}{{ item.status === 'INACTIVE' ? '（已停用）' : '' }}</option></select></label>
+      <label>选择部门<ElSelect v-model="selectedId" filterable :empty-values="[null, undefined]" :disabled="saving" aria-label="选择部门"><ElOption value="" label="＋ 新建部门" /><ElOption v-for="item in options" :key="item.id" :value="item.id" :label="`${item.unit_name}${item.status === 'INACTIVE' ? '（已停用）' : ''}`" /></ElSelect></label>
       <label>部门编码<input v-model="form.code" :disabled="saving || !!selected" maxlength="50" placeholder="如 DEPT_SUPPORT"></label>
       <label>部门名称<input v-model="form.name" :disabled="saving" maxlength="200"></label>
       <label>排序<input v-model.number="form.sort" :disabled="saving" type="number" min="0" max="2147483647"></label>
-      <label v-if="selected">状态<select v-model="form.status" :disabled="saving"><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></select></label>
+      <label v-if="selected">状态<ElSelect v-model="form.status" :disabled="saving" aria-label="部门状态"><ElOption value="ACTIVE" label="启用" /><ElOption value="INACTIVE" label="停用" /></ElSelect></label>
       <p class="muted">部门只做组织分类，不自动授予角色权限。存在角色、下级或有效员工关系时不能停用；历史记录保留。</p>
     </div>
     <template #footer><div class="access-actions access-dialog-footer"><button v-if="selected" :disabled="saving" @click="deleting = true">删除部门</button><button :disabled="saving" @click="close">取消</button><button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存部门' }}</button></div></template>

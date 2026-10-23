@@ -1,3 +1,4 @@
+from apps.workshop_config.tests.factories import production_employee
 from datetime import timedelta
 from uuid import uuid4
 
@@ -14,7 +15,7 @@ from apps.inventory.models import FinishedGoodsReceipt, Warehouse, WarehouseLoca
 from apps.inventory.assembly_receipt_models import AssemblyReceiptSource
 from apps.production_scheduling.models import ProductionSchedule, ProductionScheduleProduct, ProductionScheduleProductCraft
 from apps.reference_data.models import Currency, ProductionUnit
-from apps.workshop_config.models import Craft, Operation, Workshop, WorkshopEmployee
+from apps.workshop_config.models import Craft, Operation, Workshop
 from apps.workshop_reporting.models import (
     WageScheme, WageSchemeLine, WorkItem, WorkReport, WorkReportLine, WorkshopReportingScope,
 )
@@ -295,7 +296,7 @@ class ProductionDashboardApiTests(DashboardFixture, APITestCase):
             schedule_product=plan, craft=craft, craft_type_snapshot="INTERNAL", craft_name_snapshot=craft.name, plan_category="METAL",
         )
         operation = Operation.objects.create(operation_number="DASH-OP", craft=craft, name="切管", reporting_unit=self.unit)
-        worker = WorkshopEmployee.objects.create(workshop=workshop, position="操作工", name="看板工人", is_supervisor=False)
+        worker = production_employee(workshop=workshop, position="操作工", name="看板工人", is_supervisor=False)
         work_item = WorkItem.objects.create(
             product_line=plan.product_line, workshop=workshop, craft=craft, operation=operation, unit=self.unit,
             identity_key="dashboard", display_name="切管",

@@ -33,6 +33,21 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('企业微信部门映射弹窗', () => {
+  it('过期副本仅开放已有映射修改与清除，不开放新绑定或员工补部门', async () => {
+    const data = preview()
+    data.data.can_save_mapping = false; data.data.can_edit_saved_mappings = true
+    data.data.snapshot.status = 'CONFIG_UNAVAILABLE'; data.data.snapshot.expires_at = '2020-01-01T00:00:00Z'
+    data.data.departments.push({ ...data.data.departments[0]!, id: 2, mapping: null })
+    api.getDepartmentMappings.mockResolvedValue(data)
+    const wrapper = await render()
+    expect(target(wrapper).attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[aria-label="映射目标部门 2"]').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '按映射补充员工部门').attributes('disabled')).toBeDefined()
+    await target(wrapper).setValue('department-2'); await flushPromises()
+    expect(api.saveDepartmentMapping).toHaveBeenCalledOnce()
+    expect(target(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
   it('读取时只显示一条常驻浮动提示，成功结束关闭且没有行内加载文字', async () => {
     let finish!: (value: DepartmentMappingPreviewResponse) => void
     api.getDepartmentMappings.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))

@@ -29,6 +29,7 @@ export interface SampleOptions {
   sample_types: SampleSelectOption[]
   statuses: SampleSelectOption[]
   customers: SampleCustomerOption[]
+  owner_filters?: SampleOwnerOption[]
   owners: SampleOwnerOption[]
   fee_decisions: SampleSelectOption[]
   freight_bearers: SampleSelectOption[]

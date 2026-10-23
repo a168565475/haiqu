@@ -17,6 +17,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
@@ -384,7 +385,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                 for item in product_colors
             ],
             "production_orders": list(production_orders),
-            "employees": list(Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True)
+            "employees": list(active_department_employees("DEPT_WAREHOUSE")
                 .order_by("employee_code", "id").values("id", "employee_code", "display_name")),
         }})
 
@@ -804,7 +805,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "production_task_id": str(line.issue.production_task_id),
                 "production_task_number": line.issue.production_task.task_number,
                 "workshop": line.issue.workshop.name,
-                "recipient": line.issue.recipient_workshop_employee.name,
+                "recipient": line.issue.recipient_name_snapshot,
                 "issue_at": line.issue.issue_at,
                 "issued_quantity": str(line.issued_quantity),
                 "unit": line.unit_snapshot,

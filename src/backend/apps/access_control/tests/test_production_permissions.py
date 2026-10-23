@@ -394,7 +394,10 @@ class RoleConfigurationTests(APITestCase):
         self.assertTrue(result['applied'])
         self.assertTrue(all(not row['added'] for row in result['roles']))
         self.assertTrue(all(not row['after'] for row in result['roles'] if row['role_code'] in (
-            'FINANCE', 'CASHIER', 'PMC', 'MERCHANDISER', 'OUTSOURCING', 'COATING_MATERIALS', 'SALESPERSON', 'ACCOUNT_MANAGER')))
+            'PMC', 'MERCHANDISER', 'OUTSOURCING', 'COATING_MATERIALS', 'SALESPERSON', 'ACCOUNT_MANAGER')))
+        for row in result['roles']:
+            if row['role_code'] in ('FINANCE', 'CASHIER'):
+                self.assertEqual({grant['permission'] for grant in row['after']}, {f'finance.{action}_{resource}' for resource in ('financeaccount', 'accountingsubject') for action in ('view', 'add', 'change', 'delete')})
         count = RoleActionGrant.objects.count()
         kwargs['expected_digest'] = result['digest']
         call_command('configure_production_roles', stdout=StringIO(), **kwargs)

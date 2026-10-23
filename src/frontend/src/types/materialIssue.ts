@@ -69,7 +69,7 @@ export interface MaterialIssue {
   stock_mode?: MaterialIssueStockMode
   id: string; issue_number: string; status: MaterialIssueStatus; status_display: string; version: number
   production_task: (MaterialIssueTaskOption & { customer_name: string }) | null
-  product: MaterialIssueProduct | null; workshop: NamedOption | null; recipient: NamedOption | null
+  product: MaterialIssueProduct | null; workshop: NamedOption | null; recipient: { id: string | null; name: string } | null
   issue_at: string | null; remark: string; source_revision_hash: string; line_count: number
   lines: MaterialIssueLine[]; audit_events: MaterialIssueEvent[]
   created_by: NamedOption; submitted_at: string | null; issued_at: string | null; issued_by: NamedOption | null

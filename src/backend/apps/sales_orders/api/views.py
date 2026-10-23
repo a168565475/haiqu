@@ -15,6 +15,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
+from apps.organizations.selectors import active_department_employees
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.customers.models import CustomerEntityAddress, CustomerTransactionEntity
@@ -244,7 +245,7 @@ class SalesOrderViewSet(
             template_code=FIXED_SELLER_TEMPLATE_CODE,
             archived_at__isnull=True,
         ).first()
-        employees = Employee.objects.filter(status=EmployeeStatus.ACTIVE, archived_at__isnull=True).order_by("employee_code")[:500]
+        employees = active_department_employees("DEPT_BUSINESS").order_by("employee_code")[:500]
         products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related("unit", "category", "product_item").order_by("product_number")[:1000]
         currencies = Currency.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True).order_by("sort_order", "code")
         accepted_versions = QuotationVersion.objects.filter(

@@ -212,7 +212,7 @@ def work_report_data(report, *, detail=True, line_metrics=None, request=None):
             {
                 "id": str(line.pk), "line_number": line.line_number,
                 "scheme_line_id": str(line.scheme_line_id), "work_item_id": str(line.work_item_id),
-                "workshop_employee_id": str(line.workshop_employee_id),
+                "workshop_employee_id": str(line.workshop_employee_id) if line.workshop_employee_id else "",
                 "employee_name": line.employee_name_snapshot, "production_line": line.production_line,
                 "display_name": line.display_name_snapshot, "craft_name": line.craft_name_snapshot,
                 "operation_name": line.operation_name_snapshot, "unit_name": line.unit_name_snapshot,

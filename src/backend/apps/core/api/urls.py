@@ -5,6 +5,7 @@ from .views import api_v1_root
 
 
 urlpatterns = [
+    path("finance/", include("apps.finance.urls")),
     path("", api_v1_root, name="api-v1-root"),
     path("", include("apps.customers.api.urls")),
     path("", include("apps.crm.api.urls")),

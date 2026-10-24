@@ -73,6 +73,9 @@ class SourceQuerySerializer(serializers.Serializer):
 class StatementSerializer(serializers.ModelSerializer):
     production_task_id = serializers.UUIDField(read_only=True)
     task_number = serializers.CharField(source="task_number_snapshot", read_only=True)
+    # 起止日期展示关联生产任务的当前日期；原来源日期快照继续独立保留。
+    task_order_date = serializers.DateField(source="production_task.order_date", read_only=True)
+    task_delivery_date = serializers.DateField(source="production_task.delivery_date", read_only=True)
     salesperson = serializers.SerializerMethodField()
     operator = serializers.SerializerMethodField()
     etag = serializers.SerializerMethodField()
@@ -92,7 +95,7 @@ class StatementSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ReceivableStatement
-        fields = ("id", "number", "production_task_id", "task_number", "source_order_date", "salesperson", "operator",
+        fields = ("id", "number", "production_task_id", "task_number", "source_order_date", "task_order_date", "task_delivery_date", "salesperson", "operator",
                   "source_revision", "statement_revision", "status", "amount", "created_at", "updated_at", "etag",
                   "lines", "quantity_totals", "can_edit", "can_void", "can_delete", "delete_block_reason", "blocked_reason", "void_reason", "voided_at",
                   "settled_amount", "discount_amount", "outstanding_amount", "available_deposit_amount", "bank_received_amount", "settlement_status")

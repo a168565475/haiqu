@@ -3,6 +3,7 @@ import type { PageMeta } from './referenceData'
 export interface FinancePerson { id: string; code: string; name: string }
 export interface FinanceSourceTask {
   id: string; task_number: string; source_order_date: string; status: string; salesperson: FinancePerson
+  readonly task_order_date: string; readonly task_delivery_date: string
 }
 export interface FinanceSourceProduct {
   id: string; item_number_snapshot: string; product_number_snapshot: string; product_code_snapshot: string
@@ -22,6 +23,7 @@ export interface FinanceStatementLine {
 }
 export interface FinanceStatement {
   id: string; number: string; production_task_id: string; task_number: string; source_order_date: string
+  readonly task_order_date: string; readonly task_delivery_date: string
   salesperson: FinancePerson; operator: FinancePerson; created_at: string; updated_at: string
   source_revision: string; statement_revision: number; status: 'ACTIVE' | 'VOID'; amount: string
   settled_amount: string; discount_amount: string; outstanding_amount: string; available_deposit_amount: string; bank_received_amount: string

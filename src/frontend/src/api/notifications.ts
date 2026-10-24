@@ -91,6 +91,11 @@ export async function getNotificationTarget(recipientId: string, signal?: AbortS
   return (await apiClient.get<{ data: { target: NotificationTarget } }>(`${root}inbox/${encodeURIComponent(recipientId)}/target/`, { ...options(), signal })).data.data.target
 }
 
+export async function getNotificationDetail(recipientId: string, signal?: AbortSignal): Promise<NotificationItem> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(recipientId)) throw new Error('消息编号无效')
+  return (await apiClient.get<{ data: NotificationItem }>(`${root}inbox/${encodeURIComponent(recipientId)}/`, { ...options(), signal })).data.data
+}
+
 export function notificationInboxError(error: unknown, fallback: string): string {
   if (!isAxiosError(error)) return fallback
   if (error.response?.status === 401) return '登录状态已失效，请重新登录后查看消息。'

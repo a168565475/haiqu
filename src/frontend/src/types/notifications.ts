@@ -12,6 +12,7 @@ export interface NotificationRule {
   name: string
   title_template: string
   body_template: string
+  default_body_template: string
   allowed_variables: string[]
   required_variables: string[]
   variable_definitions?: NotificationVariable[]
@@ -45,6 +46,15 @@ export interface NotificationRuleWrite {
   enabled: boolean
 }
 
+export interface NotificationTemplateCard {
+  card_type: 'text_notice'
+  source: { desc: string }
+  main_title: { title: string; desc: string }
+  sub_title_text: string
+  jump_list: { type: 1; title: string; url: string }[]
+  card_action: { type: 1; url: string }
+}
+
 export interface NotificationPreview {
   event_code: string
   title: string
@@ -58,6 +68,9 @@ export interface NotificationPreview {
   preview_token?: string
   preview_id?: string
   expires_at?: string
+  message_type?: 'text' | 'template_card'
+  template_card?: NotificationTemplateCard | null
+  send_blocked_reason?: string
 }
 
 export interface NotificationVariable { name: string; label: string; example: string }

@@ -2,7 +2,7 @@ import { isWeComBrowser } from '@/utils/wecom'
 
 const autoLoginAttemptKey = 'wecom:auto-login-attempted'
 
-export function startWeComLoginIfNeeded(name: unknown, requiresAuth: boolean, authenticated: boolean): boolean {
+export function startWeComLoginIfNeeded(name: unknown, requiresAuth: boolean, authenticated: boolean, nextPath = '/'): boolean {
   if (authenticated || name === 'login' || name === 'wecom-error') {
     try { window.sessionStorage.removeItem(autoLoginAttemptKey) }
     catch { return false }
@@ -18,7 +18,7 @@ export function startWeComLoginIfNeeded(name: unknown, requiresAuth: boolean, au
     // 浏览器禁用会话存储时保留密码入口，不能发起无法防循环的自动授权。
     return false
   }
-  window.location.replace('/api/auth/wecom/start/')
+  window.location.replace(`/api/auth/wecom/start/?next=${encodeURIComponent(nextPath)}`)
   return true
 }
 

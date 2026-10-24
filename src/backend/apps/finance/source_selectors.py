@@ -28,7 +28,8 @@ def source_tasks(filters=None):
     if filters.get("mode") == "receipt":
         tasks = tasks.filter(Exists(ReceivableStatement.objects.filter(production_task_id=OuterRef("pk"), status="ACTIVE")))
     else:
-        tasks = tasks.filter(archived_at__isnull=True, status__in=ALLOWED_TASK_STATUSES)
+        tasks = tasks.filter(archived_at__isnull=True, status__in=ALLOWED_TASK_STATUSES).filter(
+            ~Exists(ReceivableStatement.objects.filter(production_task_id=OuterRef("pk"), status="ACTIVE")))
     if filters.get("q"):
         tasks = tasks.filter(Q(task_number__icontains=filters["q"]) | Q(salesperson__employee_code__icontains=filters["q"]) | Q(salesperson__display_name__icontains=filters["q"]))
     for field in ("status", "salesperson_id"):

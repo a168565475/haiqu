@@ -43,6 +43,45 @@ VARIABLE_DEFINITIONS = {
 }
 
 
+MULTILINE_DEFAULT_BODIES = {
+    "PRODUCTION_TASK_CONFIRMED": "任务单号：{{document_no}}\n确认人：{{operator}}\n确认时间：{{occurred_at}}",
+    "BOM_CONFIRMED": "BOM编号：{{document_no}}\n产品名称：{{product_name}}\nBOM版本：{{object_version}}\n确认人：{{operator}}\n确认时间：{{occurred_at}}",
+    "PRODUCTION_TASK_BOMS_CONFIRMED": "任务单号：{{document_no}}\n产品项数：{{product_count}}\n操作人：{{operator}}\n完成时间：{{occurred_at}}\n确认范围：产品明细最新BOM已全部确认",
+    "SUPPLIER_PURCHASE_SHEET_PUBLISHED": "采购表号：{{document_no}}\n发布状态：已发布",
+    "MATERIAL_RECEIPT_RECORDED": "到货单号：{{document_no}}\n登记人：{{operator}}\n登记时间：{{occurred_at}}\n检验状态：等待检验",
+    "MATERIAL_INSPECTION_CONFIRMED": "采购单号：{{purchase_order_no}}\n到货单号：{{document_no}}\n检验结果：{{status}}",
+    "PURCHASE_ORDER_COMPLETED": "采购单号：{{document_no}}\n完结人：{{operator}}\n完结时间：{{occurred_at}}",
+    "PRODUCTION_PLAN_CREATED": "计划单号：{{document_no}}\n创建人：{{operator}}\n创建时间：{{occurred_at}}",
+    "MATERIAL_ISSUE_SUBMITTED": "领料单号：{{document_no}}\n提交人：{{operator}}\n提交时间：{{occurred_at}}",
+    "SEMI_FINISHED_RECEIPT_SUBMITTED": "申请单号：{{document_no}}\n申请状态：已提交\n后续操作：等待仓管确认",
+    "ASSEMBLY_FINISHED_RECEIPT_SUBMITTED": "申请单号：{{document_no}}\n申请状态：已提交\n后续操作：等待仓管确认",
+    "INTERNAL_SEMI_RECEIPT_CONFIRMED": "入库单号：{{document_no}}\n入库人：{{operator}}\n入库时间：{{occurred_at}}\n后续操作：请核对现有入库记录",
+    "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": "入库单号：{{document_no}}\n入库人：{{operator}}\n入库时间：{{occurred_at}}\n后续操作：请核对成品入库记录",
+    "FINISHED_GOODS_OUTBOUND_CONFIRMED": "出库单号：{{document_no}}\n出库人：{{operator}}\n出库时间：{{occurred_at}}\n出库状态：已完成实际出库",
+    "WAGE_SCHEME_SUBMITTED": "工价单号：{{document_no}}\n送审人：{{operator}}\n送审时间：{{occurred_at}}",
+    "WAGE_SCHEME_DECIDED": "工价单号：{{document_no}}\n审批结果：{{status}}",
+    "WORK_REPORT_SAVED": "报工单号：{{document_no}}\n保存人：{{operator}}\n保存时间：{{occurred_at}}",
+    "WORK_REPORT_CORRECTED": "报工单号：{{document_no}}\n更正人：{{operator}}\n更正时间：{{occurred_at}}\n后续操作：请查看当前明细",
+    "WORK_REPORT_DELETED": "报工单号：{{document_no}}\n删除人：{{operator}}\n删除时间：{{occurred_at}}\n原因摘要：{{reason_summary}}\n处理说明：原记录已删除，本消息仅供知悉",
+    "OUTSOURCING_LOSS_RECORDED": "委外单号：{{document_no}}\n登记类型：{{kind}}\n登记数量：{{quantity}} {{unit}}\n操作人：{{operator}}\n操作时间：{{occurred_at}}",
+    "TUBE_OUTSOURCING_SHORTAGE_RECORDED": "外发单号：{{document_no}}\n少回数量：{{quantity}} {{unit}}\n登记人：{{operator}}\n登记时间：{{occurred_at}}\n登记说明：最终回货少回登记",
+    "OUTSOURCING_ORDER_CREATED": "委外单号：{{document_no}}\n创建人：{{operator}}\n创建时间：{{occurred_at}}",
+    "TUBE_OUTSOURCING_ORDER_CREATED": "外发单号：{{document_no}}\n来源类型：{{source_name}}\n创建人：{{operator}}\n创建时间：{{occurred_at}}",
+    "SAMPLE_SUBMITTED": "申请单号：{{document_no}}\n提交人：{{operator}}\n提交时间：{{occurred_at}}",
+    "SAMPLE_EFFECTIVE": "申请单号：{{document_no}}\n生效人：{{operator}}\n生效时间：{{occurred_at}}\n后续操作：请完善需求",
+    "SAMPLE_RETURNED": "申请单号：{{document_no}}\n退回人：{{operator}}\n退回时间：{{occurred_at}}\n后续操作：请查看意见并补充重提",
+    "SAMPLE_REQUIREMENTS_COMPLETED": "申请单号：{{document_no}}\n完成人：{{operator}}\n完成时间：{{occurred_at}}\n后续操作：请填写材料需求或确认无需用料",
+    "SAMPLE_MATERIALS_SUBMITTED": "申请单号：{{document_no}}\n提交人：{{operator}}\n提交时间：{{occurred_at}}\n后续操作：请核库",
+    "SAMPLE_MATERIAL_SHORTAGE": "申请单号：{{document_no}}\n核库人：{{operator}}\n核库时间：{{occurred_at}}\n库存状态：存在缺料\n后续操作：请按真实缺料明细采购",
+    "SAMPLE_MATERIALS_AVAILABLE": "申请单号：{{document_no}}\n通知时间：{{occurred_at}}\n材料状态：已有可领材料\n后续操作：请核对现有可供及到货明细后申请领料\n注意事项：不代表全部齐料或已经发料",
+    "SAMPLE_MATERIAL_ISSUE_SUBMITTED": "申请单号：{{document_no}}\n申请人：{{operator}}\n申请时间：{{occurred_at}}\n后续操作：请仓库确认实际发料",
+    "SAMPLE_MATERIAL_ISSUED": "申请单号：{{document_no}}\n发料人：{{operator}}\n发料时间：{{occurred_at}}\n后续操作：请按本岗位权限维护参数或报工\n采购说明：未到货采购仍按原流程处理",
+    "SAMPLE_PRODUCTION_READY": "申请单号：{{document_no}}\n确认人：{{operator}}\n确认时间：{{occurred_at}}\n用料结论：无需用料\n后续操作：请按本岗位权限维护参数或报工",
+    "SAMPLE_COMPLETED": "申请单号：{{document_no}}\n完成时间：{{occurred_at}}\n完成内容：参数和两工序生产\n入库操作：请仓管按剩余可入库数量办理样品入库\n知悉岗位：厂长",
+    "SAMPLE_INVENTORY_RECEIVED": "入库单号：{{document_no}}\n登记人：{{operator}}\n登记时间：{{occurred_at}}",
+}
+
+
 def variable_definitions(event):
     quantity_labels = {
         "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED": "本次入库数量",
@@ -60,7 +99,8 @@ def _event(name, title, body, roles, scopes, required_permission, target_key, *,
         "event_code": name,
         "display_name": title,
         "default_title": title,
-        "default_body": body,
+        "default_body": MULTILINE_DEFAULT_BODIES[name],
+        "legacy_default_body": body,
         "allowed_variables": list(variables) if variables is not None else [
             "document_no", "product_name", "quantity", "operator", "occurred_at",
             "workshop_name", "status", "submitter", "object_version",
@@ -269,6 +309,12 @@ def get_event(event_code):
     event["required_permission"] = next(iter(event["required_permissions"]), "")
     event["variable_definitions"] = variable_definitions(event)
     return event
+
+
+def current_body_template(event_code, body):
+    """仅转换完全匹配的旧默认正文，保留所有人工定制内容。"""
+    event = get_event(event_code)
+    return event["default_body"] if body == event["legacy_default_body"] else body
 
 
 def all_events():

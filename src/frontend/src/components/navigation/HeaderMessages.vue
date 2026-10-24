@@ -1,19 +1,28 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Bell, Close } from '@element-plus/icons-vue'
 import { ElButton } from 'element-plus'
 import { useNotificationsStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import type { NotificationItem } from '@/types/notifications'
+import { getNotificationDetail, notificationInboxError } from '@/api/notifications'
 
 const router = useRouter()
+const route = useRoute()
 const store = useNotificationsStore()
 const auth = useAuthStore()
 const trigger = ref<HTMLButtonElement>()
 const panel = ref<HTMLElement>()
 const closeButton = ref<HTMLButtonElement>()
 const shaking = ref(false)
+const linkedMode = ref(false)
+const linkedItem = ref<NotificationItem | null>(null)
+const linkedLoading = ref(false)
+const linkedError = ref('')
+let linkedRequest: AbortController | undefined
+const linkedIdentity = computed(() => JSON.stringify([auth.user?.id, auth.user?.employee,
+  auth.waitingForRole, auth.user?.permissions, auth.user?.effective_access]))
 const position = ref({ left: '8px', top: '48px' })
 const totalPages = computed(() => Math.max(1, Math.ceil(store.count / store.pageSize)))
 const label = computed(() => store.countError ? '消息，未读数量更新失败'
@@ -38,12 +47,53 @@ function close(restoreFocus = true) {
 }
 async function toggle() {
   if (store.opened) { close(); return }
+  clearLinked()
   stopShake()
   updatePosition()
   void store.open()
   await nextTick()
   closeButton.value?.focus()
 }
+function clearLinked() {
+  linkedRequest?.abort()
+  linkedRequest = undefined
+  linkedMode.value = linkedLoading.value = false
+  linkedItem.value = null
+  linkedError.value = ''
+}
+async function openLinkedNotification() {
+  clearLinked()
+  const recipientId = route.path === '/' ? route.query.notification : undefined
+  if (recipientId === undefined || !auth.user || auth.waitingForRole) return
+  const request = new AbortController()
+  linkedRequest = request
+  linkedMode.value = true
+  // PageContainer 挂载后会先聚焦主内容；等其完成，避免把自动展开的面板立即关闭。
+  await nextTick()
+  await nextTick()
+  if (disposed || request !== linkedRequest) return
+  store.opened = true
+  await nextTick()
+  if (disposed || request !== linkedRequest || !store.opened) return
+  updatePosition()
+  closeButton.value?.focus()
+  if (typeof recipientId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(recipientId)) {
+    linkedError.value = '通知链接无效，请从消息列表查看。'
+    return
+  }
+  linkedLoading.value = true
+  try {
+    const item = await getNotificationDetail(recipientId, request.signal)
+    if (disposed || request !== linkedRequest) return
+    linkedItem.value = item
+  } catch (cause) {
+    if (disposed || request !== linkedRequest) return
+    linkedError.value = notificationInboxError(cause, '通知加载失败，请重新打开卡片或从消息列表查看。')
+  } finally {
+    if (request === linkedRequest) linkedLoading.value = false
+  }
+}
+function showAllMessages() { clearLinked(); void store.open() }
 function outside(event: Event) {
   const target = event.target
   if (store.opened && target instanceof Node && !panel.value?.contains(target) && !trigger.value?.contains(target)) close(false)
@@ -61,7 +111,12 @@ function formatTime(value: string) {
 async function activate(item: NotificationItem) {
   const account = auth.user
   const destination = await store.readAndResolve(item)
-  if (!destination || disposed || !store.opened || auth.user !== account) return
+  if (disposed || !store.opened || auth.user !== account) return
+  if (!destination && linkedMode.value) {
+    linkedItem.value = null
+    linkedError.value = store.actionError || '通知当前不可访问，请重新打开卡片核对。'
+  }
+  if (!destination) return
   try {
     if (!router.hasRoute(destination.name)) { store.actionError = '消息已读，但对应业务页面尚未开放。'; return }
     const failure = await router.push(destination)
@@ -81,6 +136,7 @@ watch(() => store.arrival, (next, previous) => {
 })
 watch(() => store.opened, opened => { if (opened) stopShake() })
 watch(() => store.unread, unread => { if (unread === null) stopShake() })
+watch([() => route.path, () => route.query.notification, linkedIdentity], () => { void openLinkedNotification() })
 onMounted(() => {
   media = window.matchMedia('(prefers-reduced-motion: reduce)')
   media.addEventListener('change', motionChanged)
@@ -89,9 +145,11 @@ onMounted(() => {
   document.addEventListener('keydown', escape, true)
   window.addEventListener('resize', updatePosition)
   store.start()
+  void openLinkedNotification()
 })
 onBeforeUnmount(() => {
   disposed = true
+  clearLinked()
   store.stop()
   stopShake()
   media?.removeEventListener('change', motionChanged)
@@ -123,8 +181,19 @@ onBeforeUnmount(() => {
           {{ store.countError }} <ElButton link :disabled="store.countLoading || store.blocked" @click="store.refreshUnread()">重试未读数</ElButton>
         </div>
         <div v-if="store.actionError" class="header-message-panel__notice" role="alert">{{ store.actionError }}</div>
-        <div class="header-message-panel__list" :aria-busy="store.loading">
-          <p v-if="store.loading && !store.items.length" class="header-message-panel__state" role="status">正在加载消息…</p>
+        <div class="header-message-panel__list" :aria-busy="linkedMode ? linkedLoading : store.loading">
+          <template v-if="linkedMode">
+            <p v-if="linkedLoading" class="header-message-panel__state" role="status">正在加载通知…</p>
+            <p v-else-if="linkedError" class="header-message-panel__state" role="alert">{{ linkedError }}</p>
+            <article v-else-if="linkedItem" class="header-message-panel__item" data-linked-notification>
+              <span class="header-message-panel__title">{{ linkedItem.title }}</span>
+              <span class="header-message-panel__body">{{ linkedItem.body }}</span>
+              <time :datetime="linkedItem.created_at">{{ formatTime(linkedItem.created_at) }}</time>
+              <ElButton v-if="linkedItem.target_accessible" :loading="!!store.actionId" @click="activate(linkedItem)">查看业务</ElButton>
+              <span v-else>该通知没有当前可访问的业务详情。</span>
+            </article>
+          </template>
+          <p v-else-if="store.loading && !store.items.length" class="header-message-panel__state" role="status">正在加载消息…</p>
           <div v-else-if="store.error" class="header-message-panel__state" role="alert">
             <p>{{ store.error }}</p><ElButton :disabled="store.blocked" @click="store.retry()">重新加载</ElButton>
           </div>
@@ -141,7 +210,10 @@ onBeforeUnmount(() => {
             </button>
           </template>
         </div>
-        <footer class="header-message-panel__footer">
+        <footer v-if="linkedMode" class="header-message-panel__footer">
+          <button type="button" :disabled="!!store.actionId" @click="showAllMessages">全部消息</button>
+        </footer>
+        <footer v-else class="header-message-panel__footer">
           <button type="button" :disabled="store.loading || !!store.actionId || store.page <= 1" @click="store.loadPage(store.page - 1)">上一页</button>
           <span aria-live="polite">{{ store.page }} / {{ totalPages }} 页</span>
           <button type="button" :disabled="store.loading || !!store.actionId || store.page >= totalPages" @click="store.loadPage(store.page + 1)">下一页</button>

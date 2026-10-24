@@ -162,6 +162,17 @@ class NotificationTargetView(NotificationPersonalView):
         return Response({"data": {"target": recipient.event.target}})
 
 
+class NotificationInboxDetailView(NotificationPersonalView):
+    @extend_schema(operation_id="notification_inbox_detail", request=None, responses=NotificationReadSerializer)
+    def get(self, request, recipient_id):
+        employee = active_employee_for(request.user)
+        recipient = selectors.inbox_queryset(employee.pk).filter(pk=recipient_id).first() if employee else None
+        if recipient is None:
+            raise NotFound("通知当前不可访问。")
+        # 打开企微卡片只读内容；现有选择器重新校验角色、对象范围和版本。
+        return Response(NotificationReadSerializer({"data": selectors.recipient_payload(recipient, request.user)}).data)
+
+
 class NotificationDeliveriesView(NotificationManagementView):
     @extend_schema(responses=NotificationDeliveryListSerializer)
     def get(self, request):

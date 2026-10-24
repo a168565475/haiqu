@@ -70,7 +70,7 @@ class GoodsFixture:
         return FinanceReceiptUpload.objects.create(file=file, statement=statement,
             owner_employee=self.actor, upload_key=uuid4())
 
-    def body(self, *, statement=None, cash="0.00", deposits=(), discount="0.00", fee="0.00", kind="GOODS", uploads=None):
+    def body(self, *, statement=None, cash="0.00", deposits=(), allocations=None, discount="0.00", fee="0.00", kind="GOODS", uploads=None):
         statement = statement or self.statement
         lines = [] if Decimal(cash) == 0 else [{"account_id": str(self.account.pk),
             "account_etag": etag_for_instance(self.account), "cash_amount": cash,
@@ -79,7 +79,11 @@ class GoodsFixture:
             uploads = [str(self.upload(statement).pk)] if lines else []
         result = {"receipt_type": kind, "statement_id": str(statement.pk), "account_lines": lines, "upload_ids": uploads}
         if kind == "GOODS":
-            result.update(deposit_ids=[str(item.pk) for item in deposits], discount_amount=discount)
+            result["discount_amount"] = discount
+            if allocations is None:
+                result["deposit_ids"] = [str(item.pk) for item in deposits]
+            else:
+                result["deposit_allocations"] = [{"deposit_id": str(item.pk), "amount": amount} for item, amount in allocations]
         return result
 
     def request(self, data, instance=None, key=None, etag=None):

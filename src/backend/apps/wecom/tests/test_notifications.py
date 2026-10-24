@@ -30,6 +30,7 @@ from apps.wecom.credentials import encrypt_secret
 from apps.wecom.models import NotificationDelivery, NotificationEvent, NotificationRecipient, NotificationRule, WeComBinding, WeComConfig
 from apps.wecom.notification_access import EVENT_OBJECT_PERMISSIONS, event_object_accessible
 from apps.wecom.notification_catalog import get_event
+from .test_client import Response
 
 
 SETTINGS = dict(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True,
@@ -98,6 +99,22 @@ class NotificationFixture:
 
 @override_settings(**SETTINGS)
 class NotificationServiceTests(NotificationFixture, TestCase):
+    def test_new_event_renders_legacy_default_as_lines_without_rewriting_rule(self):
+        self.rule.body_template = get_event(EVENT_CODE)["legacy_default_body"]
+        self.rule.save(update_fields=["body_template"])
+        event = self.register()
+        self.assertEqual(event.rendered_body,
+            "入库单号：NOTIFY_RECEIPT_1\n登记人：测试提交人\n登记时间：2026-10-21 10:00:00")
+        self.rule.refresh_from_db()
+        self.assertEqual(self.rule.body_template, get_event(EVENT_CODE)["legacy_default_body"])
+
+    def test_new_event_keeps_custom_template_content_and_line_breaks(self):
+        self.rule.body_template = "自定义备注\n单号 {{document_no}}；{{operator}} 于 {{occurred_at}} 登记。"
+        self.rule.save(update_fields=["body_template"])
+        event = self.register()
+        self.assertEqual(event.rendered_body,
+            "自定义备注\n单号 NOTIFY_RECEIPT_1；测试提交人 于 2026-10-21 10:00:00 登记。")
+
     def test_replay_preserves_snapshot_and_changed_rules_only_affect_new_events(self):
         first = self.register()
         other = employee("NOTIFY_SECOND")
@@ -286,7 +303,7 @@ class NotificationRuleApiTests(NotificationFixture, TestCase):
             "body_template": "{{operator}} {{occurred_at}} {{product_name}}",
             "variables": {**self.context, "product_name": "编辑中的产品"}}
         before = NotificationRule.objects.count()
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             response = self.client.post(self.url + "preview/", payload, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["title"], self.context["document_no"])
@@ -358,21 +375,71 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
     def test_send_is_outside_transaction_and_duplicate_dispatch_is_not_repeated(self):
         observed = []
 
-        def send(user_id, text):
+        def send(user_id, *, title, body, url, preview):
             observed.append(connection.in_atomic_block)
             return {"msgid": "unit04-message"}
 
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=send) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=send) as sender:
             result = services.process_delivery(self.delivery)
             services.process_delivery(self.delivery)
         self.assertEqual(result.status, "ACCEPTED")
         self.assertEqual(result.attempt_count, 1)
         self.assertEqual(observed, [False])
-        sender.assert_called_once_with(self.binding.user_id, f"{self.event.rendered_title}\n\n{self.event.rendered_body}")
+        sender.assert_called_once_with(self.binding.user_id, title=self.event.rendered_title,
+            body=self.event.rendered_body, url=f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}", preview=False)
         self.assertIsNone(self.event.recipients.get().read_at)
 
+    def test_automatic_delivery_posts_formal_card_with_personal_details_link(self):
+        with patch("apps.wecom.client.WeComClient._access_token", return_value="test-token"), \
+                patch("apps.wecom.client.build_opener") as opener:
+            opener.return_value.open.return_value = Response({"errcode": 0, "msgid": "formal-notification"})
+            result = services.process_delivery(self.delivery)
+        self.assertEqual((result.status, result.attempt_count), ("ACCEPTED", 1))
+        opener.return_value.open.assert_called_once()
+        request = opener.return_value.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "POST")
+        payload = json.loads(request.data)
+        self.assertEqual(payload["touser"], self.binding.user_id)
+        self.assertEqual(payload["msgtype"], "template_card")
+        self.assertEqual(payload["enable_duplicate_check"], 1)
+        self.assertEqual(payload["duplicate_check_interval"], 1800)
+        self.assertNotIn("text", payload)
+        card = payload["template_card"]
+        url = f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}"
+        self.assertEqual(card["source"], {"desc": "HAIQU ERP"})
+        self.assertEqual(card["main_title"], {"title": self.event.rendered_title, "desc": "业务通知"})
+        self.assertEqual(card["sub_title_text"], self.event.rendered_body)
+        self.assertEqual(card["sub_title_text"].splitlines(), [
+            "入库单号：NOTIFY_RECEIPT_1", "登记人：测试提交人", "登记时间：2026-10-21 10:00:00"])
+        self.assertEqual(card["jump_list"], [{"type": 1, "title": "查看详情", "url": url}])
+        self.assertEqual(card["card_action"], {"type": 1, "url": url})
+
+    def test_pending_legacy_default_is_reformatted_only_for_external_card(self):
+        legacy = "样品入库单 NOTIFY_RECEIPT_1 已由 测试提交人 于 2026-10-21 10:00:00 登记。"
+        NotificationEvent.objects.filter(pk=self.event.pk).update(rendered_body=legacy)
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "legacy-card"}) as sender:
+            result = services.process_delivery(self.delivery)
+        self.assertEqual(result.status, "ACCEPTED")
+        sender.assert_called_once_with(self.binding.user_id, title=self.event.rendered_title,
+            body="入库单号：NOTIFY_RECEIPT_1\n登记人：测试提交人\n登记时间：2026-10-21 10:00:00",
+            url=f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}", preview=False)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.rendered_body, legacy)
+        self.assertEqual(NotificationDelivery.objects.get(recipient__event=self.event, channel="IN_APP").status, "ACCEPTED")
+
+    def test_pending_custom_body_is_not_replaced_by_default(self):
+        custom = "样品入库单 NOTIFY_RECEIPT_1 已由 测试提交人 于 2026-10-21 10:00:00 登记。\n人工补充：请核对数量"
+        NotificationEvent.objects.filter(pk=self.event.pk).update(rendered_body=custom)
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "custom-card"}) as sender:
+            result = services.process_delivery(self.delivery)
+        self.assertEqual(result.status, "ACCEPTED")
+        sender.assert_called_once_with(self.binding.user_id, title=self.event.rendered_title, body=custom,
+            url=f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}", preview=False)
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.rendered_body, custom)
+
     def test_send_is_rejected_inside_business_transaction(self):
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             with transaction.atomic(), self.assertRaisesRegex(RuntimeError, "事务提交"):
                 services.process_delivery(self.delivery)
         self.delivery.refresh_from_db()
@@ -380,33 +447,33 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
         sender.assert_not_called()
 
     def test_failed_external_channel_keeps_in_app_and_requires_explicit_retry(self):
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=WeComError("RECIPIENT_REJECTED", "测试拒绝")) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=WeComError("RECIPIENT_REJECTED", "测试拒绝")) as sender:
             failed = services.process_delivery(self.delivery)
             services.process_delivery(failed)
         self.assertEqual(failed.status, "FAILED")
         self.assertEqual(sender.call_count, 1)
         self.assertEqual(NotificationDelivery.objects.get(recipient__event=self.event, channel="IN_APP").status, "ACCEPTED")
         self.assertEqual(NotificationRecipient.objects.filter(event=self.event).count(), 1)
-        with patch("apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "retry-ok"}) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "retry-ok"}) as sender:
             retried = services.process_delivery(failed, allow_failed=True)
         self.assertEqual(retried.status, "ACCEPTED")
         self.assertEqual(retried.attempt_count, 2)
         sender.assert_called_once()
 
     def test_uncertain_is_not_resent_without_explicit_opt_in(self):
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=WeComSendUncertain()) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=WeComSendUncertain()) as sender:
             uncertain = services.process_delivery(self.delivery)
             services.process_delivery(uncertain)
             services.process_delivery(uncertain, allow_failed=True)
         self.assertEqual(uncertain.status, "UNCERTAIN")
         self.assertEqual(sender.call_count, 1)
-        with patch("apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "checked-retry"}) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "checked-retry"}) as sender:
             result = services.process_delivery(uncertain, allow_uncertain=True)
         self.assertEqual(result.status, "ACCEPTED")
         sender.assert_called_once()
 
     def test_late_old_worker_result_cannot_overwrite_new_processing_attempt(self):
-        def old_worker_response(user_id, text):
+        def old_worker_response(user_id, *, title, body, url, preview):
             # 隔离模拟：旧请求在途时被回收，另一个执行者已领取第二次尝试。
             current = NotificationDelivery.objects.get(pk=self.delivery.pk)
             self.assertEqual((current.status, current.attempt_count), ("PROCESSING", 1))
@@ -414,7 +481,7 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
                 status="PROCESSING", attempt_count=2, msgid="new-attempt-placeholder", last_attempt_at=timezone.now())
             return {"msgid": "old-worker-msgid"}
 
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=old_worker_response) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=old_worker_response) as sender:
             result = services.process_delivery(self.delivery)
         self.assertEqual((result.status, result.attempt_count, result.msgid),
             ("PROCESSING", 2, "new-attempt-placeholder"))
@@ -423,12 +490,12 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
         sender.assert_called_once()
 
     def test_two_stale_uncertain_snapshots_allow_only_one_new_attempt(self):
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=WeComSendUncertain()):
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=WeComSendUncertain()):
             initial = services.process_delivery(self.delivery)
         self.assertEqual((initial.status, initial.attempt_count), ("UNCERTAIN", 1))
         first_snapshot = NotificationDelivery.objects.get(pk=self.delivery.pk)
         second_snapshot = NotificationDelivery.objects.get(pk=self.delivery.pk)
-        with patch("apps.wecom.notification_services.WeComClient.send_text", side_effect=WeComSendUncertain()) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", side_effect=WeComSendUncertain()) as sender:
             first_result = services.process_delivery(first_snapshot, allow_uncertain=True)
             second_result = services.process_delivery(second_snapshot, allow_uncertain=True)
         self.assertEqual((first_result.status, first_result.attempt_count), ("UNCERTAIN", 2))
@@ -437,7 +504,7 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
 
     def test_command_defaults_to_dry_run_and_retry_requires_explicit_delivery_id(self):
         output = StringIO()
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             call_command("process_notification_deliveries", stdout=output)
             with self.assertRaises(CommandError):
                 call_command("process_notification_deliveries", execute=True, retry_uncertain=True, stdout=StringIO())
@@ -452,7 +519,7 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
         other_event = self.register(idempotency_key="other-command-candidate")
         other_delivery = NotificationDelivery.objects.get(recipient__event=other_event, channel="WECOM")
         output = StringIO()
-        with patch("apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "command-message"}) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "command-message"}) as sender:
             call_command("process_notification_deliveries", execute=True,
                 delivery_id=[str(self.delivery.pk)], stdout=output)
         summary = json.loads(output.getvalue().splitlines()[0])
@@ -465,12 +532,13 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
         other_delivery.refresh_from_db()
         self.assertEqual((self.delivery.status, self.delivery.msgid), ("ACCEPTED", "command-message"))
         self.assertEqual((other_delivery.status, other_delivery.attempt_count), ("PENDING", 0))
-        sender.assert_called_once_with(self.binding.user_id, f"{self.event.rendered_title}\n\n{self.event.rendered_body}")
+        sender.assert_called_once_with(self.binding.user_id, title=self.event.rendered_title,
+            body=self.event.rendered_body, url=f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}", preview=False)
 
     def test_restart_only_recovers_abandoned_processing_as_uncertain_without_send(self):
         NotificationDelivery.objects.filter(pk=self.delivery.pk).update(status="PROCESSING",
             last_attempt_at=timezone.now() - timedelta(minutes=6), attempt_count=1)
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             self.assertEqual(services.recover_abandoned_deliveries(), 1)
             self.assertEqual(services.recover_abandoned_deliveries(), 0)
             recovered = services.process_delivery(self.delivery)
@@ -483,7 +551,7 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
     def test_revoked_permission_blocks_retry(self):
         NotificationDelivery.objects.filter(pk=self.delivery.pk).update(status="FAILED", error_code="CONFIGURATION_ERROR")
         RoleActionGrant.objects.filter(role=self.role).delete()
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             result = services.process_delivery(self.delivery, allow_failed=True)
         self.assertEqual((result.status, result.error_code), ("FAILED", "RECIPIENT_NOT_ELIGIBLE"))
         self.assertEqual(result.attempt_count, 0)
@@ -494,10 +562,11 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
         role = grant_role(other, "NOTIFY_REPLACEMENT_ROLE", "samples.view_sampleinventoryline")
         self.rule.title_template, self.rule.recipient_role_codes, self.rule.version = "新标题", [role.role_code], 2
         self.rule.save()
-        with patch("apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "original"}) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "original"}) as sender:
             result = services.process_delivery(self.delivery)
         self.assertEqual(result.status, "ACCEPTED")
-        sender.assert_called_once_with(self.binding.user_id, f"{self.event.rendered_title}\n\n{self.event.rendered_body}")
+        sender.assert_called_once_with(self.binding.user_id, title=self.event.rendered_title,
+            body=self.event.rendered_body, url=f"{self.config.erp_origin}/?notification={self.delivery.recipient_id}", preview=False)
         self.assertEqual(list(self.event.recipients.values_list("employee_id", flat=True)), [self.member.pk])
 
     def test_binding_application_and_corporation_changes_block_retry(self):
@@ -511,19 +580,19 @@ class NotificationDeliveryTests(NotificationFixture, TransactionTestCase):
                 model, pk = (WeComBinding, self.binding.pk) if target == "binding" else (WeComConfig, self.config.pk)
                 model.objects.filter(pk=pk).update(**changes)
                 NotificationDelivery.objects.filter(pk=self.delivery.pk).update(status="UNCERTAIN")
-                with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+                with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
                     result = services.process_delivery(self.delivery, allow_uncertain=True)
                 self.assertEqual((result.status, result.error_code), ("FAILED", expected))
                 sender.assert_not_called()
 
     def test_deleted_object_or_disabled_account_never_sends(self):
         self.receipt.delete()
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             result = services.process_delivery(self.delivery)
         self.assertEqual(result.error_code, "RECIPIENT_NOT_ELIGIBLE")
         sender.assert_not_called()
         get_user_model().objects.filter(pk=self.member.user_id).update(is_active=False)
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             result = services.process_delivery(self.delivery, allow_failed=True)
         self.assertEqual(result.error_code, "RECIPIENT_INACTIVE")
         sender.assert_not_called()

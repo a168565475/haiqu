@@ -151,7 +151,7 @@ describe('AppWindowDialog 普通窗口高度计算', () => {
   })
 
   // jsdom 不排版：这里提供受控几何，只验证窗口算法；滚动和 CSS 仍需真实浏览器验收。
-  function measuredWindow(contentHeight: number, height: number | 'auto' = 'auto', fullscreen = false) {
+  function measuredWindow(contentHeight: number, height: number | 'auto' = 'auto', fullscreen = false, autoMaxHeightRatio?: number) {
     vi.stubGlobal('innerWidth', 1200)
     vi.stubGlobal('innerHeight', 900)
     let naturalHeight = contentHeight
@@ -228,7 +228,7 @@ describe('AppWindowDialog 普通窗口高度计算', () => {
 
     const wrapper = mount(AppWindowDialog, {
       attachTo: document.body,
-      props: { modelValue: true, title: '受控几何窗口', width: 520, height, fullscreen },
+      props: { modelValue: true, title: '受控几何窗口', width: 520, height, fullscreen, autoMaxHeightRatio },
       slots: { default: '<article data-geometry-content>受控内容</article>', footer: '<button>确定</button>' },
     })
     mountedWindows.push(wrapper)
@@ -287,6 +287,16 @@ describe('AppWindowDialog 普通窗口高度计算', () => {
     const window = measuredWindow(1000)
     await window.settleFrames()
     expect(window.geometry()).toMatchObject({ height: 720, top: 90 })
+  })
+
+  it('调用方可将自动限高提高到 94vh，缩小视口后仍保留上下 16px 边距', async () => {
+    const window = measuredWindow(1000, 'auto', false, 0.94)
+    expect(window.dialog.style.maxHeight).toBe('min(94vh, calc(100vh - 32px))')
+    await window.settleFrames()
+    expect(window.geometry()).toMatchObject({ height: 846, top: 27 })
+    window.resizeViewport(400)
+    await window.settleFrames()
+    expect(window.geometry()).toMatchObject({ height: 368, top: 16 })
   })
 
   it('显式高度可随自然内容扩展，但内容变少后保留请求高度下限', async () => {

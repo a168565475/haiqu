@@ -20,11 +20,15 @@ export interface DepositReceiptInput {
   account_lines: ReceiptAccountInput[]
   upload_ids: string[]
 }
+export interface ReceiptDepositAllocationInput {
+  deposit_id: string
+  amount: string
+}
 export interface GoodsReceiptInput {
   receipt_type: 'GOODS'
   statement_id: string
   account_lines: ReceiptAccountInput[]
-  deposit_ids: string[]
+  deposit_allocations: ReceiptDepositAllocationInput[]
   discount_amount: string
   upload_ids: string[]
 }

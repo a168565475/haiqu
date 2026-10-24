@@ -48,7 +48,7 @@ onBeforeUnmount(() => { disposed = true; ++generation; controller?.abort() })
 
 <template>
   <section class="receipt-section">
-    <div class="receipt-section-heading"><div><h3>到账明细</h3><p>{{ deposit ? '订金金额与实际到账同步。' : '实际到账用于核销，手续费单独记录。' }}</p></div><el-button :disabled="disabled" @click="open()">添加账户</el-button></div>
+    <div class="receipt-section-heading"><div><h3>到账明细</h3><p>{{ deposit ? '订金金额与实际到账同步。' : '实际到账用于核销，手续费单独记录。' }}</p></div><el-button type="primary" class="receipt-add-button" :disabled="disabled" @click="open()">添加账户</el-button></div>
     <p v-if="!modelValue.length" class="receipt-empty">尚未添加到账账户</p>
     <p v-if="fieldErrors?.account_lines" class="receipt-field-error" role="alert">{{ fieldErrors.account_lines }}</p>
     <div v-for="(line, index) in modelValue" :key="line.key" class="account-entry">
@@ -76,11 +76,13 @@ onBeforeUnmount(() => { disposed = true; ++generation; controller?.abort() })
 </template>
 
 <style scoped lang="scss">
-.receipt-section{container-type:inline-size}
+@use '../customers/customer-form-shared' as shared;
+.account-entry-fields{@include shared.element-form-controls(32px,12px,13px,7px)}
+.receipt-section{container-type:inline-size}.receipt-add-button{height:32px;min-height:32px;padding:0 14px;font-size:13px}
 .receipt-section-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.receipt-section h3{margin:0;font-size:15px;line-height:22px;font-weight:600}.receipt-section-heading p{margin:4px 0 0;font-size:12px;line-height:20px;color:var(--erp-color-text-secondary)}
 .receipt-empty{padding:14px 16px;border-radius:5px;background:var(--erp-input-readonly-background);font-size:12px;color:var(--erp-color-text-secondary)}
 .account-entry{border:1px solid var(--erp-color-border);border-radius:5px;padding:14px 16px}.account-entry+.account-entry{margin-top:12px}.account-entry-heading{display:flex;justify-content:space-between;gap:12px}.account-entry-heading strong{font-size:13px}.account-entry-heading p{margin:5px 0 0;font-size:12px;color:var(--erp-color-text-secondary)}.account-entry-heading .el-button{margin-left:12px}
-.account-number-line{display:flex;gap:12px;margin:8px 0 12px;font-size:12px}.account-number-line span{color:var(--erp-color-text-secondary)}.account-number-line strong{font-size:14px;font-weight:500;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.account-number-line{display:flex;align-items:baseline;gap:12px;margin:8px 0 12px;font-size:12px;line-height:20px}.account-number-line span{color:var(--erp-color-text-secondary)}.account-number-line strong{font-size:14px;font-weight:500;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .account-entry-fields{display:grid;grid-template-columns:1.2fr .8fr 1fr;gap:16px}.account-entry-fields :deep(.el-form-item){margin-bottom:0;min-width:0}.account-entry-fields :deep(.el-input),.account-entry-fields :deep(.el-date-editor){width:100%}.account-entry-fields :deep(.el-form-item__label){font-size:12px!important}
 .account-entry-fields :deep(.el-form-item__error){position:static;line-height:18px;padding-top:4px}.receipt-field-error{color:var(--el-color-danger);font-size:12px;line-height:18px}
 .receipt-account-picker{display:flex;gap:10px;margin-bottom:14px}.receipt-account-picker .el-input{max-width:300px}.receipt-picker-note{margin-right:auto;font-size:12px;color:var(--erp-color-text-secondary)}

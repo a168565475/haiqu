@@ -3,7 +3,7 @@ from apps.access_control.models import RoleActionGrant
 from apps.organizations.models import RoleProfile
 from .models import NotificationDelivery, NotificationRecipient, NotificationRule
 from .notification_access import EVENT_OBJECT_PERMISSIONS, UNAVAILABLE_EVENT_OBJECTS, event_object_accessible
-from .notification_catalog import RECIPIENT_SCOPES, all_events, get_event
+from .notification_catalog import RECIPIENT_SCOPES, all_events, current_body_template, get_event
 
 
 def rule_etag(rule):
@@ -44,7 +44,8 @@ def rule_payload(rule):
         "display_name": event["display_name"],
         "name": rule.name,
         "title_template": rule.title_template,
-        "body_template": rule.body_template,
+        "body_template": current_body_template(rule.event_code, rule.body_template),
+        "default_body_template": event["default_body"],
         "allowed_variables": event["allowed_variables"],
         "required_variables": event["required_variables"],
         "variable_definitions": event["variable_definitions"],
@@ -67,7 +68,8 @@ def default_rule_payload(event):
     return {
         "event_code": event["event_code"], "display_name": event["display_name"],
         "name": event["display_name"], "title_template": event["default_title"],
-        "body_template": event["default_body"], "allowed_variables": event["allowed_variables"],
+        "body_template": event["default_body"], "default_body_template": event["default_body"],
+        "allowed_variables": event["allowed_variables"],
         "required_variables": event["required_variables"], "supported_scopes": event["supported_scopes"],
         "variable_definitions": event["variable_definitions"],
         "scope_labels": RECIPIENT_SCOPES, "recipient_role_codes": event["default_role_codes"],

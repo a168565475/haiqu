@@ -97,3 +97,68 @@ class WeComMessageClientTests(SimpleTestCase):
                 with self.assertRaises(WeComError):
                     self.client.send_text(user_id, body)
         self.open.assert_not_called()
+
+    def test_template_card_posts_visible_content_and_one_https_homepage(self):
+        self.responses(self.token(), {"errcode": 0, "msgid": "card-id"})
+        result = self.client.send_text_notice("Member.One", title="生产任务确认", body="任务单号：示例单号\n操作人：示例操作人",
+                                             url="https://erp.example.com/")
+        self.assertEqual(result, {"msgid": "card-id"})
+        payload = json.loads(self.open.call_args.args[0].data)
+        self.assertEqual(payload["msgtype"], "template_card")
+        self.assertNotIn("text", payload)
+        card = payload["template_card"]
+        self.assertEqual(card["card_type"], "text_notice")
+        self.assertEqual(card["main_title"]["title"], "生产任务确认")
+        self.assertEqual(card["sub_title_text"], "任务单号：示例单号\n操作人：示例操作人")
+        self.assertEqual(card["card_action"], {"type": 1, "url": "https://erp.example.com/"})
+        self.assertEqual(card["jump_list"][0]["url"], card["card_action"]["url"])
+        self.assertEqual(card["jump_list"][0]["title"], "查看详情")
+        self.assertEqual(payload["enable_duplicate_check"], 1)
+
+    def test_card_refreshes_only_rejected_token_and_keeps_payload_identical(self):
+        self.responses(self.token(), {"errcode": 42001}, self.token("fresh"), {"errcode": 0, "msgid": "card-id"})
+        self.client.send_text_notice("Member.One", title="标题", body="正文", url="https://erp.example.com/")
+        posts = [call.args[0] for call in self.open.call_args_list if call.args[0].get_method() == "POST"]
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0].data, posts[1].data)
+
+    def test_invalid_card_inputs_never_reach_network(self):
+        valid = {"user_id": "Member.One", "title": "标题", "body": "正文", "url": "https://erp.example.com/"}
+        for changes in ({"user_id": "@all"}, {"user_id": "one|two"}, {"title": "长" * 201},
+                        {"body": "长" * 683}, {"body": "\ud800"}, {"title": "\x00"},
+                        {"url": "javascript:alert(1)"}, {"url": "https://user:pass@example.com/"},
+                        {"url": "https://example.com/private"}, {"url": "https://example.com/?token=x"}):
+            with self.subTest(fields=list(changes)):
+                with self.assertRaises(WeComError):
+                    self.client.send_text_notice(**{**valid, **changes})
+        self.open.assert_not_called()
+
+    def test_formal_card_links_to_the_personal_notification_without_test_label(self):
+        url = "https://erp.example.com/?notification=00000000-0000-0000-0000-000000000001"
+        self.responses(self.token(), {"errcode": 0, "msgid": "formal-card"})
+        body = "单号：真实内容\n说明：" + "长" * 161
+        self.client.send_text_notice("Member.One", title="正式通知", body=body, url=url, preview=False)
+        card = json.loads(self.open.call_args.args[0].data)["template_card"]
+        self.assertEqual(card["source"]["desc"], "HAIQU ERP")
+        self.assertEqual(card["main_title"]["desc"], "业务通知")
+        self.assertEqual(card["sub_title_text"], body)
+        self.assertEqual(card["jump_list"], [{"type": 1, "title": "查看详情", "url": url}])
+
+    def test_formal_card_rejects_missing_invalid_and_multiple_notification_ids(self):
+        for query in ("", "?notification=bad", "?notification=", "?next=https://external.example/",
+                      "?notification=00000000-0000-0000-0000-000000000001&notification=duplicate"):
+            with self.subTest(query=query), self.assertRaises(WeComError):
+                self.client.send_text_notice("Member.One", title="标题", body="正文",
+                    url="https://erp.example.com/" + query, preview=False)
+        self.open.assert_not_called()
+
+    def test_card_timeout_is_uncertain_and_invalid_recipient_is_failed(self):
+        from apps.wecom.client import WeComSendUncertain
+        for result, error_type in ((TimeoutError("private"), WeComSendUncertain),
+                                   ({"errcode": 0, "msgid": "card-id", "invaliduser": "Member.One"}, WeComError)):
+            with self.subTest(error=error_type.__name__):
+                caches["wecom"].clear(); self.open.reset_mock()
+                self.responses(self.token(), result)
+                with self.assertRaises(error_type):
+                    self.client.send_text_notice("Member.One", title="标题", body="正文", url="https://erp.example.com/")
+                self.assertEqual(len(self.open.call_args_list), 2)

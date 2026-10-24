@@ -21,7 +21,7 @@ from .client import WeComClient, WeComError, WeComSendUncertain
 from .message_serializers import validate_plain_text
 from .models import NotificationDelivery, NotificationEvent, NotificationRecipient, NotificationRule, WeComBinding, WeComConfig
 from .notification_access import EVENT_OBJECT_PERMISSIONS, UNAVAILABLE_EVENT_OBJECTS, event_object_accessible, plan_workshop_ids
-from .notification_catalog import RECIPIENT_SCOPES, VARIABLE, get_event, target_for
+from .notification_catalog import RECIPIENT_SCOPES, VARIABLE, current_body_template, get_event, target_for
 from .notification_selectors import rule_etag, rule_warnings
 from .selectors import configuration_complete
 from .services import require_etag
@@ -119,7 +119,7 @@ def preview_rule(event_code, data, variables):
         raise ValidationError({"variables": "示例变量不在该事件允许清单中。"})
     variables = _validated_context(event, variables)
     title = _render(data["title_template"], event["allowed_variables"], variables)
-    body = _render(data["body_template"], event["allowed_variables"], variables)
+    body = _render(current_body_template(event_code, data["body_template"]), event["allowed_variables"], variables)
     if len(title) > 200 or len(f"{title}\n\n{body}".encode()) > 2048:
         raise ValidationError({"template": "完整企业微信消息不能超过2048个UTF-8字节。"})
     return {"event_code": event_code, "title": title, "body": body,
@@ -270,7 +270,7 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         status = "NOT_READY"
     else:
         title = _render(rule.title_template, event["allowed_variables"], context)
-        body = _render(rule.body_template, event["allowed_variables"], context)
+        body = _render(current_body_template(event_code, rule.body_template), event["allowed_variables"], context)
         if len(title) > 200 or len(f"{title}\n\n{body}".encode()) > 2048:
             raise ValidationError("渲染后的完整消息超出标题或企业微信2048字节限制。")
         recipients = _eligible_employees(event, rule, context, object_id)
@@ -293,9 +293,17 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         )
         NotificationDelivery.objects.create(recipient=recipient, channel="IN_APP",
             idempotency_key=f"{notification.pk}:{employee.pk}:IN_APP", status="ACCEPTED", finished_at=timezone.now())
+        admin_in_app_only = _admin_uses_in_app_only(employee)
         NotificationDelivery.objects.create(recipient=recipient, channel="WECOM",
-            idempotency_key=f"{notification.pk}:{employee.pk}:WECOM", user_id_snapshot=binding.user_id if binding else "")
+            idempotency_key=f"{notification.pk}:{employee.pk}:WECOM", user_id_snapshot=binding.user_id if binding else "",
+            status="SKIPPED" if admin_in_app_only else "PENDING",
+            error_code="ADMIN_IN_APP_ONLY" if admin_in_app_only else "",
+            finished_at=timezone.now() if admin_in_app_only else None)
     return notification
+
+
+def _admin_uses_in_app_only(employee):
+    return employee.user.is_superuser and employee.user.get_username() == "admin"
 
 
 def _fail_delivery(delivery, code):
@@ -324,6 +332,10 @@ def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, def
         snapshot = SimpleNamespace(recipient_role_codes=recipient.role_codes, recipient_scope=recipient.scope)
         if not _eligible_employees(get_event(event.event_code), snapshot, event.context, event.object_id, employee_id=employee.pk):
             return _fail_delivery(locked, "RECIPIENT_NOT_ELIGIBLE")
+        if _admin_uses_in_app_only(employee):
+            locked.status, locked.error_code, locked.finished_at = "SKIPPED", "ADMIN_IN_APP_ONLY", timezone.now()
+            locked.save(update_fields=["status", "error_code", "finished_at", "updated_at"])
+            return locked
         binding = WeComBinding.objects.filter(employee=employee).first()
         if binding is None:
             return _fail_delivery(locked, "NO_WECOM_BINDING")
@@ -347,7 +359,16 @@ def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, def
         locked.user_id_snapshot = binding.user_id
         locked.save(update_fields=["status", "error_code", "attempt_count", "last_attempt_at", "user_id_snapshot", "updated_at"])
     try:
-        result = WeComClient(config).send_text(binding.user_id, f"{event.rendered_title}\n\n{event.rendered_body}")
+        body = event.rendered_body
+        definition = get_event(event.event_code)
+        # 未投递的旧默认快照只调整排版；自定义正文、历史快照及站内记录不重写。
+        if all(event.context.get(name) is not None and str(event.context[name]).strip()
+               for name in VARIABLE.findall(definition["legacy_default_body"])):
+            legacy = _render(definition["legacy_default_body"], definition["allowed_variables"], event.context)
+            if body == legacy:
+                body = _render(definition["default_body"], definition["allowed_variables"], event.context)
+        result = WeComClient(config).send_text_notice(binding.user_id, title=event.rendered_title,
+            body=body, url=f"{config.erp_origin}/?notification={recipient.pk}", preview=False)
         status, error_code, msgid = "ACCEPTED", "", result["msgid"]
     except WeComSendUncertain:
         status, error_code, msgid = "UNCERTAIN", "SEND_UNCERTAIN", ""

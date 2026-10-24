@@ -1,19 +1,22 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, reactive } from 'vue'
+import { AxiosError } from 'axios'
 import HeaderMessages from './HeaderMessages.vue'
+import PageContainer from '@/layouts/PageContainer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import type { NotificationItem } from '@/types/notifications'
 
-const api = vi.hoisted(() => ({ inbox: vi.fn(), count: vi.fn(), read: vi.fn(), target: vi.fn() }))
+const api = vi.hoisted(() => ({ inbox: vi.fn(), count: vi.fn(), read: vi.fn(), target: vi.fn(), detail: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn(), hasRoute: vi.fn() }))
-vi.mock('vue-router', () => ({ useRouter: () => router }))
+const route = reactive<{ path: string; query: { notification?: string | string[] } }>({ path: '/', query: {} })
+vi.mock('vue-router', () => ({ useRouter: () => router, useRoute: () => route }))
 vi.mock('@/api/notifications', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/notifications')>(),
   getNotificationInbox: api.inbox, getNotificationUnreadCount: api.count,
-  markNotificationRead: api.read, getNotificationTarget: api.target,
+  markNotificationRead: api.read, getNotificationTarget: api.target, getNotificationDetail: api.detail,
 }))
 const id = '12345678-1234-1234-1234-123456789abc'
 const item: NotificationItem = { id, event_code: 'BOM_CONFIRMED', event_name: 'BOM确认', title: '演示消息', body: '演示正文',
@@ -23,18 +26,94 @@ let reduced = false
 function render() { wrapper = mount(HeaderMessages, { attachTo: document.body }); return wrapper }
 beforeEach(() => {
   vi.useFakeTimers(); vi.resetAllMocks(); setActivePinia(createPinia()); reduced = false
+  route.path = '/'; route.query = {}
   vi.stubGlobal('matchMedia', () => ({ get matches() { return reduced }, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'employee', display_name: '员工',
     employee: null, is_superuser: false, permissions: [], data_scope: 'NONE' } })
   api.count.mockResolvedValue(2)
   api.inbox.mockResolvedValue({ data: [item], count: 1, page: 1, page_size: 10 })
   api.read.mockResolvedValue({ ...item, read_at: '2026-10-21T02:00:00Z' })
+  api.detail.mockResolvedValue(item)
   api.target.mockResolvedValue({ target_key: 'bom-detail', object_id: id, route_name: 'bom-preview', params: { bomId: id } })
   router.hasRoute.mockReturnValue(true); router.push.mockResolvedValue(undefined)
 })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined; document.body.innerHTML = ''; vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('页头消息组件（隔离替身）', () => {
+  it('冷启动页面容器自动聚焦后，卡片链接仍保持消息面板打开', async () => {
+    route.query = { notification: id }
+    wrapper = mount({ components: { HeaderMessages, PageContainer },
+      template: '<div><HeaderMessages /><main id="erp-main-content" tabindex="-1"><PageContainer>工作台</PageContainer></main></div>',
+    }, { attachTo: document.body })
+    ;(document.querySelector('#erp-main-content') as HTMLElement).scrollTo = vi.fn()
+    await flushPromises()
+    expect(document.querySelector('[data-linked-notification]')?.textContent).toContain(item.body)
+    expect(api.read).not.toHaveBeenCalled()
+  })
+  it('卡片链接只读打开指定通知，点击查看业务才标记已读并复查目标', async () => {
+    route.query = { notification: id }
+    render(); await flushPromises()
+    expect(api.detail.mock.calls[0]?.[0]).toBe(id)
+    expect(document.querySelector('[data-linked-notification]')?.textContent).toContain(item.body)
+    expect(api.read).not.toHaveBeenCalled()
+    expect(api.target).not.toHaveBeenCalled()
+    ;(document.querySelector('[data-linked-notification] button') as HTMLButtonElement).click(); await flushPromises()
+    expect(api.read.mock.calls[0]?.[0]).toBe(id)
+    expect(api.target.mock.calls[0]?.[0]).toBe(id)
+    expect(router.push).toHaveBeenCalledWith({ name: 'bom-preview', params: { bomId: id } })
+  })
+  it.each(['invalid', [id, id]])('非法或重复通知参数不读取任何单条正文：%s', async notification => {
+    route.query = { notification }
+    render(); await flushPromises()
+    expect(document.body.textContent).toContain('通知链接无效')
+    expect(api.detail).not.toHaveBeenCalled()
+    expect(api.read).not.toHaveBeenCalled()
+  })
+  it('他人或不存在通知只显示统一不可访问提示，不展示上一次正文', async () => {
+    route.query = { notification: id }
+    render(); await flushPromises()
+    api.detail.mockRejectedValueOnce(new AxiosError('private', undefined, undefined, undefined,
+      { status: 404, data: 'private', headers: {}, config: {} as never, statusText: 'Not Found' }))
+    route.query = { notification: '22222222-2222-2222-2222-222222222222' }; await flushPromises()
+    expect(document.body.textContent).not.toContain(item.body)
+    expect(document.body.textContent).toContain('已无访问权限')
+    expect(document.body.textContent).not.toContain('private')
+    expect(api.read).not.toHaveBeenCalled()
+  })
+  it('退出账号时丢弃迟到的通知正文，无目标通知也不会触发业务请求', async () => {
+    let release!: (value: NotificationItem) => void
+    api.detail.mockReturnValueOnce(new Promise(resolve => { release = resolve }))
+    route.query = { notification: id }; render(); await flushPromises()
+    useAuthStore().clearAuthentication(); await nextTick()
+    release(item); await flushPromises()
+    expect(document.body.textContent).not.toContain(item.body)
+    expect(api.read).not.toHaveBeenCalled()
+  })
+  it('旧账号查看业务的迟到结果不能清空新账号已加载的通知', async () => {
+    let release!: (value: NotificationItem) => void
+    api.read.mockReturnValueOnce(new Promise(resolve => { release = resolve }))
+    route.query = { notification: id }; render(); await flushPromises()
+    ;(document.querySelector('[data-linked-notification] button') as HTMLButtonElement).click(); await flushPromises()
+    const auth = useAuthStore()
+    api.detail.mockResolvedValueOnce({ ...item, title: '新账号消息', body: '新账号正文' })
+    auth.applyAuthResponse({ authenticated: true, user: { ...auth.user!, id: 2 } })
+    await flushPromises()
+    expect(document.body.textContent).toContain('新账号正文')
+    release({ ...item, read_at: '2026-10-21T02:00:00Z' }); await flushPromises()
+    expect(document.body.textContent).toContain('新账号正文')
+    expect(document.body.textContent).not.toContain('通知当前不可访问，请重新打开卡片核对。')
+    expect(router.push).not.toHaveBeenCalled()
+  })
+  it('没有业务目标的通知只展示服务端安全正文，可返回全部消息', async () => {
+    api.detail.mockResolvedValueOnce({ ...item, title: '通知内容不可访问', body: '该业务内容当前不可访问。', target_accessible: false })
+    route.query = { notification: id }; render(); await flushPromises()
+    expect(document.body.textContent).toContain('该业务内容当前不可访问')
+    expect(document.querySelector('[data-linked-notification] button')).toBeNull()
+    ;(document.querySelector('.header-message-panel__footer button') as HTMLButtonElement).click(); await flushPromises()
+    expect(api.inbox).toHaveBeenCalled()
+    expect(document.querySelector('[data-linked-notification]')).toBeNull()
+    expect(api.read).not.toHaveBeenCalled()
+  })
   it('数字角标上限99+；打开不批量已读；Escape关闭并恢复焦点', async () => {
     const view = render(); await flushPromises()
     useNotificationsStore().unread = 105; await nextTick()

@@ -3,29 +3,29 @@ import ElementPlus, { ElDropdown, ElMessageBox } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import FinanceStatementsView from './FinanceStatementsView.vue'
-import FinanceStatementSourceDialog from './FinanceStatementSourceDialog.vue'
+import FinanceTaskSelect from './FinanceTaskSelect.vue'
 import { createFinanceStatement, fetchFinanceSourceProducts, fetchFinanceStatement, fetchFinanceStatements, updateFinanceStatement } from '@/api/financeStatements'
 import type { FinanceSourcePage, FinanceSourceProduct, FinanceSourceTask, FinanceStatement, FinanceStatementPage } from '@/types/financeStatements'
 import { displayCents, previewLineAmount } from './statementAmounts'
 
 const state = vi.hoisted(() => ({ allowed: true }))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn() }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, hasPermission: () => state.allowed }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false, username: 'current-user', display_name: '当前账号', employee: { display_name: '当前制单人' } }, hasPermission: () => state.allowed }) }))
 vi.mock('@/api/financeStatements', () => ({ createFinanceStatement: vi.fn(), fetchFinanceStatements: vi.fn(), fetchFinanceStatement: vi.fn(), fetchFinanceSourceProducts: vi.fn(), fetchFinanceSourceTasks: vi.fn(), updateFinanceStatement: vi.fn(), voidFinanceStatement: vi.fn(), deleteFinanceStatement: vi.fn() }))
-const task: FinanceSourceTask = { id: 'task1', task_number: 'U03-TASK', source_order_date: '2026-10-20', status: 'READY', salesperson: { id: 'sales', code: 'SALES', name: '合成业务员' } }
+const task: FinanceSourceTask = { id: 'task1', task_number: 'U03-TASK', source_order_date: '2026-10-20', task_order_date: '2026-10-21', task_delivery_date: '2026-11-15', status: 'READY', salesperson: { id: 'sales', code: 'SALES', name: '合成业务员' } }
 const product: FinanceSourceProduct = { id: 'line1', item_number_snapshot: 'ITEM', product_number_snapshot: '', product_code_snapshot: '', product_name_snapshot: '合成产品', specification_snapshot: '规格', quantity: '3', unit_code: 'PCS', unit_name: '件', reference_unit_price_cny: '0.3350', selectable: true, reason: null, error_code: null, occupied_statement_number: null }
 const source: FinanceSourcePage = { data: [product], meta: { page: 1, page_size: 20, total: 1, total_pages: 1 }, task, source_revision: 'a'.repeat(64), salesperson_changes: [] }
-const statement: FinanceStatement = { id: 'statement', number: 'YSDZD261023001', production_task_id: task.id, task_number: task.task_number, source_order_date: task.source_order_date, salesperson: task.salesperson, operator: { id: 'operator', code: 'FIN', name: '合成财务' }, created_at: '', updated_at: '', source_revision: source.source_revision, statement_revision: 1, status: 'ACTIVE', amount: '1.01', settled_amount: '0.00', discount_amount: '0.00', outstanding_amount: '1.01', available_deposit_amount: '0.00', bank_received_amount: '0.00', settlement_status: 'UNSETTLED', can_edit: true, can_void: true, can_delete: false, delete_block_reason: '有效单据不可删除', blocked_reason: null, etag: '"v1"', lines: [], quantity_totals: [], void_reason: '', voided_at: null }
+const statement: FinanceStatement = { id: 'statement', number: 'YSDZD261023001', production_task_id: task.id, task_number: task.task_number, source_order_date: task.source_order_date, task_order_date: task.task_order_date, task_delivery_date: task.task_delivery_date, salesperson: task.salesperson, operator: { id: 'operator', code: 'FIN', name: '合成财务' }, created_at: '', updated_at: '', source_revision: source.source_revision, statement_revision: 1, status: 'ACTIVE', amount: '1.01', settled_amount: '0.00', discount_amount: '0.00', outstanding_amount: '1.01', available_deposit_amount: '0.00', bank_received_amount: '0.00', settlement_status: 'UNSETTLED', can_edit: true, can_void: true, can_delete: false, delete_block_reason: '有效单据不可删除', blocked_reason: null, etag: '"v1"', lines: [], quantity_totals: [], void_reason: '', voided_at: null }
 const result = (data = [statement]): FinanceStatementPage => ({ data, meta: { page: 1, page_size: 20, total: data.length, total_pages: 1 } })
 const setup = () => mount(FinanceStatementsView, { global: { plugins: [ElementPlus], stubs: {
   AppWindowDialog: { props: ['modelValue'], template: '<div v-if="modelValue" class="dialog-test"><slot/><slot name="footer"/></div>' },
-  FinanceStatementSourceDialog: true,
+  FinanceTaskSelect: true,
   FinanceStatementReceipts: true,
 } } })
 const button = (wrapper: ReturnType<typeof setup>, text: string) => wrapper.findAll('button').find(item => item.text() === text)!
 async function fill(wrapper: ReturnType<typeof setup>) {
   await flushPromises(); await button(wrapper, '新增对账单').trigger('click'); await flushPromises()
-  wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', task); await flushPromises()
+  wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', task); await flushPromises()
   await wrapper.get('[aria-label="选择产品合成产品"] input').setValue(true); await flushPromises()
 }
 const checkbox = (wrapper: ReturnType<typeof setup>, name = product.product_name_snapshot) => wrapper.get(`[aria-label="选择产品${name}"] input`)
@@ -56,7 +56,7 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
   })
   it('刷新失败保留旧结果，初始失败不伪装空数据', async () => {
     const wrapper = setup()
-    try { await flushPromises(); vi.mocked(fetchFinanceStatements).mockRejectedValueOnce(new Error('网络失败')); await button(wrapper, '刷新').trigger('click'); await flushPromises(); expect(wrapper.text()).toContain('刷新失败，保留上次结果'); expect(wrapper.text()).toContain(statement.number) } finally { wrapper.unmount() }
+    try { await flushPromises(); vi.mocked(fetchFinanceStatements).mockRejectedValueOnce(new Error('网络失败')); await button(wrapper, '应用筛选').trigger('click'); await flushPromises(); expect(wrapper.text()).toContain('刷新失败，保留上次结果'); expect(wrapper.text()).toContain(statement.number); await button(wrapper, '重试').trigger('click'); await flushPromises(); expect(wrapper.text()).not.toContain('网络失败') } finally { wrapper.unmount() }
     vi.mocked(fetchFinanceStatements).mockRejectedValueOnce(new Error('首次失败'))
     const failed = setup()
     try { await flushPromises(); expect(failed.text()).toContain('首次失败'); expect(failed.text()).not.toContain('暂无应收对账单') } finally { failed.unmount() }
@@ -83,10 +83,10 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
     try {
       await fill(wrapper); await wrapper.get('input[aria-label="第1行对账单价"]').setValue('2.1234')
       const other = { ...task, id: 'task2', task_number: 'U03-OTHER' }
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', other); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', other); await flushPromises()
       expect((wrapper.get('input[aria-label="第1行对账单价"]').element as HTMLInputElement).value).toBe('2.1234')
       vi.mocked(fetchFinanceSourceProducts).mockResolvedValueOnce({ ...source, task: other })
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', other); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', other); await flushPromises()
       expect((checkbox(wrapper).element as HTMLInputElement).checked).toBe(false)
       expect((wrapper.get('input[aria-label="第1行对账单价"]').element as HTMLInputElement).value).toBe('0.3350')
       expect(wrapper.text()).toContain('已选 0 行')
@@ -118,12 +118,31 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
     const wrapper = setup()
     try {
       await flushPromises(); await button(wrapper, '新增对账单').trigger('click')
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', task); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', task); await flushPromises()
       expect(wrapper.text()).toContain(product.product_name_snapshot); expect(wrapper.text()).not.toContain('选择产品行')
       expect((checkbox(wrapper).element as HTMLInputElement).checked).toBe(false)
       expect(button(wrapper, '保存对账单').attributes('disabled')).toBeDefined()
       expect(wrapper.find('.statement-summary').text()).toContain('0.00 元')
       await button(wrapper, '保存对账单').trigger('click'); expect(createFinanceStatement).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+  it('新增显示当前人员及打开时间，编辑显示原制单人和服务器时间', async () => {
+    const wrapper = setup()
+    try {
+      await flushPromises(); await button(wrapper, '新增对账单').trigger('click')
+      expect((wrapper.get('input[aria-label="对账人员"]').element as HTMLInputElement).value).toBe('当前制单人')
+      expect((wrapper.get('input[aria-label="对账时间"]').element as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+      expect(wrapper.find('.form-grid').text()).toContain('结算类型')
+      await button(wrapper, '取消').trigger('click'); await flushPromises()
+      vi.mocked(fetchFinanceStatement).mockResolvedValue({ ...savedStatement, created_at: '2026-10-23T08:09:10' })
+      await openExisting(wrapper, 'edit')
+      expect((wrapper.get('input[aria-label="对账人员"]').element as HTMLInputElement).value).toBe('合成财务')
+      expect((wrapper.get('input[aria-label="对账时间"]').element as HTMLInputElement).value).toBe('2026-10-23 08:09:10')
+      expect((wrapper.get('input[aria-label="开始时间"]').element as HTMLInputElement).value).toBe(savedStatement.task_order_date)
+      expect((wrapper.get('input[aria-label="结束时间"]').element as HTMLInputElement).value).toBe(savedStatement.task_delivery_date)
+      await button(wrapper, '取消').trigger('click'); await flushPromises(); await openExisting(wrapper, 'detail')
+      expect(wrapper.find('.document-facts').text()).toContain(`开始时间${savedStatement.task_order_date}`)
+      expect(wrapper.find('.document-facts').text()).toContain(`结束时间${savedStatement.task_delivery_date}`)
     } finally { wrapper.unmount() }
   })
   it('跨页勾选与调整单价保留，合计和提交只取勾选整行', async () => {
@@ -141,6 +160,35 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
       await checkbox(wrapper).setValue(false); expect(wrapper.find('.statement-summary').text()).toContain('8.00 元')
       await button(wrapper, '保存对账单').trigger('click'); await flushPromises()
       expect(createFinanceStatement).toHaveBeenCalledWith(expect.objectContaining({ source_revision: source.source_revision, lines: [{ production_task_product_id: 'second', unit_price: '2.0000' }] }), expect.any(String))
+    } finally { wrapper.unmount() }
+  })
+  it('开始结束显示任务当前日期，产品刷新回填日期且不写入保存体', async () => {
+    vi.mocked(createFinanceStatement).mockResolvedValue(statement)
+    const wrapper = setup()
+    try {
+      await fill(wrapper)
+      expect((wrapper.get('input[aria-label="开始时间"]').element as HTMLInputElement).value).toBe(task.task_order_date)
+      expect((wrapper.get('input[aria-label="结束时间"]').element as HTMLInputElement).value).toBe(task.task_delivery_date)
+      expect(wrapper.get('input[aria-label="开始时间"]').attributes('readonly')).toBeDefined()
+      expect(wrapper.get('input[aria-label="结束时间"]').attributes('readonly')).toBeDefined()
+      vi.mocked(fetchFinanceSourceProducts).mockResolvedValueOnce({ ...source, task: { ...task, task_order_date: '2026-10-25', task_delivery_date: '2026-12-01' } })
+      await button(wrapper, '刷新产品').trigger('click'); await flushPromises()
+      expect((wrapper.get('input[aria-label="开始时间"]').element as HTMLInputElement).value).toBe('2026-10-25')
+      expect((wrapper.get('input[aria-label="结束时间"]').element as HTMLInputElement).value).toBe('2026-12-01')
+      await button(wrapper, '保存对账单').trigger('click'); await flushPromises()
+      expect(vi.mocked(createFinanceStatement).mock.calls[0]![0]).toEqual({ production_task_id: task.id, source_revision: source.source_revision, acknowledge_salesperson_change: false, lines: [{ production_task_product_id: product.id, unit_price: product.reference_unit_price_cny }] })
+    } finally { wrapper.unmount() }
+  })
+  it('编辑产品响应更新任务当前日期，保留原人员与历史来源快照语义', async () => {
+    vi.mocked(fetchFinanceStatement).mockResolvedValue(savedStatement)
+    vi.mocked(fetchFinanceSourceProducts).mockResolvedValue({ ...source, task: { ...task, task_order_date: '2026-10-26', task_delivery_date: '2026-12-03' } })
+    const wrapper = setup()
+    try {
+      await openExisting(wrapper, 'edit')
+      expect((wrapper.get('input[aria-label="开始时间"]').element as HTMLInputElement).value).toBe('2026-10-26')
+      expect((wrapper.get('input[aria-label="结束时间"]').element as HTMLInputElement).value).toBe('2026-12-03')
+      expect((wrapper.get('input[aria-label="对账人员"]').element as HTMLInputElement).value).toBe(savedStatement.operator.name)
+      expect(wrapper.findAll('input').some(input => (input.element as HTMLInputElement).value === savedStatement.source_order_date)).toBe(false)
     } finally { wrapper.unmount() }
   })
   it('编辑预勾选已保存产品并保留原对账价，详情不请求来源或显示复选框', async () => {
@@ -232,11 +280,11 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
     const wrapper = setup()
     try {
       await flushPromises(); await button(wrapper, '新增对账单').trigger('click')
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', task); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', task); await flushPromises()
       expect(wrapper.text()).toContain('正在加载任务产品')
       const other = { ...task, id: 'task-other', task_number: 'NEW-TASK' }
       vi.mocked(fetchFinanceSourceProducts).mockResolvedValue({ ...source, task: other, data: [{ ...product, product_name_snapshot: '新任务产品' }] })
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', other); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', other); await flushPromises()
       resolve(source); await flushPromises()
       expect(wrapper.find('.statement-products').text()).toContain('新任务产品'); expect(wrapper.find('.statement-products').text()).not.toContain('合成产品')
       expect(wrapper.text()).toContain('已选 0 行')
@@ -247,7 +295,7 @@ describe('对账页面状态（隔离组件测试，不代替真实API）', () =
     const wrapper = setup()
     try {
       await flushPromises(); await button(wrapper, '新增对账单').trigger('click')
-      wrapper.findComponent(FinanceStatementSourceDialog).vm.$emit('task', task); await flushPromises()
+      wrapper.findComponent(FinanceTaskSelect).vm.$emit('task', task); await flushPromises()
       expect(wrapper.text()).toContain('产品连接失败'); expect(button(wrapper, '保存对账单').attributes('disabled')).toBeDefined()
       vi.mocked(fetchFinanceSourceProducts).mockResolvedValueOnce({ ...source, data: [], meta: { page: 1, page_size: 20, total: 0, total_pages: 1 } })
       await button(wrapper, '重试').trigger('click'); await flushPromises()

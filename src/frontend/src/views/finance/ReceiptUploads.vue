@@ -88,17 +88,18 @@ defineExpose({ discardAll })
 
 <template>
   <section class="receipt-upload-section">
-    <div class="receipt-section-heading"><div><h3>本次水单</h3><p>有新到账时必填 · JPG / PNG · 单文件不超过 20 MB</p></div><el-button :disabled="disabled || busy || !statementId" :loading="busy" @click="input?.click()">添加水单</el-button><input ref="input" type="file" accept=".jpg,.jpeg,.png" class="file-input" tabindex="-1" aria-label="选择水单文件" @change="choose"/></div>
+    <div class="receipt-section-heading"><div><h3>本次水单</h3></div><el-button type="primary" class="receipt-add-button" :disabled="disabled || busy || !statementId" :loading="busy" @click="input?.click()">添加水单</el-button><input ref="input" type="file" accept=".jpg,.jpeg,.png" class="file-input" tabindex="-1" aria-label="选择水单文件" @change="choose"/></div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon/>
     <p v-if="!modelValue.length && !pending.length" class="receipt-empty">尚未添加水单。上传完成后须保存收款才会绑定。</p>
-    <div v-for="upload in modelValue" :key="upload.id" class="upload-line"><div><strong>{{ upload.original_name }}</strong><span>{{ upload.scan_label }} · {{ upload.status === 'DISCARD_PENDING' ? '清理失败，待重试' : '尚未绑定收款' }}</span></div><el-button link type="primary" :disabled="busy || upload.status !== 'UNBOUND'" @click="show(upload)">预览</el-button><el-button link type="danger" :disabled="disabled || busy" @click="remove(upload)">{{ upload.status === 'DISCARD_PENDING' ? '重试清理' : '移除' }}</el-button></div>
+    <div v-for="upload in modelValue" :key="upload.id" class="upload-line"><div><strong>{{ upload.original_name }}</strong><span v-if="upload.status === 'DISCARD_PENDING'" role="alert">清理失败，待重试</span><span v-if="['PENDING', 'INFECTED', 'FAILED'].includes(upload.scan_status)" role="alert">{{ upload.scan_label }}</span></div><el-button link type="primary" :disabled="busy || upload.status !== 'UNBOUND'" @click="show(upload)">预览</el-button><el-button link type="danger" :disabled="disabled || busy" @click="remove(upload)">{{ upload.status === 'DISCARD_PENDING' ? '重试清理' : '移除' }}</el-button></div>
     <div v-for="item in pending" :key="item.key" class="upload-line"><div><strong>{{ item.file.name }}</strong><span role="alert">{{ item.error || '正在上传并核对扫描状态…' }}</span></div><el-button :disabled="disabled || busy" @click="retry(item)">重试原上传</el-button></div>
   </section>
   <AppWindowDialog v-model="preview" :title="previewName" :width="900" :min-width="280" :minimizable="false" destroy-on-close modal-class="finance-receipt-overlay" @closed="releasePreview"><img v-if="previewUrl" :src="previewUrl" :alt="previewName" class="receipt-slip-preview"/><template #footer><el-button @click="preview = false">关闭</el-button></template></AppWindowDialog>
 </template>
 
 <style scoped lang="scss">
-.receipt-upload-section{border-top:1px solid var(--erp-color-border);margin-top:20px;padding-top:20px}.receipt-section-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.receipt-section-heading h3{margin:0;font-size:15px;line-height:22px;font-weight:600}.receipt-section-heading p{margin:4px 0 0;font-size:12px;line-height:20px;color:var(--erp-color-text-secondary)}.file-input{display:none}
+.upload-line>.el-button{margin-left:0}
+.receipt-upload-section{border-top:1px solid var(--erp-color-border);margin-top:20px;padding-top:20px}.receipt-section-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.receipt-section-heading h3{margin:0;font-size:15px;line-height:22px;font-weight:600}.receipt-add-button{height:32px;min-height:32px;padding:0 14px;font-size:13px}.file-input{display:none}
 .receipt-empty{padding:14px 16px;border-radius:5px;background:var(--erp-input-readonly-background);font-size:12px;color:var(--erp-color-text-secondary)}.upload-line{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-top:10px;border:1px solid var(--erp-color-border);border-radius:5px;font-size:12px}.upload-line>div{flex:1;min-width:0}.upload-line strong,.upload-line span{display:block;line-height:20px;overflow-wrap:anywhere}.upload-line span{color:var(--erp-color-text-secondary)}.receipt-slip-preview{display:block;max-width:100%;height:auto;margin:auto}
 @media(max-width:600px){.receipt-section-heading,.upload-line{flex-wrap:wrap}}
 </style>

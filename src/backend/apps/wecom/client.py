@@ -12,6 +12,7 @@ from django.views.decorators.debug import sensitive_variables
 from redis.exceptions import RedisError
 
 from apps.wecom.credentials import CredentialError, decrypt_secret
+from .message_cards import build_text_notice_card
 
 
 class WeComError(Exception):
@@ -263,6 +264,23 @@ class WeComClient:
             raise WeComError("MESSAGE_REJECTED", "接收人或消息正文无效。", 400)
         payload = {"touser": user_id, "msgtype": "text", "agentid": self.agent_id, "text": {"content": content},
                    "enable_duplicate_check": 1, "duplicate_check_interval": 1800}
+        return self._send_message(user_id, payload)
+
+    @sensitive_variables()
+    def send_text_notice(self, user_id, *, title, body, url, preview=True):
+        if (not isinstance(user_id, str) or not re.fullmatch(r"[A-Za-z0-9_.@-]{1,64}", user_id)
+                or user_id.lower() == "@all"):
+            raise WeComError("MESSAGE_REJECTED", "接收人无效。", 400)
+        try:
+            card = build_text_notice_card(title, body, url, preview=preview)
+        except ValueError as exc:
+            raise WeComError("MESSAGE_REJECTED", str(exc), 400) from None
+        payload = {"touser": user_id, "msgtype": "template_card", "agentid": self.agent_id,
+                   "template_card": card, "enable_duplicate_check": 1, "duplicate_check_interval": 1800}
+        return self._send_message(user_id, payload)
+
+    @sensitive_variables()
+    def _send_message(self, user_id, payload):
         token = self._access_token()
         result = self._post_message(token, payload)
         if result["errcode"] in (40014, 42001):

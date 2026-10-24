@@ -124,10 +124,11 @@ class SuperadminSubmitterDeliveryTests(SuperadminSubmitterFixture, TransactionTe
             user_id="Notify.Superadmin", member_name="测试管理员", source="MANUAL", created_by_employee=self.admin)
         event = register_business_event(**self.arguments)
         delivery = event.recipients.get().deliveries.get(channel="WECOM")
-        with patch("apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "test-admin-receipt"}) as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "test-admin-receipt"}) as sender:
             result = process_delivery(delivery)
         self.assertEqual(result.status, "ACCEPTED")
-        sender.assert_called_once_with(binding.user_id, f"{event.rendered_title}\n\n{event.rendered_body}")
+        sender.assert_called_once_with(binding.user_id, title=event.rendered_title,
+            body=event.rendered_body, url=f"{config.erp_origin}/?notification={delivery.recipient_id}", preview=False)
 
 
 class InventorySuperadminNotificationAssertions:

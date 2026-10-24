@@ -28,9 +28,14 @@ describe('企业微信根网址自动授权入口', () => {
   })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); storage.clear() })
 
-  it('企业微信匿名访问根页时跳固定授权入口，不携带页面查询参数', () => {
+  it('企业微信匿名访问根页时跳固定授权入口并传本站回跳路径', () => {
     expect(startWeComLoginIfNeeded('home', true, false)).toBe(true)
-    expect(replace).toHaveBeenCalledExactlyOnceWith('/api/auth/wecom/start/')
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/api/auth/wecom/start/?next=%2F')
+  })
+  it('卡片通知参数作为一个编码后的next传递，由后端校验并绑定会话', () => {
+    const path = '/?notification=12345678-1234-1234-1234-123456789abc'
+    expect(startWeComLoginIfNeeded('home', true, false, path)).toBe(true)
+    expect(replace).toHaveBeenCalledExactlyOnceWith(`/api/auth/wecom/start/?next=${encodeURIComponent(path)}`)
   })
   it('Windows 企业微信受保护深链接也会发起授权', () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 WindowsWechat WXWork/4.1.36' })

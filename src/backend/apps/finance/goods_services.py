@@ -1,5 +1,6 @@
 """货款业务分支；公共 Receipt 入口负责权限、幂等及账单锁。"""
-from django.db import IntegrityError, transaction
+from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.generics import get_object_or_404
 
@@ -22,7 +23,9 @@ def _require_transaction():
         raise RuntimeError("货款分支必须在公共收款事务及账单锁内调用。")
 
 
-def _lock_selected_deposits(statement, deposit_ids):
+def _lock_selected_deposits(statement, data):
+    requested = data.get("deposit_allocations")
+    deposit_ids = [item["deposit_id"] for item in requested] if requested is not None else data.get("deposit_ids", [])
     if len(set(deposit_ids)) != len(deposit_ids):
         raise ReceiptValidationError("VALIDATION_ERROR", {"deposit_ids": "不能重复选择同一订金。"})
     # 先按归属过滤，绝不在持本账单锁时锁另一账单的订金。
@@ -30,9 +33,22 @@ def _lock_selected_deposits(statement, deposit_ids):
         statement=statement, receipt_type="DEPOSIT").order_by("pk"))
     if len(deposits) != len(deposit_ids) or any(item.status != "ACTIVE" for item in deposits):
         raise FinanceConflict("DEPOSIT_UNAVAILABLE", "所选订金不属于本对账单、已作废或不可用，请刷新确认。")
-    if DepositAllocation.objects.filter(deposit_receipt__in=deposits, is_active=True).exists():
-        raise FinanceConflict("DEPOSIT_UNAVAILABLE", "所选订金已被货款整笔使用，请刷新确认。")
-    return deposits
+    used = dict(DepositAllocation.objects.filter(deposit_receipt__in=deposits, is_active=True)
+        .values("deposit_receipt_id").annotate(total=Sum("amount")).values_list("deposit_receipt_id", "total"))
+    amounts = {item["deposit_id"]: item["amount"] for item in requested} if requested is not None else {}
+    allocations = []
+    for deposit in deposits:
+        available = deposit.deposit_amount - used.get(deposit.pk, ZERO)
+        if available < ZERO:
+            raise RuntimeError("订金有效核销金额超过原金额，登记已停止。")
+        # 旧客户端仅传编号时，使用锁内剩余全额；新客户端逐笔指定本次核销金额。
+        amount = amounts.get(deposit.pk, available)
+        if amount <= ZERO or amount > available:
+            raise FinanceConflict("DEPOSIT_UNAVAILABLE", "订金核销金额超过当前可用余额，请刷新后核对。",
+                meta={"deposit_id": str(deposit.pk), "available_amount": str(available),
+                    "recovery_action": "REVIEW_AMOUNTS"})
+        allocations.append((deposit, amount))
+    return allocations
 
 
 def create_goods_receipt(*, request, statement, data, resource_id):
@@ -42,7 +58,7 @@ def create_goods_receipt(*, request, statement, data, resource_id):
         raise FinanceConflict("STATEMENT_VOID", "对账单已作废，不能登记货款。")
     if data["receipt_type"] != "GOODS":
         raise ReceiptValidationError("RECEIPT_TYPE_FIELDS_INVALID", {"receipt_type": "此分支仅处理货款。"})
-    deposits = _lock_selected_deposits(statement, data.get("deposit_ids", []))
+    allocations = _lock_selected_deposits(statement, data)
     totals = settlement_totals_for(statement)
     cash, fees = account_line_totals(data["account_lines"])
     try:
@@ -51,9 +67,8 @@ def create_goods_receipt(*, request, statement, data, resource_id):
         raise ReceiptValidationError(exc.code, {"account_lines": "累计手续费超出允许金额范围，请核对本次手续费。"},
             meta={"field": "fee_amount", "recovery_action": "REVIEW_AMOUNTS"}) from exc
     try:
-        # 金额只能从刚锁定的整笔订金取得，客户端没有部分抵扣字段。
         amount = validate_goods_settlement(totals, cash_amount=cash,
-            allocated_deposit_amount=sum_money(item.deposit_amount for item in deposits),
+            allocated_deposit_amount=sum_money(value for _, value in allocations),
             discount_amount=data.get("discount_amount", ZERO))
     except SettlementAmountError as exc:
         raise ReceiptValidationError(exc.code, {"amounts": str(exc)}, meta=exc.meta) from exc
@@ -67,17 +82,11 @@ def create_goods_receipt(*, request, statement, data, resource_id):
         statement_snapshot=receipt_statement_snapshot(statement, outstanding_before=amount.outstanding_before,
             outstanding_after=amount.outstanding_after),
         created_by_employee=request.employee, updated_by_employee=request.employee)
-    try:
-        with transaction.atomic():
-            DepositAllocation.objects.bulk_create([DepositAllocation(goods_receipt=receipt,
-                deposit_receipt=deposit, amount=deposit.deposit_amount) for deposit in deposits])
-    except IntegrityError as exc:
-        if getattr(getattr(exc.__cause__, "diag", None), "constraint_name", None) == "finance_deposit_active_allocation":
-            raise FinanceConflict("DEPOSIT_UNAVAILABLE", "订金已被另一货款占用，请刷新后重新确认。") from exc
-        raise
+    DepositAllocation.objects.bulk_create([DepositAllocation(goods_receipt=receipt,
+        deposit_receipt=deposit, amount=value) for deposit, value in allocations])
     create_receipt_account_lines(receipt, data["account_lines"], accounts)
     bind_receipt_uploads(receipt=receipt, uploads=uploads)
-    for deposit in deposits:
+    for deposit, _ in allocations:
         deposit.updated_by_employee = request.employee
         deposit.save(update_fields=["updated_at", "updated_by_employee"])
     touch_receipt_statement(statement, request.employee)
@@ -105,8 +114,8 @@ def void_goods_receipt(*, request, statement, receipt_id, reason):
     now = timezone.now()
     for allocation in allocations:
         deposit = locked.get(allocation.deposit_receipt_id)
-        if deposit is None or deposit.receipt_type != "DEPOSIT" or deposit.status != "ACTIVE" or allocation.amount != deposit.deposit_amount:
-            raise RuntimeError("货款抵扣归属或整笔金额不一致，作废已停止。")
+        if deposit is None or deposit.receipt_type != "DEPOSIT" or deposit.status != "ACTIVE" or not ZERO < allocation.amount <= deposit.deposit_amount:
+            raise RuntimeError("货款抵扣归属或核销金额不一致，作废已停止。")
         allocation.is_active = False
         allocation.voided_at = now
         allocation.save(update_fields=["is_active", "voided_at"])

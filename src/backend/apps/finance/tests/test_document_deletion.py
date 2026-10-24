@@ -83,6 +83,24 @@ class DocumentDeletionTests(GoodsFixture, TransactionTestCase):
         self.assertIn(self.delete(self.statement).status_code, (401, 403))
         self.assertTrue(ReceivableStatement.objects.filter(pk=self.statement.pk).exists())
 
+    def test_partial_deposit_references_must_all_be_removed_before_deposit_delete(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        first = self.create(allocations=[(deposit, "100.00")])
+        second = self.create(allocations=[(deposit, "80.00")])
+        self.void(first)
+        self.assertEqual(self.delete(first).status_code, 204)
+        self.assertEqual(DepositAllocation.objects.filter(deposit_receipt=deposit, is_active=True).count(), 1)
+        self.assertEqual(settlement_totals_for(self.statement).available_deposit_amount, 220)
+        with self.assertRaises(APIException) as caught:
+            self.void(deposit)
+        self.assertEqual(caught.exception.api_error_code, "DEPOSIT_UNAVAILABLE")
+        self.void(second)
+        self.void(deposit)
+        self.assertEqual(self.delete(deposit).status_code, 409)
+        self.assertEqual(self.delete(second).status_code, 204)
+        self.assertEqual(self.delete(deposit).status_code, 204)
+        self.assertFalse(DepositAllocation.objects.exists())
+
     def test_receipt_deletes_owned_rows_files_but_preserves_audit_and_key(self):
         request = self.request(self.body(kind="DEPOSIT", cash="100.00"))
         receipt, _ = create_receipt(request)

@@ -14,6 +14,7 @@ from apps.core.audit import write_audit_log
 from apps.core.auth import active_employee_for
 from .client import WeComClient, WeComError, WeComSendUncertain
 from .message_serializers import validate_plain_text
+from .message_cards import build_preview_card
 from .models import NotificationPreviewAttempt, NotificationRule, WeComBinding, WeComConfig
 from .notification_catalog import get_event
 from .notification_preview_selectors import schema_ready
@@ -40,10 +41,19 @@ def require_preview_schema():
 
 def signed_preview(request, event_code, draft, source_etag, preview):
     actor = active_employee_for(request.user)
+    message_type, card, blocked_reason = "template_card", None, ""
+    config = WeComConfig.objects.first()
+    try:
+        card = build_preview_card(preview["title"], preview["body"], config.erp_origin + "/" if config else "")
+    except ValueError as exc:
+        blocked_reason = str(exc)
     payload = {"actor": str(actor.pk), "event": event_code, "preview_id": str(uuid4()),
                "rule_etag": source_etag, "catalog_hash": _hash(get_event(event_code)),
-               "draft_hash": _hash(draft), "title": preview["title"], "body": preview["body"]}
-    return {**preview, "preview_token": signing.dumps(payload, salt=PREVIEW_SALT, compress=True),
+               "draft_hash": _hash(draft), "title": preview["title"], "body": preview["body"],
+               "message_type": message_type, "template_card": card}
+    return {**preview, "message_type": message_type, "template_card": card,
+            "send_blocked_reason": blocked_reason,
+            "preview_token": signing.dumps(payload, salt=PREVIEW_SALT, compress=True),
             "preview_id": payload["preview_id"],
             "expires_at": (timezone.now() + timedelta(seconds=PREVIEW_SECONDS)).isoformat()}
 
@@ -81,7 +91,7 @@ def prepare_attempt(request, event_code, data):
         if existing:
             if existing.requested_by_employee_id != actor.pk or existing.request_hash != request_hash:
                 raise Conflict("本次预览已用于其他接收人或配置，请查询原发送结果。")
-            return existing, None
+            return existing, None, None
         _decode(data["preview_token"], max_age=PREVIEW_SECONDS)
         if payload["catalog_hash"] != _hash(get_event(event_code)):
             raise Conflict("通知事件定义已变化，请重新生成预览。")
@@ -102,12 +112,21 @@ def prepare_attempt(request, event_code, data):
         validate_plain_text(payload["body"])
         if len(payload["title"]) > 200 or len(content.encode("utf-8")) > 2048:
             raise ValidationError({"preview_token": "预览内容超过消息长度限制。"})
-        payload_hash = _hash([config.corp_id, config.agent_id, binding.user_id.lower(), content])
+        if payload.get("message_type") != "template_card":
+            raise Conflict("试发样式已更新，请重新生成卡片预览。")
+        try:
+            current_card = build_preview_card(payload["title"], payload["body"], config.erp_origin + "/")
+        except ValueError as exc:
+            raise ValidationError({"preview_token": str(exc)}) from None
+        card = payload.get("template_card")
+        if card != current_card:
+            raise Conflict("卡片内容或 ERP 地址已变化，请重新生成预览。")
+        payload_hash = _hash([config.corp_id, config.agent_id, binding.user_id.lower(), "template_card", card])
         # 配置行锁串行化同应用的首发检查，不会在持锁时调用网络。
         pending = NotificationPreviewAttempt.objects.filter(payload_hash=payload_hash, status__in=["PROCESSING", "UNCERTAIN"]).first()
         if pending and pending.requested_by_employee_id == actor.pk:
             # 关闭弹窗后以同样内容重新操作，只找回本人的原尝试，不再次外发。
-            return pending, None
+            return pending, None, None
         if pending:
             raise Conflict("相同消息仍在处理中或结果待核对，请勿重复发送。")
         client = WeComClient(config)
@@ -116,19 +135,20 @@ def prepare_attempt(request, event_code, data):
             recipient_name=employee.display_name, corp_id=config.corp_id, agent_id=config.agent_id,
             user_id=binding.user_id, rendered_title=payload["title"], rendered_body=payload["body"])
         _audit(request, attempt)
-    return attempt, client
+    return attempt, client, card
 
 
 @sensitive_variables()
 def send_preview(request, event_code, data):
     if connection.in_atomic_block:
         raise RuntimeError("预览外发只能在数据库事务外执行。")
-    attempt, client = prepare_attempt(request, event_code, data)
+    attempt, client, card = prepare_attempt(request, event_code, data)
     if client is None:
         return attempt
     status, msgid, error_code = "ACCEPTED", "", ""
     try:
-        result = client.send_text(attempt.user_id, f"{attempt.rendered_title}\n\n{attempt.rendered_body}")
+        result = client.send_text_notice(attempt.user_id, title=card["main_title"]["title"],
+            body=card["sub_title_text"], url=card["card_action"]["url"])
         msgid = result["msgid"]
     except WeComSendUncertain:
         status, error_code = "UNCERTAIN", "SEND_UNCERTAIN"

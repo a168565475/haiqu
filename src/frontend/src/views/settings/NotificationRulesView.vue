@@ -42,7 +42,7 @@ const attempt = ref<NotificationPreviewAttempt>()
 const canSend = computed(() => canManage.value && auth.user?.is_superuser === true && auth.managementCan('access_control.manage_wecom') && !sendForbidden.value)
 const busy = computed(() => saving.value || sending.value)
 const awaitingOutcome = computed(() => sendStarted.value && (!attempt.value || ['PROCESSING', 'UNCERTAIN'].includes(attempt.value.status)))
-const sendReady = computed(() => canSend.value && recipients.value?.available && bindingId.value && preview.value?.preview_token && previewDraft.value && !previewExpired.value && !busy.value && !sendStarted.value)
+const sendReady = computed(() => canSend.value && recipients.value?.available && bindingId.value && preview.value?.preview_token && previewDraft.value && !preview.value.send_blocked_reason && !previewExpired.value && !busy.value && !sendStarted.value)
 const form = reactive<NotificationRuleWrite>({ name: '', title_template: '', body_template: '', recipient_role_codes: [], recipient_scope: 'ROLE_MEMBERS', enabled: false })
 let disposed = false
 let pageVersion = 0
@@ -118,6 +118,12 @@ function openEditor(rule: NotificationRule): void {
   if (!etag.value) operationError.value = '通知规则版本缺失，请关闭弹窗并刷新后重试。'
   dialogVisible.value = true
   if (canSend.value) void loadRecipients()
+}
+
+function applyDefaultCardBody(): void {
+  if (!selected.value || busy.value || awaitingOutcome.value) return
+  form.body_template = selected.value.default_body_template
+  operationError.value = ''
 }
 
 function validateForm(): boolean {
@@ -276,6 +282,10 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
         <div class="dialog-grid">
           <div class="editor">
             <p class="event-label">{{ selected.display_name }} · {{ selected.event_code }}</p>
+            <div class="card-example">
+              <ElButton size="small" :disabled="busy || awaitingOutcome" @click="applyDefaultCardBody">套用默认卡片正文</ElButton>
+              <p class="hint">仅替换当前草稿正文，不自动保存；名称、标题、接收角色、范围和启用状态保持不变。</p>
+            </div>
             <label for="notification-name">模板名称<ElInput id="notification-name" :disabled="busy" v-model="form.name" maxlength="100" /></label>
             <label for="notification-title">标题<ElInput id="notification-title" :disabled="busy" v-model="form.title_template" maxlength="200" /></label>
             <label for="notification-body">正文<ElInput id="notification-body" :disabled="busy" v-model="form.body_template" type="textarea" :rows="6" maxlength="8192" /></label>
@@ -297,16 +307,25 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
               <p v-else class="hint">无其他可用变量。</p>
             </section>
             <p v-if="preview" class="preview-scope">{{ preview.scope_label }} · {{ roleNames({ ...selected, recipient_role_codes: preview.recipient_role_codes }) }}</p>
-            <div v-if="preview" class="preview-message"><strong>{{ preview.title }}</strong><p>{{ preview.body }}</p></div>
+            <div v-if="preview?.message_type === 'template_card' && preview.template_card" class="preview-message template-card" aria-label="企业微信模板卡片预览">
+              <p class="template-card-source">{{ preview.template_card.source.desc }}</p>
+              <strong>{{ preview.template_card.main_title.title }}</strong>
+              <p class="template-card-description">{{ preview.template_card.main_title.desc }}</p>
+              <p>{{ preview.template_card.sub_title_text }}</p>
+              <div class="template-card-footer"><span>{{ preview.template_card.jump_list[0]?.title }}</span><span aria-hidden="true">›</span></div>
+            </div>
+            <div v-else-if="preview" class="preview-message"><strong>{{ preview.title }}</strong><p>{{ preview.body }}</p></div>
             <p v-else class="hint preview-placeholder">点击生成预览；修改规则后需重新生成。</p>
+            <p class="hint">预览试发使用模板卡片；示例内容没有真实单据详情，“查看详情”进入ERP首页。</p>
+            <p v-if="preview?.send_blocked_reason" class="error" role="alert">{{ preview.send_blocked_reason }}</p>
             <p v-if="previewExpired" class="hint" role="status">预览已过期，请重新生成。</p>
             <p v-for="warning in preview?.warnings" :key="warning" class="hint">{{ warning }}</p>
             <p v-if="preview?.recipient_note" class="hint">{{ preview.recipient_note }}</p>
             <p class="hint">生成预览使用示例内容，不发送消息。点击“发送预览”才会发给下方选定的一人。</p>
             <section class="preview-send" aria-label="发送预览">
               <label for="notification-preview-recipient">已绑定员工</label>
-              <ElSelect id="notification-preview-recipient" v-model="bindingId" :disabled="!canSend || busy || !recipients?.available || sendStarted" :loading="recipientLoading" filterable remote :remote-method="loadRecipients" placeholder="选择姓名或搜索员工编码">
-                <ElOption v-for="person in recipients?.data" :key="person.binding_id" :value="person.binding_id" :label="`${person.employee_name}（${person.employee_code}）`" />
+              <ElSelect id="notification-preview-recipient" v-model="bindingId" :disabled="!canSend || busy || !recipients?.available || sendStarted" :loading="recipientLoading" filterable remote :remote-method="loadRecipients" placeholder="选择或搜索员工姓名">
+                <ElOption v-for="person in recipients?.data" :key="person.binding_id" :value="person.binding_id" :label="person.employee_name" />
               </ElSelect>
               <p v-if="!canSend" class="hint">试发需要通知规则和企业微信两项管理权限。</p>
               <p v-else-if="recipients?.message" class="hint" role="status">{{ recipients.message }}</p>
@@ -330,5 +349,6 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
 .page-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }.page-heading h1 { margin:0; font-size:20px; line-height:28px; }.page-heading p { margin:4px 0 0; color:var(--erp-color-text-secondary); font-size:12px; }
 .rules-card,.empty-card { border:1px solid var(--erp-glass-border); border-radius:12px; background:var(--erp-glass-surface); box-shadow:var(--erp-glass-shadow); }.empty-card,.empty-state { padding:48px 20px; text-align:center; color:var(--erp-color-text-secondary); }.rules-table { width:100%; min-width:760px; border-collapse:collapse; font-size:13px; }.rules-table th,.rules-table td { padding:12px 14px; border-bottom:1px solid var(--erp-color-border); text-align:left; vertical-align:top; }.rules-table th { color:var(--erp-color-text-secondary); font-size:12px; font-weight:500; }.rules-table tr:last-child td { border-bottom:0; }.rules-table small { display:block; margin-top:4px; color:var(--erp-color-text-secondary); font-size:11px; overflow-wrap:anywhere; }.notice,.error { margin:0 0 12px; padding:10px 12px; border-radius:8px; font-size:12px; }.notice { background:var(--erp-color-info-soft); color:var(--erp-color-text-secondary); }.error { background:var(--erp-color-danger-soft); color:var(--erp-color-danger); }.dialog-grid { display:grid; grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr); gap:16px; }.editor { min-width:0; display:flex; flex-direction:column; gap:11px; }.editor label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--erp-color-text-secondary); }.event-label { overflow-wrap:anywhere; margin:0; font-weight:600; color:var(--erp-color-text-primary); }.hint { margin:0; color:var(--erp-color-text-secondary); font-size:11px; line-height:1.7; overflow-wrap:anywhere; }.switch-line { flex-direction:row !important; align-items:center; justify-content:space-between; }.preview { min-width:0; padding:12px; border-radius:9px; background:var(--erp-color-info-soft); min-height:200px; }.preview-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }.preview-scope { overflow-wrap:anywhere; margin:12px 0 8px; color:var(--erp-color-text-secondary); font-size:11px; }.preview-message { margin-top:12px; padding:12px; border:1px solid var(--erp-color-border-subtle); border-radius:8px; background:var(--erp-glass-inner-background); }.preview-message strong { overflow-wrap:anywhere; font-size:13px; }.preview-message p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.7; }
 .variable-group { margin-top:12px; }.variable-group h3 { margin:0 0 6px; font-size:12px; font-weight:600; }.variable-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }.variable-table th,.variable-table td { padding:5px 6px; border-bottom:1px solid var(--erp-color-border-subtle); text-align:left; overflow-wrap:anywhere; }.variable-table th { font-weight:500; color:var(--erp-color-text-secondary); }.variable-table th:first-child { width:38%; }.variable-table code { white-space:normal; font-size:11px; }.preview-placeholder { margin:12px 0; }.preview-send { margin-top:16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--erp-color-border-subtle); padding-top:12px; font-size:12px; }.send-actions { display:flex; gap:8px; flex-wrap:wrap; }.send-actions .el-button + .el-button { margin-left:0; }
+.card-example { display:flex; align-items:flex-start; gap:8px; }.card-example .el-button { flex-shrink:0; }.template-card strong { display:block; }.template-card .template-card-source { margin:0 0 10px; color:var(--erp-color-text-secondary); }.template-card .template-card-description { color:var(--erp-color-text-secondary); }.template-card-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid var(--erp-color-border-subtle); color:var(--erp-color-text-secondary); font-size:12px; }
 @media (max-width:700px) { .dialog-grid { grid-template-columns:1fr; } }
 </style>

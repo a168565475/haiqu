@@ -44,6 +44,7 @@ class NotificationRuleSerializer(serializers.Serializer):
     name = serializers.CharField()
     title_template = serializers.CharField()
     body_template = serializers.CharField()
+    default_body_template = serializers.CharField()
     allowed_variables = serializers.ListField(child=serializers.CharField())
     required_variables = serializers.ListField(child=serializers.CharField())
     variable_definitions = serializers.ListField(child=serializers.DictField(child=serializers.CharField()))

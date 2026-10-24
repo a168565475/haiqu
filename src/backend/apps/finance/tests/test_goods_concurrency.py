@@ -60,6 +60,30 @@ class GoodsConcurrencyTests(GoodsFixture, TransactionTestCase):
         self.assertEqual(DepositAllocation.objects.filter(is_active=True).count(), 1)
         self.assertEqual(settlement_totals_for(self.statement).outstanding_amount, Decimal("700"))
 
+    def test_concurrent_partial_allocations_cannot_exceed_remaining_deposit(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        requests = [self.request(self.body(allocations=[(deposit, "200.00")])) for _ in range(2)]
+        results = self.race([lambda request=request: create_receipt(request) for request in requests])
+        self.assertCountEqual([row[1] for row in results], ["OK", 412])
+        with self.assertRaises(APIException) as caught:
+            self.create(allocations=[(deposit, "200.00")])
+        self.assertEqual(caught.exception.api_error_code, "DEPOSIT_UNAVAILABLE")
+        self.create(allocations=[(deposit, "100.00")])
+        self.assertEqual(DepositAllocation.objects.filter(is_active=True).count(), 2)
+        totals = settlement_totals_for(self.statement)
+        self.assertEqual((totals.outstanding_amount, totals.available_deposit_amount), (Decimal("700"), Decimal("0")))
+
+    def test_concurrent_void_of_two_partial_allocations_releases_exact_total(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        first = self.create(allocations=[(deposit, "100.00")])
+        second = self.create(allocations=[(deposit, "80.00")])
+        requests = [(self.request({"reason": "隔离部分核销作废"}, item), item.pk) for item in (first, second)]
+        results = self.race([lambda request=request, pk=pk: void_receipt(request, pk) for request, pk in requests])
+        self.assertEqual([row[1] for row in results], ["OK", "OK"])
+        self.assertFalse(DepositAllocation.objects.filter(is_active=True).exists())
+        totals = settlement_totals_for(self.statement)
+        self.assertEqual((totals.outstanding_amount, totals.available_deposit_amount), (Decimal("1000"), Decimal("300")))
+
     def test_two_cash_submissions_cannot_cross_remaining_balance(self):
         requests = [self.request(self.body(cash="800.00")) for _ in range(2)]
         results = self.race([lambda request=request: create_receipt(request) for request in requests])

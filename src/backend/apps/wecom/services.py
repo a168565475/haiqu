@@ -229,6 +229,14 @@ def create_oauth_state(request, config):
 @sensitive_variables()
 def create_qr_challenge(request, config, next_path):
     state = create_oauth_state(request, config)
+    challenge = _remember_oauth_return_path(request, state, next_path)
+    return {"login_type": "CorpApp", "appid": config.corp_id, "agentid": config.agent_id,
+            "redirect_uri": config.erp_origin + "/api/auth/wecom/callback/", "state": state,
+            "expires_at": challenge.expires_at}
+
+
+@sensitive_variables()
+def _remember_oauth_return_path(request, state, next_path):
     challenge = OAuthState.objects.get(state_digest=_digest(state))
     now = timezone.now().timestamp()
     # 回跳信息保存在发起方Session，并与挑战摘要关联；不向官方发送业务地址。
@@ -236,9 +244,7 @@ def create_qr_challenge(request, config, next_path):
                  if value["expires_at"] > now}
     redirects[challenge.state_digest] = {"path": next_path, "expires_at": challenge.expires_at.timestamp()}
     request.session["wecom_qr_redirects"] = redirects
-    return {"login_type": "CorpApp", "appid": config.corp_id, "agentid": config.agent_id,
-            "redirect_uri": config.erp_origin + "/api/auth/wecom/callback/", "state": state,
-            "expires_at": challenge.expires_at}
+    return challenge
 
 
 @sensitive_variables()
@@ -273,8 +279,9 @@ def consume_oauth_state(request, state):
 
 
 @sensitive_variables()
-def oauth_url(request, config):
+def oauth_url(request, config, next_path="/"):
     state = create_oauth_state(request, config)
+    _remember_oauth_return_path(request, state, next_path)
     parameters = {"appid": config.corp_id, "redirect_uri": config.erp_origin + "/api/auth/wecom/callback/",
                   "response_type": "code", "scope": "snsapi_base", "state": state, "agentid": config.agent_id}
     return "https://open.weixin.qq.com/connect/oauth2/authorize?" + urlencode(parameters) + "#wechat_redirect"

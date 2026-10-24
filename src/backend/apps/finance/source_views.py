@@ -17,6 +17,7 @@ SOURCE_PERMISSIONS = [f"finance.{action}_receivablestatement" for action in ("vi
 
 def source_task_data(task):
     return {"id": str(task.pk), "task_number": task.task_number, "source_order_date": task.order_date,
+            "task_order_date": task.order_date, "task_delivery_date": task.delivery_date,
             "status": task.status, "salesperson": salesperson_data(task)}
 
 
@@ -24,6 +25,8 @@ class SourceTaskSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     task_number = serializers.CharField()
     source_order_date = serializers.DateField(source="order_date")
+    task_order_date = serializers.DateField(source="order_date", read_only=True)
+    task_delivery_date = serializers.DateField(source="delivery_date", read_only=True)
     status = serializers.CharField()
     salesperson = serializers.SerializerMethodField()
 

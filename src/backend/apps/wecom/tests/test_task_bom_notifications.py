@@ -97,7 +97,8 @@ class TaskBomAggregationTests(APITestCase):
         self.assertEqual(NotificationDelivery.objects.count(), 2)
         self.assertEqual(event.target["route_name"], "boms")
         self.assertEqual(event.target["params"], {})
-        self.assertIn("3 项产品明细最新BOM已全部确认", event.rendered_body)
+        self.assertIn("产品项数：3", event.rendered_body.splitlines())
+        self.assertIn("确认范围：产品明细最新BOM已全部确认", event.rendered_body.splitlines())
 
     def test_single_product_api_etag_product_review_and_legacy_rule_are_compatible(self):
         f = aggregation_fixture(two=False)
@@ -268,7 +269,7 @@ class TaskBomAggregationConcurrencyTests(TransactionTestCase):
         delivery = NotificationDelivery.objects.get(channel="WECOM")
         f.bom.refresh_from_db()
         archive_bom(bom=f.bom, actor_employee=f.employee, request=request_for(f, f.bom))
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             result = process_delivery(delivery)
         self.assertEqual(result.error_code, "EVENT_STALE")
         sender.assert_not_called()

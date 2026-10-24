@@ -120,7 +120,7 @@ def validate_goods_settlement(totals: SettlementTotals, *, cash_amount: Decimal,
         "cash_amount": str(cash), "allocated_deposit_amount": str(allocated),
         "discount_amount": str(discount), "recovery_action": "REVIEW_AMOUNTS"}
     if settled == ZERO:
-        raise SettlementAmountError("FUNDS_REQUIRED", "货款必须有正数实际到账或整笔订金抵扣。", meta=meta)
+        raise SettlementAmountError("FUNDS_REQUIRED", "货款必须有正数实际到账或订金核销金额。", meta=meta)
     if allocated > totals.available_deposit_amount:
         raise SettlementAmountError("DEPOSIT_UNAVAILABLE", "所选订金已不可用，请刷新后重新确认。", meta=meta)
     outstanding = totals.outstanding_amount - settled - discount

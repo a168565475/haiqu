@@ -20,7 +20,7 @@ vi.mock('@/api/financeReceipts', () => ({ deleteFinanceReceipt: vi.fn(), fetchFi
 // 合成数据只用于组件行为验证，不访问真实业务 API。
 const statement: FinanceStatement = {
   id: 'statement', number: 'TEST-STATEMENT', status: 'VOID', etag: '"statement-list"', can_delete: true, delete_block_reason: null,
-  can_edit: false, can_void: false, blocked_reason: null, production_task_id: 'task', task_number: 'TASK', source_order_date: '2026-10-23',
+  can_edit: false, can_void: false, blocked_reason: null, production_task_id: 'task', task_number: 'TASK', source_order_date: '2026-10-23', task_order_date: '2026-10-24', task_delivery_date: '2026-11-15',
   salesperson: { id: 'sales', code: 'SALES', name: '合成业务员' }, operator: { id: 'operator', code: 'FIN', name: '合成财务' },
   created_at: '', updated_at: '', source_revision: 'revision', statement_revision: 1, amount: '10.00', settled_amount: '0.00',
   discount_amount: '0.00', outstanding_amount: '0.00', available_deposit_amount: '0.00', bank_received_amount: '0.00', settlement_status: 'UNSETTLED',
@@ -49,7 +49,7 @@ describe.each(cases)('$name彻底删除（合成组件测试）', scenario => {
     props: scenario.component === FinanceStatementReceipts ? { statement } : {},
     global: { plugins: [ElementPlus], stubs: {
       AppWindowDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot/><slot name="footer"/></div>' },
-      FinanceStatementSourceDialog: true, ReceiptEditor: true, ReceiptDetail: true,
+      FinanceTaskSelect: true, ReceiptEditor: true, ReceiptDetail: true,
       ...(scenario.component !== FinanceStatementReceipts ? { FinanceStatementReceipts: true } : {}),
     } },
   })

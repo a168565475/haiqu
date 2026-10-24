@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { DropdownInstance } from 'element-plus'
 import axios from 'axios'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
-import FinanceStatementSourceDialog from './FinanceStatementSourceDialog.vue'
+import FinanceTaskSelect from './FinanceTaskSelect.vue'
 import FinanceStatementReceipts from './FinanceStatementReceipts.vue'
 import { useAuthStore } from '@/stores/auth'
 import { createFinanceStatement, deleteFinanceStatement, fetchFinanceSourceProducts, fetchFinanceStatement, fetchFinanceStatements, updateFinanceStatement, voidFinanceStatement } from '@/api/financeStatements'
@@ -24,7 +24,9 @@ const selected = ref<FinanceSourceProduct[]>([]), prices = ref<Record<string, st
 const customPriceIds = ref(new Set<string>())
 const salespersonChanges = ref<FinanceSourcePage['salesperson_changes']>([])
 const formError = ref(''), fieldErrors = ref<Record<string, string>>({}), conflict = ref(false), submitting = ref(false), uncertain = ref(false)
-const original = ref(''), sourceOpen = ref(false)
+const original = ref(''), openedAt = ref('')
+const operatorName = computed(() => mode.value === 'create' ? auth.user?.employee?.display_name || auth.user?.display_name || auth.user?.username || '—' : record.value?.operator.name || '—')
+const statementTime = computed(() => mode.value === 'create' ? openedAt.value : record.value?.created_at ? formatDateTime(record.value.created_at) : '—')
 const products = ref<FinanceSourceProduct[]>([]), productPage = ref(1), productTotal = ref(0)
 const productLoading = ref(false), productLoaded = ref(false), productError = ref(''), sourceChanged = ref(false)
 const voidOpen = ref(false), voidRecord = ref<FinanceStatement>(), voidReason = ref(''), voidError = ref(''), voidBusy = ref(false)
@@ -41,10 +43,8 @@ const progress = (value: string) => ({ UNSETTLED: '未结清', PARTIAL: '部分�
 function formatDateTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-  }).replaceAll('/', '-')
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 const linePreview = (row: FinanceSourceProduct) => {
   const value = previewLineAmount(row.quantity, prices.value[row.id] || '')
@@ -94,14 +94,14 @@ function filter(reset = false) {
   Object.assign(applied, { q: search.value.trim(), status: status.value, settlement_status: settlement.value }); page.value = 1; void loadList()
 }
 function sourceFromRecord(value: FinanceStatement) {
-  task.value = { id: value.production_task_id, task_number: value.task_number, source_order_date: value.source_order_date, salesperson: value.salesperson, status: '' }
+  task.value = { id: value.production_task_id, task_number: value.task_number, source_order_date: value.source_order_date, task_order_date: value.task_order_date, task_delivery_date: value.task_delivery_date, salesperson: value.salesperson, status: '' }
   selected.value = value.lines.map(line => ({ ...line, id: line.production_task_product_id, selectable: true, reason: null, error_code: null, occupied_statement_number: value.number }))
   prices.value = Object.fromEntries(value.lines.map(line => [line.production_task_product_id, line.unit_price])); revision.value = value.source_revision
   customPriceIds.value = new Set(value.lines.map(line => line.production_task_product_id))
 }
 async function openEditor(action: 'create' | 'edit' | 'detail', row?: FinanceStatement) {
   if (!can(action === 'create' ? 'add' : action === 'edit' ? 'change' : 'view')) return
-  ++sourceRequest; sourceController?.abort(); sourceOpen.value = false
+  ++sourceRequest; sourceController?.abort(); openedAt.value = formatDateTime(new Date().toISOString())
   products.value = []; productPage.value = 1; productTotal.value = 0; productLoading.value = false; productLoaded.value = false; productError.value = ''; sourceChanged.value = false
   mode.value = action; record.value = undefined; latest.value = undefined; task.value = undefined; selected.value = []; prices.value = {}; revision.value = ''
   customPriceIds.value.clear()
@@ -134,7 +134,7 @@ async function refreshAfterReceipt() {
 }
 async function closeDialog(done?: () => void) {
   if (!await confirmLeave()) return
-  ++detailRequest; ++sourceRequest; detailController?.abort(); sourceController?.abort(); detailLoading.value = false; sourceOpen.value = false
+  ++detailRequest; ++sourceRequest; detailController?.abort(); sourceController?.abort(); detailLoading.value = false
   if (done) done(); else dialog.value = false
 }
 async function chooseTask(value: FinanceSourceTask) {
@@ -186,6 +186,7 @@ async function loadProducts(requestedPage = productPage.value, acceptChanged = f
     }
     products.value = response.data; productTotal.value = response.meta.total; productPage.value = response.meta.page
     if (record.value?.production_task_id !== taskId) { task.value = response.task; salespersonChanges.value = response.salesperson_changes }
+    else task.value = { ...task.value!, task_order_date: response.task.task_order_date, task_delivery_date: response.task.task_delivery_date }
     if (revision.value !== response.source_revision) acknowledged.value = false
     revision.value = response.source_revision; sourceChanged.value = false; productLoaded.value = true
   } catch (failure) {
@@ -328,7 +329,7 @@ onBeforeUnmount(() => { disposed = true; ++listRequest; ++detailRequest; ++sourc
           <div class="erp-list-filter-actions"><el-button @click="filter(true)">重置</el-button><el-button @click="filter()">应用筛选</el-button><el-divider direction="vertical"/><el-button v-if="can('add')" type="primary" @click="openEditor('create')">新增对账单</el-button></div>
         </div>
       </div>
-      <div class="erp-list-data"><div class="erp-list-toolbar"><el-button :loading="loading" @click="loadList">刷新</el-button></div>
+      <div class="erp-list-data">
         <el-alert v-if="listError" :title="listError" type="error" :closable="false"><el-button link @click="loadList">重试</el-button></el-alert>
         <div v-loading="loading" class="erp-list-table-frame" :aria-busy="loading"><el-table :data="rows" row-key="id" border height="100%">
           <el-table-column prop="number" label="对账单号" min-width="185"/><el-table-column prop="task_number" label="生产任务单" min-width="170"/>
@@ -350,14 +351,18 @@ onBeforeUnmount(() => { disposed = true; ++listRequest; ++detailRequest; ++sourc
       <el-alert v-if="uncertain" title="提交结果尚未确认。请重试原提交核实结果，当前内容不会重复创建。" type="warning" :closable="false"/>
       <template v-if="mode === 'detail' && record">
         <div class="document-heading"><div><h2>{{record.number}}</h2><p>应收对账单 · {{record.operator.name}} · {{formatDateTime(record.created_at)}}</p></div><el-tag :type="record.status === 'VOID' ? 'info' : 'success'">{{record.status === 'VOID' ? '已作废' : '有效'}}</el-tag></div>
-        <dl class="document-facts"><div><dt>生产任务单</dt><dd>{{record.task_number}}</dd></div><div><dt>业务员</dt><dd>{{record.salesperson.name}}</dd></div><div><dt>来源日期</dt><dd>{{record.source_order_date}}</dd></div></dl>
+        <dl class="document-facts"><div><dt>生产任务单</dt><dd>{{record.task_number}}</dd></div><div><dt>业务员</dt><dd>{{record.salesperson.name}}</dd></div><div><dt>结算类型</dt><dd>人民币</dd></div><div><dt>对账人员</dt><dd>{{operatorName}}</dd></div><div><dt>对账时间</dt><dd>{{statementTime}}</dd></div><div><dt>开始时间</dt><dd>{{record.task_order_date}}</dd></div><div><dt>结束时间</dt><dd>{{record.task_delivery_date}}</dd></div></dl>
         <el-alert v-if="record.status === 'VOID'" :title="`已作废：${record.void_reason}；历史明细保留，占用已释放。`" type="info" :closable="false"/>
         <el-alert v-else-if="record.blocked_reason" :title="record.blocked_reason" type="info" :closable="false"/>
       </template>
       <el-form v-else-if="mode !== 'detail'" label-position="top" class="form-grid" :disabled="formLocked">
-        <el-form-item label="生产任务单" required :error="fieldErrors.production_task_id"><el-input class="task-selector" :model-value="task?.task_number || ''" readonly><template #append><el-button @click="sourceOpen = true">选择</el-button></template></el-input></el-form-item>
-        <el-form-item label="来源单据日期"><el-input :model-value="task?.source_order_date || ''" readonly/></el-form-item>
+        <el-form-item label="生产任务单" required :error="fieldErrors.production_task_id"><FinanceTaskSelect :model-value="task" :disabled="formLocked" @task="chooseTask"/></el-form-item>
         <el-form-item label="业务员"><el-input :model-value="task?.salesperson.name || ''" readonly/></el-form-item>
+        <el-form-item label="结算类型"><el-input model-value="人民币" readonly/></el-form-item>
+        <el-form-item label="对账人员"><el-input :model-value="operatorName" aria-label="对账人员" readonly/></el-form-item>
+        <el-form-item label="对账时间"><el-input :model-value="statementTime" aria-label="对账时间" readonly/></el-form-item>
+        <el-form-item label="开始时间"><el-input :model-value="task?.task_order_date || ''" aria-label="开始时间" readonly/></el-form-item>
+        <el-form-item label="结束时间"><el-input :model-value="task?.task_delivery_date || ''" aria-label="结束时间" readonly/></el-form-item>
       </el-form>
       <el-alert v-if="mode !== 'detail' && salespersonChanges.length" title="当前任务业务员与既有对账快照不同。新建或更换来源将使用当前业务员，历史归属不变。" type="warning" :closable="false"><el-checkbox v-model="acknowledged" :disabled="submitting || uncertain">我已核对，按当前业务员继续</el-checkbox></el-alert>
       <el-alert v-if="mode !== 'detail' && productError" :title="productError" type="error" :closable="false"><el-button :disabled="productLoading || formLocked" @click="loadProducts(sourceChanged ? 1 : productPage, sourceChanged)">{{sourceChanged ? '重新载入并核对' : '重试'}}</el-button></el-alert>
@@ -374,14 +379,13 @@ onBeforeUnmount(() => { disposed = true; ++listRequest; ++detailRequest; ++sourc
       </el-table></div></div>
       <div v-if="mode !== 'detail' && task" class="product-footer"><span>已选 {{selected.length}} 行</span><el-button link :disabled="formLocked || productLoading || sourceChanged" @click="loadProducts()">刷新产品</el-button><el-pagination v-if="productTotal > 20" :current-page="productPage" :total="productTotal" :page-size="20" :disabled="formLocked || productLoading || sourceChanged" layout="prev, pager, next" @current-change="loadProducts($event)"/></div>
       <div class="statement-summary"><span>数量合计：{{quantities}}</span><strong>对账金额：{{mode === 'detail' ? record?.amount : amountPreview}} 元</strong></div>
-      <dl v-if="mode === 'detail' && record" class="document-facts"><div v-for="column in [{key:'settled_amount',label:'已核销'},{key:'discount_amount',label:'有效折让'},{key:'outstanding_amount',label:'未付'},{key:'available_deposit_amount',label:'可用订金'},{key:'bank_received_amount',label:'累计银行到账'}]" :key="column.key"><dt>{{column.label}}</dt><dd>{{record[column.key as keyof FinanceStatement]}} 元</dd></div></dl>
+      <dl v-if="mode === 'detail' && record" class="document-facts statement-balances"><div v-for="column in [{key:'settled_amount',label:'已核销'},{key:'discount_amount',label:'有效折让'},{key:'outstanding_amount',label:'未付'},{key:'available_deposit_amount',label:'可用订金'},{key:'bank_received_amount',label:'累计银行到账'}]" :key="column.key"><dt>{{column.label}}</dt><dd>{{record[column.key as keyof FinanceStatement]}} 元</dd></div></dl>
       <FinanceStatementReceipts v-if="mode === 'detail' && record" ref="receiptSection" :statement="record" @changed="refreshAfterReceipt"/>
       <el-button v-if="mode !== 'detail' && conflict" @click="compareLatest">查看最新版本并比较</el-button>
       <div v-if="latest" class="latest-version"><strong>服务器最新：{{latest.number}} / {{latest.task_number}} / {{latest.salesperson.name}} / {{latest.amount}} 元</strong><p>{{latest.blocked_reason || '当前输入已保留，请核对来源与金额。'}}</p><el-button :disabled="!latest.can_edit" @click="acceptLatest">已比较，保留输入继续修改</el-button></div>
     </div>
     <template #footer><el-button :disabled="submitting || uncertain" @click="closeDialog()">{{mode === 'detail' ? '关闭' : '取消'}}</el-button><el-button v-if="mode !== 'detail'" type="primary" :loading="submitting" :disabled="detailLoading || !task || (mode === 'edit' && !record?.can_edit) || (!uncertain && (productSelectionBlocked || !selected.length || !!invalidSelected.length))" @click="save">{{uncertain ? '重试原提交' : '保存对账单'}}</el-button></template>
   </AppWindowDialog>
-  <FinanceStatementSourceDialog v-model="sourceOpen" @task="chooseTask"/>
   <AppWindowDialog v-model="voidOpen" title="作废对账单" :width="620" :min-width="280" :minimizable="false" :before-close="closeVoid" modal-class="finance-statement-overlay">
     <div class="statement-dialog"><h3>{{voidRecord?.number || '读取对账单…'}}</h3><el-alert title="仅无有效收款时可作废；释放产品行占用，保留历史记录。" type="warning" :closable="false"/><el-alert v-if="voidRecord?.blocked_reason" :title="voidRecord.blocked_reason" type="warning" :closable="false"/><el-alert v-if="voidError" :title="voidError" type="error" :closable="false"/><el-form label-position="top"><el-form-item label="作废原因" required><el-input v-model="voidReason" aria-label="作废原因" type="textarea" :rows="3" maxlength="500" show-word-limit :disabled="voidBusy"/></el-form-item></el-form></div>
     <template #footer><el-button :disabled="voidBusy" @click="closeVoid()">取消</el-button><el-button type="danger" :loading="voidBusy" :disabled="!voidRecord?.can_void" @click="submitVoid">确认作废</el-button></template>
@@ -389,25 +393,22 @@ onBeforeUnmount(() => { disposed = true; ++listRequest; ++detailRequest; ++sourc
 </template>
 
 <style scoped lang="scss">
+@use '../customers/customer-form-shared' as shared;
 .more-arrow { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; margin-left: 4px; }
 .finance-statements .erp-list-filters label:first-child .el-input { width: 260px; }.finance-statements .erp-list-filters .el-select { width: 130px; }
-.erp-list-toolbar { color: var(--erp-color-text-secondary); gap: 12px; }.erp-list-toolbar > .el-button { margin-left: auto; }
 .finance-statements :deep(.el-table__header .cell) { font-weight: 500; }.finance-statements :deep(.finance-money .cell) { font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 600; white-space: nowrap; }
-.statement-dialog { display: grid; gap: 16px; min-width: 0; color: var(--erp-color-text-primary); }.form-grid, .document-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px 20px; }.form-grid .el-form-item { margin-bottom: 0; min-width: 0; }
-.form-grid { grid-template-columns: minmax(0,280px) repeat(2,minmax(0,200px)); }
-/* 弹窗全局强制 5px 圆角；组合控件的拼接处需局部取消右侧圆角。 */
-.statement-dialog .form-grid .task-selector.el-input :deep(.el-input__wrapper) { border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
-.statement-dialog .task-selector :deep(.el-input-group__append) { border-radius: 0 5px 5px 0; box-shadow: 0 1px 0 0 var(--erp-dialog-input-border) inset, 0 -1px 0 0 var(--erp-dialog-input-border) inset, -1px 0 0 0 var(--erp-dialog-input-border) inset; }
-.statement-dialog .task-selector :deep(.el-input-group__append .el-button) { border-radius: 0 5px 5px 0; box-shadow: none; }
+.statement-dialog { display: grid; gap: 16px; min-width: 0; color: var(--erp-color-text-primary); }.form-grid, .document-facts { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px 20px; }.form-grid .el-form-item { margin-bottom: 0; min-width: 0; }
+.form-grid { grid-template-columns: repeat(4,minmax(0,260px)); gap: 16px; @include shared.element-form-controls(32px,12px,13px,7px); }
 .document-heading, .statement-summary { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }dt, .document-heading p { color: var(--erp-color-text-secondary); font-size: 12px; line-height: 20px; }
 .product-footer { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--erp-color-text-secondary); }.product-footer .el-pagination { margin-left: auto; }.product-block-reason { display: block; white-space: normal; overflow-wrap: anywhere; color: var(--el-color-warning); font-size: 12px; line-height: 18px; }
 .embedded-table { min-height: 0; }.embedded-table .erp-list-table-frame { flex: none; border-radius: 8px; }
 .statement-products :deep(.el-table .cell) { padding: 0 8px; }
-.document-heading { justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--erp-color-border); padding-bottom: 16px; }.document-heading h2 { margin: 0; font-size: 22px; line-height: 30px; overflow-wrap: anywhere; }.document-heading p { margin: 6px 0 0; }
+.document-heading { justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--erp-color-border); padding-bottom: 8px; }.document-heading h2 { margin: 0; font-size: 20px; line-height: 26px; overflow-wrap: anywhere; }.document-heading p { margin: 2px 0 0; }
 .document-facts { margin: 0; }.document-facts dd { margin: 4px 0 0; font-size: 14px; line-height: 24px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.document-facts.statement-balances { grid-template-columns: repeat(5,minmax(140px,1fr)); gap: 12px 16px; min-width: 0; overflow-x: auto; }
 .statement-summary { justify-content: space-between; padding: 14px 0; border-bottom: 1px solid var(--erp-color-border); font-size: 13px; }.statement-summary strong { font-size: 18px; color: var(--erp-menu-accent); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }.field-error { color: var(--el-color-danger); }.latest-version { padding-top: 16px; border-top: 1px solid var(--erp-color-border); overflow-wrap: anywhere; }
 @media (max-width: 900px) { .form-grid { grid-template-columns: repeat(2,minmax(0,280px)); }.document-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }.finance-statements .erp-list-heading h1 { font-size: 28px !important; line-height: 36px !important; }.finance-statements .erp-list-footer { height: auto; flex-wrap: wrap; } }
-@media (max-width: 600px) { .form-grid, .document-facts { grid-template-columns: minmax(0,1fr); }.finance-statements .erp-list-heading h1 { font-size: 24px !important; line-height: 32px !important; }.finance-statements .erp-list-filters > label { width: 100%; white-space: nowrap; }.finance-statements .erp-list-filters label:first-child .el-input, .finance-statements .erp-list-filters .el-select { width: 100%; }.finance-statements .erp-list-filter-actions, .finance-statements .erp-list-toolbar { flex-wrap: wrap; margin-left: 0; }.finance-statements .erp-list-filter-actions { flex: 1 1 100%; min-width: 0; width: 100%; }.finance-statements :deep(.el-table-fixed-column--right) { position: static !important; } }
+@media (max-width: 600px) { .form-grid, .document-facts { grid-template-columns: minmax(0,1fr); }.finance-statements .erp-list-heading h1 { font-size: 24px !important; line-height: 32px !important; }.finance-statements .erp-list-filters > label { width: 100%; white-space: nowrap; }.finance-statements .erp-list-filters label:first-child .el-input, .finance-statements .erp-list-filters .el-select { width: 100%; }.finance-statements .erp-list-filter-actions { flex-wrap: wrap; margin-left: 0; }.finance-statements .erp-list-filter-actions { flex: 1 1 100%; min-width: 0; width: 100%; }.finance-statements :deep(.el-table-fixed-column--right) { position: static !important; } }
 @media (prefers-reduced-motion: reduce) { .finance-statements, .statement-dialog { &, :deep(*), :deep(*::before), :deep(*::after) { animation: none !important; transition: none !important; } } }
 </style>
 <style>

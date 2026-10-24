@@ -261,12 +261,13 @@ def event_object_accessible(event_code, object_id, user, *, role_codes=None, obj
         obj = current_workshop_object(event_code, identifier, object_version)
         if obj is None:
             return False
-        if event_code == "MATERIAL_ISSUE_SUBMITTED" and obj.submitted_by_employee_id == employee.pk:
+        if (event_code == "MATERIAL_ISSUE_SUBMITTED"
+                and obj.submitted_by_employee_id == employee.pk and not current_user.is_superuser):
             return False
         if event_code == "WAGE_SCHEME_SUBMITTED":
             submitter = obj.events.filter(action="SUBMITTED").order_by(
                 "-scheme_revision", "-created_at", "-id").values_list("actor_employee_id", flat=True).first()
-            if submitter == employee.pk:
+            if submitter == employee.pk and not current_user.is_superuser:
                 return False
 
     bom_snapshot = None

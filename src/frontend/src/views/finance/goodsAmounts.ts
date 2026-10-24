@@ -38,8 +38,8 @@ export function previewGoods(outstanding: string, available: string, cash: bigin
   const settled = cash + allocated
   const after = remaining - settled - concession
   const availableAfter = deposits - allocated
-  const error = settled <= 0n ? '本次必须有实际到账或整笔订金抵扣。'
-    : allocated > deposits ? '所选订金已不可用，请刷新后重新确认。'
+  const error = settled <= 0n ? '本次必须有实际到账或订金抵扣。'
+    : allocated > deposits ? '本次订金核销金额超过可用余额，请调整核销金额。'
     : after < 0n ? `本次核销与折让超出当前未付 ${moneyText(-after)} 元。`
     : availableAfter > after ? `已收订金与本次到账、折让超出当前未付 ${moneyText(availableAfter - after)} 元，请核对实际收款。` : ''
   return { settled, after, availableAfter, error }

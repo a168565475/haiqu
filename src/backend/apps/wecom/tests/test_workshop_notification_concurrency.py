@@ -34,7 +34,7 @@ class WorkshopNotificationConcurrencyTests(TransactionTestCase):
         self.assertEqual(decision.status_code, 200, decision.data)
         self.assertEqual(WageScheme.objects.get().status, "RETURNED")
         delivery = NotificationDelivery.objects.get(channel="WECOM", recipient__event__event_code="WAGE_SCHEME_SUBMITTED")
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as send:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as send:
             result = process_delivery(delivery)
         send.assert_not_called()
         self.assertEqual((result.status, result.error_code), ("FAILED", "RECIPIENT_NOT_ELIGIBLE"))

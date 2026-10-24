@@ -96,8 +96,68 @@ class GoodsSettlementTests(GoodsFixture, TestCase):
         self.assertFalse(DepositAllocation.objects.exists())
         self.assertFalse(Receipt.objects.filter(receipt_type="GOODS").exists())
         option = deposit_option_data(deposit_options(self.statement).get(), settlement_totals_for(self.statement))
-        self.assertFalse(option["can_select"])
+        self.assertTrue(option["can_select"])
         self.assertEqual(option["available_amount"], "300.00")
+
+    def test_partial_allocations_keep_balance_and_void_only_the_target_goods(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        first = self.create(allocations=[(deposit, "100.00")])
+        second = self.create(allocations=[(deposit, "80.00")])
+        self.assertEqual(DepositAllocation.objects.filter(deposit_receipt=deposit, is_active=True).count(), 2)
+        self.assertEqual((first.settled_amount, second.settled_amount), (Decimal("100"), Decimal("80")))
+        option = deposit_option_data(deposit_options(self.statement).get(), settlement_totals_for(self.statement))
+        self.assertTrue(option["can_select"])
+        self.assertEqual(option["available_amount"], "120.00")
+        totals = settlement_totals_for(self.statement)
+        self.assertEqual((totals.outstanding_amount, totals.available_deposit_amount, totals.bank_received_amount),
+            (Decimal("820"), Decimal("120"), Decimal("300")))
+        self.void(first)
+        second.refresh_from_db()
+        self.assertEqual(second.status, "ACTIVE")
+        self.assertEqual(settlement_totals_for(self.statement).available_deposit_amount, Decimal("220"))
+        self.assert_error("DEPOSIT_UNAVAILABLE", lambda: self.void(deposit))
+        # 编号形式的旧调用使用剩余全额，不会再次抵扣原始300元。
+        remaining = self.create(deposits=[deposit])
+        self.assertEqual(remaining.allocated_deposit_amount, Decimal("220"))
+        self.assertFalse(deposit_options(self.statement).exists())
+        self.void(remaining)
+        self.void(second)
+        self.assertEqual(settlement_totals_for(self.statement).available_deposit_amount, Decimal("300"))
+        self.void(deposit)
+        self.assertEqual(settlement_totals_for(self.statement).available_deposit_amount, Decimal("0"))
+
+    def test_partial_allocation_input_and_remaining_balance_are_validated(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        valid = self.body(allocations=[(deposit, "100.00")])
+        for value in ("0.00", "-1.00", "1.001", "NaN", "", 1.25):
+            data = {**valid, "deposit_allocations": [{"deposit_id": str(deposit.pk), "amount": value}]}
+            with self.subTest(value=value), self.assertRaises(APIException):
+                create_receipt(self.request(data))
+        for changes in (
+            {"deposit_ids": []},
+            {"deposit_allocations": valid["deposit_allocations"] * 2},
+            {"deposit_allocations": [{"deposit_id": str(deposit.pk)}]},
+            {"receipt_type": "DEPOSIT"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(APIException):
+                create_receipt(self.request({**valid, **changes}))
+        self.create(allocations=[(deposit, "100.00")])
+        self.assert_error("DEPOSIT_UNAVAILABLE", lambda: self.create(allocations=[(deposit, "200.01")]))
+        other = self.new_statement()
+        other_deposit = self.create(statement=other, kind="DEPOSIT", cash="100.00")
+        self.assert_error("DEPOSIT_UNAVAILABLE", lambda: self.create(allocations=[(other_deposit, "1.00")]))
+        self.assertEqual(DepositAllocation.objects.count(), 1)
+        self.assertEqual(settlement_totals_for(self.statement).available_deposit_amount, Decimal("200"))
+
+    def test_partial_with_cash_discount_and_multiple_deposits_uses_entered_amounts(self):
+        first = self.create(kind="DEPOSIT", cash="300.00")
+        second = self.create(kind="DEPOSIT", cash="200.00")
+        goods = self.create(cash="100.00", allocations=[(first, "25.50"), (second, "74.50")], discount="20.00")
+        self.assertEqual((goods.allocated_deposit_amount, goods.settled_amount), (Decimal("100"), Decimal("200")))
+        totals = settlement_totals_for(self.statement)
+        self.assertEqual((totals.outstanding_amount, totals.available_deposit_amount), (Decimal("780"), Decimal("400")))
+        self.assert_error("OVER_SETTLEMENT", lambda: self.create(cash="700.00", allocations=[(first, "100.00")]))
+        self.assert_error("DEPOSIT_EXCESS_AFTER_SETTLEMENT", lambda: self.create(cash="400.00", allocations=[(first, "100.00")]))
 
     def test_m10_m11_over_settlement_and_stranded_deposit_rejected(self):
         limited = self.new_statement(amount="100.00")
@@ -257,6 +317,26 @@ class GoodsApiTests(GoodsFixture, TestCase):
         return self.client.post("/api/v1/finance/receipts/", data, format="json",
             HTTP_IDEMPOTENCY_KEY=str(key or uuid4()), HTTP_IF_MATCH=etag or etag_for_instance(self.statement))
 
+    def test_api_partial_allocation_replay_and_updated_available_option(self):
+        deposit = self.create(kind="DEPOSIT", cash="300.00")
+        data, key = self.body(allocations=[(deposit, "125.25")]), uuid4()
+        created = self.post_goods(data, key)
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["data"]["allocated_deposit_amount"], "125.25")
+        self.assertEqual(created.data["data"]["allocations"][0]["amount"], "125.25")
+        replay = self.post_goods(data, key, '"stale-original-etag"')
+        self.assertEqual(replay.status_code, 200, replay.data)
+        self.assertEqual(replay["Idempotent-Replayed"], "true")
+        changed = self.post_goods(self.body(allocations=[(deposit, "126.00")]), key)
+        self.assertEqual(changed.status_code, 409, changed.data)
+        self.assertEqual(changed.data["error"]["code"], "IDEMPOTENCY_KEY_REUSED")
+        option = self.client.get(f"/api/v1/finance/statements/{self.statement.pk}/available-deposits/")
+        self.assertEqual(option.status_code, 200, option.data)
+        self.assertEqual(option.data["meta"]["total"], 1)
+        self.assertEqual(option.data["data"][0]["available_amount"], "174.75")
+        self.assertTrue(option.data["data"][0]["can_select"])
+        self.assertEqual(DepositAllocation.objects.count(), 1)
+
     def test_api_pure_deposit_history_download_and_replay(self):
         deposit = self.create(kind="DEPOSIT", cash="200.00")
         data, key = self.body(deposits=[deposit]), uuid4()
@@ -275,8 +355,12 @@ class GoodsApiTests(GoodsFixture, TestCase):
         downloaded = self.client.get(f'/api/v1/finance/receipts/{goods["id"]}/attachments/{file_id}/')
         self.assertEqual(downloaded.status_code, 200)
         self.assertTrue(b"".join(downloaded.streaming_content).startswith(b"\x89PNG"))
-        # 未开放的写动作先被BusinessActionPermission拒绝，不会进入405分派。
+        # 编辑未开放；删除权限独立于收款登记权限，本例显式撤销后验证拒绝。
         self.assertEqual(self.client.patch(f'/api/v1/finance/receipts/{goods["id"]}/', {}, format="json").status_code, 403)
+        from apps.access_control.models import RoleActionGrant
+        delete_permission = self.role.auth_group.permissions.get(codename="delete_receipt")
+        RoleActionGrant.objects.filter(role=self.role, permission=delete_permission).delete()
+        self.role.auth_group.permissions.remove(delete_permission)
         self.assertEqual(self.client.delete(f'/api/v1/finance/receipts/{goods["id"]}/').status_code, 403)
         unchanged = Receipt.objects.get(pk=goods["id"])
         self.assertEqual((unchanged.status, unchanged.settled_amount), ("ACTIVE", Decimal("200.00")))

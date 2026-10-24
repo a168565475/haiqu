@@ -8,7 +8,7 @@ def statements(filters=None, *, detail=False):
     from .settlement_selectors import annotate_settlement_totals
 
     filters = filters or {}
-    queryset = ReceivableStatement.objects.select_related("created_by_employee").annotate(
+    queryset = ReceivableStatement.objects.select_related("created_by_employee", "production_task").annotate(
         _has_receipts=Exists(Receipt.objects.filter(statement_id=OuterRef("pk"))),
         _has_occupied_lines=Exists(ReceivableStatementLine.objects.filter(statement_id=OuterRef("pk"), is_occupied=True)),
         has_active_receipts=Exists(Receipt.objects.filter(statement_id=OuterRef("pk"), status="ACTIVE")))

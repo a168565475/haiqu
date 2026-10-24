@@ -1,11 +1,23 @@
 import { AxiosError } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getNotificationInbox, getNotificationTarget, getNotificationUnreadCount, markNotificationRead, notificationInboxError } from './notifications'
+import { getNotificationDetail, getNotificationInbox, getNotificationTarget, getNotificationUnreadCount, markNotificationRead, notificationInboxError } from './notifications'
 
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('./request', () => ({ apiClient: client }))
 beforeEach(() => vi.resetAllMocks())
 describe('个人收件API契约（测试替身）', () => {
+  it('单条内容使用只读GET和收件UUID，不标记已读；非法编号不请求', async () => {
+    const id = '12345678-1234-1234-1234-123456789abc'
+    const item = { id, title: '通知详情', read_at: null }
+    const signal = new AbortController().signal
+    client.get.mockResolvedValueOnce({ data: { data: item } })
+    expect(await getNotificationDetail(id, signal)).toEqual(item)
+    expect(client.get).toHaveBeenCalledWith(`/api/v1/notifications/inbox/${id}/`, { timeout: 20000, signal })
+    expect(client.post).not.toHaveBeenCalled()
+    client.get.mockClear()
+    await expect(getNotificationDetail('../target')).rejects.toThrow('编号无效')
+    expect(client.get).not.toHaveBeenCalled()
+  })
   it('分页传page/page_size；GET携带取消信号', async () => {
     const signal = new AbortController().signal
     const data = { data: [], count: 0, page: 2, page_size: 10 }

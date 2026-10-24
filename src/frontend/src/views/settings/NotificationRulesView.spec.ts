@@ -1,4 +1,4 @@
-import { ElSelect } from 'element-plus'
+import { ElOption, ElSelect } from 'element-plus'
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { AxiosError } from 'axios'
@@ -12,6 +12,7 @@ vi.mock('@/api/notifications', async original => ({ ...await original<object>(),
 const rule: NotificationRule = {
   event_code: 'PRODUCTION_TASK_CONFIRMED', display_name: '生产任务确认', name: '任务通知',
   title_template: '生产任务', body_template: '{{document_no}} 已由 {{operator}} 于 {{occurred_at}} 确认。',
+  default_body_template: '任务单号：{{document_no}}\n操作人：{{operator}}\n确认时间：{{occurred_at}}',
   allowed_variables: ['document_no', 'operator', 'occurred_at'], required_variables: ['document_no', 'operator', 'occurred_at'],
   variable_definitions: [{ name: 'document_no', label: '单据编号', example: '示例单号' }, { name: 'operator', label: '操作人', example: '示例操作人' }, { name: 'occurred_at', label: '操作时间', example: '示例时间' }],
   supported_scopes: ['ROLE_MEMBERS'], scope_labels: { ROLE_MEMBERS: '所选角色的合法成员' },
@@ -19,6 +20,15 @@ const rule: NotificationRule = {
   recipient_scope: 'ROLE_MEMBERS', enabled: true, version: 0, updated_at: null, updated_by: '', etag: 'server-v0', target_key: 'production-task-detail',
 }
 const sample: NotificationPreview = { event_code: rule.event_code, title: '生产任务示例', body: '示例单号已确认', recipient_scope: 'ROLE_MEMBERS', scope_label: '所选角色的合法成员', recipient_role_codes: ['TECHNICAL'], will_send: false, preview_token: 'signed-preview', preview_id: 'preview-1', expires_at: '2099-01-01T00:00:00Z' }
+function cardSample(): NotificationPreview {
+  return { ...sample, expires_at: new Date(Date.now() + 600000).toISOString(), message_type: 'template_card', template_card: {
+    card_type: 'text_notice', source: { desc: 'HAIQU ERP · 测试' },
+    main_title: { title: '【生产任务】确认通知', desc: '预览试发 · 示例内容' },
+    sub_title_text: '任务单号：示例单号\n操作人：示例操作人\n确认时间：示例时间',
+    jump_list: [{ type: 1, title: '查看详情', url: 'https://erp.example.test/' }],
+    card_action: { type: 1, url: 'https://erp.example.test/' },
+  } }
+}
 const wrappers: ReturnType<typeof mount>[] = []
 function result(): NotificationRulesResponse { return { data: [{ ...rule }], roles: [...rule.recipient_roles] } }
 function button(label: string) { return new DOMWrapper(Array.from(document.querySelectorAll('button')).find(item => item.textContent?.trim() === label)!) }
@@ -50,6 +60,7 @@ describe('通知规则页面', () => {
     await button('发送预览').trigger('click')
     expect(wrapper.vm.canClose()).toBe(false)
     expect(button('取消').attributes('disabled')).toBeDefined()
+    expect(button('套用默认卡片正文').attributes('disabled')).toBeDefined()
     finish({ id: 'attempt-1', preview_id: 'preview-1', status: 'ACCEPTED', recipient_name: '已绑定员工', message: '已受理' })
     await flushPromises()
     await button('取消').trigger('click'); await flushPromises()
@@ -97,6 +108,91 @@ describe('通知规则页面', () => {
     await input('#notification-title').setValue('再次修改')
     expect(document.querySelector('.preview-message')).toBeNull()
     expect(api.saveNotificationRule).not.toHaveBeenCalled()
+  })
+
+  it.each(['PRODUCTION_TASK_CONFIRMED', 'BOM_CONFIRMED', 'SAMPLE_SUBMITTED', 'SERVER_REGISTERED_EVENT'])('所有事件均按服务端默认正文套用，保留其他配置：%s', async eventCode => {
+    const disabledRule = { ...rule, event_code: eventCode, enabled: false, recipient_role_codes: [], default_body_template: `单据编号：{{document_no}}\n操作人：{{operator}}\n操作时间：{{occurred_at}}\n业务备注：${eventCode}` }
+    api.getNotificationRules.mockResolvedValue({ data: [disabledRule], roles: rule.recipient_roles })
+    api.previewNotificationRule.mockResolvedValue({ ...cardSample(), event_code: eventCode })
+    await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(document.querySelector('.template-card')).not.toBeNull()
+    await button('套用默认卡片正文').trigger('click'); await flushPromises()
+    expect((input('#notification-name').element as HTMLInputElement).value).toBe(disabledRule.name)
+    expect((input('#notification-title').element as HTMLInputElement).value).toBe(disabledRule.title_template)
+    expect((input('#notification-body').element as HTMLTextAreaElement).value).toBe(disabledRule.default_body_template)
+    expect(document.querySelector('.preview-message')).toBeNull()
+    expect(api.saveNotificationRule).not.toHaveBeenCalled()
+    expect(api.sendNotificationPreview).not.toHaveBeenCalled()
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(api.previewNotificationRule).toHaveBeenLastCalledWith(eventCode, expect.objectContaining({
+      name: disabledRule.name, title_template: disabledRule.title_template,
+      body_template: disabledRule.default_body_template,
+      recipient_role_codes: [], recipient_scope: disabledRule.recipient_scope, enabled: false,
+    }), 'server-v0')
+  })
+
+  it('卡片使用服务端预览字段展示，页面预览入口不导航且由用户手动试发', async () => {
+    const card = cardSample()
+    api.previewNotificationRule.mockResolvedValue(card)
+    const wrapper = await edit()
+    await button('套用默认卡片正文').trigger('click')
+    await button('生成预览').trigger('click'); await flushPromises()
+    const rendered = document.querySelector('.template-card')!
+    expect(rendered.textContent).toContain(card.template_card!.source.desc)
+    expect(rendered.textContent).toContain(card.template_card!.main_title.title)
+    expect(rendered.textContent).toContain(card.template_card!.main_title.desc)
+    expect(rendered.textContent).toContain(card.template_card!.sub_title_text)
+    expect(Array.from(rendered.querySelectorAll('p')).at(-1)?.textContent?.split('\n')).toEqual(['任务单号：示例单号', '操作人：示例操作人', '确认时间：示例时间'])
+    expect(rendered.querySelector('.template-card-footer')?.textContent).toContain('查看详情')
+    expect(rendered.querySelector('a, button')).toBeNull()
+    expect(document.body.textContent).toContain('没有真实单据详情')
+    expect(document.body.textContent).toContain('“查看详情”进入ERP首页')
+    expect(api.sendNotificationPreview).not.toHaveBeenCalled()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    expect(button('发送预览').attributes('disabled')).toBeUndefined()
+    await button('发送预览').trigger('click'); await flushPromises()
+    expect(api.sendNotificationPreview).toHaveBeenCalledOnce()
+    expect(api.sendNotificationPreview).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({
+      preview_token: 'signed-preview', binding_id: 'binding-1', draft: expect.objectContaining({ name: rule.name, body_template: rule.default_body_template }),
+    }))
+  })
+
+  it.each([
+    ['模板卡片正文超出长度限制，请缩短后重新预览。', true],
+    ['企业微信应用未配置，暂不能试发。', false],
+  ])('显示发送阻断原因并禁用试发：%s', async (reason, hasCard) => {
+    api.previewNotificationRule.mockResolvedValue({ ...cardSample(), template_card: hasCard ? cardSample().template_card : undefined, send_blocked_reason: reason })
+    const wrapper = await edit()
+    await button('生成预览').trigger('click'); await flushPromises()
+    wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
+    expect(document.body.textContent).toContain(reason)
+    expect(button('发送预览').attributes('disabled')).toBeDefined()
+    await button('发送预览').trigger('click')
+    expect(api.sendNotificationPreview).not.toHaveBeenCalled()
+    await input('#notification-title').setValue('修改后重新生成')
+    expect(document.body.textContent).not.toContain(reason)
+    expect(button('发送预览').attributes('disabled')).toBeDefined()
+    api.previewNotificationRule.mockResolvedValue(cardSample())
+    await button('生成预览').trigger('click'); await flushPromises()
+    expect(button('发送预览').attributes('disabled')).toBeUndefined()
+  })
+
+  it('同名员工只显示姓名，按绑定标识选择接收人', async () => {
+    api.getNotificationPreviewRecipients.mockResolvedValue({ data: [
+      { binding_id: 'binding-1', employee_code: 'E1', employee_name: '同名员工' },
+      { binding_id: 'binding-2', employee_code: 'E2', employee_name: '同名员工' },
+    ], count: 2, page: 1, page_size: 50, available: true, schema_ready: true, config_etag: 'config-v1', message: '' })
+    const wrapper = await edit()
+    const recipientSelect = wrapper.findAllComponents(ElSelect).at(-1)!
+    expect(recipientSelect.props('placeholder')).toBe('选择或搜索员工姓名')
+    expect(recipientSelect.findAllComponents(ElOption).map(option => [option.props('label'), option.props('value')])).toEqual([
+      ['同名员工', 'binding-1'], ['同名员工', 'binding-2'],
+    ])
+    await button('生成预览').trigger('click'); await flushPromises()
+    recipientSelect.vm.$emit('update:modelValue', 'binding-2'); await flushPromises()
+    await button('发送预览').trigger('click'); await flushPromises()
+    expect(api.sendNotificationPreview).toHaveBeenCalledWith(rule.event_code, expect.objectContaining({ binding_id: 'binding-2' }))
   })
 
   it('预览在途时修改表单，迟到响应不能回填旧预览', async () => {
@@ -209,6 +305,7 @@ describe('通知规则页面', () => {
     wrapper.findAllComponents(ElSelect).at(-1)!.vm.$emit('update:modelValue', 'binding-1'); await flushPromises()
     await button('发送预览').trigger('click'); await flushPromises()
     expect(button('生成预览').attributes('disabled')).toBeDefined()
+    expect(button('套用默认卡片正文').attributes('disabled')).toBeDefined()
     await button('查询本次结果').trigger('click'); await flushPromises()
     expect(api.getNotificationPreviewAttempt).toHaveBeenCalledWith('preview-1')
     expect(api.sendNotificationPreview).toHaveBeenCalledTimes(1)

@@ -88,6 +88,51 @@ class StatementTests(TestCase):
     def create(self, body=None, key=None):
         return self.client.post(ROOT, body or request_body(self.task), format="json", HTTP_IDEMPOTENCY_KEY=str(key or uuid4()))
 
+    def test_task_dropdown_hides_active_statements_and_restores_after_all_void(self):
+        other = create_source(self.actor)
+        self.assertEqual(self.client.get(SOURCE).data["meta"]["total"], 2)
+        first = self.create()
+        second = self.create(request_body(self.task, (1,)))
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual([row["id"] for row in self.client.get(SOURCE).data["data"]], [str(other.pk)])
+        self.assertEqual(self.client.get(SOURCE, {"q": self.task.task_number}).data["meta"]["total"], 0)
+        receipt_tasks = self.client.get(SOURCE, {"mode": "receipt"}).data["data"]
+        self.assertEqual([row["id"] for row in receipt_tasks], [str(self.task.pk)])
+        # 已有单据编辑仍可读取自己的任务明细，不受新增候选过滤影响。
+        own = self.client.get(f"{SOURCE}{self.task.pk}/products/", {"editing_statement_id": first.data["data"]["id"]})
+        self.assertEqual(own.status_code, 200)
+        for index, created in enumerate((first, second)):
+            result = self.client.post(f'{ROOT}{created.data["data"]["id"]}/void/',
+                {"reason": "隔离筛选验证"}, format="json", HTTP_IF_MATCH=created["ETag"])
+            self.assertEqual(result.status_code, 200, result.data)
+            available = self.client.get(SOURCE, {"q": self.task.task_number})
+            self.assertEqual(available.data["meta"]["total"], index)
+        self.assertEqual(self.client.get(SOURCE, {"mode": "receipt"}).data["meta"]["total"], 0)
+
+    def test_task_date_display_uses_order_and_delivery_without_changing_snapshot(self):
+        self.task.planned_start_date = date(2026, 10, 22)
+        self.task.planned_end_date = date(2026, 10, 28)
+        self.task.save()
+        option = self.client.get(SOURCE).data["data"][0]
+        self.assertEqual(option["task_order_date"], "2026-10-20")
+        self.assertEqual(option["task_delivery_date"], "2026-10-30")
+        product_task = self.client.get(f"{SOURCE}{self.task.pk}/products/").json()["task"]
+        self.assertEqual(product_task["task_order_date"], option["task_order_date"])
+        self.assertEqual(product_task["task_delivery_date"], option["task_delivery_date"])
+        created = self.create()
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.data["data"]["task_order_date"], "2026-10-20")
+        self.assertEqual(created.data["data"]["task_delivery_date"], "2026-10-30")
+        self.task.order_date = date(2026, 10, 21)
+        self.task.delivery_date = date(2026, 11, 2)
+        self.task.save()
+        detail = self.client.get(f'{ROOT}{created.data["data"]["id"]}/').data["data"]
+        self.assertEqual(detail["task_order_date"], "2026-10-21")
+        self.assertEqual(detail["task_delivery_date"], "2026-11-02")
+        self.assertEqual(detail["source_order_date"], "2026-10-20")
+        self.assertEqual(self.client.get(ROOT).data["data"][0]["task_delivery_date"], "2026-11-02")
+
     def test_partial_whole_lines_snapshot_different_actor_no_production_permission(self):
         self.assertFalse(self.user.has_perm("production_tasks.view_productiontask"))
         self.assertEqual(self.client.get(SOURCE).status_code, 200)

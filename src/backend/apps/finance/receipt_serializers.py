@@ -81,30 +81,47 @@ class ReceiptAccountInputSerializer(StrictReceiptSerializer):
         list_serializer_class = ReceiptAccountListSerializer
 
 
+class ReceiptDepositAllocationInputSerializer(StrictReceiptSerializer):
+    deposit_id = serializers.UUIDField()
+    amount = ReceiptMoneyField()
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("订金核销金额必须大于零。")
+        return value
+
+
 class ReceiptCreateSerializer(StrictReceiptSerializer):
     receipt_type = serializers.ChoiceField(choices=["DEPOSIT", "GOODS"])
     statement_id = serializers.UUIDField()
     account_lines = ReceiptAccountInputSerializer(many=True, allow_empty=True)
     upload_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=True)
     deposit_ids = serializers.ListField(child=serializers.UUIDField(), required=False, allow_empty=True)
+    deposit_allocations = ReceiptDepositAllocationInputSerializer(many=True, required=False, allow_empty=True)
     discount_amount = ReceiptMoneyField(required=False)
 
     def to_internal_value(self, data):
         if isinstance(data, dict) and data.get("receipt_type") == "DEPOSIT":
-            forbidden = set(data) & {"deposit_ids", "discount_amount", "deposit_amount", "settled_amount"}
+            forbidden = set(data) & {"deposit_ids", "deposit_allocations", "discount_amount", "deposit_amount", "settled_amount"}
             if forbidden:
                 raise ReceiptInputError("RECEIPT_TYPE_FIELDS_INVALID", {name: "订金不能提交此字段。" for name in sorted(forbidden)})
         return super().to_internal_value(data)
 
     def validate(self, data):
+        if "deposit_ids" in data and "deposit_allocations" in data:
+            raise serializers.ValidationError({"deposit_allocations": "不能同时提交订金编号与订金核销金额。"})
         for field in ("upload_ids", "deposit_ids"):
             values = data.get(field, [])
             if len(set(values)) != len(values):
                 raise serializers.ValidationError({field: "不能重复选择同一记录。"})
+        allocation_ids = [item["deposit_id"] for item in data.get("deposit_allocations", [])]
+        if len(set(allocation_ids)) != len(allocation_ids):
+            raise serializers.ValidationError({"deposit_allocations": "不能重复选择同一订金。"})
         if data["receipt_type"] == "DEPOSIT" and not data["account_lines"]:
             raise ReceiptInputError("FUNDS_REQUIRED", {"account_lines": "订金必须有实际到账。"})
         if data["receipt_type"] == "GOODS":
-            data.setdefault("deposit_ids", [])
+            if "deposit_allocations" not in data:
+                data.setdefault("deposit_ids", [])
             data.setdefault("discount_amount", Decimal("0.00"))
         return data
 

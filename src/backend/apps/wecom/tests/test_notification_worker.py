@@ -56,7 +56,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
                 else:
                     WeComConfig.objects.filter(pk=self.config.pk).update(
                         enabled=state != "disabled", secret_ciphertext="" if state == "incomplete" else self.config.secret_ciphertext)
-                with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+                with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
                     output = self.run_one_cycle()
                 self.delivery.refresh_from_db()
                 self.assertEqual((self.delivery.status, self.delivery.attempt_count), ("PENDING", 0))
@@ -77,7 +77,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
 
         output = StringIO()
         with patch(f"{COMMAND}.time.sleep", side_effect=pause), patch(
-            "apps.wecom.notification_services.WeComClient.send_text", return_value={"msgid": "worker-resumed"}
+            "apps.wecom.notification_services.WeComClient.send_text_notice", return_value={"msgid": "worker-resumed"}
         ) as sender:
             call_command("process_notification_deliveries", execute=True, watch=True, interval=1, stdout=output)
         self.delivery.refresh_from_db()
@@ -95,7 +95,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
             delivery = NotificationDelivery.objects.get(recipient__event=event, channel="WECOM")
             NotificationDelivery.objects.filter(pk=delivery.pk).update(status=status, attempt_count=1)
             preserved.append((delivery, status))
-        with patch("apps.wecom.notification_services.WeComClient.send_text",
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice",
             side_effect=[WeComError("RECIPIENT_REJECTED", "隔离测试拒绝"), {"msgid": "worker-second"}]
         ) as sender:
             self.run_one_cycle()
@@ -110,7 +110,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
     def test_abandoned_processing_becomes_uncertain_without_resend(self):
         NotificationDelivery.objects.filter(pk=self.delivery.pk).update(
             status="PROCESSING", attempt_count=1, last_attempt_at=timezone.now() - timedelta(minutes=6))
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             self.run_one_cycle(recover_processing=True)
         self.delivery.refresh_from_db()
         self.assertEqual((self.delivery.status, self.delivery.attempt_count, self.delivery.error_code),
@@ -125,7 +125,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
         self.assertEqual(event.status, "NO_RECIPIENT")
         self.rule.recipient_role_codes = [self.role.role_code]
         self.rule.save(update_fields=["recipient_role_codes"])
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             self.run_one_cycle()
         event.refresh_from_db()
         self.assertEqual(event.status, "NO_RECIPIENT")
@@ -134,7 +134,7 @@ class NotificationWorkerTests(NotificationFixture, TransactionTestCase):
 
     def test_configuration_changed_after_poll_preserves_pending_before_send(self):
         WeComConfig.objects.filter(pk=self.config.pk).update(enabled=False)
-        with patch("apps.wecom.notification_services.WeComClient.send_text") as sender:
+        with patch("apps.wecom.notification_services.WeComClient.send_text_notice") as sender:
             deferred = notification_services.process_delivery(self.delivery, defer_unconfigured=True)
             self.assertEqual((deferred.status, deferred.attempt_count), ("PENDING", 0))
             failed = notification_services.process_delivery(deferred)

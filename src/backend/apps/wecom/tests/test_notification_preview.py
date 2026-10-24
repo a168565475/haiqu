@@ -7,6 +7,7 @@ import time
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.core import signing
 from django.db import close_old_connections, connection, connections
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
@@ -20,7 +21,7 @@ from apps.organizations.models import Employee
 from apps.wecom.client import WeComError, WeComSendUncertain
 from apps.wecom.credentials import encrypt_secret
 from apps.wecom.models import NotificationPreviewAttempt, NotificationRule, NotificationEvent, WeComConfig, WeComBinding, WeComMessageAttempt
-from apps.wecom.notification_catalog import all_events
+from apps.wecom.notification_catalog import all_events, get_event
 from apps.wecom import notification_preview_services as service
 from apps.wecom.notification_preview_selectors import attempt_payload
 from apps.wecom.notification_serializers import NotificationPreviewSendSerializer
@@ -172,13 +173,14 @@ class NotificationPreviewTests(PreviewFixture, TestCase):
 
     def test_first_attempt_idempotency_and_pending_payload_prevent_repeat(self):
         data = self.data()
-        first, client = service.prepare_attempt(self.request(), CODE, data)
+        first, client, card = service.prepare_attempt(self.request(), CODE, data)
         self.assertIsNotNone(client)
-        repeated, client = service.prepare_attempt(self.request(), CODE, data)
+        self.assertEqual(card["card_action"]["url"], self.config.erp_origin + "/")
+        repeated, client, _ = service.prepare_attempt(self.request(), CODE, data)
         self.assertEqual(repeated.pk, first.pk); self.assertIsNone(client)
         with self.assertRaises(Conflict):
             service.prepare_attempt(self.request(), CODE, {**data, "config_etag": '"different"'})
-        reopened, client = service.prepare_attempt(self.request(), CODE, self.data())
+        reopened, client, _ = service.prepare_attempt(self.request(), CODE, self.data())
         self.assertEqual(reopened.pk, first.pk); self.assertIsNone(client)
         self.assertEqual(NotificationPreviewAttempt.objects.count(), 1)
         NotificationPreviewAttempt.objects.filter(pk=first.pk).update(created_at=timezone.now() - timedelta(seconds=61))
@@ -188,7 +190,7 @@ class NotificationPreviewTests(PreviewFixture, TestCase):
 
     def test_result_is_personal_and_contains_no_userid_body_or_msgid(self):
         data = self.data()
-        attempt, _ = service.prepare_attempt(self.request(), CODE, data)
+        attempt, _, _ = service.prepare_attempt(self.request(), CODE, data)
         result = self.client.get(f"{ROOT}preview-attempts/{attempt.preview_id}/")
         self.assertEqual(result.status_code, 200)
         self.assertFalse({"user_id", "rendered_body", "msgid", "corp_id"} & set(result.data["data"]))
@@ -196,9 +198,88 @@ class NotificationPreviewTests(PreviewFixture, TestCase):
         grant_role(other, "OTHER_NOTIFY", "access_control.manage_notifications")
         grant_role(other, "OTHER_WECOM", "access_control.manage_wecom")
         self.client.force_login(other.user)
-        self.assertEqual(self.client.get(f"{ROOT}preview-attempts/{attempt.preview_id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"{ROOT}preview-attempts/{attempt.preview_id}/").status_code, 403)
         with self.assertRaises(PermissionDenied):
             service.prepare_attempt(self.request(other.user), CODE, data)
+        attempt.requested_by_employee = other
+        attempt.save(update_fields=["requested_by_employee"])
+        self.client.force_login(self.admin)
+        result = self.client.get(f"{ROOT}preview-attempts/{attempt.preview_id}/")
+        self.assertEqual(result.status_code, 404, result.data)
+
+    def test_card_preview_is_signed_and_has_an_explicit_test_label(self):
+        preview = self.preview()
+        payload = signing.loads(preview["preview_token"], salt=service.PREVIEW_SALT)
+        self.assertEqual(preview["message_type"], "template_card")
+        self.assertEqual(payload["template_card"], preview["template_card"])
+        self.assertEqual(preview["template_card"]["main_title"]["title"], preview["title"])
+        self.assertIn("示例", preview["template_card"]["main_title"]["desc"])
+        self.assertEqual(preview["template_card"]["jump_list"][0]["title"], "查看详情")
+        self.assertFalse(preview["send_blocked_reason"])
+
+    def test_every_event_previews_as_a_card_with_multiline_default_body(self):
+        with patch("apps.wecom.client.WeComClient.send_text_notice") as send:
+            for event in all_events():
+                with self.subTest(event=event["event_code"]):
+                    draft = {**rule_data(event["event_code"], [self.role.role_code]),
+                        "enabled": False, "body_template": event["legacy_default_body"],
+                        "variables": {item["name"]: item["example"] for item in event["variable_definitions"]}}
+                    response = self.client.post(f'{ROOT}rules/{event["event_code"]}/preview/', draft,
+                        format="json", HTTP_IF_MATCH='"notification-rule-unsaved"')
+                    self.assertEqual(response.status_code, 200, response.data)
+                    preview = response.data["data"]
+                    self.assertEqual(preview["message_type"], "template_card")
+                    self.assertFalse(preview["send_blocked_reason"])
+                    self.assertEqual(preview["template_card"]["sub_title_text"], preview["body"])
+                    self.assertEqual(preview["template_card"]["jump_list"][0]["title"], "查看详情")
+                    self.assertTrue(all("：" in line for line in preview["body"].splitlines()))
+            send.assert_not_called()
+        self.assertFalse(NotificationRule.objects.exists())
+        self.assertFalse(NotificationPreviewAttempt.objects.exists())
+
+    def test_saved_old_default_is_presented_as_lines_without_overwriting_custom_rules(self):
+        event = get_event(CODE)
+        rule = NotificationRule.objects.create(event_code=CODE, updated_by_employee=self.actor,
+            allowed_variables=event["allowed_variables"],
+            **{**{key: value for key, value in self.draft.items() if key != "variables"},
+               "body_template": event["legacy_default_body"]})
+        result = self.client.get(ROOT + "rules/")
+        shown = next(row for row in result.data["data"] if row["event_code"] == CODE)
+        self.assertEqual(shown["body_template"], event["default_body"])
+        self.assertEqual(shown["default_body_template"], event["default_body"])
+        rule.refresh_from_db()
+        self.assertEqual(rule.body_template, event["legacy_default_body"])
+        custom = "自定义说明\n" + event["legacy_default_body"]
+        rule.body_template = custom
+        rule.save(update_fields=["body_template"])
+        result = self.client.get(ROOT + "rules/")
+        shown = next(row for row in result.data["data"] if row["event_code"] == CODE)
+        self.assertEqual(shown["body_template"], custom)
+        self.assertEqual(shown["recipient_role_codes"], self.draft["recipient_role_codes"])
+        self.assertEqual(shown["enabled"], self.draft["enabled"])
+
+    def test_display_recommendation_does_not_truncate_valid_custom_content(self):
+        self.draft["body_template"] += "长" * 161
+        preview = self.preview()
+        self.assertIn("长" * 161, preview["body"])
+        self.assertEqual(preview["template_card"]["sub_title_text"], preview["body"])
+        self.assertFalse(preview["send_blocked_reason"])
+        _, _, card = service.prepare_attempt(self.request(), CODE, self.data(preview))
+        self.assertEqual(card["sub_title_text"], preview["body"])
+
+    def test_old_text_preview_and_changed_destination_require_regeneration(self):
+        preview = self.preview()
+        payload = signing.loads(preview["preview_token"], salt=service.PREVIEW_SALT)
+        payload.pop("message_type"); payload.pop("template_card")
+        data = self.data(preview)
+        data["preview_token"] = signing.dumps(payload, salt=service.PREVIEW_SALT)
+        with self.assertRaises(Conflict):
+            service.prepare_attempt(self.request(), CODE, data)
+        self.config.erp_origin = "https://changed.example.com"
+        self.config.save(update_fields=["erp_origin", "updated_at"])
+        with self.assertRaises(Conflict):
+            service.prepare_attempt(self.request(), CODE, self.data(preview))
+        self.assertFalse(NotificationPreviewAttempt.objects.exists())
 
 
 @override_settings(**SETTINGS)
@@ -206,12 +287,14 @@ class NotificationPreviewSendingTests(PreviewFixture, TransactionTestCase):
     def test_exact_visible_content_is_sent_once_and_not_wrapped_in_generic_template(self):
         preview = self.preview()
         data = self.data(preview)
-        def accepted(user_id, content):
+        def accepted(user_id, *, title, body, url):
             self.assertFalse(connection.in_atomic_block)
-            self.assertEqual(content, preview["title"] + "\n\n" + preview["body"])
+            self.assertEqual(title, preview["title"])
+            self.assertEqual(body, preview["body"])
+            self.assertEqual(url, preview["template_card"]["card_action"]["url"])
             self.assertEqual(user_id, self.binding.user_id)
             return {"msgid": "isolated-message"}
-        with patch("apps.wecom.client.WeComClient.send_text", side_effect=accepted) as send:
+        with patch("apps.wecom.client.WeComClient.send_text_notice", side_effect=accepted) as send:
             first = self.client.post(f"{ROOT}rules/{CODE}/preview-send/", data, format="json")
             second = self.client.post(f"{ROOT}rules/{CODE}/preview-send/", data, format="json")
         self.assertEqual(first.status_code, 200, first.data)
@@ -224,7 +307,7 @@ class NotificationPreviewSendingTests(PreviewFixture, TransactionTestCase):
         for status, error in [("UNCERTAIN", WeComSendUncertain()), ("FAILED", WeComError("RECIPIENT_REJECTED", "拒绝"))]:
             self.draft["title_template"] = "示例" + status
             data = self.data()
-            with patch("apps.wecom.client.WeComClient.send_text", side_effect=error) as send:
+            with patch("apps.wecom.client.WeComClient.send_text_notice", side_effect=error) as send:
                 first = service.send_preview(self.request(), CODE, data)
                 again = service.send_preview(self.request(), CODE, data)
             self.assertEqual(first.status, status); self.assertEqual(again.pk, first.pk)
@@ -233,7 +316,7 @@ class NotificationPreviewSendingTests(PreviewFixture, TransactionTestCase):
     def test_concurrent_clicks_share_one_attempt_and_one_network_call(self):
         data = self.data()
         entered, release = Event(), Event()
-        def network(*args):
+        def network(*args, **kwargs):
             entered.set()
             if not release.wait(20):
                 raise RuntimeError("isolated send wait timed out")
@@ -245,7 +328,7 @@ class NotificationPreviewSendingTests(PreviewFixture, TransactionTestCase):
                 return service.send_preview(self.request(user), CODE, data)
             finally:
                 connections.close_all()
-        with patch("apps.wecom.client.WeComClient.send_text", side_effect=network) as send, ThreadPoolExecutor(max_workers=2) as pool:
+        with patch("apps.wecom.client.WeComClient.send_text_notice", side_effect=network) as send, ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(run)
             try:
                 self.assertTrue(entered.wait(15))

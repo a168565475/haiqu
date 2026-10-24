@@ -1,6 +1,8 @@
 """07：隔离PostgreSQL真实服务/API；网络不发送，不能替代正式身份验收。"""
 from uuid import uuid4
 
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.db import transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -65,11 +67,21 @@ class WageAndReportNotificationTests(TestCase):
         return event
 
     def test_submit_approve_real_api_no_self_review_and_stale_version(self):
+        grant_role(self.f.employee, "U24_WAGE_ORDINARY_SUBMITTER", "workshop_reporting.approve_wagescheme")
+        self.f.user.user_permissions.add(*Permission.objects.filter(content_type__app_label__in=[
+            "workshop_reporting", "production_scheduling", "production_tasks",
+        ]))
+        self.f.user.is_superuser = False
+        self.f.user.save(update_fields=["is_superuser"])
+        self.f.user = get_user_model().objects.get(pk=self.f.user.pk)
+        self.f.client.force_authenticate(self.f.user)
         draft = self.draft()
         self.assertFalse(NotificationEvent.objects.exists())
         submitted = self.submit(draft)
         pending = self.assert_recipient("WAGE_SCHEME_SUBMITTED", self.manager)
-        self.assertEqual(self.decide(submitted, client=self.f.client).status_code, 403)
+        self_review = self.decide(submitted, client=self.f.client)
+        self.assertEqual(self_review.status_code, 403, self_review.data)
+        self.assertIn("提交人不能审批", str(self_review.data))
         approved = self.decide(submitted)
         self.assertEqual(approved.status_code, 200, approved.data)
         self.assert_recipient("WAGE_SCHEME_DECIDED", self.director)

@@ -18,6 +18,7 @@ const props = withDefaults(defineProps<{
   title: string
   width?: number | string
   height?: number | string
+  autoMaxHeightRatio?: number
   fullscreen?: boolean
   edgeToEdge?: boolean
   withHeader?: boolean
@@ -35,6 +36,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   width: 680,
   height: 'auto',
+  autoMaxHeightRatio: 0.8,
   fullscreen: false,
   edgeToEdge: false,
   withHeader: true,
@@ -109,7 +111,7 @@ function viewportBounds() {
 function clampRect(value: WindowRect): WindowRect {
   const viewport = viewportBounds()
   const maxWidth = Math.max(props.minWidth, viewport.width - viewport.padding * 2)
-  const maxHeight = Math.max(0, Math.min(viewport.height - viewport.padding * 2, manuallyAdjusted ? Infinity : viewport.height * 0.8))
+  const maxHeight = Math.max(0, Math.min(viewport.height - viewport.padding * 2, manuallyAdjusted ? Infinity : viewport.height * props.autoMaxHeightRatio))
   const width = Math.min(Math.max(value.width, props.minWidth), maxWidth)
   const height = Math.min(Math.max(value.height, props.minHeight), maxHeight)
   return {
@@ -217,7 +219,7 @@ const windowStyle = computed(() => {
     width: cssSize(props.width),
     height: props.height === 'auto' ? 'auto' : cssSize(props.height),
     maxWidth: 'calc(100vw - 32px)',
-    maxHeight: 'min(80vh, calc(100vh - 32px))',
+    maxHeight: `min(${props.autoMaxHeightRatio * 100}vh, calc(100vh - 32px))`,
   }
 })
 
@@ -250,7 +252,7 @@ async function initializeWindow() {
   if (!props.modelValue || !element) return
   const viewport = viewportBounds()
   const measured = element.getBoundingClientRect()
-  // 显式高度保留工作区下限；内容仍可自动增高，统一受普通窗口 80vh 上限约束。
+  // 显式高度保留工作区下限；内容仍可自动增高，默认上限为 80vh。
   requestedHeight = props.height === 'auto' ? 0 : pixelFallback(props.height, measured.height)
   if (props.fullscreen) {
     const width = Math.min(pixelFallback(props.width, 680), viewport.width - viewport.padding * 2)

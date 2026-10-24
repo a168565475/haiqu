@@ -13,13 +13,15 @@ vi.mock('@/api/financeReceipts', () => ({ createFinanceReceipt: vi.fn(), fetchRe
 vi.mock('@/api/financeStatements', () => ({ fetchFinanceStatement: vi.fn(), fetchFinanceSourceTasks: vi.fn(), fetchFinanceStatements: vi.fn() }))
 const statement = { id: 'statement', number: 'YSDZD1', production_task_id: 'task', task_number: 'TASK1', status: 'ACTIVE', etag: '"v1"',
   amount: '100.00', outstanding_amount: '100.00', available_deposit_amount: '0.00', bank_received_amount: '0.00', salesperson: { code: 'SALE', name: '隔离业务员' } } as FinanceStatement
+const discardUploads = vi.fn()
 const setup = (receiptType: ReceiptType = 'DEPOSIT', realAccounts = false) => mount(ReceiptEditor, { props: { modelValue: true, receiptType, initialStatementId: 'statement' },
   global: { plugins: [ElementPlus], stubs: {
     AppWindowDialog: { props: ['modelValue'], template: '<div v-if="modelValue"><slot/><slot name="footer"/></div>' },
-    ReceiptAccountLines: realAccounts ? false : { name: 'ReceiptAccountLines', template: '<div/>' },
-    ReceiptUploads: { name: 'ReceiptUploads', template: '<div/>' }, ReceiptSourceSelect: true, GoodsReceiptFields: true,
+    ReceiptAccountLines: realAccounts ? false : { name: 'ReceiptAccountLines', props: ['modelValue'], template: '<div/>' },
+    ReceiptUploads: { name: 'ReceiptUploads', props: ['modelValue'], methods: { discardAll: discardUploads }, template: '<div/>' }, ReceiptSourceSelect: true, GoodsReceiptFields: true,
   } } })
 const button = (wrapper: ReturnType<typeof setup>, text: string) => wrapper.findAll('button').find(item => item.text() === text)!
+const source = (wrapper: ReturnType<typeof setup>, mode: 'task' | 'statement') => wrapper.findAllComponents({ name: 'ReceiptSourceSelect' }).find(item => item.props('mode') === mode)!
 async function fill(wrapper: ReturnType<typeof setup>) {
   await flushPromises()
   wrapper.findComponent({ name: 'ReceiptAccountLines' }).vm.$emit('update:modelValue', [{ key: 'line', account_id: 'account', account_etag: '"a1"', cash_amount: '25.00', fee_amount: '1.00', received_on: '2026-10-23' }])
@@ -28,7 +30,7 @@ async function fill(wrapper: ReturnType<typeof setup>) {
 }
 describe('收款草稿保护（隔离组件测试）', () => {
   beforeEach(() => {
-    vi.clearAllMocks(); vi.mocked(fetchFinanceStatement).mockResolvedValue(statement)
+    vi.clearAllMocks(); discardUploads.mockResolvedValue(true); vi.mocked(fetchFinanceStatement).mockResolvedValue(statement)
     URL.createObjectURL = vi.fn(() => 'blob:u04-preview'); URL.revokeObjectURL = vi.fn()
   })
   it('保存防重复，超时后同键同体同ETag重试并禁止离开', async () => {
@@ -56,6 +58,24 @@ describe('收款草稿保护（隔离组件测试）', () => {
       expect(createFinanceReceipt).not.toHaveBeenCalled(); expect(wrapper.text()).toContain('超过当前未付'); expect(wrapper.text()).toContain('101.00')
     } finally { wrapper.unmount() }
   })
+  it('货款提交逐笔核销金额，超时重试保持原金额、键和版本', async () => {
+    const wrapper = setup('GOODS')
+    try {
+      await flushPromises()
+      const goods = wrapper.findComponent({ name: 'GoodsReceiptFields' })
+      goods.vm.$emit('update:depositAllocations', [{ deposit_id: 'deposit', amount: '35.01' }])
+      goods.vm.$emit('validity', true)
+      vi.mocked(createFinanceReceipt).mockRejectedValueOnce(new AxiosError('timeout'))
+      await flushPromises(); await button(wrapper, '保存并生效').trigger('click'); await flushPromises()
+      const original = vi.mocked(createFinanceReceipt).mock.calls[0]!
+      expect(original[0]).toEqual({ receipt_type: 'GOODS', statement_id: 'statement', account_lines: [], upload_ids: [], deposit_allocations: [{ deposit_id: 'deposit', amount: '35.01' }], discount_amount: '0.00' })
+      expect(original[2]).toBe(statement.etag)
+      goods.vm.$emit('update:depositAllocations', [{ deposit_id: 'deposit', amount: '10.00' }]); await flushPromises()
+      vi.mocked(createFinanceReceipt).mockResolvedValueOnce({ id: 'receipt', status: 'ACTIVE' } as Receipt)
+      await button(wrapper, '重试原提交').trigger('click'); await flushPromises()
+      expect(vi.mocked(createFinanceReceipt).mock.calls[1]).toEqual(original)
+    } finally { wrapper.unmount() }
+  })
   it('关闭再打开不接受上次来源迟到响应', async () => {
     let finish!: (value: FinanceStatement) => void
     vi.mocked(fetchFinanceStatement).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
@@ -77,7 +97,7 @@ describe('收款草稿保护（隔离组件测试）', () => {
       await flushPromises()
       if (change === 'close') {
         await wrapper.setProps({ modelValue: false }); await wrapper.setProps({ modelValue: true, initialStatementId: undefined })
-      } else wrapper.findComponent({ name: 'ReceiptSourceSelect' }).vm.$emit(change, change === 'task'
+      } else source(wrapper, change as 'task' | 'statement').vm.$emit(change, change === 'task'
         ? { id: 'new-task', task_number: 'NEW' } : { ...statement, id: 'new-statement' })
       await flushPromises(); finish(new Blob(['old'])); await flushPromises()
       expect(wrapper.find('img.receipt-slip-preview').exists()).toBe(false)
@@ -113,6 +133,65 @@ describe('收款草稿保护（隔离组件测试）', () => {
       goods.vm.$emit('preview', 'receipt', { file_id: 'new', original_name: '新水单.png' })
       await flushPromises(); finish(new Blob(['old'])); await flushPromises()
       expect(wrapper.get('img').attributes('alt')).toBe('新水单.png'); expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+    } finally { wrapper.unmount() }
+  })
+  it('固定账单回填两个来源，取消更换保留资金和水单', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
+    const wrapper = setup()
+    try {
+      await fill(wrapper)
+      expect(source(wrapper, 'task').props('selectedTask')).toEqual({ id: 'task', task_number: 'TASK1', salesperson: statement.salesperson })
+      expect(source(wrapper, 'statement').props('selectedStatement')).toEqual(statement)
+      source(wrapper, 'task').vm.$emit('task', { id: 'new-task', task_number: 'NEW' }); await flushPromises()
+      expect(source(wrapper, 'task').props('selectedTask').id).toBe('task')
+      expect(source(wrapper, 'statement').props('selectedStatement')).toEqual(statement)
+      expect(wrapper.findComponent({ name: 'ReceiptAccountLines' }).props('modelValue')).toHaveLength(1)
+      expect(wrapper.findComponent({ name: 'ReceiptUploads' }).props('modelValue')).toHaveLength(1)
+      expect(discardUploads).not.toHaveBeenCalled()
+    } finally { wrapper.unmount(); confirm.mockRestore() }
+  })
+  it('更换任务须完成水单清理，失败保留草稿，成功清空账单和资金', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue(Object.assign('confirm' as const, { value: '', action: 'confirm' as const }))
+    const wrapper = setup()
+    try {
+      await fill(wrapper); discardUploads.mockResolvedValueOnce(false)
+      source(wrapper, 'task').vm.$emit('task', { id: 'new-task', task_number: 'NEW' }); await flushPromises()
+      expect(source(wrapper, 'statement').props('selectedStatement')).toEqual(statement)
+      expect(wrapper.findComponent({ name: 'ReceiptAccountLines' }).props('modelValue')).toHaveLength(1)
+      source(wrapper, 'task').vm.$emit('task', { id: 'new-task', task_number: 'NEW' }); await flushPromises()
+      expect(source(wrapper, 'task').props('selectedTask').id).toBe('new-task')
+      expect(source(wrapper, 'statement').props('selectedStatement')).toBeNull()
+      expect(wrapper.findComponent({ name: 'ReceiptAccountLines' }).props('modelValue')).toEqual([])
+      expect(wrapper.findComponent({ name: 'ReceiptUploads' }).props('modelValue')).toEqual([])
+    } finally { wrapper.unmount(); confirm.mockRestore() }
+  })
+  it('来源确认期间防重复且关闭重开后不接收过期确认', async () => {
+    let finish!: () => void
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve(Object.assign('confirm' as const, { value: '', action: 'confirm' as const })) }))
+    const wrapper = setup()
+    try {
+      await fill(wrapper)
+      source(wrapper, 'task').vm.$emit('task', { id: 'new-task', task_number: 'NEW' })
+      source(wrapper, 'task').vm.$emit('task', { id: 'other-task', task_number: 'OTHER' }); await flushPromises()
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(source(wrapper, 'task').props('disabled')).toBe(true)
+      await button(wrapper, '保存并生效').trigger('click'); expect(createFinanceReceipt).not.toHaveBeenCalled()
+      await wrapper.setProps({ modelValue: false }); await wrapper.setProps({ modelValue: true, initialStatementId: undefined })
+      finish(); await flushPromises()
+      expect(discardUploads).not.toHaveBeenCalled()
+      expect(source(wrapper, 'task').props('selectedTask')).toBeUndefined()
+      expect(source(wrapper, 'task').props('disabled')).toBe(false)
+    } finally { wrapper.unmount(); confirm.mockRestore() }
+  })
+  it('拒绝跨任务或已作废账单，当前草稿不被覆盖', async () => {
+    const wrapper = setup()
+    try {
+      await flushPromises()
+      source(wrapper, 'statement').vm.$emit('statement', { ...statement, id: 'other', production_task_id: 'other-task' }); await flushPromises()
+      expect(wrapper.text()).toContain('不属于当前生产任务')
+      source(wrapper, 'statement').vm.$emit('statement', { ...statement, id: 'void', status: 'VOID' }); await flushPromises()
+      expect(wrapper.text()).toContain('已作废对账单不能登记收款')
+      expect(source(wrapper, 'statement').props('selectedStatement')).toEqual(statement)
     } finally { wrapper.unmount() }
   })
   it.each(['flat', 'nested'])('第二行服务端%s错误定位字段，修改金额仅清理该字段错误', async (shape) => {

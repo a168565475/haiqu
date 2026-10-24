@@ -200,12 +200,15 @@ def oauth_start(request):
     request.exception_reporter_filter = WeComExceptionReporterFilter()
     if not selectors.schema_is_ready():
         return oauth_error("CONFIG_UNAVAILABLE")
-    if request.GET:
+    if any(len(values) != 1 for _, values in request.GET.lists()):
+        return oauth_error("INVALID_REQUEST")
+    serializer = QRStartSerializer(data=request.GET)
+    if not serializer.is_valid():
         return oauth_error("INVALID_REQUEST")
     config = selectors.get_config()
     if config._state.adding or not config.enabled or not selectors.configuration_complete(config):
         return oauth_error("CONFIG_UNAVAILABLE")
-    return HttpResponseRedirect(services.oauth_url(request, config))
+    return HttpResponseRedirect(services.oauth_url(request, config, serializer.validated_data["next"]))
 
 
 @never_cache

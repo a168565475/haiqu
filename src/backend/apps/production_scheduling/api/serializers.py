@@ -189,5 +189,6 @@ class ScheduleItemReadSerializer(serializers.Serializer):
             "image_file_id": str(instance.image_file_id) if instance.image_file_id else None,
             "plan_date": date_map.get(category), "line_number": instance.line_number,
             "craft_names": category_crafts,
+            "production_task_status": task_status,
             "job_status": job_status, "job_status_display": job_status_display,
         }

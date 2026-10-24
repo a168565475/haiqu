@@ -309,6 +309,9 @@ export interface SampleProduct {
   category_name: string
   product_name: string
   specification: string
+  specification_display?: string
+  material_snapshot?: string
+  color?: string
   task_sheet_file_id: string | null
   task_sheet_file_name: string
   task_sheet_content_type: string

@@ -15,7 +15,10 @@ from .organization_views import RoleDepartmentActions, EmployeeDepartmentActions
 from .deletion_views import DeletionActions
 from .employee_batch_views import EmployeeBatchActions
 from ..deletion_services import DELETED_REASON
-from ..selectors import business_scope_enforcement, effective_access
+from ..selectors import (
+    business_scope_enforcement, effective_access, employees_with_directory_context,
+    roles_with_directory_context, teams_with_directory_context,
+)
 from ..permissions import CanManageAccounts, CanReadAccessDirectory, SuperadministratorOnly
 from apps.core.api.permissions import HasActiveEmployee
 from rest_framework.permissions import IsAuthenticated
@@ -55,6 +58,10 @@ class RoleViewSet(DeletionActions, RoleDepartmentActions, mixins.ListModelMixin,
 
     queryset = RoleProfile.objects.exclude(archive_reason=DELETED_REASON).select_related("auth_group").order_by("role_code")
     serializer_class = RoleSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return roles_with_directory_context(queryset) if self.action == "list" else queryset
 
     def respond(self, role, status=200):
         return Response(RoleSerializer(role).data, status=status, headers={"ETag": etag_for_instance(role)})
@@ -105,6 +112,10 @@ class AccessEmployeeViewSet(DeletionActions, EmployeeDepartmentActions, Employee
 
     queryset = Employee.objects.filter(archived_at__isnull=True).select_related("user", "wecom_binding").order_by("employee_code")
     serializer_class = AccessEmployeeSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return employees_with_directory_context(queryset) if self.action == "list" else queryset
 
     def respond(self, employee):
         return Response(AccessEmployeeSerializer(employee).data, headers={"ETag": etag_for_instance(employee)})
@@ -168,6 +179,10 @@ class AccessAuditViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, Acces
 class SalesTeamViewSet(mixins.ListModelMixin, AccessViewSet):
     queryset = SalesTeam.objects.select_related("manager").order_by("code")
     serializer_class = TeamSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return teams_with_directory_context(queryset) if self.action == "list" else queryset
 
     def respond(self, team, status=200):
         return Response(TeamSerializer(team).data, status=status, headers={"ETag": etag_for_instance(team)})

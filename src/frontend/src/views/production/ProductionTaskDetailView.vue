@@ -519,8 +519,8 @@ dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
 .load-error strong { color: token.$crm-text-primary; font-size: 20px; }
 .loading-state { padding: 80px 16px 24px; text-align: center; color: token.$crm-text-secondary; }
 .pmc-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.pmc-form label { display: flex; flex-direction: column; gap: 8px; color: token.$crm-text-secondary; font-size: 13px; }
-.pmc-form .el-date-editor, .pmc-form .el-select { width: 100%; }
+.pmc-form label { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: token.$crm-text-secondary; font-size: 13px; }
+.pmc-form :deep(.el-input), .pmc-form :deep(.el-select), .pmc-form :deep(.el-date-editor.el-input) { width: 100%; min-width: 0; }
 @media (max-width: 1350px) {
   .file-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bottom-grid { grid-template-columns: minmax(0, 1fr); }

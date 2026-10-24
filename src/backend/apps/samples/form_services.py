@@ -279,6 +279,10 @@ def _create_products(*, sample_request, products, task_files, sampling_image_fil
             for field_name, value in sample_product_values_from_source(source).items():
                 product_data.setdefault(field_name, value)
         category = product_data.pop("category")
+        from .product_attributes import split_product_specification
+        attributes = split_product_specification(product_data.get('specification', ''))
+        product_data['specification'] = attributes['specification']
+        product_data['material_snapshot'] = attributes['material'] or product_data.get('material_snapshot', '')
         product = SampleProduct.objects.create(
             sample_request=sample_request,
             source_inquiry_item=source_inquiry_item,
@@ -590,8 +594,15 @@ def _update_full(
         submitted_inquiry_id = product_data.pop("source_inquiry_item_id", None)
         submitted_quote_id = product_data.pop("source_quotation_line_id", None)
         category = product_data.pop("category")
+        from .product_attributes import split_product_specification
+        attributes = split_product_specification(product_data.get('specification', ''))
+        product_data['specification'] = attributes['specification']
+        if attributes['material']:
+            product_data['material_snapshot'] = attributes['material']
         if product_id:
             product = existing_products[str(product_id)]
+            if 'material_snapshot' not in product_data and not product.material_snapshot:
+                product_data['material_snapshot'] = split_product_specification(product.specification)['material']
             if submitted_inquiry_id != product.source_inquiry_item_id or submitted_quote_id != product.source_quotation_line_id:
                 raise Conflict("产品来源关系创建后不可修改。")
             product.category = category

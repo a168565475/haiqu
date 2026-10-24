@@ -20,6 +20,26 @@ from apps.procurement.models import PurchaseOrder, PurchaseOrderLine
 
 
 class SamplePurchaseApiTests(APITestCase):
+    def test_sample_product_attributes_reach_purchase_without_overwriting_materials(self):
+        from apps.samples.models import SampleProduct, SampleItem
+        product = SampleProduct.objects.create(sample_request=self.sample, line_number=1,
+            product_name='打样椅', specification='60×80', material_snapshot='铝制成品')
+        SampleItem.objects.create(sample_request=self.sample, sample_product=product, line_number=1,
+            product_description_snapshot='打样椅', specification_snapshot='60×80',
+            color_name_snapshot='成品蓝', requested_quantity=2, sample_quantity=2, unit_code='PCS')
+        preview = self.client.get(self.root + 'source/', {'source_type': 'SAMPLE', 'sample_procurement_request_id': str(self.procurement.pk)})
+        self.assertEqual(preview.status_code, 200, preview.data)
+        summary = preview.data['data']['sample_request']
+        self.assertIn('材质：铝制成品', summary['summary'])
+        self.assertEqual(summary['products'][0]['color_name'], '成品蓝')
+        created = self.create_order()
+        self.assertEqual(created.data['data']['product_summary'][0]['specification'], '60×80')
+        detail = self.client.get(self.root + self.sample_order_id + '/')
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['data']['product_summary'][0]['material'], '铝制成品')
+        self.assertEqual(self.purchase_line.color_snapshot, self.demand['color'])
+        self.assertEqual(self.purchase_line.specification_snapshot, self.demand['specification'])
+
     payload = inventory_tests.MaterialInventoryApiTests.payload
     confirm_quality = inventory_tests.MaterialInventoryApiTests.confirm_quality
 

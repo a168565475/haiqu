@@ -1,4 +1,5 @@
 import type { PageMeta } from './referenceData'
+import type { ProductionTaskStatus } from './productionTask'
 import type { ScheduleProgressStatus } from './workshopReporting'
 
 export type ScheduleStatus = 'ACTIVE' | 'VOID'
@@ -70,7 +71,7 @@ export interface ScheduleTaskCandidate {
   follower_names: string[]
   planned_start_date: string | null
   planned_end_date: string | null
-  status: 'READY'
+  status: 'READY' | 'IN_PRODUCTION'
   status_display: string
   product_count: number
   selectable: boolean
@@ -216,6 +217,7 @@ export interface ScheduleItem {
   craft_names: string[]
   line_number: number
   job_status: 'IN_PROGRESS' | 'COMPLETED' | 'PAUSED' | 'CANCELLED'
+  production_task_status: ProductionTaskStatus
   job_status_display: string
 }
 

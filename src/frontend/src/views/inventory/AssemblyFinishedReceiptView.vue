@@ -9,7 +9,9 @@ import type { AssemblyPayload,AssemblyPreview } from '@/types/finishedReceipts'
 import type { InventoryOptions } from '@/types/inventory'
 import '@/styles/finishedReceipts.scss'
 import '@/styles/assemblyFinishedReceipt.scss'
-const route=useRoute(),router=useRouter(),planId=String(route.query.schedule_product_id||'')
+const route=useRoute(),router=useRouter()
+const planId=typeof route.query.schedule_product_id==='string'?route.query.schedule_product_id:''
+const sourceError=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(planId)?'':'入库来源参数无效，请从装配内部计划的产品行进入成品入库。'
 const preview=ref<AssemblyPreview>(),options=ref<InventoryOptions>(),loading=ref(false),saving=ref(false),error=ref('')
 const quantity=ref(''),perBox=ref(''),date=ref(''),color=ref(''),warehouse=ref(''),zone=ref(''),location=ref(''),remark=ref('')
 const pending=ref<{payload:AssemblyPayload;etag:string}|null>(null),pendingKey='assembly-receipt:'+planId
@@ -34,6 +36,7 @@ function changeWarehouse(){zone.value='';location.value=''}
 function resetEntry(){quantity.value='';perBox.value='';remark.value='';error.value=''}
 function message(cause:unknown) { return cause instanceof AxiosError?cause.response?.data?.error?.message||'请求失败，请重试。':'页面操作失败，请重试。' }
 async function load() {
+ if(sourceError){error.value=sourceError;return}
  loading.value=true;error.value=''
  try {
   const [data,opts]=await Promise.all([fetchAssemblyPreview(planId),fetchInventoryOptions()]);preview.value=data;options.value=opts
@@ -55,7 +58,7 @@ function validate() {
  return ''
 }
 async function submit() {
- if(saving.value||loading.value||(!preview.value&&!pending.value))return
+ if(sourceError||saving.value||loading.value||(!preview.value&&!pending.value))return
  error.value=''
  if(!pending.value){
   const validationMessage=validate()
@@ -80,6 +83,7 @@ async function submit() {
  }finally{saving.value=false}
 }
 onMounted(()=>{
+ if(sourceError){error.value=sourceError;return}
  try{const raw=sessionStorage.getItem(pendingKey);if(raw){const value=JSON.parse(raw);if(!value?.payload?.request_id||value.payload.schedule_product_id!==planId||!value.etag)throw Error();pending.value=value;const p=value.payload;location.value=p.location_id;date.value=p.receipt_date;color.value=p.actual_color;quantity.value=String(p.received_quantity);perBox.value=p.quantity_per_box==null?'':String(p.quantity_per_box);remark.value=p.remark}}
  catch{error.value='原提交记录无法读取，请先到入库记录核对，避免重复登记。';return}
  void load()
@@ -136,7 +140,7 @@ onMounted(()=>{
     </ElForm>
    </section>
   </template>
-  <div v-else-if="!loading" class="fg-empty">未读取到订单入库信息，请刷新重试。</div>
-  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">提交后由仓库确认，确认后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'提交待入库'}}</ElButton></footer>
+  <div v-else-if="!loading&&!sourceError" class="fg-empty">未读取到订单入库信息，请刷新重试。</div>
+  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">提交后由仓库确认，确认后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="!!sourceError||saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="!!sourceError||saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="!!sourceError||(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'提交待入库'}}</ElButton></footer>
  </section>
 </template>

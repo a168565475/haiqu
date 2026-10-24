@@ -129,6 +129,7 @@ def purchase_orders_with_context(queryset=None, *, read_optimized=False):
     )
     return queryset.select_related(*relations).prefetch_related(
         Prefetch("lines", queryset=lines),
+        "sample_procurement_request__material_request__sample_request__products__details",
         Prefetch(
             "production_task__products",
             queryset=products,

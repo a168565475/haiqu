@@ -325,8 +325,11 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                 accessible_production_tasks(request), include_progress=True
             ).prefetch_related(
                 "products__sales_order_delivery_batch_line__sales_order_line__product_image",
-            ).filter(
-                status=ProductionTaskStatus.READY, archived_at__isnull=True
+            ).alias(has_active_schedule=Exists(ProductionSchedule.objects.filter(
+                production_task_id=OuterRef("pk"), record_status=ScheduleStatus.ACTIVE,
+            ))).filter(archived_at__isnull=True).filter(
+                Q(status=ProductionTaskStatus.READY)
+                | Q(status=ProductionTaskStatus.IN_PRODUCTION, has_active_schedule=True)
             ), pk=task_id,
         )
         existing = ProductionSchedule.objects.filter(production_task=task, record_status=ScheduleStatus.ACTIVE).first()

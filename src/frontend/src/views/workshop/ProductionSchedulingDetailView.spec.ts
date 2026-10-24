@@ -45,6 +45,26 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('排产详情执行汇总接入', () => {
+  it.each([
+    ['READY', 'ACTIVE', false, true, true],
+    ['IN_PRODUCTION', 'ACTIVE', false, true, true],
+    ['COMPLETED', 'ACTIVE', false, true, false],
+    ['IN_PRODUCTION', 'VOID', false, true, false],
+    ['IN_PRODUCTION', 'ACTIVE', true, true, false],
+    ['IN_PRODUCTION', 'ACTIVE', false, false, false],
+  ] as const)('编辑入口遵守任务%s、排产%s、归档%s、权限%s', async (status, recordStatus, archived, permitted, visible) => {
+    const value = { ...schedule(), source_current_status: status, record_status: recordStatus, source_is_archived: archived }
+    api.fetch.mockResolvedValue({ data: value, etag: '"v1"' })
+    if (!permitted) state.permissions.delete('production_scheduling.change_productionschedule')
+    const wrapper = await createView()
+    const edit = wrapper.findAll('button').find(button => button.text() === '编辑排产')
+    expect(Boolean(edit)).toBe(visible)
+    if (edit) {
+      await edit.trigger('click')
+      expect(api.push).toHaveBeenCalledWith('/workshop/scheduling/schedule-1/edit')
+    }
+  })
+
   it('分别展示规格、颜色、材质和后端汇总金额', async () => {
     const wrapper = await createView()
     const fields = wrapper.findAll('.detail-product-main dl > div')

@@ -2,12 +2,12 @@ import hashlib
 import json
 
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Count, F, Prefetch, Q
 from django.utils import timezone
 
-from apps.organizations.models import Employee, EmployeeRoleAssignment, RoleProfile
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, RoleProfile
 from .catalog import catalog, permission_code
-from .models import RoleActionGrant
+from .models import RoleActionGrant, SalesTeamMembership
 
 
 def business_scope_enforcement():
@@ -23,6 +23,44 @@ def current_assignments(employee, now=None):
     ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now))
 
 
+def employees_with_directory_context(queryset):
+    now = timezone.now()
+    roles = EmployeeRoleAssignment.objects.filter(
+        role_profile__archived_at__isnull=True, effective_from__lte=now,
+    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now))
+    departments = EmployeeOrganizationAssignment.objects.filter(
+        effective_from__lte=now, organization_unit__archived_at__isnull=True,
+        organization_unit__status="ACTIVE",
+    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).select_related("organization_unit")
+    return queryset.annotate(_directory_team_id=F("sales_team_membership__team_id")).prefetch_related(
+        Prefetch("role_assignments", queryset=roles, to_attr="_directory_roles"),
+        Prefetch("organization_assignments", queryset=departments, to_attr="_directory_departments"),
+    )
+
+
+def roles_with_directory_context(queryset):
+    from .resource_scopes import configured
+    now = timezone.now()
+    grants = RoleActionGrant.objects.select_related("permission__content_type").order_by(
+        "permission__content_type__app_label", "permission__codename", "scope",
+    )
+    if configured():
+        grants = grants.prefetch_related("resource_selections")
+    return queryset.annotate(_directory_employee_count=Count(
+        "employee_assignments__employee_id", distinct=True,
+        filter=Q(employee_assignments__effective_from__lte=now) & (
+            Q(employee_assignments__effective_to__isnull=True) | Q(employee_assignments__effective_to__gt=now)
+        ),
+    )).prefetch_related(Prefetch("action_grants", queryset=grants, to_attr="_directory_grants"))
+
+
+def teams_with_directory_context(queryset):
+    return queryset.prefetch_related(Prefetch(
+        "memberships", queryset=SalesTeamMembership.objects.only("team_id", "employee_id"),
+        to_attr="_directory_memberships",
+    ))
+
+
 def role_grants(role):
     queryset = RoleActionGrant.objects.filter(role=role).select_related("permission__content_type").order_by(
         "permission__content_type__app_label", "permission__codename", "scope",
@@ -31,10 +69,12 @@ def role_grants(role):
     return queryset.prefetch_related('resource_selections') if configured() else queryset
 
 
-def grant_rows(role):
+def grant_rows(role, grants=None):
     from .resource_scopes import selected_ids
+    if grants is None:
+        grants = role_grants(role)
     return [{"permission": permission_code(g.permission), "scope": g.scope,
-             **({'resource_ids': selected_ids(g)} if g.scope in {'WORKSHOP', 'CRAFT'} else {})} for g in role_grants(role)]
+             **({'resource_ids': selected_ids(g)} if g.scope in {'WORKSHOP', 'CRAFT'} else {})} for g in grants]
 
 
 def role_snapshot(role):

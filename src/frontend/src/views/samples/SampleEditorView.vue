@@ -80,7 +80,7 @@ function applySample(result: { data: SampleDetail; etag: string }, preserveDraft
   colorSpecificationBaselines.clear()
   products.value = (result.data.products || []).map(product => ({
     id: product.id, product_id: product.product_id || '', category_id: product.category_id || '',
-    product_name: product.product_name, specification: product.specification,
+    product_name: product.product_name, specification: product.specification_display ?? product.specification,
     length_cm: product.length_cm, armrest_width_cm: product.armrest_width_cm, seat_width_cm: product.seat_width_cm,
     back_height_cm: product.back_height_cm, seat_height_cm: product.seat_height_cm,
     details: product.details.map(detail => ({ id: detail.id, product_color_id: detail.product_color_id || '', color_code: detail.color_code,
@@ -111,8 +111,14 @@ async function loadMaterials({ preserveDraft = false, duringSave = false } = {})
   const expectedEtag = etag.value
   materialsLoading.value = true; materialError.value = ''
   try {
-    applyMaterials(await fetchSampleMaterials(sample.value.id), preserveDraft, expectedEtag)
-    units.value = await fetchSampleMaterialUnits()
+    // 单位不依赖材料内容；材料返回即应用版本，两路结束后才解除读写锁。
+    const [materialResult, unitResult] = await Promise.allSettled([
+      fetchSampleMaterials(sample.value.id).then(result => applyMaterials(result, preserveDraft, expectedEtag)),
+      fetchSampleMaterialUnits(),
+    ])
+    if (materialResult.status === 'rejected') throw materialResult.reason
+    if (unitResult.status === 'rejected') throw unitResult.reason
+    units.value = unitResult.value
   } catch (error) { materialError.value = sampleMaterialError(error) }
   finally { materialsLoading.value = false }
 }
@@ -131,12 +137,13 @@ async function loadPage() {
   try {
     if (typeof route.params.sampleId !== 'string' || !route.params.sampleId) throw new Error('缺少打样申请编号。')
     applySample(await fetchSample(route.params.sampleId))
-    // 只读申请不依赖产品检索权限；选项失败也不能把现有资料隐藏掉。
-    if (canEditProducts.value) {
-      options.value = await fetchSampleFormOptions()
-      void searchProducts('')
-    }
-    await loadMaterials()
+    // 只读申请仍跳过产品检索；产品选项和材料互不依赖，可同时读取。
+    const productOptionsRequest = canEditProducts.value
+      ? fetchSampleFormOptions().then(result => { options.value = result; void searchProducts('') })
+      : Promise.resolve()
+    // 两路都结束后再解除加载锁，避免失败重试与尚未结束的材料读取交错。
+    const results = await Promise.allSettled([productOptionsRequest, loadMaterials()])
+    for (const result of results) if (result.status === 'rejected') throw result.reason
   } catch (error) { errorMessage.value = sampleMaterialError(error) }
   finally { loading.value = false }
 }

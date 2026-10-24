@@ -354,6 +354,31 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertEqual(completed.data["data"][0]["job_status"], "COMPLETED")
         self.assertEqual(completed.data["data"][0]["job_status_display"], "已完成")
 
+    def test_plan_items_expose_current_production_status_for_receipt_entry(self):
+        self.create_schedule()
+        for status in ProductionTaskStatus.values:
+            with self.subTest(status=status):
+                ProductionTask.objects.filter(pk=self.task.pk).update(status=status)
+                response = self.client.get("/api/v1/production-schedule-items/", {"category": "METAL"})
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["meta"]["total"], 1)
+                self.assertEqual(response.data["data"][0]["production_task_status"], status)
+
+    def test_plan_status_serialization_uses_loaded_task_without_extra_queries(self):
+        from rest_framework.test import APIRequestFactory
+        from ..api.serializers import ScheduleItemReadSerializer
+        from ..selectors import schedule_items_for_category
+
+        self.create_schedule()
+        request = APIRequestFactory().get("/api/v1/production-schedule-items/")
+        request.user = self.user
+        request.employee = self.employee
+        plans = list(schedule_items_for_category(request, "METAL"))
+        self.assertEqual(len(plans), 1)
+        with self.assertNumQueries(0):
+            result = ScheduleItemReadSerializer(plans, many=True, context={"category": "METAL"}).data
+        self.assertEqual(result[0]["production_task_status"], ProductionTaskStatus.IN_PRODUCTION)
+
     def test_create_requires_all_boms_to_be_verified(self):
         self.bom.status = BomStatus.PENDING_CONFIRMATION
         self.bom.save(update_fields=["status", "updated_at"])
@@ -381,7 +406,7 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertFalse(source["scheduling_ready"])
         self.assertFalse(source["selectable"])
         self.assertIn("已完成采购", source["unselectable_reason"])
-        self.assertIn("采购订单必须为“已完成采购”", source["scheduling_blockers"])
+        self.assertIn("所有产品的采购订单必须为“已完成采购”", source["scheduling_blockers"])
         response = self.client.post("/api/v1/production-schedules/", self.payload(), format="json")
 
         self.assertEqual(response.status_code, 409, response.data)
@@ -404,6 +429,70 @@ class ProductionSchedulingApiTests(APITestCase):
         candidates = self.client.get("/api/v1/production-schedules/task-candidates/")
         self.assertEqual(candidates.status_code, 200, candidates.data)
         self.assertNotIn(str(self.task.pk), {row["id"] for row in candidates.data["data"]})
+
+    def test_in_production_edit_source_supports_existing_schedule_update(self):
+        self.assertFalse(self.user.is_superuser)
+        create_payload = self.payload()
+        created = self.create_schedule(create_payload)
+        schedule_id = created.data["data"]["id"]
+        source = self.detail()
+        self.assertEqual(source["status"], ProductionTaskStatus.IN_PRODUCTION)
+        self.assertEqual(source["existing_schedule_id"], schedule_id)
+        self.assertFalse(source["selectable"])
+        self.assertEqual(source["unselectable_reason"], "已有有效排产计划")
+        self.assertEqual(source["products"][0]["id"], str(self.line.pk))
+        updated = self.client.patch(
+            f"/api/v1/production-schedules/{schedule_id}/",
+            {"source_revision_hash": source["source_revision_hash"],
+             "items": [{**create_payload["items"][0], "planned_quantity": 90}]},
+            format="json", HTTP_IF_MATCH=created["ETag"],
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["data"]["products"][0]["planned_quantity"], 90)
+        duplicate = self.client.post(
+            "/api/v1/production-schedules/",
+            {**create_payload, "client_request_id": str(uuid.uuid4()), "source_revision_hash": source["source_revision_hash"]},
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 409, duplicate.data)
+
+    def test_edit_source_still_hides_completed_and_archived_tasks(self):
+        self.create_schedule()
+        url = f"/api/v1/production-schedules/task-candidates/{self.task.pk}/"
+        ProductionTask.objects.filter(pk=self.task.pk).update(status=ProductionTaskStatus.COMPLETED, completed_at=timezone.now())
+        self.assertEqual(self.client.get(url).status_code, 404)
+        ProductionTask.objects.filter(pk=self.task.pk).update(
+            status=ProductionTaskStatus.IN_PRODUCTION, completed_at=None, archived_at=timezone.now(),
+        )
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_in_production_edit_source_requires_active_schedule(self):
+        url = f"/api/v1/production-schedules/task-candidates/{self.task.pk}/"
+        ProductionTask.objects.filter(pk=self.task.pk).update(status=ProductionTaskStatus.IN_PRODUCTION)
+        self.assertEqual(self.client.get(url).status_code, 404)
+        ProductionTask.objects.filter(pk=self.task.pk).update(status=ProductionTaskStatus.READY)
+        created = self.create_schedule()
+        voided = self.client.post(
+            f"/api/v1/production-schedules/{created.data['data']['id']}/void/",
+            {"reason": "测试作废排产不再作为编辑来源"}, format="json", HTTP_IF_MATCH=created["ETag"],
+        )
+        self.assertEqual(voided.status_code, 200, voided.data)
+        ProductionTask.objects.filter(pk=self.task.pk).update(status=ProductionTaskStatus.IN_PRODUCTION)
+        self.assertEqual(self.client.get(url).status_code, 404)
+
+    def test_in_production_edit_source_preserves_permission_and_data_scope(self):
+        self.create_schedule()
+        outsider = get_user_model().objects.create_user(username="schedule-edit-outsider")
+        Employee.objects.create(user=outsider, employee_code="SCHEDULE-EDIT-OUTSIDER", display_name="范围外员工")
+        outsider.user_permissions.add(Permission.objects.get(
+            content_type__app_label="production_scheduling", codename="view_productionschedule",
+        ))
+        self.client.force_authenticate(get_user_model().objects.get(pk=outsider.pk))
+        url = f"/api/v1/production-schedules/task-candidates/{self.task.pk}/"
+        self.assertEqual(self.client.get(url).status_code, 404)
+        outsider.user_permissions.clear()
+        self.client.force_authenticate(get_user_model().objects.get(pk=outsider.pk))
+        self.assertEqual(self.client.get(url).status_code, 403)
 
     def test_batch_create_generates_one_schedule_per_task_atomically(self):
         second_task, second_line = self.create_task_with_product()
@@ -789,6 +878,9 @@ class ProductionSchedulingConcurrencyTests(TransactionTestCase):
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="schedule-concurrency-user")
+        self.user.user_permissions.add(Permission.objects.get(
+            content_type__app_label="production_scheduling", codename="change_productionschedule",
+        ))
         self.employee = Employee.objects.create(
             user=self.user, employee_code="SCHEDULE-CONCURRENCY", display_name="排产并发测试员工"
         )
@@ -912,6 +1004,8 @@ class ProductionSchedulingConcurrencyTests(TransactionTestCase):
             try:
                 actor = Employee.objects.get(pk=self.employee.pk)
                 request = RequestFactory().patch("/", HTTP_IF_MATCH=etag)
+                request.user = actor.user
+                request.employee = actor
                 barrier.wait(timeout=10)
                 result = update_schedule(
                     schedule_id=schedule.pk, validated_data=update_data,

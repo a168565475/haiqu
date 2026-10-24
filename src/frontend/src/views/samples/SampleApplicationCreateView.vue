@@ -118,7 +118,7 @@ async function loadPage() {
         repeatOrder: sample.is_repeat_order, orderDate: sample.order_date || '', dueDate: sample.sample_due_date || '',
         sourceProductId: product.source_quotation_line_id || product.source_inquiry_item_id || '',
         productId: product.product_id || '',
-        productName: product.product_name, specification: product.specification, requirements: sample.purpose,
+        productName: product.product_name, specification: product.specification_display ?? product.specification, requirements: sample.purpose,
         lengthCm: product.length_cm || '', armrestWidthCm: product.armrest_width_cm || '', seatWidthCm: product.seat_width_cm || '',
         backHeightCm: product.back_height_cm || '', seatHeightCm: product.seat_height_cm || '', quantity: product.total_sample_quantity,
       })
@@ -134,11 +134,11 @@ async function loadPage() {
           basic_info: { order_date: sample.order_date || null, sample_due_date: sample.sample_due_date || null }, suggested_due_date: sample.sample_due_date || null,
           sample_types: options.value.sample_types, unfinished_samples: [],
           products: [{ id: form.sourceProductId, source_inquiry_item_id: product.source_inquiry_item_id, source_quotation_line_id: product.source_quotation_line_id,
-            product_name: product.product_name, specification: product.specification, source_quantity: String(product.total_sample_quantity), source_unit_code: 'PCS' }],
+            product_name: product.product_name, specification: product.specification_display ?? product.specification, source_quantity: String(product.total_sample_quantity), source_unit_code: 'PCS' }],
         }
       }
       selectedProduct.value = product.product_name
-      linkedProductSnapshot.value = product.product_id ? { name: product.product_name, specification: product.specification } : null
+      linkedProductSnapshot.value = product.product_id ? { name: product.product_name, specification: form.specification } : null
       if (!sourceLocked.value) await loadContacts()
       if (sample.reference_image) imagePreview.value = `/api/v1/sample-requests/${sample.id}/business-files/${sample.reference_image}/`
     }

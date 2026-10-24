@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { submitSampleApplication, reviewSampleApplication, completeSampleApplicationProducts } from './sampleApplication'
 import type { SampleApplicationBasicInput, SampleApplicationDraft } from '@/types/sampleApplication'
+import type { SampleProductEdit } from '@/types/sampleEditor'
 const post = vi.hoisted(() => vi.fn())
 const patch = vi.hoisted(() => vi.fn())
 vi.mock('./request', () => ({ apiClient: { post, patch } }))
@@ -13,6 +14,16 @@ describe('申请提交和厂长审核接口', () => {
     requirements: '包装要求', quantity: 2, referenceImage: null,
   }
   beforeEach(() => { post.mockReset(); patch.mockReset() })
+  it('合并展示中的材质独立提交，删除标签可以明确清空材质', async () => {
+    patch.mockResolvedValue({ data: { data: { id: 'sample' } }, headers: { etag: 'v2' } })
+    const product: SampleProductEdit = { id: 'p', product_id: '', category_id: 'c', product_name: '椅子',
+      specification: '60×80；颜色：黑色；材质：铝', length_cm: null, armrest_width_cm: null,
+      seat_width_cm: null, back_height_cm: null, seat_height_cm: null, details: [] }
+    await completeSampleApplicationProducts('sample', 'v1', [product], '')
+    expect(patch.mock.calls[0]![1].products[0].material_snapshot).toBe('铝')
+    await completeSampleApplicationProducts('sample', 'v2', [{ ...product, specification: '60×80；颜色：黑色' }], '')
+    expect(patch.mock.calls[1]![1].products[0].material_snapshot).toBe('')
+  })
   it('基础字段与产品及图片使用同一版本原子提交', async () => {
     patch.mockResolvedValue({ data: { data: { id: 'sample', etag: 'v2' } }, headers: { etag: 'v2' } })
     const basic: SampleApplicationBasicInput = { source_type: null, source_id: null, customer_account_id: 'customer', customer_contact_id: null, owner_employee_id: 'owner', sample_type: 'PRE_SALES', shipping_method: 'MAIL', delivery_batch: 'SINGLE', is_repeat_order: false, order_date: null, sample_due_date: null }

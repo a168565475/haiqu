@@ -22,7 +22,7 @@ const item: ScheduleItem = {
   production_task_id: 'task-1', task_number: 'SC-1', sales_order_number: null, customer_name: '客户', customer_id: 'customer-1',
   product: { product_name: '折叠椅', specification: '旧复合规格', specification_display: '45×52×47', color_name: '酒红色', material: '尼龙' },
   planned_quantity: 100, unit_name: '把', image_file_id: null, plan_date: '2026-10-18', craft_names: ['金工'],
-  line_number: 1, job_status: 'IN_PROGRESS', job_status_display: '进行中',
+  line_number: 1, job_status: 'IN_PROGRESS', job_status_display: '进行中', production_task_status: 'IN_PRODUCTION',
 }
 let wrapper: VueWrapper | undefined
 

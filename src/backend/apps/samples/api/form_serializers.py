@@ -245,12 +245,14 @@ class SampleFormProductReadSerializer(serializers.Serializer):
     product_number_snapshot = serializers.CharField()
     product_code_snapshot = serializers.CharField()
     item_number_snapshot = serializers.CharField()
-    material_snapshot = serializers.CharField()
+    material_snapshot = serializers.SerializerMethodField()
+    specification_display = serializers.SerializerMethodField()
+    color = serializers.SerializerMethodField()
     product_image_id = serializers.UUIDField(allow_null=True)
     category_id = serializers.UUIDField(allow_null=True)
     category_name = serializers.CharField(source="category_name_snapshot")
     product_name = serializers.CharField()
-    specification = serializers.CharField()
+    specification = serializers.SerializerMethodField()
     task_sheet_file_id = serializers.UUIDField(allow_null=True)
     task_sheet_file_name = serializers.CharField(source="task_sheet_file.original_name", default="")
     task_sheet_content_type = serializers.CharField(source="task_sheet_file.content_type", default="")
@@ -263,6 +265,22 @@ class SampleFormProductReadSerializer(serializers.Serializer):
     total_sample_quantity = serializers.SerializerMethodField()
     details = SampleFormDetailReadSerializer(many=True)
     sampling_details = SampleProductSamplingDetailReadSerializer(many=True)
+
+    def get_specification(self, instance) -> str:
+        from ..product_attributes import sample_product_attributes
+        return sample_product_attributes(instance)['specification']
+
+    def get_material_snapshot(self, instance) -> str:
+        from ..product_attributes import sample_product_attributes
+        return sample_product_attributes(instance)['material']
+
+    def get_color(self, instance) -> str:
+        from ..product_attributes import sample_product_attributes
+        return sample_product_attributes(instance)['color']
+
+    def get_specification_display(self, instance) -> str:
+        from ..product_attributes import sample_product_specification_display
+        return sample_product_specification_display(instance)
 
     def get_total_sample_quantity(self, instance):
         return sum(detail.sample_quantity or 0 for detail in instance.details.all())

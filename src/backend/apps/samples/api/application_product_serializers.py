@@ -52,6 +52,7 @@ class ApplicationProductDetailSerializer(SampleFormDetailSerializer):
 
 class ApplicationProductSerializer(SampleFormProductSerializer):
     id = serializers.UUIDField()
+    material_snapshot = serializers.CharField(max_length=2000, required=False, allow_blank=True)
     details = ApplicationProductDetailSerializer(many=True, min_length=1, max_length=200)
 
     def get_fields(self):

@@ -35,7 +35,7 @@ const voidReason = ref('')
 const voidReasonError = ref('')
 const voiding = ref(false)
 const canEdit = computed(() => schedule.value?.record_status === 'ACTIVE'
-  && schedule.value.source_current_status === 'READY'
+  && ['READY', 'IN_PRODUCTION'].includes(schedule.value.source_current_status)
   && !schedule.value.source_is_archived
   && (auth.user?.is_superuser || auth.hasPermission('production_scheduling.change_productionschedule')))
 const canVoid = computed(() => schedule.value?.record_status === 'ACTIVE' && (auth.user?.is_superuser || auth.hasPermission('production_scheduling.void_productionschedule')))

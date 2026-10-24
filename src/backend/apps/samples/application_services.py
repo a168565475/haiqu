@@ -19,6 +19,7 @@ from .form_selectors import resolve_form_source, inquiry_reference_images
 from .form_services import _source_relations, _validate_source_tampering, _legacy_datetime
 from .models import SampleItem, SampleProduct, SampleRequest, SampleRequestStatus
 from .services import SAMPLE_FIELDS, _write_sample_records, sample_product_values_from_source
+from .product_attributes import split_product_specification, sample_product_attributes, sample_product_specification_display
 
 
 def application_actions(sample, request):
@@ -106,7 +107,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             if source_id != expected_id or source_product_id != expected_product_id:
                 raise ValidationError({'source_id': '退回补充不能更换申请来源或来源产品。'})
             relations = {field: getattr(sample, field) for field in ['customer_account', 'customer_contact', 'owner_employee', 'transaction_entity', 'source_inquiry', 'source_quotation_version']}
-            source_product = {'product_name': original.product_name, 'specification': original.specification, 'source_inquiry_item_id': original.source_inquiry_item_id, 'source_quotation_line_id': original.source_quotation_line_id}
+            source_product = {'product_name': original.product_name, 'specification': sample_product_specification_display(original), 'source_inquiry_item_id': original.source_inquiry_item_id, 'source_quotation_line_id': original.source_quotation_line_id}
             source_model = original
         else:
             context = resolve_form_source(request=request, source_type=source_type, source_id=source_id)
@@ -118,7 +119,9 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 else relations['quotation_lines'].get(str(source_product_id))
             )
         _validate_source_tampering(data, relations)
-        if source_product is None or data['product_name'] != source_product['product_name'] or data['specification'] != source_product['specification']:
+        if source_product is None or data['product_name'] != source_product['product_name'] or data['specification'] not in {
+            source_product['specification'], split_product_specification(source_product['specification'])['specification'],
+        }:
             raise ValidationError({'source_product_id': '产品必须与当前来源中的产品一致。'})
         product_source = {'source_inquiry_item_id': source_product['source_inquiry_item_id'], 'source_quotation_line_id': source_product['source_quotation_line_id']}
         if source_model is not None:
@@ -129,7 +132,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             }
     elif selected_product is not None and (
         data['product_name'].strip() != selected_product.product_name
-        or data['specification'] != selected_product.specification
+        or split_product_specification(data['specification'])['specification'] != selected_product.specification
     ):
         # 产品名称或规格改成了另一种产品身份，不能继续挂着原产品 ID。
         selected_product = None
@@ -169,6 +172,22 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             raise ValidationError({'source_reference_image_id': '来源图片不属于当前所选产品、已失效或没有查看权限，请重新选择。'})
     quantity = data.pop('quantity')
     product_fields = {field: data.pop(field) for field in ['product_name', 'specification', 'length_cm', 'armrest_width_cm', 'seat_width_cm', 'back_height_cm', 'seat_height_cm']}
+    attributes = split_product_specification(product_fields['specification'])
+    if source_type and source_model is not None:
+        if sample:
+            attributes = sample_product_attributes(source_model)
+        elif source_type == 'inquiry':
+            attributes = split_product_specification(source_model.specification)
+            attributes['color'] = source_model.color or attributes['color']
+            attributes['material'] = source_model.material or attributes['material']
+        else:
+            attributes = split_product_specification(source_model.specification_snapshot)
+            attributes['color'] = source_model.color_snapshot or attributes['color']
+            attributes['material'] = source_model.material_snapshot or attributes['material']
+    product_fields['specification'] = attributes['specification']
+    if len(attributes['color']) > 200:
+        raise ValidationError({'specification': '产品颜色不能超过 200 字。'})
+    source_product_values['material_snapshot'] = attributes['material'] or source_product_values.get('material_snapshot', '')
     data.update({field: relations.get(field) for field in ['transaction_entity', 'source_inquiry', 'source_quotation_version']})
     directly_effective = sample_id is None and _factory_creator(request, actor)
     data.update(status=SampleRequestStatus.PENDING_COMPLETION if directly_effective else SampleRequestStatus.DIRECTOR_REVIEW,
@@ -181,7 +200,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             number = next_business_number('SAMPLE_INTAKE')
             sample = SampleRequest.objects.create(**data, request_number=number, intake_number=number, requested_at=timezone.now(), requested_by_employee=actor, created_by_employee=actor, creation_idempotency_key=key, application_payload_hash=fingerprint, reference_image=saved_image or inherited_image)
             product = SampleProduct.objects.create(sample_request=sample, line_number=1, **product_fields, **source_product_values, **product_source)
-            SampleItem.objects.create(sample_request=sample, sample_product=product, line_number=1, product_description_snapshot=product.product_name, specification_snapshot=product.specification, requested_quantity=quantity, sample_quantity=quantity, unit_code='PCS', **product_source)
+            SampleItem.objects.create(sample_request=sample, sample_product=product, line_number=1, product_description_snapshot=product.product_name, specification_snapshot=product.specification, color_name_snapshot=attributes['color'], requested_quantity=quantity, sample_quantity=quantity, unit_code='PCS', **product_source)
         else:
             for field, value in data.items():
                 setattr(sample, field, value)
@@ -195,11 +214,12 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                     'product': None, 'product_number_snapshot': '', 'product_code_snapshot': '',
                     'item_number_snapshot': '', 'material_snapshot': '', 'product_image': None,
                 }
+                source_product_values['material_snapshot'] = attributes['material']
             for field, value in {**product_fields, **source_product_values, **product_source}.items():
                 setattr(product, field, value)
             product.save()
             item = sample.items.get(line_number=1)
-            for field, value in {**product_source, 'product_description_snapshot': product.product_name, 'specification_snapshot': product.specification, 'requested_quantity': quantity, 'sample_quantity': quantity}.items():
+            for field, value in {**product_source, 'product_description_snapshot': product.product_name, 'specification_snapshot': product.specification, 'color_name_snapshot': attributes['color'], 'requested_quantity': quantity, 'sample_quantity': quantity}.items():
                 setattr(item, field, value)
             item.save()
         _write_sample_records(sample_request=sample,

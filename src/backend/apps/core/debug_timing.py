@@ -6,9 +6,23 @@ from django.db import connection
 
 
 class ProductionReadTimingMiddleware:
-    """仅在开发环境向超级管理员返回生产/BOM/采购读取诊断，不记录 SQL 或业务内容。"""
+    """仅在开发环境向超级管理员返回业务读取诊断，不记录 SQL 或业务内容。"""
 
     paths = {
+        "/api/v1/reference-data/tube-shapes/",
+        "/api/v1/reference-data/tube-product-names/",
+        "/api/v1/reference-data/tube-materials/",
+        "/api/v1/reference-data/tube-diameters/",
+        "/api/v1/reference-data/tube-thicknesses/",
+        "/api/v1/reference-data/tube-coating-colors/",
+        "/api/v1/unified-outsourcing-orders/",
+        "/api/v1/sample-inventory/summary/",
+        "/api/v1/access/employees/",
+        "/api/v1/access/roles/",
+        "/api/v1/access/departments/",
+        "/api/v1/access/sales-teams/",
+        "/api/v1/access/catalog/",
+        "/api/v1/access/catalog/scope-options/",
         "/api/v1/production-tasks/",
         "/api/v1/production-tasks/options/",
         "/api/v1/production-tasks/stats/",

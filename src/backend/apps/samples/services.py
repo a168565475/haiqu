@@ -114,14 +114,16 @@ def sample_product_values_from_source(source):
         product_number = getattr(source, "product_number_snapshot", "")
         product_code = getattr(source, "product_code_snapshot", "")
         item_number = getattr(source, "item_number_snapshot", "")
+    from .product_attributes import split_product_specification
+    attributes = split_product_specification(source_specification)
     return {
         "product": product,
         "product_number_snapshot": product_number,
         "product_code_snapshot": product_code,
         "item_number_snapshot": item_number,
         "product_name": source_name,
-        "specification": source_specification,
-        "material_snapshot": getattr(source, "material", "") or getattr(source, "material_snapshot", ""),
+        "specification": attributes['specification'],
+        "material_snapshot": getattr(source, "material", "") or getattr(source, "material_snapshot", "") or attributes['material'],
         "product_image": getattr(source, "product_image", None),
     }
 
@@ -260,6 +262,7 @@ def _source_due_datetime(date_value):
 
 
 def _create_intake_products(*, sample_request, selections, source_type):
+    from .product_attributes import split_product_specification
     for line_number, selection in enumerate(selections, start=1):
         source = selection["source_item"] if source_type == "inquiry" else selection["source_line"]
         quantity = selection["requested_quantity"]
@@ -274,6 +277,10 @@ def _create_intake_products(*, sample_request, selections, source_type):
             inquiry_item = source.source_inquiry_item
             quotation_line = source
         product_values = sample_product_values_from_source(source)
+        source_color = (getattr(source, 'color', '') or getattr(source, 'color_snapshot', '')
+                        or split_product_specification(specification)['color'])
+        if len(source_color) > 200:
+            raise ValidationError({'products': '产品颜色不能超过 200 字。'})
         product = SampleProduct.objects.create(
             sample_request=sample_request,
             source_inquiry_item=inquiry_item,
@@ -288,7 +295,8 @@ def _create_intake_products(*, sample_request, selections, source_type):
             source_quotation_line=quotation_line,
             line_number=line_number,
             product_description_snapshot=product_name,
-            specification_snapshot=specification,
+            specification_snapshot=product.specification,
+            color_name_snapshot=source_color,
             requested_quantity=quantity,
             unit_code="PCS",
             sample_quantity=quantity,

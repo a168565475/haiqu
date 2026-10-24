@@ -33,7 +33,9 @@ let disposed = false
 const suppliers = computed(() => [...new Map((order.value?.supplier_summary ?? []).map(item => [item.id, item])).values()])
 const productLabel = computed(() => {
   const products = order.value?.product_summary ?? []
-  if (products.length) return products.map(product => [product.product_name, product.color_name].filter(Boolean).join(' · ')).join('；')
+  if (products.length) return products.map(product => (order.value?.source_type === 'SAMPLE'
+    ? [product.product_name, product.specification, product.color_name ? `颜色：${product.color_name}` : '', product.material ? `材质：${product.material}` : '']
+    : [product.product_name, product.color_name]).filter(Boolean).join(' · ')).join('；')
   return [...new Set((order.value?.lines ?? []).map(line => line.product_name).filter(Boolean))].join('；') || '—'
 })
 const deliveryLabel = computed(() => {

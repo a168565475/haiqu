@@ -57,6 +57,8 @@ class RoleSerializer(serializers.ModelSerializer):
         fields = ["id", "role_code", "display_name", "description", "department_id", "archived", "grants", "updated_at", "etag", "assigned_employee_count"]
 
     def get_assigned_employee_count(self, obj) -> int:
+        if hasattr(obj, "_directory_employee_count"):
+            return obj._directory_employee_count
         from django.db.models import Q
         from django.utils import timezone
         from apps.organizations.models import EmployeeRoleAssignment
@@ -68,7 +70,7 @@ class RoleSerializer(serializers.ModelSerializer):
         return obj.archived_at is not None
 
     def get_grants(self, obj) -> list[dict[str, str]]:
-        return grant_rows(obj)
+        return grant_rows(obj, getattr(obj, "_directory_grants", None))
 
     def get_etag(self, obj) -> str:
         return etag_for_instance(obj)
@@ -103,6 +105,8 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
         return self._login_counts.get(login_account_id(obj.user_id), 0)
 
     def get_role_ids(self, obj) -> list[str]:
+        if hasattr(obj, "_directory_roles"):
+            return [str(assignment.role_profile_id) for assignment in obj._directory_roles]
         return [str(pk) for pk in current_assignments(obj).values_list("role_profile_id", flat=True)]
 
     def get_etag(self, obj) -> str:
@@ -112,6 +116,8 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
         return bool(obj.user_id and (obj.user.is_superuser or obj.user.is_staff or obj.user.username == "admin"))
 
     def get_team_id(self, obj) -> str | None:
+        if hasattr(obj, "_directory_team_id"):
+            return str(obj._directory_team_id) if obj._directory_team_id else None
         membership = SalesTeamMembership.objects.filter(employee=obj).first()
         return str(membership.team_id) if membership else None
 
@@ -122,6 +128,9 @@ class AccessEmployeeSerializer(serializers.ModelSerializer):
         return [str(pk) for pk, _ in self.department_rows(obj)]
 
     def department_rows(self, obj):
+        if hasattr(obj, "_directory_departments"):
+            return [(assignment.organization_unit_id, assignment.organization_unit.unit_name)
+                    for assignment in obj._directory_departments]
         from django.db.models import Q
         from django.utils import timezone
         if not hasattr(self, "_department_rows"):
@@ -172,6 +181,8 @@ class TeamSerializer(serializers.ModelSerializer):
         fields = ["id", "code", "name", "manager_id", "manager_name", "is_active", "member_ids", "etag"]
 
     def get_member_ids(self, obj) -> list[str]:
+        if hasattr(obj, "_directory_memberships"):
+            return [str(membership.employee_id) for membership in obj._directory_memberships]
         return [str(pk) for pk in obj.memberships.values_list("employee_id", flat=True)]
 
     def get_etag(self, obj) -> str:

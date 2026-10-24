@@ -14,6 +14,28 @@ from . import test_application_identity as identity_tests
 
 
 class SampleApplicationProductsTests(APITestCase):
+    def test_product_edit_separates_attributes_and_keeps_detail_color_authoritative(self):
+        approved, _, data = self.prepared()
+        data['products'][0]['product_id'] = None
+        data['products'][0]['specification'] = '60×80；颜色：旧颜色；材质：铝'
+        response = self.save(approved, data)
+        self.assertEqual(response.status_code, 200, response.data)
+        sample = SampleRequest.objects.get(pk=approved.data['data']['id'])
+        product = sample.products.get()
+        self.assertEqual(product.specification, '60×80')
+        self.assertEqual(product.material_snapshot, '铝')
+        self.assertEqual(product.details.get().color_name_snapshot, self.product_color.color_name)
+        data['products'][0]['specification'] = '60×80'
+        response = self.save(response, data)
+        self.assertEqual(response.status_code, 200, response.data)
+        product.refresh_from_db()
+        self.assertEqual(product.material_snapshot, '铝')
+        data['products'][0]['material_snapshot'] = ''
+        response = self.save(response, data)
+        self.assertEqual(response.status_code, 200, response.data)
+        product.refresh_from_db()
+        self.assertEqual(product.material_snapshot, '')
+
     setUp = application_tests.SampleApplicationApiTests.setUp
     create_customer = application_tests.SampleApplicationApiTests.create_customer
     payload = application_tests.SampleApplicationApiTests.payload

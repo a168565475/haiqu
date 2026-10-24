@@ -11,6 +11,7 @@ import '@/styles/metalInternalReceipt.scss'
 
 const route = useRoute(), router = useRouter()
 const preview = ref<ReceiptPreview | null>(null), loading = ref(false), saving = ref(false), error = ref('')
+const previewReady = ref(false)
 const zoneId = ref(''), receiptDate = ref(''), remark = ref('')
 const quantities = ref<Record<string,string | number>>({}), selected = ref<Record<string,boolean>>({})
 const pending = ref<{payload:ReceiptPayload; etag:string} | null>(null)
@@ -49,20 +50,22 @@ function errorText(cause:unknown) {
   return '页面加载失败，请重试。'
 }
 async function load() {
-  loading.value = true; error.value = ''
+  loading.value = true; previewReady.value = false; error.value = ''
   try {
     preview.value = await fetchReceiptPreview(String(route.query.schedule_product_id || ''),String(route.query.plan_category || ''))
     receiptDate.value ||= preview.value.receipt_date
     warehouse.value ||= preview.value.zones.find(zone => zone.id === zoneId.value)?.warehouse || warehouses.value[0] || ''
     zoneId.value ||= zones.value[0]?.id || ''
     if (!pending.value) { quantities.value = {}; selected.value = {} }
+    previewReady.value = true
   } catch (cause) { error.value = errorText(cause) }
   finally { loading.value = false }
 }
 async function submit() {
-  if (!preview.value || saving.value) return
-  error.value = ''
+  if (loading.value || saving.value) return
   if (!pending.value) {
+    if (!preview.value || !previewReady.value) return
+    error.value = ''
     if (!zoneId.value || !receiptDate.value) { error.value = '请选择库区和日期。'; return }
     if (isSewing.value) {
       for (const line of preview.value.lines) {
@@ -88,6 +91,7 @@ async function submit() {
     } }
     sessionStorage.setItem(pendingKey,JSON.stringify(pending.value))
   }
+  error.value = ''
   saving.value = true
   try {
     const result = await confirmInternalReceipt(pending.value.payload,pending.value.etag)
@@ -151,6 +155,6 @@ onMounted(() => {
       </section>
     </template>
     <section v-else class="panel d1-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton :icon="Refresh" @click="load">重新加载</ElButton></template></section>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="!preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!preview || (!pending && !selection.length)" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="!preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="loading || saving || (!pending && (!preview || !previewReady || !selection.length))" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 </template>

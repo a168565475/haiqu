@@ -34,7 +34,7 @@ async function render() {
 }
 function button(wrapper: ReturnType<typeof mount>, label: string) { return wrapper.findAll('button').find(item => item.text() === label)! }
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   vi.stubGlobal('URL', class extends URL {
     static createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
     static revokeObjectURL = vi.fn()
@@ -70,6 +70,132 @@ async function editProductDraft(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('打样编辑：组件契约测试（Mock 不代表真实验收）', () => {
+  it('先确认申请权限，再并行读取产品选项和材料；较慢的选项未完成前保持编辑锁', async () => {
+    let finishDetail!: (value: ReturnType<typeof sample>) => void
+    const formOptions = { categories: [], colors: [], tolerances: [] }
+    let finishOptions!: (value: typeof formOptions) => void
+    api.fetch.mockImplementationOnce(() => new Promise<ReturnType<typeof sample>>(resolve => { finishDetail = resolve }))
+    api.options.mockImplementationOnce(() => new Promise<typeof formOptions>(resolve => { finishOptions = resolve }))
+    const wrapper = await render()
+    expect(api.options).not.toHaveBeenCalled(); expect(api.materials).not.toHaveBeenCalled()
+    finishDetail(sample()); await flushPromises()
+    expect(api.options).toHaveBeenCalledTimes(1)
+    expect(api.materials).toHaveBeenCalledWith('sample-1'); expect(api.units).toHaveBeenCalledTimes(1)
+    expect(api.products).not.toHaveBeenCalled()
+    expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('true')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    finishOptions(formOptions); await flushPromises()
+    expect(api.products).toHaveBeenCalledWith('sample-1', '')
+    expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    expect(api.fetch).toHaveBeenCalledTimes(1); expect(api.materials).toHaveBeenCalledTimes(1)
+  })
+  it('产品选项失败时等待材料支路完成才显示重试，避免旧材料读取与重试交错', async () => {
+    let rejectOptions!: (error: Error) => void
+    let finishMaterials!: (value: ReturnType<typeof materials>) => void
+    api.options.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOptions = reject }))
+    api.materials.mockImplementationOnce(() => new Promise<ReturnType<typeof materials>>(resolve => { finishMaterials = resolve }))
+    const wrapper = await render()
+    rejectOptions(new Error('产品表单选项读取失败')); await flushPromises()
+    expect(api.materials).toHaveBeenCalledTimes(1); expect(api.units).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).not.toContain('产品表单选项读取失败')
+    expect(button(wrapper, '重新加载')).toBeUndefined()
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    finishMaterials(materials()); await flushPromises()
+    expect(api.units).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('产品表单选项读取失败')
+    expect(button(wrapper, '重新加载')).toBeDefined()
+    expect(api.products).not.toHaveBeenCalled()
+    await button(wrapper, '重新加载').trigger('click'); await flushPromises()
+    expect(wrapper.text()).not.toContain('产品表单选项读取失败')
+    expect(api.materials).toHaveBeenCalledTimes(2); expect(api.units).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
+  })
+  it('并行材料读取失败仍单独提示，产品选项完成后保留产品编辑和材料重试', async () => {
+    const formOptions = { categories: [], colors: [], tolerances: [] }
+    let finishOptions!: (value: typeof formOptions) => void
+    api.options.mockImplementationOnce(() => new Promise<typeof formOptions>(resolve => { finishOptions = resolve }))
+    api.materials.mockRejectedValueOnce(new Error('材料接口读取失败'))
+    const wrapper = await render()
+    expect(wrapper.text()).toContain('材料接口读取失败')
+    expect(api.units).toHaveBeenCalledTimes(1)
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    finishOptions(formOptions); await flushPromises()
+    expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('true')
+    await button(wrapper, '重新加载材料').trigger('click'); await flushPromises()
+    expect(wrapper.text()).not.toContain('材料接口读取失败')
+    expect(api.materials).toHaveBeenCalledTimes(2); expect(api.units).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
+  })
+  it('材料与单位同时读取，材料先返回立即更新状态但单位完成前不允许保存', async () => {
+    let finishMaterials!: (value: ReturnType<typeof materials>) => void
+    const materialUnits = [{ id: 'u1', label: '米', decimalPlaces: 2 }]
+    let finishUnits!: (value: typeof materialUnits) => void
+    api.materials.mockImplementationOnce(() => new Promise<ReturnType<typeof materials>>(resolve => { finishMaterials = resolve }))
+    api.units.mockImplementationOnce(() => new Promise<typeof materialUnits>(resolve => { finishUnits = resolve }))
+    const wrapper = await render()
+    expect(api.materials).toHaveBeenCalledWith('sample-1'); expect(api.units).toHaveBeenCalledTimes(1)
+    finishMaterials({ ...materials(true, '"m2"'), statusLabel: '材料响应已应用' }); await flushPromises()
+    expect(wrapper.get('.editor-heading').text()).toContain('材料响应已应用')
+    for (const label of ['保存', '保存材料', '提交仓库', '无需用料']) {
+      expect(button(wrapper, label).attributes('disabled')).toBeDefined()
+      await button(wrapper, label).trigger('click')
+    }
+    expect(api.complete).not.toHaveBeenCalled(); expect(api.save).not.toHaveBeenCalled(); expect(api.noMaterials).not.toHaveBeenCalled()
+    finishUnits(materialUnits); await flushPromises()
+    expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    expect(button(wrapper, '保存材料').attributes('disabled')).toBeUndefined()
+  })
+  it('单位先失败仍等材料结束，材料成功采用新版本且产品保存使用该版本', async () => {
+    let finishMaterials!: (value: ReturnType<typeof materials>) => void
+    let rejectUnits!: (error: Error) => void
+    api.materials.mockImplementationOnce(() => new Promise<ReturnType<typeof materials>>(resolve => { finishMaterials = resolve }))
+    api.units.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectUnits = reject }))
+    const wrapper = await render()
+    expect(api.units).toHaveBeenCalledTimes(1)
+    rejectUnits(new Error('材料单位读取失败')); await flushPromises()
+    expect(wrapper.text()).not.toContain('材料单位读取失败')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '重新加载材料')).toBeUndefined()
+    finishMaterials({ ...materials(true, '"m2"'), statusLabel: '材料响应已应用' }); await flushPromises()
+    expect(wrapper.get('.editor-heading').text()).toContain('材料响应已应用')
+    expect(wrapper.text()).toContain('材料单位读取失败')
+    expect(button(wrapper, '保存材料').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    api.complete.mockResolvedValueOnce({ ...sample(), etag: '"m3"' })
+    api.materials.mockResolvedValueOnce(materials(true, '"m3"'))
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.complete.mock.calls[0]?.[1]).toBe('"m2"')
+  })
+  it('材料先失败仍等单位结束，双路失败优先提示材料错误后才允许重试', async () => {
+    let rejectMaterials!: (error: Error) => void
+    let rejectUnits!: (error: Error) => void
+    api.materials.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectMaterials = reject }))
+    api.units.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectUnits = reject }))
+    const wrapper = await render()
+    expect(api.units).toHaveBeenCalledTimes(1)
+    rejectMaterials(new Error('材料详情读取失败')); await flushPromises()
+    expect(wrapper.text()).not.toContain('材料详情读取失败')
+    expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, '重新加载材料')).toBeUndefined()
+    rejectUnits(new Error('材料单位读取失败')); await flushPromises()
+    expect(wrapper.text()).toContain('材料详情读取失败')
+    expect(wrapper.text()).not.toContain('材料单位读取失败')
+    expect(button(wrapper, '重新加载材料').attributes('disabled')).toBeUndefined()
+    await button(wrapper, '重新加载材料').trigger('click'); await flushPromises()
+    expect(wrapper.text()).not.toContain('材料详情读取失败')
+    expect(api.materials).toHaveBeenCalledTimes(2); expect(api.units).toHaveBeenCalledTimes(2)
+    expect(button(wrapper, '保存材料').attributes('disabled')).toBeUndefined()
+  })
+  it('重开产品使用合并展示文本，保留独立材质和颜色的可见信息', async () => {
+    const current = sample(false)
+    const product = current.data.products![0]!
+    Object.assign(product, { specification: '60×80', specification_display: '60×80；颜色：蓝；材质：铝', material_snapshot: '铝' })
+    api.fetch.mockResolvedValue(current)
+    const wrapper = await render()
+    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('60×80；颜色：蓝；材质：铝')
+  })
   it('基础字段参与保存、冲突保留与取消恢复，后续阶段仍可编辑', async () => {
     const current = sample(false)
     api.fetch.mockResolvedValue({ ...current, data: { ...current.data, status: 'FINISHED', shipping_method: 'MAIL', customer_account: 'customer-1', owner: { id: 'owner-1' } } })

@@ -118,6 +118,10 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
     for field, value in basic_values.items():
         setattr(sample, field, value)
     for values in data['products']:
+        from .product_attributes import split_product_specification
+        values = dict(values)
+        attributes = split_product_specification(values.get('specification', ''))
+        values['specification'] = attributes['specification']
         product = products[values['id']]
         selected = values.get('product')
         if selected and (values['product_name'] != selected.product_name or values.get('specification', '') != selected.specification):
@@ -130,6 +134,11 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
             'product': None, 'product_number_snapshot': '', 'product_code_snapshot': '',
             'item_number_snapshot': '', 'material_snapshot': '', 'product_image': None,
         }
+        # 同一产品的纯规格提交不能清空已有材质；合并文本中的材质仍单独落库。
+        material_submitted = 'material_snapshot' in values
+        snapshots['material_snapshot'] = values.pop('material_snapshot', attributes['material'] or snapshots['material_snapshot'])
+        if not material_submitted and not snapshots['material_snapshot'] and selected == product.product and values['product_name'] == product.product_name:
+            snapshots['material_snapshot'] = product.material_snapshot or split_product_specification(product.specification)['material']
         for field in ('product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image'):
             setattr(product, field, snapshots[field])
         for field, value in values.items():

@@ -14,7 +14,9 @@ export async function fetchSampleApplicationProductOptions(sampleId: string, que
 
 export async function completeSampleApplicationProducts(sampleId: string, etag: string, products: SampleProductEdit[], purpose: string, referenceImage?: File, basic?: SampleApplicationBasicInput): Promise<{ data: SampleDetail; etag: string }> {
   if (!sampleId || !etag) throw new Error('缺少申请或数据版本，请重新加载。')
-  const payload = { products: products.map(product => ({ ...product, product_id: product.product_id || null })), purpose, ...(basic ? { basic } : {}) }
+  const payload = { products: products.map(product => ({ ...product, product_id: product.product_id || null,
+    material_snapshot: product.specification.match(/(?:^|[；;])\s*材质\s*[:：]\s*([^；;]*)/)?.[1]?.trim() || '',
+  })), purpose, ...(basic ? { basic } : {}) }
   let body: typeof payload | FormData = payload
   if (referenceImage) {
     body = new FormData()

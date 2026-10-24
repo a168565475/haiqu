@@ -14,7 +14,13 @@ from . import test_sample_api as legacy_tests
 
 @override_settings(FILE_VIRUS_SCAN_ENABLED=True)
 class SampleApplicationApiTests(APITestCase):
-    setUp = legacy_tests.SampleApiTests.setUp
+    def setUp(self):
+        from django.utils import timezone
+        from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
+        legacy_tests.SampleApiTests.setUp(self)
+        department, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
+        EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=department,
+                                                       effective_from=timezone.now())
     create_customer = legacy_tests.SampleApiTests.create_customer
     create_inquiry_with_item = legacy_tests.SampleApiTests.create_inquiry_with_item
     create_quotation_version_with_line = legacy_tests.SampleApiTests.create_quotation_version_with_line

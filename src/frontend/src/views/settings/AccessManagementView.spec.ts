@@ -92,6 +92,32 @@ describe('企微成员进入现有员工角色分配', () => {
     const { wrapper } = await render({ tab: 'employees', employee_id: employee(1).id })
     expect(wrapper.findAll('[role="dialog"] .access-check-grid label').map(item => item.text())).toEqual(['测试角色'])
   })
+  it('员工角色ID正序或逆序不改变展示、分配选项顺序和选中状态', async () => {
+    api.getRoles.mockResolvedValue([
+      { ...role, department_id: 'department-production' },
+      { ...role, id: 'support-role', display_name: '技术角色', department_id: 'department-support' },
+      { ...role, id: 'unselected-role', display_name: '未分配角色', department_id: 'department-production' },
+    ])
+    for (const roleIds of [[role.id, 'support-role'], ['support-role', role.id]]) {
+      const current = { ...employee(1), department: '生产部、技术支持', department_ids: ['department-production', 'department-support'], role_ids: roleIds }
+      api.getEmployees.mockResolvedValue([current])
+      const { wrapper } = await render({ tab: 'employees', employee_id: current.id })
+      const row = wrapper.get(`[data-employee-id="${current.id}"]`)
+      expect(row.findAll('.access-role-tags .access-tag').map(item => item.text())).toEqual(['测试角色', '技术角色'])
+      const choices = wrapper.findAll('[role="dialog"] .access-check-grid label')
+      expect(choices.map(item => item.text())).toEqual(['测试角色', '技术角色', '未分配角色'])
+      expect(choices.map(item => {
+        const input = item.get('input').element as HTMLInputElement
+        return { id: input.value, checked: input.checked }
+      })).toEqual([
+        { id: role.id, checked: true },
+        { id: 'support-role', checked: true },
+        { id: 'unselected-role', checked: false },
+      ])
+      expect(api.assignRoles).not.toHaveBeenCalled()
+      wrapper.unmount(); wrappers.splice(wrappers.indexOf(wrapper), 1)
+    }
+  })
   it('没有当前部门时不提供全部角色，也不能提交', async () => {
     api.getEmployees.mockResolvedValue([{ ...employee(1), department: '', department_ids: [] }])
     const { wrapper } = await render({ tab: 'employees', employee_id: employee(1).id })

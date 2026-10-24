@@ -39,7 +39,7 @@ const dimensionFields = computed(() => [
           <div class="product-fields">
             <div v-if="(sample.products?.length || 0) > 1" class="product-selector"><label for="review-product">产品名称</label><ElSelect id="review-product" :model-value="product?.id" @update:model-value="selectedProductId = $event"><ElOption v-for="item in sample.products" :key="item.id" :value="item.id" :label="item.product_name" /></ElSelect></div>
             <SampleReadonlyField v-else label="产品名称" :value="product?.product_name || sample.item_summary?.text" />
-            <SampleReadonlyField label="规格" :value="product?.specification" />
+            <SampleReadonlyField label="规格" :value="product?.specification_display ?? product?.specification" />
             <div class="dimension-fields"><SampleReadonlyField v-for="field in dimensionFields" :key="field.label" :label="field.label" :value="field.value" /></div>
             <div class="requirements"><span>特殊要求</span><p>{{ sample.purpose || '—' }}</p></div>
           </div>

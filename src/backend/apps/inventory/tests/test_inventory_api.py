@@ -12,7 +12,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType, BomStatus
 from apps.core.models import DailyBusinessNumberCounter
 from apps.customers.models import CustomerAccount
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from apps.procurement.models import (
     PurchaseOrder,
     PurchaseOrderLine,
@@ -238,6 +238,14 @@ class FinishedGoodsInventoryApiTests(APITestCase):
         self.assertEqual(FinishedGoodsReceipt.objects.count(), 1)
 
     def test_partial_outbound_recalculates_slots_and_stale_stock_returns_409(self):
+        department, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_WAREHOUSE", defaults={"unit_name": "测试仓库部门"},
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee,
+            organization_unit=department,
+            effective_from=timezone.now() - timedelta(days=1),
+        )
         receipt = self.create_receipt()
         payload = {"responsible_employee_id": str(self.employee.pk), "shipment_date": str(timezone.localdate()), "receiver_name": "领用人", "used_for_order_number": "EXT-001", "remark": "测试", "items": [{"receipt_id": receipt["id"], "expected_remaining_quantity": 6, "outbound_quantity": 4, "quantity_per_box": 3}]}
         response = self.client.post("/api/v1/finished-goods-inventory/outbounds/", payload, format="json")

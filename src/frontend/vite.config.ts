@@ -19,7 +19,7 @@ export default defineConfig({
       usePolling: true,
       interval: 1000,
       binaryInterval: 2000,
-      ignored: ['**/.tmp/**', '**/qa/**', '**/outputs/**', '**/logs/**'],
+      ignored: ['**/.tmp/**', '**/qa/**', '**/outputs/**', '**/logs/**', '**/dist-*/**'],
     },
     allowedHosts: ['.trycloudflare.com'],
     proxy: {

@@ -27,12 +27,17 @@ def sample_procurement_sources(request):
         material_request__sample_request__in=accessible_purchase_samples(request),
         material_request__sample_request__status="PROCUREMENT_PENDING",
         material_request__reviewed_at__isnull=False,
-    ).exclude(material_request__sample_request__application_payload_hash="").select_related(
+    ).exclude(material_request__sample_request__application_payload_hash="").prefetch_related(
+        'material_request__sample_request__products__details',
+        'material_request__sample_request__items',
+    ).select_related(
         "material_request__sample_request__customer_account",
     )
 
 
 def sample_source(procurement):
+    from apps.samples.product_attributes import sample_purchase_products
+    from apps.inquiries.models import format_inquiry_item_specification
     sample = procurement.material_request.sample_request
     existing = PurchaseOrder.objects.filter(sample_procurement_request=procurement).first()
     if not existing:
@@ -57,6 +62,16 @@ def sample_source(procurement):
                 pipe_snapshots[row['key']] = sample_material_snapshot(procurement, row)
             except ValidationError as error:
                 blockers.append({'code': 'MATERIAL_IDENTITY_REQUIRED', 'message': f'打样原料关联不完整：{error.detail}'})
+    products = sample_purchase_products(sample)
+    products_by_id = {product['product_line_id']: product for product in products}
+    summary = []
+    for item in sample.items.all():
+        product = products_by_id.get(str(item.sample_product_id), {})
+        attributes = format_inquiry_item_specification(
+            product.get('specification', item.specification_snapshot),
+            item.color_name_snapshot or product.get('color_name', ''), product.get('material', ''))
+        quantity = item.sample_quantity if item.sample_quantity is not None else item.requested_quantity
+        summary.append(' · '.join(filter(None, [item.product_description_snapshot, attributes, f'打样数量 {quantity} {item.unit_code}'])))
     payload = {
         "id": str(procurement.pk), "sample_request_id": str(sample.pk),
         "source_type": "SAMPLE", "source_type_display": "打样单",
@@ -66,8 +81,8 @@ def sample_source(procurement):
         "status_display": "采购中" if existing else "待采购", "can_create": not blockers,
         "blockers": blockers, "existing_purchase_order_id": str(existing.pk) if existing else None,
         "existing_purchase_order_number": existing.order_number if existing else "",
-        "summary": "；".join(" · ".join(filter(None, [item.product_description_snapshot, item.color_name_snapshot,
-            f"打样数量 {item.sample_quantity if item.sample_quantity is not None else item.requested_quantity} {item.unit_code}"])) for item in sample.items.all()),
+        "products": products,
+        "summary": "；".join(summary),
     }
     revision = hashlib.sha256(json.dumps({
         "id": str(procurement.pk), "lines": procurement.lines, "notes": procurement.notes,

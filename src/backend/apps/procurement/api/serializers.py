@@ -422,7 +422,10 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
 
     def get_product_summary(self, instance):
         if instance.source_type == "SAMPLE":
-            return []
+            from apps.samples.product_attributes import sample_purchase_products
+            if not instance.sample_procurement_request_id:
+                return []
+            return sample_purchase_products(instance.sample_procurement_request.material_request.sample_request)
         products = getattr(instance.production_task, "purchase_order_products", [])
         products_by_id = {product.pk: product for product in products}
         result = []

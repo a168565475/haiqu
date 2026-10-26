@@ -22,8 +22,8 @@ import { useOptions } from '@/composables/useOptions'
 import { getTimelineEventTypeLabel, getTimelineSourceTypeLabel } from '@/utils/customerTimeline'
 import { toCustomerDictionaryOptions, withHistoricalCustomerOption } from '@/utils/referenceOptions'
 import { fetchCustomerContacts } from '@/api/contacts'
-import { fetchTask, fetchTasks, postTaskAction } from '@/api/tasks'
-import { createCommunication, createTask } from '@/api/crm'
+import { createTask, fetchTask, fetchTasks, postTaskAction } from '@/api/tasks'
+import { createCommunication } from '@/api/crm'
 import {
   approveCustomerTransferRequest,
   cancelCustomerTransferRequest,
@@ -126,6 +126,8 @@ const taskCreateVisible = ref(false)
 const editDialogVisible = ref(false)
 const completingTaskId = ref('')
 const communicationSaving = ref(false)
+type CommunicationSaveResult = { type: 'success' | 'warning'; message: string; uncertain: boolean }
+const communicationResult = ref<CommunicationSaveResult | null>(null)
 const communicationForm = reactive({
   type: 'EMAIL',
   direction: 'OUTBOUND' as 'INBOUND' | 'OUTBOUND' | 'INTERNAL',
@@ -204,6 +206,7 @@ const canTransfer = computed(() => authStore.hasPermission('customers.transfer_c
 const canApproveTransfer = computed(() => authStore.hasPermission('customers.approve_customer_transfer'))
 const canCommunicate = computed(() => authStore.canFor('crm.add_customercommunication', customer.value))
 const canTask = computed(() => authStore.hasPermission('workflow.add_businesstask'))
+watch(canTask, allowed => { if (!allowed) communicationForm.createTask = false }, { immediate: true })
 const canViewTasks = computed(() => authStore.hasPermission('workflow.view_businesstask'))
 const canViewComplaints = computed(() => authStore.canFor('customers.view_customercomplaint', customer.value))
 const canCreateInquiry = computed(() => authStore.canFor('inquiries.add_inquiry', customer.value))
@@ -668,8 +671,10 @@ async function loadTimeline(reset = true) {
       : result.data
     timeline.value = reset ? items : [...timeline.value, ...items]
     timelineCursor.value = result.meta.next
+    return true
   } catch (error) {
     if (requestId === timelineRequest) ElMessage.error(apiError(error, '客户时间线加载失败。'))
+    return false
   } finally {
     if (requestId === timelineRequest) timelineLoading.value = false
   }
@@ -705,34 +710,91 @@ async function loadCommunicationContacts(force = false) {
   }
 }
 
+function communicationRequestUncertain(error: unknown): boolean {
+  const status = error instanceof AxiosError ? error.response?.status : undefined
+  return status === undefined || status === 408 || status >= 500
+}
+
 async function saveCommunication() {
+  if (communicationSaving.value || communicationResult.value) return
+  if (!canCommunicate.value) {
+    ElMessage.warning('当前账号没有记录沟通的权限。')
+    return
+  }
   if (!communicationForm.subject.trim() || !communicationForm.content.trim()) {
     ElMessage.warning('请填写沟通主题和内容。')
     return
   }
+  const draft = { ...communicationForm }
+  const requestedCustomerId = customerId.value
+  const ownerId = customer.value?.primary_owner?.id || authStore.user?.employee?.id
+  if (draft.createTask && (!canTask.value || !ownerId)) {
+    ElMessage.warning(!canTask.value ? '当前账号没有创建任务的权限，请取消后续任务后保存沟通。' : '缺少任务负责人，请先安排负责人，或取消后续任务后保存沟通。')
+    return
+  }
+  const currentCustomer = () => !disposed && customerId.value === requestedCustomerId
   communicationSaving.value = true
   try {
-    const communication = await createCommunication({
-      customer_account_id: customerId.value, communication_type: communicationForm.type,
-      direction: communicationForm.direction, subject: communicationForm.subject.trim(),
-      content: communicationForm.content.trim(), occurred_at: communicationForm.occurredAt,
-      contact_participant_ids: communicationForm.contactId ? [communicationForm.contactId] : [],
-    })
-    if (communicationForm.createTask && canTask.value) {
-      const ownerId = customer.value?.primary_owner?.id || authStore.user?.employee?.id
-      if (ownerId) {
-        await createTask({
-          assignee_employee_id: ownerId, title: communicationForm.taskTitle.trim() || `跟进：${communicationForm.subject.trim()}`,
-          description: `由沟通记录自动创建：${communicationForm.content.trim()}`, priority: 'NORMAL',
-          due_at: communicationForm.taskDueAt, source_type: 'COMMUNICATION', source_id: communication.id,
-        })
+    let communicationId: string
+    try {
+      const communication = await createCommunication({
+        customer_account_id: requestedCustomerId, communication_type: draft.type,
+        direction: draft.direction, subject: draft.subject.trim(),
+        content: draft.content.trim(), occurred_at: draft.occurredAt,
+        contact_participant_ids: draft.contactId ? [draft.contactId] : [],
+      })
+      communicationId = communication.id
+    } catch (error) {
+      if (!currentCustomer()) return
+      if (communicationRequestUncertain(error)) {
+        communicationResult.value = { type: 'warning', uncertain: true, message: '沟通记录保存结果尚未确认。请先核对客户时间轴，不要重复保存；后续任务尚未提交。' }
+        ElMessage.warning(communicationResult.value.message)
+      } else {
+        ElMessage.error(apiError(error, '沟通记录未保存，请检查填写内容。'))
+      }
+      return
+    }
+    if (!currentCustomer()) {
+      ElMessage.warning(draft.createTask ? '原客户的沟通记录已保存，后续任务未创建。请返回原客户核对。' : '原客户的沟通记录已保存。')
+      return
+    }
+    // 两个接口分别提交；沟通成功后，任何任务失败都不能再次提交整份表单。
+    const result: CommunicationSaveResult = { type: 'success', uncertain: false, message: '沟通记录已保存。' }
+    if (draft.createTask) {
+      if (!canTask.value) {
+        result.type = 'warning'
+        result.message = '沟通记录已保存；任务权限已变化，后续任务未创建。请联系有权限的人员处理，无需再次保存沟通。'
+      } else {
+        try {
+          await createTask({
+            assignee_employee_id: ownerId!, title: draft.taskTitle.trim() || `跟进：${draft.subject.trim()}`,
+            description: `由沟通记录自动创建：${draft.content.trim()}`, priority: 'NORMAL',
+            due_at: draft.taskDueAt, source_type: 'COMMUNICATION', source_id: communicationId,
+          })
+          result.message = '沟通记录和后续任务已保存。'
+        } catch (error) {
+          result.type = 'warning'
+          result.uncertain = communicationRequestUncertain(error)
+          result.message = result.uncertain
+            ? '沟通记录已保存；任务创建结果尚未确认。请先到任务中心核对，不要重复创建任务或再次保存沟通。'
+            : `沟通记录已保存；后续任务未创建：${apiError(error, '请检查任务内容和权限。')} 请到任务中心处理，无需再次保存沟通。`
+        }
       }
     }
-    Object.assign(communicationForm, { subject: '', content: '', taskTitle: '' })
-    ElMessage.success(communicationForm.createTask ? '沟通记录和后续任务已保存。' : '沟通记录已保存。')
-    await Promise.all([loadTimeline(true), loadCustomerBase(true)])
-  } catch (error) {
-    ElMessage.error(apiError(error, '沟通记录保存失败。'))
+    if (!currentCustomer()) {
+      ElMessage.warning(`原客户：${result.message}`)
+      return
+    }
+    communicationResult.value = result
+    ElMessage[result.type](result.message)
+    // 刷新只影响展示，不能改变已经确认的写入结果。
+    if (baseLoadRequest) await baseLoadRequest
+    if (!currentCustomer()) return
+    const [timelineRefreshed] = await Promise.all([loadTimeline(true), loadCustomerBase(true)])
+    if (currentCustomer() && (timelineRefreshed === false || loadError.value)) {
+      communicationResult.value = { ...result, type: 'warning', message: `${result.message} 页面刷新失败，请刷新时间轴或客户资料；不要重复提交。` }
+      ElMessage.warning(communicationResult.value.message)
+    }
   } finally {
     communicationSaving.value = false
   }
@@ -743,7 +805,22 @@ function resetTimelineFilters() {
   void loadTimeline(true)
 }
 
-function clearCommunicationForm() {
+async function clearCommunicationForm() {
+  if (communicationSaving.value) return
+  const previousResult = communicationResult.value
+  const requestedCustomerId = customerId.value
+  if (previousResult?.uncertain) {
+    try {
+      await ElMessageBox.confirm('请先核对客户时间轴和任务中心，确认上次提交结果。此操作将清空表单并开始另一条沟通，不会重试上次提交。', '核对后开始新沟通', {
+        confirmButtonText: '已核对，开始新沟通', cancelButtonText: '继续核对', type: 'warning',
+      })
+    } catch (error) {
+      if (error === 'cancel' || error === 'close') return
+      throw error
+    }
+  }
+  if (disposed || communicationSaving.value || customerId.value !== requestedCustomerId || communicationResult.value !== previousResult) return
+  communicationResult.value = null
   Object.assign(communicationForm, {
     type: 'EMAIL',
     direction: 'OUTBOUND',
@@ -751,7 +828,7 @@ function clearCommunicationForm() {
     occurredAt: new Date().toISOString(),
     subject: '',
     content: '',
-    createTask: true,
+    createTask: canTask.value,
     taskTitle: '',
     taskDueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
   })
@@ -1288,7 +1365,8 @@ onBeforeUnmount(() => {
 
           <section class="customer-timeline-v2__composer erp-list-surface erp-flat-form">
             <header><div><h2>记录沟通</h2><span>保存后写入客户时间轴</span></div></header>
-            <ElForm label-position="top">
+            <ElAlert v-if="communicationResult" :title="communicationResult.message" :type="communicationResult.type" :closable="false" show-icon />
+            <ElForm label-position="top" :disabled="communicationSaving || !!communicationResult">
               <ElFormItem label="沟通方式" required><ElRadioGroup v-model="communicationForm.type"><ElRadioButton v-for="item in communicationTypeOptions" :key="item.id" :value="item.code">{{ item.label }}</ElRadioButton></ElRadioGroup></ElFormItem>
               <div class="customer-timeline-v2__form-grid">
                 <ElFormItem label="联系人"><ElSelect v-model="communicationForm.contactId" clearable placeholder="选择联系人"><ElOption v-for="item in contacts" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem>
@@ -1303,7 +1381,7 @@ onBeforeUnmount(() => {
                 <div v-if="communicationForm.createTask" class="customer-timeline-v2__form-grid customer-timeline-v2__form-grid--two"><ElFormItem label="任务标题"><ElInput v-model="communicationForm.taskTitle" /></ElFormItem><ElFormItem label="截止时间"><ElDatePicker v-model="communicationForm.taskDueAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></ElFormItem></div>
               </section>
             </ElForm>
-            <footer><ElButton @click="clearCommunicationForm">清空</ElButton><ElButton type="primary" :disabled="!canCommunicate" :loading="communicationSaving" @click="saveCommunication">保存沟通</ElButton></footer>
+            <footer><ElButton :disabled="communicationSaving" @click="clearCommunicationForm">{{ communicationResult ? '开始新沟通' : '清空' }}</ElButton><ElButton type="primary" :disabled="!canCommunicate || !!communicationResult" :loading="communicationSaving" @click="saveCommunication">保存沟通</ElButton></footer>
           </section>
         </div>
       </main>

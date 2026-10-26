@@ -2,22 +2,29 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
+import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
 
-const api = vi.hoisted(() => ({ stock: vi.fn(), options: vi.fn() }))
+const api = vi.hoisted(() => ({ stock: vi.fn(), options: vi.fn(), warehouses: vi.fn(), zones: vi.fn(), locations: vi.fn() }))
+const auth = vi.hoisted(() => ({ hasPermission: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('@/directives/glassSpotlight', () => ({ vGlassSpotlight: {} }))
 vi.mock('@/api/inventory', async importOriginal => ({
   ...await importOriginal<object>(), fetchFinishedGoodsInventory: api.stock, fetchFinishedGoodsFilterOptions: api.options,
+  fetchWarehouses: api.warehouses, fetchZones: api.zones, fetchLocations: api.locations,
 }))
 let wrapper: ReturnType<typeof mount> | undefined
 beforeEach(() => {
   vi.resetAllMocks()
   route.query = {}
+  auth.hasPermission.mockReturnValue(true)
   api.stock.mockResolvedValue({ results: [], count: 0 })
   api.options.mockResolvedValue({ warehouses: [], zones: [] })
+  api.warehouses.mockResolvedValue([])
+  api.zones.mockResolvedValue([])
+  api.locations.mockResolvedValue([])
 })
 afterEach(() => wrapper?.unmount())
 
@@ -80,4 +87,50 @@ it('库存首次加载、搜索、重置和翻页都在服务端排除样品', a
   pagination.vm.$emit('current-change', 2)
   await flushPromises()
   expect(api.stock).toHaveBeenLastCalledWith(expect.objectContaining({ exclude_sample: true, page: 2 }))
+})
+
+it.each(['stock', 'records'])('%s 页签使用成品仓配置，成功保存只刷新筛选选项', async tab => {
+  route.query = { tab }
+  wrapper = mount(FinishedGoodsInventoryView, { global: {
+    plugins: [ElementPlus], stubs: {
+      ElDialog: true, AssemblyPlanPicker: true,
+      FinishedReceiptRecordsPanel: { template: '<section><slot name="heading"/><slot name="actions"/><slot/></section>' },
+    },
+  } })
+  await flushPromises()
+  const configuration = wrapper.findComponent(WarehouseConfigurationDialogs)
+  expect(configuration.exists()).toBe(true)
+  expect(configuration.props('warehouseType')).toBe('FINISHED')
+  expect(api.warehouses).not.toHaveBeenCalled()
+
+  wrapper.findComponent({ name: 'ElDropdown' }).vm.$emit('command', 'warehouse')
+  await flushPromises()
+  expect(api.warehouses).toHaveBeenCalledOnce()
+  expect(configuration.findAllComponents({ name: 'ElDialog' })[0]!.props('modelValue')).toBe(true)
+  wrapper.findComponent({ name: 'ElDropdown' }).vm.$emit('command', 'location')
+  await flushPromises()
+  expect(api.zones).toHaveBeenCalledTimes(2)
+  expect(api.locations).toHaveBeenCalledTimes(2)
+  expect(configuration.findAllComponents({ name: 'ElDialog' })[1]!.props('modelValue')).toBe(true)
+
+  api.options.mockResolvedValueOnce({ warehouses: [{ id: 'new-finished', warehouse_name: '新增成品仓' }], zones: [] })
+  configuration.vm.$emit('saved')
+  await flushPromises()
+  expect(api.options).toHaveBeenCalledTimes(2)
+  expect(api.stock).toHaveBeenCalledOnce()
+  if (tab === 'stock') {
+    expect(wrapper.findAllComponents({ name: 'ElOption' }).some(option => option.props('label') === '新增成品仓')).toBe(true)
+  }
+})
+
+it('无配置查看权限时隐藏入口，也不加载配置数据', async () => {
+  auth.hasPermission.mockReturnValue(false)
+  wrapper = mount(FinishedGoodsInventoryView, { global: {
+    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, FinishedReceiptRecordsPanel: true },
+  } })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('仓库配置')
+  expect(api.warehouses).not.toHaveBeenCalled()
+  expect(api.zones).not.toHaveBeenCalled()
+  expect(api.locations).not.toHaveBeenCalled()
 })

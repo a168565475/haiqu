@@ -21,6 +21,10 @@ describe('全局页面选项卡身份', () => {
     expect(createPageTab(route({ fullPath: 'https://example.com' }))).toBeNull()
   })
 
+  it.each(['manager-workbench', 'sales-workbench'])('暂时隐藏的 %s 不再创建页签', (name) => {
+    expect(createPageTab(route({ name }))).toBeNull()
+  })
+
   it('分页、筛选和排序改变地址，保留原列表身份', () => {
     const original = createPageTab(route())!
     const filtered = createPageTab(route({ fullPath: '/purchase-orders?page=2&q=床&ordering=created_at', query: { page: '2', q: '床', ordering: 'created_at' } }))!

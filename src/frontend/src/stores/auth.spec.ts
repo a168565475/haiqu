@@ -1,6 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia'
+import { AxiosError } from 'axios'
+import { flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchCurrentUser, requestDevelopmentAutoLogin } from '@/api/auth'
+import { fetchCurrentUser, login as requestLogin, logout as requestLogout, requestDevelopmentAutoLogin } from '@/api/auth'
 import { useAuthStore } from './auth'
 import type { AuthResponse } from '@/types/auth'
 
@@ -12,6 +14,167 @@ const authenticated: AuthResponse = {
   authenticated: true,
   user: { id: 1, username: 'test', display_name: '测试用户', is_superuser: false, employee: null, permissions: ['customers.view_customeraccount'], data_scope: 'ALL' },
 }
+
+function deferredResponse() {
+  let resolve!: (response: AuthResponse) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<AuthResponse>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
+
+describe('身份变化使旧请求失效', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(fetchCurrentUser).mockReset()
+    vi.mocked(requestLogin).mockReset()
+    vi.mocked(requestLogout).mockReset()
+  })
+
+  it.each(['clear', 'logout', 'login', 'apply'] as const)('%s 后旧会话响应不能恢复或替换身份', async action => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const old = deferredResponse()
+    vi.mocked(fetchCurrentUser).mockReturnValueOnce(old.promise)
+    const refresh = store.initialize(true)
+    const next: AuthResponse = { authenticated: true, user: { ...authenticated.user!, id: 2, username: 'next' } }
+    if (action === 'clear') store.clearAuthentication()
+    if (action === 'logout') {
+      vi.mocked(requestLogout).mockResolvedValueOnce({ authenticated: false, user: null })
+      await store.logout()
+    }
+    if (action === 'login') {
+      vi.mocked(requestLogin).mockResolvedValueOnce(next)
+      await store.login({ username: 'next', password: 'test-only' })
+    }
+    if (action === 'apply') store.applyAuthResponse(next)
+    old.resolve(authenticated)
+    await refresh
+    expect(store.user?.id ?? null).toBe(action === 'login' || action === 'apply' ? 2 : null)
+    expect(store.checking).toBe(false)
+  })
+
+  it('旧请求收尾不清除新请求的读取状态或去重引用', async () => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const old = deferredResponse()
+    const current = deferredResponse()
+    vi.mocked(fetchCurrentUser).mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+    const first = store.initialize(true)
+    store.clearAuthentication()
+    const second = store.initialize(true)
+    old.resolve(authenticated)
+    await first
+    const checkingDuringCurrentRequest = store.checking
+    const third = store.initialize(true)
+    current.resolve({ authenticated: false, user: null })
+    await Promise.all([second, third])
+    expect(checkingDuringCurrentRequest).toBe(true)
+    expect(fetchCurrentUser).toHaveBeenCalledTimes(2)
+    expect(store.isAuthenticated).toBe(false)
+  })
+
+  it('旧请求失败不再向后续导航传播过期错误', async () => {
+    const store = useAuthStore()
+    const old = deferredResponse()
+    vi.mocked(fetchCurrentUser).mockReturnValueOnce(old.promise)
+    const refresh = store.initialize()
+    store.clearAuthentication()
+    old.reject(new Error('旧请求断网'))
+    await expect(refresh).resolves.toBeUndefined()
+    expect(store.isAuthenticated).toBe(false)
+  })
+
+  it('应用身份时的内部错误不得被当作旧请求错误吞掉', async () => {
+    const store = useAuthStore()
+    const apply = store.applyAuthResponse.bind(store)
+    const error = new Error('应用身份的内部错误')
+    vi.spyOn(store, 'applyAuthResponse').mockImplementation(response => {
+      apply(response)
+      throw error
+    })
+    vi.mocked(fetchCurrentUser).mockResolvedValueOnce(authenticated)
+    await expect(store.initialize()).rejects.toBe(error)
+  })
+
+  it('不同 Pinia 实例不共享身份查询', async () => {
+    const firstStore = useAuthStore(createPinia())
+    const secondStore = useAuthStore(createPinia())
+    const firstResponse = deferredResponse()
+    const secondResponse = deferredResponse()
+    vi.mocked(fetchCurrentUser).mockReturnValueOnce(firstResponse.promise).mockReturnValueOnce(secondResponse.promise)
+    const first = firstStore.initialize()
+    const second = secondStore.initialize()
+    firstResponse.resolve(authenticated)
+    secondResponse.resolve({ authenticated: true, user: { ...authenticated.user!, id: 2 } })
+    await Promise.all([first, second])
+    expect(firstStore.user?.id).toBe(1)
+    expect(secondStore.user?.id).toBe(2)
+  })
+
+  it('退出进行中导航等待写操作，不读取仍有效的旧会话', async () => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const logoutResponse = deferredResponse()
+    vi.mocked(requestLogout).mockReturnValueOnce(logoutResponse.promise)
+    vi.mocked(fetchCurrentUser).mockResolvedValue(authenticated)
+    const logout = store.logout()
+    const navigation = store.initialize(true)
+    logoutResponse.resolve({ authenticated: false, user: null })
+    await Promise.all([logout, navigation])
+    expect(fetchCurrentUser).not.toHaveBeenCalled()
+    expect(store.isAuthenticated).toBe(false)
+  })
+
+  it('退出失败保留身份，但旧读取不能重新确认验证时间', async () => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const old = deferredResponse()
+    vi.mocked(fetchCurrentUser).mockReturnValueOnce(old.promise)
+    const refresh = store.initialize(true)
+    vi.mocked(requestLogout).mockRejectedValueOnce(new Error('退出请求断网'))
+    await expect(store.logout()).rejects.toThrow('退出请求断网')
+    old.resolve(authenticated)
+    await refresh
+    expect(store.user?.id).toBe(1)
+    expect(store.authenticationCheckedAt).toBe(0)
+  })
+
+  it.each(['login', 'logout'] as const)('新身份导航不等待旧%s，也不接收它的迟到失败', async action => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const old = deferredResponse()
+    vi.mocked(action === 'login' ? requestLogin : requestLogout).mockReturnValueOnce(old.promise)
+    const oldError = new Error('旧身份写请求失败')
+    const mutation = (action === 'login' ? store.login({ username: 'old', password: 'test-only' }) : store.logout())
+      .catch(error => error)
+    store.applyAuthResponse({ authenticated: true, user: { ...authenticated.user!, id: 2 } })
+    let navigationState = 'pending'
+    const navigation = store.ensureFreshAuthentication().then(
+      () => { navigationState = 'resolved' },
+      () => { navigationState = 'rejected' },
+    )
+    await flushPromises()
+    const stateBeforeOldRequestSettles = navigationState
+    old.reject(oldError)
+    expect(await mutation).toBe(oldError)
+    await navigation
+    expect(stateBeforeOldRequestSettles).toBe('resolved')
+    expect(navigationState).toBe('resolved')
+    expect(store.user?.id).toBe(2)
+    expect(fetchCurrentUser).not.toHaveBeenCalled()
+  })
+
+  it.each([401, 500])('身份查询 HTTP %s 仅在明确未认证时清身份', async status => {
+    const store = useAuthStore()
+    store.applyAuthResponse(authenticated)
+    const error = new AxiosError('auth response', undefined, undefined, undefined,
+      { status, data: {}, headers: {}, statusText: '', config: {} as never })
+    vi.mocked(fetchCurrentUser).mockRejectedValueOnce(error)
+    await expect(store.initialize(true)).rejects.toBe(error)
+    expect(store.isAuthenticated).toBe(status !== 401)
+    expect(store.authenticationCheckedAt).toBe(0)
+  })
+})
 
 describe('普通ERP角色管理入口', () => {
   it('有效组织管理角色可读目录，但不获得账号或企微管理', () => {

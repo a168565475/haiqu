@@ -58,6 +58,7 @@ export interface TubeMaterialInput {
   bom_line_id: string; factory_id: string; quantity: string; zone_id: string
 }
 export interface TubeMaterialDetail extends Omit<TubeMaterialRow, 'required_quantity' | 'order_remaining' | 'available_stock' | 'max_quantity' | 'blockers' | 'zones'> {
+  unit_consumption?: string | null
   id: string; component_identity: string | null; order_line_id: string | null; part_name: string; factory_id: string; factory_name: string
   quantity: string; zone_id: string; zone_name: string; warehouse_id: string; warehouse_name: string
 }
@@ -103,6 +104,9 @@ export interface TubeReportOperation {
   quantity: string
 }
 export interface TubeDetailLine extends CuttingAttributes {
+  pieces_per_product?: string | null
+  tube_diameter?: string | null
+  order_required?: string | null
   id: string
   component_identity: string
   part_name: string
@@ -134,6 +138,10 @@ export interface TubeOrderAction {
   actor_name: string
 }
 export interface TubeOrderDetail extends TubeOrderResult {
+  updated_at?: string
+  planned_quantity?: string
+  specification?: string
+  material?: string
   materials?: TubeMaterialDetail[]
   source_label: string
   task_order_number: string

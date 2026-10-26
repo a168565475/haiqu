@@ -10,16 +10,20 @@ import type {
   ProductionDashboardQuery, ProductionDashboardRole, ProductionDashboardSection,
   ProductionDashboardStatus, ProductionDashboardTask, ProductionDashboardTasks,
 } from '@/types/productionDashboard'
-import ProductionPanel from './ProductionPanel.vue'
+import ProductionModuleLayout from './ProductionModuleLayout.vue'
+import ProductionOverview from './ProductionOverview.vue'
 import ProductionProgress from './ProductionProgress.vue'
+import type { OverviewModuleKey } from './useModuleFocus'
 
 const props = defineProps<{ role: ProductionDashboardRole }>()
 const root = ref<HTMLElement>()
+const ownerLayout = ref<InstanceType<typeof ProductionModuleLayout>>()
 const data = ref<ProductionDashboardPayload | null>(null)
 const loading = ref(false)
 const requestError = ref('')
 const forbidden = ref(false)
 const fullscreen = ref(false)
+const showOverviewFilters = ref(false)
 const fullscreenError = ref('')
 const now = ref(Date.now())
 const selectedDate = ref('')
@@ -75,7 +79,17 @@ const metrics = computed(() => [
   { key: 'unscheduled', label: '待排产', value: tasks.value?.counts.unscheduled, note: '尚无有效排产计划', filter: 'UNSCHEDULED' as const, icon: Document },
   { key: 'outsourcing', label: '委外待回货', value: outsourcing.value?.pending_count, note: '按外发单独立统计', filter: null, icon: Box },
 ])
-const chartMax = computed(() => Math.max(1, ...(tasks.value?.due_series.map(day => day.count) ?? [])))
+const ownerModules = computed(() => [
+  { key: 'production' as OverviewModuleKey, title: '优先处理的生产任务', subtitle: '从交期和当前状态查看任务', summary: tasks.value ? `${quantity(tasks.value.total)} 单任务` : sectionMessage(data.value?.sections.tasks, '暂无任务') },
+  { key: 'delivery' as OverviewModuleKey, title: '近期交期', subtitle: '查看当前范围的交期节点', summary: tasks.value ? `${quantity(tasks.value.counts.due_soon)} 单未来 3 天到期` : sectionMessage(data.value?.sections.tasks, '暂无交期节点') },
+  { key: 'outsourcing' as OverviewModuleKey, title: '委外待回货', subtitle: '预计回货日期与客户交期分别跟进', summary: outsourcing.value ? `${quantity(outsourcing.value.pending_count)} 单待回货` : sectionMessage(data.value?.sections.outsourcing, '暂无待回货外发单') },
+  { key: 'todo' as OverviewModuleKey, title: '今日协调重点', subtitle: '将关注点落到具体任务', summary: tasks.value ? `当前展示 ${attention.value.length} 项重点` : sectionMessage(data.value?.sections.tasks, '暂无协调事项') },
+])
+const workshopModules = computed(() => [
+  { key: 'production' as OverviewModuleKey, title: '当前工序任务', subtitle: '逐项查看计划与累计进度', summary: workshop.value ? `${quantity(workshop.value.total)} 项工序任务` : sectionMessage(data.value?.sections.workshop, '暂无车间任务') },
+  { key: 'output' as OverviewModuleKey, title: isAssembly.value ? '当日成品入库记录' : '当日报工记录', subtitle: isAssembly.value ? '按入库业务日期查看凭证' : '全部可查看车间 · 按生产业务日期', summary: (isAssembly.value ? receipts.value : reports.value) ? `${quantity(isAssembly.value ? receipts.value?.total : reports.value?.total)} 笔记录` : sectionMessage(isAssembly.value ? data.value?.sections.receipts : data.value?.sections.reports, '暂无记录') },
+  { key: 'todo' as OverviewModuleKey, title: '现场关注', subtitle: '查看交期已过或暂停的事项', summary: tasks.value ? `当前展示 ${attention.value.length} 项重点` : sectionMessage(data.value?.sections.tasks, '暂无关注事项') },
+])
 const selectedDayRows = computed(() => dateData.value?.items ?? [])
 const dateState = computed(() => dateLoading.value ? 'loading' : dateForbidden.value ? 'forbidden' : dateError.value ? 'error' : selectedDayRows.value.length ? 'ready' : 'empty')
 
@@ -138,6 +152,8 @@ function clearRevokedSections(result: ProductionDashboardPayload) {
 }
 
 async function load(clear = false) {
+  // 总览的“今日入库”随上海业务日期刷新；车间保留手选历史日期。
+  if (props.role === 'executive') activeQuery = { ...activeQuery, production_date: today() }
   controller?.abort()
   controller = new AbortController()
   const sequence = ++requestSequence
@@ -170,7 +186,7 @@ function reset() {
   applyFilters()
 }
 function selectFocus(value: ProductionDashboardFocus | null) {
-  if (value === null) { document.getElementById('production-outsourcing')?.scrollIntoView({ block: 'start', behavior: 'auto' }); return }
+  if (value === null) { void ownerLayout.value?.openModule('outsourcing'); return }
   focus.value = focus.value === value ? 'ALL' : value
   activeQuery = { ...activeQuery, focus: focus.value }
   void load(true)
@@ -251,17 +267,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="production-dashboard" :class="{ 'is-fullscreen': fullscreen }" data-testid="production-dashboard" :data-role="role" :data-state="pageState" :aria-busy="loading">
+  <div ref="root" class="production-dashboard" :class="{ 'is-fullscreen': fullscreen, 'production-dashboard--overview': role === 'executive' }" data-testid="production-dashboard" :data-role="role" :data-state="pageState" :aria-busy="loading">
+    <div class="pd-content">
     <header class="pd-heading">
       <div><h1>{{ title }}</h1><p>{{ subtitle }}</p></div>
       <div class="pd-heading__actions">
         <span v-if="updated" class="pd-updated">更新于 {{ updated }}</span>
+        <button v-if="role === 'executive'" class="pd-button" type="button" :aria-expanded="showOverviewFilters" @click="showOverviewFilters = !showOverviewFilters">筛选</button>
         <button class="pd-button" type="button" data-testid="production-refresh" :disabled="loading" @click="load()">{{ loading ? '刷新中…' : '刷新' }}</button>
         <button v-if="role === 'workshop'" class="pd-button" type="button" data-testid="production-fullscreen" @click="toggleFullscreen">{{ fullscreen ? '退出全屏' : '现场全屏' }}</button>
       </div>
     </header>
 
-    <form class="pd-filters pd-glass" @submit.prevent="applyFilters">
+    <form v-show="role !== 'executive' || showOverviewFilters" class="pd-filters pd-glass" @submit.prevent="applyFilters">
       <label class="pd-field pd-field--search">查找任务<input v-model="form.q" aria-label="查找任务" type="search" placeholder="任务编号或产品名称" autocomplete="off" /></label>
       <label class="pd-field">交期范围<select v-model.number="form.days" aria-label="交期范围"><option :value="7">未来 7 天及逾期</option><option :value="3">未来 3 天及逾期</option></select></label>
       <label class="pd-field">任务状态<select v-model="form.status" aria-label="任务状态"><option value="ALL">全部状态</option><option value="PENDING_VALIDATION">待确认</option><option value="READY">已接单</option><option value="IN_PRODUCTION">生产中</option><option value="PAUSED">已暂停</option><option value="COMPLETED">已完成</option></select></label>
@@ -281,7 +299,7 @@ onBeforeUnmount(() => {
       <div class="pd-loading-grid"><div v-for="item in 4" :key="item" class="pd-skeleton pd-glass"><span /><span /><span /></div></div>
       <div class="pd-skeleton pd-skeleton--panel pd-glass"><span /><span /><p class="pd-muted">正在读取生产信息…</p></div>
     </div>
-    <section v-else-if="['forbidden', 'error', 'empty'].includes(pageState)" class="pd-state pd-glass" role="status">
+    <section v-else-if="['forbidden', 'error'].includes(pageState) || (pageState === 'empty' && role !== 'executive')" class="pd-state pd-glass" role="status">
       <span class="pd-state__icon" aria-hidden="true">{{ pageState === 'forbidden' ? '!' : '—' }}</span>
       <h2>{{ pageState === 'forbidden' ? '暂无生产工作台查看权限' : pageState === 'error' ? '生产信息暂时无法加载' : '当前范围没有生产记录' }}</h2>
       <p>{{ pageState === 'forbidden' ? '当前账号没有相应生产数据的查看权限，请联系管理员。' : pageState === 'error' ? requestError : '可以调整交期、状态或关键词后重试。' }}</p>
@@ -297,11 +315,11 @@ onBeforeUnmount(() => {
             <p>{{ metric.value == null ? '暂无可用数据' : metric.note }}</p>
           </button>
         </div>
-        <div class="pd-grid">
-          <ProductionPanel title="优先处理的生产任务" subtitle="从交期和当前状态查看任务">
+        <ProductionModuleLayout ref="ownerLayout" :modules="ownerModules" variant="owner">
+          <template #production="{ expanded }">
             <div v-if="taskRows.length" class="pd-table-scroll" data-testid="production-task-list">
               <table class="pd-task-table"><thead><tr><th>生产任务</th><th>交期</th><th>阶段进度</th><th>任务状态</th><th>操作</th></tr></thead><tbody>
-                <tr v-for="task in taskRows" :key="task.id">
+                <tr v-for="task in (expanded ? tasks?.items : taskRows)" :key="task.id">
                   <td><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-link pd-task-title">{{ taskName(task) }}</RouterLink><strong v-else class="pd-task-title">{{ taskName(task) }}</strong><small>{{ task.task_number }}</small><small v-for="product in task.products" :key="product.id">{{ product.name }} · {{ quantity(product.quantity) }} {{ product.unit }}</small></td>
                   <td><strong>{{ shortDate(task.delivery_date) }}</strong><small>{{ dueText(task) }}</small></td>
                   <td><ProductionProgress label="金工汇总" :status="task.stages.metal.state" :percentage="task.stages.metal.percent" :display="task.stages.metal.label" /><ProductionProgress label="裁缝汇总" :status="task.stages.sewing.state" :percentage="task.stages.sewing.percent" :display="task.stages.sewing.label" /><ProductionProgress label="成品入库" :status="task.stages.assembly.state" :percentage="task.stages.assembly.percent" :display="task.stages.assembly.label" receipt /></td>
@@ -310,67 +328,35 @@ onBeforeUnmount(() => {
               </tbody></table>
             </div>
             <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '当前筛选范围暂无生产任务') }}</p>
-            <div class="pd-panel__note"><span>{{ tasks ? `展示 ${taskRows.length} / ${tasks.total} 单；裁缝汇总含裁剪。` : '阶段进度按可查看范围展示。' }}</span><RouterLink v-if="tasks" class="pd-link" to="/production-tasks">查看任务列表</RouterLink></div>
-          </ProductionPanel>
-          <ProductionPanel title="近期交期" subtitle="查看当前范围的交期节点">
+            <div class="pd-panel__note"><span>{{ tasks ? `展示 ${expanded ? tasks.items.length : taskRows.length} / ${tasks.total} 单；裁缝汇总含裁剪。` : '阶段进度按可查看范围展示。' }}</span><RouterLink v-if="tasks" class="pd-link" to="/production-tasks">查看任务列表</RouterLink></div>
+          </template>
+          <template #delivery>
             <div v-if="taskRows.length" class="pd-panel__body pd-timeline"><div v-for="task in taskRows" :key="task.id" class="pd-timeline__row" :class="{ 'pd-timeline__row--overdue': task.days_to_due !== null && task.days_to_due < 0 && task.status !== 'COMPLETED' }"><span class="pd-timeline__date">{{ shortDate(task.delivery_date) }}</span><span class="pd-timeline__node" /><div><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-link"><strong>{{ taskName(task) }}</strong></RouterLink><strong v-else>{{ taskName(task) }}</strong><small>{{ task.task_number }} · {{ dueText(task) }}</small></div></div></div>
             <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '当前范围暂无交期节点') }}</p>
-          </ProductionPanel>
-        </div>
-        <div class="pd-grid">
-          <ProductionPanel id="production-outsourcing" title="委外待回货" subtitle="预计回货日期与客户交期分别跟进">
-            <div v-if="outsourcing?.items.length" class="pd-panel__body"><div v-for="item in outsourcing.items.slice(0, 4)" :key="item.row_key" class="pd-compact-row"><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.order_number }}</strong></RouterLink><strong v-else>{{ item.order_number }}</strong><small>{{ item.factory_names.join('、') || '—' }} · 预计 {{ shortDate(item.delivery_date) }}</small><small v-for="(amount, index) in item.quantities" :key="index">已回货：{{ amount.name ? `${amount.name} ` : '' }}{{ quantity(amount.quantity) }} {{ amount.unit }}</small><small v-if="item.receipt_state === 'UNKNOWN'">回货数量待核实</small></div><div><span class="pd-tag">{{ item.status_display }}</span><small v-if="item.receipt_state === 'MISSING'">回货凭证待核实</small></div></div></div>
+          </template>
+          <template #outsourcing="{ expanded }">
+            <div v-if="outsourcing?.items.length" class="pd-panel__body"><div v-for="item in (expanded ? outsourcing.items : outsourcing.items.slice(0, 4))" :key="item.row_key" class="pd-compact-row"><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.order_number }}</strong></RouterLink><strong v-else>{{ item.order_number }}</strong><small>{{ item.factory_names.join('、') || '—' }} · 预计 {{ shortDate(item.delivery_date) }}</small><small v-for="(amount, index) in item.quantities" :key="index">已回货：{{ amount.name ? `${amount.name} ` : '' }}{{ quantity(amount.quantity) }} {{ amount.unit }}</small><small v-if="item.receipt_state === 'UNKNOWN'">回货数量待核实</small></div><div><span class="pd-tag">{{ item.status_display }}</span><small v-if="item.receipt_state === 'MISSING'">回货凭证待核实</small></div></div></div>
             <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.outsourcing, '当前范围暂无待回货外发单') }}</p>
-            <div v-if="outsourcing" class="pd-panel__note"><span>展示 {{ Math.min(outsourcing.items.length, 4) }} / {{ outsourcing.total }} 单</span><RouterLink class="pd-link" to="/workshop/outsourcing">查看委外列表</RouterLink></div>
-          </ProductionPanel>
-          <ProductionPanel title="今日协调重点" subtitle="将关注点落到具体任务">
+            <div v-if="outsourcing" class="pd-panel__note"><span>展示 {{ expanded ? outsourcing.items.length : Math.min(outsourcing.items.length, 4) }} / {{ outsourcing.total }} 单</span><RouterLink class="pd-link" to="/workshop/outsourcing">查看委外列表</RouterLink></div>
+          </template>
+          <template #todo>
             <div v-if="attention.length" class="pd-panel__body"><div v-for="task in attention" :key="task.id" class="pd-compact-row"><div><strong>{{ taskName(task) }}</strong><small>{{ concern(task) }}</small><small>{{ task.task_number }}</small></div><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-link">查看</RouterLink></div></div>
             <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '已加载任务中暂无需优先协调的事项') }}</p>
-          </ProductionPanel>
-        </div>
+          </template>
+        </ProductionModuleLayout>
       </template>
 
-      <template v-else-if="role === 'executive'">
-        <section v-glass-spotlight.tilt class="pd-summary pd-glass">
-          <div><h2>{{ tasks ? tasks.counts.overdue ? `${tasks.counts.overdue} 单已过交期，仍需跟进` : '当前范围暂无逾期未完成任务' : '生产任务汇总暂不可用' }}</h2><p>先看到期任务与未完成项，再查看需要介入的协调事项。</p></div>
-          <div class="pd-summary__stats"><div class="pd-summary__stat"><b>{{ quantity(tasks?.counts.total) }}</b><small>范围内任务 / 单</small></div><div class="pd-summary__stat"><b>{{ quantity(tasks?.counts.due_soon) }}</b><small>3天内到期 / 单</small></div><div class="pd-summary__stat"><b>{{ quantity(tasks?.counts.completed) }}</b><small>已完成 / 单</small></div></div>
-        </section>
-        <div class="pd-grid">
-          <ProductionPanel :title="`未来 ${data.filters.days} 天的交期分布`" subtitle="按任务交期归组，点击柱形查看对应任务">
-            <div v-if="tasks" class="pd-panel__body"><div class="pd-chart"><span class="pd-chart__unit">任务 / 单</span><div v-for="day in tasks.due_series" :key="day.date" class="pd-chart__column"><span class="pd-chart__number">{{ day.count }}</span><button class="pd-chart__bar" type="button" :aria-label="`${day.date}，${day.count} 单到期任务`" :style="{ height: `${day.count ? day.count / chartMax * 85 : 1}%` }" @click="openDay(day.date)" /><span class="pd-chart__date">{{ shortDate(day.date) }}</span></div></div></div>
-            <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '当前范围暂无交期分布') }}</p>
-            <div v-if="tasks" class="pd-panel__note">{{ tasks.counts.overdue }} 单历史逾期单独关注，未并入未来交期柱形。</div>
-          </ProductionPanel>
-          <ProductionPanel title="任务状态构成" subtitle="只统计任务单数，不混加产品数量">
-            <div v-if="tasks" class="pd-panel__body"><div class="pd-status-stack" aria-hidden="true"><span v-for="item in tasks.status_distribution" :key="item.status" :style="{ flex: item.count, background: item.status === 'COMPLETED' ? 'var(--erp-color-success)' : item.status === 'PAUSED' ? 'var(--erp-color-warning)' : undefined }" /></div><div v-for="item in tasks.status_distribution" :key="item.status" class="pd-status-row"><span>{{ item.label }}</span><strong>{{ item.count }} 单</strong></div></div>
-            <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '当前范围暂无状态分布') }}</p>
-          </ProductionPanel>
-        </div>
-        <div class="pd-grid">
-          <ProductionPanel title="需要关注的重点任务" subtitle="查看任务依据，再决定是否协调">
-            <div v-if="attention.length" class="pd-panel__body"><div v-for="task in attention" :key="task.id" class="pd-decision"><div><strong>{{ taskName(task) }}</strong><small>交期 {{ shortDate(task.delivery_date) }} · {{ task.status_display }}</small></div><p>{{ concern(task) }}<br />{{ task.task_number }}</p><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-button">查看依据</RouterLink></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '已加载任务中暂无重点关注项') }}</p>
-          </ProductionPanel>
-          <ProductionPanel title="成品入库待跟进" subtitle="任务量与累计入库量按产品分别查看" data-testid="production-receipt-gaps">
-            <p v-if="receipts?.pending_state === 'FORBIDDEN'" class="pd-section-empty">没有查看入库差额所需的任务权限</p>
-            <div v-else-if="receipts?.pending_products.length" class="pd-panel__body">
-              <div v-for="item in receipts.pending_products.slice(0, 4)" :key="item.product_line_id" class="pd-compact-row">
-                <div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.name }}</strong></RouterLink><strong v-else>{{ item.name }}</strong><small>{{ item.task_number }} · 已入库 {{ quantity(item.received) }} {{ item.unit }}</small><small v-if="item.state === 'UNKNOWN'">数量与单位口径待核实</small></div>
-                <div class="pd-compact-row__count">{{ quantity(item.remaining) }} {{ item.unit }}<small>待入库差额</small></div>
-              </div>
-            </div>
-            <p v-else class="pd-section-empty">{{ receipts?.pending_state === 'UNKNOWN' ? '部分入库数量与单位口径待核实' : sectionMessage(data.sections.receipts, '当前范围暂无成品入库差额') }}</p>
-            <div v-if="receipts && receipts.pending_state !== 'FORBIDDEN'" class="pd-panel__note"><span>近期任务摘要，最多展示 4 项；差额不代表已经完工。</span><RouterLink class="pd-link" to="/inventory/finished-goods?tab=records">入库记录</RouterLink></div>
-          </ProductionPanel>
-        </div>
-      </template>
+      <ProductionOverview v-else-if="role === 'executive'" :data="data" @open-day="openDay" />
 
       <template v-else>
         <section :key="`summary-${fullscreen}`" v-glass-spotlight.tilt="!fullscreen" class="pd-summary pd-glass">
           <div><div class="pd-process-tabs" role="group" aria-label="车间工序"><button v-for="option in ([['METAL', '金工'], ['SEWING', '缝纫'], ['ASSEMBLY', '装配']] as const)" :key="option[0]" class="pd-button" type="button" :data-testid="`production-process-${option[0]}`" :aria-pressed="category === option[0]" :disabled="loading" @click="selectCategory(option[0])">{{ option[1] }}</button></div><p>{{ isAssembly ? '按产品查看成品入库，数量与报工分别统计。' : '按产品和工序查看报工记录。' }}</p></div>
           <div class="pd-summary__stats"><div class="pd-summary__stat"><b>{{ quantity(workshop?.plan_count) }}</b><small>当前工序计划 / 项</small></div><div class="pd-summary__stat"><b>{{ quantity(isAssembly ? receipts?.today_count : reports?.report_count) }}</b><small>{{ isAssembly ? '当日入库 / 笔' : '全部车间当日报工 / 笔' }}</small></div><div class="pd-summary__stat"><b>{{ shortDate(data.filters.production_date) }}</b><small>统计日期</small></div></div>
         </section>
-        <div v-if="jobRows.length" class="pd-jobs" data-testid="production-job-list">
-          <article v-for="job in jobRows" :key="`${job.key}-${fullscreen}`" v-glass-spotlight.tilt="!fullscreen" class="pd-job pd-glass" :class="{ 'pd-job--receipt': isAssembly }">
+        <ProductionModuleLayout :modules="workshopModules" variant="workshop">
+          <template #production="{ expanded }">
+        <div v-if="jobRows.length" class="pd-panel__body pd-jobs" data-testid="production-job-list">
+          <article v-for="job in (expanded ? workshop?.items : jobRows)" :key="job.key" class="pd-job pd-job--inner" :class="{ 'pd-job--receipt': isAssembly }">
             <div class="pd-job__head"><small>{{ isAssembly ? '成品入库' : job.craft_name }}</small><span class="pd-tag" :class="job.status === 'COMPLETED' ? 'pd-tag--success' : ''">{{ jobStatus(job.status) }}</span></div>
             <h2>{{ job.name }}</h2><p class="pd-job__meta">{{ job.task_number }} ／ 计划 {{ shortDate(job.plan_date) }}</p>
             <div class="pd-job__progress"><div><b>{{ quantity(job.cumulative) }}</b><small> / {{ quantity(job.required) }} {{ job.unit }}</small></div><small>{{ isAssembly ? '累计入库' : '本工序累计报工' }}</small></div>
@@ -380,15 +366,15 @@ onBeforeUnmount(() => {
             <RouterLink v-if="safeHref(job.href)" :to="job.href" class="pd-button pd-job__action">查看{{ isAssembly ? '装配计划' : '工序任务' }}</RouterLink>
           </article>
         </div>
-        <p v-else class="pd-section-empty pd-glass">{{ sectionMessage(data.sections.workshop, '当前范围没有车间任务，可调整筛选条件。') }}</p>
-        <div v-if="workshop" class="pd-panel__note"><span>展示 {{ jobRows.length }} / {{ workshop.total }} 项工序任务</span><RouterLink class="pd-link" :to="`/workshop/plans/${category === 'METAL' ? 'metalworking' : category === 'SEWING' ? 'sewing' : 'assembly'}`">查看全部计划</RouterLink></div>
-        <div class="pd-grid pd-shop-bottom">
-          <ProductionPanel :title="isAssembly ? '当日成品入库记录' : '当日报工记录'" :subtitle="isAssembly ? '按入库业务日期查看凭证' : '全部可查看车间 · 按生产业务日期'" :static-view="fullscreen">
-            <template v-if="isAssembly"><div v-if="receipts?.items.length" class="pd-panel__body"><div v-for="item in receipts.items.slice(0, 5)" :key="item.id" class="pd-report"><time>{{ shortDate(item.date) }}</time><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.name }}</strong></RouterLink><strong v-else>{{ item.name }}</strong><small>{{ item.number }}</small></div><span class="pd-report__person">成品入库</span><strong>{{ quantity(item.quantity) }} {{ item.unit }}</strong></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.receipts, '所选生产日期暂无成品入库记录') }}</p><div v-if="receipts" class="pd-panel__note"><span>展示 {{ Math.min(receipts.items.length, 5) }} / {{ receipts.total }} 笔</span><RouterLink class="pd-link" to="/inventory/finished-goods?tab=records">查看入库记录</RouterLink></div></template>
-            <template v-else><div v-if="reports?.items.length" class="pd-panel__body"><div v-for="item in reports.items.slice(0, 5)" :key="item.id" class="pd-report"><time>{{ shortDate(item.production_date) }}</time><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.task_number }}</strong></RouterLink><strong v-else>{{ item.task_number }}</strong><small>{{ item.number }}</small></div><span class="pd-report__person">{{ item.workshop_name }}</span><div><strong v-for="(line, index) in item.lines" :key="index" style="display: block">{{ line.operation }} {{ quantity(line.quantity) }} {{ line.unit }}</strong></div></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.reports, '所选生产日期暂无报工记录') }}</p><div v-if="reports" class="pd-panel__note"><span>展示 {{ Math.min(reports.items.length, 5) }} / {{ reports.total }} 笔</span><RouterLink class="pd-link" :to="`/workshop/work-reports/days/${data.filters.production_date}`">查看报工记录</RouterLink></div></template>
-          </ProductionPanel>
-          <ProductionPanel title="现场关注" subtitle="交期已过或暂停事项常驻显示" :static-view="fullscreen"><div v-if="attention.length" class="pd-panel__body"><div v-for="task in attention" :key="task.id" class="pd-alert"><strong>{{ taskName(task) }}</strong><p>{{ concern(task) }} {{ task.task_number }}</p><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-link">查看任务</RouterLink></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '已加载任务中暂无重点关注项') }}</p></ProductionPanel>
-        </div>
+        <p v-else class="pd-section-empty">{{ sectionMessage(data.sections.workshop, '当前范围没有车间任务，可调整筛选条件。') }}</p>
+        <div v-if="workshop" class="pd-panel__note"><span>展示 {{ expanded ? workshop.items.length : jobRows.length }} / {{ workshop.total }} 项工序任务</span><RouterLink class="pd-link" :to="`/workshop/plans/${category === 'METAL' ? 'metalworking' : category === 'SEWING' ? 'sewing' : 'assembly'}`">查看全部计划</RouterLink></div>
+          </template>
+          <template #output="{ expanded }">
+            <template v-if="isAssembly"><div v-if="receipts?.items.length" class="pd-panel__body"><div v-for="item in (expanded ? receipts.items : receipts.items.slice(0, 5))" :key="item.id" class="pd-report"><time>{{ shortDate(item.date) }}</time><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.name }}</strong></RouterLink><strong v-else>{{ item.name }}</strong><small>{{ item.number }}</small></div><span class="pd-report__person">成品入库</span><strong>{{ quantity(item.quantity) }} {{ item.unit }}</strong></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.receipts, '所选生产日期暂无成品入库记录') }}</p><div v-if="receipts" class="pd-panel__note"><span>展示 {{ expanded ? receipts.items.length : Math.min(receipts.items.length, 5) }} / {{ receipts.total }} 笔</span><RouterLink class="pd-link" to="/inventory/finished-goods?tab=records">查看入库记录</RouterLink></div></template>
+            <template v-else><div v-if="reports?.items.length" class="pd-panel__body"><div v-for="item in (expanded ? reports.items : reports.items.slice(0, 5))" :key="item.id" class="pd-report"><time>{{ shortDate(item.production_date) }}</time><div><RouterLink v-if="safeHref(item.href)" :to="item.href" class="pd-link"><strong>{{ item.task_number }}</strong></RouterLink><strong v-else>{{ item.task_number }}</strong><small>{{ item.number }}</small></div><span class="pd-report__person">{{ item.workshop_name }}</span><div><strong v-for="(line, index) in item.lines" :key="index" style="display: block">{{ line.operation }} {{ quantity(line.quantity) }} {{ line.unit }}</strong></div></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.reports, '所选生产日期暂无报工记录') }}</p><div v-if="reports" class="pd-panel__note"><span>展示 {{ expanded ? reports.items.length : Math.min(reports.items.length, 5) }} / {{ reports.total }} 笔</span><RouterLink class="pd-link" :to="`/workshop/work-reports/days/${data.filters.production_date}`">查看报工记录</RouterLink></div></template>
+          </template>
+          <template #todo><div v-if="attention.length" class="pd-panel__body"><div v-for="task in attention" :key="task.id" class="pd-alert"><strong>{{ taskName(task) }}</strong><p>{{ concern(task) }} {{ task.task_number }}</p><RouterLink v-if="safeHref(task.href)" :to="task.href" class="pd-link">查看任务</RouterLink></div></div><p v-else class="pd-section-empty">{{ sectionMessage(data.sections.tasks, '已加载任务中暂无重点关注项') }}</p></template>
+        </ProductionModuleLayout>
       </template>
     </template>
 
@@ -407,6 +393,7 @@ onBeforeUnmount(() => {
         <div class="pd-date-pagination"><span v-if="dateData">第 {{ datePage }} 页</span><button class="pd-date-button" type="button" :disabled="dateLoading || datePage <= 1 || dateForbidden" @click="loadDate(datePage - 1)">上一页</button><button class="pd-date-button" type="button" data-testid="production-due-next" :disabled="dateLoading || !dateData || datePage * 20 >= dateData.total" @click="loadDate(datePage + 1)">下一页</button></div>
       </template>
     </AppWindowDialog>
+    </div>
   </div>
 </template>
 

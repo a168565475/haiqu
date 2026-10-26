@@ -78,6 +78,8 @@ function pageTitle(route: PageTabRoute, name: string, customerRead: boolean): st
 
 export function createPageTab(route: PageTabRoute): PageTab | null {
   const name = typeof route.name === 'string' ? route.name : ''
+  // 暂时隐藏的工作台不从历史会话恢复，旧链接由路由转到当前可访问的入口。
+  if (name === 'manager-workbench' || name === 'sales-workbench') return null
   if (!name || route.meta?.layout !== 'erp' || !route.fullPath.startsWith('/') || route.fullPath.startsWith('//')) return null
   const customerRead = customerReadRoutes.has(name) && !!identityText(route.params.customerId)
   const params = sortedIdentityEntries(route.params, customerRead ? ['customerId'] : Object.keys(route.params))

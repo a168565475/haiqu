@@ -14,6 +14,7 @@ import DeleteManagementDialog from '@/components/access/DeleteManagementDialog.v
 import type { DeletionKind, DeletionItem } from '@/types/access'
 import { useAuthStore } from '@/stores/auth'
 import { createClientUuid } from '@/utils/clientUuid'
+import { accessMenuOptions, groupAccessCatalog, permissionMenu } from '@/utils/accessMenuGroups'
 import * as api from '@/api/access'
 import type { AccessAudit, AccessEmployee, AccessRole, AccessScope, CatalogEntry, EffectiveAccess, Grant, SalesTeam, ScopeOptions } from '@/types/access'
 import type { AccessDepartment } from '@/types/access'
@@ -124,16 +125,37 @@ const catalogByCode = computed(() => Object.fromEntries(catalog.value.map(c => [
 const normalize = (rows: Grant[]) => JSON.stringify([...rows].sort((a,b) => (a.permission+a.scope).localeCompare(b.permission+b.scope)))
 const dirty = computed(() => !!role.value && normalize(grants.value) !== normalize(role.value.grants))
 const visibleRoles = computed(() => roles.value.filter(r => r.display_name.includes(roleFilter.value) && (departmentId.value === 'all' || (departmentId.value === 'unclassified' ? !r.department_id : r.department_id === departmentId.value))))
-const groups = computed(() => {
-  const result = new Map<string,{key:string; name:string; module:string; moduleName:string; entries:CatalogEntry[]}>()
-  for (const entry of catalog.value) {
-    if (!result.has(entry.resource)) result.set(entry.resource,{key:entry.resource,name:entry.resource_name,module:entry.module,moduleName:entry.module_name,entries:[]})
-    result.get(entry.resource)!.entries.push(entry)
-  }
-  return [...result.values()]
-})
+const groups = computed(() => groupAccessCatalog(catalog.value))
 const visibleGroups = computed(() => groups.value.filter(g => (moduleGroup.value === 'all' || g.module === moduleGroup.value) && (g.name+g.moduleName).includes(moduleFilter.value)))
-const moduleOptions = computed(() => [...new Map(catalog.value.map(c => [c.module,c.module_name])).entries()])
+const moduleOptions = computed(() => [
+  ...accessMenuOptions.map(menu => [menu.key, menu.label]),
+  ...(groups.value.some(group => group.module === 'unmapped') ? [['unmapped', '其他权限']] : []),
+])
+const moduleEntries = computed(() => catalog.value.filter(entry => permissionMenu(entry) === moduleGroup.value))
+const emptyPermissionMessage = computed(() => ['workbench', 'boards'].includes(moduleGroup.value)
+  ? '此菜单没有独立权限项，沿用对应业务页面的权限，请在生产、车间、仓库等分组中配置。'
+  : '没有匹配的业务模块')
+const grantsDisabled = computed(() => !role.value || role.value.archived || loading.value || saving.value || stale.value || !canManageAccess.value)
+const selectedPermissionCodes = computed(() => new Set(grants.value.map(grant => grant.permission)))
+function selectionState(entries: CatalogEntry[]) {
+  const available = entries.filter(entry => entry.available)
+  const selected = available.filter(entry => selectedPermissionCodes.value.has(entry.code)).length
+  return { checked: available.length > 0 && selected === available.length, partial: selected > 0 && selected < available.length, empty: available.length === 0 }
+}
+function selectGrants(entries: CatalogEntry[], checked: boolean) {
+  if (grantsDisabled.value) return
+  const available = entries.filter(entry => entry.available)
+  const codes = new Set(available.map(entry => entry.code))
+  if (!checked) {
+    grants.value = grants.value.filter(grant => !codes.has(grant.permission))
+    return
+  }
+  const selected = new Set(grants.value.map(grant => grant.permission))
+  // 只补充未勾选项，保留已有数据范围及指定车间/工艺；默认范围与单项勾选一致。
+  grants.value = [...grants.value, ...available.filter(entry => !selected.has(entry.code)).map(entry => ({
+    permission: entry.code, scope: (entry.scopes.includes('MODULE') ? 'MODULE' : 'OWN') as AccessScope,
+  }))]
+}
 const specialEntries = computed(() => groups.value.find(g => g.key === specialResource.value)?.entries.filter(e => e.action === 'special') || [])
 const wecomDepartmentOptions = computed(() => {
   const options = new Map<number, string>()
@@ -384,8 +406,9 @@ onBeforeUnmount(()=>{loadRequest++;form.password='';window.removeEventListener('
           <aside class="access-box access-role-list"><div class="access-boxhead"><b>岗位角色</b></div><input v-model="roleQuery" aria-label="搜索角色" placeholder="搜索角色，回车确认" @keyup.enter="roleFilter=roleQuery"><div class="access-role-scroll"><button v-for="item in visibleRoles" :key="item.id" class="access-role" :class="{current:roleId===item.id}" @click="chooseRole(item.id)"><span>{{ item.display_name }}</span><small v-if="item.archived">已停用</small></button><p v-if="!visibleRoles.length" class="muted">{{ roleFilter ? '没有匹配的角色' : '此部门暂无角色' }}</p></div><footer>新角色默认未分类且无权限，分类不会改变原授权。</footer></aside>
           <section v-if="role" class="access-box access-editor">
             <div class="access-editorhead"><div><h2>{{ role.display_name }} <span class="access-tag" :class="{neutral:role.archived}">{{ role.archived?'已停用':'已启用' }}</span></h2></div><div class="access-actions"><button :disabled="dirty||!canManageAccess" @click="open('editRole')">修改资料</button><button :disabled="dirty||!canManageOrganization" @click="open('roleDepartment')">调整部门</button><button :disabled="dirty||role.archived||!canManageAccess" @click="open('copyRole')">复制为新角色</button><button :disabled="dirty||!canManageAccess" @click="open('archiveRole')">{{ role.archived?'启用角色':'停用角色' }}</button><button :disabled="dirty||!canManageAccess" @click="requestDeletion('roles', [role])">删除角色</button></div></div>
-            <div class="access-toolbar"><ElSelect v-model="moduleGroup" class="access-module-filter" aria-label="业务分区"><ElOption value="all" label="全部模块" /><ElOption v-for="[value,label] in moduleOptions" :key="value" :value="value" :label="label" /></ElSelect><input v-model="moduleQuery" aria-label="搜索模块" placeholder="搜索模块，回车确认" @keyup.enter="moduleFilter=moduleQuery"></div>
-            <div v-horizontal-overflow class="access-tablewrap access-standard-table scroll-actions-container"><table class="access-matrix erp-list-native-table"><colgroup><col><col v-for="column in operationColumns" :key="column.key" style="width:160px"><col style="width:88px"></colgroup><thead><tr><th>业务模块</th><th v-for="column in operationColumns" :key="column.key">{{ column.label }}</th><th class="scroll-actions-cell">专项操作</th></tr></thead><tbody><tr v-for="group in visibleGroups" :key="group.key"><td class="access-main-cell">{{ group.name }}<small>{{ group.moduleName }}</small></td><td v-for="column in operationColumns" :key="column.key"><PermissionCell v-if="basic(group.entries,column.key)" :entry="basic(group.entries,column.key)!" :grants="grants" :disabled="role.archived||saving||stale||!canManageAccess" @change="updateGrant" @configure="configureScope"/><span v-else class="muted">—</span></td><td class="scroll-actions-cell"><button v-if="specialCount(group.entries)" class="text-button" @click="specialResource=group.key;open('special')">配置 {{ specialCount(group.entries) }}</button><span v-else class="muted">—</span></td></tr></tbody></table><p v-if="!visibleGroups.length" class="access-empty">没有匹配的业务模块</p></div>
+            <div class="access-toolbar"><div class="access-module-controls"><ElSelect v-model="moduleGroup" class="access-module-filter" aria-label="业务分区"><ElOption value="all" label="全部模块" /><ElOption v-for="[value,label] in moduleOptions" :key="value" :value="value" :label="label" /></ElSelect><label class="access-bulk-check" :title="moduleGroup === 'all' ? '请先选择一个业务模块' : '选择本模块全部可用权限，包含专项操作及搜索未显示的行'"><input type="checkbox" aria-label="本模块全选" :checked="selectionState(moduleEntries).checked" :indeterminate.prop="selectionState(moduleEntries).partial" :aria-checked="selectionState(moduleEntries).partial ? 'mixed' : selectionState(moduleEntries).checked" :disabled="grantsDisabled || selectionState(moduleEntries).empty" @change="selectGrants(moduleEntries, ($event.target as HTMLInputElement).checked)">本模块全选</label></div><input v-model="moduleQuery" aria-label="搜索模块" placeholder="搜索模块，回车确认" @keyup.enter="moduleFilter=moduleQuery"></div>
+            <p class="access-bulk-hint muted">全选包含专项操作；已有数据范围保留，新增权限沿用单项勾选的默认范围。</p>
+            <div v-horizontal-overflow class="access-tablewrap access-standard-table scroll-actions-container"><table class="access-matrix erp-list-native-table"><colgroup><col><col v-for="column in operationColumns" :key="column.key" style="width:160px"><col style="width:88px"></colgroup><thead><tr><th>业务模块</th><th v-for="column in operationColumns" :key="column.key">{{ column.label }}</th><th class="scroll-actions-cell">专项操作</th></tr></thead><tbody><tr v-for="group in visibleGroups" :key="group.key"><td class="access-main-cell"><label class="access-row-select" title="全选本行权限，包含专项操作"><input type="checkbox" :aria-label="group.name + '本行全选'" :checked="selectionState(group.entries).checked" :indeterminate.prop="selectionState(group.entries).partial" :aria-checked="selectionState(group.entries).partial ? 'mixed' : selectionState(group.entries).checked" :disabled="grantsDisabled || selectionState(group.entries).empty" @change="selectGrants(group.entries, ($event.target as HTMLInputElement).checked)"><span><span>{{ group.name }}</span><small>{{ group.moduleName }}</small></span></label></td><td v-for="column in operationColumns" :key="column.key"><PermissionCell v-if="basic(group.entries,column.key)" :entry="basic(group.entries,column.key)!" :grants="grants" :disabled="role.archived||saving||stale||!canManageAccess" @change="updateGrant" @configure="configureScope"/><span v-else class="muted">—</span></td><td class="scroll-actions-cell"><button v-if="specialCount(group.entries)" class="text-button" @click="specialResource=group.key;open('special')">配置 {{ specialCount(group.entries) }}</button><span v-else class="muted">—</span></td></tr></tbody></table><p v-if="!visibleGroups.length" class="access-empty">{{ emptyPermissionMessage }}</p></div>
             <footer class="access-editorfoot"><span class="muted">{{ dirty?`有 ${changes.length} 项未保存变更`:'当前配置已保存' }}</span><div class="access-actions"><button :disabled="!dirty||saving" @click="resetDraft">撤销修改</button><button class="primary" :disabled="!dirty||role.archived||saving||stale||!canManageAccess" @click="open('review')">查看变更并保存</button></div></footer>
           </section><div v-else class="access-box access-empty">此部门暂无角色，可新建角色后调整所属部门。</div>
         </section>

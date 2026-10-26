@@ -131,8 +131,8 @@ function versionedBom(response: { data: DataResponse<BomDetail>; headers: Record
   }
 }
 
-export async function fetchBomForEdit(id: string): Promise<VersionedBom> {
-  return versionedBom(await apiClient.get<DataResponse<BomDetail>>(`${basePath}${encodeURIComponent(id)}/`))
+export async function fetchBomForEdit(id: string, signal?: AbortSignal): Promise<VersionedBom> {
+  return versionedBom(await apiClient.get<DataResponse<BomDetail>>(`${basePath}${encodeURIComponent(id)}/`, { signal }))
 }
 
 export async function archiveBom(id: string, etag: string): Promise<void> {

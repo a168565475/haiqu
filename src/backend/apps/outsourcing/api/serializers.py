@@ -458,6 +458,14 @@ class OutsourcingOrderDetailSerializer(serializers.Serializer):
                                 "name": material.material_snapshot.get("name", ""),
                                 "specification": material.material_snapshot.get("specification", ""),
                                 "color": material.material_snapshot.get("color", ""),
+                                "material": material.material_snapshot.get("material") or next((
+                                    field.get("value", "") for field in material.material_snapshot.get("bom_attributes", [])
+                                    if field.get("key") == "material"
+                                ), ""),
+                                "unit_consumption": (
+                                    str(material.material_snapshot.get("unit_consumption") or "").strip()
+                                    or _decimal_text(material.consumption_per_set)
+                                ),
                                 "bom_attributes": material.material_snapshot.get("bom_attributes", []),
                                 "category_label": material.material_snapshot.get("category_label", ""),
                                 "unit": material.unit_text,

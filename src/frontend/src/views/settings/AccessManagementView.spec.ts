@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AccessManagementView from './AccessManagementView.vue'
 import { useAuthStore } from '@/stores/auth'
 import { pageInstanceKey } from '@/utils/pageInstanceKey'
-import type { AccessEmployee, AccessRole } from '@/types/access'
+import type { AccessEmployee, AccessRole, CatalogEntry } from '@/types/access'
 
-const api = vi.hoisted(() => ({ getRoles: vi.fn(), getEmployees: vi.fn(), getTeams: vi.fn(), getCatalog: vi.fn(), getDepartments: vi.fn(), setRoleDepartment: vi.fn(), assignRoles: vi.fn(), addTeamMembers: vi.fn() }))
+const api = vi.hoisted(() => ({ getRoles: vi.fn(), getEmployees: vi.fn(), getTeams: vi.fn(), getCatalog: vi.fn(), getDepartments: vi.fn(), setRoleDepartment: vi.fn(), assignRoles: vi.fn(), addTeamMembers: vi.fn(), getScopeOptions: vi.fn(), saveGrants: vi.fn() }))
 vi.mock('@/api/access', async original => ({ ...await original<object>(), ...api }))
 vi.mock('@/directives/horizontalOverflow', () => ({ vHorizontalOverflow: {} }))
 const dialogStub = { props: ['modelValue', 'title'], template: '<section v-if="modelValue" role="dialog"><h2>{{ title }}</h2><slot /><slot name="footer" /></section>' }
@@ -21,10 +21,10 @@ function employee(index: number): AccessEmployee {
 const target = employee(101)
 const wrappers: ReturnType<typeof mount>[] = []
 let pinia: ReturnType<typeof createPinia>
-async function render(query: LocationQueryRaw = {}) {
+async function render(query: LocationQueryRaw = {}, realPermissionCells = false) {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/settings/access', name: 'access-management', component: AccessManagementView }, { path: '/employees', name: 'employee-list', component: AccessManagementView, props: { employeesOnly: true } }] })
   await router.push({ path: query.tab === 'employees' ? '/employees' : '/settings/access', query }); await router.isReady()
-  const wrapper = mount({ setup: () => ({ pageInstanceKey }), template: '<RouterView v-slot="{ Component, route }"><div :key="pageInstanceKey(route, 1)"><component :is="Component" /></div></RouterView>' }, { global: { plugins: [pinia, router], stubs: { ElDropdown: { template: '<div><slot/><slot name="dropdown"/></div>' }, ElDropdownMenu: { template: '<div><slot/></div>' }, ElDropdownItem: { props: ['disabled'], template: '<button :disabled="disabled"><slot/></button>' }, AppWindowDialog: dialogStub, PermissionCell: true } } })
+  const wrapper = mount({ setup: () => ({ pageInstanceKey }), template: '<RouterView v-slot="{ Component, route }"><div :key="pageInstanceKey(route, 1)"><component :is="Component" /></div></RouterView>' }, { global: { plugins: [pinia, router], stubs: { ElDropdown: { template: '<div><slot/><slot name="dropdown"/></div>' }, ElDropdownMenu: { template: '<div><slot/></div>' }, ElDropdownItem: { props: ['disabled'], template: '<button :disabled="disabled"><slot/></button>' }, AppWindowDialog: dialogStub, PermissionCell: !realPermissionCells } } })
   wrappers.push(wrapper); await flushPromises()
   return { wrapper, router }
 }
@@ -42,6 +42,132 @@ beforeEach(() => {
   api.getDepartments.mockResolvedValue([{ id:'department-production', unit_code:'DEPT_PRODUCTION', unit_name:'生产部', parent_id:null, status:'ACTIVE', sort_order:40, etag:'dep-v1' }, { id:'department-support', unit_code:'DEPT_SUPPORT', unit_name:'技术支持', parent_id:null, status:'ACTIVE', sort_order:110, etag:'dep-v1' }])
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
+
+describe('角色权限按模块与行批量勾选', () => {
+  const entry = (code: string, resource: string, action: string, extra: Partial<CatalogEntry> = {}): CatalogEntry => ({
+    code, resource, action, label: code, resource_name: resource, action_name: action,
+    module: 'production_tasks', module_name: '生产', scopes: ['MODULE', 'WORKSHOP'], available: true,
+    integration_stage: 5, implied_permissions: [], ...extra,
+  })
+  const entries = [
+    entry('production.view', '任务', 'view'), entry('production.add', '任务', 'add'),
+    entry('production.finish', '任务', 'special'), entry('production.delete', '任务', 'delete', { available: false }),
+    entry('schedule.view', '排产', 'view'),
+    entry('customers.view', '客户', 'view', { module: 'customers', module_name: '客户', scopes: ['OWN', 'TEAM', 'ALL'] }),
+  ]
+  beforeEach(() => {
+    api.getCatalog.mockResolvedValue(entries)
+    api.getScopeOptions.mockResolvedValue({ enabled: true, workshops: [{ id: 'metal', name: '金工', active: true }], crafts: [] })
+  })
+  async function selectModule(wrapper: ReturnType<typeof mount>, value = 'production-management') {
+    wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '业务分区')!.vm.$emit('update:modelValue', value)
+    await flushPromises()
+  }
+  function draft(wrapper: ReturnType<typeof mount>) {
+    return (wrapper.findComponent(AccessManagementView).vm.$ as unknown as { setupState: { grants: AccessRole['grants'] } }).setupState.grants
+  }
+  it('行全选包含专项操作、跳过未开放项，单项取消后显示半选，未保存不发送写请求', async () => {
+    const { wrapper } = await render({}, true)
+    await wrapper.get('[aria-label="任务本行全选"]').setValue(true)
+    expect(draft(wrapper)).toEqual([
+      { permission: 'production.view', scope: 'MODULE' }, { permission: 'production.add', scope: 'MODULE' },
+      { permission: 'production.finish', scope: 'MODULE' },
+    ])
+    expect(wrapper.get('[aria-label="任务本行全选"]').attributes('aria-checked')).toBe('true')
+    await button(wrapper, '配置 1').trigger('click')
+    expect((wrapper.get('[aria-label="production.finish"]').element as HTMLInputElement).checked).toBe(true)
+    await button(wrapper, '关闭').trigger('click')
+    await wrapper.get('[aria-label="production.add"]').setValue(false)
+    expect((wrapper.get('[aria-label="任务本行全选"]').element as HTMLInputElement).indeterminate).toBe(true)
+    await wrapper.get('[aria-label="任务本行全选"]').setValue(true)
+    await wrapper.get('[aria-label="任务本行全选"]').setValue(false)
+    expect(draft(wrapper)).toEqual([])
+    expect(api.saveGrants).not.toHaveBeenCalled()
+  })
+  it('模块全选覆盖搜索隐藏的同行模块，保留已有资源与多范围，沿用确认保存和版本信息', async () => {
+    const retained: AccessRole['grants'] = [
+      { permission: 'production.view', scope: 'WORKSHOP', resource_ids: ['metal'] },
+      { permission: 'customers.view', scope: 'OWN' }, { permission: 'customers.view', scope: 'TEAM' },
+    ]
+    api.getRoles.mockResolvedValue([{ ...role, grants: retained }])
+    api.saveGrants.mockResolvedValue(role)
+    const { wrapper } = await render({}, true)
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+    await selectModule(wrapper)
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('aria-checked')).toBe('mixed')
+    await wrapper.get('[aria-label="搜索模块"]').setValue('任务')
+    await wrapper.get('[aria-label="搜索模块"]').trigger('keyup.enter')
+    expect(wrapper.find('[aria-label="排产本行全选"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="本模块全选"]').setValue(true)
+    const expected = [...retained, { permission: 'production.add', scope: 'MODULE' }, { permission: 'production.finish', scope: 'MODULE' }, { permission: 'schedule.view', scope: 'MODULE' }]
+    expect(draft(wrapper)).toEqual(expected)
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('aria-checked')).toBe('true')
+    await button(wrapper, '查看变更并保存').trigger('click')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('3 项变化')
+    expect(api.saveGrants).not.toHaveBeenCalled()
+    await button(wrapper, '确认保存').trigger('click'); await flushPromises()
+    expect(api.saveGrants).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: role.id, etag: role.etag }), expected)
+  })
+  it('模块取消只移除本模块可用权限，撤销恢复原范围；新客户权限默认本人', async () => {
+    const retained: AccessRole['grants'] = [
+      { permission: 'production.view', scope: 'WORKSHOP', resource_ids: ['metal'] },
+      { permission: 'production.delete', scope: 'MODULE' },
+    ]
+    api.getRoles.mockResolvedValue([{ ...role, grants: retained }])
+    const { wrapper } = await render({}, true)
+    await wrapper.get('[aria-label="客户本行全选"]').setValue(true)
+    expect(draft(wrapper)).toContainEqual({ permission: 'customers.view', scope: 'OWN' })
+    await selectModule(wrapper)
+    await wrapper.get('[aria-label="本模块全选"]').setValue(true)
+    await wrapper.get('[aria-label="本模块全选"]').setValue(false)
+    expect(draft(wrapper)).toEqual([{ permission: 'production.delete', scope: 'MODULE' }, { permission: 'customers.view', scope: 'OWN' }])
+    await button(wrapper, '撤销修改').trigger('click')
+    expect(draft(wrapper)).toEqual(retained)
+  })
+  it('没有可用权限的行与模块不可全选', async () => {
+    api.getCatalog.mockResolvedValue([entries[3]])
+    const { wrapper } = await render({}, true)
+    await selectModule(wrapper)
+    expect(wrapper.get('[aria-label="任务本行全选"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+  })
+  it('按菜单全选生产包含 BOM，采购收货独立归采购，工作台说明复用业务权限', async () => {
+    api.getCatalog.mockResolvedValue([
+      entries[0],
+      entry('boms.view_bom', 'BOM', 'view', { module: 'boms', module_name: 'BOM' }),
+      entry('inventory.receive_material', 'inventory.materialinbound', 'special', { module: 'inventory', module_name: '库存', resource_name: '材料入库' }),
+    ])
+    const { wrapper } = await render({}, true)
+    await selectModule(wrapper)
+    expect(wrapper.get('.access-matrix').text()).toContain('BOM')
+    expect(wrapper.get('.access-matrix').text()).not.toContain('材料入库')
+    await wrapper.get('[aria-label="本模块全选"]').setValue(true)
+    expect(draft(wrapper).map(grant => grant.permission)).toEqual(['production.view', 'boms.view_bom'])
+    await selectModule(wrapper, 'procurement-management')
+    await wrapper.get('[aria-label="本模块全选"]').setValue(true)
+    expect(draft(wrapper).map(grant => grant.permission)).toEqual(['production.view', 'boms.view_bom', 'inventory.receive_material'])
+    await selectModule(wrapper, 'workbench')
+    expect(wrapper.text()).toContain('没有独立权限项')
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+  })
+  it('停用角色、保存中和版本冲突均禁止批量修改', async () => {
+    api.getRoles.mockResolvedValue([{ ...role, archived: true }])
+    const archived = await render({}, true)
+    expect(archived.wrapper.get('[aria-label="任务本行全选"]').attributes('disabled')).toBeDefined()
+    api.getRoles.mockResolvedValue([role])
+    const { wrapper } = await render({}, true)
+    await selectModule(wrapper)
+    await wrapper.get('[aria-label="本模块全选"]').setValue(true)
+    await button(wrapper, '查看变更并保存').trigger('click')
+    let reject!: (error: unknown) => void
+    api.saveGrants.mockImplementation(() => new Promise((_, fail) => { reject = fail }))
+    await button(wrapper, '确认保存').trigger('click')
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+    reject({ isAxiosError: true, response: { status: 412 } }); await flushPromises()
+    expect(wrapper.get('[aria-label="任务本行全选"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+  })
+})
 
 describe('企微成员进入现有员工角色分配', () => {
   it('销售团队添加成员使用多选，仅提供业务部在职未分组员工并按ID提交', async () => {
@@ -182,6 +308,7 @@ describe('企微成员进入现有员工角色分配', () => {
     auth.user = { ...auth.user!, username: 'organization-manager', is_superuser: false,
       effective_access: { active: true, is_superuser: false, roles: [], legacy_sources: [], version: 'org',
         actions: { 'organizations.manage_organization': { scopes: ['MODULE'], sources: [{ type: 'ROLE', scope: 'MODULE' }] } } } }
+    api.getCatalog.mockResolvedValue([{ code: 'production.view', resource: '任务', resource_name: '任务', module: 'production_tasks', module_name: '生产', action: 'view', scopes: ['MODULE'], available: true }])
     const { wrapper } = await render()
     expect(wrapper.find('.access-department-layout').exists()).toBe(true)
     expect(wrapper.findAll('.access-tabs button').map(item => item.text())).toEqual(['角色与权限'])
@@ -189,6 +316,10 @@ describe('企微成员进入现有员工角色分配', () => {
     expect(button(wrapper, '修改资料').attributes('disabled')).toBeDefined()
     expect(button(wrapper, '复制为新角色').attributes('disabled')).toBeDefined()
     expect(button(wrapper, '调整部门').attributes('disabled')).toBeUndefined()
+    wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '业务分区')!.vm.$emit('update:modelValue', 'production-management')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[aria-label="任务本行全选"]').attributes('disabled')).toBeDefined()
   })
   it('部门筛选显示空部门和未分类，切换不产生写请求', async () => {
     const { wrapper } = await render()

@@ -10,6 +10,8 @@ const router = createRouter({
   history: createMemoryHistory(),
   routes: [
     { path: '/', name: 'home', component: page, meta: { layout: 'erp' } },
+    { path: '/workbench/manager', name: 'manager-workbench', component: page, meta: { layout: 'erp' } },
+    { path: '/workbench/sales', name: 'sales-workbench', component: page, meta: { layout: 'erp' } },
     ...Array.from({ length: 10 }, (_, index) => ({ path: `/page-${index}`, name: `page-${index}`, component: page, meta: { layout: 'erp' as const } })),
     { path: '/login', name: 'login', component: page },
     { path: '/_page-refresh', name: 'page-refresh', component: page },
@@ -40,6 +42,17 @@ describe('页面选项卡账户与刷新恢复', () => {
     store.synchronizeAccount(1, 'view', router)
     expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-2', '/page-3', '/page-4', '/page-5'])
     expect(store.tabs[0]?.pinned).toBe(true)
+  })
+
+  it('恢复旧会话时排除已隐藏工作台，仍保留其他业务页签', () => {
+    sessionStorage.setItem('haiqu:page-tabs:v1:1', JSON.stringify({
+      permissionSignature: 'view', paths: ['/', '/workbench/manager', '/page-1', '/workbench/sales?range=week'],
+    }))
+    const store = usePageTabsStore()
+    store.synchronizeAccount(1, 'view', router)
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-1'])
+    store.recordRoute(router.resolve('/workbench/manager'))
+    expect(store.tabs.map(tab => tab.fullPath)).toEqual(['/', '/page-1'])
   })
 
   it('直接请求关闭工作台仍保留固定入口和已存会话', () => {

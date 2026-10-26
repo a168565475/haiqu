@@ -193,7 +193,12 @@ const summary = ref<MasterDataSummary>({
   config_version: null,
 })
 const records = ref<MasterDataRecord[]>([])
-const loading = ref(false)
+const recordsLoading = ref(false)
+const summaryLoading = ref(false)
+const loading = computed(() => recordsLoading.value || summaryLoading.value)
+let recordsRequest = 0
+let summaryRequest = 0
+let disposed = false
 const loadError = ref('')
 const permissionDenied = ref(false)
 const keyword = ref('')
@@ -229,43 +234,56 @@ function apiMessage(error: unknown, fallback: string): string {
 }
 
 async function loadSummary(): Promise<void> {
-  summary.value = await fetchMasterDataSummary()
+  if (disposed) return
+  const request = ++summaryRequest
+  summaryLoading.value = true
+  try {
+    const result = await fetchMasterDataSummary()
+    if (!disposed && request === summaryRequest) summary.value = result
+  } finally {
+    if (!disposed && request === summaryRequest) summaryLoading.value = false
+  }
 }
 
 async function loadRecords(): Promise<void> {
+  if (disposed) return
+  const request = ++recordsRequest
   records.value = []
+  recordsLoading.value = false
   loadError.value = ''
   permissionDenied.value = false
   if (!canViewSelected.value) {
     permissionDenied.value = true
     return
   }
-  loading.value = true
+  recordsLoading.value = true
   try {
-    records.value = await fetchAllMasterDataRecords(selectedCategory.value.resource, {
+    const result = await fetchAllMasterDataRecords(selectedCategory.value.resource, {
       q: keyword.value.trim() || undefined,
       status: statusFilter.value || undefined,
       source: sourceFilter.value || undefined,
     })
+    if (!disposed && request === recordsRequest) records.value = result
   } catch (error) {
+    if (disposed || request !== recordsRequest) return
     if (statusCode(error) === 403) permissionDenied.value = true
     else loadError.value = apiMessage(error, '基础资料加载失败，请检查网络后重试。')
   } finally {
-    loading.value = false
+    if (!disposed && request === recordsRequest) recordsLoading.value = false
   }
 }
 
 async function loadPage(): Promise<void> {
-  if (!canViewPage.value) return
-  loading.value = true
-  loadError.value = ''
+  if (disposed || !canViewPage.value) return
+  const recordsPromise = loadRecords()
+  const request = recordsRequest
   try {
-    await Promise.all([loadSummary(), loadRecords()])
+    await Promise.all([loadSummary(), recordsPromise])
   } catch (error) {
+    // 汇总失败属于发起时的列表上下文，不能覆盖用户刚切换的分类或筛选。
+    if (disposed || request !== recordsRequest) return
     if (statusCode(error) === 403) permissionDenied.value = true
     else loadError.value = apiMessage(error, '基础资料中心加载失败，请稍后重试。')
-  } finally {
-    loading.value = false
   }
 }
 
@@ -687,7 +705,14 @@ onMounted(async () => {
   await loadPage()
 })
 
-onBeforeUnmount(() => window.removeEventListener('resize', syncViewport))
+onBeforeUnmount(() => {
+  disposed = true
+  recordsRequest++
+  summaryRequest++
+  recordsLoading.value = false
+  summaryLoading.value = false
+  window.removeEventListener('resize', syncViewport)
+})
 </script>
 
 <template>

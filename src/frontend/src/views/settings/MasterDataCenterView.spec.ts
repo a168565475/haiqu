@@ -1,6 +1,10 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { AxiosError } from 'axios'
 import ElementPlus from 'element-plus'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { fetchAllMasterDataRecords, fetchMasterDataSummary } from '@/api/referenceData'
+import type { MasterDataRecord, MasterDataSummary } from '@/types/referenceData'
 
 import MasterDataCenterView from './MasterDataCenterView.vue'
 
@@ -56,8 +60,35 @@ vi.mock('@/api/referenceData', () => ({
   correctExchangeRate: vi.fn(),
 }))
 
+enableAutoUnmount(afterEach)
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
+
+function apiFailure(status: number) {
+  return new AxiosError('请求失败', undefined, undefined, undefined, {
+    status, data: { error: { message: '当前请求失败' } }, statusText: '', headers: {}, config: {} as never,
+  })
+}
+
+function pageState(wrapper: VueWrapper) {
+  return (wrapper.vm.$ as unknown as { setupState: {
+    loading: boolean; records: MasterDataRecord[]; summary: MasterDataSummary; loadError: string; permissionDenied: boolean
+  } }).setupState
+}
+
+async function selectCategory(wrapper: VueWrapper, label: string) {
+  await wrapper.findAll('.category-item').find(button => button.text().startsWith(label))!.trigger('click')
+}
+
 describe('MasterDataCenterView', () => {
   beforeEach(() => {
+    vi.mocked(fetchMasterDataSummary).mockReset().mockResolvedValue(fixtures.summary)
+    vi.mocked(fetchAllMasterDataRecords).mockReset().mockImplementation(async resource => resource === 'countries' ? fixtures.countries : [])
     fixtures.granted.clear()
     for (const model of ['country', 'currency', 'exchangerate', 'unit', 'incoterm', 'paymentmethod', 'transportmethod', 'port', 'courier']) {
       fixtures.granted.add(`reference_data.view_${model}`)
@@ -144,5 +175,138 @@ describe('MasterDataCenterView', () => {
     await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click')
     expect(wrapper.vm.canClose()).toBe(true)
     wrapper.unmount()
+  })
+
+  it.each(['success', 'failure', 'forbidden'] as const)('切分类后旧请求 %s 不能覆盖新分类结果', async outcome => {
+    const previous = deferred<MasterDataRecord[]>()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(previous.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await selectCategory(wrapper, '币种')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无基础资料')
+
+    if (outcome === 'success') previous.resolve(fixtures.countries)
+    else previous.reject(apiFailure(outcome === 'forbidden' ? 403 : 500))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无基础资料')
+    expect(wrapper.text()).not.toContain('资料加载失败')
+    expect(wrapper.text()).not.toContain('无查看权限')
+    expect(pageState(wrapper).records).toEqual([])
+  })
+
+  it.each(['success', 'failure', 'forbidden'] as const)('新分类仍在加载时旧请求 %s 不能提前关闭加载状态', async outcome => {
+    const previous = deferred<MasterDataRecord[]>()
+    const current = deferred<MasterDataRecord[]>()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(previous.promise).mockReturnValueOnce(current.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await selectCategory(wrapper, '币种')
+    if (outcome === 'success') previous.resolve(fixtures.countries)
+    else previous.reject(apiFailure(outcome === 'forbidden' ? 403 : 500))
+    await flushPromises()
+
+    expect(pageState(wrapper).loading).toBe(true)
+    expect(pageState(wrapper).records).toEqual([])
+    expect(wrapper.text()).not.toContain('无查看权限')
+    current.resolve([])
+    await flushPromises()
+    expect(pageState(wrapper).loading).toBe(false)
+    expect(wrapper.text()).toContain('暂无基础资料')
+  })
+
+  it('同一分类连续搜索时只显示最新条件的结果', async () => {
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const previous = deferred<MasterDataRecord[]>()
+    const current = deferred<MasterDataRecord[]>()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(previous.promise).mockReturnValueOnce(current.promise)
+    const search = wrapper.get('input[placeholder="输入名称或编码"]')
+    await search.setValue('中国')
+    await search.trigger('keyup.enter')
+    await search.setValue('法国')
+    await search.trigger('keyup.enter')
+    expect(fetchAllMasterDataRecords).toHaveBeenLastCalledWith('countries', { q: '法国', status: undefined, source: undefined })
+    current.resolve([{ ...fixtures.countries[0]!, id: 'country-fr', code: 'FR', chinese_name: '法国' }])
+    await flushPromises()
+    previous.resolve(fixtures.countries)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).toContain('法国')
+    expect(wrapper.get('[data-testid="master-data-table"]').text()).not.toContain('中国')
+  })
+
+  it('切到无权限分类会结束旧列表加载，旧结果不能恢复数据', async () => {
+    fixtures.granted.delete('reference_data.view_currency')
+    const previous = deferred<MasterDataRecord[]>()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(previous.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    await selectCategory(wrapper, '币种')
+    expect(pageState(wrapper).loading).toBe(false)
+    expect(wrapper.text()).toContain('无查看权限')
+    expect(fetchAllMasterDataRecords).toHaveBeenCalledTimes(1)
+    previous.resolve(fixtures.countries)
+    await flushPromises()
+    expect(pageState(wrapper).records).toEqual([])
+    expect(wrapper.text()).toContain('无查看权限')
+  })
+
+  it.each([500, 403])('当前列表返回 %s 时保留对应错误并结束加载', async status => {
+    vi.mocked(fetchAllMasterDataRecords).mockRejectedValueOnce(apiFailure(status))
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain(status === 403 ? '无查看权限' : '资料加载失败')
+    expect(pageState(wrapper).loading).toBe(false)
+    expect(pageState(wrapper).records).toEqual([])
+  })
+
+  it('初次列表先完成时仍等待汇总，汇总结束后才关闭整页加载', async () => {
+    const summary = deferred<MasterDataSummary>()
+    vi.mocked(fetchMasterDataSummary).mockReturnValueOnce(summary.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    expect(pageState(wrapper).loading).toBe(true)
+    summary.resolve(fixtures.summary)
+    await flushPromises()
+    expect(pageState(wrapper).loading).toBe(false)
+    expect(wrapper.text()).toContain('中国')
+  })
+
+  it.each([500, 403])('初次汇总旧请求返回 %s 时不污染新分类或提前结束新列表加载', async status => {
+    const summary = deferred<MasterDataSummary>()
+    const current = deferred<MasterDataRecord[]>()
+    vi.mocked(fetchMasterDataSummary).mockReturnValueOnce(summary.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(current.promise)
+    await selectCategory(wrapper, '币种')
+    summary.reject(apiFailure(status))
+    await flushPromises()
+    expect(pageState(wrapper).loading).toBe(true)
+    expect(wrapper.text()).not.toContain('资料加载失败')
+    expect(wrapper.text()).not.toContain('无查看权限')
+    current.resolve([])
+    await flushPromises()
+    expect(pageState(wrapper).loading).toBe(false)
+    expect(wrapper.text()).toContain('暂无基础资料')
+  })
+
+  it.each(['success', 'failure', 'forbidden'] as const)('卸载后未完成请求 %s 不再更新页面状态', async outcome => {
+    const records = deferred<MasterDataRecord[]>()
+    const summary = deferred<MasterDataSummary>()
+    vi.mocked(fetchAllMasterDataRecords).mockReturnValueOnce(records.promise)
+    vi.mocked(fetchMasterDataSummary).mockReturnValueOnce(summary.promise)
+    const wrapper = mount(MasterDataCenterView, { global: { plugins: [ElementPlus] } })
+    const state = pageState(wrapper)
+    const initialSummary = state.summary
+    wrapper.unmount()
+    if (outcome === 'success') records.resolve(fixtures.countries)
+    else records.reject(apiFailure(outcome === 'forbidden' ? 403 : 500))
+    summary.resolve(fixtures.summary)
+    await flushPromises()
+    expect(state.records).toEqual([])
+    expect(state.summary).toBe(initialSummary)
+    expect(state.loadError).toBe('')
+    expect(state.permissionDenied).toBe(false)
+    expect(state.loading).toBe(false)
   })
 })

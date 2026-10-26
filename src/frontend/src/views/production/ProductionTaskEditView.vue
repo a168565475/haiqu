@@ -8,9 +8,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
-import type { InquiryItem, InquiryProductCandidate, InquiryProductSelectionOptions } from '@/types/inquiry'
+import type { InquiryItem, InquiryProductSelectionOptions } from '@/types/inquiry'
 import InquiryWangEditor from '@/components/InquiryWangEditor.vue'
 import { multiplyAmount4, sumAmounts4 } from '@/utils/salesCny'
+import { buildProductionProductCandidates } from './productionProductCandidates'
 import {
   productionTaskBusinessFileUrl,
   fetchProductionTask,
@@ -108,19 +109,9 @@ const quantitySummary = computed(() => {
 function hasDetailFiles(row: EditableProduct) { return row.payload.details.some(detail => Boolean(detailFiles.value[detail.client_key])) }
 function changedProduct(row: EditableProduct) { return hasDetailFiles(row) || row.quantity !== row.originalQuantity || JSON.stringify(row.payload) !== row.originalPayload || Boolean(productFiles.value[row.id]?.length) || row.unitPriceCny !== task.value?.products.find(item => item.id === row.id)?.local_unit_price }
 async function loadProductionCandidates(categoryId: string): Promise<InquiryProductSelectionOptions> {
-  const category = options.value?.categories?.find(row => row.id === categoryId)
-  if (!category) throw new Error('产品类别不存在或不可用。')
-  const grouped = new Map<string, Map<string, InquiryProductCandidate[]>>()
-  for (const product of options.value?.products || []) {
-    if (product.category_id !== categoryId) continue
-    const unit = options.value?.units.find(row => row.id === product.default_unit_id)
-    const candidate: InquiryProductCandidate = { ...product, unit_id: product.default_unit_id, unit_code: unit?.unit_code || '', unit_name: unit?.unit_name || '', category_id: category.id, category_name: category.category_name }
-    if (!grouped.has(product.product_name)) grouped.set(product.product_name, new Map())
-    const specs = grouped.get(product.product_name)!
-    if (!specs.has(product.specification)) specs.set(product.specification, [])
-    specs.get(product.specification)!.push(candidate)
-  }
-  return { category, groups: [...grouped].map(([product_name, specs]) => ({ product_name, specifications: [...specs].map(([specification, products]) => ({ specification, products })) })) }
+  return buildProductionProductCandidates(categoryId, {
+    categories: options.value?.categories, products: options.value?.products || [], units: options.value?.units || [],
+  })
 }
 function editProduct(row?: EditableProduct) {
   if (isTerminal.value || sourceLocked.value) return
@@ -134,7 +125,7 @@ function editProduct(row?: EditableProduct) {
 }
 function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; imageFile: File | null; removeImage: boolean }) {
   const item = value.item
-  const unit = options.value?.units.find(row => row.id === item.product_unit_id || row.unit_code === item.unit_code)
+  const unit = options.value?.units.find(row => item.product_unit_id ? row.id === item.product_unit_id : row.unit_code === item.unit_code)
   const currency = options.value?.currencies.find(row => row.code === 'CNY')
   if (!unit || !currency) { ElMessage.warning('请选择已维护的真实单位，并检查人民币币种。'); return }
   if (!/^[1-9]\d*$/.test(String(item.quantity))) { ElMessage.warning('生产数量必须是大于0的整数。'); return }

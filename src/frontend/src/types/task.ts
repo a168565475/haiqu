@@ -3,6 +3,22 @@ import type { CustomerEmployeeSummary } from './customer'
 export type TaskScope = 'ME' | 'CREATED_BY_ME' | 'TEAM' | 'ALL'
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
 export type TaskPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
+export type TaskType = 'CUSTOMER_FOLLOW_UP' | 'COMMUNICATION_FOLLOW_UP' | 'INQUIRY_RESPONSE' | 'QUOTATION_FOLLOW_UP' | 'SAMPLE_FEEDBACK' | 'OTHER'
+export type TaskSourceType = 'CUSTOMER' | 'COMMUNICATION' | 'INQUIRY' | 'QUOTATION_VERSION' | 'SAMPLE_REQUEST'
+
+export interface TaskCreateInput {
+  assignee_employee_id: string
+  title: string
+  description?: string
+  priority?: TaskPriority
+  task_type?: TaskType
+  contact_id?: string | null
+  due_at?: string | null
+  source_type?: TaskSourceType
+  source_id?: string
+  checklist?: string[]
+  reminder_at_list?: string[]
+}
 
 export interface TaskSummary {
   id: string

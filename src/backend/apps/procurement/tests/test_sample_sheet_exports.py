@@ -11,7 +11,7 @@ class SampleSheetExportTests(SimpleTestCase):
         color = '颜色' * 250
         sheet = SimpleNamespace(line_images=Mock())
         sheet.line_images.select_related.return_value.all.return_value = []
-        for layout, column in [('AUXILIARY', 4), ('PLASTIC', 4), ('FABRIC', 3), ('WEBBING', 3), ('FOAM', 3)]:
+        for layout in ('AUXILIARY', 'PLASTIC', 'FABRIC', 'WEBBING', 'FOAM'):
             with self.subTest(layout=layout):
                 ws = Workbook().active
                 config = _layout_config(layout)
@@ -21,11 +21,12 @@ class SampleSheetExportTests(SimpleTestCase):
                 ]}
                 _, _, end = _write_detail_rows(ws, sheet, content, layout, config, 6)
                 self.assertGreater(end, 7)
-                text = ''.join(str(ws.cell(row, column).value or '') for row in range(6, end))
-                self.assertIn(material, text)
-                self.assertIn(color, text)
-                self.assertTrue(all(58 <= ws.row_dimensions[row].height <= 348 for row in range(6, end)))
+                material_text = ''.join(str(ws.cell(row, 3).value or '') for row in range(6, end))
+                color_text = ''.join(str(ws.cell(row, 4).value or '') for row in range(6, end))
+                self.assertIn(material, material_text)
+                self.assertIn(color, color_text)
+                self.assertTrue(all(26 <= ws.row_dimensions[row].height <= 348 for row in range(6, end)))
                 quantities = [ws.cell(row, config['quantity_column']).value for row in range(6, end)]
                 self.assertEqual(quantities[0], 4)
                 self.assertTrue(all(value is None for value in quantities[1:]))
-                self.assertEqual(ws.cell(6, config['amount_column']).value, f'={ws.cell(6, config["quantity_column"]).column_letter}6*{ws.cell(6, config["price_column"]).column_letter}6')
+                self.assertEqual(ws.cell(6, config['amount_column']).value, '=ROUND(E6*F6,4)')

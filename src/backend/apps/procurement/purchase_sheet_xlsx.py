@@ -1,4 +1,4 @@
-"""按已确认的真实采购表品类版式生成可继续编辑的 Excel 文件。"""
+"""按采购合同 PDF 的统一七列和内容顺序导出可编辑 Excel。"""
 
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -13,26 +13,46 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
-from .purchase_sheet_services import _structured_sections
-from .material_attribute_snapshot import purchase_line_attribute_text
+from .purchase_sheet_pdf import _contract_date, _structured_sections
+from .purchase_sheet_line_display import purchase_sheet_line_display
+from .services import MONEY_QUANT
 
 
 THIN = Side(style="thin", color="000000")
 TABLE_BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 BODY_ALIGNMENT = Alignment(vertical="center", wrap_text=True)
 CENTER_ALIGNMENT = Alignment(horizontal="center", vertical="center", wrap_text=True)
+NUMBER_ALIGNMENT = Alignment(horizontal="center", vertical="center", shrink_to_fit=True)
 TITLE_FONT = Font(name="宋体", size=18, bold=True)
 BODY_FONT = Font(name="宋体", size=10)
 BOLD_FONT = Font(name="宋体", size=10, bold=True)
+
+
+def _text(value, fallback="—"):
+    return str(value if value is not None else "").strip() or fallback
 
 
 def _number(value):
     if value in (None, ""):
         return None
     try:
-        return float(Decimal(str(value)))
+        number = Decimal(str(value))
+        if not number.is_finite():
+            return None
+        return int(number) if number == number.to_integral_value() else float(number)
     except (InvalidOperation, TypeError, ValueError):
-        return str(value)
+        return None
+
+
+def _number_format(value):
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return "General"
+    if not number.is_finite():
+        return "General"
+    fractional = format(number, "f").partition(".")[2].rstrip("0")
+    return "0." + "#" * len(fractional) if fractional else "0"
 
 
 def _media_image_path(business_file):
@@ -56,323 +76,218 @@ def _style_range(ws, row_start, row_end, column_start, column_end, *, bold=False
             cell.font = BOLD_FONT if bold else BODY_FONT
 
 
-def _merge_text(ws, row, column_count, text, *, height, bold=False, center=False):
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=column_count)
-    cell = ws.cell(row=row, column=1, value=text)
-    _style_range(ws, row, row, 1, column_count, bold=bold, center=center)
-    cell.alignment = CENTER_ALIGNMENT if center else BODY_ALIGNMENT
-    ws.row_dimensions[row].height = height
+def _text_chunks(value, width, *, max_lines=24):
+    """按列宽保守估算换行，拆分长文本以免超过 Excel 行高上限。"""
+    if not isinstance(value, str):
+        return [(value, 1)]
+    capacity = max(4, int(width) - 3)
+    chunks, current, used, count = [], "", 0, 1
+    for char in value:
+        size = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        if char == "\n" or used + size > capacity:
+            if count >= max_lines:
+                chunks.append((current, count))
+                current, count = "", 2 if char == "\n" else 1
+            else:
+                count += 1
+            used = 0
+        current += char
+        if char != "\n":
+            used += size
+    chunks.append((current, count))
+    return chunks
 
 
-def _layout_name(sheet, content):
-    template = sheet.template_version.template
-    code = str(template.template_code or "").upper()
-    name = str(template.template_name or "")
-    categories = set(template.supplier_categories or [])
-    if content.get("settlement_mode") == "ACTUAL_WEIGHT" or "WEBBING" in code or "织带" in name:
-        return "WEBBING"
-    if "FOAM" in code or "喷胶棉" in name or "裁片" in name:
-        return "FOAM"
-    if "PLASTIC" in code or "塑料" in name or "PLASTIC_PART" in categories:
-        return "PLASTIC"
-    if "FABRIC" in code or "布面" in name or "FABRIC" in categories:
-        return "FABRIC"
-    return "AUXILIARY"
+def _merge_text(ws, row, column_count, text, *, height=26, bold=False, center=False, font=None):
+    font = font or (BOLD_FONT if bold else BODY_FONT)
+    width = sum(ws.column_dimensions[get_column_letter(column)].width for column in range(1, column_count + 1))
+    leading = float(font.sz) * 1.4
+    for chunk, count in _text_chunks(text, width * 10 / float(font.sz), max_lines=int(380 / leading)):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=column_count)
+        ws.cell(row=row, column=1, value=chunk)
+        _style_range(ws, row, row, 1, column_count, bold=bold, center=center)
+        ws.cell(row=row, column=1).font = font
+        ws.row_dimensions[row].height = max(height, count * leading + 12)
+        row += 1
+    return row
 
 
-def _layout_config(layout):
-    if layout == "PLASTIC":
-        return {
-            "widths": [20, 14, 14, 5, 22, 14, 12, 18, 20],
-            "headers": ["产品图", "产品名称", "产品图片", "详细描述", "", "单品数量", "套", "含税单价（元/套）", "金额（元）"],
-            "quantity_column": 6,
-            "price_column": 8,
-            "amount_column": 9,
-            "image_column": 1,
-        }
-    if layout == "FABRIC":
-        return {
-            "widths": [31, 13, 18, 13, 18, 14, 19],
-            "headers": ["产品描述", "门幅（米）", "颜色", "数量（米）", "含税单价（元/米）", "金额（元）", "订单编号"],
-            "quantity_column": 4,
-            "price_column": 5,
-            "amount_column": 6,
-            "image_column": None,
-        }
-    if layout == "WEBBING":
-        return {
-            "widths": [16, 15, 18, 20, 22, 14, 20, 20],
-            "headers": ["订单编号", "图片", "颜色", "产品规格", "产品名称", "数量（米）", "含税单价（元/KG）", "总金额（元）"],
-            "quantity_column": 6,
-            "price_column": 7,
-            "amount_column": 8,
-            "image_column": 2,
-        }
-    if layout == "FOAM":
-        return {
-            "widths": [24, 18, 35, 15, 20, 20],
-            "headers": ["订单编号", "产品名称", "产品描述", "数量（片）", "含税单价（元/片）", "金额（元）"],
-            "quantity_column": 4,
-            "price_column": 5,
-            "amount_column": 6,
-            "image_column": None,
-        }
+def _layout_config(layout=None):
+    # 保留既有内部调用参数；所有品类统一使用合同 PDF 的七列。
     return {
-        "widths": [10, 22, 32, 22, 14, 18, 19],
-        "headers": ["序号", "产品名称", "产品规格", "颜色/要求", "数量", "含税单价（元）", "总金额（元）"],
+        "widths": [14, 23, 24, 12, 9, 9, 9],
+        "headers": ["产品名称", "产品规格", "物料属性", "颜色", "数量", "含税单价\n（元）", "金额\n（元）"],
         "quantity_column": 5,
         "price_column": 6,
         "amount_column": 7,
-        "image_column": None,
     }
 
 
 def _line_values(layout, line, index, order_number, actual_weight, sample_source=False):
     from .pipe_purchase import pipe_print_description
-    name = line.get("part_name") or line.get("product_name") or ""
-    specification = line.get("specification") or line.get("product_specification") or ""
-    source_attributes = purchase_line_attribute_text(
-        line.get("material_attributes_snapshot"),
-        line.get("section_title"),
-    )
-    if source_attributes:
-        specification = f"{source_attributes}\n{specification}" if specification else source_attributes
-    if line.get('measurement_kind') == 'PIPE':
-        specification += '\n' + pipe_print_description(line)
-    color_or_requirement = line.get("remark") or line.get("material") or ""
-    if sample_source:
-        color_or_requirement = "；".join(str(line.get(key) or "").strip() for key in ("material", "remark") if str(line.get(key) or "").strip())
+    display = purchase_sheet_line_display(line, sample_source=sample_source)
+    specification, attributes, color = (display[key] for key in ("specification", "attributes", "color"))
+    if line.get("measurement_kind") == "PIPE":
+        print_line = {**line, **{
+            key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "actual_purchase_meters")
+        }}
+        attributes = "\n".join(value for value in (attributes, pipe_print_description(print_line)) if value)
     quantity = _number(line.get("quantity"))
     price = _number(line.get("unit_price"))
-    amount = "按实际送货重量结算" if actual_weight else _number(line.get("amount"))
-    if layout == "PLASTIC":
-        return ["", name, "", specification + ("\n" + color_or_requirement if sample_source and color_or_requirement else ""), "", quantity, line.get("unit") or "", price, amount]
-    if layout == "FABRIC":
-        description = name if not specification else f"{name}\n{specification}"
-        return [description, "", color_or_requirement, quantity, price, amount, order_number]
-    if layout == "WEBBING":
-        return [order_number, "", color_or_requirement, specification, name, quantity, price, amount]
-    if layout == "FOAM":
-        return [order_number, name, specification + ("\n" + color_or_requirement if sample_source and color_or_requirement else ""), quantity, price, amount]
-    return [index, name, specification, color_or_requirement, quantity, price, amount]
+    amount = _number(line.get("amount"))
+    return [
+        _text(line.get("part_name")), specification or "—", attributes or "—", color or "—",
+        quantity if quantity is not None else "—", price if price is not None else "—",
+        "待结算" if actual_weight or amount is None else amount,
+    ]
 
 
-def _add_image(ws, image_path, anchor, *, width=72, height=54):
+def _add_image(ws, image_path, anchor, *, width=140, height=98):
     if not image_path:
-        return
-    image = ExcelImage(str(image_path))
-    image.width = width
-    image.height = height
+        return False
+    try:
+        image = ExcelImage(str(image_path))
+    except (OSError, ValueError):
+        return False
+    scale = min(width / image.width, height / image.height)
+    image.width, image.height = image.width * scale, image.height * scale
     ws.add_image(image, anchor)
-
-
-def _sample_text_chunks(value, width):
-    """按列宽保守估算换行；每块至多24行，避免超过Excel行高上限。"""
-    if not isinstance(value, str):
-        return [(value, 1)]
-    capacity = max(4, int(width) - 3)
-    chunks, current, used, count = [], '', 0, 1
-    for char in value:
-        size = 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
-        if char == '\n' or used + size > capacity:
-            if count >= 24:
-                chunks.append((current, count))
-                current, count = '', 1
-            else:
-                count += 1
-            used = 0
-        current += char
-        if char != '\n':
-            used += size
-    chunks.append((current, count))
-    return chunks
+    return True
 
 
 def _write_detail_rows(ws, sheet, content, layout, config, start_row):
     line_images = {
         str(item.source_purchase_order_line_id): item.image_file
         for item in sheet.line_images.select_related("image_file").all()
-    }
+    } if content.get("show_image", True) else {}
     lines = list(content.get("lines") or [])
     order = content.get("order") or {}
-    order_number = (order.get("source_number") if order.get("source_type") == "SAMPLE" else order.get("sales_order_number")) or ""
     actual_weight = content.get("settlement_mode") == "ACTUAL_WEIGHT"
-    column_count = len(config["headers"])
     row = start_row
+    if not lines:
+        return lines, line_images, _merge_text(ws, row, 7, "暂无采购明细", center=True)
     for index, line in enumerate(lines, start=1):
-        values = _line_values(layout, line, index, order_number, actual_weight, order.get("source_type") == "SAMPLE")
-        parts = [[(value, 1)] for value in values]
-        if order.get("source_type") == "SAMPLE":
-            widths = list(config["widths"])
-            if layout == "PLASTIC":
-                widths[3] += widths[4]
-            parts = [_sample_text_chunks(value, width) for value, width in zip(values, widths)]
-        first_values = [part[0][0] for part in parts]
-        for column, value in enumerate(first_values, start=1):
-            ws.cell(row=row, column=column, value=value)
-        if layout == "PLASTIC":
-            ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=5)
-        _style_range(ws, row, row, 1, column_count)
-        for column in (config["quantity_column"], config["price_column"], config["amount_column"]):
-            ws.cell(row=row, column=column).alignment = CENTER_ALIGNMENT
-            ws.cell(row=row, column=column).number_format = "0.00##"
-        quantity_value = values[config["quantity_column"] - 1]
-        price_value = values[config["price_column"] - 1]
-        if not actual_weight and isinstance(quantity_value, (int, float)) and isinstance(price_value, (int, float)):
-            quantity_letter = get_column_letter(config["quantity_column"])
-            price_letter = get_column_letter(config["price_column"])
-            ws.cell(row=row, column=config["amount_column"], value=f"={quantity_letter}{row}*{price_letter}{row}")
-            ws.cell(row=row, column=config["amount_column"]).number_format = "0.00##"
-        image_path = _media_image_path(line_images.get(str(line.get("source_purchase_order_line_id") or "")))
-        if config["image_column"]:
-            _add_image(ws, image_path, f"{get_column_letter(config['image_column'])}{row}")
-        ws.row_dimensions[row].height = max(58, max(part[0][1] for part in parts) * 14 + 12)
-        row += 1
-        for continuation in range(1, max(len(part) for part in parts)):
+        values = _line_values(layout, line, index, "", actual_weight, order.get("source_type") == "SAMPLE")
+        parts = [_text_chunks(value, width) for value, width in zip(values, config["widths"])]
+        for continuation in range(max(len(part) for part in parts)):
             height = 1
             for column, part in enumerate(parts, 1):
                 if continuation < len(part):
                     value, count = part[continuation]
                     ws.cell(row=row, column=column, value=value)
                     height = max(height, count)
-            if layout == "PLASTIC":
-                ws.merge_cells(start_row=row, start_column=4, end_row=row, end_column=5)
-            _style_range(ws, row, row, 1, column_count)
-            ws.row_dimensions[row].height = max(58, height * 14 + 12)
+            _style_range(ws, row, row, 1, 7)
+            for column in (4, 5, 6, 7):
+                ws.cell(row=row, column=column).alignment = CENTER_ALIGNMENT
+            if continuation == 0:
+                for column in (5, 6, 7):
+                    ws.cell(row=row, column=column).number_format = _number_format(values[column - 1])
+                    if isinstance(values[column - 1], (int, float)):
+                        ws.cell(row=row, column=column).alignment = NUMBER_ALIGNMENT
+                unit = _text(line.get("unit"), "").replace('"', '\\"')
+                if isinstance(values[4], (int, float)) and unit:
+                    ws.cell(row=row, column=5).number_format += f'" {unit}"'
+                if not actual_weight and all(isinstance(values[column], (int, float)) for column in (4, 5, 6)):
+                    # 与保存采购明细金额时使用相同精度，再汇总，避免 Excel 和 PDF 合计差异。
+                    places = abs(MONEY_QUANT.as_tuple().exponent)
+                    ws.cell(row=row, column=7, value=f"=ROUND(E{row}*F{row},{places})")
+                    ws.cell(row=row, column=7).number_format = _number_format(line.get("amount"))
+            ws.row_dimensions[row].height = max(26, height * 14 + 12)
             row += 1
     return lines, line_images, row
 
 
-def _write_total_and_note(ws, content, layout, config, row, lines, line_images):
-    column_count = len(config["headers"])
-    amount_column = config["amount_column"]
-    actual_weight = content.get("settlement_mode") == "ACTUAL_WEIGHT"
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=max(1, amount_column - 2))
-    ws.cell(row=row, column=1, value=f"备注：{content.get('remark') or ''}")
-    ws.cell(row=row, column=amount_column - 1, value="总金额")
-    if actual_weight:
-        ws.cell(row=row, column=amount_column, value="按实际送货重量结算")
+def _write_total_and_note(ws, content, layout, config, row, lines, line_images, *, detail_start=6):
+    start_row = row
+    note = f"备注：\n{_text(content.get('remark'), '')}\n税率 {_text(content.get('tax_rate'), '13')}% · 运费由{_text(content.get('freight_bearer'))}承担"
+    for chunk, count in _text_chunks(note, sum(config["widths"][2:5])):
+        _style_range(ws, row, row, 1, 7)
+        ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=5)
+        ws.cell(row=row, column=3, value=chunk)
+        ws.row_dimensions[row].height = max(110 if row == start_row else 26, count * 14 + 12)
+        row += 1
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=row - 1, end_column=2)
+    for column in (6, 7):
+        ws.merge_cells(start_row=start_row, start_column=column, end_row=row - 1, end_column=column)
+        ws.cell(start_row, column).alignment = CENTER_ALIGNMENT
+        ws.cell(start_row, column).font = BOLD_FONT
+    ws.cell(start_row, 6, "合计")
+    total = _number(content.get("total_amount"))
+    if content.get("settlement_mode") == "ACTUAL_WEIGHT" or total is None:
+        ws.cell(start_row, 7, "待结算")
     elif lines:
-        amount_letter = get_column_letter(amount_column)
-        ws.cell(row=row, column=amount_column, value=f"=SUM({amount_letter}6:{amount_letter}{row - 1})")
-        ws.cell(row=row, column=amount_column).number_format = "0.00##"
-    _style_range(ws, row, row, 1, column_count)
-    ws.cell(row=row, column=amount_column - 1).font = BOLD_FONT
-    ws.cell(row=row, column=amount_column).font = BOLD_FONT
-    ws.cell(row=row, column=amount_column - 1).alignment = CENTER_ALIGNMENT
-    ws.cell(row=row, column=amount_column).alignment = CENTER_ALIGNMENT
-    ws.row_dimensions[row].height = 38
-
-    # 辅料和喷胶棉原表把图片放在明细下方的备注区域，而不是额外增加图片列。
-    if layout in {"AUXILIARY", "FOAM"}:
-        first_image = next(
-            (
-                _media_image_path(line_images.get(str(line.get("source_purchase_order_line_id") or "")))
-                for line in lines
-                if line_images.get(str(line.get("source_purchase_order_line_id") or ""))
-            ),
-            None,
-        )
-        if first_image:
-            row += 1
-            _merge_text(ws, row, column_count, "采购图片：", height=110)
-            _add_image(ws, first_image, f"A{row}", width=120, height=90)
-    return row + 1
+        ws.cell(start_row, 7, f"=SUM(G{detail_start}:G{start_row - 1})")
+        ws.cell(start_row, 7).number_format = _number_format(content.get("total_amount"))
+    else:
+        ws.cell(start_row, 7, total)
+        ws.cell(start_row, 7).number_format = _number_format(content.get("total_amount"))
+    image_path = next((path for line in lines if (path := _media_image_path(
+        line_images.get(str(line.get("source_purchase_order_line_id") or ""))
+    ))), None) if content.get("show_image", True) else None
+    if not _add_image(ws, image_path, f"A{start_row}"):
+        ws.cell(start_row, 1, "暂无图片")
+        ws.cell(start_row, 1).alignment = CENTER_ALIGNMENT
+    return row
 
 
 def _write_sections_and_signature(ws, sheet, content, start_row, column_count):
-    sections = _structured_sections(content)
     row = start_row
-    _merge_text(ws, row, column_count, f"二、支付方式和交期：{sections['payment_and_delivery']}", height=58)
-    row += 1
-    _merge_text(ws, row, column_count, "三、产品质量标准：", height=30, bold=True)
-    for index, standard in enumerate(sections["quality_standards"], start=1):
-        row += 1
-        _merge_text(ws, row, column_count, f"{index}. {standard}", height=72)
-    row += 1
-    _merge_text(ws, row, column_count, f"四、送货交接：{sections['delivery_handover']}", height=58)
-    row += 1
-    _merge_text(ws, row, column_count, f"五、特别说明：{sections['special_instructions']}", height=82)
-    row += 1
-    _merge_text(ws, row, column_count, f"六、争议解决：{sections['dispute_resolution']}", height=58)
-    row += 1
-    _merge_text(ws, row, column_count, f"七、合同生效：{sections['effectiveness']}", height=58)
+    for label, value in _structured_sections(content):
+        row = _merge_text(ws, row, column_count, label, bold=True)
+        text = "\n".join(f"{index}. {_text(item)}" for index, item in enumerate(value, 1)) if isinstance(value, list) else _text(value)
+        row = _merge_text(ws, row, column_count, text)
 
-    buyer = content.get("buyer") or {}
-    seller = content.get("seller") or {}
-    party_row = row + 1
-    split = max(1, column_count // 2)
-    ws.merge_cells(start_row=party_row, start_column=1, end_row=party_row, end_column=split)
-    ws.merge_cells(start_row=party_row, start_column=split + 1, end_row=party_row, end_column=column_count)
-    ws.cell(party_row, 1, value=f"甲方（采购方）：{buyer.get('name') or '—'}")
-    ws.cell(party_row, split + 1, value=f"乙方（供货方）：{seller.get('name') or '—'}")
-    _style_range(ws, party_row, party_row, 1, column_count, bold=True)
-    ws.row_dimensions[party_row].height = 32
-
-    signature_row = party_row + 1
-    ws.merge_cells(start_row=signature_row, start_column=1, end_row=signature_row, end_column=split)
-    ws.merge_cells(start_row=signature_row, start_column=split + 1, end_row=signature_row, end_column=column_count)
-    ws.cell(signature_row, 1, value=f"盖章：\n\n签署日期：{content.get('purchase_date') or ''}")
-    ws.cell(signature_row, split + 1, value="盖章：\n\n签署日期：")
-    _style_range(ws, signature_row, signature_row, 1, column_count)
-    ws.row_dimensions[signature_row].height = 150
-
+    for offset, height in enumerate((26, 64, 26)):
+        _style_range(ws, row + offset, row + offset, 1, 7)
+        ws.merge_cells(start_row=row + offset, start_column=1, end_row=row + offset, end_column=3)
+        ws.merge_cells(start_row=row + offset, start_column=4, end_row=row + offset, end_column=7)
+        ws.row_dimensions[row + offset].height = height
+    ws.cell(row, 1, "甲方").font = BOLD_FONT
     seal = getattr(sheet, "seal_image", None)
-    seal_path = _media_image_path(seal.image_file if seal else None)
-    _add_image(ws, seal_path, f"B{signature_row}", width=110, height=110)
-    return signature_row
+    _add_image(ws, _media_image_path(seal.image_file if seal else None), f"A{row + 1}", width=110, height=76)
+    ws.cell(row + 2, 1, "请确认无误盖章回传")
+    ws.cell(row + 2, 4, f"签订日期：{_text(_contract_date(content.get('purchase_date')))}")
+    ws.cell(row + 2, 4).alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    return row + 2
 
 
 def build_supplier_purchase_sheet_xlsx(sheet):
     content = sheet.content_snapshot if isinstance(sheet.content_snapshot, dict) else {}
-    layout = _layout_name(sheet, content)
-    config = _layout_config(layout)
-    column_count = len(config["headers"])
+    config = _layout_config()
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "采购合同"
     worksheet.sheet_view.showGridLines = False
-
     for index, width in enumerate(config["widths"], start=1):
         worksheet.column_dimensions[get_column_letter(index)].width = width
 
-    order = content.get("order") or {}
-    order_number = (order.get("source_number") if order.get("source_type") == "SAMPLE" else order.get("sales_order_number")) or "—"
-    title = content.get("title") or "采购合同"
-    _merge_text(worksheet, 1, column_count, f"{title}\n（订单编号{order_number}）", height=52, bold=True, center=True)
-    worksheet["A1"].font = TITLE_FONT
-    buyer = content.get("buyer") or {}
-    seller = content.get("seller") or {}
-    _merge_text(worksheet, 2, column_count, f"采购方：{buyer.get('name') or '—'}（以下简称甲方）", height=28)
-    _merge_text(worksheet, 3, column_count, f"供货方：{seller.get('name') or '—'}（以下简称乙方）", height=32)
-    _merge_text(
-        worksheet,
-        4,
-        column_count,
-        f"一、产品名称、规格、数量、单价、总额（含 {content.get('tax_rate') or '13'}% 增值税，运费由{content.get('freight_bearer') or '—'}承担）",
-        height=38,
-        bold=True,
-    )
-
+    buyer, seller, order = (content.get(key) or {} for key in ("buyer", "seller", "order"))
+    order_number = _text(order.get("source_number") if order.get("source_type") == "SAMPLE" else order.get("sales_order_number"))
+    title = f"{_text(content.get('title'), '购销合同')}　（订单编号  {order_number}）"
+    row = _merge_text(worksheet, 1, 7, title, height=38, center=True, font=TITLE_FONT)
+    party = f"采购单号：{_text(sheet.sheet_number)}\n甲方（采购方）：{_text(buyer.get('name'))}\n乙方（供货方）：{_text(seller.get('name'))}"
+    row = _merge_text(worksheet, row, 7, party, height=56)
+    legal = "根据《中华人民共和国民法典》《中华人民共和国产品质量法》等国家和地方政府部门有关法律法规，双方经过充分友好协商，本着诚实守信的原则，就采购方向供货方购买产品一事，达成以下约定："
+    row = _merge_text(worksheet, row, 7, legal, height=46)
+    row = _merge_text(worksheet, row, 7, "一、采购产品名称、规格、数量、单价及金额", bold=True)
     for column, header in enumerate(config["headers"], start=1):
-        worksheet.cell(row=5, column=column, value=header)
-    if layout == "PLASTIC":
-        worksheet.merge_cells(start_row=5, start_column=4, end_row=5, end_column=5)
-    _style_range(worksheet, 5, 5, 1, column_count, bold=True, center=True)
-    worksheet.row_dimensions[5].height = 42
+        worksheet.cell(row=row, column=column, value=header)
+    _style_range(worksheet, row, row, 1, 7, bold=True, center=True)
+    worksheet.row_dimensions[row].height = 40
+    worksheet.print_title_rows = f"{row}:{row}"
+    detail_start = row + 1
+    lines, images, total_row = _write_detail_rows(worksheet, sheet, content, "CONTRACT", config, detail_start)
+    section_start = _write_total_and_note(worksheet, content, "CONTRACT", config, total_row, lines, images, detail_start=detail_start)
+    final_row = _write_sections_and_signature(worksheet, sheet, content, section_start, 7)
 
-    lines, line_images, total_row = _write_detail_rows(worksheet, sheet, content, layout, config, 6)
-    section_start = _write_total_and_note(worksheet, content, layout, config, total_row, lines, line_images)
-    final_row = _write_sections_and_signature(worksheet, sheet, content, section_start, column_count)
-
-    worksheet.print_area = f"A1:{get_column_letter(column_count)}{final_row}"
+    worksheet.print_area = f"A1:G{final_row}"
     worksheet.page_setup.orientation = "portrait"
     worksheet.page_setup.paperSize = worksheet.PAPERSIZE_A4
     worksheet.page_setup.fitToWidth = 1
     worksheet.page_setup.fitToHeight = 0
     worksheet.sheet_properties.pageSetUpPr.fitToPage = True
-    worksheet.page_margins = PageMargins(left=0.2, right=0.2, top=0.3, bottom=0.3, header=0.1, footer=0.1)
-
+    worksheet.page_margins = PageMargins(left=0.28, right=0.28, top=0.2, bottom=0.28, header=0, footer=0)
+    workbook.calculation.fullCalcOnLoad = True
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()

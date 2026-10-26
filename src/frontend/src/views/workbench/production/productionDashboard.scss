@@ -1,5 +1,16 @@
 @use '@/styles/workbench' as workbench;
 
+.production-dashboard.production-dashboard--overview {
+  border-radius: 20px;
+  background: transparent;
+  .pd-heading { margin-bottom: 18px; }
+  // PageContainer 全局固定 h1 为 34px，此页按已确认稿局部覆盖。
+  .pd-heading h1 { font-size: 27px !important; line-height: 34px !important; font-weight: 600; }
+  .pd-heading p { font-size: 12px; }
+  .pd-filters { border-radius: 12px; padding: 12px 16px; }
+  .pd-filter-note { display: none; }
+}
+
 .production-dashboard {
   min-width: 0;
   padding: 6px 0 14px;
@@ -129,6 +140,8 @@
   .pd-process-tabs button[aria-pressed='true'] { color: var(--erp-color-text-inverse); background: var(--erp-color-brand); }
   .pd-jobs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
   .pd-job { min-width: 0; padding: 21px 22px; }
+  .pd-job--inner { border: 1px solid var(--erp-glass-border); border-radius: 12px; background: var(--erp-glass-inner-background); }
+  .production-module-layout .pd-jobs { margin-bottom: 0; }
   .pd-job__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
   .pd-job__head small { color: var(--erp-color-text-secondary); }
   .pd-job h2 { font-size: 21px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -165,7 +178,11 @@
   .pd-skeleton--panel { margin-top: 14px; min-height: 320px; }
   .pd-skeleton--panel span:nth-child(2) { width: 100%; height: 210px; }
 
-  &.is-fullscreen { width: 100%; min-height: 100dvh; padding: 28px 36px; overflow: auto; background: var(--erp-page-background); }
+  &.is-fullscreen { width: 100%; min-height: 100dvh; padding: 0; overflow: auto; background: var(--erp-page-background); }
+  &.is-fullscreen .pd-content { padding: 28px 36px; }
+  &.is-fullscreen .production-module-layout { --pml-detail-height: calc(100dvh - 410px); }
+  &.is-fullscreen .production-module-layout .pml-module:not(.is-mini) .pml-head h2 { font-size: 24px; line-height: 34px; }
+  &.is-fullscreen .production-module-layout .pml-module:not(.is-mini) .pml-head p { font-size: 16px; line-height: 24px; }
   &.is-fullscreen .pd-role-nav, &.is-fullscreen .pd-filters, &.is-fullscreen .pd-job__action { display: none; }
   &.is-fullscreen .pd-heading h1 { font-size: 38px; line-height: 50px; }
   &.is-fullscreen .pd-heading p { font-size: 18px; line-height: 27px; }

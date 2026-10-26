@@ -1,108 +1,110 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
 
 import { useAuthStore } from '@/stores/auth'
-import HomeView from '@/views/HomeView.vue'
 import LoginView from '@/views/LoginView.vue'
-import NotFoundView from '@/views/NotFoundView.vue'
-import PurchaseReturnListView from '@/views/procurement/PurchaseReturnListView.vue'
-import CustomerListView from '@/views/customers/CustomerListView.vue'
-import CustomerDetailView from '@/views/customers/CustomerDetailView.vue'
-import CustomerCreateView from '@/views/customers/CustomerCreateView.vue'
-import CustomerEditView from '@/views/customers/CustomerEditView.vue'
-import CustomerDuplicateCenterView from '@/views/customers/CustomerDuplicateCenterView.vue'
-import ContactListView from '@/views/contacts/ContactListView.vue'
-import InquiryListView from '@/views/inquiries/InquiryListView.vue'
-import InquiryEditorView from '@/views/inquiries/InquiryEditorView.vue'
-import InquiryDetailView from '@/views/inquiries/InquiryDetailView.vue'
-import SampleListView from '@/views/samples/SampleListView.vue'
-import SampleDetailView from '@/views/samples/SampleDetailView.vue'
-import SampleApplicationCreateView from '@/views/samples/SampleApplicationCreateView.vue'
-import SampleDirectorReviewView from '@/views/samples/SampleDirectorReviewView.vue'
-import SampleMaterialDetailView from '@/views/samples/SampleMaterialDetailView.vue'
-import SampleWarehouseReviewView from '@/views/samples/SampleWarehouseReviewView.vue'
-import SampleMaterialIssueView from '@/views/samples/SampleMaterialIssueView.vue'
-import SampleFeeView from '@/views/samples/SampleFeeView.vue'
-import SampleFulfillmentView from '@/views/samples/SampleFulfillmentView.vue'
-import SampleInventoryView from '@/views/samples/SampleInventoryView.vue'
-import SampleInventoryReceiptDetailView from '@/views/samples/SampleInventoryReceiptDetailView.vue'
-import SampleOutboundView from '@/views/samples/SampleOutboundView.vue'
-import SampleOutboundDetailView from '@/views/samples/SampleOutboundDetailView.vue'
-import SampleLoanView from '@/views/samples/SampleLoanView.vue'
-import SampleLoanDetailView from '@/views/samples/SampleLoanDetailView.vue'
-import BomListView from '@/views/boms/BomListView.vue'
-import BomCreateView from '@/views/boms/BomCreateView.vue'
-import BomEditorView from '@/views/boms/BomEditorView.vue'
-import BomPreviewView from '@/views/boms/BomPreviewView.vue'
-import ProductionTaskListView from '@/views/production/ProductionTaskListView.vue'
-import ProductionTaskCreateView from '@/views/production/ProductionTaskCreateView.vue'
-import ProductionTaskDetailView from '@/views/production/ProductionTaskDetailView.vue'
-import ProductionTaskEditView from '@/views/production/ProductionTaskEditView.vue'
-import QuotationListView from '@/views/quotations/QuotationListView.vue'
-import QuotationEditorView from '@/views/quotations/QuotationEditorView.vue'
-import QuotationPackagingView from '@/views/quotations/QuotationPackagingView.vue'
-import QuotationPreviewView from '@/views/quotations/QuotationPreviewView.vue'
-import QuotationVersionDiffView from '@/views/quotations/QuotationVersionDiffView.vue'
-import QuotationPriceHistoryView from '@/views/quotations/QuotationPriceHistoryView.vue'
-import SalesOrderListView from '@/views/salesOrders/SalesOrderListView.vue'
-import SalesOrderEditorView from '@/views/salesOrders/SalesOrderEditorView.vue'
-import SalesOrderDetailView from '@/views/salesOrders/SalesOrderDetailView.vue'
-import TaskCenterView from '@/views/tasks/TaskCenterView.vue'
-import TaskDetailView from '@/views/tasks/TaskDetailView.vue'
-import ComplaintListView from '@/views/complaints/ComplaintListView.vue'
-import ComplaintDetailView from '@/views/complaints/ComplaintDetailView.vue'
-import ReferenceDataSettingsView from '@/views/settings/ReferenceDataSettingsView.vue'
-import AccessManagementView from '@/views/settings/AccessManagementView.vue'
-import MasterDataCenterView from '@/views/settings/MasterDataCenterView.vue'
-import NumberRulesView from '@/views/settings/NumberRulesView.vue'
-import InquiryHandlingSettingsView from '@/views/settings/InquiryHandlingSettingsView.vue'
-import EmailAccountSettingsView from '@/views/settings/EmailAccountSettingsView.vue'
-import ProductionDataView from '@/views/settings/ProductionDataView.vue'
-import ThemeSettingsView from '@/views/settings/ThemeSettingsView.vue'
-import ProductInformationView from '@/views/products/ProductInformationView.vue'
-import RawMaterialInformationView from '@/views/products/RawMaterialInformationView.vue'
-import RawMaterialManagementView from '@/views/products/RawMaterialManagementView.vue'
-import ProductManagementView from '@/views/products/ProductManagementView.vue'
-import SupplierListView from '@/views/procurement/SupplierListView.vue'
-import PurchaseOrderListView from '@/views/procurement/PurchaseOrderListView.vue'
-import PurchaseOrderFormView from '@/views/procurement/PurchaseOrderFormView.vue'
-import PurchaseOrderConfirmView from '@/views/procurement/PurchaseOrderConfirmView.vue'
-import PurchaseOrderDetailView from '@/views/procurement/PurchaseOrderDetailView.vue'
-import PurchaseSheetTemplateSelectView from '@/views/procurement/PurchaseSheetTemplateSelectView.vue'
-import SupplierPurchaseSheetListView from '@/views/procurement/SupplierPurchaseSheetListView.vue'
-import SupplierPurchaseSheetEditorView from '@/views/procurement/SupplierPurchaseSheetEditorView.vue'
-import PurchaseContractTemplateListView from '@/views/procurement/PurchaseContractTemplateListView.vue'
-import FinishedGoodsInventoryView from '@/views/inventory/FinishedGoodsInventoryView.vue'
-import FinishedGoodsOutboundFormView from '@/views/inventory/FinishedGoodsOutboundFormView.vue'
-import FinishedGoodsOutboundListView from '@/views/inventory/FinishedGoodsOutboundListView.vue'
-import FinishedGoodsOutboundDetailView from '@/views/inventory/FinishedGoodsOutboundDetailView.vue'
-import MaterialInventoryView from '@/views/inventory/MaterialInventoryView.vue'
-import MaterialInventoryDetailView from '@/views/inventory/MaterialInventoryDetailView.vue'
-import MaterialPurchaseInboundView from '@/views/inventory/MaterialPurchaseInboundView.vue'
-import ManualMaterialInboundView from '@/views/inventory/ManualMaterialInboundView.vue'
-import MaterialQualityConfirmationView from '@/views/inventory/MaterialQualityConfirmationView.vue'
-import MaterialInboundDetailView from '@/views/inventory/MaterialInboundDetailView.vue'
-import PurchaseInboundListView from '@/views/procurement/PurchaseInboundListView.vue'
-import WorkshopConfigurationView from '@/views/workshop/WorkshopConfigurationView.vue'
-import ProductionSchedulingDetailView from '@/views/workshop/ProductionSchedulingDetailView.vue'
-import ProductionSchedulingFormView from '@/views/workshop/ProductionSchedulingFormView.vue'
-import ProductionSchedulingListView from '@/views/workshop/ProductionSchedulingListView.vue'
-import WorkshopPlanListView from '@/views/workshop/WorkshopPlanListView.vue'
-import MaterialIssueListView from '@/views/workshop/material-issues/MaterialIssueListView.vue'
-import MaterialIssueFormView from '@/views/workshop/material-issues/MaterialIssueFormView.vue'
-import MaterialIssueDetailView from '@/views/workshop/material-issues/MaterialIssueDetailView.vue'
-import WageSchemeListView from '@/views/workshop/wage-schemes/WageSchemeListView.vue'
-import WageSchemeFormView from '@/views/workshop/wage-schemes/WageSchemeFormView.vue'
-import WageSchemeDetailView from '@/views/workshop/wage-schemes/WageSchemeDetailView.vue'
-import WorkReportFormView from '@/views/workshop/work-reports/WorkReportFormView.vue'
-import WorkReportDayListView from '@/views/workshop/work-reports/WorkReportDayListView.vue'
-import WorkReportDayDetailView from '@/views/workshop/work-reports/WorkReportDayDetailView.vue'
-import FactoryDetailView from '@/views/outsourcing/FactoryDetailView.vue'
-import FactoryListView from '@/views/outsourcing/FactoryListView.vue'
-import OutsourcingOrderDetailView from '@/views/outsourcing/OutsourcingOrderDetailView.vue'
-import OutsourcingOrderFormView from '@/views/outsourcing/OutsourcingOrderFormView.vue'
-import OutsourcingOrderListView from '@/views/outsourcing/OutsourcingOrderListView.vue'
-import OutsourcingReworkDetailView from '@/views/outsourcing/OutsourcingReworkDetailView.vue'
+
+const WorkbenchLandingView = () => import('@/views/workbench/WorkbenchLandingView.vue')
+const NotFoundView = () => import('@/views/NotFoundView.vue')
+const PurchaseReturnListView = () => import('@/views/procurement/PurchaseReturnListView.vue')
+const CustomerListView = () => import('@/views/customers/CustomerListView.vue')
+const CustomerDetailView = () => import('@/views/customers/CustomerDetailView.vue')
+const CustomerCreateView = () => import('@/views/customers/CustomerCreateView.vue')
+const CustomerEditView = () => import('@/views/customers/CustomerEditView.vue')
+const CustomerDuplicateCenterView = () => import('@/views/customers/CustomerDuplicateCenterView.vue')
+const ContactListView = () => import('@/views/contacts/ContactListView.vue')
+const InquiryListView = () => import('@/views/inquiries/InquiryListView.vue')
+const InquiryEditorView = () => import('@/views/inquiries/InquiryEditorView.vue')
+const InquiryDetailView = () => import('@/views/inquiries/InquiryDetailView.vue')
+const SampleListView = () => import('@/views/samples/SampleListView.vue')
+const SampleDetailView = () => import('@/views/samples/SampleDetailView.vue')
+const SampleApplicationCreateView = () => import('@/views/samples/SampleApplicationCreateView.vue')
+const SampleDirectorReviewView = () => import('@/views/samples/SampleDirectorReviewView.vue')
+const SampleMaterialDetailView = () => import('@/views/samples/SampleMaterialDetailView.vue')
+const SampleWarehouseReviewView = () => import('@/views/samples/SampleWarehouseReviewView.vue')
+const SampleMaterialIssueView = () => import('@/views/samples/SampleMaterialIssueView.vue')
+const SampleFeeView = () => import('@/views/samples/SampleFeeView.vue')
+const SampleFulfillmentView = () => import('@/views/samples/SampleFulfillmentView.vue')
+const SampleInventoryView = () => import('@/views/samples/SampleInventoryView.vue')
+const SampleInventoryReceiptDetailView = () => import('@/views/samples/SampleInventoryReceiptDetailView.vue')
+const SampleOutboundView = () => import('@/views/samples/SampleOutboundView.vue')
+const SampleOutboundDetailView = () => import('@/views/samples/SampleOutboundDetailView.vue')
+const SampleLoanView = () => import('@/views/samples/SampleLoanView.vue')
+const SampleLoanDetailView = () => import('@/views/samples/SampleLoanDetailView.vue')
+const BomListView = () => import('@/views/boms/BomListView.vue')
+const BomCreateView = () => import('@/views/boms/BomCreateView.vue')
+const BomEditorView = () => import('@/views/boms/BomEditorView.vue')
+const BomPreviewView = () => import('@/views/boms/BomPreviewView.vue')
+const ProductionTaskListView = () => import('@/views/production/ProductionTaskListView.vue')
+const ProductionTaskCreateView = () => import('@/views/production/ProductionTaskCreateView.vue')
+const ProductionTaskDetailView = () => import('@/views/production/ProductionTaskDetailView.vue')
+const ProductionTaskEditView = () => import('@/views/production/ProductionTaskEditView.vue')
+const QuotationListView = () => import('@/views/quotations/QuotationListView.vue')
+const QuotationEditorView = () => import('@/views/quotations/QuotationEditorView.vue')
+const QuotationPackagingView = () => import('@/views/quotations/QuotationPackagingView.vue')
+const QuotationPreviewView = () => import('@/views/quotations/QuotationPreviewView.vue')
+const QuotationVersionDiffView = () => import('@/views/quotations/QuotationVersionDiffView.vue')
+const QuotationPriceHistoryView = () => import('@/views/quotations/QuotationPriceHistoryView.vue')
+const SalesOrderListView = () => import('@/views/salesOrders/SalesOrderListView.vue')
+const SalesOrderEditorView = () => import('@/views/salesOrders/SalesOrderEditorView.vue')
+const SalesOrderDetailView = () => import('@/views/salesOrders/SalesOrderDetailView.vue')
+const TaskCenterView = () => import('@/views/tasks/TaskCenterView.vue')
+const TaskDetailView = () => import('@/views/tasks/TaskDetailView.vue')
+const ComplaintListView = () => import('@/views/complaints/ComplaintListView.vue')
+const ComplaintDetailView = () => import('@/views/complaints/ComplaintDetailView.vue')
+const ReferenceDataSettingsView = () => import('@/views/settings/ReferenceDataSettingsView.vue')
+const AccessManagementView = () => import('@/views/settings/AccessManagementView.vue')
+const MasterDataCenterView = () => import('@/views/settings/MasterDataCenterView.vue')
+const NumberRulesView = () => import('@/views/settings/NumberRulesView.vue')
+const InquiryHandlingSettingsView = () => import('@/views/settings/InquiryHandlingSettingsView.vue')
+const EmailAccountSettingsView = () => import('@/views/settings/EmailAccountSettingsView.vue')
+const ProductionDataView = () => import('@/views/settings/ProductionDataView.vue')
+const ThemeSettingsView = () => import('@/views/settings/ThemeSettingsView.vue')
+const ProductInformationView = () => import('@/views/products/ProductInformationView.vue')
+const RawMaterialInformationView = () => import('@/views/products/RawMaterialInformationView.vue')
+const RawMaterialManagementView = () => import('@/views/products/RawMaterialManagementView.vue')
+const ProductManagementView = () => import('@/views/products/ProductManagementView.vue')
+const SupplierListView = () => import('@/views/procurement/SupplierListView.vue')
+const PurchaseOrderListView = () => import('@/views/procurement/PurchaseOrderListView.vue')
+const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFormView.vue')
+const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
+const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
+const PurchaseSheetTemplateSelectView = () => import('@/views/procurement/PurchaseSheetTemplateSelectView.vue')
+const SupplierPurchaseSheetListView = () => import('@/views/procurement/SupplierPurchaseSheetListView.vue')
+const SupplierPurchaseSheetEditorView = () => import('@/views/procurement/SupplierPurchaseSheetEditorView.vue')
+const PurchaseContractTemplateListView = () => import('@/views/procurement/PurchaseContractTemplateListView.vue')
+const FinishedGoodsInventoryView = () => import('@/views/inventory/FinishedGoodsInventoryView.vue')
+const FinishedGoodsOutboundFormView = () => import('@/views/inventory/FinishedGoodsOutboundFormView.vue')
+const FinishedGoodsOutboundListView = () => import('@/views/inventory/FinishedGoodsOutboundListView.vue')
+const FinishedGoodsOutboundDetailView = () => import('@/views/inventory/FinishedGoodsOutboundDetailView.vue')
+const MaterialInventoryView = () => import('@/views/inventory/MaterialInventoryView.vue')
+const MaterialInventoryDetailView = () => import('@/views/inventory/MaterialInventoryDetailView.vue')
+const MaterialPurchaseInboundView = () => import('@/views/inventory/MaterialPurchaseInboundView.vue')
+const ManualMaterialInboundView = () => import('@/views/inventory/ManualMaterialInboundView.vue')
+const MaterialQualityConfirmationView = () => import('@/views/inventory/MaterialQualityConfirmationView.vue')
+const MaterialInboundDetailView = () => import('@/views/inventory/MaterialInboundDetailView.vue')
+const PurchaseInboundListView = () => import('@/views/procurement/PurchaseInboundListView.vue')
+const WorkshopConfigurationView = () => import('@/views/workshop/WorkshopConfigurationView.vue')
+const ProductionSchedulingDetailView = () => import('@/views/workshop/ProductionSchedulingDetailView.vue')
+const ProductionSchedulingFormView = () => import('@/views/workshop/ProductionSchedulingFormView.vue')
+const ProductionSchedulingListView = () => import('@/views/workshop/ProductionSchedulingListView.vue')
+const WorkshopPlanListView = () => import('@/views/workshop/WorkshopPlanListView.vue')
+const MaterialIssueListView = () => import('@/views/workshop/material-issues/MaterialIssueListView.vue')
+const MaterialIssueFormView = () => import('@/views/workshop/material-issues/MaterialIssueFormView.vue')
+const MaterialIssueDetailView = () => import('@/views/workshop/material-issues/MaterialIssueDetailView.vue')
+const WageSchemeListView = () => import('@/views/workshop/wage-schemes/WageSchemeListView.vue')
+const WageSchemeFormView = () => import('@/views/workshop/wage-schemes/WageSchemeFormView.vue')
+const WageSchemeDetailView = () => import('@/views/workshop/wage-schemes/WageSchemeDetailView.vue')
+const WorkReportFormView = () => import('@/views/workshop/work-reports/WorkReportFormView.vue')
+const WorkReportDayListView = () => import('@/views/workshop/work-reports/WorkReportDayListView.vue')
+const WorkReportDayDetailView = () => import('@/views/workshop/work-reports/WorkReportDayDetailView.vue')
+const FactoryDetailView = () => import('@/views/outsourcing/FactoryDetailView.vue')
+const FactoryListView = () => import('@/views/outsourcing/FactoryListView.vue')
+const OutsourcingOrderDetailView = () => import('@/views/outsourcing/OutsourcingOrderDetailView.vue')
+const OutsourcingOrderFormView = () => import('@/views/outsourcing/OutsourcingOrderFormView.vue')
+const OutsourcingOrderListView = () => import('@/views/outsourcing/OutsourcingOrderListView.vue')
+const OutsourcingReworkDetailView = () => import('@/views/outsourcing/OutsourcingReworkDetailView.vue')
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -199,12 +201,12 @@ export const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: HomeView,
+      component: WorkbenchLandingView,
       meta: {
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'workbench',
-        headerTitle: '业务工作台',
+        headerTitle: '工作台',
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -212,22 +214,12 @@ export const router = createRouter({
     {
       path: '/workbench/manager',
       name: 'manager-workbench',
-      component: HomeView,
-      props: { workbenchMode: 'MANAGER' },
-      meta: {
-        requiresAuth: true, layout: 'erp', activeMenu: 'manager-workbench',
-        headerTitle: '主管工作台', pageWidth: 'fluid', flushPage: true,
-      },
+      redirect: { name: 'home' },
     },
     {
       path: '/workbench/sales',
       name: 'sales-workbench',
-      component: HomeView,
-      props: { workbenchMode: 'SALES' },
-      meta: {
-        requiresAuth: true, layout: 'erp', activeMenu: 'sales-workbench',
-        headerTitle: '业务员工作台', pageWidth: 'fluid', flushPage: true,
-      },
+      redirect: { name: 'home' },
     },
     {
       path: '/workbench/production',
@@ -1835,7 +1827,7 @@ export const router = createRouter({
   ],
 })
 
-router.beforeEach(async (to) => {
+router.beforeEach(async (to, from) => {
   if (to.name === 'internal-semi-receipt') {
     to.meta.activeMenu = to.query.plan_category === 'METAL' ? 'workshop-internal-plan' : 'material-inventory'
   }
@@ -1849,7 +1841,10 @@ router.beforeEach(async (to) => {
       return to.name === 'waiting-role' || to.name === 'wecom-error' ? true : { name: 'waiting-role' }
     }
     if (to.meta.requiresAuth) {
-      authStore.clearAuthentication()
+      if (authStore.isAuthenticated) {
+        ElMessage.error('暂时无法验证登录状态，请稍后重试。')
+        if (from.matched.length) return false
+      }
       return { name: 'login', query: { redirect: to.fullPath } }
     }
     return true
@@ -1860,12 +1855,25 @@ router.beforeEach(async (to) => {
   const wecomRedirect = wecomRouteRedirect(to.name, authStore.isAuthenticated, authStore.waitingForRole)
   if (wecomRedirect) return wecomRedirect
 
-  if (to.name === 'login' && authStore.isAuthenticated) {
+  if (to.name === 'login' && authStore.isAuthenticated && authStore.authenticationCheckedAt > 0) {
     return { name: 'home' }
   }
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (to.name === 'home') {
+    if (authStore.hasPermission('production_tasks.view_productiontask')) {
+      return { name: 'production-overview' }
+    }
+    if (authStore.user?.is_superuser || authStore.hasAnyPermission([
+      'production_scheduling.view_productionschedule',
+      'workshop_reporting.view_workreport',
+      'inventory.view_finishedgoodsreceipt',
+    ])) {
+      return { name: 'workshop-workbench' }
+    }
   }
 
   return true

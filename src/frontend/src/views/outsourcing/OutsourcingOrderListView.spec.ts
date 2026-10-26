@@ -13,7 +13,8 @@ vi.mock('@/api/outsourcing', () => ({
 }))
 vi.mock('@/api/unifiedOutsourcing', async (original) => ({ ...await original<object>(), fetchUnifiedOutsourcingOrders: api.list, fetchUnifiedOutsourcingOptions: api.options }))
 vi.mock('@/api/metalProcessingP4', () => ({ fetchP4Sources: api.sources, fetchP4Source: api.source }))
-vi.mock('./MetalProcessingP4View.vue', () => ({ default: { props: ['mode', 'embedded'], template: '<div data-testid="sources-workspace">来源工作区</div>' } }))
+vi.mock('./MetalProcessingP4View.vue', () => ({ default: { name: 'MetalProcessingP4View', props: ['mode', 'embedded'], emits: ['updated'], template: '<div data-testid="sources-workspace">来源工作区</div>' } }))
+vi.mock('@/components/outsourcing/OutsourcingPrintDialog.vue', () => ({ default: { props: ['record', 'kind'], emits: ['close'], template: '<div data-testid="print-dialog" />' } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { get is_superuser() { return permissions.superuser } }, hasPermission: (name: string) => permissions.values.includes(name) }) }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
 
@@ -74,9 +75,9 @@ describe('普通外发单列表删除入口', () => {
     const wrapper = await createView({ ...row, direct_handoff: true, can_revoke_dispatched: false })
     await wrapper.find('[aria-label="WW-001 更多操作"]').trigger('click')
     await flushPromises()
-    await vi.waitFor(() => expect(document.querySelectorAll('.el-dropdown-menu__item')).toHaveLength(1))
+    await vi.waitFor(() => expect(document.querySelectorAll('.el-dropdown-menu__item')).toHaveLength(2))
     const menuItems = [...document.querySelectorAll('.el-dropdown-menu__item')]
-    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['查看详情'])
+    expect(menuItems.map(item => item.textContent?.trim())).toEqual(['查看详情', '加工单打印'])
     menuItems[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
     expect(api.push).toHaveBeenCalledExactlyOnceWith('/workshop/outsourcing/order-1')
@@ -85,6 +86,94 @@ describe('普通外发单列表删除入口', () => {
 })
 
 describe('统一外发列表及来源入口', () => {
+  it('管材单通过更多菜单分别打印，打开指定模板不触发行跳转', async () => {
+    const wrapper = await createView({ ...row, record_type: 'TUBE', source_kind: 'TUBE_METAL', detail_access: 'TUBE' })
+    const vm = wrapper.vm as any
+    expect(wrapper.find('[aria-label="WW-001 加工单打印"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="WW-001 加工单打印"]')).not.toBeNull())
+    document.querySelector('[aria-label="WW-001 加工单打印"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(vm.printRequest.kind).toBe('processing')
+    expect(vm.printRequest.row.id).toBe(row.id)
+    expect(api.push).not.toHaveBeenCalled()
+    vm.printRequest = null
+    await flushPromises()
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="WW-001 管材喷塑打印"]')).not.toBeNull())
+    document.querySelector('[aria-label="WW-001 管材喷塑打印"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(vm.printRequest.kind).toBe('spray')
+    expect(api.push).not.toHaveBeenCalled()
+  })
+
+  it('裁片和普通单只提供加工单打印，金工投影和重加工不调用不相容接口', async () => {
+    const wrapper = await createView({ ...row, record_type: 'TUBE', source_kind: 'SEWING', detail_access: 'TUBE', craft: { name: '丝印' } })
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="WW-001 加工单打印"]')).not.toBeNull())
+    expect(document.querySelector('[aria-label="WW-001 管材喷塑打印"]')).toBeNull()
+    const vm = wrapper.vm as any
+    vm.openPrint({ ...row, record_type: 'TUBE', source_kind: 'SEWING' }, 'spray')
+    vm.openPrint({ ...row, record_type: 'REWORK' }, 'processing')
+    vm.openPrint({ ...row, detail_access: 'METAL' }, 'processing')
+    expect(vm.printRequest).toBeNull()
+  })
+
+  it('直接进入待外发材料不读取隐藏列表或筛选项，保留来源页的新建入口', async () => {
+    route.query = { tab: 'sources' }
+    const wrapper = await createView()
+    expect(wrapper.find('[data-testid="sources-workspace"]').exists()).toBe(true)
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
+    const button = (label: string) => wrapper.findAll('.heading-actions button').find(item => item.text() === label)!
+    await button('新建管材外发单').trigger('click')
+    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new')
+    await button('新建裁片外发单').trigger('click')
+    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/new?category=cutting')
+    await button('新建外发单').trigger('click')
+    await flushPromises()
+    expect(api.sources).toHaveBeenCalledExactlyOnceWith({ page: 1, page_size: 100 })
+    const vm = wrapper.vm as any
+    expect(vm.createVisible).toBe(true)
+    expect(vm.canContinueCreate).toBe(true)
+    vm.continueCreate()
+    expect(api.push).toHaveBeenLastCalledWith('/workshop/outsourcing/new')
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
+  })
+
+  it('来源操作更新不读取隐藏外发单，切回外发单重新读取最新列表及筛选项', async () => {
+    route.query = { tab: 'sources', issue_id: 'issue-1' }
+    api.replace.mockImplementation((target: { query: Record<string, string> }) => { route.query = target.query; return Promise.resolve() })
+    const wrapper = await createView()
+    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
+    await flushPromises()
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
+    await wrapper.get('#outsourcing-orders-tab').trigger('click')
+    await flushPromises()
+    expect(api.replace).toHaveBeenLastCalledWith({ path: '/workshop/outsourcing', query: { issue_id: 'issue-1' } })
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.options).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.el-table__body').text()).toContain('HT-001')
+    await wrapper.get('#outsourcing-sources-tab').trigger('click')
+    await flushPromises()
+    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
+    await flushPromises()
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.options).toHaveBeenCalledTimes(1)
+    const latestOptions = { statuses: [{ value: 'COMPLETED', label: '已完成' }], crafts: [], factories: [{ id: 'factory-new', name: '新加工厂' }] }
+    api.list.mockResolvedValueOnce({ data: [{ ...row, id: 'order-new', row_key: 'ORIGINAL:order-new', order_number: 'WW-NEW', production_task_number: 'HT-NEW' }], meta: { total: 1 } })
+    api.options.mockResolvedValueOnce(latestOptions)
+    await wrapper.get('#outsourcing-orders-tab').trigger('click')
+    await flushPromises()
+    expect(api.list).toHaveBeenCalledTimes(2)
+    expect(api.options).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.el-table__body').text()).toContain('HT-NEW')
+    expect(wrapper.find('.el-table__body').text()).not.toContain('HT-001')
+    expect((wrapper.vm as any).options).toEqual(latestOptions)
+  })
+
   it('产品材质替代品号，保留缺值和多款边界', async () => {
     const wrapper = await createView()
     const headers = wrapper.findAll('.el-table__header th').map(cell => cell.text())
@@ -159,6 +248,10 @@ describe('统一外发列表及来源入口', () => {
     route.query = { tab: 'sources', issue_id: 'issue-1' }
     await flushPromises()
     expect(wrapper.find('[data-testid="sources-workspace"]').exists()).toBe(true)
+    wrapper.findComponent({ name: 'MetalProcessingP4View' }).vm.$emit('updated')
+    await flushPromises()
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
   })
 
   it('只有普通权限不显示来源区，无查看权限不请求列表或options', async () => {
@@ -204,6 +297,7 @@ describe('统一外发列表及来源入口', () => {
   })
 
   it('金工新建来源必须真实读取且有可用支数，下一步只带来源定位', async () => {
+    route.query = { tab: 'sources' }
     const wrapper = await createView()
     const vm = wrapper.vm as any
     await vm.openCreate()
@@ -216,6 +310,8 @@ describe('统一外发列表及来源入口', () => {
     expect(api.push).toHaveBeenLastCalledWith({ path: '/workshop/outsourcing/new', query: { source_kind: 'METAL', source_issue_line_id: 'line-1' } })
     expect(api.remove).not.toHaveBeenCalled()
     expect(api.revoke).not.toHaveBeenCalled()
+    expect(api.list).not.toHaveBeenCalled()
+    expect(api.options).not.toHaveBeenCalled()
   })
 
   it('重加工从真实退回历史选择剩余可分配记录，不将原来源可用量作为新单额度', async () => {

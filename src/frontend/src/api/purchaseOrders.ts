@@ -251,7 +251,7 @@ export async function fetchSupplierPurchaseSheetPreview(id: string, signal?: Abo
 }
 
 export async function downloadSupplierPurchaseSheetPdf(id: string, signal?: AbortSignal): Promise<Blob> {
-  const { data } = await apiClient.get<Blob>(`${sheetBasePath}${id}/download-pdf/`, { responseType: 'blob', signal })
+  const { data } = await apiClient.get<Blob>(`${sheetBasePath}${id}/download-pdf/`, { params: { layout: 'current' }, responseType: 'blob', signal })
   return data
 }
 
@@ -290,7 +290,7 @@ export async function deleteSupplierPurchaseSheetSealImage(
 }
 
 export async function batchDownloadSupplierPurchaseSheets(ids: string[]): Promise<Blob> {
-  const { data } = await apiClient.post<Blob>(`${sheetBasePath}batch-download/`, { ids }, { responseType: 'blob' })
+  const { data } = await apiClient.post<Blob>(`${sheetBasePath}batch-download/`, { ids }, { params: { layout: 'current' }, responseType: 'blob' })
   return data
 }
 

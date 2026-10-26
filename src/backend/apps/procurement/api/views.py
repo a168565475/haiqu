@@ -1236,11 +1236,28 @@ class SupplierPurchaseSheetViewSet(
         )
         return self._response(self.get_queryset().get(pk=sheet.pk))
 
+    @staticmethod
+    def _use_current_pdf_layout(request):
+        layout = request.query_params.get("layout", "archived")
+        if layout not in {"current", "archived"}:
+            raise ValidationError({"layout": "PDF 版式必须为 current 或 archived。"})
+        return layout == "current"
+
+    @extend_schema(parameters=[OpenApiParameter(
+        "layout", str, enum=["current", "archived"], default="archived",
+        description="current 按已保存内容生成当前版式；archived 返回发布时归档文件。",
+    )])
     @action(detail=True, methods=["get"], url_path="download-pdf")
     def download_pdf(self, request, pk=None):
+        current_layout = self._use_current_pdf_layout(request)
         sheet = self.get_object()
         if sheet.status != SupplierPurchaseSheetStatus.PUBLISHED or sheet.pdf_file_id is None:
             raise ValidationError({"detail": "当前采购表尚未发布正式 PDF。"})
+        if current_layout:
+            # 只重排冻结内容，保留发布时的归档文件及其审计记录。
+            response = HttpResponse(build_supplier_purchase_sheet_pdf(sheet), content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{sheet.sheet_number}_V{sheet.version_number}.pdf"'
+            return response
         media_root = Path(settings.MEDIA_ROOT).resolve()
         file_path = (media_root / sheet.pdf_file.storage_key).resolve()
         if media_root not in file_path.parents or not file_path.is_file():
@@ -1366,8 +1383,13 @@ class SupplierPurchaseSheetViewSet(
         )
         return self._response(self.get_queryset().get(pk=sheet.pk), status.HTTP_201_CREATED)
 
+    @extend_schema(parameters=[OpenApiParameter(
+        "layout", str, enum=["current", "archived"], default="archived",
+        description="current 按已保存内容生成当前版式；archived 返回发布时归档文件。",
+    )])
     @action(detail=False, methods=["post"], url_path="batch-download")
     def batch_download(self, request):
+        current_layout = self._use_current_pdf_layout(request)
         raw_ids = request.data.get("ids")
         if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > 100:
             raise ValidationError({"ids": "请选择 1 至 100 张已发布采购表。"})
@@ -1385,6 +1407,12 @@ class SupplierPurchaseSheetViewSet(
         output = BytesIO()
         with ZipFile(output, "w", ZIP_DEFLATED) as archive:
             for sheet in sheets:
+                if current_layout:
+                    archive.writestr(
+                        f"{sheet.sheet_number}_V{sheet.version_number}.pdf",
+                        build_supplier_purchase_sheet_pdf(sheet),
+                    )
+                    continue
                 file_path = (media_root / sheet.pdf_file.storage_key).resolve()
                 if media_root not in file_path.parents or not file_path.is_file():
                     raise ValidationError({"ids": f"{sheet.sheet_number} 的正式 PDF 不存在。"})

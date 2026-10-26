@@ -44,6 +44,10 @@
 .access-actions {display:flex;align-items:center;gap:14px;}
 .access-notice {margin:14px 16px 0;padding:8px 12px;background:t.$crm-color-subtle;border-left:3px solid t.$crm-primary;color:t.$crm-text-regular;font-size:12px;flex:none;}
 .access-toolbar {padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex:none;}
+.access-bulk-check {display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;font-weight:400;}
+.access-module-controls {display:flex;align-items:center;gap:12px;}
+.access-page .access-bulk-hint {margin:0 16px 10px;font-size:12px;flex:none;}
+.access-row-select {display:grid;grid-template-columns:14px minmax(0,1fr);align-items:start;column-gap:8px;input[type='checkbox']{margin-top:3px;}}
 .access-tablewrap {flex:1;min-height:0;overflow:auto;padding:0 16px 14px;scrollbar-width:thin;overscroll-behavior:contain;}
 .access-matrix {min-width:1240px;}
 .access-main-cell {font-size:13px!important;line-height:20px!important;color:t.$crm-text-primary!important;small{display:block;font-size:11px;line-height:16px;color:t.$crm-text-muted;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}}

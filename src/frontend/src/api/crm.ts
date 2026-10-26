@@ -26,16 +26,6 @@ export interface CommunicationCreateInput {
   contact_participant_ids?: string[]
 }
 
-export interface TaskCreateInput {
-  assignee_employee_id: string
-  title: string
-  description: string
-  priority: 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
-  due_at: string
-  source_type: 'CUSTOMER' | 'COMMUNICATION'
-  source_id: string
-}
-
 export async function fetchCustomerCommunications(
   customerId: string,
   params: Record<string, unknown> = {},
@@ -52,14 +42,6 @@ export async function createCommunication(
 ): Promise<CommunicationItem> {
   const { data } = await apiClient.post<ApiDataResponse<CommunicationItem>>(
     '/api/v1/communications/',
-    payload,
-  )
-  return data.data
-}
-
-export async function createTask(payload: TaskCreateInput): Promise<Record<string, unknown>> {
-  const { data } = await apiClient.post<ApiDataResponse<Record<string, unknown>>>(
-    '/api/v1/tasks/',
     payload,
   )
   return data.data

@@ -36,14 +36,14 @@ const settingsEntries = [
 ] as const
 
 const secondaryIconKeys: Record<string, string[]> = {
-  workbench: ['manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench'],
+  workbench: ['production-workbench', 'production-overview', 'workshop-workbench'],
   'customer-management': ['customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'analytics'],
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['products', 'product-catalog', 'raw-materials', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'purchase-inbounds', 'purchase-returns'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
-  'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'defective-inventory', 'inventory-warning'],
+  'warehouse-management': ['finished-goods-inventory', 'material-inventory'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
@@ -154,8 +154,9 @@ describe('全局悬停侧栏', () => {
         renderedKeys.push(key)
       }
     }
-    expect(renderedKeys).toHaveLength(40)
-    expect(new Set(renderedKeys).size).toBe(40)
+    const expectedCount = Object.values(secondaryIconKeys).flat().length
+    expect(renderedKeys).toHaveLength(expectedCount)
+    expect(new Set(renderedKeys).size).toBe(expectedCount)
   })
 
   it('二级悬停复用一个背景，不改变当前路由或选中项', async () => {
@@ -178,8 +179,6 @@ describe('全局悬停侧栏', () => {
 
   it.each([
     ['customer', 'complaints', 'analytics'],
-    ['warehouse', 'material-inventory', 'defective-inventory'],
-    ['warehouse', 'material-inventory', 'inventory-warning'],
   ])('从 %s 的 %s 移入待开放项 %s 时清除背景且不产生导航', async (groupKey, enabledKey, disabledKey) => {
     const { router } = await setup()
     await group(groupKey).trigger('focus')
@@ -190,6 +189,23 @@ describe('全局悬停侧栏', () => {
     await disabled.trigger('mouseenter')
     expect(disabled.attributes('aria-disabled')).toBe('true')
     expect(disabled.attributes('href')).toBeUndefined()
+    expect(plate.attributes('data-hover-menu-key')).toBe('')
+    expect((plate.element as HTMLElement).style.opacity).toBe('0')
+    expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
+  })
+
+  it.each(['defective-inventory', 'inventory-warning'])('仓库未开放入口 %s 不显示或进入焦点，离开菜单清除悬停背景', async missingKey => {
+    const { router } = await setup()
+    await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
+    expect(panel().find(`[data-menu-key="${missingKey}"]`).exists()).toBe(false)
+    expect(panel().findAll('a, button, [tabindex]').map(item => item.attributes('data-menu-key'))).toEqual([
+      'finished-goods-inventory', 'material-inventory',
+    ])
+    expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
+    const plate = panel().get('[data-sidebar-hover-plate]')
+    await panel().get('[data-menu-key="material-inventory"]').trigger('mouseenter')
+    expect(plate.attributes('data-hover-menu-key')).toBe('material-inventory')
+    await panel().get('.app-sidebar__flyout-menu').trigger('mouseleave')
     expect(plate.attributes('data-hover-menu-key')).toBe('')
     expect((plate.element as HTMLElement).style.opacity).toBe('0')
     expect(router.currentRoute.value.name).toBe('workshop-metalworking-plan')
@@ -263,27 +279,27 @@ describe('全局悬停侧栏', () => {
     await panel().get('[data-menu-key="product-catalog"]').trigger('click'); await flushPromises()
     expect(router.currentRoute.value.name).toBe('product-catalog')
   })
-  it('管理员可从工作台分组分别打开主管版和业务员版', async () => {
+  it('管理员工作台分组隐藏主管与业务员版，保留生产入口', async () => {
     const { router } = await setup()
     await wrapper.get('[data-menu-key="workbench"]').trigger('click')
-    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['主管工作台', '业务员工作台', '生产负责人工作台', '生产总览', '车间主管工作台'])
-    await panel().get('[data-menu-key="sales-workbench"]').trigger('click')
+    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['生产负责人工作台', '生产总览', '车间主管工作台'])
+    await panel().get('[data-menu-key="production-overview"]').trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.name).toBe('sales-workbench')
+    expect(router.currentRoute.value.name).toBe('production-overview')
     expect(wrapper.get('[data-menu-key="workbench"]').classes()).toContain('is-active')
     await wrapper.get('[data-menu-key="workbench"]').trigger('focus')
-    await panel().get('[data-menu-key="manager-workbench"]').trigger('click')
+    await panel().get('[data-menu-key="production-workbench"]').trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.name).toBe('manager-workbench')
+    expect(router.currentRoute.value.name).toBe('production-workbench')
   })
 
-  it('业务员只看到自己的工作台入口，无查看权限时不显示分组', async () => {
+  it('仅有客户权限时隐藏工作台分组，保留客户入口', async () => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, username: 'sales', is_superuser: false,
       permissions: ['customers.view_customeraccount'] }
     await nextTick()
-    await wrapper.get('[data-menu-key="workbench"]').trigger('click')
-    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual(['业务员工作台'])
+    expect(wrapper.find('[data-menu-key="workbench"]').exists()).toBe(false)
+    expect(wrapper.find('[data-menu-key="customer-management"]').exists()).toBe(true)
     auth.user = { ...auth.user!, permissions: [] }
     await nextTick()
     expect(wrapper.find('[data-menu-key="workbench"]').exists()).toBe(false)
@@ -313,14 +329,13 @@ describe('全局悬停侧栏', () => {
   })
 
   it.each([
-    ['manager-workbench', '/workbench/manager', '主管工作台', 'MANAGER'],
-    ['sales-workbench', '/workbench/sales', '业务员工作台', 'SALES'],
-  ])('%s 路由固定工作台版本并提供独立页签', (name, path, title, mode) => {
+    ['manager-workbench', '/workbench/manager'],
+    ['sales-workbench', '/workbench/sales'],
+  ])('%s 旧链接保留但转至首页，不恢复旧页签', (name, path) => {
     const resolved = applicationRouter.resolve({ name })
     expect(resolved.path).toBe(path)
-    expect(resolved.matched.at(-1)?.props.default).toEqual({ workbenchMode: mode })
-    expect(createPageTab(resolved)?.title).toBe(title)
-    expect(createPageTab(resolved)?.id).not.toBe(createPageTab(applicationRouter.resolve({ name: 'home' }))?.id)
+    expect(resolved.matched.at(-1)?.redirect).toEqual({ name: 'home' })
+    expect(createPageTab(resolved)).toBeNull()
   })
 
   it('点击看板只展开四个演示入口，不跳转当前业务页面且不要求业务权限', async () => {

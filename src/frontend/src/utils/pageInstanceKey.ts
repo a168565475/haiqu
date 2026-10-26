@@ -12,6 +12,6 @@ export function pageInstanceKey(
   if (customerReadRoutes.has(name) && typeof customerId === 'string' && customerId) {
     return `${userId || ''}:customer-read:${customerId}`
   }
-  // 员工页与权限页自行消费定位参数，清除参数时保留已定位的页码和分配窗口。
-  return `${userId || ''}:${name === 'inquiries' || name === 'access-management' || name === 'employee-list' ? route.path : route.fullPath}`
+  // 这些页面自行处理查询参数，地址变化时保留筛选、页码或分配窗口。
+  return `${userId || ''}:${name === 'inquiries' || name === 'access-management' || name === 'employee-list' || name === 'complaints' ? route.path : route.fullPath}`
 }

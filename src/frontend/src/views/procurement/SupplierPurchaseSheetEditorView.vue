@@ -26,7 +26,7 @@ import PurchaseSheetPublishConfirm from '@/components/procurement/PurchaseSheetP
 import publishedLock from '@/assets/procurement/published-lock.svg'
 import { purchaseSheetPageStatus } from '@/composables/purchaseSheetPageStatus'
 import type { SupplierPurchaseSheet, SupplierPurchaseSheetContent, SupplierPurchaseSheetLine } from '@/types/purchaseOrder'
-import { materialAttributeFields } from '@/utils/materialAttributes'
+import { formatPurchaseSheetNumber, purchaseSheetLineDisplay, purchaseSheetSourceFields } from '@/utils/purchaseSheetLineDisplay'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -103,7 +103,7 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 
 function money(value: number | string | null): string {
   if (value === null) return '待结算'
-  return `¥${Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+  return `¥${formatPurchaseSheetNumber(typeof value === 'number' ? value.toFixed(4) : value)}`
 }
 
 function syncCalculatedAmounts(): void {
@@ -133,6 +133,7 @@ function normalizeContent(snapshot: SupplierPurchaseSheetContent): SupplierPurch
   if (isPublished.value) return { ...snapshot, quality_standards: snapshot.quality_standards || legacyTerms }
   return {
     ...snapshot,
+    lines: snapshot.lines.map(line => ({ ...line, quantity: formatPurchaseSheetNumber(line.quantity, line.quantity), unit_price: formatPurchaseSheetNumber(line.unit_price, line.unit_price) })),
     payment_and_delivery: snapshot.payment_and_delivery || '乙方应在约定采购交期前将货物送达甲方指定地点；付款方式以双方最终确认内容为准。',
     quality_standards: snapshot.quality_standards?.length ? snapshot.quality_standards : (legacyTerms.slice(0, 2).length ? legacyTerms.slice(0, 2) : ['产品应符合双方确认的规格、样品及质量要求。']),
     delivery_handover: snapshot.delivery_handover || '乙方送货至甲方指定地点并按约定完成验收交接。',
@@ -492,21 +493,28 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
             <p class="legal-row">{{ legalBasisText }}</p>
             <div class="section-heading">一、采购产品名称、规格、数量、单价及金额</div>
             <table class="reference-contract-table">
-              <colgroup><col class="col-index"><col class="col-product"><col class="col-spec"><col class="col-requirement"><col class="col-quantity"><col class="col-price"><col class="col-amount"></colgroup>
-              <thead><tr><th>序号</th><th>产品名称</th><th>产品规格</th><th>{{ isPublished ? '颜色或要求' : '颜色/要求' }}</th><th>数量</th><th>含税单价<br>（元）</th><th>总金额<br>（元）</th></tr></thead>
+              <colgroup><col class="col-product"><col class="col-spec"><col class="col-attributes"><col class="col-color"><col class="col-quantity"><col class="col-price"><col class="col-amount"></colgroup>
+              <thead><tr><th>产品名称</th><th>产品规格</th><th>物料属性</th><th>颜色</th><th>数量</th><th>含税单价<br>（元）</th><th>金额<br>（元）</th></tr></thead>
               <tbody>
-                <tr v-for="(line, index) in content.lines" :key="line.source_purchase_order_line_id">
-                  <td class="center-cell">{{ index + 1 }}</td>
+                <tr v-for="line in content.lines" :key="line.source_purchase_order_line_id">
                   <td><span v-if="isPublished" class="readonly-value">{{ line.part_name || '—' }}</span><ElInput v-else v-model="line.part_name" :disabled="!editable || busy" aria-label="产品名称" /></td>
                   <td>
-                    <div v-if="line.section_title || line.material_attributes_snapshot?.fields?.length" class="bom-source-block">
-                      <strong>{{ line.section_title || '—' }}</strong>
-                      <span v-for="field in materialAttributeFields(line)" :key="field.key">{{ field.label }}：{{ field.value }}</span>
-                    </div>
-                    <span v-if="isPublished" class="readonly-value">{{ line.specification || '—' }}</span><ElInput v-else v-model="line.specification" type="textarea" autosize :disabled="!editable || busy" aria-label="产品规格" />
+                    <span v-if="isPublished" class="readonly-value">{{ purchaseSheetLineDisplay(line, content.order.source_type === 'SAMPLE').specification || '—' }}</span>
+                    <ElInput v-else v-model="line.specification" type="textarea" autosize :disabled="!editable || busy" aria-label="产品规格" />
                   </td>
-                  <td><span v-if="isPublished" class="readonly-value">{{ line.material || '—' }}{{ content.order.source_type === 'SAMPLE' && line.remark ? '；' + line.remark : '' }}</span><template v-else><ElInput v-model="line.material" type="textarea" autosize :disabled="!editable || busy" :aria-label="content.order.source_type === 'SAMPLE' ? '样品材质要求' : '颜色和要求'" /><ElInput v-if="content.order.source_type === 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="样品颜色" placeholder="颜色" /></template></td>
-                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell"><template v-if="line.measurement_kind === 'PIPE'">{{ line.actual_bar_count == null ? '根数未记录' : `${line.actual_bar_count} 根` }}<small style="display:block">{{ line.quantity }} 米 · {{ line.raw_bar_length_m }} 米/根</small></template><template v-else>{{ line.quantity }} {{ line.unit }}</template></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
+                  <td>
+                    <span v-if="isPublished" class="readonly-value">{{ purchaseSheetLineDisplay(line, content.order.source_type === 'SAMPLE').attributes || '—' }}</span>
+                    <div v-else class="line-attribute-editor">
+                      <label><span>材质</span><ElInput v-model="line.material" type="textarea" autosize :disabled="!editable || busy" aria-label="产品材质" /></label>
+                      <span v-if="purchaseSheetSourceFields(line, content.order.source_type === 'SAMPLE').attributes.length">{{ purchaseSheetSourceFields(line, content.order.source_type === 'SAMPLE').attributes.map(field => `${field.label}：${field.value}`).join('；') }}</span>
+                      <ElInput v-if="content.order.source_type !== 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="补充要求" placeholder="补充要求" />
+                    </div>
+                  </td>
+                  <td>
+                    <ElInput v-if="!isPublished && content.order.source_type === 'SAMPLE'" v-model="line.remark" type="textarea" autosize :disabled="!editable || busy" aria-label="样品颜色" placeholder="颜色" />
+                    <span v-else class="readonly-value">{{ purchaseSheetLineDisplay(line, content.order.source_type === 'SAMPLE').color || '—' }}</span>
+                  </td>
+                  <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell"><template v-if="line.measurement_kind === 'PIPE'">{{ line.actual_bar_count == null ? '根数未记录' : `${formatPurchaseSheetNumber(line.actual_bar_count)} 根` }}<small style="display:block">{{ formatPurchaseSheetNumber(line.quantity) }} 米 · {{ formatPurchaseSheetNumber(line.raw_bar_length_m) }} 米/根</small></template><template v-else>{{ formatPurchaseSheetNumber(line.quantity) }} {{ line.unit }}</template></span><div v-else class="quantity-editor"><ElInput v-model="line.quantity" :disabled="!editable || busy" aria-label="数量" @input="syncCalculatedAmounts" /><span>{{ line.unit }}</span></div></td>
                   <td><span v-if="isPublished || line.measurement_kind === 'PIPE'" class="readonly-value center-cell">{{ line.unit_price ? money(line.unit_price).replace('¥', '') : '—' }}{{ line.measurement_kind === 'PIPE' ? ' 元/米' : '' }}</span><ElInput v-else v-model="line.unit_price" :disabled="!editable || busy" aria-label="含税单价" @input="syncCalculatedAmounts" /></td>
                   <td class="amount-cell">{{ content.settlement_mode === 'ACTUAL_WEIGHT' ? '待结算' : money(line.amount).replace('¥', '') }}</td>
                 </tr>
@@ -609,8 +617,8 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .reference-contract-table th,.reference-contract-table td { box-sizing: border-box; border-right: 1px solid crm.$crm-text-primary; border-bottom: 1px solid crm.$crm-text-primary; padding: 0; vertical-align: middle; }
 .reference-contract-table th:last-child,.reference-contract-table td:last-child { border-right: 0; }
 .reference-contract-table th { height: 52px; padding: 3px; text-align: center; font-size: 14px; line-height: 22px; }
-.reference-contract-table td { height: 38px; }
-.col-index { width: 6.971%; }.col-product { width: 18.75%; }.col-spec { width: 18.51%; }.col-requirement { width: 13.942%; }.col-quantity,.col-price { width: 13.702%; }.col-amount { width: 14.423%; }
+.reference-contract-table td { height: 38px; font-size: 14px; line-height: 20px; }
+.col-product { width: 14%; }.col-spec { width: 23%; }.col-attributes { width: 24%; }.col-color { width: 12%; }.col-quantity,.col-price,.col-amount { width: 9%; }
 .center-cell,.amount-cell { text-align: center; }
 .contract-sheet :deep(.el-input__wrapper),.contract-sheet :deep(.el-textarea__inner) { padding: 4px 12px; border-radius: 0; box-shadow: none; background: transparent; font: 16px/24px crm.$crm-font-body; }
 .contract-sheet :deep(.el-input__inner) { color: crm.$crm-text-primary; font-size: 16px; }
@@ -627,7 +635,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .quantity-editor :deep(.el-input__inner) { text-align: right; }
 .quantity-editor span { white-space: nowrap; }
 .reference-contract-table td:nth-child(6) :deep(.el-input__inner) { text-align: center; }
-.media-total-row { display: grid; grid-template-columns: 24.038% 47.836% 13.702% 14.424%; min-height: 170px; border-bottom: 1px solid crm.$crm-text-primary; box-sizing: border-box; }
+.media-total-row { display: grid; grid-template-columns: 24% 58% 9% 9%; min-height: 170px; border-bottom: 1px solid crm.$crm-text-primary; box-sizing: border-box; }
 .media-total-row > div { box-sizing: border-box; border-right: 1px solid crm.$crm-text-primary; }
 .media-total-row > div:last-child { border-right: none; }
 .contract-image-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 8px; text-align: center; }
@@ -654,22 +662,23 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .published-notice img { width: 22px; height: 24px; flex: none; }
 .published-notice strong { font-size: 20px; color: crm.$crm-success; }
 .is-published .editor-layout { grid-template-columns: 422px minmax(0,1fr); gap: 11px; }
-.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 20px 23px; display: flex; flex-direction: column; gap: 16px; @include detail.surface; font-size: 18px; line-height: 28px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
+.published-info { box-sizing: border-box; min-height: 0; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; @include detail.surface; font-size: 14px; line-height: 22px; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: var(--erp-scrollbar-thumb) var(--erp-scrollbar-track); }
 .published-info > * { flex: none; }
 .published-info > .panel-back-button { align-self: flex-start; }
-.published-info h2 { margin: 0; font-size: 22px; line-height: 32px; }
+.published-info h2 { margin: 0; font-size: 16px; line-height: 24px; }
 .published-info dl { margin: 0; }
-.published-info dl > div { display: grid; grid-template-columns: 148px minmax(0,1fr); min-height: 41px; align-items: center; }
+.published-info dl > div { display: grid; grid-template-columns: 112px minmax(0,1fr); min-height: 30px; align-items: center; }
 .published-info dt { color: crm.$crm-text-secondary; }
 .published-info dd { margin: 0; min-width: 0; }
 .published-info .published-status { color: crm.$crm-success; }
-.published-info .published-amount { font-size: 16px; }
-.published-parties { display: flex; flex-direction: column; gap: 18px; border-top: 1px solid crm.$crm-border-default; padding-top: 16px; }
+.published-info .published-amount { font-size: 14px; }
+.published-info .panel-actions { margin-top: 12px; }
+.published-parties { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid crm.$crm-border-default; padding-top: 12px; }
 .published-parties p { margin: 0; color: crm.$crm-text-secondary; }
-.published-other { border-top: 1px solid crm.$crm-border-default; padding-top: 16px; }
-.published-other h2 { margin-bottom: 14px; }
+.published-other { border-top: 1px solid crm.$crm-border-default; padding-top: 12px; }
+.published-other h2 { margin-bottom: 8px; }
 .published-other dl > div { align-items: start; }
-.published-other small { display: block; margin-top: 4px; font-size: 16px; color: crm.$crm-text-muted; }
+.published-other small { display: block; margin-top: 2px; font-size: 12px; line-height: 18px; color: crm.$crm-text-muted; }
 .is-published .canvas-area { padding: 11px 0 32px; }
 .is-published .a4-canvas { width: 953px; min-height: 1317.15px; margin: 0 0 0 110px; padding: 29.85px 32.15px 34.44px; box-shadow: 0 2px 12px color-mix(in srgb, var(--erp-shadow-color) 3.137%, transparent); }
 .is-published .contract-sheet { font-size: 17.09px; line-height: 25.636px; }
@@ -679,13 +688,14 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .is-published .party-row p { line-height: 28.55px; }
 .is-published .legal-row { min-height: 73.48px; padding: 6.4px 17.09px; font-size: 14.954px; line-height: 23.5px; }
 .is-published .section-heading { min-height: 39.04px; padding: 6.7px 17.09px; }
-.is-published .reference-contract-table th { height: 57.41px; font-size: 15px; line-height: 23.5px; }
-.is-published .reference-contract-table td { height: 41.335px; }
-.readonly-value { display: block; padding: 6px 12px; white-space: pre-wrap; }
-.bom-source-block { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px 4px; color: crm.$crm-text-secondary; font-size: 12px; line-height: 18px; white-space: pre-wrap; }
-.bom-source-block strong { color: crm.$crm-text-primary; font-size: 13px; }
+.is-published .reference-contract-table th { height: 44px; font-size: 14px; line-height: 20px; }
+.is-published .reference-contract-table td { height: 40px; }
+.readonly-value { display: block; padding: 4px 8px; white-space: pre-wrap; }
+.line-attribute-editor { display: grid; gap: 2px; padding: 4px 8px; }
+.line-attribute-editor label { display: grid; grid-template-columns: 28px minmax(0,1fr); align-items: center; gap: 4px; }
+.line-attribute-editor :deep(.el-textarea__inner) { padding: 2px 4px; min-height: 24px !important; font-size: 14px; line-height: 20px; }
 .is-published .media-total-row { min-height: 126.3px; }
-.is-published .media-total-row.without-image { grid-template-columns: 72.35% 13.44% 14.21%; }
+.is-published .media-total-row.without-image { grid-template-columns: 82% 9% 9%; }
 .is-published .contract-remark-cell { padding: 9.19px 20px 12px 17.09px; gap: 6.89px; }
 .readonly-remark { box-sizing: border-box; min-height: 71.19px; margin: 0; padding: 8px 12px; border: 1px solid crm.$crm-border-default; border-radius: 3.45px; white-space: pre-wrap; }
 .is-published .clause-row { min-height: 73.48px; padding: 8.54px 17.09px; }

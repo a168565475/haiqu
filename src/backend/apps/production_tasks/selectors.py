@@ -163,7 +163,7 @@ def legacy_accessible_production_tasks(request):
     ).distinct()
 
 
-def production_tasks_with_context(queryset=None, *, include_progress=False, list_mode=False):
+def production_tasks_with_context(queryset=None, *, include_progress=False, list_mode=False, include_bom_details=False):
     if queryset is None:
         queryset = ProductionTask.objects.all()
     related = [
@@ -208,6 +208,12 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
     from apps.procurement.models import PurchaseRequest
     from apps.procurement.selectors import active_purchase_orders, purchase_orders_with_product_ids
 
+    boms = Bom.objects.filter(archived_at__isnull=True).order_by(
+        "product_line_id", "-version_number", "-created_at", "-id"
+    )
+    if include_bom_details:
+        boms = boms.select_related("product_line", "product_line__product_color", "confirmed_by_employee")
+
     return queryset.prefetch_related(
         Prefetch(
             "purchase_orders",
@@ -216,10 +222,8 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
         ),
         Prefetch(
             "boms",
-            queryset=Bom.objects.filter(archived_at__isnull=True).order_by(
-                "product_line_id", "-version_number", "-created_at", "-id"
-            ),
-            to_attr="_active_boms_for_status",
+            queryset=boms,
+            to_attr="_active_boms_with_details" if include_bom_details else "_active_boms_for_status",
         ),
         Prefetch(
             "purchase_requests",

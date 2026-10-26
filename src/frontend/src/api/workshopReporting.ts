@@ -26,8 +26,8 @@ export async function fetchScheduleProgressStatuses(params: { schedule_ids: stri
   const { data } = await apiClient.get<DataResponse<ScheduleProgressStatus[]>>(`${basePath}schedule-progress-statuses/`, { params })
   return data.data
 }
-export async function fetchWageSchemes(params: Record<string, unknown> = {}): Promise<Paginated<WageScheme>> {
-  const { data } = await apiClient.get<Paginated<WageScheme>>(`${basePath}wage-schemes/`, { params })
+export async function fetchWageSchemes(params: Record<string, unknown> = {}, signal?: AbortSignal): Promise<Paginated<WageScheme>> {
+  const { data } = await apiClient.get<Paginated<WageScheme>>(`${basePath}wage-schemes/`, { params, ...(signal ? { signal } : {}) })
   return data
 }
 export async function fetchWageSchemeHistory(params: Record<string, unknown> = {}): Promise<Paginated<WageScheme>> {

@@ -21,12 +21,38 @@ describe('BOM 预览按编辑分区展示', () => {
     expect(result.some(column => /material_number|raw_material|source_serial|material_code/.test(column.key))).toBe(false)
   })
 
-  it('管材按 BOM 数量重新计算，与编辑一致，不读失效的历史结果', () => {
+  it('新管材按净需求及 BOM 数量计算，与编辑一致，不读失效的历史结果', () => {
     const row = line({ length_value: '530', unit_consumption: '2', tube_cut_piece_count: '5', total_consumption: '999', branch_count: '999', tube_cut_length_m: '999', suggested_purchase_meters: '999' })
     const part = section('管材类', 'PROFILE')
     const value = (key: string) => bomPreviewCell(row, key, part, '5000.0000', [])
-    expect([value('total_consumption'), value('tube_cut_length_m'), value('branch_count'), value('suggested_purchase_meters')]).toEqual(['10000', '2.70', '2020', '5454.00'])
+    expect([value('total_consumption'), value('tube_cut_length_m'), value('branch_count'), value('suggested_purchase_meters')]).toEqual(['10000', '2.70', '2000', '5400.00'])
     expect(bomPreviewCell({ ...row, tube_cut_piece_count: '' }, 'branch_count', part, '5000', [])).toBe('—')
+  })
+
+  it.each([undefined, 2, 3])('已保存管材按版本 %s 预览，未标记旧行保留 1%% 余量', version => {
+    const row = line({
+      length_value: '530', unit_consumption: '2', tube_cut_piece_count: '5',
+      cutting_length_mm: 530, pieces_per_product: 2, pieces_per_bar: 5,
+      raw_values: version === undefined ? {} : { pipe_plan_version: String(version) },
+    })
+    const before = structuredClone(row)
+    const value = (key: string) => bomPreviewCell(row, key, section('管材类', 'PROFILE'), '5000', [])
+    expect([value('branch_count'), value('suggested_purchase_meters')]).toEqual(
+      version === 3 ? ['2000', '5400.00'] : ['2020', '5454.00'],
+    )
+    expect(row).toEqual(before)
+  })
+
+  it('编辑旧行参数后按新规则预览，不改写已保存旧行的计算基准', () => {
+    const saved = line({
+      length_value: '530', unit_consumption: '2', tube_cut_piece_count: '5',
+      cutting_length_mm: 530, pieces_per_product: 2, pieces_per_bar: 5, raw_values: {},
+    })
+    const before = structuredClone(saved)
+    const edited = { ...saved, length_value: '531' }
+    const value = (key: string) => bomPreviewCell(edited, key, section('管材类', 'PROFILE'), '5000', [], saved)
+    expect([value('branch_count'), value('tube_cut_length_m'), value('suggested_purchase_meters')]).toEqual(['2000', '2.71', '5420.00'])
+    expect(saved).toEqual(before)
   })
 
   it('空名称不以原料编号代替；颜色与零值按实际字段展示', () => {

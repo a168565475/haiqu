@@ -745,14 +745,16 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
 
         latest_by_product_line = []
         seen_product_lines = set()
-        queryset = Bom.objects.filter(
-            production_task=instance,
-            archived_at__isnull=True,
-        ).select_related(
-            "product_line",
-            "product_line__product_color",
-            "confirmed_by_employee",
-        ).order_by("product_line_id", "-version_number", "-created_at", "-id")
+        queryset = getattr(instance, "_active_boms_with_details", None)
+        if queryset is None:
+            queryset = Bom.objects.filter(
+                production_task=instance,
+                archived_at__isnull=True,
+            ).select_related(
+                "product_line",
+                "product_line__product_color",
+                "confirmed_by_employee",
+            ).order_by("product_line_id", "-version_number", "-created_at", "-id")
         for bom in queryset:
             if bom.product_line_id in seen_product_lines:
                 continue
@@ -862,7 +864,9 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
         if cached is not None:
             return cached
 
-        boms = getattr(instance, "_active_boms_for_status", None)
+        boms = getattr(instance, "_active_boms_with_details", None)
+        if boms is None:
+            boms = getattr(instance, "_active_boms_for_status", None)
         if boms is None:
             boms = list(
                 instance.boms.filter(archived_at__isnull=True).order_by(

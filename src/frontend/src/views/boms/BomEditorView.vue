@@ -48,7 +48,6 @@ import type {
   BomDraftLineImage,
   BomEditorReferenceOptions,
   BomHardwareMaterial,
-  BomHardwareMaterialGroup,
   BomLine,
   BomLineImage,
   BomLineInput,
@@ -67,7 +66,7 @@ import { createProductionDataRecord } from '@/api/productionData'
 import { pipePlan, pipePlanForBomLine } from '@/utils/materialFlow'
 import { cuttingCalculation, cuttingCompatibilityValues, legacyPipeCuttingValues } from '@/utils/bomCuttingQuantities'
 import { cuttingSpecificationError } from '@/utils/cuttingSpecification'
-import { matchesPinyinSearch } from '@/utils/pinyinSearch'
+import { useBomMaterialCandidates } from './useBomMaterialCandidates'
 import type {
   TubeCoatingColor,
   TubeDiameter,
@@ -106,6 +105,9 @@ const activeSectionIndex = ref(0)
 const selectedLineIndex = ref(0)
 const quantityReason = ref('')
 const loading = ref(true)
+let bomLoadGeneration = 0
+let bomLoadController: AbortController | undefined
+let disposed = false
 const saving = ref(false)
 const syncingQuantity = ref(false)
 const verifying = ref(false)
@@ -177,42 +179,10 @@ const editingLineIsNew = ref(false)
 const advancingLineDrawer = ref(false)
 const calculatingLine = ref(false)
 let advancingLineUnlockTimer: number | undefined
-const hardwarePickerVisible = ref(false)
-const hardwarePickerLoading = ref(false)
-const hardwarePickerError = ref('')
-const hardwareGroupLoading = ref(false)
-const hardwareGroupError = ref('')
-const hardwareGroups = ref<BomHardwareMaterialGroup[]>([])
-const hardwareGroupFilterKeyword = ref('')
-const hardwarePickerMaterialName = ref('')
-const hardwarePickerKeyword = ref('')
 const hardwareCreateVisible = ref(false)
 const plasticCreateVisible = ref(false)
 const packagingCreateVisible = ref(false)
 const cuttingCreateVisible = ref(false)
-const hardwarePickerPage = ref(1)
-const hardwarePickerPageSize = ref(50)
-const hardwarePickerTotal = ref(0)
-const hardwareCandidates = ref<BomHardwareMaterial[]>([])
-const selectedHardware = ref<Record<string, BomHardwareMaterial>>({})
-let hardwarePickerRequestId = 0
-let hardwareGroupRequestId = 0
-const plasticPickerVisible = ref(false)
-const plasticPickerLoading = ref(false)
-const plasticPickerError = ref('')
-const plasticGroupLoading = ref(false)
-const plasticGroupError = ref('')
-const plasticGroups = ref<BomHardwareMaterialGroup[]>([])
-const plasticGroupFilterKeyword = ref('')
-const plasticPickerMaterialName = ref('')
-const plasticPickerKeyword = ref('')
-const plasticPickerPage = ref(1)
-const plasticPickerPageSize = ref(50)
-const plasticPickerTotal = ref(0)
-const plasticCandidates = ref<BomPlasticMaterial[]>([])
-const selectedPlastic = ref<Record<string, BomPlasticMaterial>>({})
-let plasticPickerRequestId = 0
-let plasticGroupRequestId = 0
 const editorReferenceOptions = ref<BomEditorReferenceOptions | null>(null)
 const editorReferenceOptionsLoading = ref(false)
 const editorReferenceOptionsError = ref('')
@@ -224,36 +194,6 @@ const auxiliaryPickerKeyword = ref('')
 const auxiliaryPickerPage = ref(1)
 const auxiliaryPickerPageSize = ref(50)
 const selectedAuxiliaryProducts = ref<Record<string, BomAuxiliaryProductOption>>({})
-const packagingPickerVisible = ref(false)
-const packagingPickerLoading = ref(false)
-const packagingPickerError = ref('')
-const packagingGroupLoading = ref(false)
-const packagingGroupError = ref('')
-const packagingGroups = ref<BomHardwareMaterialGroup[]>([])
-const packagingGroupFilterKeyword = ref('')
-const packagingPickerMaterialName = ref('')
-const packagingPickerKeyword = ref('')
-const packagingPickerPage = ref(1)
-const packagingPickerPageSize = ref(50)
-const packagingPickerTotal = ref(0)
-const packagingCandidates = ref<BomPackagingMaterial[]>([])
-const selectedPackaging = ref<Record<string, BomPackagingMaterial>>({})
-let packagingPickerRequestId = 0
-let packagingGroupRequestId = 0
-const cuttingPickerVisible = ref(false)
-const cuttingPickerLoading = ref(false)
-const cuttingPickerError = ref('')
-const cuttingGroupLoading = ref(false)
-const cuttingGroupError = ref('')
-const cuttingGroups = ref<BomHardwareMaterialGroup[]>([])
-const cuttingGroupFilterKeyword = ref('')
-const cuttingPickerMaterialName = ref('')
-const cuttingPickerKeyword = ref('')
-const cuttingPickerPage = ref(1)
-const cuttingPickerPageSize = ref(50)
-const cuttingPickerTotal = ref(0)
-const cuttingCandidates = ref<BomSemiFinishedMaterial[]>([])
-const selectedCutting = ref<Record<string, BomSemiFinishedMaterial>>({})
 type RawMaterialTarget = 'hardware' | 'plastic' | 'packaging' | 'cutting'
 const pendingRawMaterials = ref<Record<string, { target: RawMaterialTarget; payload: RawMaterialInput; candidate: BomHardwareMaterial }>>({})
 
@@ -269,8 +209,100 @@ function pendingLineValues(item: BomHardwareMaterial): Partial<BomLineInput> {
   const pending = pendingRawMaterials.value[item.id]
   return pending ? { client_key: item.id, pending_raw_material: { ...pending.payload } } : {}
 }
-let cuttingPickerRequestId = 0
-let cuttingGroupRequestId = 0
+const hardwarePicker = useBomMaterialCandidates({
+  label: '五金', fetchCandidates: fetchBomHardwareMaterials, fetchGroups: fetchBomHardwareMaterialGroups,
+  mergeCandidates: (rows, query) => withPendingMaterials('hardware', rows, query.q || '', query.material_name || ''),
+  errorMessage: apiError,
+})
+const {
+  visible: hardwarePickerVisible, loading: hardwarePickerLoading,
+  error: hardwarePickerError, groupLoading: hardwareGroupLoading,
+  groupError: hardwareGroupError,
+  materialName: hardwarePickerMaterialName, keyword: hardwarePickerKeyword,
+  page: hardwarePickerPage, pageSize: hardwarePickerPageSize,
+  total: hardwarePickerTotal, candidates: hardwareCandidates,
+  selected: selectedHardware, visibleGroups: visibleHardwareGroups,
+  selectedCount: selectedHardwareCount, pageAllSelected: hardwarePageAllSelected,
+  pageSelectionIndeterminate: hardwarePageSelectionIndeterminate, loadCandidates: loadHardwareCandidates,
+  loadGroups: loadHardwareGroups, search: searchHardwareCandidates,
+  changePage: changeHardwarePage, filterGroups: filterHardwareGroups,
+  clearGroupFilter: clearHardwareGroupFilter, toggleCandidate: toggleHardwareCandidate,
+  toggleRow: toggleHardwareRow, rowClass: hardwarePickerRowClass,
+  togglePage: toggleHardwarePage, onClosed: resetHardwarePickerState,
+} = hardwarePicker
+
+const plasticPicker = useBomMaterialCandidates({
+  label: '塑料件', fetchCandidates: fetchBomPlasticMaterials, fetchGroups: fetchBomPlasticMaterialGroups,
+  mergeCandidates: (rows, query) => withPendingMaterials('plastic', rows, query.q || '', query.material_name || ''),
+  errorMessage: apiError,
+})
+const {
+  visible: plasticPickerVisible, loading: plasticPickerLoading,
+  error: plasticPickerError, groupLoading: plasticGroupLoading,
+  groupError: plasticGroupError,
+  materialName: plasticPickerMaterialName, keyword: plasticPickerKeyword,
+  page: plasticPickerPage, pageSize: plasticPickerPageSize,
+  total: plasticPickerTotal, candidates: plasticCandidates,
+  selected: selectedPlastic, visibleGroups: visiblePlasticGroups,
+  selectedCount: selectedPlasticCount, pageAllSelected: plasticPageAllSelected,
+  pageSelectionIndeterminate: plasticPageSelectionIndeterminate, loadCandidates: loadPlasticCandidates,
+  loadGroups: loadPlasticGroups, search: searchPlasticCandidates,
+  changePage: changePlasticPage, filterGroups: filterPlasticGroups,
+  clearGroupFilter: clearPlasticGroupFilter, toggleCandidate: togglePlasticCandidate,
+  toggleRow: togglePlasticRow, rowClass: plasticPickerRowClass,
+  togglePage: togglePlasticPage, onClosed: resetPlasticPicker,
+} = plasticPicker
+
+const packagingPicker = useBomMaterialCandidates({
+  label: '包材', fetchCandidates: fetchBomPackagingMaterials, fetchGroups: fetchBomPackagingMaterialGroups,
+  mergeCandidates: (rows, query) => withPendingMaterials('packaging', rows, query.q || '', query.material_name || ''),
+  errorMessage: apiError,
+})
+const {
+  visible: packagingPickerVisible, loading: packagingPickerLoading,
+  error: packagingPickerError, groupLoading: packagingGroupLoading,
+  groupError: packagingGroupError,
+  materialName: packagingPickerMaterialName, keyword: packagingPickerKeyword,
+  page: packagingPickerPage, pageSize: packagingPickerPageSize,
+  total: packagingPickerTotal, candidates: packagingCandidates,
+  selected: selectedPackaging, visibleGroups: visiblePackagingGroups,
+  selectedCount: selectedPackagingCount, pageAllSelected: packagingPageAllSelected,
+  pageSelectionIndeterminate: packagingPageSelectionIndeterminate, loadCandidates: loadPackagingCandidates,
+  loadGroups: loadPackagingGroups, search: searchPackagingCandidates,
+  changePage: changePackagingPage, filterGroups: filterPackagingGroups,
+  clearGroupFilter: clearPackagingGroupFilter, toggleCandidate: togglePackagingCandidate,
+  toggleRow: togglePackagingRow, rowClass: packagingPickerRowClass,
+  togglePage: togglePackagingPage, onClosed: resetPackagingPicker,
+} = packagingPicker
+
+const cuttingPicker = useBomMaterialCandidates({
+  label: '裁剪', fetchCandidates: fetchBomSemiFinishedMaterials, fetchGroups: fetchBomSemiFinishedMaterialGroups,
+  mergeCandidates: (rows, query) => withPendingMaterials('cutting', rows, query.q || '', query.material_name || ''),
+  errorMessage: apiError,
+})
+const {
+  visible: cuttingPickerVisible, loading: cuttingPickerLoading,
+  error: cuttingPickerError, groupLoading: cuttingGroupLoading,
+  groupError: cuttingGroupError,
+  materialName: cuttingPickerMaterialName, keyword: cuttingPickerKeyword,
+  page: cuttingPickerPage, pageSize: cuttingPickerPageSize,
+  total: cuttingPickerTotal, candidates: cuttingCandidates,
+  selected: selectedCutting, visibleGroups: visibleCuttingGroups,
+  selectedCount: selectedCuttingCount, pageAllSelected: cuttingPageAllSelected,
+  pageSelectionIndeterminate: cuttingPageSelectionIndeterminate, loadCandidates: loadCuttingCandidates,
+  loadGroups: loadCuttingGroups, search: searchCuttingCandidates,
+  changePage: changeCuttingPage, filterGroups: filterCuttingGroups,
+  clearGroupFilter: clearCuttingGroupFilter, toggleCandidate: toggleCuttingCandidate,
+  toggleRow: toggleCuttingRow, rowClass: cuttingPickerRowClass,
+  togglePage: toggleCuttingPage, onClosed: resetCuttingPicker,
+} = cuttingPicker
+
+function resetHardwarePicker() {
+  if (hardwarePickerVisible.value) return
+  resetHardwarePickerState()
+  hardwareCreateVisible.value = false
+}
+
 const uploadingCuttingImagesLineId = ref('')
 const deletingCuttingImageId = ref('')
 const cleaningCuttingDraftImages = ref(false)
@@ -407,30 +439,6 @@ const materialReferenceHint = computed(() => (
               : '材质、规格以来源原材料为准；切割长度、单耗和每根切割支数填写整数'
 ))
 
-function filteredMaterialGroups(groups: BomHardwareMaterialGroup[], keyword: string) {
-  return groups.filter((group) => matchesPinyinSearch(group.material_name, group.pinyin_search, keyword))
-}
-
-const visibleHardwareGroups = computed(() => filteredMaterialGroups(hardwareGroups.value, hardwareGroupFilterKeyword.value))
-const visiblePlasticGroups = computed(() => filteredMaterialGroups(plasticGroups.value, plasticGroupFilterKeyword.value))
-const visiblePackagingGroups = computed(() => filteredMaterialGroups(packagingGroups.value, packagingGroupFilterKeyword.value))
-const visibleCuttingGroups = computed(() => filteredMaterialGroups(cuttingGroups.value, cuttingGroupFilterKeyword.value))
-const selectedHardwareCount = computed(() => Object.keys(selectedHardware.value).length)
-const hardwarePageSelectedCount = computed(() => hardwareCandidates.value.filter((item) => selectedHardware.value[item.id]).length)
-const hardwarePageAllSelected = computed(() => (
-  hardwareCandidates.value.length > 0 && hardwarePageSelectedCount.value === hardwareCandidates.value.length
-))
-const hardwarePageSelectionIndeterminate = computed(() => (
-  hardwarePageSelectedCount.value > 0 && !hardwarePageAllSelected.value
-))
-const selectedPlasticCount = computed(() => Object.keys(selectedPlastic.value).length)
-const plasticPageSelectedCount = computed(() => plasticCandidates.value.filter((item) => selectedPlastic.value[item.id]).length)
-const plasticPageAllSelected = computed(() => (
-  plasticCandidates.value.length > 0 && plasticPageSelectedCount.value === plasticCandidates.value.length
-))
-const plasticPageSelectionIndeterminate = computed(() => (
-  plasticPageSelectedCount.value > 0 && !plasticPageAllSelected.value
-))
 const auxiliaryFilteredCandidates = computed(() => {
   const keyword = auxiliaryPickerKeyword.value.trim().toLocaleLowerCase('zh-CN')
   const products = (editorReferenceOptions.value?.auxiliary_products || []).filter((item) => (
@@ -463,22 +471,6 @@ const auxiliaryPageAllSelected = computed(() => (
 ))
 const auxiliaryPageSelectionIndeterminate = computed(() => (
   auxiliaryPageSelectedCount.value > 0 && !auxiliaryPageAllSelected.value
-))
-const selectedPackagingCount = computed(() => Object.keys(selectedPackaging.value).length)
-const packagingPageSelectedCount = computed(() => packagingCandidates.value.filter((item) => selectedPackaging.value[item.id]).length)
-const packagingPageAllSelected = computed(() => (
-  packagingCandidates.value.length > 0 && packagingPageSelectedCount.value === packagingCandidates.value.length
-))
-const packagingPageSelectionIndeterminate = computed(() => (
-  packagingPageSelectedCount.value > 0 && !packagingPageAllSelected.value
-))
-const selectedCuttingCount = computed(() => Object.keys(selectedCutting.value).length)
-const cuttingPageSelectedCount = computed(() => cuttingCandidates.value.filter((item) => selectedCutting.value[item.id]).length)
-const cuttingPageAllSelected = computed(() => (
-  cuttingCandidates.value.length > 0 && cuttingPageSelectedCount.value === cuttingCandidates.value.length
-))
-const cuttingPageSelectionIndeterminate = computed(() => (
-  cuttingPageSelectedCount.value > 0 && !cuttingPageAllSelected.value
 ))
 const editingSection = computed(() => sections.value[editingSectionIndex.value] || null)
 function pipeMaterialAttributeKey(line: BomLineInput) {
@@ -905,120 +897,9 @@ function formatHardwareColor(value: string) {
   return value
 }
 
-function filterHardwareGroups(value: string) {
-  hardwareGroupFilterKeyword.value = value
-}
-
-function filterPlasticGroups(value: string) {
-  plasticGroupFilterKeyword.value = value
-}
-
-function filterPackagingGroups(value: string) {
-  packagingGroupFilterKeyword.value = value
-}
-
-function filterCuttingGroups(value: string) {
-  cuttingGroupFilterKeyword.value = value
-}
-
-function clearHardwareGroupFilter(visible: boolean) {
-  if (!visible) hardwareGroupFilterKeyword.value = ''
-}
-
-function clearPlasticGroupFilter(visible: boolean) {
-  if (!visible) plasticGroupFilterKeyword.value = ''
-}
-
-function clearPackagingGroupFilter(visible: boolean) {
-  if (!visible) packagingGroupFilterKeyword.value = ''
-}
-
-function clearCuttingGroupFilter(visible: boolean) {
-  if (!visible) cuttingGroupFilterKeyword.value = ''
-}
-
-async function loadHardwareGroups() {
-  const requestId = ++hardwareGroupRequestId
-  hardwareGroupLoading.value = true
-  hardwareGroupError.value = ''
-  try {
-    hardwareGroups.value = await fetchBomHardwareMaterialGroups()
-  } catch (error) {
-    if (requestId !== hardwareGroupRequestId) return
-    hardwareGroups.value = []
-    hardwareGroupError.value = apiError(error, '五金品名分组加载失败，请稍后重试。')
-  } finally {
-    if (requestId === hardwareGroupRequestId) hardwareGroupLoading.value = false
-  }
-}
-
-async function loadHardwareCandidates() {
-  const requestId = ++hardwarePickerRequestId
-  hardwarePickerLoading.value = true
-  hardwarePickerError.value = ''
-  try {
-    const response = await fetchBomHardwareMaterials({
-      page: hardwarePickerPage.value,
-      page_size: hardwarePickerPageSize.value,
-      q: hardwarePickerKeyword.value.trim() || undefined,
-      material_name: hardwarePickerMaterialName.value || undefined,
-    })
-    if (requestId !== hardwarePickerRequestId) return
-    hardwareCandidates.value = withPendingMaterials('hardware', response.data, hardwarePickerKeyword.value, hardwarePickerMaterialName.value)
-    hardwarePickerTotal.value = response.meta.total
-  } catch (error) {
-    if (requestId !== hardwarePickerRequestId) return
-    hardwareCandidates.value = withPendingMaterials('hardware', [], hardwarePickerKeyword.value, hardwarePickerMaterialName.value)
-    hardwarePickerTotal.value = 0
-    hardwarePickerError.value = apiError(error, '五金数据加载失败，请稍后重试。')
-  } finally {
-    if (requestId === hardwarePickerRequestId) hardwarePickerLoading.value = false
-  }
-}
-
 function openHardwarePicker() {
   if (!canEdit.value || !isHardwareSection.value) return
-  hardwarePickerKeyword.value = ''
-  hardwarePickerMaterialName.value = ''
-  hardwareGroupFilterKeyword.value = ''
-  hardwarePickerPage.value = 1
-  selectedHardware.value = {}
-  hardwarePickerVisible.value = true
-  void Promise.all([loadHardwareGroups(), loadHardwareCandidates()])
-}
-
-function searchHardwareCandidates() {
-  hardwarePickerPage.value = 1
-  void loadHardwareCandidates()
-}
-
-function changeHardwarePage(page: number) {
-  hardwarePickerPage.value = page
-  void loadHardwareCandidates()
-}
-
-function toggleHardwareCandidate(item: BomHardwareMaterial, selected: boolean | string | number) {
-  const next = { ...selectedHardware.value }
-  if (Boolean(selected)) next[item.id] = item
-  else delete next[item.id]
-  selectedHardware.value = next
-}
-
-function toggleHardwareRow(item: BomHardwareMaterial) {
-  toggleHardwareCandidate(item, !selectedHardware.value[item.id])
-}
-
-function hardwarePickerRowClass({ row }: { row: BomHardwareMaterial }) {
-  return selectedHardware.value[row.id] ? 'is-picker-selected' : ''
-}
-
-function toggleHardwarePage(selected: boolean | string | number) {
-  const next = { ...selectedHardware.value }
-  for (const item of hardwareCandidates.value) {
-    if (Boolean(selected)) next[item.id] = item
-    else delete next[item.id]
-  }
-  selectedHardware.value = next
+  void hardwarePicker.open()
 }
 
 function hardwareLine(item: BomHardwareMaterial): BomLineInput {
@@ -1084,127 +965,44 @@ function openRawMaterialCreate(target: 'plastic' | 'packaging' | 'cutting') {
   if (target === 'cutting') cuttingCreateVisible.value = true
 }
 
+function appendMaterialSelection(
+  picker: ReturnType<typeof useBomMaterialCandidates>,
+  targetSection: BomSectionInput,
+  sourceField: 'source_raw_material_id' | 'source_packaging_material_id' | 'source_cutting_material_id',
+  mapLine: (item: BomHardwareMaterial) => BomLineInput,
+) {
+  const chosen = Object.values(picker.selected.value)
+  if (!chosen.length) {
+    ElMessage.warning(`请至少选择一条${picker.label}数据。`)
+    return
+  }
+  const existingSourceIds = new Set(targetSection.lines.map(line => line.pending_raw_material ? line.client_key : line[sourceField]).filter(Boolean))
+  const newLines = chosen.filter(item => !existingSourceIds.has(item.id)).map(mapLine)
+  if (!newLines.length) {
+    ElMessage.info(`所选${picker.label}数据已在当前分区中。`)
+    return
+  }
+  targetSection.lines.push(...newLines)
+  picker.visible.value = false
+  return { newLines, skippedCount: chosen.length - newLines.length }
+}
+
 function confirmHardwareSelection() {
   const targetSection = activeSection.value
   if (!targetSection || targetSection.title !== '五金件') {
     ElMessage.error('当前五金件分区已变化，请关闭选择窗口后重试。')
     return
   }
-  const chosen = Object.values(selectedHardware.value)
-  if (!chosen.length) {
-    ElMessage.warning('请至少选择一条五金数据。')
-    return
-  }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_raw_material_id).filter(Boolean))
-  const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(hardwareLine)
-  if (!newLines.length) {
-    ElMessage.info('所选五金数据已在当前分区中。')
-    return
-  }
-  targetSection.lines.push(...newLines)
-  hardwarePickerVisible.value = false
-  const skippedCount = chosen.length - newLines.length
+  const selection = appendMaterialSelection(hardwarePicker, targetSection, 'source_raw_material_id', hardwareLine)
+  if (!selection) return
+  const { newLines, skippedCount } = selection
+
   ElMessage.success(`已添加 ${newLines.length} 条五金数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}。`)
-}
-
-function resetHardwarePicker() {
-  hardwarePickerRequestId += 1
-  hardwareGroupRequestId += 1
-  hardwarePickerLoading.value = false
-  hardwareGroupLoading.value = false
-  hardwarePickerError.value = ''
-  hardwareGroupError.value = ''
-  hardwareCandidates.value = []
-  hardwareGroups.value = []
-  hardwarePickerTotal.value = 0
-  hardwarePickerMaterialName.value = ''
-  hardwareGroupFilterKeyword.value = ''
-  hardwareCreateVisible.value = false
-  selectedHardware.value = {}
-}
-
-async function loadPlasticCandidates() {
-  const requestId = ++plasticPickerRequestId
-  plasticPickerLoading.value = true
-  plasticPickerError.value = ''
-  try {
-    const response = await fetchBomPlasticMaterials({
-      page: plasticPickerPage.value,
-      page_size: plasticPickerPageSize.value,
-      q: plasticPickerKeyword.value.trim() || undefined,
-      material_name: plasticPickerMaterialName.value || undefined,
-    })
-    if (requestId !== plasticPickerRequestId) return
-    plasticCandidates.value = withPendingMaterials('plastic', response.data, plasticPickerKeyword.value, plasticPickerMaterialName.value)
-    plasticPickerTotal.value = response.meta.total
-  } catch (error) {
-    if (requestId !== plasticPickerRequestId) return
-    plasticCandidates.value = withPendingMaterials('plastic', [], plasticPickerKeyword.value, plasticPickerMaterialName.value)
-    plasticPickerTotal.value = 0
-    plasticPickerError.value = apiError(error, '塑料件数据加载失败，请稍后重试。')
-  } finally {
-    if (requestId === plasticPickerRequestId) plasticPickerLoading.value = false
-  }
-}
-
-async function loadPlasticGroups() {
-  const requestId = ++plasticGroupRequestId
-  plasticGroupLoading.value = true
-  plasticGroupError.value = ''
-  try {
-    plasticGroups.value = await fetchBomPlasticMaterialGroups()
-  } catch (error) {
-    if (requestId !== plasticGroupRequestId) return
-    plasticGroups.value = []
-    plasticGroupError.value = apiError(error, '塑料件品名分组加载失败，请稍后重试。')
-  } finally {
-    if (requestId === plasticGroupRequestId) plasticGroupLoading.value = false
-  }
 }
 
 function openPlasticPicker() {
   if (!canEdit.value || !isPlasticSection.value) return
-  plasticPickerKeyword.value = ''
-  plasticPickerMaterialName.value = ''
-  plasticGroupFilterKeyword.value = ''
-  plasticPickerPage.value = 1
-  selectedPlastic.value = {}
-  plasticPickerVisible.value = true
-  void Promise.all([loadPlasticGroups(), loadPlasticCandidates()])
-}
-
-function searchPlasticCandidates() {
-  plasticPickerPage.value = 1
-  void loadPlasticCandidates()
-}
-
-function changePlasticPage(page: number) {
-  plasticPickerPage.value = page
-  void loadPlasticCandidates()
-}
-
-function togglePlasticCandidate(item: BomPlasticMaterial, selected: boolean | string | number) {
-  const next = { ...selectedPlastic.value }
-  if (Boolean(selected)) next[item.id] = item
-  else delete next[item.id]
-  selectedPlastic.value = next
-}
-
-function togglePlasticRow(item: BomPlasticMaterial) {
-  togglePlasticCandidate(item, !selectedPlastic.value[item.id])
-}
-
-function plasticPickerRowClass({ row }: { row: BomPlasticMaterial }) {
-  return selectedPlastic.value[row.id] ? 'is-picker-selected' : ''
-}
-
-function togglePlasticPage(selected: boolean | string | number) {
-  const next = { ...selectedPlastic.value }
-  for (const item of plasticCandidates.value) {
-    if (Boolean(selected)) next[item.id] = item
-    else delete next[item.id]
-  }
-  selectedPlastic.value = next
+  void plasticPicker.open()
 }
 
 function plasticLine(item: BomPlasticMaterial): BomLineInput {
@@ -1228,120 +1026,16 @@ function confirmPlasticSelection() {
     ElMessage.error('当前塑料件分区已变化，请关闭选择窗口后重试。')
     return
   }
-  const chosen = Object.values(selectedPlastic.value)
-  if (!chosen.length) {
-    ElMessage.warning('请至少选择一条塑料件数据。')
-    return
-  }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_raw_material_id).filter(Boolean))
-  const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(plasticLine)
-  if (!newLines.length) {
-    ElMessage.info('所选塑料件数据已在当前分区中。')
-    return
-  }
-  targetSection.lines.push(...newLines)
-  plasticPickerVisible.value = false
-  const skippedCount = chosen.length - newLines.length
+  const selection = appendMaterialSelection(plasticPicker, targetSection, 'source_raw_material_id', plasticLine)
+  if (!selection) return
+  const { newLines, skippedCount } = selection
+
   ElMessage.success(`已添加 ${newLines.length} 条塑料件数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}。`)
-}
-
-function resetPlasticPicker() {
-  plasticPickerRequestId += 1
-  plasticGroupRequestId += 1
-  plasticPickerLoading.value = false
-  plasticGroupLoading.value = false
-  plasticPickerError.value = ''
-  plasticGroupError.value = ''
-  plasticCandidates.value = []
-  plasticGroups.value = []
-  plasticPickerTotal.value = 0
-  plasticPickerMaterialName.value = ''
-  plasticGroupFilterKeyword.value = ''
-  selectedPlastic.value = {}
-}
-
-async function loadPackagingGroups() {
-  const requestId = ++packagingGroupRequestId
-  packagingGroupLoading.value = true
-  packagingGroupError.value = ''
-  try {
-    packagingGroups.value = await fetchBomPackagingMaterialGroups()
-  } catch (error) {
-    if (requestId !== packagingGroupRequestId) return
-    packagingGroups.value = []
-    packagingGroupError.value = apiError(error, '包材品名分组加载失败，请稍后重试。')
-  } finally {
-    if (requestId === packagingGroupRequestId) packagingGroupLoading.value = false
-  }
-}
-
-async function loadPackagingCandidates() {
-  const requestId = ++packagingPickerRequestId
-  packagingPickerLoading.value = true
-  packagingPickerError.value = ''
-  try {
-    const response = await fetchBomPackagingMaterials({
-      page: packagingPickerPage.value,
-      page_size: packagingPickerPageSize.value,
-      q: packagingPickerKeyword.value.trim() || undefined,
-      material_name: packagingPickerMaterialName.value || undefined,
-    })
-    if (requestId !== packagingPickerRequestId) return
-    packagingCandidates.value = withPendingMaterials('packaging', response.data, packagingPickerKeyword.value, packagingPickerMaterialName.value)
-    packagingPickerTotal.value = response.meta.total
-  } catch (error) {
-    if (requestId !== packagingPickerRequestId) return
-    packagingCandidates.value = withPendingMaterials('packaging', [], packagingPickerKeyword.value, packagingPickerMaterialName.value)
-    packagingPickerTotal.value = 0
-    packagingPickerError.value = apiError(error, '包材数据加载失败，请稍后重试。')
-  } finally {
-    if (requestId === packagingPickerRequestId) packagingPickerLoading.value = false
-  }
 }
 
 function openPackagingPicker() {
   if (!canEdit.value || !isPackagingSection.value) return
-  packagingPickerMaterialName.value = ''
-  packagingPickerKeyword.value = ''
-  packagingGroupFilterKeyword.value = ''
-  packagingPickerPage.value = 1
-  selectedPackaging.value = {}
-  packagingPickerVisible.value = true
-  void Promise.all([loadPackagingGroups(), loadPackagingCandidates()])
-}
-
-function searchPackagingCandidates() {
-  packagingPickerPage.value = 1
-  void loadPackagingCandidates()
-}
-
-function changePackagingPage(page: number) {
-  packagingPickerPage.value = page
-  void loadPackagingCandidates()
-}
-
-function togglePackagingCandidate(item: BomPackagingMaterial, selected: boolean | string | number) {
-  const next = { ...selectedPackaging.value }
-  if (Boolean(selected)) next[item.id] = item
-  else delete next[item.id]
-  selectedPackaging.value = next
-}
-
-function togglePackagingRow(item: BomPackagingMaterial) {
-  togglePackagingCandidate(item, !selectedPackaging.value[item.id])
-}
-
-function packagingPickerRowClass({ row }: { row: BomPackagingMaterial }) {
-  return selectedPackaging.value[row.id] ? 'is-picker-selected' : ''
-}
-
-function togglePackagingPage(selected: boolean | string | number) {
-  const next = { ...selectedPackaging.value }
-  for (const item of packagingCandidates.value) {
-    if (Boolean(selected)) next[item.id] = item
-    else delete next[item.id]
-  }
-  selectedPackaging.value = next
+  void packagingPicker.open()
 }
 
 function packagingLine(item: BomPackagingMaterial): BomLineInput {
@@ -1366,121 +1060,16 @@ function confirmPackagingSelection() {
     ElMessage.error('当前包材分区已变化，请关闭选择窗口后重试。')
     return
   }
-  const chosen = Object.values(selectedPackaging.value)
-  if (!chosen.length) {
-    ElMessage.warning('请至少选择一条包材数据。')
-    return
-  }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_packaging_material_id).filter(Boolean))
-  const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(packagingLine)
-  if (!newLines.length) {
-    ElMessage.info('所选包材数据已在当前分区中。')
-    return
-  }
-  targetSection.lines.push(...newLines)
-  packagingPickerVisible.value = false
-  const skippedCount = chosen.length - newLines.length
+  const selection = appendMaterialSelection(packagingPicker, targetSection, 'source_packaging_material_id', packagingLine)
+  if (!selection) return
+  const { newLines, skippedCount } = selection
+
   ElMessage.success(`已添加 ${newLines.length} 条包材数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}，请填写箱数和单个用量。`)
-}
-
-function resetPackagingPicker() {
-  packagingPickerRequestId += 1
-  packagingGroupRequestId += 1
-  packagingPickerLoading.value = false
-  packagingGroupLoading.value = false
-  packagingPickerError.value = ''
-  packagingGroupError.value = ''
-  packagingCandidates.value = []
-  packagingGroups.value = []
-  packagingPickerTotal.value = 0
-  packagingPickerMaterialName.value = ''
-  packagingPickerKeyword.value = ''
-  packagingGroupFilterKeyword.value = ''
-  selectedPackaging.value = {}
-}
-
-async function loadCuttingGroups() {
-  const requestId = ++cuttingGroupRequestId
-  cuttingGroupLoading.value = true
-  cuttingGroupError.value = ''
-  try {
-    cuttingGroups.value = await fetchBomSemiFinishedMaterialGroups()
-  } catch (error) {
-    if (requestId !== cuttingGroupRequestId) return
-    cuttingGroups.value = []
-    cuttingGroupError.value = apiError(error, '裁剪品名分组加载失败，请稍后重试。')
-  } finally {
-    if (requestId === cuttingGroupRequestId) cuttingGroupLoading.value = false
-  }
-}
-
-async function loadCuttingCandidates() {
-  const requestId = ++cuttingPickerRequestId
-  cuttingPickerLoading.value = true
-  cuttingPickerError.value = ''
-  try {
-    const response = await fetchBomSemiFinishedMaterials({
-      page: cuttingPickerPage.value,
-      page_size: cuttingPickerPageSize.value,
-      q: cuttingPickerKeyword.value.trim() || undefined,
-      material_name: cuttingPickerMaterialName.value || undefined,
-    })
-    if (requestId !== cuttingPickerRequestId) return
-    cuttingCandidates.value = withPendingMaterials('cutting', response.data, cuttingPickerKeyword.value, cuttingPickerMaterialName.value)
-    cuttingPickerTotal.value = response.meta.total
-  } catch (error) {
-    if (requestId !== cuttingPickerRequestId) return
-    cuttingCandidates.value = withPendingMaterials('cutting', [], cuttingPickerKeyword.value, cuttingPickerMaterialName.value)
-    cuttingPickerTotal.value = 0
-    cuttingPickerError.value = apiError(error, '裁剪数据加载失败，请稍后重试。')
-  } finally {
-    if (requestId === cuttingPickerRequestId) cuttingPickerLoading.value = false
-  }
 }
 
 function openCuttingPicker() {
   if (!canEdit.value || !isCuttingSection.value) return
-  cuttingPickerMaterialName.value = ''
-  cuttingPickerKeyword.value = ''
-  cuttingGroupFilterKeyword.value = ''
-  cuttingPickerPage.value = 1
-  selectedCutting.value = {}
-  cuttingPickerVisible.value = true
-  void Promise.all([loadCuttingGroups(), loadCuttingCandidates()])
-}
-
-function searchCuttingCandidates() {
-  cuttingPickerPage.value = 1
-  void loadCuttingCandidates()
-}
-
-function changeCuttingPage(page: number) {
-  cuttingPickerPage.value = page
-  void loadCuttingCandidates()
-}
-
-function toggleCuttingCandidate(item: BomSemiFinishedMaterial, selected: boolean | string | number) {
-  const next = { ...selectedCutting.value }
-  if (Boolean(selected)) next[item.id] = item
-  else delete next[item.id]
-  selectedCutting.value = next
-}
-
-function toggleCuttingRow(item: BomSemiFinishedMaterial) {
-  toggleCuttingCandidate(item, !selectedCutting.value[item.id])
-}
-
-function cuttingPickerRowClass({ row }: { row: BomSemiFinishedMaterial }) {
-  return selectedCutting.value[row.id] ? 'is-picker-selected' : ''
-}
-
-function toggleCuttingPage(selected: boolean | string | number) {
-  const next = { ...selectedCutting.value }
-  for (const item of cuttingCandidates.value) {
-    if (Boolean(selected)) next[item.id] = item
-    else delete next[item.id]
-  }
-  selectedCutting.value = next
+  void cuttingPicker.open()
 }
 
 function createDraftKey() {
@@ -1523,39 +1112,13 @@ function confirmCuttingSelection() {
     ElMessage.error('当前裁剪分区已变化，请关闭选择窗口后重试。')
     return
   }
-  const chosen = Object.values(selectedCutting.value)
-  if (!chosen.length) {
-    ElMessage.warning('请至少选择一条裁剪数据。')
-    return
-  }
-  const existingSourceIds = new Set(targetSection.lines.map((line) => line.pending_raw_material ? line.client_key : line.source_cutting_material_id).filter(Boolean))
-  const newLines = chosen.filter((item) => !existingSourceIds.has(item.id)).map(cuttingLine)
-  if (!newLines.length) {
-    ElMessage.info('所选裁剪数据已在当前分区中。')
-    return
-  }
-  targetSection.lines.push(...newLines)
-  cuttingPickerVisible.value = false
+  const selection = appendMaterialSelection(cuttingPicker, targetSection, 'source_cutting_material_id', cuttingLine)
+  if (!selection) return
+  const { newLines, skippedCount } = selection
   // 新增裁剪行立即打开编辑窗口，先补齐来源面料、每套片数和每成品套数。
   openLineDrawer(targetSection.lines.length - newLines.length)
-  const skippedCount = chosen.length - newLines.length
-  ElMessage.success(`已添加 ${newLines.length} 条裁剪数据，请补齐参数后保存 BOM${skippedCount ? `；跳过 ${skippedCount} 条重复数据` : ''}。`)
-}
 
-function resetCuttingPicker() {
-  cuttingPickerRequestId += 1
-  cuttingGroupRequestId += 1
-  cuttingPickerLoading.value = false
-  cuttingGroupLoading.value = false
-  cuttingPickerError.value = ''
-  cuttingGroupError.value = ''
-  cuttingCandidates.value = []
-  cuttingGroups.value = []
-  cuttingPickerTotal.value = 0
-  cuttingPickerMaterialName.value = ''
-  cuttingPickerKeyword.value = ''
-  cuttingGroupFilterKeyword.value = ''
-  selectedCutting.value = {}
+  ElMessage.success(`已添加 ${newLines.length} 条裁剪数据，请补齐参数后保存 BOM${skippedCount ? `；跳过 ${skippedCount} 条重复数据` : ''}。`)
 }
 
 async function ensureEditorReferenceOptions() {
@@ -1884,28 +1447,48 @@ function isTemporaryBomLoadError(error: unknown) {
   return [500, 502, 503, 504].includes(error.response.status)
 }
 
-function waitBeforeBomReload(attempt: number) {
-  return new Promise<void>((resolve) => {
+function waitBeforeBomReload(attempt: number, signal: AbortSignal) {
+  if (signal.aborted) return Promise.resolve(false)
+  return new Promise<boolean>((resolve) => {
     const retryDelays = [0, 750, 1500, 2500]
-    window.setTimeout(resolve, retryDelays[attempt] ?? 2500)
+    const cancel = () => {
+      window.clearTimeout(timer)
+      resolve(false)
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', cancel)
+      resolve(true)
+    }, retryDelays[attempt] ?? 2500)
+    signal.addEventListener('abort', cancel, { once: true })
   })
 }
 
-async function fetchBomForEditWithRetry(bomId: string) {
+async function fetchBomForEditWithRetry(bomId: string, signal: AbortSignal) {
   const maximumAttempts = 4
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    if (signal.aborted) return
     try {
-      return await fetchBomForEdit(bomId)
+      return await fetchBomForEdit(bomId, signal)
     } catch (error) {
+      if (signal.aborted) return
       if (!isTemporaryBomLoadError(error) || attempt === maximumAttempts) throw error
-      await waitBeforeBomReload(attempt)
+      if (!await waitBeforeBomReload(attempt, signal)) return
     }
   }
   throw new Error('BOM 加载重试失败。')
 }
 
 async function loadBom() {
+  if (disposed) return
+  const generation = ++bomLoadGeneration
+  bomLoadController?.abort()
+  const controller = new AbortController()
+  bomLoadController = controller
+  syncingQuantity.value = false
+  productConfirmVisible.value = false
+  productInfoVisible.value = false
   const bomId = String(route.params.bomId || '')
+  const isCurrentLoad = () => !disposed && generation === bomLoadGeneration && bomId === String(route.params.bomId || '')
   if (!bomId) {
     errorMessage.value = '缺少 BOM 编号。'
     loading.value = false
@@ -1915,14 +1498,18 @@ async function loadBom() {
   errorMessage.value = ''
   let shouldPromptQuantitySync = false
   try {
-    const result = await fetchBomForEditWithRetry(bomId)
+    const result = await fetchBomForEditWithRetry(bomId, controller.signal)
+    // 取消请求不保证响应尚未到达，仍需拦住旧加载结果及其确认弹窗。
+    if (!result || !isCurrentLoad()) return
     applyVersioned(result)
     shouldPromptQuantitySync = result.data.is_order_quantity_outdated || result.data.is_order_product_outdated
   } catch (error) {
-    errorMessage.value = apiError(error)
+    if (isCurrentLoad()) errorMessage.value = apiError(error)
+    return
   } finally {
-    loading.value = false
+    if (isCurrentLoad()) loading.value = false
   }
+  if (!isCurrentLoad()) return
   if (bom.value && !bom.value.product_information_confirmed) openProductConfirmDialog()
   if (shouldPromptQuantitySync) void requestOrderQuantitySync(true)
 }
@@ -1930,6 +1517,10 @@ async function loadBom() {
 async function requestOrderQuantitySync(automatic = false) {
   const currentBom = bom.value
   if (!(currentBom?.is_order_quantity_outdated || currentBom?.is_order_product_outdated) || !canEdit.value || syncingQuantity.value) return
+  const generation = bomLoadGeneration
+  const currentEtag = etag.value
+  const isCurrentSync = () => !disposed && generation === bomLoadGeneration && currentBom.id === String(route.params.bomId || '')
+  if (!isCurrentSync()) return
   if (automatic) {
     if (automaticallyPromptedBomId.value === currentBom.id) return
     automaticallyPromptedBomId.value = currentBom.id
@@ -1955,20 +1546,22 @@ async function requestOrderQuantitySync(automatic = false) {
     return
   }
 
+  if (!isCurrentSync()) return
   syncingQuantity.value = true
   try {
-    const result = await syncBomOrderQuantity(currentBom.id, etag.value)
+    const result = await syncBomOrderQuantity(currentBom.id, currentEtag)
+    if (!isCurrentSync()) return
     const targetBomId = result.data.id
     applyVersioned(result)
     quantityReason.value = ''
+    ElMessage.success('订单信息已同步，BOM 用量已按最新数量重新计算。')
     if (targetBomId !== String(route.params.bomId || '')) {
       await router.replace({ name: 'bom-edit', params: { bomId: targetBomId } })
     }
-    ElMessage.success('订单信息已同步，BOM 用量已按最新数量重新计算。')
   } catch (error) {
-    ElMessage.error(apiError(error))
+    if (isCurrentSync()) ElMessage.error(apiError(error))
   } finally {
-    syncingQuantity.value = false
+    if (isCurrentSync()) syncingQuantity.value = false
   }
 }
 
@@ -2768,6 +2361,8 @@ function printPage() {
   window.print()
 }
 
+watch(() => route.params.bomId, () => { void loadBom() })
+
 onMounted(() => {
   window.addEventListener('keydown', closeTableFullscreen)
   void loadBom()
@@ -2775,6 +2370,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  bomLoadGeneration += 1
+  bomLoadController?.abort()
   if (advancingLineUnlockTimer !== undefined) window.clearTimeout(advancingLineUnlockTimer)
   window.removeEventListener('keydown', closeTableFullscreen)
 })

@@ -22,7 +22,7 @@ class PurchaseSheetPdfTests(SimpleTestCase):
             with self.subTest(value=value):
                 self.assertEqual(_number(value), '—')
                 self.assertEqual(_money(value), '待结算')
-        self.assertEqual(_money('5386'), '5,386.00')
+        self.assertEqual(_money('5386'), '5386')
 
     def test_long_clause_expands_and_splits(self):
         paragraph = Paragraph('合同条款 ' * 400, ParagraphStyle('test', fontSize=10, leading=14))

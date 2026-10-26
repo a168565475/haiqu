@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
-import { ArrowDown, Refresh } from '@element-plus/icons-vue'
+import { MoreFilled, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -10,11 +10,13 @@ import { deleteOutsourcingOrder, fetchOutsourcingOrder, revokeDispatchedOutsourc
 import { fetchP4Source, fetchP4Sources } from '@/api/metalProcessingP4'
 import { fetchUnifiedOutsourcingOptions, fetchUnifiedOutsourcingOrders, unifiedOutsourcingDetailPath } from '@/api/unifiedOutsourcing'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import OutsourcingPrintDialog from '@/components/outsourcing/OutsourcingPrintDialog.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import MetalProcessingP4View from './MetalProcessingP4View.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { P4Rework, P4Source } from '@/types/metalProcessingP4'
 import type { UnifiedOutsourcingOptions, UnifiedOutsourcingOrder, UnifiedOutsourcingStatus } from '@/types/unifiedOutsourcing'
+import type { OutsourcingPrintKind } from '@/types/outsourcingPrint'
 import { createClientUuid } from '@/utils/clientUuid'
 import { unifiedProductAttribute, unifiedQuantityText } from '@/utils/unifiedOutsourcingDisplay'
 
@@ -41,6 +43,7 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 const actingOrderId = ref('')
+const printRequest = ref<{ row: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind } | null>(null)
 const loadError = ref('')
 const accessDenied = ref(false)
 const search = ref('')
@@ -122,6 +125,7 @@ function switchTab(tab: 'orders' | 'sources'): void {
 }
 
 async function loadOptions(): Promise<void> {
+  if (activeTab.value !== 'orders' || !canViewRegularOrders.value) return
   try {
     options.value = await fetchUnifiedOutsourcingOptions()
   } catch (error) {
@@ -130,7 +134,7 @@ async function loadOptions(): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  if (!canViewOrders.value) return
+  if (activeTab.value !== 'orders' || !canViewRegularOrders.value) return
   const current = ++requestSequence
   loading.value = true
   loadError.value = ''
@@ -178,12 +182,27 @@ function openDetail(row: UnifiedOutsourcingOrder): void {
   void router.push(unifiedOutsourcingDetailPath(row))
 }
 
+function canPrintRow(row: UnifiedOutsourcingOrder): boolean {
+  return canViewRegularOrders.value && (row.record_type === 'TUBE' || (row.record_type === 'ORIGINAL' && row.detail_access === 'REGULAR'))
+}
+
+function canPrintSpray(row: UnifiedOutsourcingOrder): boolean {
+  return canPrintRow(row) && row.record_type === 'TUBE' && ['RAW_PIPE', 'PUBLIC_SEMI', 'TUBE_METAL'].includes(row.source_kind)
+}
+
+function openPrint(row: UnifiedOutsourcingOrder, kind: OutsourcingPrintKind): void {
+  if (loading.value || accessDenied.value || printRequest.value || !canPrintRow(row) || (kind === 'spray' && !canPrintSpray(row))) return
+  printRequest.value = { row, kind }
+}
+
 function canRemoveRow(row: UnifiedOutsourcingOrder): boolean {
   return row.record_type === 'ORIGINAL' && row.detail_access === 'REGULAR' && !row.direct_handoff && row.source_kind !== 'METAL' && (row.can_delete || row.can_revoke_dispatched)
 }
 
 function handleRowCommand(command: string, row: UnifiedOutsourcingOrder): void {
   if (command === 'detail') openDetail(row)
+  if (command === 'print-processing') openPrint(row, 'processing')
+  if (command === 'print-spray') openPrint(row, 'spray')
   if (command === 'remove' && canRemoveRow(row)) void removeRow(row)
 }
 
@@ -299,8 +318,7 @@ watch(createSourceKind, () => {
   sourceDetailLoading.value = false
   createSourceId.value = ''; createSource.value = null; createReworkId.value = ''
 })
-watch(() => activeTab.value, value => { if (value === 'orders') void load() })
-onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), loadOptions()]) })
+watch(activeTab, value => { if (value === 'orders') void Promise.all([load(), loadOptions()]) }, { immediate: true })
 </script>
 
 <template>
@@ -344,20 +362,21 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
         <ElTableColumn label="管材差额" width="90" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示新管材最终登记后的实发减实收。面料等不同单位不相减。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>
         <ElTableColumn label="预计回货日" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
         <ElTableColumn label="状态" width="90"><template #default="{ row }"><span class="status-tag erp-list-tag" :class="[`status-${statusTone(row.status)}`, row.status === 'COMPLETED' ? 'erp-list-tag--success' : row.status === 'PROCESSING' ? 'erp-list-tag--info' : row.status === 'PARTIAL_RETURN' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.status_display }}</span></template></ElTableColumn>
-        <ElTableColumn label="操作" width="70" fixed="right">
+        <ElTableColumn label="操作" width="72" fixed="right" align="center">
           <template #default="{ row }">
-            <span class="cell-actions" @click.stop>
-              <ElButton v-if="row.record_type === 'TUBE'" link type="primary" :aria-label="`${row.order_number} 查看`" @click="openDetail(row)">查看</ElButton>
-              <ElDropdown v-else :persistent="false" trigger="click" placement="bottom-end" @command="(command: string) => handleRowCommand(command, row)">
-                <ElButton link type="primary" :aria-label="`${row.order_number} 更多操作`">更多<ElIcon><ArrowDown/></ElIcon></ElButton>
+            <div class="row-actions" @click.stop>
+              <ElDropdown :persistent="false" trigger="click" placement="bottom-end" @command="(command: string) => handleRowCommand(command, row)">
+                <ElButton link class="row-more-button" :icon="MoreFilled" :aria-label="`${row.order_number} 更多操作`" />
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem command="detail">查看详情</ElDropdownItem>
+                    <ElDropdownItem v-if="canPrintRow(row)" command="print-processing" :aria-label="`${row.order_number} 加工单打印`" :disabled="loading || Boolean(printRequest)">加工单打印</ElDropdownItem>
+                    <ElDropdownItem v-if="canPrintSpray(row)" command="print-spray" :aria-label="`${row.order_number} 管材喷塑打印`" :disabled="loading || Boolean(printRequest)">管材喷塑打印</ElDropdownItem>
                     <ElDropdownItem v-if="canRemoveRow(row)" command="remove" :disabled="loading || Boolean(actingOrderId)" divided>{{ row.can_delete ? '删除' : '撤销并退料' }}</ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
               </ElDropdown>
-            </span>
+            </div>
           </template>
         </ElTableColumn>
         <template #empty><div class="d4-list-empty"><template v-if="!canViewOrders || accessDenied"><strong>暂无委外加工查看权限</strong><span>请联系管理员核对权限</span></template><template v-else-if="loading"><ElIcon class="is-loading"><Refresh/></ElIcon><strong>正在读取外发单</strong><span>读取完成后显示数量与状态</span></template><template v-else-if="loadError"><strong>外发单读取失败</strong><span>{{ loadError }}</span><ElButton class="erp-button-motion" @click="load">重新读取</ElButton></template><template v-else><strong>{{ search || sourceKind || status || craftId || factoryId ? '没有符合条件的外发单' : '暂无外发单' }}</strong><span>可调整筛选条件或新建外发单</span></template></div></template>
@@ -365,6 +384,7 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
       <footer class="outsourcing-pagination erp-list-footer"><span>{{ total === null ? '数量待读取' : `共 ${total} 条` }}</span><div v-if="total !== null" class="pagination"><ElSelect v-model="pageSize" class="page-size-picker" aria-label="每页条数" @change="page = 1; load()"><ElOption :value="20" label="20 条 / 页"/><ElOption :value="50" label="50 条 / 页"/></ElSelect><ElPagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" background @current-change="load" /></div><span v-else>页数 —</span></footer>
     </section>
     <ElResult v-if="!canViewOrders" icon="warning" title="暂无委外加工查看权限" />
+    <OutsourcingPrintDialog v-if="printRequest" :record="printRequest.row" :kind="printRequest.kind" @close="printRequest = null" />
     <AppWindowDialog v-model="createVisible" title="新建外发单 · 选择材料来源" :width="760" class="unified-source-dialog">
       <ElForm label-position="top">
         <ElFormItem label="材料来源">
@@ -395,6 +415,8 @@ onMounted(() => { if (canViewRegularOrders.value) void Promise.all([load(), load
 
 <style lang="scss">@use '@/styles/outsourcing.scss'; @use '@/styles/unifiedOutsourcingList.scss';</style>
 <style scoped lang="scss">
+.row-actions { display: flex; align-items: center; justify-content: center; }
+.row-more-button { color: var(--erp-table-text); width: 36px; height: 32px; }
 .create-source-note { margin: 12px 0; color: var(--erp-color-text-regular); font-size: 13px; line-height: 1.8; }
 .create-source-summary { display: grid; gap: 7px; margin-bottom: 16px; padding: 14px; border: 1px solid var(--erp-color-border); border-radius: 4px; background: var(--erp-color-subtle); font-size: 13px; }
 .create-source-summary span { color: var(--erp-color-text-secondary); }

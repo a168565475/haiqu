@@ -15,6 +15,7 @@ function vueFiles(directory: string): string[] {
 
 it('业务弹窗和抽屉必须通过 AppWindowDialog，不能依赖全局注册绕过统一组件', () => {
   const violations: string[] = []
+  let messagePanelCount = 0
   for (const path of vueFiles(sourceRoot)) {
     if (path === resolve(__dirname, 'AppWindowDialog.vue')) continue
     const { descriptor } = parseSfc(readFileSync(path, 'utf8'))
@@ -37,11 +38,17 @@ it('业务弹窗和抽屉必须通过 AppWindowDialog，不能依赖全局注册
         if (child.type !== NodeTypes.ELEMENT) continue
         const tag = child.tag.replaceAll('-', '').toLowerCase()
         const customDialog = child.props.some(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'role' && prop.value?.content === 'dialog')
-        if ((rawAliases.has(tag) && !sharedAliases.has(tag)) || tag === 'dialog' || customDialog) violations.push(`${relative(sourceRoot, path)}:${child.loc.start.line} <${child.tag}>`)
+        // 已确认的页头消息为非模态气泡；只放行该组件的指定节点，其他业务窗口仍受统一规则约束。
+        const messagePanel = path === resolve(sourceRoot, 'components/navigation/HeaderMessages.vue') && tag === 'section' && customDialog
+          && [['id', 'header-message-panel'], ['aria-modal', 'false'], ['aria-labelledby', 'header-message-title']].every(([name, value]) =>
+            child.props.some(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === name && prop.value?.content === value))
+        if (messagePanel) messagePanelCount += 1
+        if ((rawAliases.has(tag) && !sharedAliases.has(tag)) || tag === 'dialog' || (customDialog && !messagePanel)) violations.push(`${relative(sourceRoot, path)}:${child.loc.start.line} <${child.tag}>`)
         visit(child)
       }
     }
     visit(baseParse(descriptor.template.content, parserOptions))
   }
   expect(violations).toEqual([])
+  expect(messagePanelCount).toBe(1)
 })

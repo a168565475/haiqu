@@ -3,6 +3,7 @@ import type { AxiosResponse } from 'axios'
 import { apiClient } from './request'
 import type { ApiDataResponse, PaginatedResponse } from '@/types/customer'
 import type {
+  TaskCreateInput,
   TaskDetail,
   TaskFilters,
   TaskOptions,
@@ -41,7 +42,7 @@ export async function fetchTaskActivity(taskId: string): Promise<Array<{ kind: s
   return response.data.data
 }
 
-export async function createTask(payload: Record<string, unknown>): Promise<TaskDetail> {
+export async function createTask(payload: TaskCreateInput): Promise<TaskDetail> {
   const response = await apiClient.post<ApiDataResponse<TaskDetail>>('/api/v1/tasks/', payload)
   return response.data.data
 }

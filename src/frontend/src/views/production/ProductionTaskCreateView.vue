@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { createProductionTask, reserveProductionTaskContractNumber, createProductionOrderFromSalesOrder, fetchProductionTaskOptions, submitProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl } from '@/api/productionTasks'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
-import type { InquiryItem, InquiryProductCandidate, InquiryProductSelectionOptions } from '@/types/inquiry'
+import type { InquiryItem, InquiryProductSelectionOptions } from '@/types/inquiry'
 import type { ProductCategoryOption, ProductionUnitOption } from '@/types/product'
 import type { ColorOption } from '@/types/productionTask'
 import type { ProductionTaskDetailInput, ProductionTaskInput } from '@/types/productionTask'
@@ -13,6 +13,7 @@ import ProductImage from '@/components/products/ProductImage.vue'
 import type { ProductionTaskOptions, ProductionSalesOrderSource, ProductionSalesOrderSourceSummary, ProductionSalesOrderSourceBatch } from '@/types/productionTask'
 import type { SalesOrderBatchLine } from '@/types/salesOrder'
 import { multiplyAmount4, sumAmounts4 } from '@/utils/salesCny'
+import { buildProductionProductCandidates } from './productionProductCandidates'
 
 interface ColorProductionLine {
   key: string
@@ -393,25 +394,15 @@ async function loadCatalog() {
   catalogError.value = options.value?.categories ? '' : '生产建单产品分类未加载，请刷新后重试。'
 }
 async function loadProductionCandidates(categoryId: string): Promise<InquiryProductSelectionOptions> {
-  const category = categories.value.find(row => row.id === categoryId)
-  if (!category) throw new Error('产品类别不存在或不可用。')
-  const grouped = new Map<string, Map<string, InquiryProductCandidate[]>>()
-  for (const product of options.value?.products || []) {
-    if (product.category_id !== categoryId) continue
-    const unit = catalogUnits.value.find(row => row.id === product.default_unit_id)
-    const candidate: InquiryProductCandidate = { id: product.id, product_number: product.product_number, product_code: product.product_code, item_number: product.item_number, product_name: product.product_name, specification: product.specification, unit_id: product.default_unit_id, unit_code: product.unit_code || unit?.unit_code || '', unit_name: product.unit_name || unit?.unit_name || '', category_id: category.id, category_name: category.category_name }
-    if (!grouped.has(product.product_name)) grouped.set(product.product_name, new Map())
-    const specs = grouped.get(product.product_name)!
-    if (!specs.has(product.specification)) specs.set(product.specification, [])
-    specs.get(product.specification)!.push(candidate)
-  }
-  return { category, groups: [...grouped].map(([product_name, specs]) => ({ product_name, specifications: [...specs].map(([specification, products]) => ({ specification, products })) })) }
+  return buildProductionProductCandidates(categoryId, {
+    categories: categories.value, products: options.value?.products || [], units: catalogUnits.value,
+  })
 }
 function editManual(row?: typeof manualProducts.value[number]) {
   editingKey.value = row?.key || ''; editorItem.value = row ? { ...row.item } : emptyItem(); editorRevision.value++; editorVisible.value = true
 }
 function confirmManual(value: { item: InquiryItem; imageChanged: boolean; imageFile: File | null; removeImage: boolean }) {
-  const unit = catalogUnits.value.find(row => row.id === value.item.product_unit_id || row.unit_code === value.item.unit_code)
+  const unit = catalogUnits.value.find(row => value.item.product_unit_id ? row.id === value.item.product_unit_id : row.unit_code === value.item.unit_code)
   if (!unit) { ElMessage.warning('请选择系统已维护的真实单位，未维护单位请先补全基础资料。'); return }
   if (!/^[1-9]\d*$/.test(String(value.item.quantity))) { ElMessage.warning('生产数量必须是大于0的整数。'); return }
   const old = manualProducts.value.find(row => row.key === editingKey.value)

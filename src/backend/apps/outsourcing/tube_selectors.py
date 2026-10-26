@@ -216,6 +216,10 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
     lines, total_quantity, total_stock, total_meters = [], 0, 0, Decimal('0')
     for line in order.lines.all():
         snapshot = line.snapshot if isinstance(line.snapshot, dict) else {}
+        output_identity = snapshot.get('public_output_identity')
+        output_snapshot = output_identity.get('identity_snapshot') if isinstance(output_identity, dict) else None
+        tube_diameter = output_snapshot.get('tube_diameter') if isinstance(output_snapshot, dict) else None
+        pieces_per_product = snapshot.get('pieces_per_product')
         meters = snapshot.get('meters')
         component = basis['components'].get(str(line.component_identity)) if basis else None
         lines.append({'id': str(line.pk), 'component_identity': str(line.component_identity),
@@ -227,6 +231,8 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
             'meters': str(meters) if meters is not None else None,
             **{key: snapshot.get(key) for key in ('material', 'specification', 'thickness',
                 'cutting_length_mm', 'raw_color', 'spray_color', 'order_required', 'pieces_per_bar', 'raw_bar_length_m')},
+            'pieces_per_product': str(pieces_per_product) if pieces_per_product is not None else None,
+            'tube_diameter': str(tube_diameter) if tube_diameter is not None else None,
             'current_reported_minimum': str(component['allowance']['reported_minimum'])
                 if component and component['basis_ready'] else None,
             'report_as_of': basis['as_of'] if basis else None,
@@ -254,6 +260,9 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'category': source_category(order.source_kind), 'output_unit': output_unit(order.source_kind),
         'material_category': '辅料' if order.source_kind in CUTTING_SOURCES else '五金',
         'created_at': order.created_at.isoformat(), 'created_by_name': order.created_by_employee.display_name,
+        'updated_at': order.updated_at.isoformat(),
+        'planned_quantity': str(order.schedule_product.planned_quantity),
+        'specification': order.product_line.specification_snapshot, 'material': order.product_line.material_snapshot,
         'actual_dispatch_date': str(dispatch.actual_dispatch_date) if dispatch else None,
         'dispatched_at': dispatch.created_at.isoformat() if dispatch else None,
         'dispatched_by_name': dispatch.actor_employee.display_name if dispatch else '',
@@ -265,7 +274,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind in DIRECT_SOURCES else str(total_stock),
         'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines,
         'planned_amount': planned_amount(order.lines.all()),
-        'materials': [material_data(value) for value in order.materials.all()]}
+        'materials': [{**material_data(value), 'unit_consumption': None} for value in order.materials.all()]}
     if action_record:
         result['action'] = {'id': str(action_record.pk), 'kind': action_record.kind,
             'client_request_id': str(action_record.client_request_id),

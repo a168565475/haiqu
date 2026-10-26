@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 
 import { createTask, fetchTaskOptions } from '@/api/tasks'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
-import type { TaskDetail, TaskOptions, TaskScope } from '@/types/task'
+import type { TaskDetail, TaskOptions, TaskPriority, TaskScope, TaskType } from '@/types/task'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -40,8 +40,8 @@ const form = reactive({
   title: '',
   description: '',
   assignee_employee_id: '',
-  task_type: 'OTHER',
-  priority: 'NORMAL',
+  task_type: 'OTHER' as TaskType,
+  priority: 'NORMAL' as TaskPriority,
   due_at: '',
 })
 

@@ -228,6 +228,13 @@ describe('BOM API', () => {
     })
   })
 
+  it('编辑读取把取消信号传给请求层并保留数据和 ETag', async () => {
+    const controller = new AbortController()
+    mockedGet.mockResolvedValueOnce({ data: { data: { id: 'bom-1' } }, headers: { etag: 'v1' } })
+    expect(await fetchBomForEdit('bom-1', controller.signal)).toEqual({ data: { id: 'bom-1' }, etag: 'v1' })
+    expect(mockedGet).toHaveBeenCalledWith('/api/v1/boms/bom-1/', { signal: controller.signal })
+  })
+
   it('列表删除使用归档接口并携带当前 BOM ETag', async () => {
     mockedPost.mockResolvedValueOnce({ data: { data: { id: 'bom-1', archived: true } } })
 

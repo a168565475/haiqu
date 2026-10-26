@@ -8,6 +8,11 @@ it('行政员工页消费定位参数时保留实例，切换账号时重新创�
 })
 
 describe('页面实例隔离', () => {
+  it('客诉筛选和分页复用实例，切换身份仍重新创建', () => {
+    const route = { name: 'complaints', params: {}, path: '/complaints', fullPath: '/complaints?q=first' }
+    expect(pageInstanceKey(route, 1)).toBe(pageInstanceKey({ ...route, fullPath: '/complaints?q=second&page=2' }, 1))
+    expect(pageInstanceKey(route, 1)).not.toBe(pageInstanceKey(route, 2))
+  })
   it('权限页员工定位参数变化保留页面实例，切换账号仍隔离', () => {
     const access = { name: 'access-management', params: {}, path: '/settings/access', fullPath: '/settings/access?tab=employees&employee_id=first' }
     const key = pageInstanceKey(access, 1)

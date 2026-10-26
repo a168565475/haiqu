@@ -83,8 +83,12 @@ function listQuery(): ComplaintQuery {
   return query
 }
 
-function syncUrl() {
-  if (!props.embedded) void router.replace({ query: listQuery() as Record<string, string | number> })
+function submitQuery() {
+  if (props.embedded) { void refresh(); return }
+  const query = listQuery() as Record<string, string | number>
+  if (router.resolve({ query }).fullPath === route.fullPath) { void refresh(); return }
+  // 地址变化由下方 watcher 统一查询，避免本地提交和路由同步各请求一次。
+  void router.replace({ query }).catch(error => { ElMessage.error(complaintRequestMessage(error)) })
 }
 
 async function loadRows() {
@@ -122,12 +126,12 @@ async function loadStats() {
 
 async function refresh() { await Promise.all([loadRows(), loadStats()]) }
 
-function applyFilters() { page.value = 1; selectedRows.value = []; syncUrl(); void refresh() }
+function applyFilters() { page.value = 1; selectedRows.value = []; submitQuery() }
 function resetFilters() {
   Object.assign(filters, { q: '', complaint_type_item_id: '', severity_item_id: '', status: '', owner_employee_id: '', sla_status: '' })
   applyFilters()
 }
-function changePage() { syncUrl(); void refresh() }
+function changePage() { selectedRows.value = []; submitQuery() }
 
 function openDetail(row: Complaint, action?: 'edit' | 'progress') {
   const query: Record<string, string> = {}
@@ -166,6 +170,23 @@ function exportCurrentPage() {
   link.click()
   URL.revokeObjectURL(link.href)
 }
+
+watch(() => route.query, query => {
+  if (props.embedded) return
+  page.value = Math.max(1, Number(query.page) || 1)
+  const size = Number(query.page_size)
+  pageSize.value = PAGE_SIZES.includes(size) ? size : 50
+  Object.assign(filters, {
+    q: String(query.q || ''),
+    complaint_type_item_id: String(query.complaint_type_item_id || ''),
+    severity_item_id: String(query.severity_item_id || ''),
+    status: String(query.status || ''),
+    owner_employee_id: String(query.owner_employee_id || ''),
+    sla_status: String(query.sla_status || ''),
+  })
+  selectedRows.value = []
+  void refresh()
+})
 
 watch(() => props.customerId, value => {
   if (!props.embedded || !value) return

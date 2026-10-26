@@ -198,6 +198,7 @@ class ProductionTaskViewSet(
             self._filtered_queryset(),
             include_progress=self.action in {"list", "retrieve"},
             list_mode=self.action == "list",
+            include_bom_details=self.action == "retrieve",
         )
 
     def _date_param(self, name):

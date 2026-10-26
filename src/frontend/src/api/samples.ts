@@ -61,8 +61,10 @@ function unwrap<T>(response: AxiosResponse<ApiDataResponse<T>>): T {
   return response.data.data
 }
 
-export async function fetchSamples(query: SampleListQuery): Promise<SampleListResult> {
-  const { data } = await apiClient.get<SampleListResult>('/api/v1/sample-requests/', { params: sampleQueryParams(query) })
+export async function fetchSamples(query: SampleListQuery, signal?: AbortSignal): Promise<SampleListResult> {
+  const { data } = await apiClient.get<SampleListResult>('/api/v1/sample-requests/', {
+    params: sampleQueryParams(query), ...(signal ? { signal } : {}),
+  })
   return data
 }
 

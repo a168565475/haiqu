@@ -323,6 +323,8 @@ export interface OutsourcingOrderDetailAllocation {
     bom_line_id: string
     material_number: string
     name: string
+    unit_consumption?: string | null
+    material?: string
     specification: string
     color: string
     bom_attributes?: BomAttributeField[]

@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios'
 import { defineStore } from 'pinia'
 
 import {
@@ -7,8 +8,20 @@ import {
 } from '@/api/auth'
 import type { AuthResponse, AuthUser, LoginCredentials } from '@/types/auth'
 
-let initializationRequest: Promise<AuthResponse> | null = null
 const authenticationMaxAgeMs = 30_000
+const requestsByStore = new WeakMap<object, {
+  initialization: Promise<number | void> | null
+  mutation: Promise<void> | null
+}>()
+
+function requestsFor(store: object) {
+  let requests = requestsByStore.get(store)
+  if (!requests) {
+    requests = { initialization: null, mutation: null }
+    requestsByStore.set(store, requests)
+  }
+  return requests
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -16,6 +29,7 @@ export const useAuthStore = defineStore('auth', {
     initialized: false,
     checking: false,
     authenticationCheckedAt: 0,
+    authenticationGeneration: 0,
   }),
   getters: {
     isAuthenticated: (state) => state.user !== null,
@@ -56,13 +70,20 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     applyAuthResponse(response: AuthResponse) {
+      this.invalidatePendingAuthentication()
       this.user = response.authenticated ? response.user : null
       this.initialized = true
       this.authenticationCheckedAt = response.authenticated ? Date.now() : 0
     },
     clearAuthentication() {
-      this.user = null
-      this.initialized = true
+      this.applyAuthResponse({ authenticated: false, user: null })
+    },
+    invalidatePendingAuthentication() {
+      this.authenticationGeneration += 1
+      const requests = requestsFor(this)
+      requests.initialization = null
+      requests.mutation = null
+      this.checking = false
       this.invalidateAuthenticationCheck()
     },
     invalidateAuthenticationCheck() {
@@ -72,44 +93,70 @@ export const useAuthStore = defineStore('auth', {
       const age = Date.now() - this.authenticationCheckedAt
       const fresh = this.isAuthenticated && this.authenticationCheckedAt > 0
         && age >= 0 && age < authenticationMaxAgeMs
-      if (fresh && !initializationRequest) return
+      const requests = requestsFor(this)
+      if (fresh && !requests.initialization && !requests.mutation) return
       await this.initialize(true)
     },
-    async initialize(force = false) {
+    // 返回本次读取实际应用的身份代次；过期结果不返回代次。
+    async initialize(force = false): Promise<number | void> {
+      const requests = requestsFor(this)
+      // 登录或退出尚未完成时，读取会话可能仍拿到写操作之前的身份。
+      if (requests.mutation) {
+        await requests.mutation
+        return
+      }
       if (this.initialized && !force) {
         return
       }
-      if (initializationRequest) {
-        await initializationRequest
-        return
+      if (requests.initialization) {
+        return requests.initialization
       }
 
       this.checking = true
       this.invalidateAuthenticationCheck()
-      initializationRequest = fetchCurrentUser()
-      try {
-        const response = await initializationRequest
-        if (response.authenticated) {
-          this.applyAuthResponse(response)
-          return
-        }
-
+      const generation = this.authenticationGeneration
+      const request = fetchCurrentUser().then(response => {
+        if (generation !== this.authenticationGeneration) return
         this.applyAuthResponse(response)
-      } finally {
+        return this.authenticationGeneration
+      }, (error: unknown) => {
+        if (generation !== this.authenticationGeneration) return
+        if (isAxiosError(error) && error.response?.status === 401) this.clearAuthentication()
+        throw error
+      }).finally(() => {
+        if (requests.initialization !== request) return
         this.checking = false
-        initializationRequest = null
-      }
+        requests.initialization = null
+      })
+      requests.initialization = request
+      return request
     },
     async login(credentials: LoginCredentials) {
       if (!this.initialized) {
         await this.initialize()
       }
-      const response = await requestLogin(credentials)
-      this.applyAuthResponse(response)
+      this.invalidatePendingAuthentication()
+      const generation = this.authenticationGeneration
+      const requests = requestsFor(this)
+      const request = requestLogin(credentials).then(response => {
+        if (generation === this.authenticationGeneration) this.applyAuthResponse(response)
+      }).finally(() => {
+        if (requests.mutation === request) requests.mutation = null
+      })
+      requests.mutation = request
+      await request
     },
     async logout() {
-      const response = await requestLogout()
-      this.applyAuthResponse(response)
+      this.invalidatePendingAuthentication()
+      const generation = this.authenticationGeneration
+      const requests = requestsFor(this)
+      const request = requestLogout().then(response => {
+        if (generation === this.authenticationGeneration) this.applyAuthResponse(response)
+      }).finally(() => {
+        if (requests.mutation === request) requests.mutation = null
+      })
+      requests.mutation = request
+      await request
     },
   },
 })

@@ -1,19 +1,35 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 import AppHeader from './AppHeader.vue'
 import ErpLayout from '@/layouts/ErpLayout.vue'
 
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => {
+  setActivePinia(createPinia())
+  notificationApi.count.mockReset().mockResolvedValue(0)
+  notificationApi.inbox.mockReset().mockResolvedValue({ data: [], count: 0, page: 1, page_size: 10 })
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+})
+afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
 const routeMock = vi.hoisted(() => ({
   name: 'tasks',
+  path: '/tasks',
+  fullPath: '/tasks',
   params: {},
+  query: {},
   meta: { activeMenu: 'tasks', headerTitle: '任务中心', breadcrumbs: [{ label: '任务中心' }] },
 }))
 const accountActions = vi.hoisted(() => ({ logout: vi.fn(), replace: vi.fn() }))
+const notificationApi = vi.hoisted(() => ({ count: vi.fn(), inbox: vi.fn() }))
+
+vi.mock('@/api/notifications', async importOriginal => ({
+  ...await importOriginal<typeof import('@/api/notifications')>(),
+  getNotificationUnreadCount: notificationApi.count,
+  getNotificationInbox: notificationApi.inbox,
+}))
 
 vi.mock('vue-router', async (importOriginal) => ({
   ...await importOriginal<typeof import('vue-router')>(),
@@ -72,6 +88,55 @@ describe('常驻主栏的页面外壳', () => {
       expect(accountActions.replace).toHaveBeenCalledWith({ name: 'login' })
       expect(wrapper.get('[data-current-user]').attributes('disabled')).toBeUndefined()
     } finally { wrapper.unmount() }
+  })
+
+  it('消息气泡保持非模态语义，Escape关闭后焦点返回消息按钮', async () => {
+    const wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      global: { plugins: [ElementPlus], stubs: { GlobalPageTabs: true } },
+    })
+    try {
+      await flushPromises()
+      const trigger = wrapper.get('[data-message-toggle]')
+      expect(trigger.attributes('aria-haspopup')).toBe('dialog')
+      await trigger.trigger('click')
+      await flushPromises()
+      const panel = document.getElementById(trigger.attributes('aria-controls')!)!
+      expect(panel.getAttribute('role')).toBe('dialog')
+      expect(panel.getAttribute('aria-modal')).toBe('false')
+      expect(document.getElementById(panel.getAttribute('aria-labelledby')!)?.textContent).toBe('消息')
+      expect(trigger.attributes('aria-expanded')).toBe('true')
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭消息')
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      document.dispatchEvent(escape)
+      await flushPromises()
+      expect(escape.defaultPrevented).toBe(true)
+      expect(document.getElementById('header-message-panel')).toBeNull()
+      expect(trigger.attributes('aria-expanded')).toBe('false')
+      expect(document.activeElement).toBe(trigger.element)
+    } finally { wrapper.unmount() }
+  })
+
+  it('消息气泡允许焦点移到外部，关闭时不抢回外部焦点', async () => {
+    const outside = document.createElement('button')
+    outside.textContent = '页面其他操作'
+    document.body.append(outside)
+    const wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      global: { plugins: [ElementPlus], stubs: { GlobalPageTabs: true } },
+    })
+    try {
+      await flushPromises()
+      const trigger = wrapper.get('[data-message-toggle]')
+      await trigger.trigger('click')
+      await flushPromises()
+      expect(document.getElementById('header-message-panel')).not.toBeNull()
+      outside.focus()
+      await flushPromises()
+      expect(document.getElementById('header-message-panel')).toBeNull()
+      expect(trigger.attributes('aria-expanded')).toBe('false')
+      expect(document.activeElement).toBe(outside)
+    } finally { wrapper.unmount(); outside.remove() }
   })
 
   it('全宽顶部独立于下方侧栏和正文，侧栏不重复放品牌', () => {

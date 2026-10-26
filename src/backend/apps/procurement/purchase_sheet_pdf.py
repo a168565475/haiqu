@@ -22,7 +22,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image as ReportLabImage
 from reportlab.platypus import BaseDocTemplate, Frame, PageTemplate, Paragraph, Table, TableStyle
 
-from .material_attribute_snapshot import purchase_line_attribute_text
+from .purchase_sheet_line_display import purchase_sheet_line_display
 
 
 FONT_NAME = "PurchaseSans"
@@ -59,13 +59,8 @@ def _number(value):
 
 
 def _money(value):
-    if value in (None, ""):
-        return "待结算"
-    try:
-        number = Decimal(str(value))
-        return f"{number:,.2f}" if number.is_finite() else "待结算"
-    except (InvalidOperation, TypeError, ValueError):
-        return "待结算"
+    number = _number(value)
+    return "待结算" if number == "—" else number
 
 
 def _contract_date(value):
@@ -180,7 +175,7 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
     buyer, seller, order = (content.get(key) or {} for key in ("buyer", "seller", "order"))
     actual_weight = content.get("settlement_mode") == "ACTUAL_WEIGHT"
     lines = content.get("lines") or []
-    columns = [width * item / 832 for item in (58, 156, 154, 116, 114, 114, 120)]
+    columns = [width * item / 100 for item in (14, 23, 24, 12, 9, 9, 9)]
     title = Table([[Paragraph(
         f"<b>{_text(content.get('title'), '购销合同')}</b>　"
         f"<font size='{23 * PX}'><b>（订单编号  {_text(order.get('source_number') if order.get('source_type') == 'SAMPLE' else order.get('sales_order_number'))}）</b></font>", title_style
@@ -197,28 +192,24 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
     story = [title, _one_cell_table(party, width, min_height=86 * PX),
              _one_cell_table(legal, width, min_height=64 * PX),
              _one_cell_table(Paragraph("<b>一、采购产品名称、规格、数量、单价及金额</b>", heading), width, min_height=39 * PX)]
-    labels = ["序号", "产品名称", "产品规格", "颜色/要求", "数量", "含税单价<br/>（元）", "总金额<br/>（元）"]
+    labels = ["产品名称", "产品规格", "物料属性", "颜色", "数量", "含税单价<br/>（元）", "金额<br/>（元）"]
     rows = [[Paragraph(f"<b>{label}</b>", header) for label in labels]]
-    for index, line in enumerate(lines, 1):
+    for line in lines:
         from .pipe_purchase import pipe_print_description
-        specification = str(line.get('specification') or '')
-        source_attributes = purchase_line_attribute_text(
-            line.get("material_attributes_snapshot"),
-            line.get("section_title"),
+        display = purchase_sheet_line_display(
+            line, sample_source=order.get("source_type") == "SAMPLE",
         )
-        if source_attributes:
-            specification = f"{source_attributes}\n{specification}" if specification else source_attributes
+        attributes = display["attributes"]
         if line.get('measurement_kind') == 'PIPE':
-            specification += '\n' + pipe_print_description(line)
-        requirement = "；".join(str(line.get(key) or "").strip() for key in ("material", "remark") if str(line.get(key) or "").strip())
+            print_line = {**line, **{
+                key: _number(line.get(key)) for key in ("actual_bar_count", "raw_bar_length_m", "actual_purchase_meters")
+            }}
+            attributes = "\n".join(value for value in (attributes, pipe_print_description(print_line)) if value)
         price = _number(line.get("unit_price"))
-        if price != "—":
-            # 单价至少两位小数，保留超过两位的实际精度。
-            price = f"{Decimal(price):.2f}" if len(price.partition(".")[2]) < 2 else price
-        values = [str(index), _text(line.get("part_name")), _text(specification),
-                  _text(requirement), f"{_number(line.get('quantity'))} {_text(line.get('unit'), '')}",
+        values = [_text(line.get("part_name")), _text(display["specification"]), _text(attributes),
+                  _text(display["color"]), f"{_number(line.get('quantity'))} {_text(line.get('unit'), '')}",
                   price, "待结算" if actual_weight else _money(line.get("amount"))]
-        rows.append([Paragraph(value, body if col in (1, 2, 3) else center) for col, value in enumerate(values)])
+        rows.append([Paragraph(value, body if col in (0, 1, 2) else center) for col, value in enumerate(values)])
     if not lines:
         rows.append([Paragraph("暂无采购明细", center)] + [""] * 6)
     table = Table(rows, colWidths=columns, repeatRows=1, splitInRow=1,
@@ -245,7 +236,7 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
         image_cell.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#ddd6c9"), 1, [2, 2]),
                                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f6f3ec")),
                                        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (-1, -1), "CENTER")]))
-    remark_width = width * 398 / 832 - 30 * PX
+    remark_width = width * 58 / 100 - 30 * PX
     remark_box = Table([[Paragraph(_text(content.get("remark"), ""), small)]], colWidths=[remark_width],
                        minRowHeights=[62 * PX], splitInRow=1)
     remark_box.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#ddd6c9")),
@@ -255,7 +246,7 @@ def build_supplier_purchase_sheet_pdf(sheet, *, draft=False):
                Paragraph(f"税率 {_text(content.get('tax_rate'), '13')}% · 运费由{_text(content.get('freight_bearer'))}承担", small)]
     total = "待结算" if actual_weight else _money(content.get("total_amount"))
     media = Table([[image_cell, remarks, Paragraph("<b>合计</b>", center), Paragraph(f"<b>{total}</b>", center)]],
-                  colWidths=[width * item / 832 for item in (200, 398, 114, 120)],
+                  colWidths=[width * item / 100 for item in (24, 58, 9, 9)],
                   minRowHeights=[148 * PX], splitInRow=1)
     media.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.65, BLACK),
                               ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("ALIGN", (0, 0), (0, 0), "CENTER"),

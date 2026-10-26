@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref, watch } from 'vue'
-import { VideoPlay, Download } from '@element-plus/icons-vue'
+import { VideoPlay, Download, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { TableInstance } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -10,7 +10,6 @@ import documentLockIcon from '@/assets/procurement/publish-document-lock.svg'
 import {
   batchDownloadSupplierPurchaseSheets,
   batchPublishSupplierPurchaseSheets,
-  downloadSupplierPurchaseSheetPdf,
   downloadSupplierPurchaseSheetXlsx,
   fetchSupplierPurchaseSheets,
 } from '@/api/purchaseOrders'
@@ -53,7 +52,7 @@ function updatedTime(value: string): string {
 function money(value: string | null): string {
   if (value === null) return '待结算'
   if (!Number.isFinite(Number(value))) return '—'
-  return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+  return `¥${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })}`
 }
 
 function apiErrorMessage(error: unknown, fallback: string): string {
@@ -107,16 +106,10 @@ function edit(row: SupplierPurchaseSheet): void {
   void router.push({ name: 'supplier-purchase-sheet-editor', params: { id: row.id } })
 }
 
-async function download(row: SupplierPurchaseSheet): Promise<void> {
-  if (busy.value || row.status !== 'PUBLISHED') return
-  downloading.value = true
-  try {
-    saveBlob(await downloadSupplierPurchaseSheetPdf(row.id), `${row.sheet_number}_V${row.version_number}.pdf`)
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, 'PDF 下载失败。'))
-  } finally {
-    downloading.value = false
-  }
+function handleRowAction(command: string, row: SupplierPurchaseSheet): void {
+  if (busy.value || loading.value) return
+  if (command === 'edit') edit(row)
+  if (command === 'xlsx') void downloadXlsx(row)
 }
 
 async function downloadXlsx(row: SupplierPurchaseSheet): Promise<void> {
@@ -134,14 +127,14 @@ async function downloadXlsx(row: SupplierPurchaseSheet): Promise<void> {
 async function batchDownload(): Promise<void> {
   if (!downloadReady.value) return
   if (!selected.value.length || publishedSelected.value.length !== selected.value.length) {
-    ElMessage.warning('批量下载只能选择已发布采购表。')
+    ElMessage.warning('批量下载 Excel 只能选择已发布采购表。')
     return
   }
   downloading.value = true
   try {
-    saveBlob(await batchDownloadSupplierPurchaseSheets(publishedSelected.value.map((item) => item.id)), '供应商采购表.zip')
+    saveBlob(await batchDownloadSupplierPurchaseSheets(publishedSelected.value.map((item) => item.id)), '供应商采购表Excel.zip')
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '批量下载失败。'))
+    ElMessage.error(apiErrorMessage(error, '批量下载 Excel 失败。'))
   } finally {
     downloading.value = false
   }
@@ -209,7 +202,7 @@ onMounted(() => {
       <div class="erp-list-toolbar">
       <div class="heading-actions">
         <ElButton class="manage-button erp-button-motion" :disabled="busy" @click="router.push({ name: 'purchase-contract-templates' })">模板管理</ElButton>
-        <ElButton class="download-button erp-button-motion" data-testid="sheet-batch-download" :icon="Download" :loading="downloading" :disabled="!downloadReady" @click="batchDownload">批量下载</ElButton>
+        <ElButton class="download-button erp-button-motion" data-testid="sheet-batch-download" :icon="Download" :loading="downloading" :disabled="!downloadReady" @click="batchDownload">批量下载Excel</ElButton>
         <ElButton class="publish-button erp-button-motion" data-testid="sheet-batch-publish" type="primary" :icon="VideoPlay" :loading="publishing" :disabled="!publishReady" :title="canPublish ? '请选择1至100张草稿采购表' : '没有发布采购表权限'" @click="openBatchPublish">批量发布（{{ selected.length }}）</ElButton>
       </div>
         <div class="list-description"><h2>采购表清单</h2><span>{{ canPublish ? '草稿可编辑，发布后只读' : '当前账号没有发布权限' }}</span></div>
@@ -217,14 +210,23 @@ onMounted(() => {
       <div class="erp-list-table-frame">
       <ElTable ref="tableRef" v-loading="loading" :data="rows" height="100%" row-key="id" @selection-change="selected = $event">
         <ElTableColumn type="selection" width="46" align="center" header-align="center" :selectable="() => !busy && !loading" />
-        <ElTableColumn label="采购表编号" width="214"><template #default="{ row }"><div class="stack"><strong>{{ row.sheet_number }}</strong><span>V{{ row.version_number }}</span></div></template></ElTableColumn>
-        <ElTableColumn label="订单来源" width="160"><template #default="{ row }"><div class="stack"><strong>{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : (row.is_historical_unlinked ? '历史未关联' : (row.sales_order_number || '—')) }}</strong><span>{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? '打样单' : (row.production_task_number || '—') }}</span></div></template></ElTableColumn>
-        <ElTableColumn label="供应商" width="292"><template #default="{ row }"><div class="stack"><strong>{{ row.supplier_name_snapshot }}</strong><span>{{ row.supplier_number_snapshot }}</span></div></template></ElTableColumn>
-        <ElTableColumn label="模板" width="210"><template #default="{ row }"><div class="stack"><strong>{{ row.template_name }}</strong><span>{{ row.template_version_name || '未命名版本' }}</span></div></template></ElTableColumn>
-        <ElTableColumn label="金额" width="134" align="right" header-align="center"><template #default="{ row }"><strong>{{ money(row.total_amount) }}</strong></template></ElTableColumn>
-        <ElTableColumn label="状态" width="112" align="center"><template #default="{ row }"><ElTag :class="{ published: row.status === 'PUBLISHED' }" :type="row.status === 'PUBLISHED' ? 'success' : 'info'">{{ row.status_display }}</ElTag></template></ElTableColumn>
-        <ElTableColumn label="更新信息" width="208"><template #default="{ row }"><div class="stack"><strong>{{ row.updated_by_name || '—' }}</strong><span>{{ updatedTime(row.updated_at) }}</span></div></template></ElTableColumn>
-        <ElTableColumn label="操作" min-width="232" fixed="right" align="center"><template #default="{ row }"><ElButton :disabled="busy || loading" link type="primary" @click="edit(row)">{{ row.status === 'DRAFT' ? '编辑' : '查看' }}</ElButton><ElButton :disabled="busy || loading" link @click="downloadXlsx(row)">Excel</ElButton><ElButton v-if="row.status === 'PUBLISHED'" link @click="download(row)">PDF</ElButton></template></ElTableColumn>
+        <ElTableColumn prop="sheet_number" label="采购表编号" width="152" show-overflow-tooltip />
+        <ElTableColumn label="订单来源" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.content_snapshot?.order?.source_type === 'SAMPLE' ? row.content_snapshot.order.source_number : (row.production_task_number || row.sales_order_number || '—') }}</template></ElTableColumn>
+        <ElTableColumn prop="supplier_name_snapshot" label="供应商" min-width="200" show-overflow-tooltip />
+        <ElTableColumn prop="template_name" label="模板" width="126" show-overflow-tooltip />
+        <ElTableColumn label="金额" width="110" align="right" header-align="center"><template #default="{ row }"><strong>{{ money(row.total_amount) }}</strong></template></ElTableColumn>
+        <ElTableColumn label="状态" width="88" align="center"><template #default="{ row }"><ElTag :class="{ published: row.status === 'PUBLISHED' }" :type="row.status === 'PUBLISHED' ? 'success' : 'info'">{{ row.status_display }}</ElTag></template></ElTableColumn>
+        <ElTableColumn prop="updated_by_name" label="更新人" width="100" show-overflow-tooltip><template #default="{ row }">{{ row.updated_by_name || '—' }}</template></ElTableColumn>
+        <ElTableColumn label="更新时间" width="152"><template #default="{ row }">{{ updatedTime(row.updated_at) }}</template></ElTableColumn>
+        <ElTableColumn label="操作" width="72" fixed="right" align="center"><template #default="{ row }">
+          <ElDropdown :persistent="false" trigger="click" placement="bottom-end" :disabled="busy || loading" @command="handleRowAction($event, row)">
+            <ElButton link class="row-more-button" :icon="MoreFilled" :disabled="busy || loading" :aria-label="row.sheet_number + '的更多操作'" />
+            <template #dropdown><ElDropdownMenu>
+              <ElDropdownItem command="edit">{{ row.status === 'DRAFT' ? '编辑' : '查看' }}</ElDropdownItem>
+              <ElDropdownItem command="xlsx">下载 Excel</ElDropdownItem>
+            </ElDropdownMenu></template>
+          </ElDropdown>
+        </template></ElTableColumn>
         <template #empty><div class="empty"><strong>{{ loadError ? '采购表加载失败' : '暂无供应商采购表' }}</strong><span>{{ loadError ? '请重新加载后继续操作' : '请先确认采购订单并选择合同模板' }}</span></div></template>
       </ElTable>
       </div>
@@ -248,7 +250,7 @@ onMounted(() => {
         <div class="batch-publish-dialog__count"><span>本次将发布</span><strong>{{ pendingPublishIds.length }}</strong><span>张供应商采购表</span></div>
         <div class="batch-publish-dialog__notice">
           <img :src="documentLockIcon" alt="" width="34" height="34" />
-          <div><strong>发布后将生成正式 PDF</strong><p>当前版本将锁定为只读；如需修改，请创建新版本。</p></div>
+          <div><strong>发布后将锁定当前版本</strong><p>当前版本将变为只读；如需修改，请创建新版本。</p></div>
         </div>
         <p v-if="publishError" class="batch-publish-dialog__error" role="alert">{{ publishError }}</p>
       </div>
@@ -267,7 +269,8 @@ onMounted(() => {
 .total-count { color: var(--erp-color-text-secondary); white-space: nowrap; font-size: 12px; }
 .heading-space { flex: 1; }
 .heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.manage-button, .download-button { width: 110px; }
+.manage-button { width: 110px; }
+.download-button { width: 138px; }
 .publish-button { width: 176px; }
 .load-error { padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; background: var(--erp-color-danger-soft); color: var(--erp-color-danger); flex: none; }
 .list-description { display: flex; flex-wrap: wrap; align-items: center; margin-left: auto; gap: 12px; color: var(--erp-color-text-secondary); }

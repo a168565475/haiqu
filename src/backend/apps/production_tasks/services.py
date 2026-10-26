@@ -16,7 +16,8 @@ from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 from apps.files.uploads import save_scanned_image
 from apps.products.models import ProductStatus
-from apps.organizations.models import Employee, EmployeeStatus
+from apps.organizations.models import Employee
+from apps.organizations.selectors import active_role_employees
 from apps.reference_data.models import Currency, ProductionUnit, ReferenceStatus
 from apps.sales_orders.pricing import cny_line_amounts
 from apps.sales_orders.models import (
@@ -912,11 +913,9 @@ def _validate_followers(followers):
     follower_ids = {employee.pk for employee in followers}
     if not follower_ids:
         raise ValidationError({"follower_ids": "必须选择生产跟单员。"})
-    valid_count = Employee.objects.filter(
-        pk__in=follower_ids, status=EmployeeStatus.ACTIVE, archived_at__isnull=True,
-    ).count()
+    valid_count = active_role_employees("MERCHANDISER").filter(pk__in=follower_ids).count()
     if valid_count != len(follower_ids):
-        raise ValidationError({"follower_ids": "跟单员已停用或归档，请重新选择。"})
+        raise ValidationError({"follower_ids": "请选择行政员工管理中当前有效的“跟单”岗位员工。"})
 
 
 def _sync_sales_delivery_date(*, task, actor_employee, request):

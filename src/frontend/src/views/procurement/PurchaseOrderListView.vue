@@ -89,7 +89,7 @@ function formatMoney(value: string | null | undefined): string {
   const matched = /^(-?)(\d+)(?:\.(\d+))?$/.exec(normalized)
   if (!matched) return normalized
   const grouped = (matched[2] || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return `${matched[1] || ''}${grouped}${matched[3] ? `.${matched[3]}` : ''}`
+  return `${matched[1] || ''}${grouped}${matched[3]?.replace(/0+$/, '') ? `.${matched[3].replace(/0+$/, '')}` : ''}`
 }
 
 function formatDateTime(value: string): string {
@@ -336,7 +336,7 @@ async function submitCompletion(remark: string): Promise<void> {
 async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及 PDF 也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
+      `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及归档文件也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
       '删除采购订单',
       {
         type: 'warning',

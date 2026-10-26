@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -109,7 +110,7 @@ function format(value: unknown): string {
   if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return '—'
   return Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
-function meters(value: unknown): string { return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value).toFixed(2) : '—' }
+function meters(value: unknown): string { return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? compactDecimal(Number(value).toFixed(2)) : '—' }
 function materialQuantity(value: unknown): string {
   return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 }

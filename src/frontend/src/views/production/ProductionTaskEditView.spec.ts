@@ -21,7 +21,7 @@ vi.mock('@/api/productionTasks', () => ({
 }))
 
 interface EditPage {
-  form: { delivery_date: string; follower_ids: string[]; special_requirements_html: string; salesperson_id: string; order_date: string; includes_tax: boolean; tax_rate: 3 | 5 | 7 | null; order_tolerance_percent: string; is_repeat_order: boolean; preproduction_sample_required: boolean; delivery_method: 'SINGLE' | 'SPLIT'; planner_id: string | null; planned_start_date: string; planned_end_date: string; production_priority: string; production_batch_number: string }
+  form: { delivery_date: string; follower_ids: string[]; special_requirements_html: string; salesperson_id: string; order_date: string; includes_tax: boolean; tax_rate: 3 | 5 | 7 | null; order_tolerance_percent: string; is_repeat_order: boolean; preproduction_sample_required: boolean; delivery_method: 'SINGLE' | 'SPLIT'; planned_start_date: string; planned_end_date: string; production_priority: string; production_batch_number: string }
   products: Array<{ quantity: string }>
   dirty: boolean
   save: () => Promise<void>
@@ -262,15 +262,29 @@ describe('生产任务编辑页精确保存', () => {
     wrapper.unmount()
   })
 
+  it('旧跟单员不在候选岗位时保留姓名且不可重新选择，不自动改写原授权人', async () => {
+    vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue({ employees: [{ id: 'current-follower', display_name: '当前跟单', employee_code: 'E3' }] } as never)
+    const { wrapper, page } = await mountPage()
+    const state = wrapper.vm as unknown as { followerOptions: Array<{ id: string; display_name: string }> }
+    expect(state.followerOptions.find(entry => entry.id === 'follower-old')?.display_name).toBe('跟单员')
+    expect(page.form.follower_ids).toEqual(['follower-old'])
+    expect(page.dirty).toBe(false)
+    page.form.follower_ids = []
+    await flushPromises()
+    expect(state.followerOptions.map(entry => entry.id)).toEqual(['current-follower'])
+    wrapper.unmount()
+  })
+
   it('生产中任务补齐创建同名字段并保留状态，不发送编号或来源身份', async () => {
     const task = legacyTask()
     task.status = 'IN_PRODUCTION'
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: '"task-v1"' })
     const { wrapper, page } = await mountPage()
-    Object.assign(page.form, { salesperson_id: 'sales-new', order_date: '2026-09-02', includes_tax: true, tax_rate: 5, order_tolerance_percent: '2', is_repeat_order: true, preproduction_sample_required: true, delivery_method: 'SPLIT', planner_id: 'planner', planned_start_date: '2026-09-03', planned_end_date: '2026-09-18', production_priority: 'HIGH', production_batch_number: 'B-01' })
+    Object.assign(page.form, { salesperson_id: 'sales-new', order_date: '2026-09-02', includes_tax: true, tax_rate: 5, order_tolerance_percent: '2', is_repeat_order: true, preproduction_sample_required: true, delivery_method: 'SPLIT', planned_start_date: '2026-09-03', planned_end_date: '2026-09-18', production_priority: 'HIGH', production_batch_number: 'B-01' })
     await page.save()
-    expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ salesperson_id: 'sales-new', order_date: '2026-09-02', includes_tax: true, tax_rate: 5, order_tolerance_percent: '2', is_repeat_order: true, preproduction_sample_required: true, delivery_method: 'SPLIT', planner_id: 'planner', planned_start_date: '2026-09-03', planned_end_date: '2026-09-18', production_priority: 'HIGH', production_batch_number: 'B-01' }), {}, {}, '"task-v1"')
+    expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ salesperson_id: 'sales-new', order_date: '2026-09-02', includes_tax: true, tax_rate: 5, order_tolerance_percent: '2', is_repeat_order: true, preproduction_sample_required: true, delivery_method: 'SPLIT', planned_start_date: '2026-09-03', planned_end_date: '2026-09-18', production_priority: 'HIGH', production_batch_number: 'B-01' }), {}, {}, '"task-v1"')
     const patch = vi.mocked(api.updateProductionTask).mock.calls[0][1]
+    expect(patch).not.toHaveProperty('planner_id')
     expect(patch).not.toHaveProperty('task_number')
     expect(patch).not.toHaveProperty('sales_order_id')
     expect(ElMessageBox.confirm).toHaveBeenCalledWith(expect.stringContaining('保留当前生产状态'), '确认保存修改', expect.any(Object))

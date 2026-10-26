@@ -86,7 +86,7 @@ class PurchaseRequestViewSet(
         return purchase_requests_with_context(queryset)
 
     def _response(self, purchase_request, response_status=status.HTTP_200_OK):
-        current = purchase_requests_with_context(self.get_queryset().filter(pk=purchase_request.pk)).get()
+        current = self.get_queryset().filter(pk=purchase_request.pk).get()
         response = Response({"data": PurchaseRequestSerializer(current).data}, status=response_status)
         response["ETag"] = etag_for_instance(current)
         return response

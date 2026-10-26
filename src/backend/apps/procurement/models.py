@@ -542,6 +542,9 @@ class PurchaseRequestLine(TimeStampedModel):
 
     @property
     def allocated_quantity(self):
+        # 批量读查询提供本次读取的汇总；普通实例仍查询数据库最新值。
+        if hasattr(self, "_allocated_quantity_total"):
+            return self._allocated_quantity_total or Decimal("0")
         return self.allocations.filter(
             status__in=[PurchaseAllocationStatus.DRAFT, PurchaseAllocationStatus.ORDERED]
         ).aggregate(value=models.Sum("quantity"))["value"] or Decimal("0")

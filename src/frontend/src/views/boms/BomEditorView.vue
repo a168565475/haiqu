@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
@@ -2562,13 +2563,13 @@ onBeforeUnmount(() => {
                   </template>
                 </ElTableColumn>
                <ElTableColumn label="规格" min-width="118"><template #default="scope"><ElTooltip :content="scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}`" placement="top"><span class="profile-ellipsis-value">{{ scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}` }}</span></ElTooltip></template></ElTableColumn>
-               <ElTableColumn prop="length_value" label="切割长度（mm）" width="100" />
-               <ElTableColumn prop="unit_consumption" label="单耗" width="78" />
+               <ElTableColumn prop="length_value" label="切割长度（mm）" width="100" ><template #default="{ row }">{{ compactDecimal(row.length_value) }}</template></ElTableColumn>
+               <ElTableColumn prop="unit_consumption" label="单耗" width="78" ><template #default="{ row }">{{ compactDecimal(row.unit_consumption) }}</template></ElTableColumn>
                <ElTableColumn label="总需求（支）" width="110"><template #default="scope"><b>{{ tubeCalculations(scope.row).total_consumption }}</b></template></ElTableColumn>
                <ElTableColumn prop="tube_cut_piece_count" label="切割支数" width="90" />
-               <ElTableColumn label="原材料长度（m）" width="105"><template #default="scope">{{ tubeCalculations(scope.row).tube_cut_length_m }}</template></ElTableColumn>
+               <ElTableColumn label="原材料长度（m）" width="105"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).tube_cut_length_m) }}</template></ElTableColumn>
                <ElTableColumn label="采购根数" width="90"><template #default="scope"><b>{{ tubeCalculations(scope.row).branch_count }}</b></template></ElTableColumn>
-               <ElTableColumn label="建议采购米数" width="115"><template #default="scope">{{ tubeCalculations(scope.row).suggested_purchase_meters }}</template></ElTableColumn>
+               <ElTableColumn label="建议采购米数" width="115"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_meters) }}</template></ElTableColumn>
                <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
              </ElTable>
             <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
@@ -2882,9 +2883,9 @@ onBeforeUnmount(() => {
               <h3>自动计算</h3>
               <div class="drawer-calculation-grid">
                 <label><span>总耗</span><strong>{{ editingLineCalculations.total_consumption }}</strong></label>
-                <label><span>原材料长度（m）</span><strong>{{ editingLineCalculations.tube_cut_length_m }}</strong></label>
+                <label><span>原材料长度（m）</span><strong>{{ compactDecimal(editingLineCalculations.tube_cut_length_m) }}</strong></label>
                 <label><span>采购根数</span><strong>{{ editingLineCalculations.branch_count }}</strong></label>
-                <label><span>建议采购米数</span><strong>{{ editingLineCalculations.suggested_purchase_meters }}</strong></label>
+                <label><span>建议采购米数</span><strong>{{ compactDecimal(editingLineCalculations.suggested_purchase_meters) }}</strong></label>
                 <label><span>长料单重（kg）</span><strong>{{ editingLineCalculations.long_material_unit_weight_kg }}</strong></label>
                 <label><span>单重（kg）</span><strong>{{ editingLineCalculations.tube_unit_weight_kg }}</strong></label>
                 <label><span>长料总重量（kg）</span><strong>{{ editingLineCalculations.long_material_total_weight_kg }}</strong></label>
@@ -3095,7 +3096,7 @@ onBeforeUnmount(() => {
               :value="group.material_name"
             />
           </ElSelect>
-          <ElInput v-model="hardwarePickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名、材质、颜色或规格" @keyup.enter="searchHardwareCandidates" @clear="searchHardwareCandidates" />
+          <ElInput v-model="hardwarePickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchHardwareCandidates" @clear="searchHardwareCandidates" />
           <ElButton type="primary" @click="searchHardwareCandidates">查询</ElButton>
           <ElTooltip
             :disabled="canCreateHardwareRawMaterial"
@@ -3139,13 +3140,12 @@ onBeforeUnmount(() => {
               <ElCheckbox :model-value="Boolean(selectedHardware[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="toggleHardwareCandidate(scope.row, $event)" />
             </template>
           </ElTableColumn>
-          <ElTableColumn prop="material_number" label="品号" width="130" show-overflow-tooltip />
           <ElTableColumn prop="material_name" label="品名" min-width="165" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="100" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />
           <ElTableColumn prop="unit_name" label="单位" width="76" />
-          <ElTableColumn label="单个材料重量（kg）" width="160"><template #default="scope">{{ scope.row.weight_kg || '待填写' }}</template></ElTableColumn>
+          <ElTableColumn label="单个材料重量（kg）" width="160"><template #default="scope">{{ compactDecimal(scope.row.weight_kg, '待填写') }}</template></ElTableColumn>
           <ElTableColumn label="流转单位" width="90"><template #default="scope">{{ scope.row.flow_unit || '—' }}</template></ElTableColumn>
         </ElTable>
         <div class="hardware-picker-pagination">
@@ -3189,7 +3189,7 @@ onBeforeUnmount(() => {
           <ElSelect v-model="plasticPickerMaterialName" clearable filterable :value-on-clear="''" :loading="plasticGroupLoading" placeholder="全部品名分组" aria-label="塑料件品名分组" :filter-method="filterPlasticGroups" @change="searchPlasticCandidates" @visible-change="clearPlasticGroupFilter">
             <ElOption v-for="group in visiblePlasticGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
           </ElSelect>
-          <ElInput v-model="plasticPickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名、材质、颜色或规格" @keyup.enter="searchPlasticCandidates" @clear="searchPlasticCandidates" />
+          <ElInput v-model="plasticPickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchPlasticCandidates" @clear="searchPlasticCandidates" />
           <ElButton type="primary" @click="searchPlasticCandidates">查询</ElButton>
           <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('plastic')">新增原料</ElButton>
         </div>
@@ -3204,7 +3204,6 @@ onBeforeUnmount(() => {
             <template #header><ElCheckbox :model-value="plasticPageAllSelected" :indeterminate="plasticPageSelectionIndeterminate" aria-label="全选当前页塑料件数据" @change="togglePlasticPage" /></template>
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPlastic[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePlasticCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
-          <ElTableColumn prop="material_number" label="品号" width="145" show-overflow-tooltip />
           <ElTableColumn prop="material_name" label="品名" min-width="190" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="120" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="145" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
@@ -3287,7 +3286,7 @@ onBeforeUnmount(() => {
           <ElSelect v-model="packagingPickerMaterialName" clearable filterable :value-on-clear="''" :loading="packagingGroupLoading" placeholder="全部品名分组" aria-label="包材品名分组" :filter-method="filterPackagingGroups" @change="searchPackagingCandidates" @visible-change="clearPackagingGroupFilter">
             <ElOption v-for="group in visiblePackagingGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
           </ElSelect>
-          <ElInput v-model="packagingPickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名、材质、颜色或规格" @keyup.enter="searchPackagingCandidates" @clear="searchPackagingCandidates" />
+          <ElInput v-model="packagingPickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchPackagingCandidates" @clear="searchPackagingCandidates" />
           <ElButton type="primary" @click="searchPackagingCandidates">查询</ElButton>
           <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('packaging')">新增原料</ElButton>
         </div>
@@ -3298,7 +3297,6 @@ onBeforeUnmount(() => {
             <template #header><ElCheckbox :model-value="packagingPageAllSelected" :indeterminate="packagingPageSelectionIndeterminate" aria-label="全选当前页包材数据" @change="togglePackagingPage" /></template>
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPackaging[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePackagingCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
-          <ElTableColumn prop="material_number" label="品号" width="140" show-overflow-tooltip />
           <ElTableColumn prop="material_name" label="品名" min-width="180" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="material" label="材质" width="115" show-overflow-tooltip />
           <ElTableColumn label="颜色" min-width="135" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
@@ -3327,7 +3325,7 @@ onBeforeUnmount(() => {
           <ElSelect v-model="cuttingPickerMaterialName" clearable filterable :value-on-clear="''" :loading="cuttingGroupLoading" placeholder="全部品名分组" aria-label="裁剪品名分组" :filter-method="filterCuttingGroups" @change="searchCuttingCandidates" @visible-change="clearCuttingGroupFilter">
             <ElOption v-for="group in visibleCuttingGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
           </ElSelect>
-          <ElInput v-model="cuttingPickerKeyword" clearable maxlength="100" placeholder="搜索品号、品名或规格" @keyup.enter="searchCuttingCandidates" @clear="searchCuttingCandidates" />
+          <ElInput v-model="cuttingPickerKeyword" clearable maxlength="100" placeholder="搜索品名或规格" @keyup.enter="searchCuttingCandidates" @clear="searchCuttingCandidates" />
           <ElButton type="primary" @click="searchCuttingCandidates">查询</ElButton>
           <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('cutting')">新增裁片</ElButton>
         </div>
@@ -3338,7 +3336,6 @@ onBeforeUnmount(() => {
             <template #header><ElCheckbox :model-value="cuttingPageAllSelected" :indeterminate="cuttingPageSelectionIndeterminate" aria-label="全选当前页裁剪数据" @change="toggleCuttingPage" /></template>
             <template #default="scope"><ElCheckbox :model-value="Boolean(selectedCutting[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="toggleCuttingCandidate(scope.row, $event)" /></template>
           </ElTableColumn>
-          <ElTableColumn prop="material_number" label="品号" width="135" show-overflow-tooltip />
           <ElTableColumn prop="material_name" label="裁剪名称" min-width="175" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
           <ElTableColumn prop="category_name" label="类别" width="120" show-overflow-tooltip />
           <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />

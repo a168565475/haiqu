@@ -2,7 +2,7 @@
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 from apps.workshop_reporting.models import WageScheme, WorkReportLine
@@ -40,11 +40,11 @@ def schedule_list_amounts(request, schedules):
     schemes = defaultdict(list)
     today = timezone.localdate()
     for scheme in WageScheme.objects.filter(
+        Q(effective_to__isnull=True) | Q(effective_to__gte=today),
         product_line_id__in=[product.product_line_id for product in products],
         status="APPROVED", effective_from__lte=today,
     ).prefetch_related("lines"):
-        if scheme.effective_to is None or scheme.effective_to >= today:
-            schemes[(scheme.product_line_id, scheme.scope_craft_id)].append(scheme)
+        schemes[(scheme.product_line_id, scheme.scope_craft_id)].append(scheme)
     all_report_counts = dict(WorkReportLine.objects.filter(
         report__schedule_product__schedule_id__in=schedule_ids,
     ).values("report__schedule_product__schedule_id").annotate(total=Count("id"))

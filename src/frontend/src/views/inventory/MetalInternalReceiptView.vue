@@ -164,6 +164,13 @@ async function postPending(recovering = false) {
   try { await saved(await confirmInternalReceipt(original.payload, original.etag)) }
   catch (cause) {
     const status = isAxiosError(cause) ? cause.response?.status : undefined
+    const code = isAxiosError(cause) ? cause.response?.data?.error?.code : undefined
+    if (status === 409 && code === 'RECEIPT_REQUEST_DELETED') {
+      if (!clearPending()) return
+      dialog.value = ''; error.value = ''
+      warn(errorText(cause, '本次待入库记录已删除，不能重复提交；如需重新入库，请重新填写。'))
+      return
+    }
     if (status === 409) {
       dialog.value = ''
       original.conflict = true

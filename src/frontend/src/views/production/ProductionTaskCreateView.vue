@@ -45,17 +45,15 @@ const requestKey = crypto.randomUUID()
 const taskNumberSuffix = ref('')
 let latestOrderRequest = 0
 const stepItems = [
-  { title: '选择销售来源', description: '订单及交付来源' },
-  { title: '产品与价格', description: '本次数量与人民币金额' },
-  { title: '生产安排', description: '任务编号、人员与要求' },
-  { title: '核对并提交', description: '保存草稿或提交 PMC' },
+  { step: 1, title: '选择产品', description: '来源、数量与人民币价格' },
+  { step: 3, title: '生产安排', description: '任务编号、人员与要求' },
+  { step: 4, title: '核对并提交', description: '保存草稿或提交 PMC' },
 ]
 const plan = reactive({
   plannedStartDate: '',
   plannedEndDate: '',
   productionPriority: 'NORMAL' as 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW',
   productionBatchNumber: '',
-  plannerId: null as string | null,
   followerIds: [] as string[], deliveryDate: '', salespersonId: '', orderDate: '',
   preproductionSample: false, includesTax: false, taxRate: null as 3 | 5 | 7 | null, tolerance: '0', isRepeat: false, deliveryMethod: 'SINGLE' as 'SINGLE' | 'SPLIT',
 })
@@ -285,10 +283,9 @@ function validatePlan() {
 }
 
 function nextStep() {
-  if (activeStep.value === 1 && !validateStepOne()) return
-  if (activeStep.value === 2 && !validateLines()) return
+  if (activeStep.value === 1 && (!validateStepOne() || !validateLines())) return
   if (activeStep.value === 3 && !validatePlan()) return
-  activeStep.value = Math.min(4, activeStep.value + 1)
+  activeStep.value = activeStep.value === 1 ? 3 : 4
 }
 
 async function save(submitToPmc: boolean) {
@@ -315,7 +312,6 @@ async function save(submitToPmc: boolean) {
       planned_end_date: plan.plannedEndDate || null,
       production_priority: plan.productionPriority,
       production_batch_number: plan.productionBatchNumber.trim(),
-      planner_id: plan.plannerId,
     })
     createdId = created.data.id
     if (submitToPmc) {
@@ -433,14 +429,14 @@ async function saveManual() {
     salesperson_id: plan.salespersonId, follower_ids: [...plan.followerIds], currency_id: currencyId, includes_tax: plan.includesTax, tax_rate: plan.includesTax ? plan.taxRate : null,
     order_tolerance_percent: plan.tolerance, is_repeat_order: plan.isRepeat, preproduction_sample_required: plan.preproductionSample, delivery_method: plan.deliveryMethod,
     special_requirements_html: '', freight_amount: '0', other_fee_amount: '0', delivery_batches: [],
-    planned_start_date: plan.plannedStartDate || null, planned_end_date: plan.plannedEndDate || null, production_priority: plan.productionPriority, production_batch_number: plan.productionBatchNumber, planner_id: plan.plannerId,
+    planned_start_date: plan.plannedStartDate || null, planned_end_date: plan.plannedEndDate || null, production_priority: plan.productionPriority, production_batch_number: plan.productionBatchNumber,
     products: manualProducts.value.map(row => ({ client_key: row.key, product_id: row.item.product_id || null, product_category_id: row.item.product_category_id ?? null, product_color_id: row.item.product_color_id || null, color_code: catalogColors.value.find(color => color.id === row.item.product_color_id)?.color_code || '', customer_product_name: row.item.product_description, customer_specification: row.item.specification, customer_color: row.item.color, material: row.item.material,
       quantity: String(row.item.quantity), unit_id: row.item.product_unit_id!, currency_id: currencyId, unit_price: String(row.item.target_unit_price), exchange_rate: '1.00000000', retained_image_ids: [], details: row.details, special_requirements: row.item.notes, packaging_method: row.packagingMethod })),
   }
   return createProductionTask(payload, Object.fromEntries(manualProducts.value.filter(row => row.file).map(row => [row.key, [row.file!]])), {})
 }
 const sourceAmountsReady = computed(() => Boolean(order.value && order.value.total_amount_cny != null && colorLines.value.every(row => salesOrderLine(row)?.unit_price_cny != null)))
-function money(value: string | number | null | undefined) { if (value === undefined || value === null || value === '') return '—'; return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) }
+function money(value: string | number | null | undefined) { if (value === undefined || value === null || value === '') return '—'; return Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 4 }) }
 function unitName(line: ColorProductionLine) { const source = salesOrderLine(line); const batch = sourceLine(line); return source?.unit_name || options.value?.units.find(unit => unit.id === source?.unit_id || unit.unit_code === batch?.unit_code)?.unit_name || '单位未维护' }
 function quantitySummary(kind: 'quantity' | 'remaining_quantity' | 'allocated_quantity' | 'production') {
   const totals = new Map<string, number>()
@@ -456,11 +452,11 @@ watch(() => plan.includesTax, value => { if (!value) plan.taxRate = null })
 </script>
 <template>
   <section v-loading="loading" class="production-create-page erp-glass-form">
-    <header class="page-heading"><div><h1>新增生产任务单</h1><p>选择来源、核对产品价格，再填写生产安排并提交 PMC。</p></div><span class="draft-tag">未保存</span></header>
+    <header class="page-heading"><div><h1>新增生产任务单</h1><p>选择产品并核对本次数量、价格，再填写生产安排并提交 PMC。</p></div><span class="draft-tag">未保存</span></header>
     <div class="creation-card">
       <nav class="creation-modes" aria-label="创建方式"><button :class="{ active: !manualMode }" @click="router.push({ name: 'production-task-create', query: route.query })">从销售订单创建</button><button :class="{ active: manualMode }" @click="router.push({ name: 'production-task-manual-create', query: route.query })">手动创建</button></nav>
       <div class="creation-body">
-        <ol class="steps" aria-label="新增生产任务单步骤"><li v-for="(item,index) in stepItems" :key="item.title" :class="{ active: activeStep === index + 1, done: activeStep > index + 1 }"><b>{{ activeStep > index + 1 ? '✓' : index + 1 }}</b><div><span>{{ index === 0 && manualMode ? '录入产品' : item.title }}</span><small>{{ index === 0 && manualMode ? '产品、规格与人民币价格' : item.description }}</small></div></li></ol>
+        <ol class="steps" aria-label="新增生产任务单步骤"><li v-for="(item,index) in stepItems" :key="item.title" :class="{ active: activeStep === item.step, done: activeStep > item.step }"><b>{{ activeStep > item.step ? '✓' : index + 1 }}</b><div><span>{{ index === 0 && manualMode ? '录入产品' : item.title }}</span><small>{{ index === 0 && manualMode ? '产品、规格与人民币价格' : item.description }}</small></div></li></ol>
         <main class="workspace" :class="{ 'erp-flat-form': activeStep === 3 }">
           <template v-if="activeStep === 1 && !manualMode">
             <div class="section-title"><h2>选择销售订单及交付来源</h2></div>
@@ -470,17 +466,16 @@ watch(() => plan.includesTax, value => { if (!value) plan.taxRate = null })
           </template>
           <template v-if="activeStep === 1 && manualMode">
             <div class="section-title"><h2>录入本次生产产品</h2></div>
-            <InquiryProductDialog :key="editorRevision" v-model="editorVisible" embedded hide-summary business-title="本次生产内容" scene="sales-order" :candidate-loader="loadProductionCandidates" :item="editorItem" :categories="categories" :units="catalogUnits" :colors="catalogColors" :currencies="[{code:'CNY'}]" quotation-currency="CNY" :can-upload="true" :close-on-confirm="false" :catalog-error="catalogError" :pending-image="manualProducts.find(row => row.key === editingKey)?.file" @confirm="confirmManual"/>
+            <InquiryProductDialog :key="editorRevision" v-model="editorVisible" embedded hide-summary group-identity-fields business-title="本次生产内容" scene="sales-order" :candidate-loader="loadProductionCandidates" :item="editorItem" :categories="categories" :units="catalogUnits" :colors="catalogColors" :currencies="[{code:'CNY'}]" quotation-currency="CNY" :can-upload="true" :close-on-confirm="false" :catalog-error="catalogError" :pending-image="manualProducts.find(row => row.key === editingKey)?.file" @confirm="confirmManual"/>
             <div class="section-title"><h3>已录入产品（{{ manualProducts.length }}）</h3></div>
           </template>
-          <template v-if="(activeStep === 1 && order && !manualMode) || activeStep === 2">
-          <div v-if="activeStep === 2" class="section-title"><h2>核对产品及本次数量价格</h2><p v-if="!manualMode">产品与人民币单价沿用销售订单，核对本次生产数量。</p></div>
+          <template v-if="activeStep === 1 && order && !manualMode">
             <div v-if="!manualMode" class="source-context"><span>来源 {{ order?.order_number }} · {{ selectedBatch?.batch_number }}</span><strong>订单总金额 CNY {{ money(order?.total_amount_cny) }}</strong><span>可分配 {{ quantitySummary('remaining_quantity') }}</span></div>
             <el-alert v-if="!manualMode && order && !sourceAmountsReady" type="error" :closable="false" title="来源销售订单尚未保存人民币金额，请先完善销售订单。"/>
-            <div v-if="!manualMode" class="table-frame"><el-table :data="colorLines" class="erp-table-editor product-table"  empty-text="该来源没有可分配产品"><el-table-column label="图片" width="72"><template #default="{row}"><ProductImage :src="order && salesOrderLine(row)?.product_image_id ? productionSalesOrderSourceImageUrl(order.id, salesOrderLine(row)!.id) : ''" :name="sourceLine(row)?.product_name"/></template></el-table-column><el-table-column label="货号" width="130"><template #default="{row}">{{ salesOrderLine(row)?.product_id ? salesOrderLine(row)?.item_number_snapshot : '' }}</template></el-table-column><el-table-column label="产品名称" min-width="170"><template #default="{row}">{{ salesOrderLine(row)?.customer_product_name_snapshot || sourceLine(row)?.product_name }}</template></el-table-column><el-table-column label="颜色" width="120"><template #default="{row}">{{ sourceColorText(row) }}</template></el-table-column><el-table-column label="规格" min-width="150"><template #default="{row}">{{ salesOrderLine(row)?.specification_display || salesOrderLine(row)?.customer_specification_snapshot || salesOrderLine(row)?.specification_snapshot }}</template></el-table-column><el-table-column label="材质" width="130"><template #default="{row}">{{ salesOrderLine(row)?.material_snapshot || '—' }}</template></el-table-column><el-table-column label="可分配量" width="140" align="right"><template #default="{row}">{{ formatQuantity(sourceLine(row)?.remaining_quantity || 0) }} {{ unitName(row) }}</template></el-table-column><el-table-column v-if="activeStep === 2" label="本次生产数量" width="160" align="right" header-align="center"><template #default="{row}"><el-input-number v-model="row.quantity" :min="1" :max="Math.floor(Number(sourceLine(row)?.remaining_quantity || 0))" :precision="0" :controls="false"/></template></el-table-column><el-table-column label="人民币单价" width="145" align="right"><template #default="{row}">{{ money(salesOrderLine(row)?.unit_price_cny) }}</template></el-table-column><el-table-column label="订单行金额（CNY）" width="170" align="right"><template #default="{row}">{{ money(salesOrderLine(row)?.line_total_cny) }}</template></el-table-column><el-table-column v-if="activeStep === 2" label="本次金额（CNY）" width="170" align="right"><template #default="{row}">{{ money(multiplyAmount4(row.quantity, salesOrderLine(row)?.unit_price_cny)) }}</template></el-table-column></el-table></div>
+            <div v-if="!manualMode" class="table-frame"><el-table :data="colorLines" class="erp-table-editor product-table"  empty-text="该来源没有可分配产品"><el-table-column label="图片" width="72"><template #default="{row}"><ProductImage :src="order && salesOrderLine(row)?.product_image_id ? productionSalesOrderSourceImageUrl(order.id, salesOrderLine(row)!.id) : ''" :name="sourceLine(row)?.product_name"/></template></el-table-column><el-table-column label="货号" width="130"><template #default="{row}">{{ salesOrderLine(row)?.product_id ? salesOrderLine(row)?.item_number_snapshot : '' }}</template></el-table-column><el-table-column label="产品名称" min-width="170"><template #default="{row}">{{ salesOrderLine(row)?.customer_product_name_snapshot || sourceLine(row)?.product_name }}</template></el-table-column><el-table-column label="颜色" width="120"><template #default="{row}">{{ sourceColorText(row) }}</template></el-table-column><el-table-column label="规格" min-width="150"><template #default="{row}">{{ salesOrderLine(row)?.specification_display || salesOrderLine(row)?.customer_specification_snapshot || salesOrderLine(row)?.specification_snapshot }}</template></el-table-column><el-table-column label="材质" width="130"><template #default="{row}">{{ salesOrderLine(row)?.material_snapshot || '—' }}</template></el-table-column><el-table-column label="可分配量" width="140" align="right"><template #default="{row}">{{ formatQuantity(sourceLine(row)?.remaining_quantity || 0) }} {{ unitName(row) }}</template></el-table-column><el-table-column label="本次生产数量" width="160" align="right" header-align="center"><template #default="{row}"><el-input-number v-model="row.quantity" :min="1" :max="Math.floor(Number(sourceLine(row)?.remaining_quantity || 0))" :precision="0" :controls="false"/></template></el-table-column><el-table-column label="人民币单价" width="145" align="right"><template #default="{row}">{{ money(salesOrderLine(row)?.unit_price_cny) }}</template></el-table-column><el-table-column label="订单行金额（CNY）" width="170" align="right"><template #default="{row}">{{ money(salesOrderLine(row)?.line_total_cny) }}</template></el-table-column><el-table-column label="本次金额（CNY）" width="170" align="right"><template #default="{row}">{{ money(multiplyAmount4(row.quantity, salesOrderLine(row)?.unit_price_cny)) }}</template></el-table-column></el-table></div>
           </template>
-          <div v-if="manualMode && activeStep <= 2" class="table-frame"><el-table :data="manualProducts" empty-text="尚未录入产品"><el-table-column label="图片" width="72"><template #default="{row}"><ProductImage :src="row.preview" :name="row.item.product_description"/></template></el-table-column><el-table-column label="货号" width="120"><template #default="{row}">{{ row.item.product_id ? row.item.item_number_snapshot : '' }}</template></el-table-column><el-table-column label="名称" min-width="160"><template #default="{row}">{{ row.item.product_description }}</template></el-table-column><el-table-column label="颜色" width="110"><template #default="{row}">{{ row.item.color || '—' }}</template></el-table-column><el-table-column label="规格" min-width="140"><template #default="{row}">{{ row.item.specification }}</template></el-table-column><el-table-column label="材质" width="130"><template #default="{row}">{{ row.item.material || '—' }}</template></el-table-column><el-table-column label="数量" width="130" align="right"><template #default="{row}">{{ row.item.quantity }} {{ catalogUnits.find(unit => unit.id === row.item.product_unit_id)?.unit_name }}</template></el-table-column><el-table-column label="人民币单价" width="140" align="right"><template #default="{row}">{{ money(row.item.target_unit_price || 0) }}</template></el-table-column><el-table-column label="本次金额" width="150" align="right"><template #default="{row}">{{ money(multiplyAmount4(row.item.quantity, row.item.target_unit_price)) }}</template></el-table-column><el-table-column label="操作" width="130" fixed="right"><template #default="{row,$index}"><el-button link type="primary" @click="activeStep = 1; editManual(row)">编辑</el-button><el-button link type="danger" @click="removeManual($index)">移除</el-button></template></el-table-column></el-table></div>
-          <div v-if="activeStep === 2" class="totals"><strong>本次生产 {{ manualMode ? manualProducts.map(row => `${row.item.quantity} ${catalogUnits.find(unit => unit.id === row.item.product_unit_id)?.unit_name || ''}`).join(' / ') : quantitySummary('production') }}</strong><strong>本次金额 CNY {{ money(currentAmount) }}</strong></div>
+          <div v-if="manualMode && activeStep === 1" class="table-frame"><el-table :data="manualProducts" empty-text="尚未录入产品"><el-table-column label="图片" width="72"><template #default="{row}"><ProductImage :src="row.preview" :name="row.item.product_description"/></template></el-table-column><el-table-column label="货号" width="120"><template #default="{row}">{{ row.item.product_id ? row.item.item_number_snapshot : '' }}</template></el-table-column><el-table-column label="名称" min-width="160"><template #default="{row}">{{ row.item.product_description }}</template></el-table-column><el-table-column label="颜色" width="110"><template #default="{row}">{{ row.item.color || '—' }}</template></el-table-column><el-table-column label="规格" min-width="140"><template #default="{row}">{{ row.item.specification }}</template></el-table-column><el-table-column label="材质" width="130"><template #default="{row}">{{ row.item.material || '—' }}</template></el-table-column><el-table-column label="数量" width="130" align="right"><template #default="{row}">{{ row.item.quantity }} {{ catalogUnits.find(unit => unit.id === row.item.product_unit_id)?.unit_name }}</template></el-table-column><el-table-column label="人民币单价" width="140" align="right"><template #default="{row}">{{ money(row.item.target_unit_price || 0) }}</template></el-table-column><el-table-column label="本次金额" width="150" align="right"><template #default="{row}">{{ money(multiplyAmount4(row.item.quantity, row.item.target_unit_price)) }}</template></el-table-column><el-table-column label="操作" width="130" fixed="right"><template #default="{row,$index}"><el-button link type="primary" @click="activeStep = 1; editManual(row)">编辑</el-button><el-button link type="danger" @click="removeManual($index)">移除</el-button></template></el-table-column></el-table></div>
+          <div v-if="activeStep === 1 && (manualMode ? manualProducts.length : colorLines.length)" class="totals"><strong>本次生产 {{ manualMode ? manualProducts.map(row => `${row.item.quantity} ${catalogUnits.find(unit => unit.id === row.item.product_unit_id)?.unit_name || ''}`).join(' / ') : quantitySummary('production') }}</strong><strong>本次金额 CNY {{ money(currentAmount) }}</strong></div>
           <template v-if="activeStep === 3">
             <div class="section-title"><h2>生产安排</h2><p>人工填写 HT 编号，独立选择生产跟单员；来源业务员和下单日期只读。</p></div>
             <div class="plan-grid">
@@ -494,16 +489,16 @@ watch(() => plan.includesTax, value => { if (!value) plan.taxRate = null })
               <label><span>订单误差 *</span><el-input v-model="plan.tolerance"><template #append>%</template></el-input></label>
               <label><span>是否返单 *</span><el-select v-model="plan.isRepeat"><el-option label="是" :value="true"/><el-option label="否" :value="false"/></el-select></label>
               <label><span>交货方式 *</span><el-select v-model="plan.deliveryMethod"><el-option label="一次交货" value="SINGLE"/><el-option label="分批交货" value="SPLIT"/></el-select></label>
-              <label v-if="manualMode"><span>产前确认样</span><el-select v-model="plan.preproductionSample"><el-option label="是" :value="true"/><el-option label="否" :value="false"/></el-select></label><label><span>计划员</span><el-select v-model="plan.plannerId" clearable filterable><el-option v-for="employee in options?.employees || []" :key="employee.id" :value="employee.id" :label="employee.display_name"/></el-select></label>
+              <label v-if="manualMode"><span>产前确认样</span><el-select v-model="plan.preproductionSample"><el-option label="是" :value="true"/><el-option label="否" :value="false"/></el-select></label>
               <label><span>生产优先级</span><el-select v-model="plan.productionPriority"><el-option label="紧急" value="URGENT"/><el-option label="高" value="HIGH"/><el-option label="普通" value="NORMAL"/><el-option label="低" value="LOW"/></el-select></label>
               <label><span>计划开始</span><el-date-picker v-model="plan.plannedStartDate" type="date" value-format="YYYY-MM-DD"/></label><label><span>计划完工</span><el-date-picker v-model="plan.plannedEndDate" type="date" value-format="YYYY-MM-DD"/></label><label><span>生产批号</span><el-input v-model="plan.productionBatchNumber" maxlength="100"/></label>
             </div>
             <h3>生产要求</h3>
             <div v-if="!manualMode" v-for="line in colorLines" :key="line.key" class="requirement-row"><strong>{{ sourceLine(line)?.product_name }} · {{ sourceColorText(line) }}</strong><label><span>包装要求</span><el-input v-model="line.packagingMethod" type="textarea" :rows="2" maxlength="2000"/></label><label><span>生产要求</span><el-input v-model="line.specialRequirements" type="textarea" :rows="2" maxlength="2000"/></label></div>
-            <div v-else v-for="row in manualProducts" :key="row.key" class="requirement-row"><label><span>{{ row.item.product_description }} · 生产要求</span><el-input v-model="row.item.notes" type="textarea" :rows="2" maxlength="2000"/></label><label><span>包装要求</span><el-input v-model="row.packagingMethod" type="textarea" :rows="2" maxlength="2000"/></label><div class="manual-details"><strong>生产任务单明细</strong><div v-for="detail in row.details" :key="detail.client_key" class="manual-detail-line"><el-input v-model="detail.detail_type" placeholder="明细类型（必填）"/><el-input v-model="detail.category_label" placeholder="类别项"/><el-checkbox v-model="detail.is_selected">需要</el-checkbox><el-input v-model="detail.description" placeholder="本次要求描述"/></div></div></div>
+            <div v-else v-for="row in manualProducts" :key="row.key" class="requirement-row"><label><span>{{ row.item.product_description }} · 生产要求</span><el-input v-model="row.item.notes" type="textarea" :rows="2" maxlength="2000"/></label><label><span>包装要求</span><el-input v-model="row.packagingMethod" type="textarea" :rows="2" maxlength="2000"/></label><!-- 暂不展示生产任务单明细，保留明细数据及保存契约。 --></div>
           </template>
           <template v-if="activeStep === 4"><div class="section-title"><h2>核对并提交</h2><p>保存草稿后可以继续修改，提交 PMC 后进入确认流程。</p></div><dl class="review-summary"><dt>任务编号</dt><dd>HT{{ taskNumberSuffix }}</dd><dt>来源</dt><dd>{{ manualMode ? '手动创建' : `${order?.order_number} · ${selectedBatch?.batch_number}` }}</dd><dt>生产跟单员</dt><dd>{{ plan.followerIds.map(id => options?.employees.find(row => row.id === id)?.display_name).join('、') }}</dd><dt>交期</dt><dd>{{ plan.deliveryDate }}</dd><dt>税务</dt><dd>{{ plan.includesTax ? `含税 ${plan.taxRate}%` : '不含税' }}</dd><dt>订单误差</dt><dd>{{ plan.tolerance }}%</dd><dt>本次金额</dt><dd>CNY {{ money(currentAmount) }}</dd><dt>计划安排</dt><dd>{{ priorityLabel(plan.productionPriority) }} · {{ plan.plannedStartDate || '待确认' }} 至 {{ plan.plannedEndDate || '待确认' }}</dd></dl></template>
-          <footer class="form-actions"><el-button v-if="activeStep === 1" @click="router.push({ name: 'production-tasks' })">返回列表</el-button><el-button v-else :disabled="submitting" @click="activeStep--">上一步</el-button><span/><el-button v-if="activeStep < 4" type="primary" :disabled="loading || orderLoading" @click="nextStep">{{ activeStep === 1 ? '选择并继续' : '下一步' }}</el-button><template v-else><el-button :loading="submitting" @click="save(false)">保存草稿</el-button><el-button type="primary" :loading="submitting" @click="save(true)">保存并提交 PMC</el-button></template></footer>
+          <footer class="form-actions"><el-button v-if="activeStep === 1" @click="router.push({ name: 'production-tasks' })">返回列表</el-button><el-button v-else :disabled="submitting" @click="activeStep = activeStep === 3 ? 1 : 3">上一步</el-button><span/><el-button v-if="activeStep < 4" type="primary" :disabled="loading || orderLoading" @click="nextStep">{{ activeStep === 1 ? '选择并继续' : '下一步' }}</el-button><template v-else><el-button :loading="submitting" @click="save(false)">保存草稿</el-button><el-button type="primary" :loading="submitting" @click="save(true)">保存并提交 PMC</el-button></template></footer>
         </main>
       </div>
     </div>
@@ -554,10 +549,10 @@ h3 { margin:4px 0; font-size:14px; }
 .plan-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
 .plan-grid label>span,.requirement-row label>span { display:block; margin-bottom:7px; font-weight:600; }
 .plan-grid :deep(.el-select), .plan-grid :deep(.el-date-editor) { width:100%; }
+.production-create-page :deep(.business-fields) { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 .production-create-page :deep(.el-input__wrapper),.production-create-page :deep(.el-select__wrapper) { min-height:32px; height:32px; box-sizing:border-box; border-radius:5px; font-size:13px; }
 .production-create-page :deep(.el-button) { height:32px; margin-left:0; border-radius:5px; font-size:13px; }
 .requirement-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:14px; @include detail.inset; }.requirement-row>strong { grid-column:1/-1; }
-.manual-details { grid-column:1/-1; }.manual-detail-line { display:grid; grid-template-columns:150px 150px 80px minmax(120px,1fr); gap:12px; margin-top:10px; }
 .review-summary { display:grid; grid-template-columns:140px 1fr; gap:16px; margin:8px 0 28px; }.review-summary dt { color:var(--erp-color-text-secondary); }.review-summary dd { margin:0; }
 .form-actions { display:flex; align-items:center; gap:10px; border-top:1px solid var(--erp-color-border-subtle); padding-top:16px; margin-top:auto; }.form-actions>span { flex:1; }
 .recent-numbers { padding-left:20px; line-height:28px; }

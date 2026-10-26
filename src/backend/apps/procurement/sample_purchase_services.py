@@ -10,15 +10,18 @@ from apps.core.audit import write_audit_log
 from apps.reference_data.models import Currency, ReferenceStatus
 from apps.samples.models import SampleMaterialProcurementRequest, SampleMaterialPurchaseSource, SampleRequest
 
-from .models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderSourceType, Supplier
+from .models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderSourceType, Supplier, SupplierCategory
 from .selectors import purchase_orders_with_context
 from .source_access import accessible_purchase_samples
 
 
 CATEGORIES = {
-    "tube": ("PROFILE", "管材类"), "hardware": ("HARDWARE", "五金件"),
-    "plastic": ("PLASTIC", "塑料件"), "accessory": ("ACCESSORY", "辅料"),
-    "fabric": ("FABRIC", "面料类"), "packaging": ("PACKAGING", "包装"),
+    "tube": ("PROFILE", "管材类", SupplierCategory.TUBE),
+    "hardware": ("HARDWARE", "五金件", SupplierCategory.HARDWARE),
+    "plastic": ("PLASTIC", "塑料件", SupplierCategory.PLASTIC_PART),
+    "accessory": ("ACCESSORY", "辅料", SupplierCategory.AUXILIARY),
+    "fabric": ("FABRIC", "面料类", SupplierCategory.FABRIC),
+    "packaging": ("PACKAGING", "包装", SupplierCategory.PACKAGING),
 }
 
 
@@ -90,7 +93,7 @@ def sample_source(procurement):
     }, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
     lines = []
     for i, row in enumerate(procurement.lines, 1):
-        section, category = CATEGORIES[row["category"]]
+        section, category, supplier_category = CATEGORIES[row["category"]]
         lines.append({
             "sample_line_key": row["key"], "line_number": i,
             "part_name": row["name"], "specification": row["specification"],
@@ -100,7 +103,7 @@ def sample_source(procurement):
             "sample_demand_quantity": row["quantity"], "sample_supply_quantity": row["supplyQuantity"],
             "required_quantity": row["shortageQuantity"], "source_quantity_text": row["shortageQuantity"],
             "source_quantity_field": "shortageQuantity", "source_unit_text": row["unitLabel"],
-            "quantity_parse_status": "READY", "suggested_supplier_category": section, "category_source": "SECTION",
+            "quantity_parse_status": "READY", "suggested_supplier_category": supplier_category, "category_source": "SECTION",
         })
         if row['key'] in pipe_snapshots:
             snapshot = pipe_snapshots[row['key']]

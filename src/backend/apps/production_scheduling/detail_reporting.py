@@ -107,16 +107,26 @@ def reporting_summary(request, schedule, products):
         if _allows(wage_scope, link.craft.workshop_id) or _allows(report_scope, link.craft.workshop_id)
     }
     schemes_by_scope = {}
+    active_by_scope = {}
     if scope_keys:
         schemes = WageScheme.objects.filter(
             product_line_id__in={key[0] for key in scope_keys},
             workshop_id__in={key[1] for key in scope_keys},
             scope_craft_id__in={key[2] for key in scope_keys},
-        ).prefetch_related("lines").order_by("-created_at", "-id")
+        ).order_by("-created_at", "-id")
         for scheme in schemes:
             key = (scheme.product_line_id, scheme.workshop_id, scheme.scope_craft_id)
             if key in scope_keys:
                 schemes_by_scope.setdefault(key, []).append(scheme)
+                if (
+                    scheme.status == WageSchemeStatus.APPROVED and scheme.effective_from <= as_of
+                    and (scheme.effective_to is None or scheme.effective_to >= as_of)
+                ):
+                    active_by_scope.setdefault(key, []).append(scheme)
+        # 保留全部方案头以显示最新状态；金额和进度只需当前有效版本的明细。
+        prefetch_related_objects(
+            [scheme for candidates in active_by_scope.values() for scheme in candidates], "lines",
+        )
 
     amounts = {}
     quantities = {}
@@ -146,11 +156,7 @@ def reporting_summary(request, schedule, products):
             can_view_wage = _allows(wage_scope, workshop_id)
             can_view_reports = _allows(report_scope, workshop_id)
             candidates = schemes_by_scope.get((product.product_line_id, workshop_id, link.craft_id), [])
-            active = [
-                scheme for scheme in candidates
-                if scheme.status == WageSchemeStatus.APPROVED and scheme.effective_from <= as_of
-                and (scheme.effective_to is None or scheme.effective_to >= as_of)
-            ]
+            active = active_by_scope.get((product.product_line_id, workshop_id, link.craft_id), [])
             scheme = active[0] if len(active) == 1 else None
             estimated = None
             scheme_id = None

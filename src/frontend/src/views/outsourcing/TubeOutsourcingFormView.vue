@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -101,7 +102,7 @@ const materialZoneName = (row: MaterialEntry) => { const zone = row.zones.find(i
 const materialDisabled = (row: MaterialEntry) => locked.value || !canCreate.value || !context.value?.ready || row.blockers.length > 0 || Number(row.max_quantity) <= 0
 const rowDisabled = (row: Entry) => locked.value || !canCreate.value || !context.value?.ready || !(wholeTubeQuantity(row.max_quantity) || 0) || row.blockers.length > 0
 function cellText(row: Entry, key: string): string {
-  if (key === 'raw_bar_length_m') return row.raw_bar_length_m === null ? '—' : Number(row.raw_bar_length_m).toFixed(2)
+  if (key === 'raw_bar_length_m') return row.raw_bar_length_m === null ? '—' : compactDecimal(Number(row.raw_bar_length_m).toFixed(2))
   if (['order_required', 'stock_quantity', 'pieces_per_bar'].includes(key)) return number(row[key as keyof Entry])
   return String(row[key as keyof Entry] ?? '—')
 }

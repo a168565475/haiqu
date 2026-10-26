@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onMounted, reactive, ref, watch, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
@@ -68,7 +69,7 @@ function syncProductExpansion(id: string, event: Event) {
 const form = reactive({
   salesperson_id: '', order_date: '', includes_tax: false, tax_rate: null as 3 | 5 | 7 | null,
   order_tolerance_percent: '0', is_repeat_order: false, preproduction_sample_required: false,
-  delivery_method: 'SINGLE' as 'SINGLE' | 'SPLIT', planner_id: null as string | null,
+  delivery_method: 'SINGLE' as 'SINGLE' | 'SPLIT',
   planned_start_date: '', planned_end_date: '', production_priority: 'NORMAL' as 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW', production_batch_number: '',
   delivery_date: '',
   follower_ids: [] as string[],
@@ -76,13 +77,17 @@ const form = reactive({
 })
 
 const isTerminal = computed(() => ['COMPLETED', 'CANCELLED'].includes(task.value?.status || ''))
-const followerOptions = computed(() => options.value?.employees || [])
-const employeeName = (id: string) => options.value?.employees.find((item) => item.id === id)?.display_name || id
+const followerOptions = computed(() => {
+  const available = options.value?.employees || []
+  return [...available, ...(task.value?.followers || []).filter(employee =>
+    form.follower_ids.includes(employee.id) && !available.some(item => item.id === employee.id))]
+})
+const employeeName = (id: string) => options.value?.employees.find(item => item.id === id)?.display_name || task.value?.followers.find(item => item.id === id)?.display_name || id
 const followerSummary = (ids: string[]) => ids.map(employeeName).join('、') || '未设置'
 const sourceLocked = computed(() => Boolean(task.value?.sales_order_id || task.value?.products.some(row => row.source_delivery_batch_line_id)))
 const returnsToDraft = computed(() => ['PENDING_VALIDATION', 'READY'].includes(task.value?.status || ''))
 const originalForm = ref<Record<string, unknown>>({})
-const fieldLabels: Record<string, string> = { salesperson_id: '业务员', order_date: '下单日期', includes_tax: '含税', tax_rate: '税率', order_tolerance_percent: '订单误差', is_repeat_order: '返单', preproduction_sample_required: '产前样', delivery_method: '交货方式', planner_id: '计划员', planned_start_date: '计划开工', planned_end_date: '计划完工', production_priority: '优先级', production_batch_number: '生产批号' }
+const fieldLabels: Record<string, string> = { salesperson_id: '业务员', order_date: '下单日期', includes_tax: '含税', tax_rate: '税率', order_tolerance_percent: '订单误差', is_repeat_order: '返单', preproduction_sample_required: '产前样', delivery_method: '交货方式', planned_start_date: '计划开工', planned_end_date: '计划完工', production_priority: '优先级', production_batch_number: '生产批号' }
 const productFiles = ref<Record<string, File[]>>({})
 const detailFiles = ref<Record<string, File | null>>({})
 const productPreviews = ref<Record<string, string>>({})
@@ -295,7 +300,7 @@ function buildPatch(): ProductionTaskPatchInput {
   for (const key of Object.keys(fieldLabels)) {
     if (sourceLocked.value && ['salesperson_id', 'order_date', 'preproduction_sample_required'].includes(key)) continue
     const value = form[key as keyof typeof form]
-    if (value !== originalForm.value[key]) Object.assign(patch, { [key]: ['planned_start_date', 'planned_end_date', 'planner_id'].includes(key) ? value || null : value })
+    if (value !== originalForm.value[key]) Object.assign(patch, { [key]: ['planned_start_date', 'planned_end_date'].includes(key) ? value || null : value })
   }
   if (products.value.some(changedProduct) || products.value.length !== task.value.products.length) patch.products = products.value.map(row => row.sourceLocked ? productPayload(task.value!.products.find(item => item.id === row.id)!, row.quantity) : { ...row.payload, quantity: row.quantity, unit_price: row.isCny ? row.unitPriceCny : row.payload.unit_price })
   return patch
@@ -385,7 +390,7 @@ async function load() {
       return { ...row, local_unit_price: unitPrice, local_total_amount: lineAmount }
     })
     task.value = result.data
-    Object.assign(form, { salesperson_id: result.data.salesperson?.id || '', order_date: result.data.order_date, includes_tax: result.data.includes_tax ?? false, tax_rate: result.data.tax_rate ?? null, order_tolerance_percent: result.data.order_tolerance_percent || '0', is_repeat_order: result.data.is_repeat_order ?? false, preproduction_sample_required: result.data.preproduction_sample_required ?? false, delivery_method: result.data.delivery_method, planner_id: result.data.planner?.id || null, planned_start_date: result.data.planned_start_date || '', planned_end_date: result.data.planned_end_date || '', production_priority: result.data.production_priority || 'NORMAL', production_batch_number: result.data.production_batch_number || '' })
+    Object.assign(form, { salesperson_id: result.data.salesperson?.id || '', order_date: result.data.order_date, includes_tax: result.data.includes_tax ?? false, tax_rate: result.data.tax_rate ?? null, order_tolerance_percent: result.data.order_tolerance_percent || '0', is_repeat_order: result.data.is_repeat_order ?? false, preproduction_sample_required: result.data.preproduction_sample_required ?? false, delivery_method: result.data.delivery_method, planned_start_date: result.data.planned_start_date || '', planned_end_date: result.data.planned_end_date || '', production_priority: result.data.production_priority || 'NORMAL', production_batch_number: result.data.production_batch_number || '' })
     etag.value = result.etag
     options.value = optionData
     form.delivery_date = result.data.delivery_date
@@ -443,7 +448,7 @@ onMounted(() => { void load() })
       <ElAlert v-if="returnsToDraft" type="warning" show-icon :closable="false" class="review-alert" title="修改待校验或已接单任务后将回到草稿，需重新提交 PMC 确认。" />
       <ElAlert v-if="isTerminal" type="info" show-icon :closable="false" class="review-alert" title="已完成或已取消的任务不能编辑。" />
       <section class="edit-summary summary-bar" aria-label="任务汇总">
-        <div><span>人民币金额合计</span><strong class="summary-money">￥{{ totalAmountCny }}</strong></div>
+        <div><span>人民币金额合计</span><strong class="summary-money">￥{{ compactDecimal(totalAmountCny) }}</strong></div>
         <div><span>生产数量（按单位）</span><strong>{{ quantitySummary || '—' }}</strong></div>
         <div><span>交期日期</span><strong>{{ form.delivery_date || '待填写' }}</strong></div>
       </section>
@@ -469,7 +474,6 @@ onMounted(() => { void load() })
           <section class="task-schedule">
             <h2>生产安排</h2>
             <div class="info-grid">
-              <label><span>计划员</span><ElSelect v-model="form.planner_id" aria-label="计划员" clearable filterable :disabled="isTerminal"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
               <label><span>生产优先级</span><ElSelect v-model="form.production_priority" aria-label="生产优先级" :disabled="isTerminal"><ElOption v-for="(label, value) in {URGENT:'紧急',HIGH:'高',NORMAL:'普通',LOW:'低'}" :key="value" :value="value" :label="label"/></ElSelect></label>
               <label><span>计划开工</span><ElDatePicker v-model="form.planned_start_date" aria-label="计划开工" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>
               <label><span>计划完工</span><ElDatePicker v-model="form.planned_end_date" aria-label="计划完工" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>
@@ -505,7 +509,7 @@ onMounted(() => { void load() })
                     <div class="price-fields">
                       <label><span>本次生产量 <i>*</i></span><ElInput v-model="row.quantity" inputmode="numeric" :aria-label="row.productName + '本次生产量'" :disabled="isTerminal"><template #append>{{ row.unitName }}</template></ElInput><small v-if="row.sourceLocked && row.maxQuantity != null">上限 {{ row.maxQuantity }} {{ row.unitName }}</small></label>
                       <label><span>人民币单价 <i v-if="!row.sourceLocked && row.isCny">*</i></span><ElInput v-if="!row.sourceLocked && row.isCny" v-model="row.unitPriceCny" inputmode="decimal" aria-label="人民币单价" :disabled="isTerminal"/><span v-else class="readonly-value">￥{{ row.unitPriceCny }}</span></label>
-                      <div class="amount-field"><span>人民币金额</span><strong>￥{{ productAmountCny(row) }}</strong></div>
+                      <div class="amount-field"><span>人民币金额</span><strong>￥{{ compactDecimal(productAmountCny(row)) }}</strong></div>
                     </div>
                     <div class="pack-fields">
                       <label><span>包装要求</span><ElInput v-model="row.payload.packaging_method" type="textarea" :rows="3" :disabled="sourceLocked || isTerminal" maxlength="3000" aria-label="包装要求"/></label>

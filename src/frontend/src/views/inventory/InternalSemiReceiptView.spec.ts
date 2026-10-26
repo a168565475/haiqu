@@ -152,6 +152,55 @@ describe('车缝半成品入库', () => {
     expect(api.confirm.mock.calls[0]![0].lines).toEqual([{ bom_line_id: 'line-1', quantity: '75' }])
   })
 
+  it('原请求已删除时展示服务端原因并解锁，主动再提交才使用新编号', async () => {
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue('5')
+    api.confirm.mockRejectedValueOnce(new AxiosError('响应丢失', 'ECONNABORTED'))
+    await (wrapper.vm as any).submit()
+    const original = api.confirm.mock.calls[0]!
+    const message = '本次待入库记录已删除，不能重复提交；如需重新入库，请重新填写。'
+    api.confirm.mockRejectedValueOnce(Object.assign(new AxiosError(message), {
+      response: { status: 409, data: { error: { code: 'RECEIPT_REQUEST_DELETED', message } } },
+    }))
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '核对本次提交')!.trigger('click')
+    await flushPromises()
+
+    expect(api.confirm.mock.calls[1]).toEqual(original)
+    expect(api.confirm).toHaveBeenCalledTimes(2)
+    expect((wrapper.vm as any).pending).toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).toBeNull()
+    expect(wrapper.text()).toContain(message)
+    expect(wrapper.get('input[aria-label="椅套本次入库"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('核对本次提交')
+
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue('3')
+    await wrapper.findAll('button').find(button => button.text() === '提交待入库')!.trigger('click')
+    await flushPromises()
+    expect(api.confirm).toHaveBeenCalledTimes(3)
+    expect(api.confirm.mock.calls[2]![0].request_id).not.toBe(original[0].request_id)
+    expect(api.confirm.mock.calls[2]![0].lines).toEqual([{ bom_line_id: 'line-1', quantity: '3' }])
+  })
+
+  it.each(['CONFLICT', 'RECEIPT_REQUEST_CONFLICT', undefined])('其他409（%s）仍保留原请求和锁定状态', async code => {
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.get('input[aria-label="椅套本次入库"]').setValue('5')
+    api.confirm.mockRejectedValueOnce(Object.assign(new AxiosError('请求冲突'), {
+      response: { status: 409, data: { error: { code, message: '请求冲突' } } },
+    }))
+    await (wrapper.vm as any).submit(); await flushPromises()
+
+    expect((wrapper.vm as any).pending?.payload).toEqual(api.confirm.mock.calls[0]![0])
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).not.toBeNull()
+    expect(wrapper.get('input[aria-label="椅套本次入库"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('核对本次提交')
+    expect(api.confirm).toHaveBeenCalledTimes(1)
+  })
+
   it('重填只清空入库数量，保留日期、仓库和备注，不提交请求', async () => {
     const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
     wrappers.push(wrapper)

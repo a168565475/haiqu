@@ -81,8 +81,8 @@ ACTION_OVERRIDES = {
     'PurchaseContractTemplateViewSet': {'list': 'procurement.view_purchasecontracttemplate', 'retrieve': 'procurement.view_purchasecontracttemplate',
         'create': 'procurement.add_purchasecontracttemplate', 'update': 'procurement.change_purchasecontracttemplate', 'partial_update': 'procurement.change_purchasecontracttemplate'},
     'SupplierPurchaseSheetViewSet': {
-        **{action: 'procurement.view_supplierpurchasesheet' for action in ('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'line_image.GET', 'seal_image.GET')},
-        **{action: 'procurement.change_supplierpurchasesheet' for action in ('update', 'partial_update', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE')},
+        **{action: 'procurement.view_supplierpurchasesheet' for action in ('list', 'options', 'retrieve', 'preview_pdf', 'download_pdf', 'download_xlsx', 'batch_download', 'preview.GET', 'line_image.GET', 'seal_image.GET')},
+        **{action: 'procurement.change_supplierpurchasesheet' for action in ('update', 'partial_update', 'preview.POST', 'line_image.POST', 'line_image.DELETE', 'seal_image.POST', 'seal_image.DELETE')},
         'new_version': 'procurement.add_supplierpurchasesheet', 'publish': 'procurement.publish_supplierpurchasesheet', 'batch_publish': 'procurement.publish_supplierpurchasesheet'},
     'ProductionTaskViewSet': {'cancel': 'access_control.cancel_productiontask', 'finish': 'access_control.finish_productiontask'},
     'BomViewSet': {'sync_order_quantity': 'access_control.sync_bomquantity'},

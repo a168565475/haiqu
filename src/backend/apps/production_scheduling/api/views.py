@@ -165,11 +165,11 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
     @extend_schema(parameters=[TimelineQuerySerializer], responses=TimelineResponseSerializer)
     @action(detail=True, methods=["get"], url_path="timeline")
     def timeline(self, request, pk=None):
-        from ..timeline import TimelineQuerySerializer, production_timeline, timeline_page
+        from ..timeline import TimelineQuerySerializer, production_timeline_page
         query = TimelineQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         schedule = self.get_object()
-        return Response(timeline_page(production_timeline(request, schedule), query.validated_data))
+        return Response(production_timeline_page(request, schedule, query.validated_data))
 
     def create(self, request):
         serializer = ScheduleCreateSerializer(data=request.data)

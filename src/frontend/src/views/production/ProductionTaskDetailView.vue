@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { isTaskReadyForScheduling } from './productionTaskDisplay'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
@@ -34,6 +35,11 @@ const expandedProductIds = ref<string[]>([])
 const failedImageIds = ref<string[]>([])
 const etag = ref('')
 const options = ref<ProductionTaskOptions | null>(null)
+const followerOptions = computed(() => {
+  const available = options.value?.employees || []
+  return [...available, ...(task.value?.followers || []).filter(employee =>
+    pmcForm.follower_ids.includes(employee.id) && !available.some(item => item.id === employee.id))]
+})
 const pmcDialogVisible = ref(false)
 const optionsLoading = ref(false)
 const optionsError = ref('')
@@ -46,7 +52,6 @@ const pmcForm = reactive({
   planned_end_date: '',
   production_priority: 'NORMAL' as 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW',
   production_batch_number: '',
-  planner_id: '' as string,
   reason: '',
   follower_ids: [] as string[],
   delivery_date: '',
@@ -199,7 +204,6 @@ function openPmcDialog(mode: 'CONFIRM' | 'RETURN') {
   pmcForm.planned_end_date = task.value.planned_end_date || ''
   pmcForm.production_priority = task.value.production_priority || 'NORMAL'
   pmcForm.production_batch_number = task.value.production_batch_number || ''
-  pmcForm.planner_id = task.value.planner?.id || ''
   pmcForm.reason = ''
   pmcForm.follower_ids = task.value.followers.map((employee) => employee.id)
   pmcForm.delivery_date = task.value.delivery_date
@@ -251,7 +255,6 @@ async function decideByPmc() {
           planned_end_date: pmcForm.planned_end_date,
           production_priority: pmcForm.production_priority,
           production_batch_number: pmcForm.production_batch_number.trim(),
-          planner_id: pmcForm.planner_id || null,
         }
     const result = await decideProductionTaskByPmc(task.value.id, payload, etag.value)
     task.value = result.data
@@ -321,6 +324,7 @@ onMounted(async () => {
         <div><span>交期日期</span><strong>{{ task.delivery_date || '—' }}</strong></div>
       </section>
 
+
       <div class="dossier-layout">
         <aside class="task-sidebar">
           <section class="basic-card" aria-labelledby="task-info-title">
@@ -329,13 +333,12 @@ onMounted(async () => {
               <label class="info-wide"><span>来源销售订单</span><strong>{{ task.source_sales_order_number || '手动创建（未关联销售订单）' }}</strong></label>
               <label><span>业务员</span><strong>{{ task.salesperson.display_name }}</strong></label>
               <label><span>跟单员</span><strong>{{ task.followers.map((item) => item.display_name).join('、') || '待选择' }}</strong></label>
-              <label><span>计划员</span><strong>{{ task.planner?.display_name || '—' }}</strong></label>
               <label><span>下单日期</span><strong>{{ task.order_date }}</strong></label>
               <label><span>交期日期</span><strong>{{ task.delivery_date }}</strong></label>
               <label><span>交货方式</span><strong>{{ task.delivery_method === 'SPLIT' ? '分批交货' : '一次交货' }}</strong></label>
               <label><span>是否含税</span><strong>{{ task.includes_tax ? '含税' : '不含税' }}</strong></label>
               <label><span>税率</span><strong>{{ task.tax_rate ? `${task.tax_rate}%` : '—' }}</strong></label>
-              <label><span>订单误差</span><strong>{{ task.order_tolerance_percent || '0' }}%</strong></label>
+              <label><span>订单误差</span><strong>{{ compactDecimal(task.order_tolerance_percent || '0') }}%</strong></label>
               <label><span>是否返单</span><strong>{{ task.is_repeat_order ? '是' : '否' }}</strong></label>
               <label><span>生产优先级</span><strong>{{ task.production_priority === 'URGENT' ? '紧急' : task.production_priority === 'HIGH' ? '高' : task.production_priority === 'LOW' ? '低' : '普通' }}</strong></label>
               <label><span>生产批号</span><strong>{{ task.production_batch_number || task.source_delivery_batch_number || '—' }}</strong></label>
@@ -373,7 +376,7 @@ onMounted(async () => {
                     <div><dt>产品</dt><dd>{{ product.customer_product_name || product.product_name || '—' }}</dd></div><div><dt>货号</dt><dd>{{ product.item_number || '—' }}</dd></div>
                     <div><dt>颜色</dt><dd>{{ product.customer_color || product.color_name || product.color_code || '—' }}</dd></div><div><dt>规格</dt><dd>{{ product.specification_display || product.customer_specification || product.specification || '—' }}</dd></div>
                     <div><dt>材质</dt><dd>{{ product.material || '—' }}</dd></div><div><dt>数量</dt><dd>{{ number(product.quantity) }} {{ product.unit_name || product.unit_code || '单位未知' }}</dd></div>
-                    <div><dt>人民币单价</dt><dd>¥ {{ product.local_unit_price ?? '—' }}</dd></div><div class="file-amount"><dt>人民币金额</dt><dd>¥ {{ product.local_total_amount ?? '—' }}</dd></div>
+                    <div><dt>人民币单价</dt><dd>¥ {{ compactDecimal(product.local_unit_price) }}</dd></div><div class="file-amount"><dt>人民币金额</dt><dd>¥ {{ compactDecimal(product.local_total_amount) }}</dd></div>
                     <div><dt>计划开工</dt><dd>{{ task.planned_start_date || '—' }}</dd></div><div><dt>计划完工</dt><dd>{{ task.planned_end_date || '—' }}</dd></div>
                     <div class="file-pack"><dt>包装要求</dt><dd>{{ product.packaging_method || '—' }}</dd></div><div class="file-note"><dt>备注</dt><dd>{{ product.special_requirements || '—' }}</dd></div>
                   </dl>
@@ -401,13 +404,13 @@ onMounted(async () => {
       <ElAlert v-if="pmcMode === 'CONFIRM' && optionsError" :title="optionsError" type="error" :closable="false"><ElButton link @click="loadPmcOptions">重新加载员工选项</ElButton></ElAlert>
       <div v-if="pmcMode === 'CONFIRM'" class="pmc-form">
         <label><span>生产任务单号</span><ElInput :model-value="task?.task_number" readonly /></label>
-        <label><span>跟单员 *</span><ElSelect v-model="pmcForm.follower_ids" multiple filterable :loading="optionsLoading" :disabled="optionsLoading || !!optionsError" placeholder="请选择生产跟单员"><ElOption v-for="employee in options?.employees || task?.followers || []" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
+        <label><span>跟单员 *</span><ElSelect v-model="pmcForm.follower_ids" multiple filterable :loading="optionsLoading" :disabled="optionsLoading || !!optionsError" placeholder="请选择生产跟单员"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
         <label><span>交期日期 *</span><ElDatePicker v-model="pmcForm.delivery_date" type="date" value-format="YYYY-MM-DD" /></label>
         <label><span>是否含税 *</span><ElSelect v-model="pmcForm.includes_tax"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></label>
         <label v-if="pmcForm.includes_tax"><span>税率 *</span><ElSelect v-model="pmcForm.tax_rate" placeholder="请选择税率"><ElOption v-for="rate in [3, 5, 7]" :key="rate" :label="`${rate}%`" :value="rate" /></ElSelect></label>
         <label><span>订单误差 *</span><ElInput v-model="pmcForm.order_tolerance_percent"><template #append>%</template></ElInput></label>
         <label><span>是否返单 *</span><ElSelect v-model="pmcForm.is_repeat_order"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></label>
-        <label><span>交货方式 *</span><ElSelect v-model="pmcForm.delivery_method"><ElOption label="一次交货" value="SINGLE" /><ElOption label="分批交货" value="SPLIT" /></ElSelect></label><label><span>计划开始日期 *</span><ElDatePicker v-model="pmcForm.planned_start_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>计划完工日期 *</span><ElDatePicker v-model="pmcForm.planned_end_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>优先级</span><ElSelect v-model="pmcForm.production_priority"><ElOption label="紧急" value="URGENT" /><ElOption label="高" value="HIGH" /><ElOption label="普通" value="NORMAL" /><ElOption label="低" value="LOW" /></ElSelect></label><label><span>生产批号</span><ElInput v-model="pmcForm.production_batch_number" maxlength="50" /></label><label><span>计划员</span><ElSelect v-model="pmcForm.planner_id" :loading="optionsLoading" :disabled="optionsLoading || !!optionsError" clearable filterable><ElOption v-for="employee in options?.employees || []" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label></div>
+        <label><span>交货方式 *</span><ElSelect v-model="pmcForm.delivery_method"><ElOption label="一次交货" value="SINGLE" /><ElOption label="分批交货" value="SPLIT" /></ElSelect></label><label><span>计划开始日期 *</span><ElDatePicker v-model="pmcForm.planned_start_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>计划完工日期 *</span><ElDatePicker v-model="pmcForm.planned_end_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>优先级</span><ElSelect v-model="pmcForm.production_priority"><ElOption label="紧急" value="URGENT" /><ElOption label="高" value="HIGH" /><ElOption label="普通" value="NORMAL" /><ElOption label="低" value="LOW" /></ElSelect></label><label><span>生产批号</span><ElInput v-model="pmcForm.production_batch_number" maxlength="50" /></label></div>
       <ElInput v-else v-model="pmcForm.reason" type="textarea" :rows="5" maxlength="500" show-word-limit placeholder="请填写需要修改的内容" />
       <template #footer><ElButton @click="pmcDialogVisible = false">取消</ElButton><ElButton type="primary" :loading="actionLoading" :disabled="pmcMode === 'CONFIRM' && (optionsLoading || !options)" @click="decideByPmc">{{ pmcMode === 'CONFIRM' ? '确认通过' : '确认退回' }}</ElButton></template>
     </ElDialog>

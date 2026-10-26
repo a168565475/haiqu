@@ -103,3 +103,62 @@ describe('成品入库来源参数', () => {
     expect(api.submit).toHaveBeenCalledExactlyOnceWith(payload, '"receipt-1"')
   })
 })
+
+describe('成品入库提交恢复', () => {
+  it('原请求已删除时展示服务端原因并解锁，主动再提交才使用新编号', async () => {
+    const { wrapper, vm } = await form()
+    api.submit.mockRejectedValueOnce(new AxiosError('响应丢失', 'ECONNABORTED'))
+    await vm.submit()
+    const original = api.submit.mock.calls[0]!
+    const message = '本次待入库记录已删除，不能重复提交；如需重新入库，请重新填写。'
+    api.submit.mockRejectedValueOnce(Object.assign(new AxiosError(message), {
+      response: { status: 409, data: { error: { code: 'RECEIPT_REQUEST_DELETED', message } } },
+    }))
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '核对本次提交')!.trigger('click')
+    await flushPromises()
+
+    expect(api.submit.mock.calls[1]).toEqual(original)
+    expect(api.submit).toHaveBeenCalledTimes(2)
+    expect(vm.pending).toBeNull()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).toBeNull()
+    expect(wrapper.text()).toContain(message)
+    expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(false)
+    expect(wrapper.text()).not.toContain('核对本次提交')
+
+    vm.quantity = '3'
+    await wrapper.findAll('button').find(button => button.text() === '提交待入库')!.trigger('click')
+    await flushPromises()
+    expect(api.submit).toHaveBeenCalledTimes(3)
+    expect(api.submit.mock.calls[2]![0].request_id).not.toBe(original[0].request_id)
+    expect(api.submit.mock.calls[2]![0].received_quantity).toBe(3)
+  })
+
+  it.each(['RECEIPT_REQUEST_CONFLICT', undefined])('其他未确认409（%s）仍保留原请求和锁定状态', async code => {
+    const { wrapper, vm } = await form()
+    api.submit.mockRejectedValueOnce(Object.assign(new AxiosError('请求冲突'), {
+      response: { status: 409, data: { error: { code, message: '请求冲突' } } },
+    }))
+    await vm.submit(); await flushPromises()
+
+    expect(vm.pending?.payload).toEqual(api.submit.mock.calls[0]![0])
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).not.toBeNull()
+    expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(true)
+    expect(wrapper.text()).toContain('核对本次提交')
+    expect(api.submit).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([409, 412])('原有确定失败（状态%s）仍展示原因并清除待核对请求', async status => {
+    const { wrapper, vm } = await form()
+    api.submit.mockRejectedValueOnce(Object.assign(new AxiosError('额度已变化'), {
+      response: { status, data: { error: { code: 'CONFLICT', message: '额度已变化' } } },
+    }))
+    await vm.submit(); await flushPromises()
+
+    expect(vm.pending).toBeNull()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).toBeNull()
+    expect(wrapper.text()).toContain('额度已变化')
+    expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(false)
+    expect(api.submit).toHaveBeenCalledTimes(1)
+  })
+})

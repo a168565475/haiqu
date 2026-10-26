@@ -1,3 +1,4 @@
+import { compactDecimal } from '@/utils/compactDecimal'
 // 使用定点整数处理数量合计，避免小数累加误差及不同单位相加。
 export function quantityValue(value: unknown): bigint | null {
   if (typeof value !== 'string' || !/^\d{1,18}(\.\d{1,4})?$/.test(value)) return null
@@ -35,14 +36,14 @@ export function formatMoney(value: unknown): string {
   const amount = quantityValue(value)
   if (amount === null) return '—'
   const cents = (amount + 50n) / 100n
-  return `${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`
+  return compactDecimal(`${(cents / 100n).toLocaleString('zh-CN')}.${(cents % 100n).toString().padStart(2, '0')}`)
 }
 
 export function formatUnitPrice(value: unknown): string {
   const formatted = formatQuantity(value)
   if (formatted === '—') return formatted
   const [whole, fraction = ''] = formatted.split('.')
-  return `${whole}.${fraction.padEnd(2, '0')}`
+  return compactDecimal(`${whole}.${fraction.padEnd(2, '0')}`)
 }
 
 export function formatTime(value: string | null | undefined, dateOnly = false): string {

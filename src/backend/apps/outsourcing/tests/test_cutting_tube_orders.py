@@ -1,5 +1,6 @@
 """裁片复用外发单的真实数据库链路；仅在隔离测试库运行。"""
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
@@ -7,6 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
+from apps.audit.models import AuditLog
 from apps.boms.models import BomLine, BomSection
 from apps.inventory.models import PublicStockMovement, PublicStockBalance, MaterialStockMovement
 from apps.inventory.public_stock_identity import build_semi_finished_identity
@@ -19,7 +21,7 @@ from apps.reference_data.models import ProductionUnit, ProductCategory
 from apps.workshop_config.models import Craft
 from apps.workshop_reporting.models import WorkReportLine
 from ..models import (OutsourcingFactoryCraft, OutsourcingOrder, OutsourcingOrderProduct,
-    OutsourcingProcessingItem, TubeOutsourcingOrder, TubeOutsourcingReceipt)
+    OutsourcingProcessingItem, TubeOutsourcingOrder, TubeOutsourcingReceipt, TubeOutsourcingReceiptLine)
 
 
 BASE = '/api/v1/tube-outsourcing-orders/'
@@ -137,6 +139,43 @@ class CuttingTubeOrdersTests(sewing_fixture.SewingProcessingFixture, TestCase):
         self.act(dispatched, 'confirm-receipt', payload=entry)
         self.assertEqual(TubeOutsourcingReceipt.objects.count(), 1)
         self.assertEqual(self.component_limit()['allowance']['dispatched'], 50)
+
+    def test_cutting_receipt_dates_use_actual_dispatch_and_rejected_request_can_retry(self):
+        self.report((500, 1000))
+        self.stock(100)
+        dispatch_date = timezone.localdate() + timedelta(days=1)
+        for source in ['SEWING', 'PUBLIC_CUTTING']:
+            for days_after in [0, 1]:
+                with self.subTest(source=source, days_after=days_after):
+                    detail = self.create(self.payload(source)).data['data']
+                    order = self.act(detail, 'dispatch', payload={'client_request_id': str(uuid.uuid4()),
+                        'actual_dispatch_date': str(dispatch_date)}).data['data']
+                    entry = {'client_request_id': str(uuid.uuid4()), 'receipt_date': str(timezone.localdate()),
+                        'warehouse_id': str(self.semi_zone.warehouse_id), 'lines': [{
+                            'order_line_id': order['lines'][0]['id'], 'received_quantity': '48',
+                            'shortage_reason': '少回2套', 'zone_id': str(self.semi_zone.pk)}]}
+                    balances = list(PublicStockBalance.objects.order_by('pk').values('pk', 'quantity'))
+                    before = (PublicStockMovement.objects.count(), TubeOutsourcingReceipt.objects.count(),
+                        TubeOutsourcingReceiptLine.objects.count(), AuditLog.objects.count())
+                    with patch('apps.wecom.workshop_change_notifications.tube_shortages') as notify:
+                        response = self.act(order, 'confirm-receipt', payload=entry, status=400)
+                        self.assertIn('回货日期不能早于实际发出日期', str(response.data))
+                        self.assertEqual(balances, list(PublicStockBalance.objects.order_by('pk').values('pk', 'quantity')))
+                        self.assertEqual(before, (PublicStockMovement.objects.count(), TubeOutsourcingReceipt.objects.count(),
+                            TubeOutsourcingReceiptLine.objects.count(), AuditLog.objects.count()))
+                        saved = TubeOutsourcingOrder.objects.get(pk=order['id'])
+                        self.assertEqual((saved.status, saved.version), ('PROCESSING', order['version']))
+                        notify.assert_not_called()
+                        entry['receipt_date'] = str(dispatch_date + timedelta(days=days_after))
+                        first = self.act(order, 'confirm-receipt', payload=entry, status=201).data['data']
+                        replay = self.act(order, 'confirm-receipt', payload=entry).data['data']
+                        notify.assert_called_once()
+                    self.assertEqual(first['receipt_date'], entry['receipt_date'])
+                    self.assertEqual(first['id'], replay['id'])
+                    self.assertFalse(replay['created'])
+                    self.assertEqual(TubeOutsourcingOrder.objects.get(pk=order['id']).status, 'COMPLETED')
+                    self.assertEqual(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_RETURN',
+                        source_id=first['id']).count(), 1)
 
     def test_stock_source_reservation_debit_and_receipt_do_not_restore_first_output(self):
         self.report((200, 300))

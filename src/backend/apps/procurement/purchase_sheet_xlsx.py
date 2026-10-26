@@ -1,4 +1,4 @@
-"""按采购合同 PDF 的统一七列和内容顺序导出可编辑 Excel。"""
+"""按确认的原版模板或通用七列表格导出可编辑采购合同。"""
 
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
@@ -13,6 +13,8 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.page import PageMargins
 
+from .fabric_purchase_sheet_template import build_fabric_purchase_sheet_xlsx, uses_fabric_contract_template
+from .original_purchase_sheet_templates import build_original_purchase_contract_xlsx, uses_original_purchase_contract_template
 from .purchase_sheet_pdf import _contract_date, _structured_sections
 from .purchase_sheet_line_display import purchase_sheet_line_display
 from .services import MONEY_QUANT
@@ -113,7 +115,7 @@ def _merge_text(ws, row, column_count, text, *, height=26, bold=False, center=Fa
 
 
 def _layout_config(layout=None):
-    # 保留既有内部调用参数；所有品类统一使用合同 PDF 的七列。
+    # 未使用原版模板的合同保留通用七列。
     return {
         "widths": [14, 23, 24, 12, 9, 9, 9],
         "headers": ["产品名称", "产品规格", "物料属性", "颜色", "数量", "含税单价\n（元）", "金额\n（元）"],
@@ -188,7 +190,7 @@ def _write_detail_rows(ws, sheet, content, layout, config, start_row):
                 if isinstance(values[4], (int, float)) and unit:
                     ws.cell(row=row, column=5).number_format += f'" {unit}"'
                 if not actual_weight and all(isinstance(values[column], (int, float)) for column in (4, 5, 6)):
-                    # 与保存采购明细金额时使用相同精度，再汇总，避免 Excel 和 PDF 合计差异。
+                    # 与保存采购明细金额时使用相同精度，再汇总。
                     places = abs(MONEY_QUANT.as_tuple().exponent)
                     ws.cell(row=row, column=7, value=f"=ROUND(E{row}*F{row},{places})")
                     ws.cell(row=row, column=7).number_format = _number_format(line.get("amount"))
@@ -252,6 +254,11 @@ def _write_sections_and_signature(ws, sheet, content, start_row, column_count):
 
 
 def build_supplier_purchase_sheet_xlsx(sheet):
+    from .purchase_sheet_template_edits import apply_original_template_edits
+    if uses_fabric_contract_template(sheet):
+        return apply_original_template_edits(build_fabric_purchase_sheet_xlsx(sheet), sheet.content_snapshot)
+    if uses_original_purchase_contract_template(sheet):
+        return apply_original_template_edits(build_original_purchase_contract_xlsx(sheet), sheet.content_snapshot)
     content = sheet.content_snapshot if isinstance(sheet.content_snapshot, dict) else {}
     config = _layout_config()
     workbook = Workbook()
@@ -262,7 +269,7 @@ def build_supplier_purchase_sheet_xlsx(sheet):
         worksheet.column_dimensions[get_column_letter(index)].width = width
 
     buyer, seller, order = (content.get(key) or {} for key in ("buyer", "seller", "order"))
-    order_number = _text(order.get("source_number") if order.get("source_type") == "SAMPLE" else order.get("sales_order_number"))
+    order_number = _text(order.get("source_number") if order.get("source_type") == "SAMPLE" else order.get("production_task_number"))
     title = f"{_text(content.get('title'), '购销合同')}　（订单编号  {order_number}）"
     row = _merge_text(worksheet, 1, 7, title, height=38, center=True, font=TITLE_FONT)
     party = f"采购单号：{_text(sheet.sheet_number)}\n甲方（采购方）：{_text(buyer.get('name'))}\n乙方（供货方）：{_text(seller.get('name'))}"

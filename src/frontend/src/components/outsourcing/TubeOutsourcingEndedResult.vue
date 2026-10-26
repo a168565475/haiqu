@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, ref } from 'vue'
 import { Document, Refresh } from '@element-plus/icons-vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -65,7 +66,7 @@ function format(value: unknown): string {
   return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 function meters(value: unknown): string {
-  return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2)
+  return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : compactDecimal(Number(value).toFixed(2))
 }
 function dateText(value: string | null | undefined): string {
   if (!value) return '—'

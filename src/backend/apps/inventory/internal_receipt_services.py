@@ -319,6 +319,8 @@ def submit_receipt(request, data):
         if existing.request_payload_hash != payload_hash:
             raise Conflict('相同请求编号不能用于不同入库内容或操作人。')
         return existing, True
+    from .receipt_request_history import require_receipt_request_not_deleted
+    require_receipt_request_not_deleted(object_type='INTERNAL_SEMI_RECEIPT', request_id=data['request_id'])
     context = load_receipt_context(request, data['schedule_product_id'], data['plan_category'], lock=True)
     if context.get('tube_new'):
         # 等待统一产品锁期间可能出现首笔新口径记录，继续使用新口径办理。
@@ -493,6 +495,7 @@ def delete_pending_receipt(request, receipt_id):
             actor_employee=request.employee, context_type='PRODUCTION_SCHEDULE',
             context_id=receipt.schedule_product.schedule_id, request=request,
             before_data={'receipt_number': receipt.receipt_number,
+                         'submission_request_id': str(receipt.request_id),
                          'product_line_id': str(receipt.schedule_product.product_line_id),
                          'submitted_at': receipt.submitted_at or receipt.created_at,
                          'submitted_by_name': (receipt.submitted_by_employee or receipt.actor_employee).display_name,

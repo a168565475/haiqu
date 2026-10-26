@@ -131,7 +131,9 @@ class NotificationInboxView(NotificationPersonalView):
         page, page_size = query.validated_data["page"], query.validated_data["page_size"]
         queryset = selectors.inbox_queryset(employee.pk)
         start = (page - 1) * page_size
-        values = {"data": [selectors.recipient_payload(item, request.user) for item in queryset[start:start + page_size]],
+        permission_snapshots = {}
+        values = {"data": [selectors.recipient_payload(item, request.user, permission_snapshots=permission_snapshots)
+                           for item in queryset[start:start + page_size]],
                   "count": queryset.count(), "page": page, "page_size": page_size}
         return Response(NotificationListSerializer(values).data)
 

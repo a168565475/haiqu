@@ -23,7 +23,7 @@ from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
-from apps.organizations.selectors import active_department_employees, employee_filter_choices
+from apps.organizations.selectors import active_department_employees, active_role_employees, employee_filter_choices
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
 from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
@@ -65,9 +65,11 @@ from .serializers import (
     ProductionSalesSourceSerializer,
     ProductionSalesSourceSummarySerializer,
 )
+from .cost_views import ProductionTaskCostMixin
 
 
 class ProductionTaskViewSet(
+    ProductionTaskCostMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.CreateModelMixin,
@@ -102,6 +104,10 @@ class ProductionTaskViewSet(
         "start": "production_tasks.start_productiontask",
         "cancel": "production_tasks.change_productiontask",
         "finish": "production_tasks.change_productiontask",
+        "cost_summary": "production_tasks.view_productiontaskcost",
+        "cost_expenses.GET": "production_tasks.view_productiontaskcost",
+        "cost_expenses.POST": "production_tasks.manage_productiontaskexpense",
+        "cost_expense": "production_tasks.manage_productiontaskexpense",
     }
 
     def _filtered_queryset(self, *, include_status=True):
@@ -439,7 +445,7 @@ class ProductionTaskViewSet(
         if scope not in {"full", "filters"}:
             raise ValidationError({"scope": "选项范围必须是 full 或 filters。"})
         customers = self._customer_references().filter(archived_at__isnull=True).order_by("account_name", "account_code")[:500]
-        employees = active_department_employees("DEPT_PRODUCTION").order_by("employee_code")
+        employees = active_role_employees("MERCHANDISER").order_by("employee_code")
         salespeople = active_department_employees("DEPT_BUSINESS").order_by("employee_code")
         if scope == "filters":
             visible = self.get_queryset()

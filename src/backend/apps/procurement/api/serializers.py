@@ -584,6 +584,7 @@ class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     template_id = serializers.UUIDField(source="template_version.template_id", read_only=True)
     template_name = serializers.CharField(source="template_version.template.template_name", read_only=True)
+    template_code = serializers.CharField(source="template_version.template.template_code", read_only=True)
     template_version_number = serializers.IntegerField(source="template_version.version_number", read_only=True)
     template_version_name = serializers.CharField(source="template_version.version_name", read_only=True)
     pdf_ready = serializers.SerializerMethodField()
@@ -614,6 +615,7 @@ class SupplierPurchaseSheetSerializer(serializers.ModelSerializer):
             "template_version_id",
             "template_id",
             "template_name",
+            "template_code",
             "template_version_number",
             "template_version_name",
             "status",

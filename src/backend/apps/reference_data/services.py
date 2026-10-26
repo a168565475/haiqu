@@ -2,6 +2,7 @@ from collections import defaultdict
 
 from django.apps import apps
 from django.db import transaction
+from django.db.models import Count
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -74,6 +75,35 @@ def dictionary_reference_breakdown(item):
 
 def dictionary_reference_count(item):
     return sum(row["count"] for row in dictionary_reference_breakdown(item))
+
+
+def dictionary_reference_counts(items):
+    """按登记的引用字段批量统计，保留每个字段及每个字典项的独立计数。"""
+    items = list(items)
+    counts = {item.pk: 0 for item in items}
+    by_category = defaultdict(list)
+    for item in items:
+        by_category[item.category_code].append(item)
+    for category, category_items in by_category.items():
+        for app_label, model_name, field_name, value_source in DICTIONARY_REFERENCE_REGISTRY.get(category, []):
+            model = apps.get_model(app_label, model_name)
+            field = model._meta.get_field(field_name)
+            item_values = []
+            for item in category_items:
+                value = _reference_value(item, value_source)
+                if value not in (None, ""):
+                    item_values.append((item.pk, field.get_prep_value(value)))
+            values = {value for _, value in item_values}
+            if not values:
+                continue
+            grouped = (
+                model.objects.filter(**{f"{field_name}__in": values})
+                .order_by().values(field_name).annotate(reference_count=Count("pk"))
+            )
+            by_value = {row[field_name]: row["reference_count"] for row in grouped}
+            for item_id, value in item_values:
+                counts[item_id] += by_value.get(value, 0)
+    return counts
 
 
 def dictionary_type_reference_count(dictionary_type):

@@ -142,9 +142,25 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
     ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).select_related("employee__user", "role_profile")
     if employee_id:
         assignments = assignments.filter(employee_id=employee_id)
-    selected = OrderedDict()
+    candidates = OrderedDict()
     for assignment in assignments:
         employee = assignment.employee
+        candidates.setdefault(employee.pk, {"employee": employee, "roles": []})["roles"].append(assignment.role_profile.role_code)
+    # 超级管理员也可能是实际提交人；回执只给该人，不扩展按角色发送的范围。
+    submitter_id = context.get("submitter_id")
+    if rule.recipient_scope == "SUBMITTER" and submitter_id and (
+        employee_id is None or str(employee_id) == str(submitter_id)
+    ):
+        submitter = Employee.objects.select_related("user").filter(
+            pk=submitter_id, status="ACTIVE", archived_at__isnull=True,
+            user__is_active=True, user__is_superuser=True,
+        ).first()
+        if submitter is not None:
+            candidates.setdefault(submitter.pk, {"employee": submitter, "roles": []})
+    selected = []
+    # 同一次解析中按员工检查一次，仍保留该员工全部命中的接收角色。
+    for item in candidates.values():
+        employee = item["employee"]
         if rule.recipient_scope == "SUBMITTER" and str(employee.pk) != str(context.get("submitter_id") or ""):
             continue
         if rule.recipient_scope == "WORKSHOP":
@@ -163,21 +179,8 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
         if not event_object_accessible(event["event_code"], object_id, employee.user,
                                        object_version=context.get("object_version")):
             continue
-        selected.setdefault(employee.pk, {"employee": employee, "roles": []})["roles"].append(assignment.role_profile.role_code)
-    # 超级管理员也可能是实际提交人；回执只给该人，不扩展按角色发送的范围。
-    submitter_id = context.get("submitter_id")
-    if rule.recipient_scope == "SUBMITTER" and submitter_id and (
-        employee_id is None or str(employee_id) == str(submitter_id)
-    ):
-        submitter = Employee.objects.select_related("user").filter(
-            pk=submitter_id, status="ACTIVE", archived_at__isnull=True,
-            user__is_active=True, user__is_superuser=True,
-        ).first()
-        if submitter is not None and event_object_accessible(
-            event["event_code"], object_id, submitter.user, object_version=context.get("object_version"),
-        ):
-            selected.setdefault(submitter.pk, {"employee": submitter, "roles": []})
-    return list(selected.values())
+        selected.append(item)
+    return selected
 
 
 def _validated_context(event, context):
@@ -282,23 +285,32 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         target=target_for(event_code, object_id), status=status,
     )
     config = WeComConfig.objects.first()
+    bindings = dict(WeComBinding.objects.filter(
+        employee_id__in=[item["employee"].pk for item in recipients],
+    ).order_by().values_list("employee_id", "user_id")) if recipients else {}
+    recipient_rows = []
     for item in recipients:
         employee = item["employee"]
-        binding = WeComBinding.objects.filter(employee=employee).first()
-        recipient = NotificationRecipient.objects.create(
+        recipient_rows.append(NotificationRecipient(
             event=notification, employee=employee, employee_name=employee.display_name,
             role_codes=sorted(set(item["roles"])), scope=rule.recipient_scope,
             eligibility_snapshot={"required_permissions": list(EVENT_OBJECT_PERMISSIONS[event_code]),
                                   "corp_id": config.corp_id if config else "", "agent_id": config.agent_id if config else ""},
-        )
-        NotificationDelivery.objects.create(recipient=recipient, channel="IN_APP",
-            idempotency_key=f"{notification.pk}:{employee.pk}:IN_APP", status="ACCEPTED", finished_at=timezone.now())
+        ))
+    # UUID 在构造时生成；两类批量写入仍由外层事件事务保证全部成功或回滚。
+    NotificationRecipient.objects.bulk_create(recipient_rows, batch_size=500)
+    deliveries = []
+    for recipient in recipient_rows:
+        employee = recipient.employee
+        deliveries.append(NotificationDelivery(recipient=recipient, channel="IN_APP",
+            idempotency_key=f"{notification.pk}:{employee.pk}:IN_APP", status="ACCEPTED", finished_at=timezone.now()))
         admin_in_app_only = _admin_uses_in_app_only(employee)
-        NotificationDelivery.objects.create(recipient=recipient, channel="WECOM",
-            idempotency_key=f"{notification.pk}:{employee.pk}:WECOM", user_id_snapshot=binding.user_id if binding else "",
+        deliveries.append(NotificationDelivery(recipient=recipient, channel="WECOM",
+            idempotency_key=f"{notification.pk}:{employee.pk}:WECOM", user_id_snapshot=bindings.get(employee.pk, ""),
             status="SKIPPED" if admin_in_app_only else "PENDING",
             error_code="ADMIN_IN_APP_ONLY" if admin_in_app_only else "",
-            finished_at=timezone.now() if admin_in_app_only else None)
+            finished_at=timezone.now() if admin_in_app_only else None))
+    NotificationDelivery.objects.bulk_create(deliveries, batch_size=500)
     return notification
 
 

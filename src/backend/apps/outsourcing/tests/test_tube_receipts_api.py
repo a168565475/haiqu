@@ -79,6 +79,60 @@ class TubeReceiptFixture(TubeActionFixture):
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class TubeReceiptsApiTests(TubeReceiptFixture, APITestCase):
+    def test_receipt_before_actual_dispatch_is_rejected_without_side_effects(self):
+        self.receive(40)
+        dispatch_date = timezone.localdate() + timedelta(days=1)
+        for source in ['RAW_PIPE', 'PUBLIC_SEMI', 'METAL']:
+            for quantity in ['18', '0']:
+                with self.subTest(source=source, quantity=quantity):
+                    pending = self.saved_order(source)
+                    action = dict(self.action_payload(), actual_dispatch_date=str(dispatch_date))
+                    order = self.act(pending, payload=action).data['data']
+                    payload = self.receipt_payload(order, quantity)
+                    before = self.receipt_snapshot()
+                    with patch('apps.wecom.workshop_change_notifications.tube_shortages') as notify:
+                        response = self.receive_final(order, payload, expected=400)
+                    self.assertIn('回货日期不能早于实际发出日期', str(response.data))
+                    self.assertIn(str(dispatch_date), str(response.data))
+                    self.assertEqual(before, self.receipt_snapshot())
+                    saved = TubeOutsourcingOrder.objects.get(pk=order['id'])
+                    self.assertEqual((saved.status, saved.version), ('PROCESSING', order['version']))
+                    notify.assert_not_called()
+
+    def test_receipt_on_or_after_actual_dispatch_succeeds_and_replays_once(self):
+        for days_after in [0, 1]:
+            with self.subTest(days_after=days_after):
+                order = self.dispatched()
+                payload = self.receipt_payload(order)
+                payload['receipt_date'] = str(timezone.localdate() + timedelta(days=days_after))
+                with patch('apps.wecom.workshop_change_notifications.tube_shortages') as notify:
+                    first = self.receive_final(order, payload).data['data']
+                    before = self.receipt_snapshot()
+                    replay = self.receive_final(order, payload, expected=200).data['data']
+                self.assertEqual(first['receipt_date'], payload['receipt_date'])
+                self.assertEqual(first['id'], replay['id'])
+                self.assertFalse(replay['created'])
+                self.assertEqual(before, self.receipt_snapshot())
+                self.assertEqual(TubeOutsourcingOrder.objects.get(pk=order['id']).status, 'COMPLETED')
+                self.assertEqual(PublicStockMovement.objects.filter(source_type='TUBE_OUTSOURCING_RETURN',
+                    source_id=first['id']).count(), 1)
+                notify.assert_called_once()
+
+    def test_existing_receipt_replay_does_not_revalidate_historical_dispatch_date(self):
+        order = self.dispatched()
+        payload = self.receipt_payload(order)
+        first = self.receive_final(order, payload).data['data']
+        # 模拟旧凭证的日期倒置，原成功请求重试仍只返回已有结果。
+        TubeOutsourcingAction.objects.filter(order_id=order['id'], kind='DISPATCH').update(
+            actual_dispatch_date=timezone.localdate() + timedelta(days=1))
+        before = self.receipt_snapshot()
+        with patch('apps.wecom.workshop_change_notifications.tube_shortages') as notify:
+            replay = self.receive_final(order, payload, expected=200).data['data']
+        self.assertEqual(first['id'], replay['id'])
+        self.assertFalse(replay['created'])
+        self.assertEqual(before, self.receipt_snapshot())
+        notify.assert_not_called()
+
     def test_final_tube_receipt_is_visible_in_semi_receipt_records_with_source_details(self):
         order = self.dispatched('RAW_PIPE', '20')
         response = self.receive_final(order, self.receipt_payload(order, '18', '少回2支，按本单结束'))

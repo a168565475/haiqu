@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ArrowDown, Plus, Upload } from '@element-plus/icons-vue'
@@ -18,6 +18,7 @@ import {
 } from '@/api/productionTasks'
 import searchIcon from '@/assets/crm-v2/search.svg'
 import ProductionTaskScheduleDialog from '@/components/productionScheduling/ProductionTaskScheduleDialog.vue'
+import ProductionTaskCostPanel from './ProductionTaskCostPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import type {
   ProductionDeliveryMethod,
@@ -72,6 +73,9 @@ const completionGoodQuantity = ref('0')
 const completionBatches = ref<Array<{ batch_number: string; planned_quantity: string; actual_quantity: string; good_quantity: string; note: string }>>([])
 const scheduleDialogVisible = ref(false)
 const scheduleTarget = ref<ProductionTask | null>(null)
+const costDialogVisible = ref(false)
+const costTarget = ref<ProductionTask | null>(null)
+const costBusy = ref(false)
 
 
 const advancedFilters = reactive<AdvancedFilters>({
@@ -79,6 +83,7 @@ const advancedFilters = reactive<AdvancedFilters>({
 })
 
 const canDelete = computed(() => authStore.hasPermission('production_tasks.delete_productiontask'))
+const canViewCost = computed(() => authStore.hasPermission('production_tasks.view_productiontaskcost'))
 const deletingId = ref('')
 const hoveredProductElement = ref<HTMLElement>()
 const hoveredProductDetails = ref('')
@@ -224,10 +229,20 @@ function progressStatusClass(status?: string) {
 }
 function openCreate() { void router.push({ name: 'production-task-create' }) }
 function openTask(row: ProductionTask, edit = false) { void router.push({ name: edit ? 'production-task-edit' : 'production-task-detail', params: { taskId: row.id } }) }
+function openCost(row: ProductionTask) {
+  if (!canViewCost.value) return
+  costTarget.value = row
+  costBusy.value = false
+  costDialogVisible.value = true
+}
+function closeCost(done: () => void) {
+  if (!costBusy.value) done()
+}
 function canChangeLifecycle(row: ProductionTask) { return canEdit.value && row.status !== 'CANCELLED' && row.status !== 'COMPLETED' }
 function handleRowAction(command: string, row: ProductionTask) {
   if (command === 'delete') { void deleteTask(row); return }
   if (command === 'view') { openTask(row); return }
+  if (command === 'cost') { openCost(row); return }
   if (command === 'edit') { openTask(row, true); return }
   if (command === 'confirm') { void openPmcConfirm(row); return }
   if (command === 'schedule') {
@@ -349,6 +364,7 @@ async function exportList() {
 }
 
 onMounted(() => { void loadRows(); void loadFilterOptions() })
+watch(canViewCost, allowed => { if (!allowed) costDialogVisible.value = false })
 onBeforeUnmount(() => {
   ++latestRowsRequest
   ++latestOptionsRequest
@@ -436,6 +452,7 @@ onBeforeUnmount(() => {
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem command="view">查看</ElDropdownItem>
+                    <ElDropdownItem v-if="canViewCost" command="cost" data-test="open-cost">成本</ElDropdownItem>
                     <ElDropdownItem v-if="canEdit && row.status !== 'CANCELLED' && row.status !== 'COMPLETED'" command="edit">编辑</ElDropdownItem>
                     <ElDropdownItem v-if="row.status === 'PENDING_VALIDATION' && canConfirm" command="confirm">PMC 确认</ElDropdownItem>
                     <ElDropdownItem v-if="canSchedule && isTaskReadyForScheduling(row)" command="schedule">计划排产</ElDropdownItem>
@@ -456,6 +473,10 @@ onBeforeUnmount(() => {
 
 
     <ProductionTaskScheduleDialog v-model="scheduleDialogVisible" :task="scheduleTarget" @saved="handleScheduleSaved" />
+
+    <ElDialog v-model="costDialogVisible" :title="`订单成本 · ${costTarget?.task_number || ''}`" :width="1040" :min-width="280" :close-on-click-modal="false" :close-on-press-escape="!costBusy" :show-close="!costBusy" :before-close="closeCost" :minimizable="false" destroy-on-close @closed="costTarget = null">
+      <ProductionTaskCostPanel v-if="costDialogVisible && costTarget && canViewCost" :key="costTarget.id" :task-id="costTarget.id" @busy-change="costBusy = $event" />
+    </ElDialog>
 
     <ElDialog v-model="lifecycleDialogVisible" :title="lifecycleTitle" width="480px" :close-on-click-modal="!lifecycleLoading" :close-on-press-escape="!lifecycleLoading">
       <div class="lifecycle-dialog__summary">任务单：<strong>{{ lifecycleTarget?.task_number }}</strong></div>

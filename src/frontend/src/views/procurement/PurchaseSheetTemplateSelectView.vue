@@ -30,7 +30,7 @@ const emptyReason = computed(() => {
 function money(value: string | null): string {
   if (value === null || value.trim() === '') return '—'
   const amount = Number(value)
-  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'
+  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
 function apiErrorMessage(error: unknown, fallback: string): string {
   const response = (error as { response?: { data?: { error?: { message?: string; field_errors?: Record<string, string[]> }; detail?: string } } })?.response

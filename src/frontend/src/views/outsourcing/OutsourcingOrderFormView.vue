@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { decimalUnits, outsourcingPlan } from '@/utils/outsourcingQuantities' 
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
@@ -498,7 +499,7 @@ onMounted(() => { void loadOptions() })
           <div class="product-info-heading"><h2>产品信息</h2><div v-if="selectedProducts.length > 1" class="selected-product-tabs"><button v-for="product in selectedProducts" :key="product.id" type="button" :class="{ 'is-active': selectedProduct?.id === product.id }" @click="activeProductId = product.id">{{ product.product_number || product.item_number || product.product_name }}</button></div><span v-if="selectedProducts.length">已选 {{ selectedProducts.length }} 个产品</span></div>
           <div v-if="selectedProduct" class="selected-product-panel">
             <div class="line-art-product" aria-label="产品简笔画"><i /><b /></div>
-            <dl><div><dt>产品编号</dt><dd>{{ selectedProduct.product_number || '—' }}</dd></div><div><dt>订单数量</dt><dd>{{ selectedProduct.source_quantity }} {{ selectedProduct.unit_name }}</dd></div><div><dt>产品名称</dt><dd>{{ selectedProduct.product_name }}</dd></div><div><dt>排产数量</dt><dd>{{ selectedProduct.planned_quantity }} {{ selectedProduct.unit_name }}</dd></div><div><dt>规格/颜色</dt><dd>{{ selectedProduct.specification || '—' }} / {{ selectedProduct.color_name || '—' }}</dd></div><div><dt>BOM编号</dt><dd>{{ selectedBomContext?.bom?.bom_number || (bomLoading ? '加载中…' : '暂无可用BOM') }}</dd></div></dl>
+            <dl><div><dt>产品编号</dt><dd>{{ selectedProduct.product_number || '—' }}</dd></div><div><dt>订单数量</dt><dd>{{ compactDecimal(selectedProduct.source_quantity) }} {{ selectedProduct.unit_name }}</dd></div><div><dt>产品名称</dt><dd>{{ selectedProduct.product_name }}</dd></div><div><dt>排产数量</dt><dd>{{ compactDecimal(selectedProduct.planned_quantity) }} {{ selectedProduct.unit_name }}</dd></div><div><dt>规格/颜色</dt><dd>{{ selectedProduct.specification || '—' }} / {{ selectedProduct.color_name || '—' }}</dd></div><div><dt>BOM编号</dt><dd>{{ selectedBomContext?.bom?.bom_number || (bomLoading ? '加载中…' : '暂无可用BOM') }}</dd></div></dl>
           </div>
           <div v-else class="product-empty"><div class="line-art-product" aria-hidden="true"><i /><b /></div><p>选择排产计划后显示产品基础信息</p></div>
         </section>
@@ -524,7 +525,7 @@ onMounted(() => { void loadOptions() })
           <ElTable class="erp-table-editor scroll-actions-table" :data="materialRows" :max-height="272" border empty-text="选择加工明细后，再选择本次需要外发的 BOM 材料">
             <ElTableColumn type="index" label="#" width="45" /><ElTableColumn prop="name" label="原材料" min-width="150" /><ElTableColumn prop="specification" label="规格" min-width="120" />
             <ElTableColumn label="加工厂 / 部位" min-width="230"><template #default="{ row }"><span v-if="isPrimaryMaterial(row)">{{ availableFactories.find(item => item.id === row.factory_id)?.name || '待选择加工厂' }} / {{ processingRows.find(item => item.id === row.processing_bom_line_id)?.part_name }}</span><ElSelect v-else :model-value="materialAllocationKey(row)" @change="selectMaterialAllocation(row, $event)"><ElOption v-for="item in processingRows.filter(item => item.factory_id)" :key="item.row_key" :value="`${item.id}|${item.factory_id}`" :label="`${availableFactories.find(factory => factory.id === item.factory_id)?.name} / ${item.part_name}`" /></ElSelect></template></ElTableColumn>
-            <ElTableColumn label="本次发料" width="180"><template #default="{ row }"><span v-if="materialPlan(row)">{{ row.planned_issue_quantity || '—' }} {{ row.unit }}</span><ElInput v-else :model-value="row.planned_issue_quantity" :aria-label="`${row.name}发料数量`" inputmode="decimal" @update:model-value="setMaterialQuantity(row, $event)"><template #suffix>{{ row.unit }}</template></ElInput></template></ElTableColumn>
+            <ElTableColumn label="本次发料" width="180"><template #default="{ row }"><span v-if="materialPlan(row)">{{ compactDecimal(row.planned_issue_quantity) }} {{ row.unit }}</span><ElInput v-else :model-value="row.planned_issue_quantity" :aria-label="`${row.name}发料数量`" inputmode="decimal" @update:model-value="setMaterialQuantity(row, $event)"><template #suffix>{{ row.unit }}</template></ElInput></template></ElTableColumn>
             <ElTableColumn label="预计扣库" min-width="205"><template #default="{ row }"><span v-if="materialPlan(row) && !materialPlan(row)?.error">{{ materialPlan(row)?.raw }} {{ row.procurement_unit }}<template v-if="row.category === 'PROFILE'"> / {{ materialPlan(row)?.meters }} 米</template></span><span v-else>{{ materialPlan(row)?.error || `${row.planned_issue_quantity || '—'} ${row.unit}` }}</span></template></ElTableColumn>
             <ElTableColumn label="操作" width="90" fixed="right"><template #default="{ row }"><ElButton v-if="!isPrimaryMaterial(row)" link type="danger" @click="removeMaterial(row.id)">移除</ElButton><span v-else>随部位联动</span></template></ElTableColumn>
           </ElTable>
@@ -532,7 +533,7 @@ onMounted(() => { void loadOptions() })
         <section class="form-card return-measure-card"><h2>回货计量</h2><p>管材半成品按支回货，裁片半成品按套回货，均填写整数；合格与不良分别入库。</p><p>保存外发单不扣库存。仓库确认发料后扣原料，回货不重复扣原料；原料和产出去向均对平后手动结清。</p></section>
       </main>
     </div>
-    <footer class="order-form-footer"><div><span>计划加工金额合计：</span><strong>{{ plannedAmount.toFixed(2) }} 元</strong></div><div><ElButton :disabled="saving" @click="router.push('/workshop/outsourcing')">取消</ElButton><ElButton type="primary" :disabled="!readyToSave" :loading="saving" @click="save">保存外发单</ElButton></div></footer>
+    <footer class="order-form-footer"><div><span>计划加工金额合计：</span><strong>{{ compactDecimal(plannedAmount.toFixed(2)) }} 元</strong></div><div><ElButton :disabled="saving" @click="router.push('/workshop/outsourcing')">取消</ElButton><ElButton type="primary" :disabled="!readyToSave" :loading="saving" @click="save">保存外发单</ElButton></div></footer>
     <FactoryFormDialog v-model="factoryDialogVisible" mode="create" :factory="null" :initial-craft-id="craftId" :crafts="options?.crafts || []" :saving="factorySaving" @submit="saveFactory" />
     <OutsourcingSourcePlanDialog
       v-if="selectedCraft"

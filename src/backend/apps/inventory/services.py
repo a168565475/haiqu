@@ -13,7 +13,11 @@ from rest_framework.exceptions import ValidationError
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
-from apps.boms.models import BomLine
+from apps.procurement.material_receipt_identity import (
+    PurchaseMaterialIdentityError,
+    get_purchase_material_id,
+    resolve_purchase_material,
+)
 from apps.procurement.models import (
     PurchaseOrder,
     PurchaseOrderLine,
@@ -23,7 +27,6 @@ from apps.procurement.models import (
     PurchaseReturnStatus,
     SupplierType,
 )
-from apps.products.material_identity import lock_bom_line_material_identities, resolve_bom_line_raw_material
 from apps.products.models import RawMaterialInformation
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.reference_data.pinyin_search import build_pinyin_search
@@ -486,6 +489,43 @@ def _freeze_public_pipe_values(values, stock_mode):
                                                "public_stock_identity": identity}}
 
 
+def _lock_purchase_receipt_materials(purchase_lines, existing_identity_rows):
+    frozen_ids = defaultdict(set)
+    for purchase_line_id, material_id in existing_identity_rows:
+        frozen_ids[purchase_line_id].add(material_id)
+    if any(len(material_ids) > 1 for material_ids in frozen_ids.values()):
+        raise PurchaseMaterialIdentityError("采购明细存在多个已冻结库存原料身份，请先核对原始单据。")
+
+    material_ids = {}
+    resolve_line_ids = set()
+    for line in purchase_lines:
+        saved_id = get_purchase_material_id(line)
+        frozen_id = next(iter(frozen_ids[line.pk]), None)
+        if frozen_id and saved_id and frozen_id != saved_id:
+            raise PurchaseMaterialIdentityError("采购保存的材料与已收货材料不一致，请先核对原始单据。")
+        if saved_id or not frozen_id:
+            material_ids[line.pk] = resolve_purchase_material(line).pk
+            resolve_line_ids.add(line.pk)
+        else:
+            # 老采购已收过货时，后续批次沿用首次收货冻结的材料。
+            material_ids[line.pk] = frozen_id
+
+    # 统一在入库明细、库区之前按 ID 锁原料，保持库存事务的锁顺序。
+    materials = {
+        material.pk: material
+        for material in RawMaterialInformation.objects.select_for_update(of=("self",))
+        .select_related("unit").filter(pk__in=set(material_ids.values())).order_by("pk")
+    }
+    for line in purchase_lines:
+        material_id = material_ids[line.pk]
+        material = materials.get(material_id)
+        if material is None or material.archived_at is not None or material.item_type != "MATERIAL":
+            raise PurchaseMaterialIdentityError("采购收货材料不存在、已归档或不是原材料，请先核对。")
+        if line.pk in resolve_line_ids and resolve_purchase_material(line).pk != material_id:
+            raise PurchaseMaterialIdentityError("采购材料对应关系已变化，请刷新后重试。")
+    return {line_id: materials[material_id] for line_id, material_id in material_ids.items()}
+
+
 @stock_write_transaction
 def create_material_inbound(*, inbound_date, remark, items, actor_employee, request,
                             sample_direct=False, client_request_id=None):
@@ -501,7 +541,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     list(PurchaseOrder.objects.select_for_update().filter(pk__in=order_ids).order_by("id"))
     locked_lines = list(
         PurchaseOrderLine.objects.select_for_update(of=("self",))
-        .select_related("purchase_order", "purchase_order__production_task", "supplier", "bom_line")
+        .select_related("purchase_order", "purchase_order__production_task", "supplier")
         .filter(purchase_order_access(accessible_production_tasks(request).values_list("id", flat=True), request, "purchase_order__"),
                 pk__in=line_ids, purchase_order__archived_at__isnull=True)
         .order_by("id")
@@ -511,45 +551,19 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     if any((line.purchase_order.source_type == 'SAMPLE') != sample_direct for line in locked_lines):
         raise Conflict('样品采购请使用全部入库；普通采购仍须收货并完成品质确认。')
     line_map = {line.pk: line for line in locked_lines}
-    bom_line_ids = sorted({line.bom_line_id for line in locked_lines if line.bom_line_id}, key=str)
-    locked_bom_lines = list(
-        BomLine.objects.select_for_update().filter(pk__in=bom_line_ids).order_by("pk")
-    )
-    bom_line_map = {line.pk: line for line in locked_bom_lines}
-    for line in locked_lines:
-        if line.bom_line_id:
-            line.bom_line = bom_line_map[line.bom_line_id]
     existing_identity_rows = list(
         MaterialInboundLine.objects.filter(
             purchase_order_line_id__in=line_ids,
             raw_material_information__isnull=False,
         ).values_list("purchase_order_line_id", "raw_material_information_id")
     )
-    lock_bom_line_material_identities(
-        locked_bom_lines,
-        extra_raw_material_ids=[raw_material_id for _, raw_material_id in existing_identity_rows]
-        + [line.calculation_snapshot.get('raw_material_id') for line in locked_lines if line.calculation_snapshot],
-    )
-    locked_existing_inbound_lines = list(
+    purchase_materials = _lock_purchase_receipt_materials(locked_lines, existing_identity_rows)
+    list(
         MaterialInboundLine.objects.select_for_update(of=("self",))
         .select_related("raw_material_information", "raw_material_information__unit")
         .filter(purchase_order_line_id__in=line_ids)
         .order_by("id")
     )
-    frozen_ids_by_purchase_line = defaultdict(set)
-    frozen_materials = {}
-    for existing_line in locked_existing_inbound_lines:
-        if existing_line.raw_material_information_id:
-            frozen_ids_by_purchase_line[existing_line.purchase_order_line_id].add(
-                existing_line.raw_material_information_id
-            )
-            frozen_materials[existing_line.raw_material_information_id] = existing_line.raw_material_information
-    conflicting_line_ids = [
-        line_id for line_id, material_ids in frozen_ids_by_purchase_line.items() if len(material_ids) > 1
-    ]
-    if conflicting_line_ids:
-        raise Conflict("采购明细存在多个已冻结库存原料身份，请先完成受控数据修复。")
-    material_identity_cache = {}
     purchase_order_ids = {line.purchase_order_id for line in locked_lines}
     if len(purchase_order_ids) != 1:
         raise ValidationError({"items": "一次仓库收货只能选择同一张采购单的明细。"})
@@ -633,6 +647,9 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
         item['_pipe_values'] = _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode)
+        pipe_material = item['_pipe_values'].get('raw_material_information')
+        if pipe_material is not None and pipe_material.pk != purchase_materials[line.pk].pk:
+            raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
         if item.get('received_quantity') is None:
             raise ValidationError({'received_quantity': '请填写到货数量。'})
         submitted_totals[line_id] = submitted_totals.get(line_id, Decimal("0")) + item["received_quantity"]
@@ -670,20 +687,13 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     created = []
     for item in items:
         line = line_map[item["purchase_order_line_id"]]
-        frozen_ids = frozen_ids_by_purchase_line.get(line.pk, set())
-        if frozen_ids:
-            raw_material = frozen_materials[next(iter(frozen_ids))]
-        else:
-            raw_material, _ = resolve_bom_line_raw_material(
-                line.bom_line,
-                cache=material_identity_cache,
-            )
+        raw_material = purchase_materials[line.pk]
         created.append(
             MaterialInboundLine.objects.create(
                 inbound=inbound,
                 purchase_order_line=line,
                 **{key: value for key, value in item.get('_pipe_values', {}).items() if key != 'raw_material_information'},
-                raw_material_information=item.get('_pipe_values', {}).get('raw_material_information', raw_material),
+                raw_material_information=raw_material,
                 zone=zone_map[item["zone_id"]],
                 location=location_map.get(item.get("location_id")),
                 received_quantity=item["received_quantity"],
@@ -970,7 +980,6 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
             "purchase_order_line",
             "purchase_order_line__purchase_order",
             "purchase_order_line__purchase_order__production_task",
-            "purchase_order_line__bom_line",
             "raw_material_information",
             "raw_material_information__unit",
             "zone",
@@ -980,26 +989,15 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
         .order_by("id")
     )
     purchase_line_ids = sorted({line.purchase_order_line_id for line in candidate_lines}, key=str)
-    unresolved_bom_line_ids = sorted(
-        {
-            line.purchase_order_line.bom_line_id
-            for line in candidate_lines
-            if not line.raw_material_information_id and line.purchase_order_line.bom_line_id
-        },
-        key=str,
-    )
     existing_identity_rows = list(
         MaterialInboundLine.objects.filter(
             purchase_order_line_id__in=purchase_line_ids,
             raw_material_information__isnull=False,
         ).values_list("purchase_order_line_id", "raw_material_information_id")
     )
-    locked_bom_lines = list(
-        BomLine.objects.select_for_update().filter(pk__in=unresolved_bom_line_ids).order_by("pk")
-    )
-    lock_bom_line_material_identities(
-        locked_bom_lines,
-        extra_raw_material_ids=[raw_material_id for _, raw_material_id in existing_identity_rows],
+    purchase_materials = _lock_purchase_receipt_materials(
+        list({line.purchase_order_line_id: line.purchase_order_line for line in candidate_lines}.values()),
+        existing_identity_rows,
     )
     inbound = (
         MaterialInbound.objects.select_for_update(of=("self",))
@@ -1027,7 +1025,6 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
             "purchase_order_line",
             "purchase_order_line__purchase_order",
             "purchase_order_line__purchase_order__production_task",
-            "purchase_order_line__bom_line",
             "raw_material_information",
             "raw_material_information__unit",
             "zone",
@@ -1050,21 +1047,6 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
             if line.zone.status != RecordStatus.ACTIVE or line.zone.warehouse.status != RecordStatus.ACTIVE:
                 raise Conflict("入库库区或仓库已停用，请先核对库区状态。")
 
-    bom_line_map = {line.pk: line for line in locked_bom_lines}
-    frozen_ids_by_purchase_line = defaultdict(set)
-    frozen_materials = {}
-    for line in locked_purchase_lines:
-        if line.raw_material_information_id:
-            frozen_ids_by_purchase_line[line.purchase_order_line_id].add(line.raw_material_information_id)
-            frozen_materials[line.raw_material_information_id] = line.raw_material_information
-    if any(len(material_ids) > 1 for material_ids in frozen_ids_by_purchase_line.values()):
-        raise Conflict("采购明细存在多个已冻结库存原料身份，请先完成受控数据修复。")
-    unresolved_lines = [line for line in locked_lines if not line.raw_material_information_id]
-    for line in unresolved_lines:
-        if line.purchase_order_line.bom_line_id:
-            line.purchase_order_line.bom_line = bom_line_map[line.purchase_order_line.bom_line_id]
-    material_identity_cache = {}
-
     prepared = []
     for item in items:
         line = line_map[item["line_id"]]
@@ -1074,17 +1056,10 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
         if return_quantity < 0 or return_quantity > line.received_quantity:
             raise ValidationError({"items": f"退货数量不能超过到货数量 {line.received_quantity}。"})
         accepted_quantity = line.received_quantity - return_quantity
-        if not line.raw_material_information_id:
-            frozen_ids = frozen_ids_by_purchase_line.get(line.purchase_order_line_id, set())
-            if frozen_ids:
-                raw_material = frozen_materials[next(iter(frozen_ids))]
-            else:
-                raw_material, _ = resolve_bom_line_raw_material(
-                    line.purchase_order_line.bom_line,
-                    cache=material_identity_cache,
-                )
-            if raw_material:
-                line.raw_material_information = raw_material
+        raw_material = purchase_materials[line.purchase_order_line_id]
+        if line.raw_material_information_id and line.raw_material_information_id != raw_material.pk:
+            raise PurchaseMaterialIdentityError("待检批次材料与采购收货材料不一致，请刷新后核对。")
+        line.raw_material_information = raw_material
         line.return_quantity = return_quantity
         line.accepted_quantity = accepted_quantity
         line.quality_remark = item.get("quality_remark", "")

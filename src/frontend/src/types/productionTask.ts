@@ -339,7 +339,7 @@ export interface ProductionOrderFromSalesCommonInput {
   planned_end_date?: string | null
   production_priority: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
   production_batch_number: string
-  planner_id: string | null
+  planner_id?: string | null
 }
 
 export type ProductionOrderFromSalesInput = ProductionOrderFromSalesCommonInput & (

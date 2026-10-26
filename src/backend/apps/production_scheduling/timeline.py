@@ -76,7 +76,7 @@ STATUS_LABELS = {"PRODUCTION_TASK": dict(ProductionTaskStatus.choices), "PURCHAS
                  "BOM": dict(BomStatus.choices), "PRODUCTION_SCHEDULE": {"ACTIVE": "有效", "VOID": "已作废"}}
 
 
-def event_row(*, identity, kind, label, action, actor, at, number="", path=None, before=None, after=None):
+def _event_changes(kind, before, after):
     before, after = before or {}, after or {}
     changes = []
     for key, title in SAFE_FIELDS.items():
@@ -88,15 +88,19 @@ def event_row(*, identity, kind, label, action, actor, at, number="", path=None,
             old, new = labels.get(old, old), labels.get(new, new)
         changes.append({"label": title, "before": "" if old is None else str(old),
                         "after": "" if new is None else str(new)})
+    return changes
+
+
+def event_row(*, identity, kind, label, action, actor, at, number="", path=None, before=None, after=None):
     action_label = ACTION_LABELS.get(action, action)
     if kind == "PRODUCTION_TASK":
         action_label = {"SUBMITTED": "提交 PMC 确认", "CONFIRMED": "PMC 确认"}.get(action, action_label)
     return {"id": identity, "kind": kind, "title": f"{action_label} · {label}",
             "actor_name": actor or "操作人未记录", "occurred_at": at, "document_number": number,
-            "detail_path": path, "changes": changes}
+            "detail_path": path, "changes": _event_changes(kind, before, after)}
 
 
-def production_timeline(request, schedule):
+def production_timeline(request, schedule, *, include_audit_changes=True):
     """各来源先按本模块查看权限和数据范围取单据，再读取其事件；不输出原始快照。"""
     task_id = schedule.production_task_id
     product_ids = [product.product_line_id for product in schedule.active_products]
@@ -237,7 +241,11 @@ def production_timeline(request, schedule):
     query = Q(pk__in=[])
     for kind, records in documents.items():
         query |= Q(object_type=kind, object_id__in=list(records))
-    events = list(AuditLog.objects.filter(query).order_by("occurred_at", "id"))
+    events_query = AuditLog.objects.filter(query).order_by("occurred_at", "id")
+    if not include_audit_changes:
+        # 完整轻量索引用于历史去重、搜索和排序；大快照只在分页后读取。
+        events_query = events_query.only("id", "object_type", "object_id", "action", "actor_name_snapshot", "occurred_at")
+    events = list(events_query)
     created_reports = {event.object_id for event in events if event.object_type == "WORK_REPORT" and event.action == "CREATED"}
     # 新报工已有正式创建审计，删除快照只为旧记录提供真实创建时间，避免重复展示。
     audited_creations = {str(event.object_id) for event in events if event.action == "CREATED"}
@@ -253,8 +261,24 @@ def production_timeline(request, schedule):
         label, number, path = documents[event.object_type][str(event.object_id)]
         rows.append(event_row(identity=f"audit:{event.pk}", kind=event.object_type, label=label,
             action=event.action, actor=event.actor_name_snapshot, at=event.occurred_at,
-            number=number, path=path, before=event.before_data, after=event.after_data))
+            number=number, path=path,
+            before=event.before_data if include_audit_changes else None,
+            after=event.after_data if include_audit_changes else None))
     return sorted(rows, key=lambda row: (row["occurred_at"], row["id"]))
+
+
+def production_timeline_page(request, schedule, params):
+    result = timeline_page(production_timeline(request, schedule, include_audit_changes=False), params)
+    audit_rows = [row for row in result["data"] if row["id"].startswith("audit:")]
+    if audit_rows:
+        # ID 来自本次已按来源权限筛选的当前页，避免逐条访问延迟字段。
+        snapshots = {str(event.pk): event for event in AuditLog.objects.filter(
+            pk__in=[row["id"].removeprefix("audit:") for row in audit_rows],
+        ).only("before_data", "after_data")}
+        for row in audit_rows:
+            event = snapshots[row["id"].removeprefix("audit:")]
+            row["changes"] = _event_changes(row["kind"], event.before_data, event.after_data)
+    return result
 
 
 def timeline_page(rows, params):

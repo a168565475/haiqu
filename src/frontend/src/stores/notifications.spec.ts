@@ -17,6 +17,12 @@ const item: NotificationItem = { id, event_code: 'BOM_CONFIRMED', event_name: 'B
   created_at: '2026-10-21T01:00:00Z', read_at: null, target: null, target_accessible: true, channel_status: {} }
 const target = { target_key: 'bom-detail', object_id: id, route_name: 'bom-preview', params: { bomId: id } }
 const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); await nextTick() }
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline })
+  return { promise, resolve, reject }
+}
 function login(userId = 1) {
   useAuthStore().applyAuthResponse({ authenticated: true, user: { id: userId, username: `employee${userId}`, display_name: '员工',
     employee: null, is_superuser: false, permissions: [], data_scope: 'NONE' } })
@@ -100,6 +106,76 @@ describe('个人消息状态（测试替身，不是真实验收）', () => {
     expect(api.read.mock.calls[0]?.[0]).toBe(id); expect(api.target.mock.calls[0]?.[0]).toBe(id)
     expect(api.read.mock.invocationCallOrder[0]).toBeLessThan(api.target.mock.invocationCallOrder[0]!)
     expect(store.items[0]?.read_at).toBeTruthy()
+  })
+  it('未读计数仍等待时已返回目标；计数到达后采用服务端数量而非本地减一', async () => {
+    const store = useNotificationsStore(); await store.open()
+    const count = deferred<number>()
+    api.count.mockReturnValueOnce(count.promise)
+    const resolved = vi.fn()
+    const pending = store.readAndResolve(item).then(resolved)
+    try {
+      await flush()
+      expect(api.target).toHaveBeenCalledWith(id, expect.any(AbortSignal))
+      expect(resolved).toHaveBeenCalledWith({ name: 'bom-preview', params: { bomId: id } })
+      expect(store.items[0]?.read_at).toBeTruthy()
+      expect(store.countLoading).toBe(true)
+      expect(store.unread).toBe(2)
+      count.resolve(7); await flush()
+      expect(store.unread).toBe(7)
+      expect(store.countError).toBe('')
+    } finally { count.resolve(7); await pending }
+  })
+  it('已读后的计数网络失败显示计数错误，目标仍能独立返回', async () => {
+    const store = useNotificationsStore(); await store.open()
+    const count = deferred<number>(); const destination = deferred<typeof target>()
+    api.count.mockReturnValueOnce(count.promise); api.target.mockReturnValueOnce(destination.promise)
+    const pending = store.readAndResolve(item)
+    try {
+      await flush()
+      count.reject(new Error('网络失败')); await flush()
+      expect(store.countError).toContain('失败')
+      expect(store.unread).toBe(2); expect(store.blocked).toBe(false)
+      expect(api.target).toHaveBeenCalledWith(id, expect.any(AbortSignal))
+      destination.resolve(target)
+      expect(await pending).toEqual({ name: 'bom-preview', params: { bomId: id } })
+      expect(store.actionError).toBe('')
+    } finally { count.resolve(2); destination.resolve(target); await pending }
+  })
+  it.each([401, 403])('计数先返回%s时清空并阻断，迟到的目标不得产生跳转', async status => {
+    const store = useNotificationsStore(); await store.open()
+    const count = deferred<number>(); const destination = deferred<typeof target>()
+    api.count.mockReturnValueOnce(count.promise); api.target.mockReturnValueOnce(destination.promise)
+    const pending = store.readAndResolve(item)
+    try {
+      await flush()
+      expect(api.target).toHaveBeenCalledWith(id, expect.any(AbortSignal))
+      count.reject(httpError(status)); await flush()
+      expect(store.items).toEqual([]); expect(store.unread).toBeNull()
+      expect(store.blocked).toBe(true); expect(store.opened).toBe(false)
+      expect(store.countError).not.toBe('')
+      destination.resolve(target)
+      expect(await pending).toBeNull()
+      expect(store.actionId).toBe('')
+    } finally { count.resolve(2); destination.resolve(target); await pending }
+  })
+  it('计数仍等待时换账号，旧目标和旧计数都不能污染新账号', async () => {
+    const store = useNotificationsStore(); await store.open()
+    const count = deferred<number>(); const destination = deferred<typeof target>()
+    api.count.mockReturnValueOnce(count.promise); api.target.mockReturnValueOnce(destination.promise)
+    const pending = store.readAndResolve(item)
+    try {
+      await flush()
+      expect(api.target).toHaveBeenCalledWith(id, expect.any(AbortSignal))
+      login(2); await flush()
+      expect(store.items).toEqual([]); expect(store.unread).toBeNull()
+      api.count.mockResolvedValueOnce(5)
+      await store.refreshUnread(); expect(store.unread).toBe(5)
+      destination.resolve(target)
+      expect(await pending).toBeNull()
+      count.resolve(99); await flush()
+      expect(store.items).toEqual([]); expect(store.unread).toBe(5)
+      expect(store.countError).toBe(''); expect(store.blocked).toBe(false)
+    } finally { count.resolve(99); destination.resolve(target); await pending }
   })
   it('标记已读失败不跳转；目标404不撤销已读并清除正文', async () => {
     const store = useNotificationsStore(); await store.open()

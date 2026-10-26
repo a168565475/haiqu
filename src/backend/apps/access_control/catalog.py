@@ -16,7 +16,8 @@ FULL_DATA_CODES = (
 )
 
 PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet',
-    'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
+    'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview',
+    'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
 
 SALES_APPS = {"customers", "inquiries", "quotations", "sales_orders", "crm"}
 MODULE_NAMES = {

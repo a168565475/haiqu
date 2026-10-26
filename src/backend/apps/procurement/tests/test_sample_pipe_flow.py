@@ -202,7 +202,7 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(self.sample.status, 'MATERIAL_ISSUE_PENDING')
         self.assertEqual(sum(SampleMaterialArrival.objects.values_list('accepted_quantity', flat=True)), 24)
 
-    def test_formal_publish_pdf_and_xlsx_use_same_root_meter_snapshot(self):
+    def test_formal_publish_and_xlsx_use_same_root_meter_snapshot(self):
         from openpyxl import load_workbook
         url = self.generate_sheet()
         detail = self.client.get(url)
@@ -212,16 +212,14 @@ class SamplePipeFlowTests(APITestCase):
         self.assertEqual(exported.status_code, 200)
         binary = b''.join(exported.streaming_content) if exported.streaming else exported.content
         cells = '\n'.join(str(cell.value or '') for row in load_workbook(BytesIO(binary)).active for cell in row)
-        self.assertIn('4 根 × 3.05 米/根 = 12.20 米', cells)
+        self.assertIn('4 根 × 3.05 米/根 = 12.2 米', cells)
         self.assertIn('元/米', cells)
         published = self.client.post(url + 'publish/', {}, format='json', HTTP_IF_MATCH=detail['ETag'])
         self.assertEqual(published.status_code, 200, published.data)
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, 'PURCHASING')
         pdf = self.client.get(url + 'preview-pdf/')
-        self.assertEqual(pdf.status_code, 200)
-        content = b''.join(pdf.streaming_content) if pdf.streaming else pdf.content
-        self.assertTrue(content.startswith(b'%PDF'))
+        self.assertEqual(pdf.status_code, 404)
 
 
 class SamplePipeMaterialApiTests(APITestCase):

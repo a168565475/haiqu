@@ -100,7 +100,8 @@ async function submit() {
     await load()
   } catch (cause) {
     const status = cause instanceof AxiosError ? cause.response?.status : undefined
-    if (status && [400, 412, 428].includes(status)) {
+    const code = cause instanceof AxiosError ? cause.response?.data?.error?.code : undefined
+    if (status && ([400, 412, 428].includes(status) || (status === 409 && code === 'RECEIPT_REQUEST_DELETED'))) {
       pending.value = null; sessionStorage.removeItem(pendingKey)
       error.value = errorText(cause)
       if (status === 412) error.value += ' 请刷新后重新填写。'

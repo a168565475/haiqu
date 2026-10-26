@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -167,7 +168,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
           <ElTableColumn prop="color" label="颜色" width="110"><template #default="{ row }">{{ row.color || '—' }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格/切割长度" min-width="170" />
           <ElTableColumn v-if="stockKind === 'SEMI' && publicStock" label="厚度" width="82"><template #default="{ row }">{{ row.tube_thickness || '—' }}</template></ElTableColumn>
-          <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}</b><small v-if="row.measurement_kind === 'PIPE'"> · {{ row.meter_quantity || '—' }} 米 · {{ row.raw_bar_length_m || '—' }} 米/根</small></span></template></ElTableColumn>
+          <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}</b><small v-if="row.measurement_kind === 'PIPE'"> · {{ compactDecimal(row.meter_quantity) }} 米 · {{ row.raw_bar_length_m || '—' }} 米/根</small></span></template></ElTableColumn>
           <ElTableColumn prop="unit" label="单位" width="65" align="center" />
           <ElTableColumn label="材料仓" min-width="150"><template #default="{ row }">{{ row.warehouse_name || '—' }}</template></ElTableColumn>
           <ElTableColumn label="库区" min-width="175"><template #default="{ row }">{{ row.zone_name }}</template></ElTableColumn>

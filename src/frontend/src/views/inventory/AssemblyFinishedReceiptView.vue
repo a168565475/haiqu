@@ -78,7 +78,7 @@ async function submit() {
  }catch(cause){
   const status=cause instanceof AxiosError?cause.response?.status:undefined
   const code=cause instanceof AxiosError?cause.response?.data?.error?.code:undefined
-  if(status&&([400,412,428].includes(status)||(status===409&&code==='CONFLICT'))){pending.value=null;sessionStorage.removeItem(pendingKey);error.value=message(cause)}
+  if(status&&([400,412,428].includes(status)||(status===409&&(code==='CONFLICT'||code==='RECEIPT_REQUEST_DELETED')))){pending.value=null;sessionStorage.removeItem(pendingKey);error.value=message(cause)}
   else error.value=code==='RECEIPT_REQUEST_CONFLICT'?message(cause):'提交结果尚未确认，请点击“核对本次提交”使用原编号核对，不要另建单据。'
  }finally{saving.value=false}
 }

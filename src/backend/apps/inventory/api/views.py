@@ -83,7 +83,7 @@ from ..services import (
 from ..workflow import purchase_inbound_workflow_status
 from ..sample_receiving_services import receive_sample_purchase
 from ..public_stock_mode import public_flow_enabled
-from ..public_inventory_queries import public_pipe_summary, public_raw_inventory_rows, public_semi_inventory_page
+from ..public_inventory_queries import public_pipe_summary, public_raw_inventory_page, public_semi_inventory_page
 from .serializers import (
     FinishedGoodsOutboundInputSerializer,
     FinishedGoodsOutboundSerializer,
@@ -546,27 +546,30 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         if kind == 'SEMI':
             return self._semi_finished_rows(request)
         public_enabled = public_flow_enabled()
-        inventory_rows = public_raw_inventory_rows if public_enabled else material_inventory_rows
-        rows_query = inventory_rows(
+        filters = dict(
             keyword=request.query_params.get("q", "").strip(),
             section_title=request.query_params.get("section_title", "").strip(),
             warehouse_id=self._optional_uuid(request, "warehouse_id"),
             zone_id=self._optional_uuid(request, "zone_id"),
             location_id=self._optional_uuid(request, "location_id"),
         )
-        # 公共查询已在各余额分支中筛选；旧库存查询返回的是聚合 QuerySet。
-        rows = list(rows_query if public_enabled else rows_query.filter(inventory_quantity__gt=0))
         page = positive_int(request.query_params.get("page"), "page", 1)
         page_size = min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100)
-        start = (page - 1) * page_size
+        if public_enabled:
+            count, rows = public_raw_inventory_page(page=page, page_size=page_size, **filters)
+        else:
+            rows = list(material_inventory_rows(**filters).filter(inventory_quantity__gt=0))
+            count = len(rows)
+            start = (page - 1) * page_size
+            rows = rows[start:start + page_size]
         results = []
-        for row in rows[start:start + page_size]:
+        for row in rows:
             identity = f"{row['raw_material_id']}|{row['unit__unit_name']}|{row['zone_id']}|{row['measurement_kind']}|{row['raw_bar_length_m']}"
             color = row["raw_material__color__color_name"] or row["raw_material__color_snapshot"]
             results.append({
                 "inventory_key": identity,
                 'stock_kind': 'RAW',
-                'stock_mode': 'PUBLIC_V2' if public_flow_enabled() else 'LEGACY',
+                'stock_mode': 'PUBLIC_V2' if public_enabled else 'LEGACY',
                 'measurement_kind': row['measurement_kind'],
                 'raw_bar_length_m': row['raw_bar_length_m'],
                 'meter_quantity': row['meter_quantity'],
@@ -595,7 +598,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 ),
                 "latest_inbound_time": row["latest_inbound_time"],
             })
-        return Response({"count": len(rows), "next": None, "previous": None, "results": results})
+        return Response({"count": count, "next": None, "previous": None, "results": results})
 
     def _semi_finished_rows(self, request):
         if public_flow_enabled():

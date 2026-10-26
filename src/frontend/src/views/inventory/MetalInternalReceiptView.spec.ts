@@ -218,6 +218,35 @@ describe('金工半成品入库', () => {
     expect(api.findInternalReceipt).not.toHaveBeenCalled(); expect(ElMessage.success).not.toHaveBeenCalled()
   })
 
+  it('原请求已删除时结束核对并解锁，用户再次确认才使用新编号提交', async () => {
+    const { wrapper, vm } = await mountPage(); vm.rows[0]!.quantity = '20'
+    vi.mocked(api.confirmInternalReceipt).mockRejectedValueOnce(new AxiosError('响应丢失', 'ECONNABORTED'))
+    await vm.save()
+    const original = vi.mocked(api.confirmInternalReceipt).mock.calls[0]!
+    const message = '本次待入库记录已删除，不能重复提交；如需重新入库，请重新填写。'
+    vi.mocked(api.confirmInternalReceipt).mockRejectedValueOnce(Object.assign(new AxiosError(message), {
+      response: { status: 409, data: { error: { code: 'RECEIPT_REQUEST_DELETED', message } } },
+    }))
+
+    await vm.save(); await flushPromises()
+
+    expect(vi.mocked(api.confirmInternalReceipt).mock.calls[1]).toEqual(original)
+    expect(api.confirmInternalReceipt).toHaveBeenCalledTimes(2)
+    expect(vm.pending).toBeNull(); expect(sessionStorage.getItem(pendingKey)).toBeNull()
+    expect(ElMessage.warning).toHaveBeenCalledWith(expect.objectContaining({ message }))
+    expect(ElMessage.success).not.toHaveBeenCalled()
+    expect(wrapper.get('input[aria-label="前腿管本次入库"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).not.toContain('核对本次提交')
+
+    await wrapper.get('input[aria-label="前腿管本次入库"]').setValue('10')
+    await wrapper.findAll('button').find(button => button.text() === '提交待入库')!.trigger('click')
+    expect(vm.dialog).toBe('confirm'); expect(api.confirmInternalReceipt).toHaveBeenCalledTimes(2)
+    await vm.save()
+    const next = vi.mocked(api.confirmInternalReceipt).mock.calls[2]![0]
+    expect(next.request_id).not.toBe(original[0].request_id)
+    expect(next.lines).toEqual([{ bom_line_id: 'front', quantity: '10' }])
+  })
+
   it('损坏的原请求不删除、不覆盖，也不发起新入库', async () => {
     sessionStorage.setItem(pendingKey, '{broken')
     const { vm } = await mountPage(); await vm.save()

@@ -12,6 +12,8 @@ import type {
   PurchaseOrderSource,
   PurchaseSheetOptions,
   SupplierPurchaseSheet,
+  SupplierPurchaseSheetContent,
+  PurchaseSheetPreview,
   PaginatedSupplierPurchaseSheets,
   PurchaseContractTemplate,
   VersionedPurchaseOrder,
@@ -245,14 +247,11 @@ export async function deleteSupplierPurchaseSheetLineImage(
   ))
 }
 
-export async function fetchSupplierPurchaseSheetPreview(id: string, signal?: AbortSignal): Promise<Blob> {
-  const { data } = await apiClient.get<Blob>(`${sheetBasePath}${id}/preview-pdf/`, { responseType: 'blob', signal })
-  return data
-}
-
-export async function downloadSupplierPurchaseSheetPdf(id: string, signal?: AbortSignal): Promise<Blob> {
-  const { data } = await apiClient.get<Blob>(`${sheetBasePath}${id}/download-pdf/`, { params: { layout: 'current' }, responseType: 'blob', signal })
-  return data
+export async function fetchSupplierPurchaseSheetPreview(id: string, content?: SupplierPurchaseSheetContent): Promise<PurchaseSheetPreview> {
+  const response = content
+    ? await apiClient.post<DataResponse<PurchaseSheetPreview>>(`${sheetBasePath}${id}/preview/`, { content })
+    : await apiClient.get<DataResponse<PurchaseSheetPreview>>(`${sheetBasePath}${id}/preview/`)
+  return response.data.data
 }
 
 export async function downloadSupplierPurchaseSheetXlsx(id: string): Promise<Blob> {
@@ -290,7 +289,7 @@ export async function deleteSupplierPurchaseSheetSealImage(
 }
 
 export async function batchDownloadSupplierPurchaseSheets(ids: string[]): Promise<Blob> {
-  const { data } = await apiClient.post<Blob>(`${sheetBasePath}batch-download/`, { ids }, { params: { layout: 'current' }, responseType: 'blob' })
+  const { data } = await apiClient.post<Blob>(`${sheetBasePath}batch-download/`, { ids }, { responseType: 'blob' })
   return data
 }
 

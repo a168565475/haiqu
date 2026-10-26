@@ -61,10 +61,13 @@ describe('B布局创建行为', () => {
     const wrapper = shallowMount(ProductionTaskCreateView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     const page = wrapper.vm as any
-    page.order = { id: 'order', lines: [], delivery_batches: [{ id: 'batch', status: 'ACTIVE', lines: [] }] }
+    page.order = { id: 'order', total_amount_cny: '10', lines: [{ id: 'line', unit_price_cny: '1' }], delivery_batches: [{ id: 'batch', status: 'ACTIVE', lines: [{ id: 'source', sales_order_line_id: 'line', quantity: '10', remaining_quantity: '10' }] }] }
     page.selectedBatchId = 'batch'
+    page.colorLines = [{ key: 'draft', sourceLineId: 'source', productColorId: '', quantity: 3, specialRequirements: '', packagingMethod: '' }]
     page.nextStep()
-    expect(page.activeStep).toBe(2)
+    expect(page.activeStep).toBe(3)
+    expect(wrapper.findAll('.steps li')).toHaveLength(3)
+    expect(wrapper.find('.steps').text()).not.toContain('产品与价格')
     expect(page.money(undefined)).toBe('—')
     expect(page.money('0')).toBe('0.00')
     wrapper.unmount()
@@ -93,10 +96,10 @@ describe('B布局创建行为', () => {
     await flushPromises()
     const page = wrapper.vm as any
     page.order = { currency_code: 'USD', production_exchange_rate: null, lines: [], delivery_batches: [{ id: 'b', status: 'ACTIVE', lines: [{ id: 'l', remaining_quantity: 10 }] }] }
-    page.selectedBatchId = 'b'; page.activeStep = 2
+    page.selectedBatchId = 'b'; page.activeStep = 1
     page.colorLines = [{ key: 'k', sourceLineId: 'l', quantity: 1, specialRequirements: '', packagingMethod: '' }]
     page.nextStep()
-    expect(page.activeStep).toBe(2)
+    expect(page.activeStep).toBe(1)
     wrapper.unmount()
   })
 })
@@ -121,9 +124,16 @@ describe('内嵌销售产品录入保存', () => {
     expect(page.manualProducts[0].file).toBe(file)
     page.taskNumberSuffix = '26201'
     Object.assign(page.plan, { orderDate: '2026-10-15', deliveryDate: '2026-11-15', followerIds: ['follower'], salespersonId: 'sales', includesTax: true, taxRate: 5, plannedStartDate: '2026-10-16', plannedEndDate: '2026-11-10' })
+    page.activeStep = 3
+    await flushPromises()
+    expect(wrapper.find('.manual-details').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('计划员')
+    expect(wrapper.text()).toContain('生产要求')
+    expect(wrapper.text()).toContain('包装要求')
     await page.saveManual()
     expect(api.createProductionTask).toHaveBeenCalledWith(expect.objectContaining({ task_number: 'HT26201', follower_ids: ['follower'], tax_rate: 5, planned_start_date: '2026-10-16', products: [expect.objectContaining({ product_id: null, product_category_id: 'category-real', customer_product_name: '定制面板', material: '铝合金', unit_id: 'unit-1', unit_price: '12.3456', exchange_rate: '1.00000000', details: [expect.objectContaining({ template_key: 'material', detail_type: '材料', category_label: '面料', is_selected: false, description: '' })] })] }), expect.any(Object), {})
     const imagePayload = vi.mocked(api.createProductionTask).mock.calls.at(-1)![1]!
+    expect(vi.mocked(api.createProductionTask).mock.calls.at(-1)![0]).not.toHaveProperty('planner_id')
     expect(Object.values(imagePayload)[0]).toEqual([file])
     wrapper.unmount()
   })

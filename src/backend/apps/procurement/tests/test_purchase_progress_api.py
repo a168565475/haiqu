@@ -1,4 +1,4 @@
-"""采购表发布、入库角标与完成状态的真实 API 回归；仅 PDF 文件输出被隔离。"""
+"""采购表发布、入库角标与完成状态的 API 回归；内容校验按用例隔离。"""
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
@@ -60,7 +60,7 @@ class PublishingFixture:
 class PurchasePublishingTests(PublishingFixture, APITestCase):
     def test_last_supplier_publication_updates_order_stats_and_revision_does_not_regress(self):
         first, second = self.make_pair()
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", return_value=b"pdf"), patch("apps.procurement.purchase_sheet_services._save_pdf_file", return_value=None):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish"):
             self.assertEqual(self.publish(first).status_code, 200)
             self.assert_status(first, "SUBMITTED")
             result = self.publish(second)
@@ -79,13 +79,13 @@ class PurchasePublishingTests(PublishingFixture, APITestCase):
     def test_atomic_batch_failure_and_completed_order_preserved(self):
         first, second = self.make_pair()
         from rest_framework.exceptions import ValidationError
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", side_effect=[b"pdf", ValidationError("无效内容")]):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish", side_effect=[None, ValidationError("无效内容")]):
             response = self.client.post("/api/v1/supplier-purchase-sheets/batch-publish/", {"ids": [str(first.pk), str(second.pk)]}, format="json")
         self.assertEqual(response.status_code, 400, response.data)
         self.assert_status(first, "SUBMITTED")
         self.assertFalse(SupplierPurchaseSheet.objects.filter(purchase_order=first.purchase_order, status="PUBLISHED").exists())
         PurchaseOrder.objects.filter(pk=first.purchase_order_id).update(status="COMPLETED")
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", return_value=b"pdf"), patch("apps.procurement.purchase_sheet_services._save_pdf_file", return_value=None):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish"):
             result = self.client.post("/api/v1/supplier-purchase-sheets/batch-publish/", {"ids": [str(first.pk), str(second.pk)]}, format="json")
         self.assertEqual(result.status_code, 200, result.data)
         self.assert_status(first, "COMPLETED")
@@ -96,7 +96,7 @@ class PurchasePublishingTests(PublishingFixture, APITestCase):
         first, second = self.make_pair()
         second.archived_at = timezone.now()
         second.save()
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", return_value=b"pdf"), patch("apps.procurement.purchase_sheet_services._save_pdf_file", return_value=None):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish"):
             self.assertEqual(self.publish(first).status_code, 200)
         self.assert_status(first, "SUBMITTED")
         with connection.schema_editor() as editor:
@@ -182,7 +182,7 @@ class SampleProgressTests(APITestCase):
         self.assertEqual(generated.status_code, 201, generated.data)
         sheet_url = "/api/v1/supplier-purchase-sheets/" + str(generated.data["data"][0]["id"]) + "/"
         detail = self.client.get(sheet_url)
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", return_value=b"pdf"), patch("apps.procurement.purchase_sheet_services._save_pdf_file", return_value=None):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish"):
             result = self.client.post(sheet_url + "publish/", {}, format="json", HTTP_IF_MATCH=detail["ETag"])
         self.assertEqual(result.status_code, 200, result.data)
         self.assertEqual(PurchaseOrder.objects.get(pk=self.sample_order_id).status, "PURCHASING")
@@ -202,7 +202,7 @@ class ConcurrentPublishingTests(PublishingFixture, APITransactionTestCase):
                 return self.publish(sheet, client).status_code
             finally:
                 connections.close_all()
-        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_pdf", return_value=b"pdf"), patch("apps.procurement.purchase_sheet_services._save_pdf_file", return_value=None):
+        with patch("apps.procurement.purchase_sheet_services._prepare_sheet_for_publish"):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 self.assertEqual(list(pool.map(publish_in_worker, [first, second])), [200, 200])
         self.assert_status(first, "PURCHASING")

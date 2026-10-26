@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
@@ -7,9 +8,9 @@ import { fetchFinishedGoodsOutbound } from '@/api/inventory'
 import type { FinishedGoodsOutboundDetail } from '@/types/inventory'
 const route = useRoute(); const router = useRouter(); const detail = ref<FinishedGoodsOutboundDetail | null>(null); const loading = ref(false); const errorMessage = ref('')
 const message = (error: unknown) => error instanceof AxiosError ? (error.response?.data as { error?: { message?: string } })?.error?.message || '出货单读取失败，请重试。' : '出货单读取失败，请重试。'
-const money = (value: string | number | null | undefined) => Number(value || 0).toFixed(2)
+const money = (value: string | number | null | undefined) => compactDecimal(Number(value || 0).toFixed(2))
 const time = (value: string) => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
-const quantity = (value: string | number | null | undefined, unit?: string) => value == null ? '—' : `${value}${unit ? ` ${unit}` : ''}`
+const quantity = (value: string | number | null | undefined, unit?: string) => value == null ? '—' : `${compactDecimal(value)}${unit ? ` ${unit}` : ''}`
 let sequence = 0
 async function load() { const current = ++sequence; loading.value = true; errorMessage.value = ''; detail.value = null; try { const result = await fetchFinishedGoodsOutbound(String(route.params.outboundId || '')); if (current === sequence) detail.value = result } catch (error) { if (current === sequence) errorMessage.value = message(error) } finally { if (current === sequence) loading.value = false } }
 watch(() => route.params.outboundId, () => { void load() }, { immediate: true })
@@ -47,7 +48,7 @@ watch(() => route.params.outboundId, () => { void load() }, { immediate: true })
               <tr v-for="line in detail.lines" :key="line.id">
                 <td>{{ line.task_number_snapshot || '—' }}</td><td>{{ line.product_code_snapshot || '—' }}</td><td>{{ line.product_name_snapshot || '—' }}</td><td>{{ line.item_number_snapshot || '—' }}</td><td>{{ line.material_snapshot || '—' }}</td><td>{{ line.specification_snapshot || '—' }}</td><td>{{ line.actual_color || '—' }}</td>
                 <td class="numeric">{{ quantity(line.order_quantity, line.unit_name) }}</td><td class="numeric">{{ quantity(line.received_quantity, line.unit_name) }}</td><td class="numeric">{{ quantity(line.outbound_quantity, line.unit_name) }}</td>
-                <td>{{ line.warehouse_name || '—' }} / {{ line.location_number || '—' }}</td><td class="numeric">{{ line.quantity_per_box }}</td><td class="numeric">{{ line.box_count }} / {{ line.tail_quantity }}</td>
+                <td>{{ line.warehouse_name || '—' }} / {{ line.location_number || '—' }}</td><td class="numeric">{{ compactDecimal(line.quantity_per_box) }}</td><td class="numeric">{{ line.box_count }} / {{ compactDecimal(line.tail_quantity) }}</td>
               </tr>
               <tr v-if="!detail.lines.length"><td colspan="13" class="empty-record">暂无出库明细</td></tr>
             </tbody>

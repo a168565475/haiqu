@@ -81,6 +81,30 @@ def model_cache_tags(model):
 class ConfigurationListCacheMixin:
     """列表缓存保留现有分页/过滤契约；详情和写操作继续实时读库。"""
 
+    def get_serializer(self, *args, **kwargs):
+        from .models import DictionaryType, ReferenceDictionary
+
+        if (getattr(self, 'action', None) == 'list' and args and kwargs.get('many')
+                and self.queryset.model in (DictionaryType, ReferenceDictionary)):
+            instances = list(args[0])
+            args = (instances, *args[1:])
+            counts = self.dictionary_list_reference_counts(instances)
+            context = kwargs.setdefault('context', self.get_serializer_context())
+            context['dictionary_reference_counts'] = counts
+            # 只在当前请求复用，避免冷加载序列化后又重复统计。
+            self._list_reference_counts = counts
+        return super().get_serializer(*args, **kwargs)
+
+    def dictionary_list_reference_counts(self, instances):
+        from .models import DictionaryType
+        from .services import dictionary_reference_counts
+
+        if self.queryset.model is not DictionaryType:
+            return dictionary_reference_counts(instances)
+        items_by_type = {instance.pk: list(instance.items.all()) for instance in instances}
+        counts = dictionary_reference_counts(item for items in items_by_type.values() for item in items)
+        return {type_id: sum(counts[item.pk] for item in items) for type_id, items in items_by_type.items()}
+
     def list(self, request, *args, **kwargs):
         from rest_framework.response import Response
 
@@ -93,12 +117,21 @@ class ConfigurationListCacheMixin:
 
     def refresh_reference_counts(self, payload):
         from .models import DictionaryType, ProductCategory, ReferenceDictionary
-        from .services import dictionary_reference_count, dictionary_type_reference_count
 
         model = self.queryset.model
         if model not in (DictionaryType, ReferenceDictionary, ProductCategory):
             return
         rows = payload.get('data', [])
+        if model in (DictionaryType, ReferenceDictionary):
+            counts = getattr(self, '_list_reference_counts', None)
+            if counts is None:
+                instances = self.get_queryset().filter(pk__in=[row['id'] for row in rows])
+                counts = self.dictionary_list_reference_counts(instances)
+            by_id = {str(item_id): count for item_id, count in counts.items()}
+            for row in rows:
+                if str(row['id']) in by_id:
+                    row['reference_count'] = by_id[str(row['id'])]
+            return
         instances = self.get_queryset().filter(pk__in=[row['id'] for row in rows])
         by_id = {str(item.pk): item for item in instances}
         serializer = self.get_serializer()
@@ -106,9 +139,4 @@ class ConfigurationListCacheMixin:
             instance = by_id.get(str(row['id']))
             if instance is None:
                 continue
-            if model is DictionaryType:
-                row['reference_count'] = dictionary_type_reference_count(instance)
-            elif model is ReferenceDictionary:
-                row['reference_count'] = dictionary_reference_count(instance)
-            else:
-                row['reference_count'] = serializer.get_reference_count(instance)
+            row['reference_count'] = serializer.get_reference_count(instance)

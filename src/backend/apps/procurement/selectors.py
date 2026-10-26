@@ -1,11 +1,11 @@
 from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Exists, F, OuterRef, Prefetch, Q
+from django.db.models import Exists, F, OuterRef, Prefetch, Q, Sum
 
 from apps.boms.models import Bom
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 
-from .models import PurchaseOrder, PurchaseOrderLine, Supplier
+from .models import PurchaseAllocationStatus, PurchaseOrder, PurchaseOrderLine, Supplier
 
 
 def active_suppliers():
@@ -30,6 +30,13 @@ def search_suppliers(queryset, search_text):
         | Q(supplier_name__icontains=search_text)
         | Q(phone__icontains=search_text)
     )
+
+
+def purchase_request_lines_with_allocated_quantity(queryset):
+    return queryset.annotate(_allocated_quantity_total=Sum(
+        "allocations__quantity",
+        filter=Q(allocations__status__in=[PurchaseAllocationStatus.DRAFT, PurchaseAllocationStatus.ORDERED]),
+    ))
 
 
 def active_purchase_orders():

@@ -443,3 +443,6 @@ class ProductionRunBatch(TimeStampedModel):
             models.CheckConstraint(condition=Q(good_quantity__gte=0), name="prod_run_batch_good_qty_nonnegative"),
             models.CheckConstraint(condition=Q(status__in=ProductionRunBatchStatus.values), name="prod_run_batch_status_valid"),
         ]
+
+
+from .cost_models import ProductionTaskExpense  # noqa: E402,F401

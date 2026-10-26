@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
@@ -50,6 +51,7 @@ const selectedTaskId = ref('')
 const selectedBomId = ref('')
 const sourceTypeFilter = ref<'ALL' | 'PRODUCTION' | 'SAMPLE'>('ALL')
 const detailFullscreen = ref(false)
+const bulkSupplierCategory = ref<string | null>(null)
 const bulkSupplierId = ref<string | null>(null)
 const bulkDeliveryDate = ref('')
 const optionsLoading = ref(true)
@@ -82,6 +84,23 @@ const selectedProducts = computed(() => (source.value?.production_task?.products
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
 const selectedSupplierCount = computed(() => new Set(lines.value.map((line) => line.supplier_id).filter(Boolean)).size)
+const supplierCategories = computed(() => [...new Set(lines.value.map((line) => line.category || '未分类'))])
+const bulkSupplierLines = computed(() => {
+  if (!bulkSupplierCategory.value) return []
+  return bulkSupplierCategory.value === '__all__'
+    ? lines.value
+    : lines.value.filter((line) => (line.category || '未分类') === bulkSupplierCategory.value)
+})
+const bulkSupplierOptions = computed(() => {
+  if (bulkSupplierCategory.value === '__all__') return options.value.suppliers
+  if (!bulkSupplierLines.value.length) return []
+  return options.value.suppliers.filter((supplier) => bulkSupplierLines.value.every((line) =>
+    line.suggested_supplier_category && supplier.supplier_categories.includes(line.suggested_supplier_category),
+  ))
+})
+const bulkSupplierEmptyText = computed(() => bulkSupplierLines.value.some((line) => !line.suggested_supplier_category)
+  ? '当前物料分类尚未对应供应商类别，请逐行选择供应商'
+  : '暂无匹配供应商，请在供应商信息中维护对应类别')
 const completeLineCount = computed(() => lines.value.filter(isLineComplete).length)
 const isPreviewMode = computed(() => Boolean(source.value && !source.value.can_create && lines.value.length))
 const detailTableHeight = computed(() => detailFullscreen.value ? 'calc(100dvh - 108px)'
@@ -118,6 +137,7 @@ function resetSource(): void {
   sourceLoading.value = false
   lines.value = []
   selectedBomId.value = ''
+  bulkSupplierCategory.value = null
   bulkSupplierId.value = null
   bulkDeliveryDate.value = ''
   sourceError.value = ''
@@ -126,6 +146,7 @@ function resetSource(): void {
 function applySource(result: PurchaseOrderSource): void {
   source.value = result
   selectedBomId.value = result.selected_bom_id || ''
+  bulkSupplierCategory.value = null
   bulkSupplierId.value = null
   bulkDeliveryDate.value = ''
   if (!form.currencyId && result.default_currency_id) form.currencyId = result.default_currency_id
@@ -313,16 +334,22 @@ function disablePastDeliveryDate(date: Date): boolean {
 }
 
 function applyBulkSupplier(value: string | null): void {
-  for (const line of lines.value) line.supplier_id = value || null
+  if (!source.value?.can_create || sourceLoading.value) return
+  if (value && !bulkSupplierOptions.value.some((supplier) => supplier.id === value)) {
+    refreshBulkSupplier()
+    showActionError('该供应商不属于当前分类，请重新选择。')
+    return
+  }
+  for (const line of bulkSupplierLines.value) line.supplier_id = value || null
 }
 
 function refreshBulkSupplier(): void {
-  if (!lines.value.length) {
+  if (!bulkSupplierLines.value.length) {
     bulkSupplierId.value = null
     return
   }
-  const firstValue = lines.value[0].supplier_id
-  bulkSupplierId.value = lines.value.every((line) => line.supplier_id === firstValue)
+  const firstValue = bulkSupplierLines.value[0].supplier_id
+  bulkSupplierId.value = bulkSupplierLines.value.every((line) => line.supplier_id === firstValue)
     ? firstValue
     : null
 }
@@ -789,19 +816,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             </div>
           </div>
           <div class="detail-header-actions">
+            <label class="bulk-field bulk-field--category" data-testid="purchase-bulk-supplier-category">
+              <span>分类</span>
+              <ElSelect v-model="bulkSupplierCategory" filterable clearable :value-on-clear="null" aria-label="统一供应商分类" :disabled="!source?.can_create || sourceLoading || !lines.length" placeholder="请选择分类" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
+                <ElOption label="全部分类" value="__all__" />
+                <ElOption v-for="category in supplierCategories" :key="category" :label="category" :value="category" />
+              </ElSelect>
+            </label>
             <label class="bulk-field bulk-field--supplier" data-testid="purchase-bulk-supplier">
               <span>统一供应商</span>
               <ElSelect
                 v-model="bulkSupplierId"
                 filterable
                 clearable
-                :disabled="!source?.can_create || !lines.length"
-                placeholder="选择后同步全部"
+                aria-label="统一供应商"
+                :disabled="!source?.can_create || sourceLoading || !bulkSupplierLines.length"
+                :placeholder="!bulkSupplierCategory ? '请先选择分类' : bulkSupplierCategory === '__all__' ? '选择后同步全部' : '选择后同步本分类'"
+                :no-data-text="bulkSupplierEmptyText"
                 popper-class="purchase-detail-popper"
                 @change="applyBulkSupplier"
               >
                 <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
-              <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
+              <ElOption v-for="supplier in bulkSupplierOptions" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
               </ElSelect>
             </label>
             <label class="bulk-field bulk-field--date" data-testid="purchase-bulk-delivery-date">
@@ -844,7 +880,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
           </ElTableColumn>
           <ElTableColumn :label="isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><template v-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ row.suggested_purchase_meters }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
+            <template #default="{ row }"><div class="quantity-cell"><template v-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ compactDecimal(row.suggested_purchase_meters) }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
@@ -988,7 +1024,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .detail-card { flex: none; min-height: 220px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 14px; }
 .detail-card:not(.is-fullscreen) .purchase-lines { flex: none; }
 .detail-card.is-fullscreen { position: fixed; z-index: 1900; inset: 0; height: 100dvh; width: 100%; border-radius: 0; }
-.detail-card > header { display: flex; flex: 0 0 52px; align-items: center; justify-content: space-between; padding: 0 12px; gap: 10px; }
+.detail-card > header { display: flex; flex: 0 0 auto; min-height: 52px; flex-wrap: wrap; align-items: center; justify-content: space-between; padding: 8px 12px; gap: 10px; }
 .detail-card > header > div { display: flex; align-items: center; gap: 12px; }
 .detail-card > header > div > span { color: crm.$crm-text-secondary; font-size: 13px; }
 .detail-title-context { min-width: 0; }
@@ -997,9 +1033,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .selected-product-context > span { color: crm.$crm-text-secondary; font-size: 13px; }
 .selected-product-context > strong { max-width: 130px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 500; }
 .selected-product-context > small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; color: crm.$crm-text-secondary; font-size: 12px; }
-.detail-header-actions { margin-left: auto; gap: 10px !important; }
+.detail-header-actions { margin-left: auto; flex-wrap: wrap; gap: 10px !important; }
 .detail-header-actions :deep(.el-button) { width: 92px; height: 42px; margin: 0; }
 .bulk-field { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 13px; }
+.bulk-field--category :deep(.el-select) { width: 150px; }
 .bulk-field--supplier :deep(.el-select) { width: 218px; }
 .bulk-field--date :deep(.el-date-editor) { width: 220px; }
 .bulk-field :deep(.el-select__wrapper), .bulk-field :deep(.el-input__wrapper) { height: 32px; min-height: 32px; border-radius: var(--erp-radius-control); }
@@ -1060,7 +1097,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 .state-page p { color: crm.$crm-text-secondary; }
 
 @media (max-width: 980px) {
-  .detail-card > header { flex: 0 0 112px; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; padding-top: 8px; padding-bottom: 8px; }
+  .detail-card > header { flex: 0 0 auto; min-height: 112px; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; padding-top: 8px; padding-bottom: 8px; }
   .detail-title-context { flex: none; height: 30px; }
   .detail-header-actions { flex: none; justify-content: flex-end; margin-left: 0; }
 }

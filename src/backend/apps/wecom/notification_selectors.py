@@ -95,21 +95,22 @@ def delivery_statuses(recipient):
             for delivery in recipient.deliveries.all()}
 
 
-def content_accessible(recipient, user):
+def content_accessible(recipient, user, *, permission_snapshots=None):
     if recipient.event.status == "STALE":
         return False
     return event_object_accessible(recipient.event.event_code, recipient.event.object_id, user,
                                    role_codes=recipient.role_codes, object_version=recipient.event.object_version,
                                    submitter_id=(recipient.event.context.get("submitter_id")
-                                                 if recipient.scope == "SUBMITTER" else None))
+                                                 if recipient.scope == "SUBMITTER" else None),
+                                   permission_snapshots=permission_snapshots)
 
 
 def target_accessible(recipient, user):
     return recipient.event.target is not None and content_accessible(recipient, user)
 
 
-def recipient_payload(recipient, user):
-    accessible = content_accessible(recipient, user)
+def recipient_payload(recipient, user, *, permission_snapshots=None):
+    accessible = content_accessible(recipient, user, permission_snapshots=permission_snapshots)
     event = get_event(recipient.event.event_code)
     if accessible:
         title, body, target = recipient.event.rendered_title, recipient.event.rendered_body, recipient.event.target

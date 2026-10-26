@@ -33,6 +33,7 @@ from .models import (
     SupplierPurchaseSheetSealImage,
 )
 from .material_attribute_snapshot import build_material_attribute_snapshot
+from .material_receipt_identity import build_purchase_material_snapshot
 from .selectors import (
     production_tasks_with_purchase_sources, purchase_orders_with_context,
     purchase_orders_by_product, purchase_orders_with_product_ids,
@@ -785,6 +786,8 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         if source_line["section_type"] == "PROFILE":
             pipe_values = purchase_pipe_values(pipe_source_snapshot(source_line["_bom_line"]), input_line)
             quantity = pipe_values["actual_purchase_meters"]
+        else:
+            pipe_values["calculation_snapshot"] = build_purchase_material_snapshot(source_line["_bom_line"])
         unit_price = input_line.get("unit_price")
         amount = _money(quantity * unit_price) if quantity is not None and unit_price is not None else None
         amounts.append(amount)

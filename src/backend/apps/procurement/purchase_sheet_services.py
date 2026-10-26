@@ -1,11 +1,8 @@
-import hashlib
 import uuid
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from pathlib import Path
 
-from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
@@ -13,7 +10,6 @@ from rest_framework.exceptions import NotFound, ValidationError
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
-from apps.files.models import BusinessFile, FileScanStatus
 from apps.files.uploads import save_scanned_image
 
 from .models import (
@@ -31,7 +27,6 @@ from .models import (
     SupplierPurchaseSheetSealImage,
     SupplierPurchaseSheetStatus,
 )
-from .purchase_sheet_pdf import build_supplier_purchase_sheet_pdf
 from .services import MAX_MONEY_VALUE, MONEY_QUANT, next_purchase_order_number
 
 
@@ -555,7 +550,12 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
     seller = _normalize_party(raw_content.get("seller"), "seller")
     if for_publish and (not buyer["name"] or not seller["name"]):
         raise ValidationError({"parties": "正式发布前必须填写甲方和乙方名称。"})
+    from .purchase_sheet_template_edits import EDITABLE_TEMPLATE_FIELDS
+    template_edits = raw_content.get("original_template_edits", current.get("original_template_edits", []))
+    if not isinstance(template_edits, list) or any(not isinstance(key, str) or key not in EDITABLE_TEMPLATE_FIELDS for key in template_edits):
+        raise ValidationError({"original_template_edits": "原版合同编辑字段不正确。"})
     return {
+        "original_template_edits": list(dict.fromkeys(template_edits)),
         "title": _string(raw_content.get("title"), field_name="title", max_length=150, allow_blank=not for_publish),
         "sheet_number": sheet.sheet_number,
         "purchase_date": _date_text(raw_content.get("purchase_date"), field_name="purchase_date", allow_blank=not for_publish),
@@ -706,28 +706,6 @@ def update_supplier_purchase_sheet(*, sheet_id, content, allowed_task_ids, actor
         request=request,
     )
     return sheet
-
-
-def _save_pdf_file(sheet, content, actor_employee):
-    digest = hashlib.sha256(content).hexdigest()
-    filename = f"{sheet.sheet_number}_V{sheet.version_number}.pdf"
-    storage_key = f"generated/procurement/{sheet.series_id}/{filename}"
-    media_root = Path(settings.MEDIA_ROOT).resolve()
-    target = (media_root / storage_key).resolve()
-    target.relative_to(media_root)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(content)
-    return BusinessFile.objects.create(
-        uploaded_by_employee=actor_employee,
-        original_name=filename,
-        storage_key=storage_key,
-        content_type="application/pdf",
-        size_bytes=len(content),
-        content_hash=digest,
-        scan_status=FileScanStatus.CLEAN,
-        scanned_at=timezone.now(),
-        scan_message="系统生成的采购表 PDF。",
-    )
 
 
 def _has_source_line(sheet, source_line_id):
@@ -923,8 +901,7 @@ def _start_purchasing_if_all_published(sheet, actor_employee, request):
     )
 
 
-def _publish_prepared_sheet(sheet, pdf_content, actor_employee, request):
-    sheet.pdf_file = _save_pdf_file(sheet, pdf_content, actor_employee)
+def _publish_prepared_sheet(sheet, actor_employee, request):
     sheet.status = SupplierPurchaseSheetStatus.PUBLISHED
     sheet.published_at = timezone.now()
     sheet.published_by_employee = actor_employee
@@ -932,7 +909,6 @@ def _publish_prepared_sheet(sheet, pdf_content, actor_employee, request):
     sheet.save(update_fields=[
         "content_snapshot",
         "total_amount",
-        "pdf_file",
         "status",
         "published_at",
         "published_by_employee",
@@ -970,7 +946,7 @@ def _first_validation_message(detail):
     return str(detail or "采购表内容不完整。")
 
 
-def _prepare_sheet_pdf(sheet, *, include_sheet_number_in_error=False):
+def _prepare_sheet_for_publish(sheet, *, include_sheet_number_in_error=False):
     try:
         from .pipe_purchase import validate_pipe_sheet_source
         validate_pipe_sheet_source(sheet)
@@ -983,7 +959,6 @@ def _prepare_sheet_pdf(sheet, *, include_sheet_number_in_error=False):
         }) from exc
     sheet.content_snapshot = normalized
     sheet.total_amount = total
-    return build_supplier_purchase_sheet_pdf(sheet, draft=False)
 
 
 @transaction.atomic
@@ -1000,8 +975,8 @@ def publish_supplier_purchase_sheet(*, sheet_id, allowed_task_ids, actor_employe
     if sheet.status != SupplierPurchaseSheetStatus.DRAFT:
         raise Conflict("只有草稿采购表可以发布。")
     require_matching_etag(request, sheet)
-    pdf_content = _prepare_sheet_pdf(sheet)
-    return _publish_prepared_sheet(sheet, pdf_content, actor_employee, request)
+    _prepare_sheet_for_publish(sheet)
+    return _publish_prepared_sheet(sheet, actor_employee, request)
 
 
 @transaction.atomic
@@ -1028,13 +1003,11 @@ def publish_supplier_purchase_sheets(*, sheet_ids, allowed_task_ids, actor_emplo
     if non_draft:
         raise ValidationError({"ids": f"只有草稿采购表可以批量发布：{', '.join(non_draft)}。"})
 
-    prepared = [
-        (sheet, _prepare_sheet_pdf(sheet, include_sheet_number_in_error=True))
-        for sheet in ordered
-    ]
+    for sheet in ordered:
+        _prepare_sheet_for_publish(sheet, include_sheet_number_in_error=True)
     return [
-        _publish_prepared_sheet(sheet, pdf_content, actor_employee, request)
-        for sheet, pdf_content in prepared
+        _publish_prepared_sheet(sheet, actor_employee, request)
+        for sheet in ordered
     ]
 
 

@@ -1,0 +1,9 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from './request'
+import { fetchProductionTaskCostSummary, fetchProductionTaskExpenses, createProductionTaskExpense, updateProductionTaskExpense, voidProductionTaskExpense } from './productionCosts'
+vi.mock('./request', () => ({ apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() } }))
+describe('任务成本 API', () => {
+  beforeEach(() => vi.clearAllMocks())
+  it('解包汇总与含 ETag 的费用列表', async () => { vi.mocked(apiClient.get).mockResolvedValueOnce({ data: { data: { task_id: 'a/b' } } }).mockResolvedValueOnce({ data: { data: [{ id: 'e', etag: 'v1' }] } }); expect(await fetchProductionTaskCostSummary('a/b')).toEqual({ task_id: 'a/b' }); expect(apiClient.get).toHaveBeenCalledWith('/api/v1/production-tasks/a%2Fb/cost-summary/'); expect(await fetchProductionTaskExpenses('a/b')).toEqual([{ id: 'e', etag: 'v1' }]) })
+  it('创建保留幂等 UUID，编辑和作废携带 If-Match', async () => { const payload = { expense_type: 'TRANSPORT' as const, description: '运费', amount: '12.50', occurred_on: '2026-10-26', remark: '', client_request_id: 'request-id' }; vi.mocked(apiClient.post).mockResolvedValue({ data: { data: { id: 'e', etag: 'v1' } } }); vi.mocked(apiClient.patch).mockResolvedValue({ data: { data: { id: 'e', etag: 'v2' } } }); vi.mocked(apiClient.delete).mockResolvedValue({}); await createProductionTaskExpense('t', payload); expect(apiClient.post).toHaveBeenCalledWith('/api/v1/production-tasks/t/cost-expenses/', payload); await updateProductionTaskExpense('t', 'e', { amount: '13.00' }, 'v1'); expect(apiClient.patch).toHaveBeenCalledWith('/api/v1/production-tasks/t/cost-expenses/e/', { amount: '13.00' }, { headers: { 'If-Match': 'v1' } }); await voidProductionTaskExpense('t', 'e', 'v2'); expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/production-tasks/t/cost-expenses/e/', { headers: { 'If-Match': 'v2' } }) })
+})

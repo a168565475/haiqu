@@ -4,7 +4,7 @@ from decimal import Decimal
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.organizations.selectors import active_department_employees
+from apps.organizations.selectors import active_department_employees, active_role_employees
 from apps.customers.models import CustomerAccount
 from apps.audit.models import AuditLog
 from apps.inquiries.rich_text import sanitize_rich_text
@@ -159,7 +159,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
     )
     follower_ids = serializers.PrimaryKeyRelatedField(
         source="followers",
-        queryset=active_department_employees("DEPT_PRODUCTION"),
+        queryset=active_role_employees("MERCHANDISER"),
         many=True,
         allow_empty=False,
     )
@@ -996,7 +996,7 @@ class ProductionTaskCreateFromSalesOrderSerializer(serializers.Serializer):
         error_messages={"invalid": "生产任务单号必须为 HT 加数字，可用连字符连接数字。"},
     )
     follower_ids = serializers.PrimaryKeyRelatedField(
-        source="followers", queryset=active_department_employees("DEPT_PRODUCTION"),
+        source="followers", queryset=active_role_employees("MERCHANDISER"),
         many=True, allow_empty=False,
     )
     delivery_date = serializers.DateField()
@@ -1111,7 +1111,7 @@ class ProductionTaskPmcDecisionSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["CONFIRM", "RETURN"])
     follower_ids = serializers.PrimaryKeyRelatedField(
         source="followers",
-        queryset=active_department_employees("DEPT_PRODUCTION"),
+        queryset=active_role_employees("MERCHANDISER"),
         many=True,
         allow_empty=False,
         required=False,

@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Prefetch, Sum
 from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -21,6 +21,7 @@ from .models import (
     Supplier,
 )
 from .services import PurchaseQuantityParseStatus, _source_quantity
+from .selectors import purchase_request_lines_with_allocated_quantity
 
 
 def _request_snapshot(purchase_request):
@@ -39,7 +40,9 @@ def _request_snapshot(purchase_request):
                 "remaining_quantity": str(line.remaining_quantity),
                 "required_date": line.required_date.isoformat() if line.required_date else None,
             }
-            for line in purchase_request.lines.order_by("line_number", "id")
+            for line in purchase_request_lines_with_allocated_quantity(
+                purchase_request.lines.order_by("line_number", "id"),
+            )
         ],
     }
 
@@ -53,6 +56,7 @@ def purchase_requests_with_context(queryset=None):
         "bom",
         "requested_by_employee",
     ).prefetch_related(
+        Prefetch("lines", queryset=purchase_request_lines_with_allocated_quantity(PurchaseRequestLine.objects.order_by("line_number", "id"))),
         "lines__bom_line",
         "lines__suggested_supplier",
         "lines__allocations__supplier",
@@ -223,7 +227,7 @@ def submit_purchase_request(*, purchase_request, actor_employee, request=None):
 
 
 def _refresh_allocation_status(purchase_request):
-    lines = list(purchase_request.lines.all())
+    lines = list(purchase_request_lines_with_allocated_quantity(purchase_request.lines.all()))
     fully_allocated = bool(lines) and all(line.remaining_quantity <= 0 for line in lines)
     purchase_request.status = (
         PurchaseRequestStatus.FULLY_ALLOCATED if fully_allocated else PurchaseRequestStatus.ALLOCATING

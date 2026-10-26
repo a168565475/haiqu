@@ -208,11 +208,13 @@ def _object_queryset(event_code, request, permission):
     return None
 
 
-def event_object_accessible(event_code, object_id, user, *, role_codes=None, object_version=None, submitter_id=None):
+def event_object_accessible(event_code, object_id, user, *, role_codes=None, object_version=None, submitter_id=None,
+                            permission_snapshots=None):
     """检查当前有效身份、可选历史接收角色、实际动作及对象范围。
 
     role_codes 仅用于重试时确认快照接收角色仍有效，不用当前规则追收新成员。
     submitter_id 仅由原提交人回执传入，允许当前超级管理员读取本人的回执。
+    permission_snapshots 只由一次列表请求提供；身份、接收角色和对象检查仍逐条执行。
     未登记事件、尚无真实申请模型或不存在的对象均拒绝；数据库错误正常上抛。
     """
     if event_code not in EVENT_OBJECT_PERMISSIONS or event_code in UNAVAILABLE_EVENT_OBJECTS:
@@ -225,7 +227,7 @@ def event_object_accessible(event_code, object_id, user, *, role_codes=None, obj
         return False
 
     from django.contrib.auth import get_user_model
-    from apps.access_control import module_policy
+    from apps.access_control import module_policy, sales_policy
     from apps.access_control.selectors import current_assignments
     from apps.organizations.models import Employee
 
@@ -279,6 +281,10 @@ def event_object_accessible(event_code, object_id, user, *, role_codes=None, obj
 
     for permission in EVENT_OBJECT_PERMISSIONS[event_code]:
         request = _request_for(current_user, employee, permission)
+        if permission_snapshots is not None and module_policy.enabled():
+            if current_user.pk not in permission_snapshots:
+                permission_snapshots[current_user.pk] = sales_policy.access_for(request)
+            request._sales_access_snapshot = permission_snapshots[current_user.pk]
         if not module_policy.has_permission(request, permission):
             continue
         queryset = _object_queryset(event_code, request, permission)

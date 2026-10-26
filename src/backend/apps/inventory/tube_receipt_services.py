@@ -230,6 +230,8 @@ def submit_tube_receipt(request, data):
         if existing.request_payload_hash != payload_hash:
             raise Conflict('相同请求编号不能用于不同入库内容或操作人。')
         return existing, True
+    from .receipt_request_history import require_receipt_request_not_deleted
+    require_receipt_request_not_deleted(object_type='INTERNAL_SEMI_RECEIPT', request_id=data['request_id'])
     context = load_tube_receipt_context(request, data['schedule_product_id'], lock=True)
     expected = request.headers.get('If-Match')
     if not expected:

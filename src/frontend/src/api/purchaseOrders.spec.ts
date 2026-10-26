@@ -9,7 +9,6 @@ import {
   deleteSupplierPurchaseSheetSealImage,
   deleteSupplierPurchaseSheetLineImage,
   downloadSupplierPurchaseSheetXlsx,
-  downloadSupplierPurchaseSheetPdf,
   batchDownloadSupplierPurchaseSheets,
   fetchPurchaseOrder,
   fetchPurchaseSheetOptions,
@@ -44,21 +43,12 @@ const mockedPatch = vi.mocked(apiClient.patch)
 const mockedDelete = vi.mocked(apiClient.delete)
 
 describe('采购订单 API', () => {
-  it('单张PDF下载与已发布预览请求当前统一版式', async () => {
-    const blob = new Blob(['pdf'], { type: 'application/pdf' })
-    const signal = new AbortController().signal
-    mockedGet.mockResolvedValueOnce({ data: blob })
-    expect(await downloadSupplierPurchaseSheetPdf('sheet-1', signal)).toBe(blob)
-    expect(mockedGet).toHaveBeenCalledWith('/api/v1/supplier-purchase-sheets/sheet-1/download-pdf/', {
-      params: { layout: 'current' }, responseType: 'blob', signal,
-    })
-  })
-  it('批量PDF下载使用相同当前版式', async () => {
+  it('批量Excel打包下载不再携带PDF版式参数', async () => {
     const blob = new Blob(['zip'], { type: 'application/zip' })
     mockedPost.mockResolvedValueOnce({ data: blob })
     expect(await batchDownloadSupplierPurchaseSheets(['sheet-1'])).toBe(blob)
     expect(mockedPost).toHaveBeenCalledWith('/api/v1/supplier-purchase-sheets/batch-download/', { ids: ['sheet-1'] }, {
-      params: { layout: 'current' }, responseType: 'blob',
+      responseType: 'blob',
     })
   })
   it('确认页仅请求供应商选项', async () => {

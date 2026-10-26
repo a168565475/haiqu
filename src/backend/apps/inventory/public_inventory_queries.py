@@ -1,7 +1,8 @@
 """公共余额只按实物和库区展示；采购与领用原单继续独立追溯。"""
 from decimal import Decimal
 
-from django.db.models import Count, Exists, Max, OuterRef, Q, Sum
+from django.db.models import Count, Exists, F, Max, OuterRef, Q, Sum
+from django.db.models.functions import Collate
 
 from apps.workshop_config.models import Craft
 
@@ -10,14 +11,14 @@ from .public_stock_identity import validate_public_identity
 from .selectors import material_inventory_rows
 
 
-def public_raw_inventory_rows(*, keyword="", section_title="", warehouse_id="", zone_id="", location_id=""):
+def public_raw_inventory_page(*, page, page_size, keyword="", section_title="", warehouse_id="", zone_id="", location_id=""):
     filters = dict(keyword=keyword, section_title=section_title, warehouse_id=warehouse_id,
                    zone_id=zone_id, location_id=location_id)
     # 普通材料本来就是公共账；旧口径管材不能混进公共根米余额。
     # 库存列表只展示仍有可用余额的记录；零余额仍保留在库存流水和汇总接口中追溯。
-    rows = list(material_inventory_rows(**filters).filter(
+    ordinary_rows = material_inventory_rows(**filters).filter(
         measurement_kind="OTHER", inventory_quantity__gt=0,
-    ).exclude(raw_material__category__category_name="管材"))
+    ).exclude(raw_material__category__category_name="管材")
     balances = PublicStockBalance.objects.filter(
         stock_kind="RAW_PIPE", quality="AVAILABLE", quantity__gt=0,
     ).select_related(
@@ -42,14 +43,26 @@ def public_raw_inventory_rows(*, keyword="", section_title="", warehouse_id="", 
         balances = balances.filter(zone_id=zone_id)
     if location_id:
         balances = balances.none()
+    count = ordinary_rows.count() + balances.count()
+    start = (page - 1) * page_size
+    if start >= count:
+        return count, []
+    end = min(page * page_size, count)
+    # 两个来源各取前 end 行再归并；分别 OFFSET 会遗漏另一来源前面的记录。
+    # SQL 与 Python 使用相同顺序，空时间排后，单位名称使用 C 排序规则。
+    rows = list(ordinary_rows.order_by(
+        F("latest_inbound_time").desc(nulls_last=True), "-raw_material_id", "-zone_id",
+        Collate("unit__unit_name", "C").desc(),
+    )[:end])
     balances = balances.annotate(
         inbound_count=Count("movements__source_id", distinct=True,
             filter=Q(movements__direction="IN") & ~Q(movements__source_type="PUBLIC_STOCK_OPENING")),
         latest_inbound_time=Max("movements__occurred_at", filter=Q(movements__direction="IN")),
-    )
+    ).order_by(F("latest_inbound_time").desc(nulls_last=True), "-raw_material_id", "-zone_id", "-pk")[:end]
     for balance in balances:
         material, zone = balance.raw_material, balance.zone
         rows.append({
+            "_balance_id": str(balance.pk),
             "measurement_kind": "PIPE", "raw_bar_length_m": balance.raw_bar_length_m,
             "raw_material_id": material.pk, "raw_material__item_type": material.item_type,
             "raw_material__category__category_name": material.category.category_name,
@@ -64,8 +77,12 @@ def public_raw_inventory_rows(*, keyword="", section_title="", warehouse_id="", 
             "inventory_quantity": balance.quantity, "meter_quantity": balance.meter_quantity,
             "inbound_count": balance.inbound_count, "latest_inbound_time": balance.latest_inbound_time,
         })
-    rows.sort(key=lambda row: (str(row["latest_inbound_time"] or ""), str(row["raw_material_id"]), str(row["zone_id"])), reverse=True)
-    return rows
+    # 前三项相同时保留普通材料优先，并为各来源补足稳定顺序，避免跨页重复或遗漏。
+    rows.sort(key=lambda row: (
+        str(row["latest_inbound_time"] or ""), str(row["raw_material_id"]), str(row["zone_id"]),
+        row["measurement_kind"] == "OTHER", row.get("_balance_id", row["unit__unit_name"]),
+    ), reverse=True)
+    return count, rows[start:end]
 
 
 def public_pipe_summary(material):

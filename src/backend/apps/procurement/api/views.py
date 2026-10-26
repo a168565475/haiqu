@@ -1,4 +1,5 @@
 import re
+from copy import copy
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +14,7 @@ from django.db.models import Count, Exists, OuterRef, Prefetch, Q, Sum
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -68,9 +70,10 @@ from ..services import (
     update_purchase_order,
     update_supplier,
 )
-from ..purchase_sheet_pdf import build_supplier_purchase_sheet_pdf
 from ..completion_services import complete_purchase_order
 from ..purchase_sheet_xlsx import build_supplier_purchase_sheet_xlsx
+from ..purchase_sheet_preview import build_purchase_sheet_preview
+from ..fabric_purchase_sheet_template import FabricPurchaseSheetTemplateError
 from ..purchase_sheet_services import (
     create_purchase_contract_template,
     create_supplier_purchase_sheet_version,
@@ -83,6 +86,7 @@ from ..purchase_sheet_services import (
     replace_supplier_purchase_sheet_seal_image,
     update_purchase_contract_template,
     update_supplier_purchase_sheet,
+    normalize_sheet_content,
 )
 from .serializers import (
     PurchaseContractTemplateInputSerializer,
@@ -1072,10 +1076,10 @@ class SupplierPurchaseSheetViewSet(
         "retrieve": "procurement.view_purchaseorder",
         "partial_update": "procurement.add_purchaseorder",
         "update": "procurement.add_purchaseorder",
-        "preview_pdf": "procurement.view_purchaseorder",
         "publish": "procurement.submit_purchaseorder",
-        "download_pdf": "procurement.view_purchaseorder",
         "download_xlsx": "procurement.view_purchaseorder",
+        "preview.GET": "procurement.view_purchaseorder",
+        "preview.POST": "procurement.add_purchaseorder",
         "new_version": "procurement.add_purchaseorder",
         "batch_download": "procurement.view_purchaseorder",
         "batch_publish": "procurement.submit_purchaseorder",
@@ -1215,17 +1219,6 @@ class SupplierPurchaseSheetViewSet(
     def partial_update(self, request, *args, **kwargs):
         return self._update(request, partial=True)
 
-    @action(detail=True, methods=["get"], url_path="preview-pdf")
-    def preview_pdf(self, request, pk=None):
-        sheet = self.get_object()
-        content = build_supplier_purchase_sheet_pdf(
-            sheet,
-            draft=sheet.status == SupplierPurchaseSheetStatus.DRAFT,
-        )
-        response = HttpResponse(content, content_type="application/pdf")
-        response["Content-Disposition"] = f'inline; filename="{sheet.sheet_number}_V{sheet.version_number}_preview.pdf"'
-        return response
-
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
         sheet = publish_supplier_purchase_sheet(
@@ -1236,43 +1229,31 @@ class SupplierPurchaseSheetViewSet(
         )
         return self._response(self.get_queryset().get(pk=sheet.pk))
 
-    @staticmethod
-    def _use_current_pdf_layout(request):
-        layout = request.query_params.get("layout", "archived")
-        if layout not in {"current", "archived"}:
-            raise ValidationError({"layout": "PDF 版式必须为 current 或 archived。"})
-        return layout == "current"
-
-    @extend_schema(parameters=[OpenApiParameter(
-        "layout", str, enum=["current", "archived"], default="archived",
-        description="current 按已保存内容生成当前版式；archived 返回发布时归档文件。",
-    )])
-    @action(detail=True, methods=["get"], url_path="download-pdf")
-    def download_pdf(self, request, pk=None):
-        current_layout = self._use_current_pdf_layout(request)
+    @extend_schema(request=SupplierPurchaseSheetUpdateSerializer, responses=OpenApiTypes.OBJECT)
+    @action(detail=True, methods=["get", "post"])
+    def preview(self, request, pk=None):
         sheet = self.get_object()
-        if sheet.status != SupplierPurchaseSheetStatus.PUBLISHED or sheet.pdf_file_id is None:
-            raise ValidationError({"detail": "当前采购表尚未发布正式 PDF。"})
-        if current_layout:
-            # 只重排冻结内容，保留发布时的归档文件及其审计记录。
-            response = HttpResponse(build_supplier_purchase_sheet_pdf(sheet), content_type="application/pdf")
-            response["Content-Disposition"] = f'attachment; filename="{sheet.sheet_number}_V{sheet.version_number}.pdf"'
-            return response
-        media_root = Path(settings.MEDIA_ROOT).resolve()
-        file_path = (media_root / sheet.pdf_file.storage_key).resolve()
-        if media_root not in file_path.parents or not file_path.is_file():
-            raise ValidationError({"detail": "正式采购表 PDF 不存在，请重新发布或联系管理员。"})
-        return FileResponse(
-            file_path.open("rb"),
-            content_type="application/pdf",
-            as_attachment=True,
-            filename=sheet.pdf_file.original_name,
-        )
+        if request.method == "POST":
+            if sheet.status != SupplierPurchaseSheetStatus.DRAFT:
+                raise ValidationError({"detail": "已发布合同只能预览正式内容。"})
+            serializer = SupplierPurchaseSheetUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            # 与保存共用校验；仅复制内存对象，预览不会写入业务数据库。
+            normalized, _ = normalize_sheet_content(sheet, serializer.validated_data["content"])
+            sheet = copy(sheet)
+            sheet.content_snapshot = normalized
+        try:
+            return Response({"data": build_purchase_sheet_preview(sheet)})
+        except FabricPurchaseSheetTemplateError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
 
     @action(detail=True, methods=["get"], url_path="download-xlsx")
     def download_xlsx(self, request, pk=None):
         sheet = self.get_object()
-        content = build_supplier_purchase_sheet_xlsx(sheet)
+        try:
+            content = build_supplier_purchase_sheet_xlsx(sheet)
+        except FabricPurchaseSheetTemplateError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         response = HttpResponse(
             content,
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1383,13 +1364,8 @@ class SupplierPurchaseSheetViewSet(
         )
         return self._response(self.get_queryset().get(pk=sheet.pk), status.HTTP_201_CREATED)
 
-    @extend_schema(parameters=[OpenApiParameter(
-        "layout", str, enum=["current", "archived"], default="archived",
-        description="current 按已保存内容生成当前版式；archived 返回发布时归档文件。",
-    )])
     @action(detail=False, methods=["post"], url_path="batch-download")
     def batch_download(self, request):
-        current_layout = self._use_current_pdf_layout(request)
         raw_ids = request.data.get("ids")
         if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > 100:
             raise ValidationError({"ids": "请选择 1 至 100 张已发布采购表。"})
@@ -1399,24 +1375,17 @@ class SupplierPurchaseSheetViewSet(
         sheets = list(self.get_queryset().filter(
             pk__in=ids,
             status=SupplierPurchaseSheetStatus.PUBLISHED,
-            pdf_file__isnull=False,
         ))
         if len(sheets) != len(ids):
             raise ValidationError({"ids": "选择中包含不存在、无权限或尚未发布的采购表。"})
-        media_root = Path(settings.MEDIA_ROOT).resolve()
         output = BytesIO()
         with ZipFile(output, "w", ZIP_DEFLATED) as archive:
             for sheet in sheets:
-                if current_layout:
-                    archive.writestr(
-                        f"{sheet.sheet_number}_V{sheet.version_number}.pdf",
-                        build_supplier_purchase_sheet_pdf(sheet),
-                    )
-                    continue
-                file_path = (media_root / sheet.pdf_file.storage_key).resolve()
-                if media_root not in file_path.parents or not file_path.is_file():
-                    raise ValidationError({"ids": f"{sheet.sheet_number} 的正式 PDF 不存在。"})
-                archive.writestr(sheet.pdf_file.original_name, file_path.read_bytes())
+                try:
+                    content = build_supplier_purchase_sheet_xlsx(sheet)
+                except FabricPurchaseSheetTemplateError as exc:
+                    raise ValidationError({"ids": f"{sheet.sheet_number} 无法导出：{exc}"}) from exc
+                archive.writestr(f"{sheet.sheet_number}_V{sheet.version_number}.xlsx", content)
         response = HttpResponse(output.getvalue(), content_type="application/zip")
         response["Content-Disposition"] = 'attachment; filename="supplier_purchase_sheets.zip"'
         return response

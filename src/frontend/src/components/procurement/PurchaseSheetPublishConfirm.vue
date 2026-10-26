@@ -12,6 +12,7 @@ const props = defineProps<{
   amount: string
   lineCount: number
   hasSeal: boolean
+  autoSeal?: boolean
   publishing: boolean
   error: string
   blocked: boolean
@@ -26,7 +27,7 @@ function close(): void {
   <ElDialog v-model="visible" class="purchase-publish-dialog" title="发布采购表" width="646px"
     append-to-body destroy-on-close :close-on-click-modal="false" :close-on-press-escape="!publishing"
     :before-close="close" :aria-busy="publishing">
-    <p class="publish-subtitle">确认当前版本，生成正式 PDF</p>
+    <p class="publish-subtitle">确认发布并锁定当前版本</p>
     <dl class="publish-summary">
       <div><dt>采购表编号</dt><dd class="publish-number"><span :title="sheetNumber">{{ sheetNumber || '—' }}</span><ElTag>V{{ version }}</ElTag></dd></div>
       <div><dt>供应商</dt><dd :title="supplierName">{{ supplierName || '—' }}</dd></div>
@@ -40,8 +41,9 @@ function close(): void {
       </div>
       <div class="publish-seal-notice">
         <span class="publish-info-icon"><img :src="infoIcon" alt="" width="21" height="21" /></span>
-        <p v-if="hasSeal">已上传甲方盖章图片<br />正式 PDF 将带入已上传的盖章图片。</p>
-        <p v-else>当前未上传甲方盖章图片<br />正式 PDF 将保留签章位置。</p>
+        <p v-if="autoSeal">导出的原版合同自动带甲方印章。</p>
+        <p v-else-if="hasSeal">已上传甲方盖章图片。</p>
+        <p v-else>当前未上传甲方盖章图片。</p>
       </div>
     </div>
     <p v-if="error" class="publish-error" role="alert">{{ error }}</p>

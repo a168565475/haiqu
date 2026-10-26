@@ -66,6 +66,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertIsNotNone(self.product)
         self.inventory_material = (
             RawMaterialInformation.objects.filter(
+                item_type="MATERIAL",
                 archived_at__isnull=True,
                 unit__unit_name="PCS",
             )
@@ -1361,8 +1362,7 @@ class PurchaseOrderApiTests(APITestCase):
         self.assertTrue(any(value.startswith("七、合同生效") for value in section_values))
 
         preview = self.client.get(f"/api/v1/supplier-purchase-sheets/{sheet_id}/preview-pdf/")
-        self.assertEqual(preview.status_code, 200)
-        self.assertEqual(preview["Content-Type"], "application/pdf")
+        self.assertEqual(preview.status_code, 404)
 
         with tempfile.TemporaryDirectory() as media_root, self.settings(MEDIA_ROOT=media_root):
             image_path = Path(media_root) / "purchase-sheet-images" / "test.png"
@@ -1420,9 +1420,9 @@ class PurchaseOrderApiTests(APITestCase):
             )
             self.assertEqual(published.status_code, 200, published.data)
             self.assertEqual(published.data["data"]["status"], "PUBLISHED")
-            self.assertTrue(published.data["data"]["pdf_ready"])
+            self.assertFalse(published.data["data"]["pdf_ready"])
             downloaded = self.client.get(f"/api/v1/supplier-purchase-sheets/{sheet_id}/download-pdf/")
-            self.assertEqual(downloaded.status_code, 200)
+            self.assertEqual(downloaded.status_code, 404)
 
         new_version = self.client.post(
             f"/api/v1/supplier-purchase-sheets/{sheet_id}/new-version/",
@@ -1547,8 +1547,8 @@ class PurchaseOrderApiTests(APITestCase):
         second.refresh_from_db()
         self.assertEqual(first.status, "PUBLISHED")
         self.assertEqual(second.status, "PUBLISHED")
-        self.assertIsNotNone(first.pdf_file_id)
-        self.assertIsNotNone(second.pdf_file_id)
+        self.assertIsNone(first.pdf_file_id)
+        self.assertIsNone(second.pdf_file_id)
         self.assertEqual(
             AuditLog.objects.filter(
                 object_type="SUPPLIER_PURCHASE_SHEET",

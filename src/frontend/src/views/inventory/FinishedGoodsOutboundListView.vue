@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
@@ -14,7 +15,7 @@ const applied = ref({ q: '', warehouseId: '' })
 const options = ref<MaterialReceivingOptions>({ warehouses: [], zones: [] })
 const taskId = computed(() => String(route.query.production_task_id || ''))
 const productLineId = computed(() => String(route.query.product_line_id || ''))
-const money = (value: string | number | null | undefined) => Number(value || 0).toFixed(2)
+const money = (value: string | number | null | undefined) => compactDecimal(Number(value || 0).toFixed(2))
 const quantity = (value: number | null | undefined) => value == null ? '—' : Number(value).toLocaleString()
 const displayLines = (row: FinishedGoodsOutbound) => row.lines.length ? row.lines : [null]
 const message = (error: unknown) => error instanceof AxiosError ? (error.response?.data as { error?: { message?: string } })?.error?.message || '出库记录读取失败，请重试。' : '出库记录读取失败，请重试。'

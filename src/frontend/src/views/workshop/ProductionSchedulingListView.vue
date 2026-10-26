@@ -171,7 +171,7 @@ function overallPercentage(row: ProductionSchedule) { return displayProgressBySc
 function listMoney(value: string | null | undefined) {
   if (value == null) return '—'
   const amount = Number(value)
-  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'
+  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—'
 }
 onMounted(() => { void load() })
 </script>

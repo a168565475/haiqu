@@ -159,7 +159,7 @@ class SupplierPurchaseSheetBomAttributeTests(SimpleTestCase):
 
     def test_complete_workbook_matches_pdf_content_order_units_and_page_setup(self):
         content = {
-            "title": "塑料件采购合同", "order": {"source_type": "PRODUCTION", "sales_order_number": "HT-001"},
+            "title": "塑料件采购合同", "order": {"source_type": "PRODUCTION", "sales_order_number": "SALE-OTHER", "production_task_number": "HT-001"},
             "buyer": {"name": "甲方公司"}, "seller": {"name": "乙方工厂"}, "purchase_date": "2026-10-26",
             "show_image": False, "total_amount": "21.6000", "tax_rate": "13", "freight_bearer": "乙方", "remark": "到厂验收",
             "lines": [{"part_name": "半通", "specification": "16", "material": "PE", "unit": "只",

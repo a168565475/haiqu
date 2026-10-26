@@ -389,7 +389,18 @@ export interface SupplierPurchaseSheetLine {
   remark: string
 }
 
+export interface PurchaseSheetPreview {
+  columns: number[]
+  rows: { height: number; cells: { address: string; rowspan: number; colspan: number; runs: { text: string; style: Record<string, string> }[]; style: Record<string, string> }[] }[]
+  images: { src: string; left: number; top: number; width: number; height: number }[]
+  width: number
+  height: number
+  margins: { top: number; right: number; bottom: number; left: number }
+  terms: Partial<Pick<SupplierPurchaseSheetContent, 'title' | 'payment_and_delivery' | 'quality_standards' | 'delivery_handover' | 'special_instructions' | 'dispute_resolution' | 'effectiveness'>>
+}
+
 export interface SupplierPurchaseSheetContent {
+  original_template_edits?: string[]
   title: string
   sheet_number: string
   purchase_date: string
@@ -438,6 +449,7 @@ export interface SupplierPurchaseSheet {
   is_current: boolean
   template_version_id: string
   template_id: string
+  template_code: string
   template_name: string
   template_version_number: number
   template_version_name: string

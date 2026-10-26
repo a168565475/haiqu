@@ -5,7 +5,11 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from rest_framework.exceptions import ValidationError
 
-from apps.products.material_identity import resolve_bom_line_raw_material
+from apps.procurement.material_receipt_identity import (
+    PurchaseMaterialIdentityError,
+    get_purchase_material_id,
+    resolve_purchase_material,
+)
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductionUnit
 
@@ -45,11 +49,26 @@ def inbound_line_material(line: MaterialInboundLine):
         if material.archived_at is None:
             return material
         return None
-    bom_line = getattr(getattr(line, "purchase_order_line", None), "bom_line", None)
-    if bom_line is None:
+    purchase_line = getattr(line, "purchase_order_line", None)
+    if purchase_line is None:
         return None
-    material, _ = resolve_bom_line_raw_material(bom_line)
-    return material
+    try:
+        saved_id = get_purchase_material_id(purchase_line)
+        frozen_ids = list(MaterialInboundLine.objects.filter(
+            purchase_order_line_id=purchase_line.pk, raw_material_information__isnull=False,
+        ).order_by("raw_material_information_id").values_list("raw_material_information_id", flat=True).distinct()[:2])
+        if len(frozen_ids) > 1:
+            return None
+        if frozen_ids:
+            if saved_id and saved_id != frozen_ids[0]:
+                return None
+            if saved_id is None:
+                return RawMaterialInformation.objects.select_related("unit").filter(
+                    pk=frozen_ids[0], archived_at__isnull=True, item_type="MATERIAL",
+                ).first()
+        return resolve_purchase_material(purchase_line)
+    except PurchaseMaterialIdentityError:
+        return None
 
 
 def validate_inbound_stock_identity(line: MaterialInboundLine):

@@ -83,6 +83,9 @@ def confirm_tube_final_receipt(*, order_id, data, request):
     blockers = dispatch_evidence_blockers(order)
     if blockers:
         _fail('；'.join(blockers))
+    dispatch = order.actions.get(kind='DISPATCH')
+    if data['receipt_date'] < dispatch.actual_dispatch_date:
+        _fail(f'回货日期不能早于实际发出日期{dispatch.actual_dispatch_date}。')
     entered_by_id = {row['order_line_id']: row for row in data['lines']}
     if len(entered_by_id) != len(data['lines']) or set(entered_by_id) != {line.pk for line in lines}:
         _fail('必须完整且唯一地提交原单全部加工明细，包括实收0的部位。')
@@ -128,7 +131,7 @@ def confirm_tube_final_receipt(*, order_id, data, request):
         receipt_date=data['receipt_date'], warehouse=warehouse, actor_employee=request.employee,
         remark=data.get('remark', ''), snapshot={'order_number': order.order_number,
             'actor_name': request.employee.display_name, 'warehouse_name': warehouse.warehouse_name if warehouse else '',
-            'source_kind': order.source_kind, 'actual_dispatch_action_id': str(order.actions.get(kind='DISPATCH').pk)})
+            'source_kind': order.source_kind, 'actual_dispatch_action_id': str(dispatch.pk)})
     for row, _, identity in pending:
         row.receipt = header
         if row.received_quantity > 0:

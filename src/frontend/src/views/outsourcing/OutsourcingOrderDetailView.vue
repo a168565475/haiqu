@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -337,7 +338,7 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
                 <div><dt>产品</dt><dd>{{ product.product.product_number || product.product.item_number || '—' }} {{ product.product.product_name || '—' }}</dd></div>
                 <div><dt>颜色</dt><dd>{{ product.product.color_name || '—' }}</dd></div>
                 <div><dt>BOM部位</dt><dd>{{ Array.from(new Set(product.processing_items.map(item => item.part_name).filter(Boolean))).join('、') || '—' }}</dd></div>
-                <div><dt>计划数量</dt><dd>{{ product.planned_quantity }} {{ product.unit_name || '套' }}</dd></div>
+                <div><dt>计划数量</dt><dd>{{ compactDecimal(product.planned_quantity) }} {{ product.unit_name || '套' }}</dd></div>
                 <div><dt>计量单位</dt><dd>{{ product.unit_name || '套' }}</dd></div>
               </dl>
             </article>
@@ -353,7 +354,7 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
           <ElTableColumn prop="product_name" label="产品" min-width="150" />
           <ElTableColumn prop="part_name" label="部位" min-width="130" />
           <ElTableColumn prop="factory_name" label="加工厂" min-width="150" />
-          <ElTableColumn label="计划加工量" width="130" align="right"><template #default="{ row }">{{ row.allocated_quantity }} {{ row.unit }}</template></ElTableColumn>
+          <ElTableColumn label="计划加工量" width="130" align="right"><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }} {{ row.unit }}</template></ElTableColumn>
           <ElTableColumn label="加工单价" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="row.unit_price != null"> 元/{{ row.unit }}</template></template></ElTableColumn>
           <ElTableColumn label="计划金额（元）" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
         </ElTable>
@@ -364,13 +365,13 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
         <ElTable :data="factoryProgressRows" border :show-summary="detail.status !== 'CANCELLED'" sum-text="合计" empty-text="暂无加工分配">
           <ElTableColumn prop="factory_name" label="加工厂" min-width="210" />
           <ElTableColumn prop="unit" label="单位" width="90" />
-          <ElTableColumn prop="allocated_quantity" label="分配数量" min-width="140" />
-          <ElTableColumn v-if="detail.direct_handoff" prop="handoff_quantity" label="实际交接" min-width="120" />
-          <ElTableColumn prop="returned_quantity" label="累计收货数量" min-width="160" />
-          <ElTableColumn prop="good_quantity" label="合格数量" min-width="140" />
-          <ElTableColumn v-if="detail.direct_handoff" prop="unsprayed_quantity" label="未喷塑退回" min-width="120" />
-          <ElTableColumn v-else prop="defective_quantity" label="不良数量" min-width="140" />
-          <ElTableColumn prop="remaining_quantity" label="待回数量" min-width="140"><template #default="{ row }">{{ detail.status === 'CANCELLED' ? '—' : row.remaining_quantity }}</template></ElTableColumn>
+          <ElTableColumn prop="allocated_quantity" label="分配数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }}</template></ElTableColumn>
+          <ElTableColumn v-if="detail.direct_handoff" prop="handoff_quantity" label="实际交接" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.handoff_quantity) }}</template></ElTableColumn>
+          <ElTableColumn prop="returned_quantity" label="累计收货数量" min-width="160" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
+          <ElTableColumn prop="good_quantity" label="合格数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
+          <ElTableColumn v-if="detail.direct_handoff" prop="unsprayed_quantity" label="未喷塑退回" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.unsprayed_quantity) }}</template></ElTableColumn>
+          <ElTableColumn v-else prop="defective_quantity" label="不良数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
+          <ElTableColumn prop="remaining_quantity" label="待回数量" min-width="140"><template #default="{ row }">{{ detail.status === 'CANCELLED' ? '—' : compactDecimal(row.remaining_quantity) }}</template></ElTableColumn>
           <ElTableColumn label="加工状态" min-width="130"><template #default="{ row }"><span class="status-tag progress-status" :class="`status-${allocationStageTone(row)}`">{{ allocationStage(row) }}</span></template></ElTableColumn>
         </ElTable>
         <div v-if="hasDefectiveReturns" class="order-progress-alert">异常情况：存在不良品待处理，数量按各加工明细的 BOM 单位记录。</div>
@@ -384,7 +385,7 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
             <ElTableColumn label="物料名称" min-width="150"><template #default="{ row }"><div class="two-line-cell"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys"><span>{{ row.material_name }}</span></BomAttributesTooltip><small>{{ row.color }}</small></div></template></ElTableColumn>
             <ElTableColumn prop="specification" label="规格" min-width="90" />
             <ElTableColumn prop="unit" label="单位" width="64" />
-            <ElTableColumn label="实际发料 / 扣库" min-width="190"><template #default="{ row }"><div class="two-line-cell"><span v-if="row.pieces !== null">{{ row.pieces }} 支</span><span>{{ row.quantity }} {{ row.unit }}<template v-if="row.meters"> / {{ row.meters }} 米</template></span></div></template></ElTableColumn>
+            <ElTableColumn label="实际发料 / 扣库" min-width="190"><template #default="{ row }"><div class="two-line-cell"><span v-if="row.pieces !== null">{{ row.pieces }} 支</span><span>{{ compactDecimal(row.quantity) }} {{ row.unit }}<template v-if="row.meters"> / {{ compactDecimal(row.meters) }} 米</template></span></div></template></ElTableColumn>
             <ElTableColumn prop="remark" label="备注" width="80" />
           </ElTable>
         </section>
@@ -399,9 +400,9 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
             <ElTableColumn prop="specification" label="规格" min-width="135" />
             <ElTableColumn prop="color" label="颜色" min-width="105" />
             <ElTableColumn prop="unit" label="单位" width="72" />
-            <ElTableColumn prop="returned_quantity" label="回货数量" width="120" />
-            <ElTableColumn prop="good_quantity" label="合格数量" width="120" />
-            <ElTableColumn prop="defective_quantity" label="不良数量" width="120" />
+            <ElTableColumn prop="returned_quantity" label="回货数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
+            <ElTableColumn prop="good_quantity" label="合格数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
+            <ElTableColumn prop="defective_quantity" label="不良数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
           </ElTable>
         </section>
       </div>

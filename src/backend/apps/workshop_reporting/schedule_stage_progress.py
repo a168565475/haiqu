@@ -52,38 +52,64 @@ def _aggregate(metrics):
     )
 
 
-def _internal_reporting_metrics(products, full_links, as_of_date, category):
-    scopes_by_product = {}
-    scope_keys = set()
-    for product in products:
-        links = [link for link in full_links[product.pk]
-                 if link.craft_type_snapshot == "INTERNAL" and link.plan_category == category]
-        visible_ids = {link.pk for link in product.active_crafts}
-        scopes = {(product.product_line_id, link.craft.workshop_id, link.craft_id) for link in links}
-        visible = all(link.pk in visible_ids for link in links)
-        scopes_by_product[product.pk] = (scopes, visible)
-        if visible:
-            scope_keys.update(scopes)
+def _internal_reporting_metrics(products, full_links, as_of_date):
+    categories = ("METAL", "CUTTING", "SEWING")
+    scopes_by_category = {}
+    scope_keys_by_category = {}
+    scheme_scopes = Q(pk__in=[])
+    for category in categories:
+        scopes_by_product = {}
+        scope_keys = set()
+        for product in products:
+            links = [link for link in full_links[product.pk]
+                     if link.craft_type_snapshot == "INTERNAL" and link.plan_category == category]
+            visible_ids = {link.pk for link in product.active_crafts}
+            scopes = {(product.product_line_id, link.craft.workshop_id, link.craft_id) for link in links}
+            visible = all(link.pk in visible_ids for link in links)
+            scopes_by_product[product.pk] = (scopes, visible)
+            if visible:
+                scope_keys.update(scopes)
+        scopes_by_category[category] = scopes_by_product
+        scope_keys_by_category[category] = scope_keys
+        # 合并原三类查询条件，不把不同类别的产品、车间、工艺重新交叉组合。
+        scheme_scopes |= Q(
+            product_line_id__in={key[0] for key in scope_keys},
+            workshop_id__in={key[1] for key in scope_keys},
+            scope_craft_id__in={key[2] for key in scope_keys},
+        )
     schemes_by_scope = defaultdict(list)
     schemes = list(WageScheme.objects.filter(
-        product_line_id__in={key[0] for key in scope_keys},
-        workshop_id__in={key[1] for key in scope_keys},
-        scope_craft_id__in={key[2] for key in scope_keys},
+        scheme_scopes,
         status="APPROVED", effective_from__lte=as_of_date,
     ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=as_of_date)).prefetch_related("lines"))
     for scheme in schemes:
         schemes_by_scope[(scheme.product_line_id, scheme.workshop_id, scheme.scope_craft_id)].append(scheme)
-    work_item_ids = {line.work_item_id for scheme in schemes for line in scheme.lines.all()
-                     if line.status == "ACTIVE"}
-    quantities = {
-        (row["report__schedule_product_id"], row["work_item_id"]): row["quantity"]
-        for row in WorkReportLine.objects.filter(
-            report__schedule_product_id__in=[product.pk for product in products],
-            report__production_date__lte=as_of_date, work_item_id__in=work_item_ids,
-            report__scheme__scope_craft__craft_type="INTERNAL",
-            report__scheme__scope_craft__plan_category=category,
-        ).values("report__schedule_product_id", "work_item_id").annotate(quantity=Sum("quantity"))
+    report_scopes = Q(pk__in=[])
+    for category, scope_keys in scope_keys_by_category.items():
+        work_item_ids = set()
+        for scope in scope_keys:
+            for scheme in schemes_by_scope[scope]:
+                work_item_ids.update(line.work_item_id for line in scheme.lines.all() if line.status == "ACTIVE")
+        report_scopes |= Q(
+            report__scheme__scope_craft__plan_category=category, work_item_id__in=work_item_ids,
+        )
+    quantities_by_category = defaultdict(dict)
+    # scope 沿用排产快照；报工仍按方案工艺的当前分类汇总，避免同工项跨阶段串量。
+    for row in WorkReportLine.objects.filter(
+        report_scopes,
+        report__schedule_product_id__in=[product.pk for product in products],
+        report__production_date__lte=as_of_date,
+        report__scheme__scope_craft__craft_type="INTERNAL",
+    ).values("report__schedule_product_id", "work_item_id", "report__scheme__scope_craft__plan_category").annotate(quantity=Sum("quantity")):
+        category = row["report__scheme__scope_craft__plan_category"]
+        quantities_by_category[category][(row["report__schedule_product_id"], row["work_item_id"])] = row["quantity"]
+    return {
+        category: _category_reporting_metrics(products, scopes_by_category[category], schemes_by_scope, quantities_by_category[category])
+        for category in categories
     }
+
+
+def _category_reporting_metrics(products, scopes_by_product, schemes_by_scope, quantities):
     result = {}
     for product in products:
         scopes, visible = scopes_by_product[product.pk]
@@ -168,8 +194,7 @@ def schedule_stage_progress_statuses(schedule_ids, *, request, as_of_date):
         schedule_product_id__in=[product.pk for product in products], removed_at__isnull=True,
     ).select_related("craft"):
         full_links[link.schedule_product_id].append(link)
-    reporting = {category: _internal_reporting_metrics(products, full_links, as_of_date, category)
-                 for category in ("METAL", "CUTTING", "SEWING")}
+    reporting = _internal_reporting_metrics(products, full_links, as_of_date)
     finished = dict(FinishedGoodsReceipt.objects.filter(
         production_task_product_id__in=[product.product_line_id for product in products],
         source_type="PRODUCTION_ORDER", status="CONFIRMED", received_at__date__lte=as_of_date,

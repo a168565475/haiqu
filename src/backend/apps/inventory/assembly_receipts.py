@@ -80,6 +80,8 @@ def confirm_assembly_receipt(request, data):
         if previous.payload_hash != payload_hash:
             raise ReceiptRequestConflict('同一入库请求不能修改内容，请先核对原单。')
         return previous.receipt, True
+    from .receipt_request_history import require_receipt_request_not_deleted
+    require_receipt_request_not_deleted(object_type='FINISHED_GOODS_RECEIPT', request_id=data['request_id'])
     plan, product, context, etag = load_context(request, data['schedule_product_id'], lock=True)
     if not request.headers.get('If-Match'):
         raise PreconditionRequired('请先读取当前入库额度。')
@@ -160,6 +162,7 @@ def delete_pending_assembly_receipt(request, receipt_id):
             actor_employee=request.employee, context_type='PRODUCTION_SCHEDULE',
             context_id=source.schedule_product.schedule_id, request=request,
             before_data={'receipt_number': receipt.receipt_number,
+                         'submission_request_id': str(source.request_id),
                          'product_line_id': str(receipt.production_task_product_id), 'status': receipt.status})
         source.delete()
         receipt.delete()

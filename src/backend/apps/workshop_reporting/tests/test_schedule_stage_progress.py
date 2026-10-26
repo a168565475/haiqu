@@ -85,13 +85,27 @@ class ScheduleStageProgressTests(SimpleTestCase):
         ):
             schemes.return_value.filter.return_value.prefetch_related.return_value = candidates
             reports.return_value.values.return_value.annotate.return_value = [
-                {"report__schedule_product_id": product.pk, "work_item_id": item, "quantity": quantity}
+                {"report__schedule_product_id": product.pk, "work_item_id": item, "quantity": quantity,
+                 "report__scheme__scope_craft__plan_category": category}
                 for item, quantity in quantities
             ]
-            result = progress._internal_reporting_metrics([product], {product.pk: links}, date(2026, 10, 22), category)
-            self.assertEqual(reports.call_args.kwargs["report__scheme__scope_craft__plan_category"], category)
+            result = progress._internal_reporting_metrics([product], {product.pk: links}, date(2026, 10, 22))
+            self.assertIn("report__scheme__scope_craft__plan_category", reports.return_value.values.call_args.args)
             self.assertEqual(reports.call_args.kwargs["report__scheme__scope_craft__craft_type"], "INTERNAL")
-            return result[product.pk]
+            return result[category][product.pk]
+
+    def test_conflicting_candidates_or_changed_order_quantity_remain_unknown(self):
+        link = self.make_link("METAL")
+        product = self.make_product(links=[link])
+        scope = (product.product_line_id, link.craft.workshop_id, link.craft_id)
+        scopes = {product.pk: ({scope}, True)}
+        line = SimpleNamespace(status="ACTIVE", order_quantity_snapshot=99)
+        scheme = SimpleNamespace(lines=SimpleNamespace(all=lambda: [line]))
+        for candidates in ([scheme, scheme], [scheme]):
+            with self.subTest(candidate_count=len(candidates)):
+                metric = progress._category_reporting_metrics([product], scopes, {scope: candidates}, {})[product.pk]
+                self.assertEqual(metric["status"], "NOT_CONFIGURED")
+                self.assertIsNone(progress._percentage(metric))
 
     def test_external_cutting_alone_is_not_part_of_internal_progress(self):
         link = self.make_link("CUTTING", external=True)
@@ -158,10 +172,12 @@ class ScheduleStageProgressTests(SimpleTestCase):
             patch.object(progress, "schedules_with_context", return_value=[schedule]),
             patch.object(progress, "schedule_outsourcing_statuses", return_value={str(schedule.pk): {}}),
             patch.object(progress.ProductionScheduleProductCraft.objects, "filter") as craft_query,
-            patch.object(progress, "_internal_reporting_metrics", side_effect=lambda products, links, day, category: {
-                product.pk: (cutting or progress._metric("READY", 100, 0)) if category == "CUTTING"
-                else progress._metric("READY", 100, 100 if category == "METAL" else 0)
-                for product in products
+            patch.object(progress, "_internal_reporting_metrics", side_effect=lambda products, links, day: {
+                category: {
+                    product.pk: (cutting or progress._metric("READY", 100, 0)) if category == "CUTTING"
+                    else progress._metric("READY", 100, 100 if category == "METAL" else 0)
+                    for product in products
+                } for category in ("METAL", "CUTTING", "SEWING")
             }),
             patch.object(progress.FinishedGoodsReceipt.objects, "filter") as receipt_query,
         ):

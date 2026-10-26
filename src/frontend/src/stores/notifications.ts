@@ -122,8 +122,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const updated = await markNotificationRead(item.id, controller.signal)
       if (current !== epoch) return null
       items.value = items.value.map(row => row.id === item.id ? updated : row)
-      // 已读成功后只刷新服务端计数；不依赖旧页面本地减一。
-      await refreshUnread()
+      // 计数仍取服务端结果，但与目标查询并行，不挡住业务页面跳转。
+      void refreshUnread()
       if (current !== epoch) return null
       // 删除知悉无业务目标；正文来自本次服务端权限复查，不请求已删除报工的详情。
       if (updated.event_code === 'WORK_REPORT_DELETED' && updated.target === null && !updated.target_accessible) {

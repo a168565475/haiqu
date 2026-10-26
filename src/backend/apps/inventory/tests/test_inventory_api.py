@@ -373,7 +373,7 @@ class MaterialInventoryApiTests(APITestCase):
             product_code_snapshot=self.product.product_code, product_name_snapshot=self.product.product_name,
             product_specification_snapshot=self.product.specification, section_type_snapshot=BomSectionType.PROFILE,
             section_title_snapshot="管材类", category_snapshot="管材", material_snapshot="黑管",
-            part_name_snapshot="测试钢管", specification_snapshot="Φ25×1.0", raw_material_snapshot="测试钢管",
+            part_name_snapshot="测试钢管", specification_snapshot="Φ25×1.0", raw_material_snapshot=self.raw_material.material_number,
             required_quantity=Decimal("10.5000"), source_quantity_field="branch_count", source_quantity_text="10.5",
             source_unit_text="PCS", quantity_parse_status=PurchaseQuantityParseStatus.READY, supplier=self.supplier,
             supplier_number_snapshot=self.supplier.supplier_number, supplier_name_snapshot=self.supplier.supplier_name,
@@ -458,7 +458,7 @@ class MaterialInventoryApiTests(APITestCase):
         purchase_values = {
             "section_type_snapshot": BomSectionType.ACCESSORY, "section_title_snapshot": "配件类",
             "category_snapshot": "五金", "material_snapshot": "铁", "part_name_snapshot": "测试连接件",
-            "specification_snapshot": "连接件规格", "raw_material_snapshot": "测试连接件",
+            "specification_snapshot": "连接件规格", "raw_material_snapshot": self.raw_material.material_number,
             "source_quantity_field": "budget_quantity", "supplier_categories_snapshot": ["HARDWARE"],
         }
         for field, value in purchase_values.items():

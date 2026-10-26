@@ -8,7 +8,6 @@ import PurchaseReturnConfirmDialog from '@/components/procurement/PurchaseReturn
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ params: { id: 'sheet-1' } }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, moduleCan: () => true }) }))
 vi.mock('@/api/purchaseOrders', async original => ({ ...await original<typeof import('@/api/purchaseOrders')>(), fetchSupplierPurchaseSheet: vi.fn() }))
-vi.mock('@/components/procurement/PurchaseSheetPdfPreview.vue', () => ({ default: { template: '<div />' } }))
 
 describe('管材采购与退货显示单位', () => {
   it('已发布采购表无序号，完整分列规格属性和纯颜色，数字去尾零', async () => {
@@ -16,20 +15,22 @@ describe('管材采购与退货显示单位', () => {
       material_attributes_snapshot: { fields: [{ key: 'part_name', label: '品名', value: '半通' }, { key: 'material', label: '材质', value: 'PE' }, { key: 'plastic_color', label: '颜色', value: '黑色' }, { key: 'specification', label: '规格', value: '16' }] } }
     const content = { title: '塑料采购合同', order: { source_type: 'PRODUCTION' }, buyer: { name: '甲方' }, seller: { name: '乙方' }, settlement_mode: 'NORMAL', quality_standards: [], lines: [line] }
     vi.mocked(api.fetchSupplierPurchaseSheet).mockResolvedValue({ data: { id: 'sheet-1', sheet_number: 'CGDD261024002', version_number: 1, supplier_name_snapshot: '乙方', template_name: '塑料件采购合同', status: 'PUBLISHED', content_snapshot: content, line_images: [], total_amount: '21.6' }, etag: 'version-1' } as never)
-    const wrapper = shallowMount(SupplierPurchaseSheetEditorView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(SupplierPurchaseSheetEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
     try {
       await flushPromises()
       const cells = wrapper.get('.reference-contract-table tbody tr').findAll('td')
       expect(wrapper.findAll('.reference-contract-table th').map(cell => cell.text())).toEqual(['产品名称', '产品规格', '物料属性', '颜色', '数量', '含税单价（元）', '金额（元）'])
       expect(cells.map(cell => cell.text())).toEqual(['半通', '16', '材质：PE；要求：无毛刺', '黑色', '48 只', '0.45', '21.6'])
       expect(wrapper.find('.bom-source-block').exists()).toBe(false)
+      expect(wrapper.get('.published-info').text()).toContain('导出 Excel')
+      expect(wrapper.get('.published-info').text()).not.toContain('PDF')
     } finally { wrapper.unmount() }
   })
 
   it('草稿的材质编辑位于属性列，补充要求单独保存到remark', async () => {
     const content = { title: '塑料采购合同', order: { source_type: 'PRODUCTION' }, buyer: { name: '甲方' }, seller: { name: '乙方' }, settlement_mode: 'NORMAL', quality_standards: [], lines: [{ source_purchase_order_line_id: 'plastic', part_name: '半通', specification: '16', material: 'PE', remark: '', quantity: '48', unit: '只', unit_price: '0.45', amount: '21.6', material_attributes_snapshot: { fields: [{ key: 'plastic_color', label: '颜色', value: '黑色' }] } }] }
     vi.mocked(api.fetchSupplierPurchaseSheet).mockResolvedValue({ data: { id: 'sheet-1', sheet_number: 'CGDD261024002', version_number: 1, supplier_name_snapshot: '乙方', template_name: '塑料件采购合同', status: 'DRAFT', content_snapshot: content, line_images: [] }, etag: 'version-1' } as never)
-    const wrapper = shallowMount(SupplierPurchaseSheetEditorView, { global: { plugins: [ElementPlus] } })
+    const wrapper = shallowMount(SupplierPurchaseSheetEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
     try {
       await flushPromises()
       const cells = wrapper.get('.reference-contract-table tbody tr').findAll('td')
@@ -40,6 +41,8 @@ describe('管材采购与退货显示单位', () => {
       inputs.find(input => input.attributes('aria-label') === '补充要求')!.vm.$emit('update:modelValue', '无毛刺')
       await flushPromises()
       expect((wrapper.vm as any).content.lines[0]).toMatchObject({ material: 'PP', remark: '无毛刺', specification: '16' })
+      expect(wrapper.get('.property-panel').text()).toContain('导出 Excel')
+      expect(wrapper.get('.property-panel').text()).not.toContain('PDF')
     } finally { wrapper.unmount() }
   })
 

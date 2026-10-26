@@ -142,10 +142,11 @@ describe('生产建单与独立跟单员', () => {
     page.colorLines = [{ key: 'draft-1', sourceLineId: 'batch-line-1', productColorId: 'color-1', quantity: 100, specialRequirements: '', packagingMethod: '' }]
     Object.assign(page.plan, { followerIds: ['factory-follower'], orderDate: '2026-10-15', deliveryDate: '2026-11-15', salespersonId: 'salesperson' })
     await page.save(false)
-    expect(api.createProductionOrderFromSalesOrder).toHaveBeenCalledWith(expect.objectContaining({ task_number: 'HT26200', delivery_batch_id: 'batch-1', planner_id: null }))
+    expect(api.createProductionOrderFromSalesOrder).toHaveBeenCalledWith(expect.objectContaining({ task_number: 'HT26200', delivery_batch_id: 'batch-1' }))
     const payload = vi.mocked(api.createProductionOrderFromSalesOrder).mock.calls[0]![0]
     expect(payload).toHaveProperty('follower_ids', ['factory-follower'])
     expect(payload).not.toHaveProperty('factory_merchandiser_id')
+    expect(payload).not.toHaveProperty('planner_id')
     wrapper.unmount()
   })
 
@@ -163,6 +164,7 @@ describe('生产建单与独立跟单员', () => {
     expect(api.decideProductionTaskByPmc).not.toHaveBeenCalled()
     Object.assign(page.pmcForm, { follower_ids: ['factory-1'], includes_tax: true, tax_rate: 5 })
     await page.decideByPmc()
+    expect(vi.mocked(api.decideProductionTaskByPmc).mock.calls[0]![1]).not.toHaveProperty('planner_id')
     expect(api.decideProductionTaskByPmc).toHaveBeenCalledWith('task-1', expect.objectContaining({ follower_ids: ['factory-1'], includes_tax: true, tax_rate: 5, delivery_date: '2026-11-15', delivery_method: 'SINGLE' }), 'v1')
     wrapper.unmount()
   })

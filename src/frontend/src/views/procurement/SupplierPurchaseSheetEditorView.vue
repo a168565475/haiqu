@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Delete, Document, Download, Picture, VideoPlay, View } from '@element-plus/icons-vue'
+import { ArrowLeft, Delete, Document, Download, Picture, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
@@ -9,7 +9,6 @@ import {
   createSupplierPurchaseSheetVersion,
   deleteSupplierPurchaseSheetLineImage,
   deleteSupplierPurchaseSheetSealImage,
-  downloadSupplierPurchaseSheetPdf,
   downloadSupplierPurchaseSheetXlsx,
   fetchSupplierPurchaseSheet,
   fetchSupplierPurchaseSheetPreview,
@@ -21,11 +20,12 @@ import {
   uploadSupplierPurchaseSheetSealImage,
 } from '@/api/purchaseOrders'
 import { useAuthStore } from '@/stores/auth'
-import PurchaseSheetPdfPreview from '@/components/procurement/PurchaseSheetPdfPreview.vue'
 import PurchaseSheetPublishConfirm from '@/components/procurement/PurchaseSheetPublishConfirm.vue'
+import PurchaseSheetOriginalPreview from '@/components/procurement/PurchaseSheetOriginalPreview.vue'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import publishedLock from '@/assets/procurement/published-lock.svg'
 import { purchaseSheetPageStatus } from '@/composables/purchaseSheetPageStatus'
-import type { SupplierPurchaseSheet, SupplierPurchaseSheetContent, SupplierPurchaseSheetLine } from '@/types/purchaseOrder'
+import type { PurchaseSheetPreview, SupplierPurchaseSheet, SupplierPurchaseSheetContent, SupplierPurchaseSheetLine } from '@/types/purchaseOrder'
 import { formatPurchaseSheetNumber, purchaseSheetLineDisplay, purchaseSheetSourceFields } from '@/utils/purchaseSheetLineDisplay'
 
 const auth = useAuthStore()
@@ -42,11 +42,83 @@ const sheet = ref<SupplierPurchaseSheet | null>(null)
 const content = ref<SupplierPurchaseSheetContent | null>(null)
 const etag = ref('')
 const qualityStandardsText = ref('')
-const previewVisible = ref(false)
-const previewPdf = ref<Blob | null>(null)
+const termOptions = [
+  { key: 'payment_and_delivery', label: '二、支付方式和交期' },
+  { key: 'quality_standards', label: '三、产品质量标准' },
+  { key: 'delivery_handover', label: '四、送货交接' },
+  { key: 'special_instructions', label: '五、特别说明' },
+  { key: 'dispute_resolution', label: '六、争议解决' },
+  { key: 'effectiveness', label: '七、合同生效' },
+] as const
+type TermKey = typeof termOptions[number]['key']
+const showOriginal = ref(true)
+const originalPreview = ref<PurchaseSheetPreview | null>(null)
 const previewLoading = ref(false)
 const previewError = ref('')
-let previewRequest: AbortController | null = null
+let previewRequest = 0
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+function markOriginalEdit(key: TermKey | 'title'): void {
+  if (autoSeal.value && content.value) content.value.original_template_edits = [...new Set([...(content.value.original_template_edits || []), key])]
+}
+async function refreshOriginalPreview(fromSaved = false): Promise<void> {
+  if (!sheet.value || !content.value || !autoSeal.value) return
+  const request = ++previewRequest
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    const result = await fetchSupplierPurchaseSheetPreview(sheet.value.id, fromSaved || !editable.value ? undefined : JSON.parse(JSON.stringify(content.value)))
+    if (request !== previewRequest) return
+    originalPreview.value = result
+    if (fromSaved) {
+      Object.assign(content.value, result.terms)
+      qualityStandardsText.value = content.value.quality_standards.join('\n')
+    }
+  } catch (error) {
+    if (request === previewRequest) previewError.value = apiErrorMessage(error, '原版预览加载失败，请重试。')
+  } finally {
+    if (request === previewRequest) previewLoading.value = false
+  }
+}
+watch([content, showOriginal], () => {
+  clearTimeout(previewTimer)
+  if (!loading.value && autoSeal.value && showOriginal.value) {
+    previewTimer = setTimeout(() => void refreshOriginalPreview(), 400)
+  }
+}, { deep: true })
+const editingTerm = ref<TermKey | null>(null)
+const termDraft = ref('')
+const termTitle = computed(() => termOptions.find(item => item.key === editingTerm.value)?.label || '修改条款')
+const canvasArea = ref<HTMLElement>()
+const canvasZoom = ref(1)
+let canvasObserver: ResizeObserver | undefined
+function fitCanvas(): void {
+  if (!canvasArea.value) return
+  const pageWidth = isPublished.value ? 953 : 892
+  canvasZoom.value = Math.min(1, Math.max(0.5, (canvasArea.value.clientWidth - 24) / pageWidth))
+}
+watch(canvasArea, element => {
+  canvasObserver?.disconnect()
+  if (element && typeof ResizeObserver !== 'undefined') {
+    canvasObserver = new ResizeObserver(fitCanvas)
+    canvasObserver.observe(element)
+    fitCanvas()
+  }
+})
+function openTerm(key: TermKey): void {
+  if (!editable.value || busy.value || !content.value) return
+  const original = autoSeal.value && !content.value.original_template_edits?.includes(key) ? originalPreview.value?.terms[key] : undefined
+  termDraft.value = original !== undefined ? (Array.isArray(original) ? original.join('\n') : original) : (key === 'quality_standards' ? qualityStandardsText.value : content.value[key])
+  editingTerm.value = key
+}
+function applyTerm(): void {
+  if (!editable.value || busy.value || !content.value || !editingTerm.value) return
+  markOriginalEdit(editingTerm.value)
+  if (editingTerm.value === 'quality_standards') {
+    qualityStandardsText.value = termDraft.value
+    syncQualityStandards()
+  } else content.value[editingTerm.value] = termDraft.value
+  editingTerm.value = null
+}
 const legalBasisText = '根据《中华人民共和国民法典》《中华人民共和国产品质量法》等国家和地方政府部门有关法律法规，双方经过充分友好协商，本着诚实守信的原则，就采购方向供货方购买产品一事，达成以下约定：'
 
 const activeAction = ref(false)
@@ -65,6 +137,8 @@ async function runAction(action: () => Promise<unknown>): Promise<void> {
   try { await action() } finally { activeAction.value = false }
 }
 const qualityStandards = computed(() => qualityStandardsText.value.split(/\r?\n/).map(item => item.trim()).filter(Boolean))
+const autoSeal = computed(() => content.value?.order.source_type !== 'SAMPLE'
+  && ['FABRIC', 'FOAM_CUTTING', 'AUXILIARY', 'PLASTIC_PART', 'WEBBING_ACTUAL_WEIGHT'].includes(sheet.value?.template_code || ''))
 const totalAmount = computed(() => {
   if (!content.value || content.value.settlement_mode === 'ACTUAL_WEIGHT') return null
   if (isPublished.value) return sheet.value?.total_amount == null ? null : Number(sheet.value.total_amount)
@@ -145,6 +219,12 @@ function normalizeContent(snapshot: SupplierPurchaseSheetContent): SupplierPurch
 }
 
 async function load(): Promise<void> {
+  editingTerm.value = null
+  previewRequest++
+  clearTimeout(previewTimer)
+  originalPreview.value = null
+  previewError.value = ''
+  showOriginal.value = true
   loading.value = true
   loadError.value = ''
   sheet.value = null
@@ -156,6 +236,7 @@ async function load(): Promise<void> {
     content.value = normalizeContent(structuredClone(result.data.content_snapshot))
     qualityStandardsText.value = content.value.quality_standards.join('\n')
     etag.value = result.etag
+    await refreshOriginalPreview(true)
   } catch (error) {
     loadError.value = apiErrorMessage(error, '采购表加载失败。')
   } finally {
@@ -184,45 +265,6 @@ async function save(showMessage = true): Promise<boolean> {
   }
 }
 
-function revokePreview(): void {
-  previewRequest?.abort()
-  previewRequest = null
-  previewPdf.value = null
-  previewLoading.value = false
-  previewError.value = ''
-}
-
-watch(previewVisible, (visible) => { if (!visible) revokePreview() })
-
-async function loadPreview(): Promise<void> {
-  if (!sheet.value || !previewVisible.value || previewLoading.value) return
-  const controller = new AbortController()
-  previewRequest = controller
-  previewLoading.value = true
-  previewError.value = ''
-  try {
-    // 已发布版本显示归档文件，避免模板更新后预览与当时的正式 PDF 不同。
-    const pdf = await (sheet.value.status === 'DRAFT'
-      ? fetchSupplierPurchaseSheetPreview(sheet.value.id, controller.signal)
-      : downloadSupplierPurchaseSheetPdf(sheet.value.id, controller.signal))
-    if (controller.signal.aborted) return
-    if (!pdf.size || !(await pdf.slice(0, 5).text()).startsWith('%PDF-')) throw new Error('Invalid PDF')
-    if (!controller.signal.aborted) previewPdf.value = pdf
-  } catch (error) {
-    if (!controller.signal.aborted) previewError.value = apiErrorMessage(error, 'PDF 预览加载失败，请重试。')
-  } finally {
-    if (previewRequest === controller) { previewLoading.value = false; previewRequest = null }
-  }
-}
-
-async function preview(): Promise<void> {
-  if (!sheet.value) return
-  if (editable.value && !(await save(false))) return
-  revokePreview()
-  previewVisible.value = true
-  await loadPreview()
-}
-
 async function publish(): Promise<void> {
   if (!sheet.value || sheet.value.status !== 'DRAFT' || !canPublish.value) return
   if (editable.value && !(await save(false))) return
@@ -241,7 +283,7 @@ async function confirmPublish(): Promise<void> {
     content.value = normalizeContent(structuredClone(result.data.content_snapshot))
     etag.value = result.etag
     publishVisible.value = false
-    ElMessage.success('采购表已发布并生成正式 PDF。')
+    ElMessage.success('采购表已发布，当前版本已锁定为只读。')
   } catch (error) {
     publishError.value = apiErrorMessage(error, '采购表发布失败，请重试。')
     const status = (error as { response?: { status?: number } })?.response?.status
@@ -258,15 +300,6 @@ function saveBlob(blob: Blob, name: string): void {
   link.download = name
   link.click()
   URL.revokeObjectURL(url)
-}
-
-async function download(): Promise<void> {
-  if (!sheet.value) return
-  try {
-    saveBlob(await downloadSupplierPurchaseSheetPdf(sheet.value.id), `${sheet.value.sheet_number}_V${sheet.value.version_number}.pdf`)
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, 'PDF 下载失败。'))
-  }
 }
 
 async function downloadXlsx(): Promise<void> {
@@ -401,7 +434,7 @@ async function removeSealImage(): Promise<void> {
 }
 
 onMounted(() => void load())
-onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
+onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObserver?.disconnect(); purchaseSheetPageStatus.value = null })
 </script>
 
 <template>
@@ -421,15 +454,13 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
           <div><dt>采购日期</dt><dd>{{ content.purchase_date || '—' }}</dd></div>
           <div><dt>结算方式</dt><dd>{{ content.settlement_mode === 'ACTUAL_WEIGHT' ? '按实际重量结算' : '按数量和单价结算' }}</dd></div>
           <div><dt>采购金额</dt><dd class="published-amount">{{ money(totalAmount) }} （共{{ content.lines.length }}项明细）</dd></div>
-          <div><dt>税率</dt><dd>{{ content.tax_rate ? `${content.tax_rate}%` : '—' }}</dd></div>
+          <div><dt>税率</dt><dd>{{ content.tax_rate ? `${formatPurchaseSheetNumber(content.tax_rate)}%` : '—' }}</dd></div>
           <div><dt>运费承担方</dt><dd>{{ content.freight_bearer ? `${content.freight_bearer}承担` : '—' }}</dd></div>
         </dl>
         <div class="published-parties"><h2>甲方信息</h2><p>{{ content.buyer.name || '—' }}</p><h2>乙方信息</h2><p>{{ content.seller.name || '—' }}</p></div>
-        <div class="published-other"><h2>其他信息</h2><dl><div><dt>甲方盖章</dt><dd>{{ sheet.seal_image ? '已上传' : '未上传' }}<small>{{ sheet.seal_image ? '正式PDF包含盖章图片。' : '正式PDF保留签章位置。' }}</small></dd></div></dl></div>
+        <div class="published-other"><h2>其他信息</h2><dl><div><dt>甲方盖章</dt><dd>{{ autoSeal ? '原版 Excel 自动带章' : (sheet.seal_image ? '已上传' : '未上传') }}</dd></div></dl></div>
         <div class="panel-actions">
           <ElButton :icon="Download" :disabled="busy" @click="runAction(downloadXlsx)">导出 Excel</ElButton>
-          <ElButton :icon="View" :disabled="busy" @click="runAction(preview)">PDF 预览</ElButton>
-          <ElButton :icon="Download" :disabled="busy" @click="runAction(download)">下载 PDF</ElButton>
           <ElButton type="primary" :disabled="busy || !canNewVersion" @click="runAction(newVersion)">创建新版本</ElButton>
         </div>
       </aside>
@@ -438,7 +469,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
           <ElButton class="panel-back-button" :icon="ArrowLeft" circle aria-label="返回供应商采购表" :disabled="busy" @click="router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: sheet.purchase_order_id || undefined } })" />
         </div>
         <section class="settings-section"><h2>采购表设置</h2>
-          <label>合同标题<ElInput v-model="content.title" aria-label="设置合同标题" :disabled="!editable || busy" /></label>
+          <label>合同标题<ElInput v-model="content.title" aria-label="设置合同标题" :disabled="!editable || busy" @input="markOriginalEdit('title')" /></label>
           <label>采购日期<ElDatePicker v-model="content.purchase_date" value-format="YYYY-MM-DD" :clearable="false" aria-label="采购日期" :disabled="!editable || busy" /></label>
           <label>结算方式<ElSelect v-model="content.settlement_mode" :disabled="!editable || busy" @change="syncCalculatedAmounts"><ElOption label="按数量和单价结算" value="NORMAL" /><ElOption label="按实际重量结算" value="ACTUAL_WEIGHT" :disabled="content.lines.some(line => line.measurement_kind === 'PIPE')" /></ElSelect></label>
           <div class="two-fields"><label>税率（%）<ElInput v-model="content.tax_rate" aria-label="税率" :disabled="!editable || busy" /></label><label>运费承担方<ElSelect v-model="content.freight_bearer" allow-create filterable :disabled="!editable || busy"><ElOption label="甲方" value="甲方" /><ElOption label="乙方" value="乙方" /></ElSelect></label></div>
@@ -450,18 +481,13 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
           <ElInput v-model="content.seller.name" aria-label="乙方名称" :disabled="!editable || busy" />
         </section>
         <section class="terms-section"><h2>第二至第七条</h2>
-          <label>二、支付方式和交期<ElInput v-model="content.payment_and_delivery" aria-label="支付方式和交期" class="long-term" type="textarea" :rows="2" :disabled="!editable || busy" /></label>
-          <label>三、产品质量标准（每行一条）<ElInput v-model="qualityStandardsText" aria-label="产品质量标准" type="textarea" :rows="2" :disabled="!editable || busy" /></label>
-          <label>四、送货交接<ElInput v-model="content.delivery_handover" type="textarea" :rows="2" :disabled="!editable || busy" /></label>
-          <label>五、特别说明<ElInput v-model="content.special_instructions" type="textarea" :rows="2" :disabled="!editable || busy" /></label>
-          <label>六、争议解决<ElInput v-model="content.dispute_resolution" class="long-term" type="textarea" :rows="2" :disabled="!editable || busy" /></label>
-          <label>七、合同生效<ElInput v-model="content.effectiveness" type="textarea" :rows="1" :disabled="!editable || busy" /></label>
+          <div class="term-buttons"><ElButton v-for="term in termOptions" :key="term.key" :disabled="!editable || busy" @click="openTerm(term.key)">{{ term.label }}</ElButton></div>
         </section>
         <section class="seal-section"><h2>甲方盖章图片</h2>
           <div class="seal-editor">
             <ElImage v-if="sheet.seal_image" :src="sealImageUrl()" :preview-src-list="[sealImageUrl()]" fit="contain" />
-            <span v-else>暂未上传盖章图片</span>
-            <div v-if="editable" class="seal-actions">
+            <span v-else>{{ autoSeal ? '下载原版 Excel 时自动带甲方章' : '暂未上传盖章图片' }}</span>
+            <div v-if="editable && !autoSeal" class="seal-actions">
               <ElUpload :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/gif,image/webp" :disabled="busy" @change="(file: UploadFile) => runAction(() => uploadSealImage(file))">
                 <ElButton :disabled="busy">{{ sheet.seal_image ? '替换图片' : '上传图片' }}</ElButton>
               </ElUpload>
@@ -470,20 +496,29 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
           </div>
           <div class="panel-actions">
             <ElButton :icon="Download" :disabled="busy" @click="runAction(downloadXlsx)">导出 Excel</ElButton>
-            <ElButton :icon="View" :disabled="busy" @click="runAction(preview)">PDF 预览</ElButton>
             <ElButton :icon="Document" :loading="saving" :disabled="busy || !editable" @click="runAction(() => save())">保存草稿</ElButton>
             <ElButton type="primary" :icon="VideoPlay" :loading="publishing" :disabled="busy || !canPublish" @click="runAction(publish)">发布</ElButton>
           </div>
         </section>
       </aside>
 
-      <main class="canvas-area">
-        <article class="a4-canvas">
+      <main ref="canvasArea" class="canvas-area">
+        <div v-if="autoSeal" class="preview-toolbar">
+          <ElButton :type="showOriginal ? 'primary' : 'default'" @click="showOriginal = true">原版预览</ElButton>
+          <ElButton v-if="editable" :type="!showOriginal ? 'primary' : 'default'" @click="showOriginal = false">编辑明细</ElButton>
+          <span>{{ previewLoading ? '正在更新预览…' : editable ? '修改后请保存草稿' : '与下载 Excel 使用同一原版' }}</span>
+        </div>
+        <div v-if="autoSeal && showOriginal" class="preview-content" :aria-busy="previewLoading">
+          <div v-if="previewError" class="preview-error" role="alert">{{ previewError }}<ElButton :disabled="previewLoading" @click="refreshOriginalPreview()">重试</ElButton></div>
+          <PurchaseSheetOriginalPreview v-else-if="originalPreview" :preview="originalPreview" />
+          <p v-else>正在加载原版合同…</p>
+        </div>
+        <article v-else class="a4-canvas" :style="{ zoom: canvasZoom }">
           <div class="contract-sheet">
             <div class="contract-title-row">
-              <ElInput v-if="editable" v-model="content.title" :disabled="busy" aria-label="合同标题" />
+              <ElInput v-if="editable" v-model="content.title" :disabled="busy" aria-label="合同标题" @input="markOriginalEdit('title')" />
               <strong v-else>{{ content.title }}</strong>
-              <span>（订单编号 <b>{{ (content.order.source_type === 'SAMPLE' ? content.order.source_number : content.order.sales_order_number) || '—' }}</b>）</span>
+              <span>（订单编号 <b>{{ (content.order.source_type === 'SAMPLE' ? content.order.source_number : content.order.production_task_number) || '—' }}</b>）</span>
             </div>
             <div class="party-row">
               <p>采购单号：{{ sheet.sheet_number }}</p>
@@ -522,7 +557,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
               </tbody>
             </table>
                 <div class="media-total-row" :class="{ 'without-image': isPublished && !hasRepresentativeImage }">
-                  <div v-if="!isPublished || hasRepresentativeImage" class="contract-image-cell">
+                  <div v-if="!autoSeal && (!isPublished || hasRepresentativeImage)" class="contract-image-cell">
                     <ElImage v-if="representativeImageLine && hasRepresentativeImage" :src="lineImageUrl(representativeImageLine.source_purchase_order_line_id)" :preview-src-list="[lineImageUrl(representativeImageLine.source_purchase_order_line_id)]" fit="contain" />
                     <span v-else class="image-empty"><ElIcon><Picture /></ElIcon>暂无图片</span>
                     <div v-if="editable" class="representative-image-actions">
@@ -531,7 +566,7 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
                     </div>
                     <small v-if="!isPublished">{{ content.order.source_type === 'SAMPLE' ? '可上传样品采购参考图' : 'BOM 有图时自动带入' }}</small>
                   </div>
-                  <div class="contract-remark-cell"><strong>备注：</strong><p v-if="isPublished" class="readonly-remark">{{ content.remark }}</p><ElInput v-else v-model="content.remark" type="textarea" :rows="2" :disabled="!editable || busy" aria-label="合同备注" /><small v-if="!isPublished">税率 {{ content.tax_rate }}% · 运费由{{ content.freight_bearer || '—' }}承担</small></div>
+                  <div class="contract-remark-cell"><strong>备注：</strong><p v-if="isPublished" class="readonly-remark">{{ content.remark }}</p><ElInput v-else v-model="content.remark" type="textarea" :rows="2" :disabled="!editable || busy" aria-label="合同备注" /><small v-if="!isPublished">税率 {{ formatPurchaseSheetNumber(content.tax_rate) }}% · 运费由{{ content.freight_bearer || '—' }}承担</small></div>
                   <div class="total-label">合计</div>
                   <div class="total-value">{{ money(totalAmount).replace('¥', '') }}</div>
                 </div>
@@ -549,12 +584,17 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
       </main>
     </div>
 
-    <PurchaseSheetPdfPreview v-if="sheet" v-model="previewVisible" :sheet-number="sheet.sheet_number"
-      :version="sheet.version_number" :supplier-name="sheet.supplier_name_snapshot" :draft="sheet.status === 'DRAFT'"
-      :loading="previewLoading" :error="previewError" :pdf="previewPdf" @retry="loadPreview" />
+    <AppWindowDialog :model-value="editingTerm !== null" :title="termTitle" :width="780" :height="520" destroy-on-close @update:model-value="value => { if (!value) editingTerm = null }">
+      <div class="term-dialog-body">
+        <p v-if="editingTerm === 'quality_standards'">每行填写一条质量标准。</p>
+        <ElInput v-model="termDraft" type="textarea" :rows="15" :aria-label="termTitle" :disabled="!editable || busy" />
+      </div>
+      <template #footer><div class="term-dialog-footer"><span>确认后请保存草稿。</span><ElButton @click="editingTerm = null">取消</ElButton><ElButton type="primary" :disabled="!editable || busy" @click="applyTerm">确认</ElButton></div></template>
+    </AppWindowDialog>
+
     <PurchaseSheetPublishConfirm v-if="sheet" v-model="publishVisible" :sheet-number="sheet.sheet_number"
       :version="sheet.version_number" :supplier-name="sheet.supplier_name_snapshot" :template-name="sheet.template_name"
-      :amount="money(sheet.total_amount)" :line-count="sheet.content_snapshot.lines.length" :has-seal="!!sheet.seal_image"
+      :amount="money(sheet.total_amount)" :line-count="sheet.content_snapshot.lines.length" :has-seal="!!sheet.seal_image" :auto-seal="autoSeal"
       :publishing="publishing" :error="publishError" :blocked="publishBlocked" @confirm="confirmPublish" />
   </section>
 </template>
@@ -566,9 +606,9 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .editor-page > :is(.editor-layout, .load-error) { min-width: 0; }
 
 .load-error { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px; background: crm.$crm-danger-soft; color: crm.$crm-danger; }
-.editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 398px minmax(0,1fr); gap: 14px; }
+.editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 300px minmax(0,1fr); gap: 14px; }
 .property-panel,.canvas-area { @include detail.surface; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
-.panel-nav { box-sizing: border-box; height: 48px; padding: 8px 23px; border-bottom: 1px solid crm.$crm-border-subtle; }
+.panel-nav { box-sizing: border-box; height: 44px; padding: 6px 12px; border-bottom: 1px solid crm.$crm-border-subtle; }
 .panel-back-button { width: 32px; height: 32px; min-height: 32px; padding: 0; margin: 0; color: crm.$crm-text-secondary; }
 // 保留原12px尺寸，颜色交由全局WebKit伪元素规则提供。
 @supports selector(::-webkit-scrollbar) {
@@ -576,31 +616,43 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 }
 .property-panel::-webkit-scrollbar,.canvas-area::-webkit-scrollbar { width: 12px; height: 12px; }
 .property-panel::-webkit-scrollbar-thumb,.canvas-area::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 6px; background-clip: padding-box; }
-.property-panel section { box-sizing: border-box; padding: 20px 11px 20px 23px; border-bottom: 1px solid crm.$crm-border-subtle; }
+.property-panel section { box-sizing: border-box; padding: 10px 12px; border-bottom: 1px solid crm.$crm-border-subtle; }
 .property-panel section:last-child { border-bottom: none; }
-.property-panel h2 { margin: 0 0 16px; font-size: 20px; line-height: 28px; font-weight: 700; }
-.property-panel label { display: flex; flex-direction: column; gap: 4px; margin-top: 16px; color: crm.$crm-text-secondary; font-size: 14px; line-height: 22px; }
+.property-panel h2 { margin: 0 0 8px; font-size: 15px; line-height: 22px; font-weight: 700; }
+.property-panel label { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; color: crm.$crm-text-secondary; font-size: 13px; line-height: 18px; }
 .property-panel h2 + label { margin-top: 0; }
-.property-panel .settings-section { min-height: 382px; padding-top: 19px; padding-bottom: 13px; }
-.property-panel .party-section { min-height: 104px; padding-top: 16px; padding-bottom: 9px; }
-.property-panel .party-section h2 { margin-bottom: 12px; }
-.property-panel .terms-section { min-height: 736px; padding-top: 20px; border-bottom: none; }
-.property-panel .seal-section { min-height: 188px; }
+.property-panel .settings-section { padding-top: 10px; padding-bottom: 10px; }
+.property-panel .party-section { padding-top: 8px; padding-bottom: 8px; }
+.property-panel .party-section h2 { margin-bottom: 4px; }
+.property-panel .terms-section { padding-top: 10px; }
+.property-panel .seal-section { padding-top: 10px; }
 .property-panel :deep(.el-date-editor),.property-panel :deep(.el-select) { width: 100%; }
-.property-panel :deep(.el-date-editor) { height: 32px; }
-.property-panel :deep(.el-input__wrapper),.property-panel :deep(.el-select__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; padding: 0 12px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: 0 0 0 1px var(--erp-input-border) inset; font-size: 16px; }
-.property-panel :deep(.el-input__inner),.property-panel :deep(.el-select__selected-item) { color: crm.$crm-text-secondary; font-size: 16px; }
+.property-panel :deep(.el-date-editor) { height: 28px; }
+.property-panel :deep(.el-input__wrapper),.property-panel :deep(.el-select__wrapper) { height: 28px; min-height: 28px; box-sizing: border-box; padding: 0 8px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: 0 0 0 1px var(--erp-input-border) inset; font-size: 13px; }
+.property-panel :deep(.el-input__inner),.property-panel :deep(.el-select__selected-item) { color: crm.$crm-text-secondary; font-size: 13px; }
 .property-panel :deep(.el-textarea__inner) { padding: 4px 12px; min-height: 54px; border-radius: var(--erp-radius-control); box-shadow: 0 0 0 1px var(--erp-input-border) inset; font: 16px/24px crm.$crm-font-body; color: crm.$crm-text-secondary; background: var(--erp-input-surface); resize: vertical; }
-.property-panel .long-term :deep(.el-textarea__inner) { min-height: 78px !important; }
-.two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.seal-editor { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; color: crm.$crm-text-secondary; }
+
+.term-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.term-buttons :deep(.el-button) { width: 100%; height: 30px; margin: 0; padding: 0 4px; font-size: 12px; }
+.term-dialog-body { display: grid; gap: 8px; }
+.term-dialog-body p { margin: 0; font-size: 13px; color: crm.$crm-text-secondary; }
+.term-dialog-footer { display: flex; align-items: center; gap: 8px; width: 100%; }
+.term-dialog-footer > span { margin-right: auto; color: crm.$crm-text-secondary; font-size: 12px; }
+.term-dialog-footer :deep(.el-button) { margin-left: 0; }
+.two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seal-editor { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; color: crm.$crm-text-secondary; font-size: 12px; line-height: 18px; }
 .seal-editor :deep(.el-image) { width: 150px; height: 110px; border: 1px solid crm.$crm-border-default; }
 .seal-actions { display: flex; gap: 8px; }
 .seal-actions :deep(.el-button) { height: 32px; min-width: 112px; }
-.panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
+.panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .panel-actions :deep(.el-button) { width: 100%; height: 32px; min-height: 32px; margin: 0; padding: 0 10px; }
 .panel-actions :deep(.el-icon) { margin-right: 6px; }
-.canvas-area { padding: 25px 0 32px; }
+.canvas-area { padding: 12px 0 32px; }
+.preview-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 12px 8px; }
+.preview-toolbar .el-button + .el-button { margin-left: 0; }
+.preview-toolbar span { font-size: 12px; color: var(--el-text-color-secondary); }
+.preview-error { padding: 16px; color: var(--el-color-danger); }
+.preview-error .el-button { margin-left: 8px; }
 .a4-canvas { box-sizing: border-box; width: 892px; min-height: 1271px; margin: 0 auto; padding: 28px 30px 30px; background: #fff; }
 .contract-sheet { box-sizing: border-box; border: 1px solid crm.$crm-text-primary; font: 16px/24px crm.$crm-font-body; overflow-wrap: anywhere; }
 .contract-title-row { box-sizing: border-box; min-height: 65px; padding: 6px 10px; display: flex; gap: 20px; align-items: center; justify-content: center; border-bottom: 1px solid crm.$crm-text-primary; font: 700 28px/36px crm.$crm-font-display; }
@@ -678,9 +730,8 @@ onBeforeUnmount(() => { revokePreview(); purchaseSheetPageStatus.value = null })
 .published-other { border-top: 1px solid crm.$crm-border-default; padding-top: 12px; }
 .published-other h2 { margin-bottom: 8px; }
 .published-other dl > div { align-items: start; }
-.published-other small { display: block; margin-top: 2px; font-size: 12px; line-height: 18px; color: crm.$crm-text-muted; }
 .is-published .canvas-area { padding: 11px 0 32px; }
-.is-published .a4-canvas { width: 953px; min-height: 1317.15px; margin: 0 0 0 110px; padding: 29.85px 32.15px 34.44px; box-shadow: 0 2px 12px color-mix(in srgb, var(--erp-shadow-color) 3.137%, transparent); }
+.is-published .a4-canvas { width: 953px; min-height: 1317.15px; margin: 0 auto; padding: 29.85px 32.15px 34.44px; box-shadow: 0 2px 12px color-mix(in srgb, var(--erp-shadow-color) 3.137%, transparent); }
 .is-published .contract-sheet { font-size: 17.09px; line-height: 25.636px; }
 .is-published .contract-title-row { min-height: 70.04px; gap: 22.96px; padding: 6px 10px; font-size: 34px; line-height: 44px; flex-wrap: wrap; }
 .is-published .contract-title-row > span { font-size: 30px; }

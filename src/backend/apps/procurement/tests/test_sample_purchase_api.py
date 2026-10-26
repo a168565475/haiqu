@@ -182,7 +182,7 @@ class SamplePurchaseApiTests(APITestCase):
         self.assertIn('黑色', cells)
         self.assertEqual(self.client.get('/api/v1/supplier-purchase-sheets/' + str(sheet_id) + '/').status_code, 200)
         preview = self.client.get('/api/v1/supplier-purchase-sheets/' + str(sheet_id) + '/preview-pdf/')
-        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.status_code, 404)
         published = self.client.post('/api/v1/supplier-purchase-sheets/' + str(sheet_id) + '/publish/', {}, format='json', HTTP_IF_MATCH=saved['ETag'])
         self.assertEqual(published.status_code, 200, published.data)
         eligible = self.client.get('/api/v1/material-inventory/eligible-purchase-orders/')
@@ -261,9 +261,6 @@ class SamplePurchaseApiTests(APITestCase):
             from pathlib import Path
             output = Path(os.environ['PURCHASE_SOURCE_QA_OUTPUT'])
             output.mkdir(parents=True, exist_ok=True)
-            pdf = self.client.get(url + 'preview-pdf/')
-            self.assertEqual(pdf.status_code, 200)
-            (output / 'sample-colors.pdf').write_bytes(b''.join(pdf.streaming_content) if pdf.streaming else pdf.content)
             (output / 'sample-colors.xlsx').write_bytes(binary)
 
     def test_historical_pending_full_return_and_failed_arrival_do_not_partially_advance(self):

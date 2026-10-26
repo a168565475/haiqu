@@ -34,6 +34,12 @@ ACTION_NAMES = {
 
 
 def presentation(code, permission, module):
+    if code in {'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense'}:
+        viewing = code == 'production_tasks.view_productiontaskcost'
+        name = '查看订单成本' if viewing else '维护订单零星费用'
+        return {'resource': 'production_tasks.productiontaskcost', 'resource_name': '订单成本',
+                'action': 'view' if viewing else 'special', 'action_name': name,
+                'label': f'订单成本 · {name}'}
     if code in {'inventory.delete_finishedgoodsreceipt', 'inventory.delete_internalsemifinishedreceipt'}:
         model = code.split('.', 1)[1].removeprefix('delete_')
         return {"resource": f"inventory.{model}", "resource_name": RESOURCE_NAMES[model],

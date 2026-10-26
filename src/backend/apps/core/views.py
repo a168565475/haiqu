@@ -17,6 +17,9 @@ from .serializers import AuthenticationStateSerializer, HealthResponseSerializer
 
 
 def user_payload(user):
+    from types import SimpleNamespace
+
+    from apps.access_control import module_policy, sales_policy
     from apps.wecom.selectors import waiting_for_role
 
     employee_payload = None
@@ -49,21 +52,16 @@ def user_payload(user):
         "permissions": sorted(user.get_all_permissions()),
         "data_scope": data_scope,
     }
+    # 身份输出和兼容权限共用本次计算；下次调用仍重新检查授权。
+    request = SimpleNamespace(user=user, employee=employee)
     if settings.ACCESS_MANAGEMENT_ENABLED:
-        from apps.access_control.selectors import effective_access
-        payload["effective_access"] = effective_access(user)
-    from apps.access_control import sales_policy
+        payload["effective_access"] = sales_policy.access_for(request)
     payload["sales_access_enabled"] = sales_policy.enabled()
-    from apps.access_control import module_policy
     payload['module_access_enabled'] = module_policy.enabled()
     if module_policy.enabled():
-        from types import SimpleNamespace
-        request = SimpleNamespace(user=user, employee=employee)
         payload['permissions'] = sorted(set(payload['permissions']) | {
             code for code in module_policy.LEGACY_ALIASES if module_policy.has_permission(request, code)})
     if sales_policy.enabled():
-        from types import SimpleNamespace
-        request = SimpleNamespace(user=user, employee=employee)
         payload["permissions"] = sorted(set(payload["permissions"]) | {code for code in sales_policy.LEGACY_ACTION_PERMISSIONS if sales_policy.has_permission(request, code)})
     payload["waiting_for_role"] = waiting_for_role(user)
     if payload["waiting_for_role"]:

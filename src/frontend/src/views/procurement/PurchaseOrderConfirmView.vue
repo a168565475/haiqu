@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { compactDecimal } from '@/utils/compactDecimal'
 import { useAuthStore } from '@/stores/auth'
 import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue'
@@ -96,7 +97,7 @@ function formatQuantityInput(value: string | number | null): string | null {
 
 function money(value: number | string | null): string {
   const parsed = Number(value || 0)
-  return parsed.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  return parsed.toLocaleString('zh-CN', { maximumFractionDigits: 4 })
 }
 
 function lineAmount(line: PurchaseOrderDetail['lines'][number]): string {
@@ -107,7 +108,7 @@ function lineAmount(line: PurchaseOrderDetail['lines'][number]): string {
 }
 
 function pipeMetersLabel(line: PurchaseOrderDetail['lines'][number]): string {
-  return `${pipeMeters(line.actual_bar_count, line.raw_bar_length_m) || '—'} 米 · ${line.raw_bar_length_m} 米/根`
+  return `${compactDecimal(pipeMeters(line.actual_bar_count, line.raw_bar_length_m))} 米 · ${compactDecimal(line.raw_bar_length_m)} 米/根`
 }
 
 function disabledPastDate(date: Date): boolean {
@@ -324,7 +325,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn label="建议采购量" width="180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><strong v-if="row.raw_bar_length_m">{{ row.suggested_bar_count }} 根</strong><strong v-else>{{ formatQuantity(row.required_quantity) }}</strong><small>{{ row.raw_bar_length_m ? row.suggested_purchase_meters + ' 米' : row.source_unit_text || '单位未识别' }}</small></div></template>
+            <template #default="{ row }"><div class="quantity-cell"><strong v-if="row.raw_bar_length_m">{{ row.suggested_bar_count }} 根</strong><strong v-else>{{ formatQuantity(row.required_quantity) }}</strong><small>{{ row.raw_bar_length_m ? compactDecimal(row.suggested_purchase_meters) + ' 米' : row.source_unit_text || '单位未识别' }}</small></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" width="271">
             <template #default="{ row }">

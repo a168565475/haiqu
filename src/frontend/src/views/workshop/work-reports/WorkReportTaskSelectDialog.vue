@@ -69,7 +69,7 @@ function progressPercentage(progress?: WorkReportTaskProgress) {
 
 function amountText(value?: string) {
   if (typeof value !== 'string' || !value.trim() || !Number.isFinite(Number(value))) return '—'
-  return `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `¥${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
 }
 
 async function loadTasks(append = false, restoreSelection?: { taskId: string; workshopId: string }) {

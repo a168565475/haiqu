@@ -104,6 +104,27 @@ class InternalPendingDeletionTests(DeletePermissionFixture, D1Fixture, APITestCa
         self.assertIsNone(current_inventory_object(event.event_code, event.object_id, event.object_version))
         self.assertEqual(self.client.delete(f'{self.url}{receipt.pk}/', HTTP_IF_MATCH=data['etag']).status_code, 404)
 
+    def test_deleted_request_cannot_recreate_pending_receipt(self):
+        payload = self.d1_payload()
+        preview = self.d1_preview()
+        created = self.d1_post(payload, etag=preview['etag'])
+        receipt_id = created.data['data']['receipt_id']
+        detail = self.client.get(f'{self.url}{receipt_id}/').data['data']
+        self.d1_post(payload, etag=preview['etag'], expected=200)
+        self.other_actor('WAREHOUSE_KEEPER')
+        deleted = self.client.delete(f'{self.url}{receipt_id}/', HTTP_IF_MATCH=detail['etag'])
+        self.assertEqual(deleted.status_code, 204, deleted.data)
+        self.client.force_authenticate(self.user)
+        event_count = NotificationEvent.objects.count()
+        replay = self.d1_post(payload, etag=preview['etag'], expected=409)
+        self.assertEqual(replay.data['error']['code'], 'RECEIPT_REQUEST_DELETED')
+        self.assertIn('已删除', replay.data['error']['message'])
+        self.assertFalse(InternalSemiFinishedReceipt.objects.filter(request_id=payload['request_id']).exists())
+        self.assertFalse(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').exists())
+        self.assertEqual(NotificationEvent.objects.count(), event_count)
+        self.assertEqual(self.d1_preview()['lines'][0]['can_receive'], preview['lines'][0]['can_receive'])
+        self.d1_post({**payload, 'request_id': str(uuid.uuid4())})
+
     def test_other_director_expired_manager_and_missing_permission_are_denied(self):
         receipt, data = self.pending()
         for code, expired, permissions in [('METAL_DIRECTOR', False, True),
@@ -186,6 +207,30 @@ class AssemblyPendingDeletionTests(DeletePermissionFixture, AssemblyFixture, API
         self.assertEqual(self.preview()['remaining_receivable'], before)
         self.assertIsNone(current_inventory_object(event.event_code, event.object_id, event.object_version))
         self.assertEqual(self.client.delete(f'{self.url}{receipt.pk}/', HTTP_IF_MATCH=data['etag']).status_code, 404)
+
+    def test_deleted_request_cannot_recreate_pending_receipt(self):
+        payload = self.payload(received_quantity=3)
+        preview = self.preview()
+        created = self.post(payload, etag=preview['etag'])
+        self.assertEqual(created.status_code, 201, created.data)
+        receipt_id = created.data['data']['id']
+        detail = self.client.get(f'/api/v1/finished-goods-records/{receipt_id}/').data['data']
+        self.assertEqual(self.post(payload, etag=preview['etag']).status_code, 200)
+        self.other_actor('WAREHOUSE_KEEPER')
+        deleted = self.client.delete(f'{self.url}{receipt_id}/', HTTP_IF_MATCH=detail['etag'])
+        self.assertEqual(deleted.status_code, 204, deleted.data)
+        self.client.force_authenticate(self.user)
+        event_count = NotificationEvent.objects.count()
+        replay = self.post(payload, etag=preview['etag'])
+        self.assertEqual(replay.status_code, 409, replay.data)
+        self.assertEqual(replay.data['error']['code'], 'RECEIPT_REQUEST_DELETED')
+        self.assertIn('已删除', replay.data['error']['message'])
+        self.assertFalse(AssemblyReceiptSource.objects.filter(request_id=payload['request_id']).exists())
+        self.assertFalse(FinishedGoodsReceipt.objects.filter(production_task_product=self.line).exists())
+        self.assertEqual(NotificationEvent.objects.count(), event_count)
+        self.assertEqual(self.preview()['remaining_receivable'], preview['remaining_receivable'])
+        replacement = self.post({**payload, 'request_id': str(uuid.uuid4())})
+        self.assertEqual(replacement.status_code, 201, replacement.data)
 
     def test_other_director_expired_manager_and_missing_permission_are_denied(self):
         receipt, data = self.pending()

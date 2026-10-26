@@ -85,6 +85,9 @@ class DictionaryTypeSerializer(serializers.ModelSerializer):
         )
 
     def get_reference_count(self, instance) -> int:
+        counts = self.context.get("dictionary_reference_counts")
+        if counts is not None and instance.pk in counts:
+            return counts[instance.pk]
         return dictionary_type_reference_count(instance)
 
 
@@ -121,6 +124,9 @@ class ReferenceDictionarySerializer(serializers.ModelSerializer):
         ]
 
     def get_reference_count(self, instance) -> int:
+        counts = self.context.get("dictionary_reference_counts")
+        if counts is not None and instance.pk in counts:
+            return counts[instance.pk]
         return dictionary_reference_count(instance)
 
     def validate_dictionary_type(self, value):

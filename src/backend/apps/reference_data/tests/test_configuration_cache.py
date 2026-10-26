@@ -7,7 +7,8 @@ from rest_framework.test import APITransactionTestCase
 
 from apps.reference_data import configuration_cache as cache_module
 from apps.reference_data.configuration_cache import read_configuration, invalidate_configuration
-from apps.reference_data.models import Country
+from apps.reference_data.models import Country, DictionaryType, ReferenceDictionary
+from apps.customers.models import CustomerAccount
 from apps.reference_data.tests.test_published_reads import PublishedReadTests
 from apps.core.api.concurrency import etag_for_instance
 
@@ -126,11 +127,15 @@ class ConfigurationApiTests(APITransactionTestCase):
     def test_cached_dictionary_reference_count_is_refreshed(self):
         self.user.is_superuser = True
         self.user.save(update_fields=['is_superuser'])
-        url = '/api/v1/reference-data/dictionary-types/'
-        with patch('apps.reference_data.services.dictionary_type_reference_count', return_value=2):
-            first = self.client.get(url, HTTP_HOST='localhost')
-            self.assertEqual(first.status_code, 200, first.data)
-            self.assertTrue(first.data['data'])
-            self.assertEqual(first.data['data'][0]['reference_count'], 2)
-        with patch('apps.reference_data.services.dictionary_type_reference_count', return_value=3):
-            self.assertEqual(self.client.get(url, HTTP_HOST='localhost').data['data'][0]['reference_count'], 3)
+        ReferenceDictionary.objects.create(
+            dictionary_type=DictionaryType.objects.get(code='COUNTRY_REGION'),
+            category_code='COUNTRY_REGION', item_code='QW', display_name='引用刷新测试',
+        )
+        url = '/api/v1/reference-data/dictionary-types/?q=COUNTRY_REGION'
+        first = self.client.get(url, HTTP_HOST='localhost')
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data['data'][0]['reference_count'], 0)
+        CustomerAccount.objects.create(
+            account_code='CACHE_REFERENCE', account_name='引用刷新测试', primary_country_code='QW',
+        )
+        self.assertEqual(self.client.get(url, HTTP_HOST='localhost').data['data'][0]['reference_count'], 1)

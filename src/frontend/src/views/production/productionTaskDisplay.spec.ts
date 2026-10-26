@@ -23,8 +23,8 @@ describe('生产任务显示口径', () => {
     expect(quantityWithUnits([product({ quantity: 2 }), product({ quantity: 3 }), product({ unit_id: 'box', unit_name: '箱', quantity: 1 })])).toBe('5 件 / 1 箱')
     expect(quantityWithUnits([])).toBe('—')
   })
-  it('人民币只累加本币行金额，非零小数保留四位，不混用原币金额', () => {
-    expect(localAmountTotal([product({ total_amount: '999.00' }), product({ local_total_amount: '0.20' })])).toBe('0.3000')
+  it('人民币只累加本币行金额，显示去除尾零，不混用原币金额', () => {
+    expect(localAmountTotal([product({ total_amount: '999.00' }), product({ local_total_amount: '0.20' })])).toBe('0.3')
     expect(localAmountTotal([product({ local_total_amount: '0.1234' }), product({ local_total_amount: '0.0001' })])).toBe('0.1235')
     expect(localAmountTotal([product({ local_total_amount: 'bad' })])).toBe('—')
   })
@@ -34,7 +34,7 @@ describe('生产任务显示口径', () => {
     { name: '负整数省略全零小数', amounts: ['-1234.0000'], expected: '-1,234' },
     { name: '正负小数精确抵消', amounts: ['1250.4321', '-1250.4321'], expected: '0' },
     { name: '小数相加进位后显示整数', amounts: ['0.9999', '0.0001'], expected: '1' },
-    { name: '负数的非零小数保留四位', amounts: ['-12.3400'], expected: '-12.3400' },
+    { name: '负数的小数去除尾零', amounts: ['-12.3400'], expected: '-12.34' },
     { name: '大整数进位不丢精度', amounts: ['9007199254740993.9999', '0.0001'], expected: '9,007,199,254,740,994' },
     { name: '大整数的非零小数精确保留四位', amounts: ['9007199254740993.1234', '0.0001'], expected: '9,007,199,254,740,993.1235' },
   ])('金额格式：$name', ({ amounts, expected }) => {

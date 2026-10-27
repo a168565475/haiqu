@@ -165,6 +165,20 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         self.assertIn('inventory.view_internalsemifinishedreceipt', rows)
         self.assertIn('inventory.view_finishedgoodsreceipt', rows)
 
+    def test_warehouse_template_confirms_saved_outsourcing_orders_for_all_sources(self):
+        ids = dict(Workshop.objects.values_list('name', 'pk'))
+        rows = templates(ids)
+        warehouse = {row['permission']: row['scope'] for row in rows['WAREHOUSE_KEEPER']}
+        for code in ('outsourcing.confirm_dispatch_outsourcingorder',
+                     'material_issues.create_metalprocessingoriginalhandoff',
+                     'material_issues.confirm_metalprocessingexternalhandoff',
+                     'material_issues.confirm_metalprocessingexternalreturn'):
+            self.assertEqual(warehouse[code], 'MODULE')
+        for role in ('METAL_DIRECTOR', 'SEWING_DIRECTOR', 'ASSEMBLY_DIRECTOR'):
+            permissions = {row['permission'] for row in rows[role]}
+            self.assertNotIn('outsourcing.confirm_dispatch_outsourcingorder', permissions)
+            self.assertNotIn('material_issues.confirm_metalprocessingexternalhandoff', permissions)
+
     def test_purchasing_template_can_execute_quality_generated_returns(self):
         ids = dict(Workshop.objects.values_list('name', 'pk'))
         rows = {row['permission'] for row in templates(ids)['PURCHASING']}

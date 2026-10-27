@@ -95,7 +95,7 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'purchase-inbounds', label: '采购入库', to: { name: 'purchase-inbounds' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
       { key: 'purchase-returns', label: '退货明细', to: { name: 'purchase-returns' }, anyPermissions: ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'] },
       { key: 'material-issues', label: '生产领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
-      { key: 'warehouse-outsourcing', label: '委外管理', to: { name: 'warehouse-outsourcing' }, anyPermissions: ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn'] },
+      { key: 'warehouse-outsourcing', label: '委外管理', to: { name: 'warehouse-outsourcing' }, anyPermissions: ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff', 'material_issues.confirm_metalprocessingexternalreturn'] },
     ],
   },
   {

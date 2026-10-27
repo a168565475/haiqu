@@ -15,7 +15,6 @@ import {
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { formatOutsourcingMoney, outsourcingLineAmount, outsourcingPriceError } from '@/utils/outsourcingPrices'
 import { useAuthStore } from '@/stores/auth'
-import type { OutsourcingOrder } from '@/types/outsourcing'
 import type { P4ExternalOrder, P4HandoffDetail, P4Options, P4OriginalGoodReturnContext, P4OriginalHandoff, P4OriginalOrderContext, P4OriginalOrderPart, P4Rework, P4SemiStock, P4Source, P4UnsprayedReturn } from '@/types/metalProcessingP4'
 
 type DialogMode = 'handoff' | 'return' | 'original-good-return' | 'rework' | 'order' | 'new-handoff' | 'new-return' | 'close' | 'allocation' | 'source-completion' | 'source-close' | 'original-close' | 'original-cancel-pending'
@@ -57,7 +56,7 @@ const sources = ref<P4Source[]>([])
 const source = ref<P4Source | null>(null)
 const orders = ref<P4ExternalOrder[]>([])
 const selectedOrder = ref<P4ExternalOrder | null>(null)
-const legacyOrders = ref<OutsourcingOrder[]>([])
+const legacyOrders = ref<P4Options['original_orders']>([])
 const options = ref<P4Options | null>(null)
 const semiStock = ref<P4SemiStock | null>(null)
 const loading = ref(false)
@@ -103,12 +102,29 @@ const actionPermissions: Record<DialogMode, string> = {
   'original-close': 'complete_outsourcingorder', 'original-cancel-pending': 'change_outsourcingorder',
 }
 function canAct(mode: DialogMode): boolean {
-  if (['original-good-return', 'new-return'].includes(mode) !== warehouseWorkspace.value) return false
+  if (mode !== 'handoff' && ['new-handoff', 'original-good-return', 'new-return'].includes(mode) !== warehouseWorkspace.value) return false
   const app = ['original-good-return', 'original-close', 'original-cancel-pending'].includes(mode) ? 'outsourcing' : 'material_issues'
   return Boolean(auth.user?.is_superuser || auth.hasPermission(`${app}.${actionPermissions[mode]}`))
 }
-const canHandoffSource = computed(() => Boolean(source.value?.source_id && source.value.etag
+const canHandoffOriginal = computed(() => canAct('handoff') && props.mode === 'original'
+  && orderSummary.value?.original_order_id === props.originalOrderId && orderSummary.value?.can_handoff === true)
+function sourceMatchesHandoffWorkspace(row: P4Source, orderId: string): boolean {
+  return Array.isArray(row.original_handoff_order_ids)
+    && row.original_handoff_order_ids.includes(orderId) === warehouseWorkspace.value
+}
+function canHandoffOriginalSource(row: P4Source): boolean {
+  return canHandoffOriginal.value && row.can_handoff === true && row.status === 'OPEN'
+    && row.available_pieces > 0 && Boolean(row.source_id && row.etag)
+    && sourceMatchesHandoffWorkspace(row, props.originalOrderId)
+}
+const availableOriginalOrders = computed(() => legacyOrders.value.filter(row => row.can_handoff === true
+  && source.value && sourceMatchesHandoffWorkspace(source.value, row.id)))
+const canHandoffSource = computed(() => (props.mode === 'original' ? Boolean(source.value && canHandoffOriginalSource(source.value))
+  : !warehouseWorkspace.value && canAct('handoff') && availableOriginalOrders.value.length > 0) && Boolean(source.value?.source_id && source.value.etag && source.value.can_handoff === true
   && source.value.status === 'OPEN' && source.value.available_pieces > 0))
+function canHandoffExternal(row: P4ExternalOrder): boolean {
+  return canAct('new-handoff') && row.can_handoff === true && row.status === 'PENDING_HANDOFF' && row.handoff_pieces === 0 && Boolean(row.etag)
+}
 const sourceBlockers = computed(() => Object.values(source.value?.blockers || {}).flat())
 
 const today = () => {
@@ -149,6 +165,8 @@ const isSourceDialog = computed(() => dialog.value === 'source-completion' || di
 const dialogWidth = computed(() => dialog.value === 'original-close' ? 1080 : ['original-good-return', 'allocation', 'return', 'original-cancel-pending'].includes(dialog.value || '') || isSourceDialog.value ? 840 : 650)
 const dialogHeight = computed(() => dialog.value === 'original-close' ? 860 : ['original-good-return', 'allocation', 'return'].includes(dialog.value || '') ? 780 : isSourceDialog.value || dialog.value === 'original-cancel-pending' ? 640 : 520)
 const submitDisabled = computed(() => originalGoodLoading.value || contextLoading.value
+  || (dialog.value === 'handoff' && !canHandoffSource.value)
+  || (dialog.value === 'new-handoff' && (!selectedOrder.value || !canHandoffExternal(selectedOrder.value)))
   || (dialog.value === 'original-good-return' && (!originalGoodContext.value?.can_return || !!originalGoodContext.value?.blockers.length))
   || (dialog.value === 'allocation' && !selectedOrder.value?.allocation_context?.can_adjust)
   || (dialog.value === 'source-completion' && !sourceContext.value?.can_register)
@@ -345,17 +363,17 @@ function openSourceHandoff(row: P4Source): void {
 }
 
 async function loadHandoffCandidates(): Promise<void> {
-  if (saving.value || dialog.value) return
+  if (!canHandoffOriginal.value || saving.value || dialog.value) return
   candidatesLoading.value = true
   try {
-    handoffCandidates.value = (await loadAllSources({})).filter(row => row.status === 'OPEN' && row.available_pieces > 0)
+    handoffCandidates.value = (await loadAllSources(warehouseWorkspace.value ? { original_order_id: props.originalOrderId } : {})).filter(canHandoffOriginalSource)
     if (!handoffCandidates.value.length) ElMessage.info('暂无可交接的加工件，请先登记对应领料部位的加工完成。')
   } catch (value) { error.value = errorText(value, '可交接来源加载失败。') }
   finally { candidatesLoading.value = false }
 }
 
 async function handoffCandidate(): Promise<void> {
-  if (!candidateId.value || candidatesLoading.value || saving.value || dialog.value) return
+  if (!canHandoffOriginal.value || !candidateId.value || candidatesLoading.value || saving.value || dialog.value) return
   candidatesLoading.value = true
   try {
     const row = await fetchP4Source(candidateId.value, ...warehouseArgs.value)
@@ -385,7 +403,7 @@ async function selectSource(row: P4Source): Promise<void> {
 
 function openHandoff(): void {
   if (!canHandoffSource.value || !beginDialog('handoff')) return
-  handoffForm.value = { originalOrderId: props.originalOrderId || legacyOrders.value[0]?.id || '', factoryId: options.value?.factories[0]?.id || '', pieces: '', date: today() }
+  handoffForm.value = { originalOrderId: props.originalOrderId || availableOriginalOrders.value[0]?.id || '', factoryId: options.value?.factories[0]?.id || '', pieces: '', date: today() }
 }
 async function openReturn(row: P4OriginalHandoff): Promise<void> {
   if (!beginDialog('return')) return
@@ -429,7 +447,7 @@ function openOrder(row: P4Rework): void {
   orderForm.value = { factoryId: '', craftId: sprayCrafts.value[0]?.id || '', pieces: String(row.remaining_allocatable_pieces), unitPrice: '0' }
   orderForm.value.factoryId = orderFactories.value[0]?.id || ''
 }
-function openNewHandoff(row: P4ExternalOrder): void { if (!beginDialog('new-handoff')) return; selectedOrder.value = row; newHandoffForm.value = { pieces: String(row.allocated_pieces), date: today() } }
+function openNewHandoff(row: P4ExternalOrder): void { if (!canHandoffExternal(row) || !beginDialog('new-handoff')) return; selectedOrder.value = row; newHandoffForm.value = { pieces: String(row.allocated_pieces), date: today() } }
 function openNewReturn(row: P4ExternalOrder): void { if (!['PROCESSING', 'CLOSED'].includes(row.status) || row.remaining_return_pieces <= 0 || !beginDialog('new-return')) return; selectedOrder.value = row; newReturnForm.value = { pieces: '', zoneId: options.value?.semi_finished_zones[0]?.id || '', receiverId: options.value?.receivers[0]?.id || '', date: today(), remark: '' } }
 function openClose(row: P4ExternalOrder): void { if (!beginDialog('close')) return; selectedOrder.value = row; closeForm.value = { remark: '' } }
 
@@ -562,6 +580,9 @@ async function submit(): Promise<void> {
       sent = true
       selectedOrder.value = await adjustP4ExternalAllocation(order.id, { request_id: request.id, ...payload }, request.etag)
     } else if (dialog.value === 'handoff' && source.value?.etag) {
+      if (!canHandoffSource.value || (props.mode === 'original'
+        ? handoffForm.value.originalOrderId !== props.originalOrderId
+        : !availableOriginalOrders.value.some(row => row.id === handoffForm.value.originalOrderId))) throw new Error('当前来源或外发单不可交接，请刷新后核对。')
       const pieces = positiveInteger(handoffForm.value.pieces)
       if (!handoffForm.value.originalOrderId || !handoffForm.value.factoryId || !pieces || !handoffForm.value.date) throw new Error('请选择原外发单、加工厂、交接日期并填写正整数交接支数。')
       if (pieces > source.value.available_pieces) throw new Error('交接支数超过当前可外发完成量。')
@@ -614,6 +635,7 @@ async function submit(): Promise<void> {
       const created = await createP4ExternalOrder(selectedRework.value.id, { request_id: request.id, ...payload })
       createdOrderId = created.id
     } else if (dialog.value === 'new-handoff' && selectedOrder.value) {
+      if (!canHandoffExternal(selectedOrder.value)) throw new Error('当前外发单不可交接，请刷新后核对。')
       const pieces = positiveInteger(newHandoffForm.value.pieces)
       if (!pieces || !newHandoffForm.value.date) throw new Error('请填写正整数交接支数和交接日期。')
       if (pieces !== selectedOrder.value.allocated_pieces) throw new Error('实际交接支数必须等于已保存分配支数。')
@@ -682,15 +704,28 @@ async function showSemiStock(row: P4ExternalOrder): Promise<void> {
 onMounted(() => { void loadSources() })
 watch(() => [props.mode, props.originalOrderId, props.externalOrderId, warehouseWorkspace.value, route.query?.source_issue_line_id,
   route.query?.issue_id, route.query?.production_task_id, route.query?.product_line_id, route.query?.rework_id], () => { void loadSources() })
-let openedWarehouseReturn = false
+let openedWarehouseAction = ''
 watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () => {
-  if (loading.value || !warehouseWorkspace.value || route.query?.action !== 'return' || openedWarehouseReturn) return
-  if (props.mode === 'rework' && reworkDetail.value && canAct('new-return')
+  const action = route.query?.action
+  const key = `${props.mode}:${props.originalOrderId || props.externalOrderId}:${action}`
+  if (loading.value || !warehouseWorkspace.value || !['dispatch', 'return'].includes(String(action)) || openedWarehouseAction === key) return
+  if (action === 'dispatch') {
+    if (props.mode === 'rework' && reworkDetail.value && canHandoffExternal(reworkDetail.value)) {
+      openedWarehouseAction = key
+      openNewHandoff(reworkDetail.value)
+    } else if (canHandoffOriginal.value) {
+      const candidates = relatedSources.value.filter(canHandoffOriginalSource)
+      if (candidates.length === 1) {
+        openedWarehouseAction = key
+        openSourceHandoff(candidates[0]!)
+      }
+    }
+  } else if (props.mode === 'rework' && reworkDetail.value && canAct('new-return')
     && ['PROCESSING', 'CLOSED'].includes(reworkDetail.value.status) && reworkDetail.value.remaining_return_pieces > 0) {
-    openedWarehouseReturn = true
+    openedWarehouseAction = key
     openNewReturn(reworkDetail.value)
   } else if (props.mode === 'original' && originalHandoffs.value.length === 1 && canAct('original-good-return')) {
-    openedWarehouseReturn = true
+    openedWarehouseAction = key
     void openOriginalGoodReturn(originalHandoffs.value[0]!)
   }
 })
@@ -722,7 +757,7 @@ watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () =
 
       <main v-loading="detailLoading" class="p4-panel p4-detail-panel">
         <template v-if="source">
-          <div class="detail-top"><div><span class="eyebrow">来源领料 {{ source.issue_number }}</span><h2>{{ source.part_name || '管材部位' }}</h2><p>{{ source.component_identity }} · 原料 {{ source.bar_count ?? '—' }} 根 / {{ source.meters ?? '—' }} 米</p></div><div class="source-actions"><ElTag :type="source.status === 'CLOSED' ? 'info' : 'success'">{{ source.status === 'CLOSED' ? '已结清' : source.status === 'OPEN' ? '进行中' : '来源异常' }}</ElTag><ElButton v-if="canAct('source-completion')" data-testid="source-completion-button" :disabled="!source.can_register || loading || detailLoading" @click="openSourceOperation('source-completion')">登记加工完成</ElButton><ElButton v-if="canAct('source-close')" data-testid="source-close-button" :disabled="!source.can_close || loading || detailLoading" @click="openSourceOperation('source-close')">来源备注结清</ElButton><ElButton v-if="canAct('handoff')" type="primary" :icon="Plus" :disabled="!canHandoffSource || loading" @click="openHandoff">登记原外发</ElButton></div></div>
+          <div class="detail-top"><div><span class="eyebrow">来源领料 {{ source.issue_number }}</span><h2>{{ source.part_name || '管材部位' }}</h2><p>{{ source.component_identity }} · 原料 {{ source.bar_count ?? '—' }} 根 / {{ source.meters ?? '—' }} 米</p></div><div class="source-actions"><ElTag :type="source.status === 'CLOSED' ? 'info' : 'success'">{{ source.status === 'CLOSED' ? '已结清' : source.status === 'OPEN' ? '进行中' : '来源异常' }}</ElTag><ElButton v-if="canAct('source-completion')" data-testid="source-completion-button" :disabled="!source.can_register || loading || detailLoading" @click="openSourceOperation('source-completion')">登记加工完成</ElButton><ElButton v-if="canAct('source-close')" data-testid="source-close-button" :disabled="!source.can_close || loading || detailLoading" @click="openSourceOperation('source-close')">来源备注结清</ElButton><ElButton v-if="!warehouseWorkspace && canAct('handoff') && availableOriginalOrders.length" type="primary" :icon="Plus" :disabled="!canHandoffSource || loading" @click="openHandoff">登记原外发</ElButton></div></div>
           <div class="metric-grid source-metrics" data-testid="source-summary"><div><span>已领支数</span><strong>{{ source.issued_pieces ?? '—' }}</strong></div><div><span>完成加工</span><strong>{{ source.completed_pieces ?? '—' }}</strong></div><div><span>已交接</span><strong>{{ source.dispatched_pieces ?? '—' }}</strong></div><div><span>待外发占用</span><strong>{{ source.reserved_pieces ?? '—' }}</strong></div><div><span>可继续外发</span><strong class="accent">{{ source.available_pieces ?? '—' }}</strong></div></div>
           <ElAlert v-for="blocker in sourceBlockers" :key="blocker" :title="blocker" type="warning" :closable="false" />
 
@@ -740,7 +775,7 @@ watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () =
       </main>
     </div>
 
-    <section v-if="mode === 'sources' && !embedded" class="p4-panel orders-panel"><div class="panel-title"><div><strong>新外发单</strong><span>重新加工完成后重新建立，和原外发单分开</span></div><ElTag type="info">{{ visibleOrders.length }} 条</ElTag></div><ElTable :data="visibleOrders" border empty-text="暂无新外发单"><ElTableColumn type="expand"><template #default="{ row }"><div class="allocation-history" data-testid="allocation-history"><div class="section-title"><h3>分配修改记录</h3><span>{{ row.order_number }} · 已交接后不可调整</span></div><ElTable :data="row.allocation_history || []" border empty-text="暂无分配修改记录"><ElTableColumn prop="before_pieces" label="修改前（支）" width="150" /><ElTableColumn prop="after_pieces" label="修改后（支）" width="150" /><ElTableColumn prop="actor_name" label="操作人" min-width="100" /><ElTableColumn label="修改时间" min-width="180"><template #default="{ row: history }">{{ formatTime(history.created_at) }}</template></ElTableColumn></ElTable></div></template></ElTableColumn><ElTableColumn prop="order_number" label="新外发单号" width="190" /><ElTableColumn prop="factory_name" label="加工厂" width="150" /><ElTableColumn prop="craft_name" label="工艺" width="100" /><ElTableColumn prop="allocated_pieces" label="分配支数" width="100" /><ElTableColumn prop="handoff_pieces" label="已交接" width="100" /><ElTableColumn prop="returned_good_pieces" label="合格回货" width="100" /><ElTableColumn label="状态" width="100"><template #default="{ row }"><ElTag :type="row.status === 'COMPLETED' ? 'success' : row.status === 'CLOSED' ? 'info' : 'warning'">{{ statusText(row.status) }}</ElTag></template></ElTableColumn><ElTableColumn label="操作" min-width="400"><template #default="{ row }"><ElButton v-if="canAct('allocation')" data-testid="allocation-button" size="small" :disabled="row.status !== 'PENDING_HANDOFF' || row.handoff_pieces !== 0 || row.allocation_context?.can_adjust === false" @click="openAllocation(row)">{{ row.status === 'PENDING_HANDOFF' && row.handoff_pieces === 0 ? '调整分配' : '调整已锁定' }}</ElButton><ElButton v-if="canAct('new-handoff') && row.status === 'PENDING_HANDOFF'" size="small" type="primary" @click="openNewHandoff(row)">确认交接</ElButton><ElButton v-if="canAct('new-return') && (row.status === 'PROCESSING' || row.status === 'CLOSED') && row.remaining_return_pieces > 0" size="small" @click="openNewReturn(row)">登记合格回货</ElButton><ElButton v-if="canAct('close') && row.status === 'PROCESSING'" size="small" @click="openClose(row)">备注结清</ElButton><ElButton size="small" :icon="Box" @click="showSemiStock(row)">看半成品库存</ElButton></template></ElTableColumn></ElTable></section>
+    <section v-if="mode === 'sources' && !embedded" class="p4-panel orders-panel"><div class="panel-title"><div><strong>新外发单</strong><span>重新加工完成后重新建立，和原外发单分开</span></div><ElTag type="info">{{ visibleOrders.length }} 条</ElTag></div><ElTable :data="visibleOrders" border empty-text="暂无新外发单"><ElTableColumn type="expand"><template #default="{ row }"><div class="allocation-history" data-testid="allocation-history"><div class="section-title"><h3>分配修改记录</h3><span>{{ row.order_number }} · 已交接后不可调整</span></div><ElTable :data="row.allocation_history || []" border empty-text="暂无分配修改记录"><ElTableColumn prop="before_pieces" label="修改前（支）" width="150" /><ElTableColumn prop="after_pieces" label="修改后（支）" width="150" /><ElTableColumn prop="actor_name" label="操作人" min-width="100" /><ElTableColumn label="修改时间" min-width="180"><template #default="{ row: history }">{{ formatTime(history.created_at) }}</template></ElTableColumn></ElTable></div></template></ElTableColumn><ElTableColumn prop="order_number" label="新外发单号" width="190" /><ElTableColumn prop="factory_name" label="加工厂" width="150" /><ElTableColumn prop="craft_name" label="工艺" width="100" /><ElTableColumn prop="allocated_pieces" label="分配支数" width="100" /><ElTableColumn prop="handoff_pieces" label="已交接" width="100" /><ElTableColumn prop="returned_good_pieces" label="合格回货" width="100" /><ElTableColumn label="状态" width="100"><template #default="{ row }"><ElTag :type="row.status === 'COMPLETED' ? 'success' : row.status === 'CLOSED' ? 'info' : 'warning'">{{ statusText(row.status) }}</ElTag></template></ElTableColumn><ElTableColumn label="操作" min-width="400"><template #default="{ row }"><ElButton v-if="canAct('allocation')" data-testid="allocation-button" size="small" :disabled="row.status !== 'PENDING_HANDOFF' || row.handoff_pieces !== 0 || row.allocation_context?.can_adjust === false" @click="openAllocation(row)">{{ row.status === 'PENDING_HANDOFF' && row.handoff_pieces === 0 ? '调整分配' : '调整已锁定' }}</ElButton><ElButton v-if="canHandoffExternal(row)" size="small" type="primary" @click="openNewHandoff(row)">确认交接</ElButton><ElButton v-if="canAct('new-return') && (row.status === 'PROCESSING' || row.status === 'CLOSED') && row.remaining_return_pieces > 0" size="small" @click="openNewReturn(row)">登记合格回货</ElButton><ElButton v-if="canAct('close') && row.status === 'PROCESSING'" size="small" @click="openClose(row)">备注结清</ElButton><ElButton size="small" :icon="Box" @click="showSemiStock(row)">看半成品库存</ElButton></template></ElTableColumn></ElTable></section>
 
     <section v-if="mode === 'original'" v-loading="loading" class="unified-order-section" data-testid="unified-original-operations">
       <div class="order-operation-heading"><div><h2>{{ orderSummary?.original_order_number || originalHandoffs[0]?.original_order_number || '原外发单' }}</h2><span>材料来源：{{ originalHandoffs.length ? '金工加工件' : '待选择 · 金工来源已预选，交接后确认' }}</span></div><div class="source-actions"><ElButton :icon="Refresh" :loading="loading" :disabled="saving || !!dialog" @click="loadSources">刷新</ElButton><ElButton :disabled="loading || !!dialog" @click="openOrderSummary">收尾与记录</ElButton></div></div>
@@ -750,7 +785,7 @@ watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () =
       <section class="p4-panel unified-record-card"><ElTabs v-model="recordTab">
         <ElTabPane label="外发明细" name="handoffs"><ElTable :data="originalHandoffs" border empty-text="尚无实际交接记录"><ElTableColumn prop="part_name" label="部位" min-width="140" /><ElTableColumn prop="issue_number" label="来源领料" min-width="170" /><ElTableColumn prop="factory_name" label="加工厂" min-width="140" /><ElTableColumn prop="handoff_pieces" label="交接（支）" width="112" /><ElTableColumn prop="handoff_date" label="交接日期" width="120" /><ElTableColumn label="操作" min-width="310"><template #default="{ row }"><ElButton v-if="canAct('original-good-return')" link type="primary" :disabled="['COMPLETED', 'CANCELLED'].includes(row.original_order_status || '')" @click="openOriginalGoodReturn(row)">{{ row.original_order_status === 'CLOSED' ? '补登记合格回货' : '登记合格回货' }}</ElButton><ElButton v-if="canAct('return')" link type="primary" :disabled="remainingReturnPieces(row) <= 0 || !row.source.etag" @click="openReturn(row)">{{ row.original_order_status === 'CLOSED' ? '补登记未喷塑退回' : '登记未喷塑退回' }}</ElButton></template></ElTableColumn></ElTable>
           <details v-if="orderSummary" class="plan-quantity-review"><summary>计划与数量核对 <span>{{ originalStatusText(orderSummary.original_order_status) }} · 各部位独立核算</span></summary><ElTable :data="orderSummary.parts" border><ElTableColumn prop="part_name" label="部位" min-width="150" /><ElTableColumn prop="factory_name" label="加工厂" min-width="150" /><ElTableColumn prop="planned_pieces" label="计划（支）" width="112" /><ElTableColumn prop="handoff_pieces" label="实交（支）" width="112" /><ElTableColumn prop="returned_good_pieces" label="合格回货（支）" width="130" /><ElTableColumn prop="returned_unsprayed_pieces" label="未喷塑退回（支）" width="145" /><ElTableColumn prop="remaining_return_pieces" label="待回（支）" width="112" /><ElTableColumn prop="pending_handoff_pieces" label="待交接（支）" width="120" /></ElTable></details>
-          <div class="section-title related-source-title"><h3>继续交接</h3><span>从真实来源选择可用加工件</span></div><div v-if="canAct('handoff') && !['CLOSED','COMPLETED','CANCELLED'].includes(orderSummary?.original_order_status || '')" class="source-handoff-row"><ElButton :loading="candidatesLoading" @click="loadHandoffCandidates">选择其他金工来源</ElButton><ElSelect v-if="handoffCandidates.length" v-model="candidateId" filterable placeholder="选择领料单 / 部位" style="width:380px"><ElOption v-for="item in handoffCandidates" :key="item.issue_line_id" :value="item.issue_line_id" :label="`${item.issue_number} / ${item.part_name} · ${item.available_pieces} 支`" /></ElSelect><ElButton v-if="candidateId" type="primary" :loading="candidatesLoading" @click="handoffCandidate">登记所选来源交接</ElButton></div><div v-for="item in relatedSources" :key="item.issue_line_id" class="source-handoff-row"><span>{{ item.part_name }} · {{ item.issue_number }}</span><span>可外发 {{ item.available_pieces }} 支</span><ElButton v-if="canAct('handoff')" :disabled="item.status !== 'OPEN' || item.available_pieces <= 0 || !item.etag || ['CLOSED','COMPLETED','CANCELLED'].includes(orderSummary?.original_order_status || '')" @click="openSourceHandoff(item)">登记交接</ElButton><ElButton v-if="canViewSource" link type="primary" @click="router.push({ path: '/workshop/outsourcing', query: { tab: 'sources', source_issue_line_id: item.issue_line_id } })">查看来源</ElButton></div><ElEmpty v-if="!relatedSources.length && !loading" description="未找到可访问的金工来源，请从待外发材料选择真实来源" :image-size="64" />
+          <div class="section-title related-source-title"><h3>继续交接</h3><span>从真实来源选择可用加工件</span></div><div v-if="canHandoffOriginal" class="source-handoff-row"><ElButton :loading="candidatesLoading" @click="loadHandoffCandidates">{{ warehouseWorkspace ? '选择已关联金工来源' : '选择其他金工来源' }}</ElButton><ElSelect v-if="handoffCandidates.length" v-model="candidateId" filterable placeholder="选择领料单 / 部位" style="width:380px"><ElOption v-for="item in handoffCandidates" :key="item.issue_line_id" :value="item.issue_line_id" :label="`${item.issue_number} / ${item.part_name} · ${item.available_pieces} 支`" /></ElSelect><ElButton v-if="candidateId" type="primary" :loading="candidatesLoading" @click="handoffCandidate">登记所选来源交接</ElButton></div><div v-for="item in relatedSources" :key="item.issue_line_id" class="source-handoff-row"><span>{{ item.part_name }} · {{ item.issue_number }}</span><span>可外发 {{ item.available_pieces }} 支</span><ElButton v-if="canHandoffOriginalSource(item)" @click="openSourceHandoff(item)">登记交接</ElButton><ElButton v-if="canViewSource" link type="primary" @click="router.push({ path: '/workshop/outsourcing', query: { tab: 'sources', source_issue_line_id: item.issue_line_id } })">查看来源</ElButton></div><ElEmpty v-if="!relatedSources.length && !loading" :description="warehouseWorkspace ? '当前单据暂无可访问的已关联金工来源' : '未找到可访问的金工来源，请从待外发材料选择真实来源'" :image-size="64" />
         </ElTabPane>
         <ElTabPane label="回货记录" name="returns"><ElTable :data="goodReturnRows" border empty-text="暂无可查看的合格回货记录"><ElTableColumn prop="return_number" label="回货单号" min-width="170" /><ElTableColumn prop="part_name" label="部位" min-width="130" /><ElTableColumn prop="factory_name" label="加工厂" min-width="140" /><ElTableColumn prop="good_pieces" label="合格（支）" width="110" /><ElTableColumn prop="return_date" label="回货日期" width="120" /><ElTableColumn prop="zone_name" label="半成品库区" min-width="140" /><ElTableColumn prop="received_by_employee_name" label="接收人" width="100" /><ElTableColumn prop="remark" label="备注" min-width="180" /></ElTable></ElTabPane>
         <ElTabPane label="退回与重加工" name="rework"><template v-for="item in sourceGroups" :key="item.issue_line_id"><section v-for="handoff in item.original_handoffs" :key="handoff.id" class="flow-section"><div class="section-title"><h3>{{ item.part_name }} · {{ handoff.factory_name }}</h3><span>已退回 {{ handoff.returned_unsprayed_pieces }} 支</span></div><div v-for="returned in handoff.unsprayed_returns || []" :key="returned.id" class="return-card"><div><strong>未喷塑退回 {{ returned.returned_pieces }} 支</strong><small>{{ formatDate(returned.return_date) }} · {{ returned.storage_location }} · {{ returned.remark || '无备注' }}</small></div><ElButton v-if="canAct('rework') && (returned.remaining_rework_pieces ?? returned.returned_pieces) > 0" @click="openRework(returned)">登记重加工</ElButton><div v-for="rework in returned.reworks || []" :key="rework.id" class="rework-line"><span>完成 {{ rework.completed_pieces }} 支 · 可新外发 {{ rework.remaining_allocatable_pieces }} 支</span><div><ElButton v-for="id in rework.external_order_ids" :key="id" link type="primary" @click="router.push(`${listPath}/rework/${id}`)">查看关联外发单</ElButton><ElButton v-if="canAct('order') && rework.remaining_allocatable_pieces > 0" type="primary" @click="openOrder(rework)">创建新外发</ElButton></div></div></div><ElEmpty v-if="!handoff.unsprayed_returns?.length" description="暂无未喷塑退回记录" :image-size="48" /></section></template><ElEmpty v-if="!originalHandoffs.length" description="暂无退回与重加工记录" :image-size="64" /></ElTabPane>
@@ -759,7 +794,7 @@ watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () =
     </section>
 
     <section v-if="mode === 'rework'" v-loading="loading" class="unified-order-section" data-testid="unified-rework-detail">
-      <template v-if="reworkDetail"><div class="order-operation-heading"><div><h2>{{ reworkDetail.order_number }}</h2><span>材料来源：重加工件 · {{ statusText(reworkDetail.status) }}</span></div><div class="source-actions"><ElButton v-if="canAct('allocation') && reworkDetail.status === 'PENDING_HANDOFF'" data-testid="rework-allocation-button" @click="openAllocation(reworkDetail)">调整分配</ElButton><ElButton v-if="canAct('new-handoff') && reworkDetail.status === 'PENDING_HANDOFF'" type="primary" @click="openNewHandoff(reworkDetail)">确认交接</ElButton><ElButton v-if="canAct('new-return') && ['PROCESSING','CLOSED'].includes(reworkDetail.status) && reworkDetail.remaining_return_pieces > 0" type="primary" @click="openNewReturn(reworkDetail)">{{ reworkDetail.status === 'CLOSED' ? '补登记合格回货' : '登记合格回货' }}</ElButton><ElButton v-if="canAct('close') && reworkDetail.status === 'PROCESSING'" @click="openClose(reworkDetail)">备注结清</ElButton><ElButton :icon="Box" @click="showSemiStock(reworkDetail)">看半成品库存</ElButton></div></div>
+      <template v-if="reworkDetail"><div class="order-operation-heading"><div><h2>{{ reworkDetail.order_number }}</h2><span>材料来源：重加工件 · {{ statusText(reworkDetail.status) }}</span></div><div class="source-actions"><ElButton v-if="canAct('allocation') && reworkDetail.status === 'PENDING_HANDOFF'" data-testid="rework-allocation-button" @click="openAllocation(reworkDetail)">调整分配</ElButton><ElButton v-if="canHandoffExternal(reworkDetail)" type="primary" @click="openNewHandoff(reworkDetail)">确认交接</ElButton><ElButton v-if="canAct('new-return') && ['PROCESSING','CLOSED'].includes(reworkDetail.status) && reworkDetail.remaining_return_pieces > 0" type="primary" @click="openNewReturn(reworkDetail)">{{ reworkDetail.status === 'CLOSED' ? '补登记合格回货' : '登记合格回货' }}</ElButton><ElButton v-if="canAct('close') && reworkDetail.status === 'PROCESSING'" @click="openClose(reworkDetail)">备注结清</ElButton><ElButton :icon="Box" @click="showSemiStock(reworkDetail)">看半成品库存</ElButton></div></div>
         <div class="p4-panel unified-record-card rework-identity"><div><span>加工厂</span><strong>{{ reworkDetail.factory_name }}</strong></div><div><span>工艺</span><strong>{{ reworkDetail.craft_name }}</strong></div><div><span>来源领料 / 部位</span><strong>{{ source?.issue_number || '—' }} / {{ source?.part_name || '—' }}</strong></div><div><span>交货日期</span><strong>—</strong></div><div><span>原外发单</span><ElButton v-if="reworkOrigin" link type="primary" @click="router.push({ path: `${listPath}/${reworkOrigin.handoff.original_order_id}`, query: { view: 'metal' } })">{{ reworkOrigin.handoff.original_order_number || '查看原外发单' }}</ElButton><strong v-else>未取得来源关联</strong></div><div><span>原退回</span><strong>{{ reworkOrigin ? `${reworkOrigin.returned.returned_pieces} 支 · ${formatDate(reworkOrigin.returned.return_date)}` : '—' }}</strong></div></div>
         <div class="metric-grid"><div><span>计划分配</span><strong>{{ reworkDetail.allocated_pieces }} 支</strong></div><div><span>实际交接</span><strong>{{ reworkDetail.handoff_pieces }} 支</strong></div><div><span>合格回货</span><strong>{{ reworkDetail.returned_good_pieces }} 支</strong></div><div><span>当前待回</span><strong class="accent">{{ reworkDetail.remaining_return_pieces }} 支</strong></div></div>
         <div class="p4-panel rework-identity" data-testid="rework-pricing"><div><span>加工单价</span><strong>{{ formatOutsourcingMoney(reworkDetail.unit_price) }}<template v-if="reworkDetail.unit_price != null"> 元/支</template></strong></div><div><span>计划加工金额</span><strong>{{ formatOutsourcingMoney(reworkDetail.planned_amount) }}<template v-if="reworkDetail.planned_amount != null"> 元</template></strong></div></div>
@@ -770,7 +805,7 @@ watch(() => [loading.value, route.query?.action, warehouseWorkspace.value], () =
 
     <section v-if="semiStock" class="p4-panel stock-panel"><div class="panel-title"><div><strong>半成品库存</strong><span>{{ semiStock.part_name }} · 不按批次，按统一库区汇总</span></div><ElTag type="success">{{ semiStock.available_pieces }} 支</ElTag></div><ElTable :data="semiStock.zones" border><ElTableColumn prop="zone_name" label="库区" /><ElTableColumn prop="available_pieces" label="可用支数" width="130" /><ElTableColumn label="领用方式" width="160"><template #default>按正整数支领取</template></ElTableColumn></ElTable></section>
 
-    <AppWindowDialog v-model="dialogVisible" :class="{ 'p4-detail-dialog': mode !== 'sources' || embedded }" :title="dialogTitle" :width="dialogWidth" :height="dialogHeight" destroy-on-close :close-on-click-modal="false" :show-close="!saving && !uncertainOutcome" :close-on-press-escape="!saving && !uncertainOutcome"><ElAlert v-if="dialogError" :title="dialogError" type="error" :closable="false" show-icon class="p4-alert" /><ElForm label-width="120px" class="p4-form" :disabled="saving || uncertainOutcome || originalGoodLoading || contextLoading"><template v-if="dialog === 'handoff'"><ElFormItem label="原外发单"><ElSelect v-model="handoffForm.originalOrderId" filterable :disabled="mode === 'original'"><ElOption v-for="row in legacyOrders" :key="row.id" :value="row.id" :label="row.order_number" /></ElSelect></ElFormItem><ElFormItem label="加工厂"><ElSelect v-model="handoffForm.factoryId" filterable><ElOption v-for="row in options?.factories || []" :key="row.id" :value="row.id" :label="row.name" /></ElSelect></ElFormItem><ElFormItem label="交接支数"><ElInput v-model="handoffForm.pieces" inputmode="numeric" /></ElFormItem><ElFormItem label="交接日期"><ElDatePicker v-model="handoffForm.date" type="date" value-format="YYYY-MM-DD" /></ElFormItem></template><template v-else-if="dialog === 'return'">
+    <AppWindowDialog v-model="dialogVisible" :class="{ 'p4-detail-dialog': mode !== 'sources' || embedded }" :title="dialogTitle" :width="dialogWidth" :height="dialogHeight" destroy-on-close :close-on-click-modal="false" :show-close="!saving && !uncertainOutcome" :close-on-press-escape="!saving && !uncertainOutcome"><ElAlert v-if="dialogError" :title="dialogError" type="error" :closable="false" show-icon class="p4-alert" /><ElForm label-width="120px" class="p4-form" :disabled="saving || uncertainOutcome || originalGoodLoading || contextLoading"><template v-if="dialog === 'handoff'"><ElFormItem label="原外发单"><ElSelect v-model="handoffForm.originalOrderId" filterable :disabled="mode === 'original'"><ElOption v-for="row in availableOriginalOrders" :key="row.id" :value="row.id" :label="row.order_number" /></ElSelect></ElFormItem><ElFormItem label="加工厂"><ElSelect v-model="handoffForm.factoryId" filterable><ElOption v-for="row in options?.factories || []" :key="row.id" :value="row.id" :label="row.name" /></ElSelect></ElFormItem><ElFormItem label="交接支数"><ElInput v-model="handoffForm.pieces" inputmode="numeric" /></ElFormItem><ElFormItem label="交接日期"><ElDatePicker v-model="handoffForm.date" type="date" value-format="YYYY-MM-DD" /></ElFormItem></template><template v-else-if="dialog === 'return'">
         <div v-loading="contextLoading" data-testid="original-unsprayed-return-dialog" class="original-return-dialog">
           <template v-if="returnContext">
             <div class="original-good-identity"><div><span>原外发单 / 加工厂</span><strong>{{ returnContext.original_order_number }} · {{ returnContext.factory_name }}</strong></div><div><span>当前状态 / 本次可退</span><strong>{{ originalStatusText(returnContext.original_order_status) }} / {{ remainingReturnPieces(returnContext) }} 支</strong></div></div>

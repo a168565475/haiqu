@@ -3,6 +3,7 @@ import uuid
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from django.conf import settings
 from django.test import override_settings
@@ -16,7 +17,8 @@ from apps.organizations.models import EmployeeOrganizationAssignment, Organizati
 from apps.workshop_config.models import Craft
 
 from ..models import TubeOutsourcingAction, TubeOutsourcingOrder
-from ..warehouse_access import DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION, REWORK_RETURN_PERMISSION
+from ..warehouse_access import (DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION,
+                                ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION)
 from .test_material_flow import MaterialFlowFixture
 from .test_unified_tube_orders import UnifiedTubeFixture
 
@@ -41,19 +43,36 @@ class WarehouseResponseMixin:
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True, **SCOPES)
 class WarehouseTubeOrdersTests(WarehouseResponseMixin, ScopedActorMixin, UnifiedTubeFixture, APITestCase):
-    def test_dispatch_only_reads_stock_orders_without_view_and_keeps_direct_handoff_in_workshop(self):
+    def test_dispatch_only_reads_and_confirms_all_authorized_tube_sources_without_view(self):
+        from apps.inventory.models import PublicStockMovement
+        self.receive(30)
         stock = self.saved_order('RAW_PIPE')
+        semi = self.saved_order('PUBLIC_SEMI')
         direct = self.saved_order('METAL')
         self.scoped_actor()
         self.grant(DISPATCH_PERMISSION, 'MODULE')
         rows = self.warehouse_rows()
-        self.assertEqual([row['id'] for row in rows], [stock['id']])
-        self.assertEqual(rows[0]['warehouse_actions'], ['dispatch'])
+        self.assertEqual({row['id'] for row in rows}, {stock['id'], semi['id'], direct['id']})
+        self.assertTrue(all(row['warehouse_actions'] == ['dispatch'] for row in rows))
         self.assertEqual(self.client.get(URL).status_code, 403)
         self.warehouse_get(URL + 'options/')
         self.warehouse_get(f"/api/v1/tube-outsourcing-orders/{stock['id']}/")
         self.assertEqual(self.client.get(f"/api/v1/tube-outsourcing-orders/{stock['id']}/").status_code, 403)
+        for order in (stock, semi, direct):
+            detail = self.warehouse_get(f"/api/v1/tube-outsourcing-orders/{order['id']}/").data['data']
+            self.assertTrue(detail['permissions']['can_dispatch'])
+            self.assertEqual(self.act(detail).data['data']['status'], 'PROCESSING')
+        self.assertFalse(PublicStockMovement.objects.filter(source_id=direct['id'], direction='OUT').exists())
+
+    def test_stock_dispatch_does_not_borrow_view_permission_for_direct_source(self):
+        stock = self.saved_order('RAW_PIPE')
+        direct = self.saved_order('METAL')
+        self.scoped_actor()
+        self.grant(DISPATCH_PERMISSION, 'STOCK')
+        self.grant('outsourcing.view_outsourcingorder')
+        self.assertEqual([row['id'] for row in self.warehouse_rows()], [stock['id']])
         self.assertEqual(self.client.get(f"/api/v1/tube-outsourcing-orders/{direct['id']}/", WAREHOUSE).status_code, 404)
+        self.act(direct, expected=404)
 
     def test_return_scope_reads_workshop_orders_and_action_recovery_without_view(self):
         order = self.dispatched('METAL')
@@ -208,6 +227,118 @@ class WarehouseMetalOrdersTests(WarehouseResponseMixin, ScopedActorMixin, MetalP
         return {'request_id': str(uuid.uuid4()), 'good_pieces': 1, 'zone_id': str(self.f.semi_zone.pk),
                 'received_by_employee_id': str(self.f.employee.pk), 'return_date': str(timezone.localdate()),
                 'remark': '仓库动作范围验证'}
+
+    def test_existing_original_handoff_can_continue_in_warehouse_without_view(self):
+        self.create_original_handoff()
+        self.scoped_actor()
+        self.grant(ORIGINAL_HANDOFF_PERMISSION, 'CRAFT', [self.f.spray])
+        self.assertEqual([(row['id'], row['warehouse_actions']) for row in self.warehouse_rows()],
+                         [(self.original_order, ['dispatch'])])
+        summary = self.warehouse_get(f'/api/v1/metal-processing-original-orders/{self.original_order}/').data['data']
+        self.assertTrue(summary['can_handoff'])
+        self.assertTrue(summary['has_handoffs'])
+        options = self.warehouse_get('/api/v1/metal-processing-sources/options/').data['data']
+        self.assertEqual(options['original_orders'], [{'id': self.original_order, 'order_number': summary['original_order_number'],
+                                                     'can_handoff': True, 'has_handoffs': True}])
+        source = self.warehouse_get(f'/api/v1/metal-processing-sources/{self.line.pk}/').data['data']
+        self.assertTrue(source['can_handoff'])
+        candidates = self.client.get('/api/v1/metal-processing-sources/', {**WAREHOUSE, 'original_order_id': self.original_order})
+        self.assertEqual(candidates.status_code, 200, candidates.data)
+        self.assertEqual([(row['issue_line_id'], row['can_handoff']) for row in candidates.data['data']], [(str(self.line.pk), True)])
+        response = self.client.post(f'/api/v1/metal-processing-sources/{self.line.pk}/handoffs/?warehouse_stage=all', {
+            'request_id': str(uuid.uuid4()), 'original_order_id': self.original_order,
+            'factory_id': str(self.f.factory.pk), 'handoff_pieces': 2, 'handoff_date': str(timezone.localdate()),
+        }, format='json', HTTP_IF_MATCH=source['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['dispatched_pieces'], 10)
+
+    def test_original_first_source_is_not_inferred_from_matching_product_in_warehouse(self):
+        self.scoped_actor()
+        self.grant(ORIGINAL_HANDOFF_PERMISSION)
+        self.assertEqual(self.warehouse_rows(), [])
+        self.assertEqual(self.client.get(f'/api/v1/metal-processing-original-orders/{self.original_order}/', WAREHOUSE).status_code, 404)
+        self.assertEqual(self.warehouse_get('/api/v1/metal-processing-sources/options/').data['data']['original_orders'], [])
+
+    def test_original_first_handoff_is_per_source_even_when_another_source_already_joined(self):
+        self.create_original_handoff()
+        second_line = self.issue_line(12)
+        self.write('completions', self.complete_payload(12), line=second_line)
+        self.scoped_actor()
+        self.grant(ORIGINAL_HANDOFF_PERMISSION)
+        self.grant('material_issues.view_metalprocessingsource')
+        url = f'/api/v1/metal-processing-sources/{second_line.pk}/'
+        source = self.client.get(url).data['data']
+        self.assertTrue(source['can_handoff'])
+        self.assertEqual(source['original_handoff_order_ids'], [])
+        self.assertEqual(self.client.get(url, WAREHOUSE).status_code, 404)
+        summary = self.client.get(f'/api/v1/metal-processing-original-orders/{self.original_order}/').data['data']
+        self.assertTrue(summary['has_handoffs'])
+        self.assertTrue(summary['can_handoff'])
+        options = self.client.get('/api/v1/metal-processing-sources/options/').data['data']
+        original = next(row for row in options['original_orders'] if row['id'] == self.original_order)
+        self.assertTrue(original['has_handoffs'])
+        self.assertTrue(original['can_handoff'])
+        response = self.client.post(url + 'handoffs/', {'request_id': str(uuid.uuid4()),
+            'original_order_id': self.original_order, 'factory_id': str(self.f.factory.pk),
+            'handoff_pieces': 2, 'handoff_date': str(timezone.localdate())}, format='json', HTTP_IF_MATCH=source['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['original_handoff_order_ids'], [self.original_order])
+        self.assertEqual(self.warehouse_get(url).data['data']['original_handoff_order_ids'], [self.original_order])
+
+    def test_original_dispatch_requires_the_same_whole_order_read_scope_as_detail(self):
+        from apps.material_issues.models import MetalProcessingOriginalHandoff
+        first = self.create_original_handoff()
+        second_line = self.issue_line(12)
+        self.write('completions', self.complete_payload(12), line=second_line)
+        self.write('handoffs', {'request_id': str(uuid.uuid4()), 'original_order_id': self.original_order,
+                   'factory_id': str(self.f.factory.pk), 'handoff_pieces': 2,
+                   'handoff_date': str(timezone.localdate())}, line=second_line)
+        self.scoped_actor()
+        self.grant(ORIGINAL_HANDOFF_PERMISSION)
+        visible = MetalProcessingOriginalHandoff.objects.filter(pk=first.pk)
+        # 独立模拟来源权限只允许第一条；列表按钮与详情仍使用真实数据库原单和关联记录。
+        with patch('apps.outsourcing.warehouse_access.warehouse_original_handoffs', return_value=visible), \
+                patch('apps.outsourcing.unified_selectors.warehouse_original_handoffs', return_value=visible):
+            rows = self.warehouse_rows()
+            self.assertEqual([(row['id'], row['warehouse_actions']) for row in rows], [(self.original_order, [])])
+            response = self.client.get(f'/api/v1/metal-processing-original-orders/{self.original_order}/', WAREHOUSE)
+            self.assertEqual(response.status_code, 404, response.data)
+
+    def test_rework_handoff_only_reads_context_and_confirms_without_view_or_return(self):
+        order = self.create_order()
+        self.scoped_actor()
+        self.grant(REWORK_HANDOFF_PERMISSION, 'CRAFT', [self.f.spray])
+        self.assertEqual([(row['id'], row['warehouse_actions']) for row in self.warehouse_rows()], [(str(order.pk), ['dispatch'])])
+        url = f'/api/v1/metal-processing-external-orders/{order.pk}/'
+        self.assertEqual(self.client.get(url).status_code, 403)
+        detail = self.warehouse_get(url).data['data']
+        self.assertTrue(detail['can_handoff'])
+        self.warehouse_get('/api/v1/metal-processing-sources/options/')
+        self.warehouse_get(f'/api/v1/metal-processing-sources/{self.line.pk}/')
+        response = self.client.post(url + 'handoff/?warehouse_stage=all', {
+            'request_id': str(uuid.uuid4()), 'handoff_pieces': 5, 'handoff_date': str(timezone.localdate()),
+        }, format='json', HTTP_IF_MATCH=detail['etag'])
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data']['status'], 'PROCESSING')
+        self.assertFalse(response.data['data']['can_handoff'])
+        self.assertEqual(self.client.post(url + 'returns/', self.good_return_payload(), format='json',
+                                         HTTP_IF_MATCH=response.data['data']['etag']).status_code, 403)
+        self.assertEqual(self.warehouse_rows()[0]['warehouse_actions'], [])
+
+    def test_rework_handoff_cannot_borrow_other_action_craft_scope(self):
+        order = self.create_order()
+        other = Craft.objects.create(name='交接无关工艺', craft_type='EXTERNAL', outsourcing_code='EMBROIDERY')
+        self.scoped_actor()
+        self.grant(REWORK_RETURN_PERMISSION, 'CRAFT', [self.f.spray])
+        self.grant(REWORK_HANDOFF_PERMISSION, 'CRAFT', [other])
+        url = f'/api/v1/metal-processing-external-orders/{order.pk}/'
+        detail = self.warehouse_get(url).data['data']
+        self.assertFalse(detail['can_handoff'])
+        self.assertEqual(self.warehouse_rows()[0]['warehouse_actions'], [])
+        response = self.client.post(url + 'handoff/', {
+            'request_id': str(uuid.uuid4()), 'handoff_pieces': 5, 'handoff_date': str(timezone.localdate()),
+        }, format='json', HTTP_IF_MATCH=detail['etag'])
+        self.assertIn(response.status_code, (403, 404), response.data)
 
     def test_original_return_only_reads_scoped_p4_context_without_metal_view(self):
         handoff = self.create_original_handoff()

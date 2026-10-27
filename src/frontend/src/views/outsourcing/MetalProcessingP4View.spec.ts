@@ -38,7 +38,8 @@ const completedSource = {
   production_task_id: 'task-1', product_line_id: 'product-1', component_identity: 'part-1',
   issued_pieces: 12, completed_pieces: 12, dispatched_pieces: 0, reserved_pieces: 0,
   available_pieces: 12, remaining_completion_pieces: 0, status: 'OPEN', can_register: false,
-  can_close: true, bar_count: 2, meters: '6.10', blockers: [], etag: '"source-1"', original_handoffs: [],
+  can_close: true, can_handoff: true, original_handoff_order_ids: ['original-order'],
+  bar_count: 2, meters: '6.10', blockers: [], etag: '"source-1"', original_handoffs: [],
 }
 const goodContext = {
   etag: '"allocation-return-1"', original_order_id: 'original-order', original_order_number: '原单-001',
@@ -244,10 +245,9 @@ describe('统一入口内的单据与来源范围', () => {
 })
 
 describe('管材外发闭环写入边界', () => {
-  it('金工全部完成且仍有可外发支数时允许登记原外发', async () => {
+  it('车间加工来源不再显示原外发交接入口', async () => {
     const wrapper = await createView()
-    const button = wrapper.findAll('button').find(item => item.text() === '登记原外发')!
-    expect(button.attributes('disabled')).toBeUndefined()
+    expect(wrapper.findAll('button').some(item => item.text() === '登记原外发')).toBe(false)
   })
 
   it('只读用户可加载来源，不能看到写入按钮', async () => {
@@ -508,25 +508,34 @@ describe('原外发单正常合格回货', () => {
   })
 })
 
-it('车间保留金工交接，但禁止打开和直接提交合格入库', async () => {
+it('车间仅保留旧单首次关联入口，禁止重加工交接及合格入库', async () => {
   const wrapper = await createView()
   const vm = state(wrapper)
   expect(vm.canAct('handoff')).toBe(true)
+  expect(vm.canAct('new-handoff')).toBe(false)
   expect(vm.canAct('original-good-return')).toBe(false)
   await vm.openOriginalGoodReturn(handoffDetail)
   expect(api.handoffDetail).not.toHaveBeenCalled()
   vm.dialog = 'original-good-return'
   await vm.submit()
   expect(api.originalGoodReturn).not.toHaveBeenCalled()
+  vm.dialog = 'handoff'
+  await vm.submit()
+  vm.dialog = 'new-handoff'
+  await vm.submit()
+  expect(api.handoff).not.toHaveBeenCalled()
+  expect(api.externalHandoff).not.toHaveBeenCalled()
 })
 
-it('仓库仅开放合格入库，禁止交接、重加工和结清写入', async () => {
+it('仓库开放交接及合格入库，禁止创建、加工登记、分配和结清写入', async () => {
   route.meta.outsourcingWorkspace = 'warehouse'
   const wrapper = await createView()
   const vm = state(wrapper)
   expect(vm.canAct('original-good-return')).toBe(true)
   expect(vm.canAct('new-return')).toBe(true)
-  for (const action of ['handoff', 'new-handoff', 'return', 'rework', 'order', 'close', 'allocation', 'original-close']) {
+  expect(vm.canAct('handoff')).toBe(true)
+  expect(vm.canAct('new-handoff')).toBe(true)
+  for (const action of ['return', 'rework', 'order', 'close', 'allocation', 'original-close', 'source-completion', 'source-close']) {
     expect(vm.canAct(action)).toBe(false)
     vm.dialog = action
     await vm.submit()
@@ -535,6 +544,179 @@ it('仓库仅开放合格入库，禁止交接、重加工和结清写入', asyn
   expect(api.externalHandoff).not.toHaveBeenCalled()
   expect(api.originalClose).not.toHaveBeenCalled()
   expect(api.returned).not.toHaveBeenCalled()
+})
+
+describe('仓库办理已建外发单交接', () => {
+  const summary = { original_order_id: 'original-order', original_order_number: '原单-001',
+    original_order_status: 'PENDING_DISPATCH', etag: '"original-1"', parts: [],
+    totals: { planned_pieces: 12, handoff_pieces: 0, returned_good_pieces: 0, returned_unsprayed_pieces: 0, remaining_return_pieces: 0 },
+    can_handoff: true, has_handoffs: true, can_close: false, blockers: [], closure: null, post_closure_returns: [], pending_cancellations: [] }
+  const pendingOrder = { id: 'new-order', order_number: '新单-001', source_id: 'source-1', original_return_id: 'return-1',
+    rework_id: 'rework-1', factory_name: '喷塑厂', craft_name: '喷塑', allocated_pieces: 12, handoff_pieces: 0,
+    returned_good_pieces: 0, remaining_return_pieces: 0, status: 'PENDING_HANDOFF', etag: '"new-order-1"',
+    can_handoff: true, handoff: null, good_returns: [], closure: null, allocation_history: [] }
+
+  beforeEach(() => {
+    route.meta.outsourcingWorkspace = 'warehouse'
+    auth.superuser = false
+    api.originalOrder.mockResolvedValue(structuredClone(summary))
+    api.externalOrder.mockResolvedValue(structuredClone(pendingOrder))
+  })
+
+  it('只有原单交接权限也可由仓库深链接打开确认弹窗，确认后使用来源版本写入', async () => {
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    route.query = { action: 'dispatch' }
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order' })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBe('handoff')
+    expect(api.handoff).not.toHaveBeenCalled()
+    expect(api.originalOrder).toHaveBeenCalledWith('original-order', true)
+    expect(wrapper.findAll('button').some(button => button.text() === '登记交接')).toBe(true)
+    vm.handoffForm.pieces = '12'
+    api.handoff.mockResolvedValue({ ...completedSource, available_pieces: 0 })
+    await vm.submit()
+    expect(api.handoff).toHaveBeenCalledWith('line-1', expect.objectContaining({ original_order_id: 'original-order', handoff_pieces: 12 }), '"source-1"')
+  })
+
+  it.each(['source', 'order', 'permission'])('原单交接缺少%s授权时不显示入口，直接提交也不写入', async missing => {
+    if (missing !== 'permission') auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    if (missing === 'source') api.source.mockResolvedValue({ ...completedSource, can_handoff: false })
+    if (missing === 'order') api.originalOrder.mockResolvedValue({ ...summary, can_handoff: false })
+    route.query = { action: 'dispatch' }
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order' })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBeNull()
+    expect(wrapper.findAll('button').some(button => button.text() === '登记交接')).toBe(false)
+    vm.dialog = 'handoff'
+    vm.handoffForm = { originalOrderId: 'original-order', factoryId: 'factory', pieces: '12', date: '2026-10-27' }
+    await vm.submit()
+    expect(api.handoff).not.toHaveBeenCalled()
+  })
+
+  it('候选来源只按当前原单读取，多个来源不擅自选择或提交', async () => {
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    route.query = { action: 'dispatch' }
+    const second = { ...completedSource, issue_line_id: 'line-2', source_id: 'source-2' }
+    api.sources.mockResolvedValue({ data: [completedSource, second], meta: { total_pages: 1 } })
+    api.source.mockImplementation(async id => structuredClone(id === 'line-2' ? second : completedSource))
+    const vm = state(await createView({ mode: 'original', originalOrderId: 'original-order' }))
+    expect(vm.dialog).toBeNull()
+    await vm.loadHandoffCandidates()
+    expect(api.sources).toHaveBeenLastCalledWith(expect.objectContaining({ original_order_id: 'original-order', warehouse_stage: 'all' }))
+    expect(api.handoff).not.toHaveBeenCalled()
+    vm.openSourceHandoff(second)
+    expect(vm.dialog).toBe('handoff')
+    expect(vm.source.issue_line_id).toBe('line-2')
+  })
+
+  it('只有重加工确认权限也可由仓库深链接打开确认弹窗，不自动提交', async () => {
+    auth.permissions.add('material_issues.confirm_metalprocessingexternalhandoff')
+    route.query = { action: 'dispatch' }
+    const wrapper = await createView({ mode: 'rework', externalOrderId: 'new-order' })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBe('new-handoff')
+    expect(api.externalHandoff).not.toHaveBeenCalled()
+    expect(wrapper.findAll('button').some(button => button.text() === '确认交接')).toBe(true)
+    api.externalHandoff.mockResolvedValue({ ...pendingOrder, status: 'PROCESSING', handoff_pieces: 12, can_handoff: false })
+    await vm.submit()
+    expect(api.externalHandoff).toHaveBeenCalledWith('new-order', expect.objectContaining({ handoff_pieces: 12 }), '"new-order-1"')
+  })
+
+  it.each(['object', 'permission', 'status'])('重加工交接缺少%s条件时隐藏入口并禁止直接提交', async missing => {
+    if (missing !== 'permission') auth.permissions.add('material_issues.confirm_metalprocessingexternalhandoff')
+    const order = { ...pendingOrder, can_handoff: missing !== 'object', status: missing === 'status' ? 'PROCESSING' : 'PENDING_HANDOFF' }
+    api.externalOrder.mockResolvedValue(order)
+    route.query = { action: 'dispatch' }
+    const wrapper = await createView({ mode: 'rework', externalOrderId: 'new-order' })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBeNull()
+    expect(wrapper.findAll('button').some(button => button.text() === '确认交接')).toBe(false)
+    vm.dialog = 'new-handoff'; vm.selectedOrder = order
+    vm.newHandoffForm = { pieces: '12', date: '2026-10-27' }
+    await vm.submit()
+    expect(api.externalHandoff).not.toHaveBeenCalled()
+  })
+
+  it('车间保留外发详情和分配，不显示或提交交接', async () => {
+    route.meta.outsourcingWorkspace = 'workshop'
+    auth.superuser = true
+    route.query = { action: 'dispatch' }
+    const wrapper = await createView({ mode: 'rework', externalOrderId: 'new-order' })
+    const vm = state(wrapper)
+    expect(wrapper.get('[data-testid="rework-allocation-button"]').text()).toBe('调整分配')
+    expect(wrapper.findAll('button').some(button => button.text() === '确认交接')).toBe(false)
+    vm.openNewHandoff(pendingOrder)
+    expect(vm.dialog).toBeNull()
+    expect(api.externalHandoff).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('旧原单已有其他来源交接时，当前来源已有关联=%s仍按来源控制车间入口', async sourceLinked => {
+    route.meta.outsourcingWorkspace = 'workshop'
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    const current = { ...completedSource, original_handoff_order_ids: sourceLinked ? ['original-order'] : [] }
+    api.source.mockResolvedValue(current)
+    api.originalOrder.mockResolvedValue({ ...summary, has_handoffs: true, can_handoff: true })
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order' })
+    const vm = state(wrapper)
+    expect(wrapper.findAll('button').some(button => button.text() === '登记交接')).toBe(!sourceLinked)
+    vm.openSourceHandoff(current)
+    expect(vm.dialog).toBe(sourceLinked ? null : 'handoff')
+    if (sourceLinked) vm.dialog = 'handoff'
+    vm.handoffForm = { originalOrderId: 'original-order', factoryId: 'factory', pieces: '12', date: '2026-10-27' }
+    api.handoff.mockResolvedValue({ ...completedSource, available_pieces: 0 })
+    await vm.submit()
+    expect(api.handoff).toHaveBeenCalledTimes(sourceLinked ? 0 : 1)
+  })
+
+  it('车间来源首次关联可选择已有其他来源的原单，不能绕过选择当前来源已关联的单', async () => {
+    route.meta.outsourcingWorkspace = 'workshop'
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    api.options.mockResolvedValue({ factories: [{ id: 'factory', name: '喷塑厂', crafts: [] }], crafts: [], receivers: [],
+      semi_finished_zones: [], original_orders: [
+        { id: 'new-original', order_number: '待首次关联', can_handoff: true, has_handoffs: true },
+        { id: 'linked-original', order_number: '已有交接', can_handoff: true, has_handoffs: true },
+      ] })
+    api.source.mockResolvedValue({ ...completedSource, original_handoff_order_ids: ['linked-original'] })
+    const vm = state(await createView())
+    vm.openHandoff()
+    expect(vm.dialog).toBe('handoff')
+    expect(vm.availableOriginalOrders.map((order: { id: string }) => order.id)).toEqual(['new-original'])
+    vm.handoffForm = { originalOrderId: 'linked-original', factoryId: 'factory', pieces: '12', date: '2026-10-27' }
+    await vm.submit()
+    expect(api.handoff).not.toHaveBeenCalled()
+  })
+
+  it('仓库已有原单只能继续交接当前已关联来源，不能用新来源补建关系', async () => {
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    const unlinked = { ...completedSource, issue_line_id: 'line-2', source_id: 'source-2', original_handoff_order_ids: [] }
+    api.sources.mockResolvedValue({ data: [completedSource, unlinked], meta: { total_pages: 1 } })
+    api.source.mockImplementation(async id => structuredClone(id === 'line-2' ? unlinked : completedSource))
+    const vm = state(await createView({ mode: 'original', originalOrderId: 'original-order' }))
+    await vm.loadHandoffCandidates()
+    expect(vm.handoffCandidates.map((row: { issue_line_id: string }) => row.issue_line_id)).toEqual(['line-1'])
+    vm.openSourceHandoff(unlinked)
+    expect(vm.dialog).toBeNull()
+    vm.dialog = 'handoff'
+    vm.handoffForm = { originalOrderId: 'original-order', factoryId: 'factory', pieces: '12', date: '2026-10-27' }
+    await vm.submit()
+    expect(api.handoff).not.toHaveBeenCalled()
+  })
+
+  it('车间为多来源原单补关联时只列未关联来源，不能继续交接已有来源', async () => {
+    route.meta.outsourcingWorkspace = 'workshop'
+    auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
+    const unlinked = { ...completedSource, issue_line_id: 'line-2', source_id: 'source-2', original_handoff_order_ids: [] }
+    api.sources.mockResolvedValue({ data: [completedSource, unlinked], meta: { total_pages: 1 } })
+    api.source.mockImplementation(async id => structuredClone(id === 'line-2' ? unlinked : completedSource))
+    const vm = state(await createView({ mode: 'original', originalOrderId: 'original-order' }))
+    await vm.loadHandoffCandidates()
+    expect(vm.handoffCandidates.map((row: { issue_line_id: string }) => row.issue_line_id)).toEqual(['line-2'])
+    vm.openSourceHandoff(completedSource)
+    expect(vm.dialog).toBeNull()
+    vm.openSourceHandoff(unlinked)
+    expect(vm.dialog).toBe('handoff')
+    expect(api.handoff).not.toHaveBeenCalled()
+  })
 })
 
 describe('新外发交接前调整分配', () => {

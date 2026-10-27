@@ -23,7 +23,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const hasPermission = (permission: string) => Boolean(auth.user?.is_superuser || auth.hasPermission(permission))
 const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
-const canViewWarehouse = computed(() => ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn'].some(hasPermission))
+const canViewWarehouse = computed(() => ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff', 'material_issues.confirm_metalprocessingexternalreturn'].some(hasPermission))
 const canViewSources = computed(() => !warehouseWorkspace.value && hasPermission('material_issues.view_metalprocessingsource'))
 const canViewRegularOrders = computed(() => hasPermission('outsourcing.view_outsourcingorder'))
 const canViewList = computed(() => warehouseWorkspace.value ? canViewWarehouse.value : canViewRegularOrders.value)
@@ -186,6 +186,7 @@ function canRemoveRow(row: UnifiedOutsourcingOrder): boolean {
 
 function handleRowCommand(command: string, row: UnifiedOutsourcingOrder): void {
   if (command === 'detail') openDetail(row)
+  if (command === 'dispatch' || command === 'return') openWarehouseAction(row, command)
   if (command === 'print-processing') openPrint(row, 'processing')
   if (command === 'print-spray') openPrint(row, 'spray')
   if (command === 'remove' && canRemoveRow(row)) void removeRow(row)
@@ -280,17 +281,16 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
         <ElTableColumn label="管材差额" width="90" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示新管材最终登记后的实发减实收。面料等不同单位不相减。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>
         <ElTableColumn label="预计回货日" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
         <ElTableColumn label="状态" width="90"><template #default="{ row }"><span class="status-tag erp-list-tag" :class="[`status-${statusTone(row.status)}`, row.status === 'COMPLETED' ? 'erp-list-tag--success' : row.status === 'PROCESSING' ? 'erp-list-tag--info' : row.status === 'PARTIAL_RETURN' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.status_display }}</span></template></ElTableColumn>
-        <ElTableColumn label="操作" :width="warehouseWorkspace ? 180 : 72" fixed="right" align="center">
+        <ElTableColumn label="操作" width="72" fixed="right" align="center">
           <template #default="{ row }">
             <div class="row-actions" @click.stop>
-            <ElButton v-if="warehouseWorkspace && row.warehouse_actions?.includes('dispatch')" link type="primary" :disabled="loading || accessDenied" @click.stop="openWarehouseAction(row, 'dispatch')">发料</ElButton>
-            <ElButton v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" link type="primary" :disabled="loading || accessDenied" @click.stop="openWarehouseAction(row, 'return')">入库</ElButton>
-            <ElButton v-if="warehouseWorkspace" link @click.stop="openDetail(row)">详情</ElButton>
-              <ElDropdown v-if="!warehouseWorkspace || canPrintRow(row) || canRemoveRow(row)" :persistent="false" trigger="click" placement="bottom-end" @command="(command: string) => handleRowCommand(command, row)">
+              <ElDropdown :persistent="false" trigger="click" placement="bottom-end" @command="(command: string) => handleRowCommand(command, row)">
                 <ElButton link class="row-more-button" :icon="MoreFilled" :aria-label="`${row.order_number} 更多操作`" />
                 <template #dropdown>
                   <ElDropdownMenu>
-                    <ElDropdownItem v-if="!warehouseWorkspace" command="detail">查看详情</ElDropdownItem>
+                    <ElDropdownItem command="detail">查看详情</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('dispatch')" command="dispatch" :disabled="loading || accessDenied">确认外发</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" command="return" :disabled="loading || accessDenied">回货入库</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintRow(row)" command="print-processing" :aria-label="`${row.order_number} 加工单打印`" :disabled="loading || Boolean(printRequest)">加工单打印</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintSpray(row)" command="print-spray" :aria-label="`${row.order_number} 管材喷塑打印`" :disabled="loading || Boolean(printRequest)">管材喷塑打印</ElDropdownItem>
                     <ElDropdownItem v-if="canRemoveRow(row)" command="remove" :disabled="loading || Boolean(actingOrderId)" divided>{{ warehouseWorkspace ? '撤销并退料' : '删除' }}</ElDropdownItem>

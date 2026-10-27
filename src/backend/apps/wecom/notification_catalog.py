@@ -365,12 +365,8 @@ def target_for(event_code, object_id):
     value = object_id
     if event_code == "TUBE_OUTSOURCING_ORDER_CREATED":
         from apps.outsourcing.models import TubeOutsourcingOrder
-        from apps.outsourcing.tube_models import TubeSourceKind
-        source = TubeOutsourcingOrder.objects.filter(pk=object_id).values_list("source_kind", flat=True).first()
-        if source is None:
+        if not TubeOutsourcingOrder.objects.filter(pk=object_id).exists():
             return None
-        if source in {TubeSourceKind.METAL, TubeSourceKind.SEWING}:
-            name = "workshop-outsourcing-tube-detail"
     elif event_code == "MATERIAL_INSPECTION_CONFIRMED":
         from apps.inventory.models import MaterialInbound
         value = MaterialInbound.objects.filter(pk=object_id).values_list("purchase_order_id", flat=True).first()

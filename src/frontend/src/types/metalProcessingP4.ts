@@ -55,6 +55,8 @@ export interface P4Source {
   meters: string
   can_register: boolean
   can_close: boolean
+  can_handoff?: boolean
+  original_handoff_order_ids?: string[]
   blockers: string[] | Record<string, string | string[]>
   etag: string | null
   source_snapshot?: Record<string, unknown>
@@ -150,6 +152,8 @@ export interface P4OriginalOrderContext {
   parts: P4OriginalOrderPart[]
   totals: P4OriginalOrderQuantities
   can_close: boolean
+  can_handoff?: boolean
+  has_handoffs?: boolean
   blockers: string[]
   closure: P4OriginalOrderClosure | null
   post_closure_returns: Array<{
@@ -207,6 +211,7 @@ export interface P4ExternalOrder {
   status: 'PENDING_HANDOFF' | 'PROCESSING' | 'COMPLETED' | 'CLOSED'
   version: number
   etag: string
+  can_handoff?: boolean
   handoff: { id: string; handoff_pieces: number; handoff_date: string } | null
   good_returns: Array<{ id: string; return_number: string; good_pieces: number; zone_id: string; return_date: string; post_closure: boolean; remark: string }>
   closure: { id: string; remark: string; quantity_snapshot: Record<string, unknown>; created_at: string } | null
@@ -246,5 +251,5 @@ export interface P4SemiStock {
 }
 
 export interface P4Options extends OutsourcingOptions {
-  original_orders: OutsourcingOrder[]
+  original_orders: Array<OutsourcingOrder & { can_handoff?: boolean; has_handoffs?: boolean }>
 }

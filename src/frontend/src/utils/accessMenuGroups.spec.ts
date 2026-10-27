@@ -49,7 +49,7 @@ describe('权限编辑器跟随侧栏菜单', () => {
     expect(permissionMenu(entry('access_control', 'purchasereturn', 'access_control.confirm_purchasereturn'))).toBe('procurement-management')
     expect(permissionMenu(entry('access_control', 'purchasereturn', 'access_control.complete_purchasereturn'))).toBe('procurement-management')
   })
-  it('委外发料、入库及原料退回归仓库，单据管理和车间交接仍归车间', () => {
+  it('委外发料、交接、入库及原料退回归仓库，单据管理和加工登记仍归车间', () => {
     const catalog = [
       entry('outsourcing', 'outsourcingorder', 'outsourcing.confirm_dispatch_outsourcingorder'),
       entry('outsourcing', 'outsourcingorder', 'outsourcing.confirm_return_outsourcingorder'),
@@ -57,10 +57,12 @@ describe('权限编辑器跟随侧栏菜单', () => {
       entry('material_issues', 'metalprocessingexternalorder', 'material_issues.confirm_metalprocessingexternalreturn'),
       entry('outsourcing', 'outsourcingorder', 'outsourcing.add_outsourcingorder'),
       entry('material_issues', 'metalprocessingexternalorder', 'material_issues.confirm_metalprocessingexternalhandoff'),
+      entry('material_issues', 'metalprocessingsource', 'material_issues.create_metalprocessingoriginalhandoff'),
+      entry('material_issues', 'metalprocessingsource', 'material_issues.register_metalprocessingcompletion'),
     ]
     expect(catalog.map(permissionMenu)).toEqual([
       'warehouse-management', 'warehouse-management', 'warehouse-management', 'warehouse-management',
-      'workshop-management', 'workshop-management',
+      'workshop-management', 'warehouse-management', 'warehouse-management', 'workshop-management',
     ])
     const groups = groupAccessCatalog(catalog)
     expect(groups.flatMap(group => group.entries)).toHaveLength(catalog.length)

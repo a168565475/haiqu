@@ -480,10 +480,10 @@ describe('全局悬停侧栏', () => {
     expect(group('procurement').attributes('aria-expanded')).toBe('false')
   })
 
-  it('仅有委外回货权限时可以从仓库进入委外管理', async () => {
+  it.each(['outsourcing.confirm_return_outsourcingorder', 'material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff'])('仅有委外操作权限 %s 时可以从仓库进入委外管理', async permission => {
     const { auth } = await setup()
     auth.user = { ...auth.user!, username: 'warehouse-receiver', is_superuser: false,
-      permissions: ['outsourcing.confirm_return_outsourcingorder'] }
+      permissions: [permission] }
     await nextTick()
     await group('warehouse').trigger('focus')
     expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['warehouse-outsourcing'])

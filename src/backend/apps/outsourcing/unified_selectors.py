@@ -25,8 +25,9 @@ from .selectors import accessible_outsourcing_orders
 from .tube_selectors import saved_orders_for_permission
 from .tube_prices import planned_amount
 from .warehouse_access import (
-    DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION,
-    warehouse_original_handoffs, warehouse_regular_orders, warehouse_rework_orders, warehouse_tube_orders,
+    DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION, REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION,
+    warehouse_original_handoffs, warehouse_original_dispatch_orders,
+    warehouse_regular_orders, warehouse_rework_orders, warehouse_tube_orders,
 )
 
 
@@ -467,10 +468,16 @@ def _warehouse_actions(request, rows):
     )
     allowed[('TUBE', 'return')] = set(map(str, receivable.values_list('pk', flat=True)))
     rework_ids = [row['id'] for row in rows.values() if row['record_type'] == 'REWORK']
-    allowed[('REWORK', 'return')] = set(map(str, warehouse_rework_orders(request).filter(
+    allowed[('REWORK', 'dispatch')] = set(map(str, warehouse_rework_orders(request, REWORK_HANDOFF_PERMISSION).filter(
+        pk__in=rework_ids, status='PENDING_HANDOFF').values_list('pk', flat=True)))
+    allowed[('REWORK', 'return')] = set(map(str, warehouse_rework_orders(request, REWORK_RETURN_PERMISSION).filter(
         pk__in=rework_ids, status__in=['PROCESSING', 'CLOSED'], handoff_pieces__gt=F('returned_good_pieces'),
     ).values_list('pk', flat=True)))
     from apps.material_issues.p4_services import original_good_return_context
+    from apps.material_issues.original_order_services import original_order_context
+    for order in warehouse_original_dispatch_orders(request).filter(pk__in=original_ids).select_related('schedule', 'craft'):
+        if original_order_context(order, request)['can_handoff']:
+            allowed[('ORIGINAL', 'dispatch')].add(str(order.pk))
     for handoff in warehouse_original_handoffs(request).filter(original_order_id__in=original_ids).select_related('original_order', 'source', 'factory'):
         if original_good_return_context(handoff, request)['can_return']:
             allowed[('ORIGINAL', 'return')].add(str(handoff.original_order_id))

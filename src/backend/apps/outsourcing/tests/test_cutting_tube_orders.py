@@ -84,6 +84,28 @@ class CuttingTubeOrdersTests(sewing_fixture.SewingProcessingFixture, TestCase):
             actor_employee=self.employee, production_task=self.task, product_line=self.product_line,
             bom_line=self.parts[0]).balance
 
+    @override_settings(ACCESS_MANAGEMENT_ENABLED=True, MODULE_ACCESS_ENABLED=True,
+                       SALES_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
+    def test_warehouse_dispatch_permission_reads_and_confirms_both_cutting_sources(self):
+        from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
+        self.report((200, 300))
+        self.stock(100)
+        orders = [self.create(self.payload(source, quantity='20')).data['data']
+                  for source in ('SEWING', 'PUBLIC_CUTTING')]
+        ScopedActorMixin.scoped_actor(self)
+        ScopedActorMixin.grant(self, 'outsourcing.confirm_dispatch_outsourcingorder', 'CRAFT', [self.print_craft])
+        listed = self.client.get('/api/v1/unified-outsourcing-orders/', {'warehouse_stage': 'all'})
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual({row['id'] for row in listed.data['data']}, {row['id'] for row in orders})
+        self.assertTrue(all(row['warehouse_actions'] == ['dispatch'] for row in listed.data['data']))
+        for order in orders:
+            detail = self.client.get(BASE + order['id'] + '/', {'warehouse_stage': 'all'})
+            self.assertEqual(detail.status_code, 200, detail.data)
+            self.assertTrue(detail.data['data']['permissions']['can_dispatch'])
+            self.assertEqual(self.act(order, 'dispatch').data['data']['status'], 'PROCESSING')
+        self.assertFalse(PublicStockMovement.objects.filter(source_id=orders[0]['id'], direction='OUT').exists())
+        self.assertTrue(PublicStockMovement.objects.filter(source_id=orders[1]['id'], direction='OUT').exists())
+
     def test_options_filter_crafts_and_require_explicit_cutting_craft(self):
         response = self.client.get(BASE + 'options/', {'category': 'cutting'})
         self.assertEqual(response.status_code, 200, response.data)

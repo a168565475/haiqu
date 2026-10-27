@@ -26,6 +26,8 @@ const permissionMenus: Record<string, string> = {
   'outsourcing.confirm_dispatch_outsourcingorder': 'warehouse-management',
   'outsourcing.confirm_return_outsourcingorder': 'warehouse-management',
   'outsourcing.return_raw_outsourcingorder': 'warehouse-management',
+  'material_issues.create_metalprocessingoriginalhandoff': 'warehouse-management',
+  'material_issues.confirm_metalprocessingexternalhandoff': 'warehouse-management',
   'material_issues.confirm_metalprocessingexternalreturn': 'warehouse-management',
   'access_control.confirm_purchasereturn': 'procurement-management',
   'access_control.complete_purchasereturn': 'procurement-management',

@@ -30,7 +30,8 @@ const canRemoveOrder = computed(() => Boolean(detail.value && !detail.value.dire
   && (warehouseWorkspace.value ? !detail.value.can_delete && detail.value.can_revoke_dispatched : detail.value.can_delete)))
 const canViewRegular = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.view_outsourcingorder')))
 const canViewMetal = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('material_issues.view_metalprocessingsource')
-  || (warehouseWorkspace.value && auth.hasPermission('outsourcing.confirm_return_outsourcingorder'))))
+  || (warehouseWorkspace.value && (auth.hasPermission('outsourcing.confirm_return_outsourcingorder')
+    || auth.hasPermission('material_issues.create_metalprocessingoriginalhandoff')))))
 const metalProjectionOnly = computed(() => canViewMetal.value && (warehouseWorkspace.value
   ? route.query?.view === 'metal' : !canViewRegular.value || route.query?.view === 'metal'))
 const detail = ref<OutsourcingOrderDetail | null>(null)

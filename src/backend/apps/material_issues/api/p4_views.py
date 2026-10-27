@@ -11,7 +11,8 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.outsourcing.selectors import accessible_outsourcing_orders
 from apps.outsourcing.models import OutsourcingOrder
 from apps.outsourcing.warehouse_access import (
-    REWORK_RETURN_PERMISSION, RETURN_PERMISSION, WarehouseActionReadPermission,
+    ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION,
+    RETURN_PERMISSION, WarehouseActionReadPermission,
     warehouse_original_handoffs, warehouse_rework_orders, warehouse_stage,
 )
 
@@ -42,7 +43,7 @@ class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
     serializer_class = P4RecordResponseSerializer
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
     warehouse_read_actions = {'retrieve'}
-    warehouse_read_permissions = (RETURN_PERMISSION,)
+    warehouse_read_permissions = (ORIGINAL_HANDOFF_PERMISSION, RETURN_PERMISSION)
     action_permission_map = {
         "retrieve": "material_issues.view_metalprocessingsource",
         "returns": "material_issues.register_metalprocessingunsprayedreturn",
@@ -67,8 +68,11 @@ class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         handoff = get_object_or_404(self.get_queryset(), pk=pk)
         from ..processing_selectors import frozen_source, source_etag
-        permission = RETURN_PERMISSION if warehouse_stage(request) else None
-        line = get_object_or_404(processing_lines(request, permission=permission), pk=handoff.source.issue_line_id)
+        if warehouse_stage(request):
+            lines = processing_lines(request, permission=RETURN_PERMISSION) | processing_lines(request, permission=ORIGINAL_HANDOFF_PERMISSION)
+        else:
+            lines = processing_lines(request)
+        line = get_object_or_404(lines, pk=handoff.source.issue_line_id)
         return Response({"data": {
             "id": str(handoff.pk), "source_id": str(handoff.source_id),
             "original_order_id": str(handoff.original_order_id), "original_order_number": handoff.original_order.order_number,
@@ -115,7 +119,7 @@ class MetalProcessingOriginalOrderViewSet(viewsets.GenericViewSet):
     queryset = OutsourcingOrder.objects.none()
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
     warehouse_read_actions = {'retrieve'}
-    warehouse_read_permissions = (RETURN_PERMISSION,)
+    warehouse_read_permissions = (ORIGINAL_HANDOFF_PERMISSION, RETURN_PERMISSION)
     action_permission_map = {
         "retrieve": "material_issues.view_metalprocessingsource",
         "close": "outsourcing.complete_outsourcingorder",
@@ -221,7 +225,7 @@ class MetalProcessingExternalOrderViewSet(viewsets.GenericViewSet):
     serializer_class = P4OrderResponseSerializer
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
     warehouse_read_actions = {'retrieve', 'semi_stock'}
-    warehouse_read_permissions = (REWORK_RETURN_PERMISSION,)
+    warehouse_read_permissions = (REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION)
     action_permission_map = {
         "list": "material_issues.view_metalprocessingsource",
         "retrieve": "material_issues.view_metalprocessingsource",

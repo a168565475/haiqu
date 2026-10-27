@@ -5,6 +5,7 @@ from apps.inventory.public_stock_cutover import stock_write_transaction
 from decimal import Decimal
 
 from django.db import connection, transaction
+from django.db.models import Q
 from django.db.migrations.recorder import MigrationRecorder
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -43,11 +44,14 @@ def original_order_for_request(request, order_id, *, lock=False, permission=None
     from .p4_services import p4_schema_ready
     if not p4_schema_ready():
         raise Conflict("管材直接交接数据库升级尚未完成，暂不能读取或操作原单收尾。")
-    from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_original_handoffs
+    from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_original_handoffs, warehouse_original_dispatch_orders
     warehouse_read = not lock and permission is None and request.method == 'GET' and warehouse_stage(request)
-    if warehouse_read:
-        permission = 'outsourcing.confirm_return_outsourcingorder'
     queryset = accessible_outsourcing_orders(request, permission=permission or current_permission(request, "material_issues.view_metalprocessingsource"))
+    if warehouse_read:
+        from apps.outsourcing.models import OutsourcingOrder
+        queryset = OutsourcingOrder.objects.filter(
+            Q(pk__in=warehouse_original_dispatch_orders(request).values('pk'))
+            | Q(pk__in=warehouse_original_handoffs(request).values('original_order_id')))
     if lock:
         queryset = queryset.select_for_update(of=("self",))
     order = get_object_or_404(queryset.select_related("schedule", "craft"), pk=order_id)
@@ -152,6 +156,7 @@ def _post_closure_returns(order, closure, parts):
 
 def original_order_context(order, request=None):
     parts, totals, structural_blockers = _order_quantities(order)
+    has_handoffs = MetalProcessingOriginalHandoff.objects.filter(original_order=order).exists()
     closure = original_closure_data(order)
     blockers = list(structural_blockers)
     schema_ready = original_closure_schema_ready()
@@ -170,6 +175,13 @@ def original_order_context(order, request=None):
     can_cancel = (schema_ready and not structural_blockers and totals["handoff_pieces"] > 0
                   and order.status in OPEN_STATUSES and request is not None
                   and can_order(request, "outsourcing.change_outsourcingorder", order))
+    can_handoff = (not structural_blockers and totals["pending_handoff_pieces"] > 0
+                   and order.status in OPEN_STATUSES and request is not None
+                   and can_order(request, "material_issues.create_metalprocessingoriginalhandoff", order))
+    if can_handoff:
+        from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_original_dispatch_orders
+        if warehouse_stage(request):
+            can_handoff = warehouse_original_dispatch_orders(request).filter(pk=order.pk).exists()
     for part in parts:
         part["can_cancel_pending"] = bool(can_cancel and part["pending_handoff_pieces"] > 0)
     pending_cancellations = []
@@ -182,7 +194,8 @@ def original_order_context(order, request=None):
     return {"original_order_id": str(order.pk), "original_order_number": order.order_number,
         "original_order_status": order.status, "etag": '"' + digest({"order_id": str(order.pk), "version": order.version, "status": order.status,
             "parts": [{key: value for key, value in row.items() if key != "can_cancel_pending"} for row in parts]}) + '"',
-        "parts": parts, "totals": totals, "schema_ready": schema_ready, "can_close": not blockers, "blockers": blockers,
+        "parts": parts, "totals": totals, "schema_ready": schema_ready, "can_close": not blockers,
+        "can_handoff": bool(can_handoff), "has_handoffs": has_handoffs, "blockers": blockers,
         "closure": closure, "pending_cancellations": pending_cancellations,
         "post_closure_returns": _post_closure_returns(order, closure, parts)}
 

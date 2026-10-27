@@ -39,6 +39,15 @@ beforeEach(() => { route.meta.outsourcingWorkspace = 'workshop'; vi.resetAllMock
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('原外发详情的直接交接展示及保护', () => {
+  it('仓库仅有旧金工交接权限时可进入已有交接单的操作投影', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
+    route.query = { view: 'metal' }
+    auth.permissions = new Set(['material_issues.create_metalprocessingoriginalhandoff'])
+    const wrapper = await createView()
+    expect(api.fetch).not.toHaveBeenCalled()
+    expect(wrapper.find('metal-processing-p4-view-stub').attributes('originalorderid')).toBe('order-1')
+    expect(wrapper.find('outsourcing-flow-actions-stub').exists()).toBe(false)
+  })
   it('仓库仅有入库权限查看普通原料单仍读取普通详情，不误入金工投影', async () => {
     route.meta.outsourcingWorkspace = 'warehouse'
     auth.permissions = new Set(['outsourcing.confirm_return_outsourcingorder'])

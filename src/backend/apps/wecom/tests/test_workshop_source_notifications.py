@@ -95,11 +95,11 @@ class TubeCreationNotificationTests(TestCase):
         target_response = client.get(reverse("notification-target", kwargs={"recipient_id": event.recipients.get().pk}))
         self.assertEqual(target_response.status_code, 404, target_response.data)
 
-    def test_direct_metal_notifies_only_metal_and_blocks_stock_dispatch(self):
+    def test_direct_metal_uses_warehouse_page_and_preserves_dispatch_resource_scope(self):
         response = self.f.post_order(self.f.order_payload("METAL"))
         event = NotificationEvent.objects.get(event_code="TUBE_OUTSOURCING_ORDER_CREATED")
         self.assertEqual(event.recipients.get().employee_id, self.metal.pk)
-        self.assertEqual(event.target["route_name"], "workshop-outsourcing-tube-detail")
+        self.assertEqual(event.target["route_name"], "warehouse-outsourcing-tube-detail")
         self.assertEqual(event.target["params"], {"id": response.data["data"]["id"]})
         self.assertTrue(recipient_payload(event.recipients.get(), self.metal.user)["target_accessible"])
         client = APIClient()
@@ -111,10 +111,10 @@ class TubeCreationNotificationTests(TestCase):
         self.assertEqual(result.status_code, 404, result.data)
         self.assertIn("error", result.data)  # 来自真实动作的对象范围拒绝，不是访问了不存在的URL。
 
-    def test_old_target_resolves_current_source_without_rewriting_notification(self):
-        for source, member, route_name in (
-            ("RAW_PIPE", self.warehouse, "warehouse-outsourcing-tube-detail"),
-            ("METAL", self.metal, "workshop-outsourcing-tube-detail"),
+    def test_old_target_resolves_warehouse_page_without_rewriting_notification(self):
+        for source, member in (
+            ("RAW_PIPE", self.warehouse),
+            ("METAL", self.metal),
         ):
             with self.subTest(source=source):
                 created = self.f.post_order(self.f.order_payload(source))
@@ -127,7 +127,7 @@ class TubeCreationNotificationTests(TestCase):
                 client.force_authenticate(member.user)
                 result = client.get(reverse("notification-target", kwargs={"recipient_id": event.recipients.get().pk}))
                 self.assertEqual(result.status_code, 200, result.data)
-                self.assertEqual(result.data["data"]["target"]["route_name"], route_name)
+                self.assertEqual(result.data["data"]["target"]["route_name"], "warehouse-outsourcing-tube-detail")
                 self.assertEqual(result.data["data"]["target"]["params"], {"id": order_id})
                 event.refresh_from_db()
                 self.assertEqual(event.target, old_target)
@@ -142,6 +142,36 @@ class TubeCreationNotificationTests(TestCase):
                 raise RuntimeError("rollback")
         self.assertFalse(TubeOutsourcingOrder.objects.exists())
         self.assertEqual(NotificationEvent.objects.count(), before)
+
+
+@override_settings(**SETTINGS, TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
+class SewingCreationNotificationTests(TestCase):
+    def test_sewing_creation_and_old_notification_target_use_warehouse_page(self):
+        from apps.outsourcing.tests.test_cutting_tube_orders import CuttingTubeOrdersTests
+
+        fixture = CuttingTubeOrdersTests()
+        fixture.setUp()
+        fixture.report()
+        member, role = receiver("U07_SEWING_DISPATCH", "outsourcing.confirm_dispatch_outsourcingorder",
+            workshop=fixture.sewing_workshop)
+        create_rule("TUBE_OUTSOURCING_ORDER_CREATED", fixture.employee, [role.role_code])
+        response = fixture.create(fixture.payload())
+        order_id = response.data["data"]["id"]
+        event = NotificationEvent.objects.get(event_code="TUBE_OUTSOURCING_ORDER_CREATED", object_id=order_id)
+        self.assertEqual(event.target["route_name"], "warehouse-outsourcing-tube-detail")
+        self.assertEqual(event.target["params"], {"id": order_id})
+        self.assertEqual(event.recipients.get().employee_id, member.pk)
+        old_target = {**event.target, "route_name": "workshop-outsourcing-tube-detail", "params": {"orderId": order_id}}
+        event.target = old_target
+        event.save(update_fields=["target"])
+        client = APIClient()
+        client.force_authenticate(member.user)
+        result = client.get(reverse("notification-target", kwargs={"recipient_id": event.recipients.get().pk}))
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["data"]["target"]["route_name"], "warehouse-outsourcing-tube-detail")
+        self.assertEqual(result.data["data"]["target"]["params"], {"id": order_id})
+        event.refresh_from_db()
+        self.assertEqual(event.target, old_target)
 
 
 @override_settings(**SETTINGS)

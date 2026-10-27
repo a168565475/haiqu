@@ -97,15 +97,32 @@ describe('统一外发列表及来源入口', () => {
     expect(api.list).toHaveBeenCalledWith(expect.objectContaining({ warehouse_stage: 'all' }))
     expect(api.options).toHaveBeenCalledWith(true)
     const buttons = wrapper.findAll('.el-table__body-wrapper button')
-    expect(buttons.some(button => button.text() === '发料')).toBe(false)
-    await buttons.find(button => button.text() === '入库')!.trigger('click')
+    expect(buttons.some(button => ['发料', '入库', '详情'].includes(button.text()))).toBe(false)
+    await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
+    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '回货入库')).toBe(true))
+    const menuItems = [...document.querySelectorAll('.el-dropdown-menu__item')]
+    expect(menuItems.filter(item => item.textContent?.trim() === '查看详情')).toHaveLength(1)
+    expect(menuItems.some(item => item.textContent?.trim() === '确认外发')).toBe(false)
+    menuItems.find(item => item.textContent?.trim() === '回货入库')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
     expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/tube/order-1/return')
     await (wrapper.vm as any).openWarehouseAction({ ...row, warehouse_actions: [] }, 'dispatch')
     expect(api.push).toHaveBeenCalledTimes(1)
-    expect(buttons.filter(button => button.text() === '详情')).toHaveLength(1)
+  })
+
+  it.each(['material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff'])('仅%s权限也能从仓库更多菜单办理外发', async permission => {
+    route.meta = { outsourcingWorkspace: 'warehouse' }
+    permissions.superuser = false
+    permissions.values = [permission]
+    const wrapper = await createView({ ...row, record_type: 'REWORK', detail_access: 'METAL', warehouse_actions: ['dispatch'], can_revoke_dispatched: false } as typeof row)
+    expect(api.list).toHaveBeenCalledOnce()
     await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="WW-001 加工单打印"]')).not.toBeNull())
-    expect(document.querySelector('.el-dropdown-menu')?.textContent).not.toContain('查看详情')
+    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '确认外发')).toBe(true))
+    document.querySelectorAll('.el-dropdown-menu__item').forEach(item => {
+      if (item.textContent?.trim() === '确认外发') item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushPromises()
+    expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/rework/order-1?action=dispatch')
   })
 
   it('仓库发料及普通回货按钮进入相应办理表单，原车间列表隐藏退料', async () => {

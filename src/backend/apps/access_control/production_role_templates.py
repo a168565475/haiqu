@@ -4,7 +4,7 @@ from .catalog import PERMISSION_CODES, scopes_for
 PENDING = {
     'MERCHANDISER': '职责待确认：建议确认仅生产进度读取还是参与计划，不推定销售职责。',
     'PMC': '职责待确认：建议确认计划只读/调整；生产确认已明确由行政办理。',
-    'OUTSOURCING': '职责待确认：建议明确制单、对账、完结及工艺范围，发料按来源分工。',
+    'OUTSOURCING': '职责待确认：建议明确制单、对账、完结及工艺范围，已建单发料和入库由仓库办理。',
     'COATING_MATERIALS': '职责待确认：建议明确喷塑收发对应旧交接或新库存来源，不直接扩大库存写权。',
     'SALESPERSON': '明确暂不启用：销售业务本期不开通。',
     'ACCOUNT_MANAGER': '明确暂不启用：销售业务本期不开通。',
@@ -65,9 +65,11 @@ def templates(workshops):
         'material_issues.view_materialissue', 'material_issues.review_materialissue',
         'samples.view_samplerequest', 'samples.review_sample_materials',
         'samples.view_sampleinventoryline', 'samples.add_sampleinventoryreceipt',
-        'outsourcing.confirm_return_outsourcingorder')
+        'outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder',
+        'material_issues.create_metalprocessingoriginalhandoff',
+        'material_issues.confirm_metalprocessingexternalhandoff', 'material_issues.confirm_metalprocessingexternalreturn')
     result['WAREHOUSE_KEEPER'] += [{'permission': code, 'scope': 'STOCK'} for code in (
-        'outsourcing.view_outsourcingorder', 'outsourcing.confirm_dispatch_outsourcingorder')]
+        'outsourcing.view_outsourcingorder',)]
     for role, workshop in DIRECTORS.items():
         ids = [str(workshops[workshop])]
         result[role] = [{'permission': code, 'scope': 'WORKSHOP', 'resource_ids': ids} for code in (
@@ -84,7 +86,7 @@ def templates(workshops):
                                        'inventory.delete_finishedgoodsreceipt')
         if role != 'ASSEMBLY_DIRECTOR':
             result[role] += [{'permission': code, 'scope': 'WORKSHOP', 'resource_ids': ids} for code in (
-                'outsourcing.view_outsourcingorder', 'outsourcing.confirm_dispatch_outsourcingorder')]
+                'outsourcing.view_outsourcingorder',)]
     for role, parameter, report in (
         ('METAL_SAMPLING', 'metalwork', 'metalreport'), ('FABRIC_SAMPLING', 'cutting', 'cuttingreport'),
     ):

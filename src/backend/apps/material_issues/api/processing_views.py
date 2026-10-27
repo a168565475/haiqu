@@ -1,5 +1,5 @@
-from apps.access_control.resource_scopes import filter_crafts, enabled, require_order_craft
-from django.db.models import Q
+from apps.access_control.resource_scopes import can_order, filter_crafts, enabled, require_order_craft
+from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import viewsets
@@ -10,7 +10,8 @@ from apps.organizations.selectors import active_department_employees
 from apps.core.api.permissions import HasActiveEmployee
 from apps.outsourcing.warehouse_access import (
     WarehouseActionReadPermission, warehouse_stage, warehouse_original_handoffs,
-    warehouse_rework_orders, warehouse_crafts,
+    warehouse_rework_orders, warehouse_crafts, warehouse_original_dispatch_orders,
+    ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION,
 )
 
 from ..processing_selectors import processing_lines, readable_processing_lines, source_data
@@ -34,7 +35,8 @@ WRITE_RESPONSES = {200: ProcessingSourceResponseSerializer, **{
 class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
     warehouse_read_actions = ('list', 'retrieve', 'options')
-    warehouse_read_permissions = ('outsourcing.confirm_return_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn')
+    warehouse_read_permissions = ('outsourcing.confirm_return_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn',
+                                  ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION)
     serializer_class = ProcessingSourceReadSerializer
     lookup_value_regex = "[0-9a-fA-F-]{36}"
     action_permission_map = {
@@ -89,7 +91,23 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
             else:
                 queryset = queryset.filter(**{f"issue__{key}" if key != "issue_id" else key: value})
         page = self.paginate_queryset(queryset)
-        return self.get_paginated_response([source_data(line) for line in page])
+        handoff_ids = set(processing_lines(request, permission=ORIGINAL_HANDOFF_PERMISSION).filter(
+            pk__in=[line.pk for line in page]).values_list('pk', flat=True)) if request.user.has_perm(ORIGINAL_HANDOFF_PERMISSION) else set()
+        from ..models import MetalProcessingOriginalHandoff
+        from apps.outsourcing.selectors import accessible_outsourcing_orders
+        related_orders = {}
+        for source_line_id, order_id in MetalProcessingOriginalHandoff.objects.filter(
+            source__issue_line_id__in=handoff_ids,
+            original_order__in=accessible_outsourcing_orders(request, permission=ORIGINAL_HANDOFF_PERMISSION),
+        ).values_list('source__issue_line_id', 'original_order_id').distinct():
+            related_orders.setdefault(source_line_id, []).append(str(order_id))
+        rows = []
+        for line in page:
+            data = source_data(line)
+            data['can_handoff'] = bool(line.pk in handoff_ids and data.get('status') == 'OPEN' and data.get('available_pieces', 0) > 0)
+            data['original_handoff_order_ids'] = related_orders.get(line.pk, [])
+            rows.append(data)
+        return self.get_paginated_response(rows)
 
     @staticmethod
     def response(data):
@@ -124,8 +142,10 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
         receivers = active_department_employees("DEPT_WAREHOUSE")
         orders = accessible_outsourcing_orders(request).filter(craft__in=crafts).exclude(status="CANCELLED")
         if warehouse_stage(request):
-            # 仓库仅使用回货库区和收货人，不提供车间新建外发的候选原单。
-            orders = orders.none()
+            # 仓库只办理已保存交接关系的原单，不提供首次选择来源的候选。
+            orders = warehouse_original_dispatch_orders(request).filter(craft__in=crafts).exclude(status__in=['CLOSED', 'COMPLETED', 'CANCELLED'])
+        from ..models import MetalProcessingOriginalHandoff
+        orders = orders.annotate(has_handoffs=Exists(MetalProcessingOriginalHandoff.objects.filter(original_order_id=OuterRef('pk'))))
         return Response({"data": {
             "crafts": [{"id": str(row.pk), "name": row.name, "outsourcing_code": row.outsourcing_code} for row in crafts],
             "factories": [{"id": str(row.pk), "name": row.name, "crafts": [
@@ -133,7 +153,9 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
             ]} for row in factories],
             "semi_finished_zones": [{"id": str(row.pk), "name": f"{row.warehouse.warehouse_name} / {row.zone_name}"} for row in zones],
             "receivers": [{"id": str(row.pk), "name": row.display_name, "employee_code": row.employee_code} for row in receivers],
-            "original_orders": [{"id": str(row.pk), "order_number": row.order_number} for row in orders.order_by("-created_at", "id")],
+            "original_orders": [{"id": str(row.pk), "order_number": row.order_number, "has_handoffs": row.has_handoffs,
+                "can_handoff": bool(can_order(request, ORIGINAL_HANDOFF_PERMISSION, row)
+                    and row.status in {'PENDING_DISPATCH', 'PROCESSING', 'PARTIAL_RETURN'})} for row in orders.order_by("-created_at", "id")],
             "statuses": [], "defective_zones": [], "bom_confirmation_rule": "LATEST_VERIFIED",
             "material_overage_rule": "SHARED_CONFIRMED_ALLOWANCE",
         }})

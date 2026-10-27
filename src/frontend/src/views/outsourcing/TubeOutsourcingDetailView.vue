@@ -54,7 +54,7 @@ const materialRows = computed(() => detail.value?.materials || [])
 const actorName = computed(() => auth.user?.employee?.display_name || auth.user?.display_name || auth.user?.username || '—')
 const locked = computed(() => loading.value || saving.value || Boolean(pending.value) || storageError.value || !showDetails.value)
 const hasLines = computed(() => rows.value.length > 0 && Number(detail.value?.total_quantity) > 0)
-const dispatchWorkspace = computed(() => Boolean(source.value) && warehouseWorkspace.value !== direct.value)
+const dispatchWorkspace = computed(() => Boolean(source.value) && warehouseWorkspace.value)
 const canDispatch = computed(() => dispatchWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_dispatch === true)
 const canCancel = computed(() => !warehouseWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_cancel === true)
 const canCreate = computed(() => !warehouseWorkspace.value && Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.add_outsourcingorder')))
@@ -221,7 +221,7 @@ async function recoverPending(allowRetry = false) {
         }
         if (!allowRetry) { warn('原请求尚未登记。请点击“核对本次提交”，使用原请求编号继续核对。'); return }
         const allowed = action.kind === 'DISPATCH'
-          ? warehouseWorkspace.value !== isDirectSource(current.source_kind) && current.permissions.can_dispatch
+          ? warehouseWorkspace.value && current.permissions.can_dispatch
           : !warehouseWorkspace.value && current.permissions.can_cancel
         if (current.id !== action.order_id || current.status !== 'PENDING_DISPATCH' || current.etag !== action.etag || !allowed) {
           if (!disposed) warn('原请求尚未登记，但原单状态、版本或操作权限已变化，不能自动重试。请继续核对原请求。')

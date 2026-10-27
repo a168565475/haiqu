@@ -522,6 +522,13 @@ def _source_result(source, line, request=None):
         handoffs = handoffs.filter(pk__in=warehouse_original_handoffs(request)) if warehouse_stage(request) else scoped_records(handoffs, request, "material_issues.view_metalprocessingsource", "original_order__craft_id")
     line.processing_source = source
     result = source_data(line, detail=True)
+    result["can_handoff"] = bool(request is not None
+        and request.user.has_perm("material_issues.create_metalprocessingoriginalhandoff")
+        and result.get("status") == "OPEN" and result.get("available_pieces", 0) > 0
+        and processing_lines(request, permission="material_issues.create_metalprocessingoriginalhandoff").filter(pk=line.pk).exists())
+    result["original_handoff_order_ids"] = [str(value) for value in source.original_handoffs.filter(
+        original_order__in=accessible_outsourcing_orders(request, permission="material_issues.create_metalprocessingoriginalhandoff")
+    ).values_list("original_order_id", flat=True).distinct()] if result["can_handoff"] else []
     result["original_handoffs"] = [
         {
             "id": str(row.pk), "original_order_id": str(row.original_order_id),
@@ -587,6 +594,8 @@ def _order_result(order, request=None):
         "handoff_pieces": order.handoff_pieces, "returned_good_pieces": order.returned_good_pieces,
         "remaining_return_pieces": order.handoff_pieces - order.returned_good_pieces,
         "status": order.status, "version": order.version, "etag": _p4_order_etag(order),
+        "can_handoff": bool(order.status == MetalProcessingExternalOrderStatus.PENDING_HANDOFF
+                            and can_record(request, "material_issues.confirm_metalprocessingexternalhandoff", "external", order.pk)),
         "allocation_context": _allocation_context(order, request),
         "allocation_history": [
             {"id": str(row.pk), "before_pieces": row.before_data["allocated_pieces"],
@@ -675,8 +684,9 @@ def create_original_handoff(*, request, issue_line_id, request_id, original_orde
             requested={str(line.requirement.component_identity): handoff_pieces},
             expected_revision=basis['revision'],
         )
+    visible_order_ids = accessible_outsourcing_orders(request).values('pk')
     original_order = get_object_or_404(
-        accessible_outsourcing_orders(request).select_for_update(of=("self",)).select_related("schedule", "craft"),
+        OutsourcingOrder.objects.filter(pk__in=visible_order_ids).select_for_update(of=("self",)).select_related("schedule", "craft"),
         pk=original_order_id,
     )
     if original_order.status in {OutsourcingOrderStatus.CLOSED, OutsourcingOrderStatus.COMPLETED, OutsourcingOrderStatus.CANCELLED}:

@@ -1,5 +1,5 @@
 """仓库委外读取按实际操作授权取并集，不借查看权限扩大操作范围。"""
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from rest_framework import serializers
 
 from apps.access_control import module_policy
@@ -10,13 +10,15 @@ from apps.material_issues.p4_access import scoped_records
 
 from .models import OutsourcingOrder, TubeOutsourcingOrder
 from .selectors import accessible_outsourcing_orders
-from .source_access import STOCK_SOURCES
 from .tube_selectors import DISPATCH_PERMISSION, RETURN_PERMISSION, saved_orders_for_permission
 
 
 RAW_RETURN_PERMISSION = 'outsourcing.return_raw_outsourcingorder'
 REWORK_RETURN_PERMISSION = 'material_issues.confirm_metalprocessingexternalreturn'
-WAREHOUSE_PERMISSIONS = (DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION, REWORK_RETURN_PERMISSION)
+ORIGINAL_HANDOFF_PERMISSION = 'material_issues.create_metalprocessingoriginalhandoff'
+REWORK_HANDOFF_PERMISSION = 'material_issues.confirm_metalprocessingexternalhandoff'
+WAREHOUSE_PERMISSIONS = (DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION,
+                         ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION)
 
 
 def warehouse_stage(request):
@@ -52,16 +54,33 @@ def warehouse_regular_orders(request, permission=None):
 
 def warehouse_original_handoffs(request):
     queryset = MetalProcessingOriginalHandoff.objects.all()
-    if not module_policy.has_permission(request, RETURN_PERMISSION):
-        return queryset.none()
-    return scoped_records(queryset, request, RETURN_PERMISSION, 'original_order__craft_id')
+    allowed = Q(pk__in=[])
+    for permission in (ORIGINAL_HANDOFF_PERMISSION, RETURN_PERMISSION):
+        if module_policy.has_permission(request, permission):
+            scoped = scoped_records(queryset, request, permission, 'original_order__craft_id')
+            allowed |= Q(pk__in=scoped.values('pk'))
+    return queryset.filter(allowed)
 
 
-def warehouse_rework_orders(request):
+def warehouse_original_dispatch_orders(request):
+    """只使用已保存的原单交接关系；首次选择来源仍由车间建立。"""
+    if not module_policy.has_permission(request, ORIGINAL_HANDOFF_PERMISSION):
+        return OutsourcingOrder.objects.none()
+    handoffs = scoped_records(MetalProcessingOriginalHandoff.objects.all(), request,
+                             ORIGINAL_HANDOFF_PERMISSION, 'original_order__craft_id')
+    outside_scope = MetalProcessingOriginalHandoff.objects.filter(original_order_id=OuterRef('pk')).exclude(
+        pk__in=warehouse_original_handoffs(request).values('pk'))
+    # 列表操作和原单详情使用同一整单读取边界，不能只看到一条来源就给整单交接入口。
+    return OutsourcingOrder.objects.filter(pk__in=handoffs.values('original_order_id')).filter(~Exists(outside_scope))
+
+
+def warehouse_rework_orders(request, permission=None):
     queryset = MetalProcessingExternalOrder.objects.all()
-    if not module_policy.has_permission(request, REWORK_RETURN_PERMISSION):
-        return queryset.none()
-    return scoped_records(queryset, request, REWORK_RETURN_PERMISSION)
+    allowed = Q(pk__in=[])
+    for code in (permission,) if permission else (REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION):
+        if module_policy.has_permission(request, code):
+            allowed |= Q(pk__in=scoped_records(queryset, request, code).values('pk'))
+    return queryset.filter(allowed)
 
 
 def warehouse_tube_orders(request, permission=None):
@@ -70,8 +89,6 @@ def warehouse_tube_orders(request, permission=None):
     for code in permissions:
         if module_policy.has_permission(request, code):
             scoped = saved_orders_for_permission(request, code)
-            if code == DISPATCH_PERMISSION:
-                scoped = scoped.filter(source_kind__in=STOCK_SOURCES)
             allowed |= Q(pk__in=scoped.values('pk'))
     return TubeOutsourcingOrder.objects.filter(allowed)
 
@@ -81,7 +98,7 @@ def warehouse_crafts(request, crafts):
     for code in WAREHOUSE_PERMISSIONS:
         if module_policy.has_permission(request, code):
             scoped = filter_crafts(crafts, request, code, 'pk')
-            if code == REWORK_RETURN_PERMISSION:
+            if code in (ORIGINAL_HANDOFF_PERMISSION, REWORK_HANDOFF_PERMISSION, REWORK_RETURN_PERMISSION):
                 scoped = scoped.filter(outsourcing_code='POWDER_COATING')
             allowed |= Q(pk__in=scoped.values('pk'))
     return crafts.filter(allowed)

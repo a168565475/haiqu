@@ -70,6 +70,8 @@ class ProcessingSourceReadSerializer(serializers.Serializer):
     closure = serializers.JSONField(allow_null=True, required=False)
     operation_id = serializers.UUIDField(required=False)
     original_handoffs = serializers.ListField(child=serializers.JSONField(), required=False)
+    can_handoff = serializers.BooleanField(required=False)
+    original_handoff_order_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
 
 
 class ProcessingSourceResponseSerializer(serializers.Serializer):

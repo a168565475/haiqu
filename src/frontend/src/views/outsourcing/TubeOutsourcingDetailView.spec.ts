@@ -60,8 +60,9 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('管材外发详情与整单动作', () => {
-  it('车间不显示库存来源发料与入库，直接调用也不能发料', async () => {
+  it.each(['RAW_PIPE', 'PUBLIC_SEMI', 'METAL', 'PUBLIC_CUTTING', 'SEWING'] as const)('车间不办理%s来源的确认外发，直接调用也不能发料', async sourceKind => {
     routing.route.meta.outsourcingWorkspace = 'workshop'
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue({ ...structuredClone(base), source_kind: sourceKind })
     const { wrapper, vm } = await mountPage()
     expect(wrapper.findAll('button').some(button => button.text() === '确认实际发出')).toBe(false)
     await vm.submit('DISPATCH')
@@ -69,13 +70,25 @@ describe('管材外发详情与整单动作', () => {
     vm.detail!.status = 'PROCESSING'; await flushPromises()
     expect(wrapper.findAll('button').some(button => button.text() === '喷塑入库')).toBe(false)
   })
-  it('仓库不显示车间直接交接与取消操作，不能绕过方法提交', async () => {
-    const data = structuredClone(base); data.source_kind = 'METAL'
+  it.each(['RAW_PIPE', 'PUBLIC_SEMI', 'METAL', 'PUBLIC_CUTTING', 'SEWING'] as const)('仓库可以确认%s来源外发，但不能取消车间制单', async sourceKind => {
+    const data = structuredClone(base); data.source_kind = sourceKind
     vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
     const { wrapper, vm } = await mountPage()
-    expect(wrapper.findAll('button').some(button => ['确认实际发出', '取消外发单'].includes(button.text()))).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === '确认实际发出')).toBe(true)
+    expect(wrapper.findAll('button').some(button => button.text() === '取消外发单')).toBe(false)
     await vm.submit('DISPATCH'); await vm.submit('CANCEL')
-    expect(api.dispatchTubeOrder).not.toHaveBeenCalled(); expect(api.cancelTubeOrder).not.toHaveBeenCalled()
+    expect(api.dispatchTubeOrder).toHaveBeenCalledOnce(); expect(api.cancelTubeOrder).not.toHaveBeenCalled()
+  })
+  it.each(['METAL', 'SEWING'] as const)('仓库%s来源确认超时后沿用原请求核对重试', async sourceKind => {
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue({ ...structuredClone(base), source_kind: sourceKind })
+    const { vm } = await mountPage()
+    vi.mocked(api.dispatchTubeOrder).mockRejectedValueOnce(new AxiosError('超时'))
+    await vm.submit('DISPATCH')
+    const original = JSON.parse(JSON.stringify(vm.pending)) as TubePendingAction
+    await vm.recoverPending(true)
+    expect(api.dispatchTubeOrder).toHaveBeenCalledTimes(2)
+    expect(api.dispatchTubeOrder).toHaveBeenLastCalledWith('order-1', original.payload, original.etag)
+    expect(vm.pending).toBeNull()
   })
   it('仓库列表发料入口只打开确认弹窗，不自动写入', async () => {
     routing.route.query = { action: 'dispatch' }

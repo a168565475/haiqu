@@ -240,7 +240,7 @@ function returnActionLabel(row: PurchaseOrderListItem): string {
 function openReturns(row: PurchaseOrderListItem): void {
   if (!returnActionLabel(row)) return
   void router.push({
-    name: 'purchase-returns',
+    name: 'purchase-return-records',
     query: { purchase_order_id: row.id, from: 'orders' },
   })
 }

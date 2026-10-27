@@ -35,7 +35,7 @@ export interface ReportingContext {
 }
 export interface ReportingScheduleProduct {
     id: string; product_line_id: string; production_task_id: string; task_number: string; order_number: string
-    product_name: string; product_number: string; product_specification: string; product_color: string
+    product_name: string; product_number: string; product_code?: string; product_specification: string; product_color: string
     planned_quantity: string; order_quantity: string; unit_name: string
 }
 export interface PlanWageStatus {

@@ -133,6 +133,53 @@ class WorkshopConfigApiTests(APITestCase):
         self.assertEqual(response.data["data"]["product_name"], "")
         self.assertIsNone(response.data["data"]["reporting_unit"])
 
+    def test_operation_number_is_generated_when_omitted(self):
+        workshop = self.fixed_workshop("金工车间")
+        craft = Craft.objects.create(
+            craft_type=CraftType.INTERNAL,
+            workshop=workshop,
+            name="自动编号工艺",
+        )
+
+        response = self.client.post(
+            "/api/v1/workshop-config/operations/",
+            {
+                "craft": str(craft.pk),
+                "name": "自动编号工序",
+                "status": RecordStatus.ACTIVE,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        operation_number = response.data["data"]["operation_number"]
+        self.assertTrue(operation_number.startswith("OP-"))
+        self.assertEqual(Operation.objects.filter(operation_number=operation_number).count(), 1)
+
+    def test_operation_update_keeps_internal_number(self):
+        workshop = self.fixed_workshop("金工车间")
+        craft = Craft.objects.create(
+            craft_type=CraftType.INTERNAL,
+            workshop=workshop,
+            name="编号保持工艺",
+        )
+        operation = Operation.objects.create(
+            operation_number="OP-KEEP-001",
+            craft=craft,
+            name="原工序",
+        )
+        detail = self.client.get(f"/api/v1/workshop-config/operations/{operation.pk}/")
+
+        response = self.client.patch(
+            f"/api/v1/workshop-config/operations/{operation.pk}/",
+            {"name": "更新工序"},
+            format="json",
+            HTTP_IF_MATCH=detail["ETag"],
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["data"]["operation_number"], "OP-KEEP-001")
+
     def test_non_metal_workshop_cannot_skip_product_name_when_category_is_misconfigured(self):
         workshop = self.fixed_workshop("装配车间")
         invalid_craft = self.client.post(

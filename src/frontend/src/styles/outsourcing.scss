@@ -179,7 +179,6 @@ $brand-dark: var(--erp-color-brand-hover);
 
   .detail-heading { margin-bottom: 18px; }
   .detail-title { h1 { margin-left: 6px; } }
-  &.outsourcing-order-form-page { min-height: 0; background: transparent; }
 
   .detail-card {
     border: 1px solid $border;
@@ -196,41 +195,6 @@ $brand-dark: var(--erp-color-brand-hover);
   .factory-information-grid .craft-tag { margin-right: 5px; }
   .related-orders-card { padding-bottom: 0; h2 { margin: 0 0 20px 2px; } .embedded-pagination { margin: 0 -14px; } }
   .page-loading { padding: 28px; border: 1px solid $border; border-radius: 5px; background: $surface; }
-
-  .order-form-layout { display: grid; min-height: 0; grid-template-columns: 340px minmax(0, 1fr); gap: 14px; }
-  .form-card { @include detail.surface; padding: 16px; h2 { margin: 0; color: $text; font-size: 17px; font-weight: 600; } }
-  .source-card { min-height: 0; }
-  .source-fields { display: grid; gap: 18px; margin-top: 24px; }
-  .source-fields label { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 10px; > span { color: $text-secondary; } .el-select, .el-date-editor { width: 100%; } }
-  .source-fields .el-input.is-disabled .el-input__wrapper { background: var(--erp-color-disabled); box-shadow: 0 0 0 1px var(--erp-control-border) inset; }
-  .source-fields .el-input.is-disabled .el-input__inner { color: $text-regular; font-size: 13px; opacity: 1; -webkit-text-fill-color: $text-regular; }
-  .source-select-control { display: flex; width: 100%; height: 32px; align-items: center; justify-content: space-between; padding: 0 10px; border: 1px solid $border; border-radius: 4px; color: $text-regular; background: $surface; cursor: pointer; font: inherit; text-align: left; strong { overflow: hidden; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; } strong.is-placeholder { color: var(--erp-control-placeholder); } span { flex: none; margin-left: 8px; color: $brand; font-size: 12px; } &:hover, &:focus-visible { border-color: $brand; outline: none; } }
-  .source-rule-note { display: flex; align-items: flex-start; gap: 10px; margin-top: 24px; padding: 12px; @include detail.inset; p { margin: 2px 0 0; color: $text-secondary; font-size: 12px; line-height: 20px; } .craft-tag { min-width: 64px; } }
-  .order-form-content { display: grid; min-width: 0; align-content: start; grid-template-rows: 212px auto auto; gap: 14px; }
-  .product-info-card { min-height: 212px; }
-  .product-info-heading { display: flex; height: 24px; align-items: center; gap: 12px; > span { margin-left: auto; color: $text-secondary; font-size: 12px; } }
-  .selected-product-tabs { display: flex; min-width: 0; gap: 6px; overflow: auto; }
-  .selected-product-tabs button { height: 24px; padding: 0 10px; border: 1px solid $border; border-radius: 999px; color: $text-secondary; background: $surface; cursor: pointer; font-size: 12px; white-space: nowrap; &.is-active { border-color: $brand; color: var(--erp-color-text-inverse); background: $brand; } }
-  .selected-product-panel, .product-empty { display: grid; min-height: 152px; align-items: center; margin-top: 10px; }
-  .selected-product-panel { grid-template-columns: 158px minmax(0, 1fr); gap: 24px; }
-  .selected-product-panel dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 30px; margin: 0; }
-  .selected-product-panel dl > div { display: grid; height: 42px; grid-template-columns: 106px minmax(0, 1fr); align-items: center; }
-  .selected-product-panel dt { color: $text-secondary; }
-  .selected-product-panel dd { box-sizing: border-box; display: flex; height: 32px; align-items: center; overflow: hidden; margin: 0; padding: 0 12px; border: 1px solid $border; border-radius: 4px; background: $surface-muted; color: $text-regular; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-  .product-empty { justify-items: center; align-content: center; gap: 8px; color: $text-weak; }
-  .line-art-product { position: relative; width: 132px; height: 112px; border: 1px solid $border; border-radius: 5px; background: var(--erp-color-subtle); }
-  .line-art-product::before { position: absolute; top: 24px; left: 37px; width: 57px; height: 46px; border: 2px solid var(--erp-color-text-muted); border-radius: 4px 4px 10px 10px; content: ''; transform: skew(-5deg); }
-  .line-art-product i, .line-art-product b { position: absolute; top: 69px; width: 2px; height: 27px; background: var(--erp-color-text-muted); }
-  .line-art-product i { left: 43px; transform: rotate(12deg); }
-  .line-art-product b { right: 38px; transform: rotate(-12deg); }
-  .card-title-row { display: flex; height: 32px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-  .card-title-actions { display: flex; align-items: center; gap: 8px; }
-  .processing-card, .material-card { max-height: 350px; min-width: 0; overflow: hidden; }
-  .processing-card .el-table__empty-block, .material-card .el-table__empty-block { min-height: 116px; }
-  .processing-card .el-input-number, .processing-card .el-select { width: 100%; }
-  .material-card .cell small { display: block; margin-top: 2px; color: $text-secondary; }
-  .material-card .el-select, .material-card .el-input-number { width: 100%; }
-  .order-form-footer { display: flex; height: 68px; align-items: center; justify-content: space-between; margin-top: 14px; padding: 0 18px; @include detail.surface; > div { display: flex; align-items: center; gap: 14px; } strong { color: $brand; font-family: 'Noto Serif SC Variable', serif; font-size: 25px; font-weight: 600; } .el-button { min-width: 115px; } }
 
   .order-number-link { color: var(--erp-color-text-secondary); text-decoration: none; &:hover { color: $brand; } }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import {
@@ -58,7 +58,6 @@ const optionsLoading = ref(false)
 const errorMessage = ref('')
 const rows = ref<CustomerListItem[]>([])
 const total = ref(0)
-const totalReady = ref(false)
 const page = ref(1)
 const pageSize = ref(50)
 const ordering = ref<CustomerOrdering>('-updated_at')
@@ -68,9 +67,6 @@ const createDialogVisible = ref(false)
 const editDialogVisible = ref(false)
 const editingCustomerId = ref('')
 let latestRowsRequest = 0
-const trendGradientId = `customer-trend-${useId()}`
-// 仅用于装饰，不对应业务指标、周期或客户数据。
-const decorativeBarHeights = [22, 34, 29, 46, 40, 59, 52, 73, 63, 82, 76, 96]
 
 const filters = reactive<FilterForm>({
   q: '',
@@ -85,11 +81,6 @@ const canChangeCustomer = computed(() => authStore.hasPermission('customers.chan
 const canDeleteCustomer = computed(() => authStore.hasPermission('customers.delete_customeraccount'))
 
 const hasActiveFilters = computed(() => Object.values(appliedFilters).some((value) => value.trim()))
-const totalDisplay = computed(() => {
-  if (loading.value) return '加载中…'
-  if (errorMessage.value) return '加载失败'
-  return totalReady.value ? total.value.toLocaleString() : '加载中…'
-})
 
 function buildQuery(): CustomerListQuery {
   const query: CustomerListQuery = { page: page.value, page_size: pageSize.value, ordering: ordering.value }
@@ -121,7 +112,6 @@ async function loadRows() {
     if (requestId !== latestRowsRequest) return
     rows.value = result.data
     total.value = result.meta.total
-    totalReady.value = true
     if (page.value > result.meta.total_pages && result.meta.total_pages > 0) {
       page.value = result.meta.total_pages
       await loadRows()
@@ -129,7 +119,6 @@ async function loadRows() {
   } catch (error) {
     if (requestId !== latestRowsRequest) return
     rows.value = []
-    totalReady.value = false
     errorMessage.value = getErrorMessage(error)
   } finally {
     if (requestId === latestRowsRequest) loading.value = false
@@ -338,14 +327,13 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
 
 <template>
   <div
-    class="customer-list-page"
+    class="customer-list-page erp-glass-list"
     data-customer-list-page
     :style="{ '--customer-sort-icon': `url(${sortCustomerIcon})` }"
   >
-    <section v-glass-spotlight class="filter-panel" aria-label="筛选客户">
-      <div class="filter-content">
-      <CrmPageHeader title="客户列表" />
-      <form class="filter-grid" @submit.prevent="searchCustomers">
+    <section v-glass-spotlight class="erp-list-filter" aria-label="筛选客户">
+      <CrmPageHeader class="erp-list-heading" title="客户列表" />
+      <form class="erp-list-filters" @submit.prevent="searchCustomers">
         <ElInput
           v-model="filters.q"
           class="filter-control filter-control--search"
@@ -356,8 +344,8 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
           @clear="searchCustomers"
         >
           <template #suffix>
-            <button type="button" class="customer-search-button" aria-label="搜索客户" @click="searchCustomers">
-              <img class="field-icon" :src="searchIcon" alt="" aria-hidden="true" />
+            <button type="button" class="customer-search-button erp-list-search-button" aria-label="搜索客户" @click="searchCustomers">
+              <img :src="searchIcon" alt="" aria-hidden="true" />
             </button>
           </template>
         </ElInput>
@@ -396,38 +384,15 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
             <ElOption v-for="item in options?.country_options" :key="item.item_code" :label="`${item.display_name}（${item.item_code}）`" :value="item.item_code" />
         </ElSelect>
 
-        <div class="filter-actions">
+        <div class="erp-list-filter-actions">
           <ElButton class="erp-button-motion" data-reset-customer-filters @click="resetFilters">重置</ElButton>
           <ElButton class="erp-button-motion" type="primary" data-apply-customer-filters @click="searchCustomers">应用筛选</ElButton>
         </div>
       </form>
-      </div>
-      <aside class="customer-stat-card" data-customer-stat aria-label="当前筛选客户总数；右侧柱图为装饰示意，不代表真实趋势">
-        <div class="customer-stat-card__heading">
-          <span>客户总数</span>
-        </div>
-        <div class="customer-stat-card__body">
-          <div class="customer-stat-card__metric" aria-live="polite" :aria-busy="loading">
-            <div class="customer-stat-card__value" :class="{ 'is-status': loading || !totalReady }" data-customer-total>{{ totalDisplay }}</div>
-          </div>
-          <svg class="customer-stat-card__trend" viewBox="0 0 216 108" aria-hidden="true" focusable="false" preserveAspectRatio="none">
-            <defs>
-              <linearGradient :id="trendGradientId" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" class="customer-stat-card__gradient-start" />
-                <stop offset="100%" class="customer-stat-card__gradient-end" />
-              </linearGradient>
-            </defs>
-            <g v-for="(barHeight, index) in decorativeBarHeights" :key="index">
-              <rect class="customer-stat-card__track" :x="2 + index * 18" y="4" width="10" height="100" rx="4" />
-              <rect class="customer-stat-card__bar" :x="2 + index * 18" :y="104 - barHeight" width="10" :height="barHeight" rx="4" :fill="`url(#${trendGradientId})`" />
-            </g>
-          </svg>
-        </div>
-      </aside>
     </section>
 
-    <section class="data-surface is-dense" aria-label="客户数据列表">
-      <div class="customer-actions" data-customer-toolbar>
+    <section class="erp-list-data" aria-label="客户数据列表">
+      <div class="erp-list-toolbar" data-customer-toolbar>
         <ElButton class="filter-action filter-action--create erp-button-motion" type="primary" :icon="Plus" @click="openCustomerCreate">
           新建客户
         </ElButton>
@@ -442,7 +407,7 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
         <ElButton type="primary" :icon="Refresh" @click="loadRows">重新加载</ElButton>
       </div>
       <template v-else>
-        <div class="customer-table-frame">
+        <div class="erp-list-table-frame">
           <ElTable
             v-loading="loading"
             element-loading-text="正在加载客户数据…"
@@ -551,7 +516,7 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
             </template>
           </ElTable>
         </div>
-        <footer class="table-footer">
+        <footer class="erp-list-footer">
           <ElPagination
             v-model:current-page="page"
             v-model:page-size="pageSize"
@@ -575,7 +540,6 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/crm/mixins' as mixin;
 
-/* 客户页只负责已确认布局，绘色统一消费全局用途变量。 */
 .customer-list-page {
   display: flex;
   flex-direction: column;
@@ -593,27 +557,6 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   font-family: token.$crm-font-body;
 }
 
-.crm-page-header {
-  flex: none;
-  height: 44px;
-  margin: 0 0 12px;
-}
-
-.customer-list-page :deep(.crm-page-header h1) {
-  color: var(--erp-color-text-primary);
-  font-family: token.$crm-font-body;
-  // 客户卡片标题使用本轮确认的设计图字号，覆盖 PageContainer 的通用标题规则。
-  font-size: 36px !important;
-  line-height: 44px !important;
-  font-weight: 700;
-  letter-spacing: normal;
-}
-
-.customer-list-page :deep(.crm-page-header__title-row) {
-  align-items: baseline;
-  gap: 12px;
-}
-
 .customer-list-page :deep(.el-button) {
   height: 32px;
   min-height: 32px;
@@ -627,13 +570,22 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   gap: 8px;
 }
 
-.customer-actions {
-  display: flex;
+.filter-control {
+  height: 32px;
   flex: none;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 var(--erp-toolbar-table-gap);
-  padding-inline: var(--erp-toolbar-inline-padding);
+}
+
+.filter-control--search { width: min(250px, 100%); min-width: 0; }
+.filter-control--status { width: 128px; }
+.filter-control--grade { width: 120px; }
+.filter-control--country { width: 140px; }
+
+.customer-search-button {
+  @include mixin.reset-button;
+}
+
+.customer-search-button:focus-visible {
+  @include mixin.focus-ring;
 }
 
 .filter-action {
@@ -642,317 +594,48 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   padding: 0 8px;
 }
 
-.filter-action--export {
-  width: 76px;
-}
+.filter-action--export { width: 76px; }
+.filter-action--create { width: 112px; }
 
-.filter-action--create {
-  width: 112px;
-}
-
-.button-icon,
-.field-icon {
+.button-icon {
   display: block;
   width: 16px;
   height: 16px;
   flex: none;
 }
 
-.filter-panel {
-  display: flex;
-  align-items: stretch;
-  flex-wrap: wrap;
-  gap: 24px;
-  height: auto;
-  min-height: 32px;
-  flex: none;
-  margin: 0;
-  padding: var(--erp-filter-padding);
-}
-
-.filter-panel,
-.data-surface {
-  box-sizing: border-box;
-  border: 1px solid var(--erp-glass-border);
-  border-radius: var(--erp-glass-radius);
-  background: var(--erp-glass-surface);
-  box-shadow: var(--erp-glass-shadow);
-  -webkit-backdrop-filter: var(--erp-glass-backdrop);
-  backdrop-filter: var(--erp-glass-backdrop);
-}
-
-.filter-content {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1 1 450px;
-}
-
-.customer-stat-card {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 0 320px;
-  align-self: flex-end;
-  padding: 12px 16px;
-  border: 1px solid var(--erp-stat-border);
-  border-radius: var(--erp-glass-radius);
-  color: var(--erp-stat-text);
-  background: var(--erp-stat-background);
-  box-shadow: var(--erp-stat-shadow);
-}
-
-.customer-stat-card::before {
-  content: '';
-  position: absolute;
-  z-index: -1;
-  top: -96px;
-  left: 18px;
-  width: 290px;
-  height: 130px;
-  border-radius: 50%;
-  background: var(--erp-stat-glow);
-  filter: blur(43px);
-  opacity: var(--erp-stat-glow-opacity);
-  pointer-events: none;
-}
-
-.customer-stat-card__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.customer-stat-card__body { display: flex; align-items: flex-end; gap: 16px; }
-.customer-stat-card__metric {
-  min-width: 0;
-  flex: 0 1 auto;
-  max-width: 55%;
-  padding-right: 16px;
-  border-right: 1px solid var(--erp-stat-divider);
-}
-.customer-stat-card__value {
-  overflow-wrap: anywhere;
-  color: var(--erp-stat-text);
-  font-size: 48px;
-  font-weight: 600;
-  line-height: 52px;
-  letter-spacing: -1px;
-  font-variant-numeric: tabular-nums;
-}
-.customer-stat-card__value.is-status { font-size: 20px; letter-spacing: normal; }
-.customer-stat-card__trend { min-width: 0; height: 48px; flex: 1; overflow: visible; }
-.customer-stat-card__track { fill: var(--erp-stat-trend-track); }
-.customer-stat-card__bar { filter: drop-shadow(var(--erp-stat-trend-shadow)); }
-.customer-stat-card__gradient-start { stop-color: var(--erp-stat-trend-start); }
-.customer-stat-card__gradient-end { stop-color: var(--erp-stat-trend-end); }
-
-.filter-grid {
-  display: flex;
-  height: auto;
-  min-height: 32px;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 8px;
-  margin-top: auto;
-}
-
-.filter-control {
-  height: 32px;
-  flex: none;
-}
-
-.filter-control--search { width: min(250px, 100%); min-width: 0; flex: none; }
-.filter-control--status { width: 128px; }
-.filter-control--grade { width: 120px; }
-.filter-control--country { width: 140px; }
-
-.customer-search-button {
-  @include mixin.reset-button;
-  display: inline-flex;
-  width: 24px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.customer-search-button:focus-visible { @include mixin.focus-ring; }
-
-.filter-control :deep(.el-input__wrapper),
-.filter-control :deep(.el-select__wrapper) {
-  min-height: 32px;
-  box-sizing: border-box;
-  padding: 0 12px;
-  border-radius: var(--erp-radius-control);
-  background: var(--erp-input-surface);
-  box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset;
-}
-
-.filter-control :deep(.el-input__wrapper:hover),
-.filter-control :deep(.el-select__wrapper:hover) {
-  box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-hover-border) inset;
-}
-
-.filter-control :deep(.el-input__wrapper.is-focus),
-.filter-control :deep(.el-select__wrapper.is-focused) {
-  box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset;
-}
-
-.filter-control :deep(.el-input__inner),
-.filter-control :deep(.el-select__placeholder),
-.filter-control :deep(.el-select__selected-item) {
-  color: var(--erp-input-text);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.filter-control :deep(.el-input__inner::placeholder) {
-  color: var(--erp-input-placeholder);
-}
-
-.filter-control :deep(.el-select__placeholder.is-transparent) { color: var(--erp-input-text); }
-
-.filter-control :deep(.el-input.is-disabled .el-input__wrapper),
-.filter-control :deep(.el-select__wrapper.is-disabled) { background: var(--erp-input-disabled-background); }
-.filter-control :deep(.el-input.is-disabled .el-input__inner),
-.filter-control :deep(.el-select__wrapper.is-disabled .el-select__placeholder) { color: var(--erp-input-disabled-text); }
-
-.filter-actions {
-  display: flex;
-  height: 32px;
-  align-items: stretch;
-  flex: none;
-  margin-left: auto;
-  gap: 8px;
-}
-
-.filter-actions :deep(.el-button) { margin: 0; }
-
-.data-surface {
-  display: flex;
-  width: 100%;
-  min-height: 0;
-  overflow: hidden;
-  flex: 1;
-  flex-direction: column;
-  margin: 0;
-  padding: var(--erp-list-card-padding);
-}
-
-/* 外围四边只由此容器绘制，表格保留内部网格。 */
-.customer-table-frame {
-  min-height: 0;
-  flex: 1;
-  overflow: hidden;
-  border: 1px solid var(--erp-table-frame-border);
-  border-radius: var(--erp-radius-control);
-}
-
-.customer-table-frame :deep(.el-table::before),
-.customer-table-frame :deep(.el-table::after),
-.customer-table-frame :deep(.el-table__inner-wrapper::before),
-.customer-table-frame :deep(.el-table__inner-wrapper::after),
-.customer-table-frame :deep(.el-table__border-left-patch),
-.customer-table-frame :deep(.el-table__border-right-patch),
-.customer-table-frame :deep(.el-table__border-bottom-patch) {
-  display: none;
-}
-
-.customer-table-frame :deep(tr > .el-table__cell:last-child) {
-  border-right: 0;
-}
-
-.customer-table-frame :deep(.el-table__body tr:last-child > td.el-table__cell) {
-  border-bottom: 0;
-}
-
-.data-surface :deep(.el-table) {
-  color: var(--erp-table-text);
-  background: var(--erp-table-background);
-  font-family: token.$crm-font-body;
-  font-size: 12px;
-  --el-table-bg-color: var(--erp-table-background);
-  --el-table-tr-bg-color: var(--erp-table-background);
-  --el-table-border-color: var(--erp-table-border);
-  --el-table-header-bg-color: var(--erp-table-header-background);
-  --el-table-row-hover-bg-color: var(--erp-table-hover);
-  --el-table-current-row-bg-color: var(--erp-table-selected);
-  --el-table-fixed-right-column: none;
-  --el-table-fixed-left-column: none;
-}
-
-.data-surface :deep(.el-table__header th.el-table__cell) {
-  // 共享客户表格声明了 !important，此处仅覆盖客户列表的已确认表头高度。
-  height: 38px !important;
-  padding: 0;
-  border-bottom-color: var(--erp-table-border);
-  /* 共享表格规则使用 !important，局部沿用相同的表头用途色。 */
+.customer-list-page .erp-list-table-frame :deep(.el-table__header-wrapper th.el-table__cell),
+.customer-list-page .erp-list-table-frame :deep(.el-table__header-wrapper th.el-table__cell > .cell) {
   color: var(--erp-table-header-text) !important;
-  background: var(--erp-table-header-background) !important;
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
   letter-spacing: 0;
 }
 
-.data-surface :deep(.el-table__header th.el-table__cell > .cell) {
-  color: var(--erp-table-header-text) !important;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 16px;
+.customer-list-page .erp-list-table-frame :deep(.el-table__header-wrapper th.el-table__cell > .cell) {
+  padding-right: 16px;
+  padding-left: 16px;
 }
 
-.data-surface :deep(.el-table__row td.el-table__cell) {
-  height: token.$crm-table-row-comfortable;
-  padding: 0;
-  border-bottom-color: var(--erp-table-border);
-  color: var(--erp-table-text);
-  background: var(--erp-table-background);
-}
-
-.data-surface :deep(.el-table__body .cell) {
-  color: var(--erp-table-text);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-}
-
-.data-surface.is-dense :deep(.el-table__row td.el-table__cell) {
-  height: 40px;
-}
-
-.data-surface :deep(.el-table__row:hover td.el-table__cell) {
-  background: var(--erp-table-hover) !important;
-}
-
-.data-surface :deep(.el-table__row.current-row td.el-table__cell) {
-  background: var(--erp-table-selected) !important;
-}
-
-.data-surface :deep(.customer-identity__name) {
+.customer-list-page .erp-list-table-frame :deep(.customer-identity__name),
+.customer-list-page .erp-list-table-frame :deep(.customer-identity:hover .customer-identity__name) {
   color: var(--erp-table-text);
 }
 
-.data-surface :deep(.customer-identity:hover .customer-identity__name) {
-  color: var(--erp-table-text);
-}
-
-.data-surface :deep(.el-table .cell) {
-  padding: 0 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.data-surface :deep(.caret-wrapper) {
+.customer-list-page .erp-list-table-frame :deep(.caret-wrapper) {
   display: none;
+}
+
+.customer-list-page .erp-list-table-frame :deep(.el-table__fixed-right),
+.customer-list-page .erp-list-table-frame :deep(.el-table__fixed) {
+  box-shadow: none;
+}
+
+.customer-list-page .erp-list-table-frame :deep(.el-scrollbar__bar.is-horizontal) {
+  bottom: 2px;
+  height: 6px;
+  opacity: 0.45 !important;
 }
 
 .sortable-header {
@@ -1021,7 +704,7 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   font-size: 0 !important;
 }
 
-.data-surface :deep(.el-button.row-action-button) {
+.customer-list-page .erp-list-table-frame :deep(.el-button.row-action-button) {
   box-shadow: none;
 }
 
@@ -1039,18 +722,6 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
   background: currentColor;
 }
 
-.data-surface :deep(.el-table__fixed-right),
-.data-surface :deep(.el-table__fixed) {
-  box-shadow: none;
-}
-
-.data-surface :deep(.el-scrollbar__bar.is-horizontal) {
-  bottom: 2px;
-  height: 6px;
-  opacity: 0.45 !important;
-}
-
-
 .empty-state,
 .data-state {
   display: flex;
@@ -1062,138 +733,36 @@ onBeforeUnmount(() => { latestRowsRequest += 1 })
 }
 
 .empty-state { gap: 4px; }
-.empty-state strong, .data-state strong { margin-top: 8px; font-size: 14px; font-weight: 600; }
-.empty-state p, .data-state p { margin: 0 0 12px; font-size: 12px; line-height: 18px; }
-.data-state--error { padding: 24px; color: var(--erp-color-danger); background: var(--erp-color-danger-soft); }
 
-.data-surface .empty-state {
-  color: var(--erp-table-text);
+.empty-state strong,
+.data-state strong {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
-.data-surface .empty-state strong {
-  color: var(--erp-table-text);
+.empty-state p,
+.data-state p {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
-.data-state {
+.data-state--error {
   flex: 1;
   margin-bottom: 16px;
+  padding: 24px;
   border-radius: token.$crm-radius-2;
+  color: var(--erp-color-danger);
+  background: var(--erp-color-danger-soft);
 }
 
-.table-footer {
-  display: flex;
-  box-sizing: border-box;
-  justify-content: flex-end;
-  width: 100%;
-  height: 40px;
-  min-height: 40px;
-  flex: none;
-  align-items: center;
-  padding: 0;
-  border-top: 0;
-  color: var(--erp-color-text-secondary);
-  background: transparent;
-  font-size: 12px;
+.erp-list-data .empty-state {
+  color: var(--erp-table-text);
 }
 
-.table-footer :deep(.el-pagination) {
-  height: 28px;
-  gap: 6px;
-  --el-pagination-button-width: 28px;
-  --el-pagination-button-height: 28px;
-}
-
-.table-footer :deep(.el-pagination__sizes) {
-  width: 112px;
-  margin-right: 2px;
-}
-
-.table-footer :deep(.el-pagination__sizes .el-select) {
-  width: 112px;
-}
-
-.table-footer :deep(.el-pagination__sizes .el-select__wrapper) {
-  height: 28px;
-  min-height: 28px;
-  padding: 0 8px;
-  font-size: 12px;
-  line-height: 18px;
-  border-radius: token.$crm-radius-2;
-  background: var(--erp-pagination-background);
-  box-shadow: 0 0 0 1px var(--erp-pagination-border) inset;
-}
-
-.table-footer :deep(.btn-prev),
-.table-footer :deep(.btn-next),
-.table-footer :deep(.el-pager li) {
-  min-width: 28px;
-  width: auto;
-  height: 28px;
-  line-height: 18px;
-  margin: 0;
-  border: 1px solid var(--erp-pagination-border);
-  border-radius: token.$crm-radius-2;
-  color: var(--erp-pagination-text);
-  background: var(--erp-pagination-background);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.table-footer :deep(.el-pager) {
-  gap: 6px;
-}
-
-.table-footer :deep(.btn-prev:not(:disabled):hover),
-.table-footer :deep(.btn-next:not(:disabled):hover),
-.table-footer :deep(.el-pager li:not(.is-active):hover) {
-  border-color: var(--erp-pagination-hover-border);
-  color: var(--erp-pagination-text);
-  background: var(--erp-pagination-hover-background);
-}
-
-.table-footer :deep(.btn-prev:not(:disabled):active),
-.table-footer :deep(.btn-next:not(:disabled):active),
-.table-footer :deep(.el-pager li:not(.is-active):active) { background: var(--erp-pagination-pressed-background); }
-
-.table-footer :deep(.el-pager li.is-active) {
-  border-color: var(--erp-pagination-current-border);
-  color: var(--erp-pagination-current-text);
-  background: var(--erp-pagination-current-background);
-}
-
-.table-footer :deep(.btn-prev:disabled),
-.table-footer :deep(.btn-next:disabled) {
-  color: var(--erp-pagination-disabled-text);
-  background: var(--erp-pagination-disabled-background);
-  opacity: 1;
-}
-
-@media (max-width: 900px) {
-  .filter-panel { gap: 18px; }
-  .filter-content { flex-basis: 100%; }
-  .customer-stat-card { flex: 1 1 100%; }
-}
-
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .filter-panel, .data-surface { background: var(--erp-color-surface); }
-  .customer-list-page {
-    --erp-input-background: var(--erp-control-fallback-background);
-    --erp-button-secondary-background: var(--erp-control-fallback-background);
-    --erp-pagination-background: var(--erp-control-fallback-background);
-  }
-}
-
-@media print {
-  .filter-panel, .data-surface, .customer-stat-card {
-    color: var(--erp-print-text);
-    background: var(--erp-print-background);
-    border-color: var(--erp-print-border);
-    box-shadow: none;
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-  .customer-stat-card::before, .customer-stat-card__trend { display: none; }
-  .customer-stat-card__value { color: var(--erp-print-text); }
+.erp-list-data .empty-state strong {
+  color: var(--erp-table-text);
 }
 
 :global(.customer-list-message-box .el-button) {

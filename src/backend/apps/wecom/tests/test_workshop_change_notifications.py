@@ -113,7 +113,7 @@ class TubeShortageNotificationTests(TestCase):
                 self.assertEqual(event.context["quantity"], "2")
                 self.assertEqual(event.context["unit"], "支")
                 self.assertEqual(event.recipients.get().employee_id, self.manager.pk)
-                self.assertEqual(event.target["params"], {"orderId": order["id"]})
+                self.assertEqual(event.target["params"], {"id": order["id"]})
                 self.assertTrue(recipient_payload(event.recipients.get(), self.manager.user)["target_accessible"])
                 self.f.receive_final(order, payload, client=self.client, expected=200)
                 self.assertEqual(NotificationEvent.objects.filter(event_code="TUBE_OUTSOURCING_SHORTAGE_RECORDED",

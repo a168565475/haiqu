@@ -10,6 +10,7 @@ export interface OutsourcingQuantitySummary {
 }
 
 export interface UnifiedOutsourcingOrder extends Omit<OutsourcingOrder, 'status' | 'delivery_date' | 'planned_amount'> {
+  warehouse_actions?: ('dispatch' | 'return' | 'raw')[]
   record_type: 'ORIGINAL' | 'REWORK' | 'TUBE'
   row_key: string
   source_kind: UnifiedOutsourcingSourceKind

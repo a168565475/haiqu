@@ -24,6 +24,10 @@ from .models import (
 from .selectors import accessible_outsourcing_orders
 from .tube_selectors import saved_orders_for_permission
 from .tube_prices import planned_amount
+from .warehouse_access import (
+    DISPATCH_PERMISSION, RETURN_PERMISSION, RAW_RETURN_PERMISSION,
+    warehouse_original_handoffs, warehouse_regular_orders, warehouse_rework_orders, warehouse_tube_orders,
+)
 
 
 VIEW_PERMISSIONS = ("outsourcing.view_outsourcingorder", "material_issues.view_metalprocessingsource")
@@ -41,6 +45,7 @@ TUBE_STATUS_LABELS = {"PENDING_DISPATCH": "待外发", "PROCESSING": "加工中"
 
 
 class UnifiedOrderFilters(serializers.Serializer):
+    warehouse_stage = serializers.ChoiceField(required=False, choices=['all'])
     search = serializers.CharField(required=False, allow_blank=True, max_length=200)
     status = serializers.ChoiceField(required=False, allow_blank=True,
                                      choices=[*OutsourcingOrderStatus.values, "PENDING_HANDOFF"])
@@ -63,13 +68,21 @@ def _source_lines(request, filters):
 
 def unified_order_sources(request, filters):
     """返回统一列表使用的三个授权查询，供列表和只读统计共用。"""
-    regular = request.user.has_perm(VIEW_PERMISSIONS[0])
-    metal = request.user.has_perm(VIEW_PERMISSIONS[1])
+    warehouse = filters.get('warehouse_stage') == 'all'
+    regular = warehouse or request.user.has_perm(VIEW_PERMISSIONS[0])
+    metal = not warehouse and request.user.has_perm(VIEW_PERMISSIONS[1])
     visible_handoffs = MetalProcessingOriginalHandoff.objects.filter(
         source__issue_line__in=_source_lines(request, filters),
     ) if metal else MetalProcessingOriginalHandoff.objects.none()
     visible_handoffs = scoped_records(visible_handoffs, request, VIEW_PERMISSIONS[1], "original_order__craft_id")
     regular_orders = accessible_outsourcing_orders(request) if regular else OutsourcingOrder.objects.none()
+    if warehouse:
+        regular_orders = warehouse_regular_orders(request)
+        visible_handoffs = warehouse_original_handoffs(request)
+        for key in ('production_task_id', 'product_line_id', 'issue_id'):
+            if filters.get(key):
+                path = 'source__issue_line__issue_id' if key == 'issue_id' else f'source__issue_line__issue__{key}'
+                visible_handoffs = visible_handoffs.filter(**{path: filters[key]})
     originals = OutsourcingOrder.objects.filter(
         Q(pk__in=regular_orders.values("pk")) | Q(pk__in=visible_handoffs.values("original_order_id")),
     ).annotate(unified_access=Case(
@@ -88,6 +101,12 @@ def unified_order_sources(request, filters):
         source__issue_line__in=_source_lines(request, filters),
     ) if metal else MetalProcessingExternalOrder.objects.none()
     reworks = scoped_records(reworks, request, VIEW_PERMISSIONS[1])
+    if warehouse:
+        reworks = warehouse_rework_orders(request)
+        for key in ('production_task_id', 'product_line_id', 'issue_id'):
+            if filters.get(key):
+                path = 'source__issue_line__issue_id' if key == 'issue_id' else f'source__issue_line__issue__{key}'
+                reworks = reworks.filter(**{path: filters[key]})
     reworks = reworks.annotate(record_type=Value("REWORK", output_field=CharField()),
                                unified_source=Value("REWORK", output_field=CharField()),
                                unified_access=Value("METAL", output_field=CharField()))
@@ -143,7 +162,8 @@ def unified_order_candidates(request, filters):
 
 
 def _tube_candidates(request, filters):
-    tubes = saved_orders_for_permission(request).annotate(
+    queryset = warehouse_tube_orders(request) if filters.get('warehouse_stage') == 'all' else saved_orders_for_permission(request)
+    tubes = queryset.annotate(
         record_type=Value("TUBE", output_field=CharField()),
         unified_access=Value("TUBE", output_field=CharField()),
         unified_source=Case(When(source_kind="METAL", then=Value("TUBE_METAL")),
@@ -266,7 +286,10 @@ def _original_quantities(rows, request, filters, regular):
     dispatch_totals, return_totals = defaultdict(lambda: defaultdict(Decimal)), defaultdict(lambda: defaultdict(Decimal))
     handoffs = MetalProcessingOriginalHandoff.objects.filter(original_order_id__in=rows)
     if not regular:
-        handoffs = handoffs.filter(source__issue_line__in=_source_lines(request, filters))
+        if filters.get('warehouse_stage') == 'all':
+            handoffs = handoffs.filter(pk__in=warehouse_original_handoffs(request).values('pk'))
+        else:
+            handoffs = handoffs.filter(source__issue_line__in=_source_lines(request, filters))
     if filters.get("factory_id"):
         handoffs = handoffs.filter(factory_id=filters["factory_id"])
     handoffs = list(handoffs.select_related("source", "factory").order_by("created_at", "id"))
@@ -418,4 +441,40 @@ def unified_order_rows(request, candidates, filters):
         )
         all_rows[row["row_key"]] = row
     all_rows.update(_tube_rows([row for row in candidates if row["record_type"] == "TUBE"], filters))
+    if filters.get('warehouse_stage') == 'all':
+        _warehouse_actions(request, all_rows)
     return [all_rows[f"{row['record_type']}:{row['id']}"] for row in candidates]
+
+
+def _warehouse_actions(request, rows):
+    """按钮同时满足动作的数据范围和当前状态；写接口仍复核库存及并发。"""
+    original_ids = [row['id'] for row in rows.values() if row['record_type'] == 'ORIGINAL']
+    tube_ids = [row['id'] for row in rows.values() if row['record_type'] == 'TUBE']
+    allowed = {}
+    for action, permission, statuses in (
+        ('dispatch', DISPATCH_PERMISSION, ['PENDING_DISPATCH']),
+        ('return', RETURN_PERMISSION, ['PROCESSING', 'PARTIAL_RETURN']),
+        ('raw', RAW_RETURN_PERMISSION, ['PROCESSING', 'PARTIAL_RETURN']),
+    ):
+        allowed[('ORIGINAL', action)] = set(map(str, warehouse_regular_orders(request, permission).filter(
+            pk__in=original_ids, status__in=statuses).values_list('pk', flat=True)))
+    allowed[('TUBE', 'dispatch')] = set(map(str, warehouse_tube_orders(request, DISPATCH_PERMISSION).filter(
+        pk__in=tube_ids, status='PENDING_DISPATCH').values_list('pk', flat=True)))
+    receivable = warehouse_tube_orders(request, RETURN_PERMISSION).filter(pk__in=tube_ids, status='PROCESSING').filter(
+        Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='DISPATCH')),
+        ~Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='CANCEL')),
+        ~Exists(TubeOutsourcingReceipt.objects.filter(order_id=OuterRef('pk'))),
+    )
+    allowed[('TUBE', 'return')] = set(map(str, receivable.values_list('pk', flat=True)))
+    rework_ids = [row['id'] for row in rows.values() if row['record_type'] == 'REWORK']
+    allowed[('REWORK', 'return')] = set(map(str, warehouse_rework_orders(request).filter(
+        pk__in=rework_ids, status__in=['PROCESSING', 'CLOSED'], handoff_pieces__gt=F('returned_good_pieces'),
+    ).values_list('pk', flat=True)))
+    from apps.material_issues.p4_services import original_good_return_context
+    for handoff in warehouse_original_handoffs(request).filter(original_order_id__in=original_ids).select_related('original_order', 'source', 'factory'):
+        if original_good_return_context(handoff, request)['can_return']:
+            allowed[('ORIGINAL', 'return')].add(str(handoff.original_order_id))
+    for row in rows.values():
+        row['warehouse_actions'] = [action for action in ('dispatch', 'return', 'raw')
+            if row['id'] in allowed.get((row['record_type'], action), set())
+            and not (row['record_type'] == 'TUBE' and action == 'return' and row.get('receipt_state') == 'MISSING')]

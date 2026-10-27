@@ -126,7 +126,7 @@ describe('工价详情弹窗', () => {
     ])
     const rowCells = Array.from(dialog?.querySelectorAll('.el-table__body tbody tr:first-child td') || [])
       .map(cell => cell.textContent?.trim())
-    expect(rowCells.slice(4, 8)).toEqual(['10.0000', '3.0000', '¥5.5', '¥22'])
+    expect(rowCells.slice(4, 8)).toEqual(['10', '3', '¥5.5', '¥22'])
     expect(dialog?.textContent).toContain('¥2.2')
     expect(dialog?.textContent).not.toContain('¥2.2000')
 
@@ -201,7 +201,7 @@ describe('工价详情弹窗', () => {
     expect(Array.from(rows[0]!.querySelectorAll('td')).slice(5, 8).map(cell => cell.textContent?.trim()))
       .toEqual(['—', '—', '—'])
     expect(Array.from(rows[1]!.querySelectorAll('td')).slice(5, 8).map(cell => cell.textContent?.trim()))
-      .toEqual(['0.0000', '¥0', '¥0'])
+      .toEqual(['0', '¥0', '¥0'])
 
     wrapper.unmount()
   })

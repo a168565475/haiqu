@@ -76,7 +76,6 @@ const SupplierPurchaseSheetEditorView = () => import('@/views/procurement/Suppli
 const PurchaseContractTemplateListView = () => import('@/views/procurement/PurchaseContractTemplateListView.vue')
 const FinishedGoodsInventoryView = () => import('@/views/inventory/FinishedGoodsInventoryView.vue')
 const FinishedGoodsOutboundFormView = () => import('@/views/inventory/FinishedGoodsOutboundFormView.vue')
-const FinishedGoodsOutboundListView = () => import('@/views/inventory/FinishedGoodsOutboundListView.vue')
 const FinishedGoodsOutboundDetailView = () => import('@/views/inventory/FinishedGoodsOutboundDetailView.vue')
 const MaterialInventoryView = () => import('@/views/inventory/MaterialInventoryView.vue')
 const MaterialInventoryDetailView = () => import('@/views/inventory/MaterialInventoryDetailView.vue')
@@ -102,7 +101,6 @@ const WorkReportDayDetailView = () => import('@/views/workshop/work-reports/Work
 const FactoryDetailView = () => import('@/views/outsourcing/FactoryDetailView.vue')
 const FactoryListView = () => import('@/views/outsourcing/FactoryListView.vue')
 const OutsourcingOrderDetailView = () => import('@/views/outsourcing/OutsourcingOrderDetailView.vue')
-const OutsourcingOrderFormView = () => import('@/views/outsourcing/OutsourcingOrderFormView.vue')
 const OutsourcingOrderListView = () => import('@/views/outsourcing/OutsourcingOrderListView.vue')
 const OutsourcingReworkDetailView = () => import('@/views/outsourcing/OutsourcingReworkDetailView.vue')
 
@@ -190,8 +188,12 @@ export const router = createRouter({
     },
     {
       path: '/inventory/semi-finished/tube-return', name: 'inventory-tube-return',
-      component: () => import('@/views/inventory/TubeCoatingReceiptView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '仓库管理 / 半成品 / 喷塑入库', breadcrumbs: [{ label: '仓库管理' }, { label: '半成品', to: '/inventory/materials?stock_kind=SEMI' }, { label: '喷塑入库' }], pageWidth: 'fluid', flushPage: true },
+      redirect: to => {
+        const { order_id: orderId, ...query } = to.query
+        return typeof orderId === 'string' && orderId.trim()
+          ? { name: 'warehouse-outsourcing-tube-return', params: { id: orderId }, query }
+          : { name: 'warehouse-outsourcing' }
+      },
     },
     {
       path: '/login',
@@ -1173,7 +1175,7 @@ export const router = createRouter({
       component: MaterialIssueListView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '生产车间 / 生产领料', breadcrumbs: [{ label: '生产车间' }, { label: '生产领料' }],
+        headerTitle: '仓库管理 / 生产领料', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1183,7 +1185,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '生产车间 / 生产领料 / 新增', breadcrumbs: [{ label: '生产车间' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '新增' }],
+        headerTitle: '仓库管理 / 生产领料 / 新增', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '新增' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1193,7 +1195,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '生产车间 / 生产领料 / 修改', breadcrumbs: [{ label: '生产车间' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '修改' }],
+        headerTitle: '仓库管理 / 生产领料 / 修改', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '修改' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1203,7 +1205,7 @@ export const router = createRouter({
       component: MaterialIssueDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '生产车间 / 生产领料 / 领料单详情', breadcrumbs: [{ label: '生产车间' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
+        headerTitle: '仓库管理 / 生产领料 / 领料单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1230,8 +1232,7 @@ export const router = createRouter({
     {
       path: '/inventory/finished-goods/outbounds',
       name: 'finished-goods-outbounds',
-      component: FinishedGoodsOutboundListView,
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'finished-goods-inventory', headerTitle: '仓库管理 / 成品库存 / 出库记录', breadcrumbs: [{ label: '仓库管理' }, { label: '成品库存', to: '/inventory/finished-goods' }, { label: '出库记录' }], pageWidth: 'fluid', flushPage: true },
+      redirect: to => ({ name: 'finished-goods-inventory', query: { ...to.query, tab: 'outbounds' } }),
     },
     {
       path: '/inventory/finished-goods/outbounds/:outboundId',
@@ -1261,8 +1262,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-inbounds',
-        headerTitle: '采购管理 / 采购入库',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购入库' }],
+        headerTitle: '仓库管理 / 采购入库',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '采购入库' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1274,6 +1275,56 @@ export const router = createRouter({
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory',
         headerTitle: '仓库管理 / 材料库存 / 订单追溯', breadcrumbs: [{ label: '仓库管理' }, { label: '材料库存', to: '/inventory/materials' }, { label: '订单追溯' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/warehouse/outsourcing',
+      name: 'warehouse-outsourcing',
+      component: OutsourcingOrderListView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-outsourcing', outsourcingWorkspace: 'warehouse',
+        headerTitle: '仓库 / 委外管理', breadcrumbs: [{ label: '仓库' }, { label: '委外管理' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/warehouse/outsourcing/tube/:id', name: 'warehouse-outsourcing-tube-detail',
+      component: () => import('@/views/outsourcing/TubeOutsourcingDetailView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-outsourcing', outsourcingWorkspace: 'warehouse',
+        headerTitle: '仓库 / 委外管理 / 外发单',
+        breadcrumbs: [{ label: '仓库' }, { label: '委外管理', to: '/warehouse/outsourcing' }, { label: '外发单' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/warehouse/outsourcing/tube/:id/return', name: 'warehouse-outsourcing-tube-return',
+      component: () => import('@/views/inventory/TubeCoatingReceiptView.vue'),
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-outsourcing', outsourcingWorkspace: 'warehouse',
+        headerTitle: '仓库 / 委外管理 / 外发回货入库',
+        breadcrumbs: [{ label: '仓库' }, { label: '委外管理', to: '/warehouse/outsourcing' }, { label: '外发回货入库' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/warehouse/outsourcing/rework/:orderId', name: 'warehouse-outsourcing-rework-detail',
+      component: OutsourcingReworkDetailView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-outsourcing', outsourcingWorkspace: 'warehouse',
+        headerTitle: '仓库 / 委外管理 / 外发单详情',
+        breadcrumbs: [{ label: '仓库' }, { label: '委外管理', to: '/warehouse/outsourcing' }, { label: '外发单详情' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/warehouse/outsourcing/:orderId', name: 'warehouse-outsourcing-detail',
+      component: OutsourcingOrderDetailView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'warehouse-outsourcing', outsourcingWorkspace: 'warehouse',
+        headerTitle: '仓库 / 委外管理 / 外发单详情',
+        breadcrumbs: [{ label: '仓库' }, { label: '委外管理', to: '/warehouse/outsourcing' }, { label: '外发单详情' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1315,21 +1366,11 @@ export const router = createRouter({
     },
     {
       path: '/workshop/outsourcing/tube/:id/return', name: 'workshop-outsourcing-tube-return',
-      component: () => import('@/views/inventory/TubeCoatingReceiptView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'workshop-outsourcing', headerTitle: '生产车间 / 委外加工 / 外发回货入库', breadcrumbs: [{ label: '生产车间' }, { label: '委外加工', to: '/workshop/outsourcing' }, { label: '外发回货入库' }], pageWidth: 'fluid', flushPage: true },
-    },    {
+      redirect: to => ({ name: 'warehouse-outsourcing-tube-return', params: { id: to.params.id }, query: to.query }),
+    },
+    {
       path: '/workshop/outsourcing/new',
-      name: 'workshop-outsourcing-new',
-      component: OutsourcingOrderFormView,
-      meta: {
-        requiresAuth: true,
-        layout: 'erp',
-        activeMenu: 'workshop-outsourcing',
-        headerTitle: '生产车间 / 委外加工 / 新增外发单',
-        breadcrumbs: [{ label: '生产车间' }, { label: '委外加工' }, { label: '新增外发单' }],
-        pageWidth: 'fluid',
-        flushPage: true,
-      },
+      redirect: { name: 'workshop-outsourcing' },
     },
     {
       path: '/workshop/outsourcing/metal-processing',
@@ -1442,8 +1483,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-inbounds',
-        headerTitle: '采购管理 / 采购入库 / 仓库收货',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '仓库收货' }],
+        headerTitle: '仓库管理 / 采购入库 / 仓库收货',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '仓库收货' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1456,8 +1497,8 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-inbounds',
-        headerTitle: '采购管理 / 采购入库 / 品质确认',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '品质确认' }],
+        headerTitle: '仓库管理 / 采购入库 / 品质确认',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '品质确认' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1470,8 +1511,22 @@ export const router = createRouter({
         requiresAuth: true,
         layout: 'erp',
         activeMenu: 'purchase-returns',
-        headerTitle: '采购管理 / 退货明细',
-        breadcrumbs: [{ label: '采购管理' }, { label: '退货明细' }],
+        headerTitle: '仓库管理 / 退货明细',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '退货明细' }],
+        pageWidth: 'fluid',
+        flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-return-records',
+      name: 'purchase-return-records',
+      component: PurchaseReturnListView,
+      meta: {
+        requiresAuth: true,
+        layout: 'erp',
+        activeMenu: 'purchase-return-records',
+        headerTitle: '采购管理 / 退货记录',
+        breadcrumbs: [{ label: '采购管理' }, { label: '退货记录' }],
         pageWidth: 'fluid',
         flushPage: true,
       },
@@ -1563,8 +1618,8 @@ export const router = createRouter({
       component: PurchaseOrderDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'purchase-inbounds',
-        headerTitle: '采购管理 / 采购入库 / 查看明细',
-        breadcrumbs: [{ label: '采购管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '查看明细' }],
+        headerTitle: '仓库管理 / 采购入库 / 查看明细',
+        breadcrumbs: [{ label: '仓库管理' }, { label: '采购入库', to: '/purchase-inbound' }, { label: '查看明细' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },

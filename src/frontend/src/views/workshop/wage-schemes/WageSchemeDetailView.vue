@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { approveWageScheme, fetchWageScheme, returnWageScheme, submitWageScheme } from '@/api/workshopReporting'
 import { useAuthStore } from '@/stores/auth'
 import type { WageScheme } from '@/types/workshopReporting'
+import { compactDecimal } from '@/utils/compactDecimal'
 import { formatWageMoney } from '@/utils/wageMoney'
 
 const route = useRoute()
@@ -168,7 +169,7 @@ onMounted(load)
           <ElTableColumn prop="display_name" label="名称 / 部位" min-width="180" show-overflow-tooltip />
           <ElTableColumn prop="operation_name" label="申报工序" min-width="130" show-overflow-tooltip />
           <ElTableColumn v-if="scheme.scope_craft?.plan_category === 'SEWING'" prop="counting_mode_display" label="计数方式" width="100" align="center" />
-          <ElTableColumn label="需完成次数" width="112" align="right"><template #default="{ row }">{{ row.required_quantity ?? '—' }}</template></ElTableColumn>
+          <ElTableColumn label="需完成次数" width="112" align="right"><template #default="{ row }">{{ compactDecimal(row.required_quantity) }}</template></ElTableColumn>
           <ElTableColumn prop="production_description" label="制作工序描述" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.production_description || '—' }}</template>
           </ElTableColumn>

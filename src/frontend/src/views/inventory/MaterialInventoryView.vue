@@ -21,7 +21,6 @@ const route = useRoute()
 const can = (permission: string) => auth.user?.is_superuser === true || auth.hasPermission(permission)
 const canView = computed(() => can('inventory.view_materialinbound'))
 const canReceive = computed(() => can('inventory.receive_material'))
-const canReceiveTubeCoating = computed(() => can('outsourcing.confirm_return_outsourcingorder'))
 const canViewReceipts = computed(() => can('inventory.view_material_receipt'))
 const canConfigure = computed(() => can('inventory.view_warehouse') || can('inventory.view_warehousezone'))
 const rows = ref<MaterialInventoryRow[]>([])
@@ -132,7 +131,6 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
             <ElButton class="erp-button-motion" :icon="Setting">配置</ElButton>
             <template #dropdown><ElDropdownMenu><ElDropdownItem @click="openConfig('warehouse')">仓库信息</ElDropdownItem><ElDropdownItem @click="openConfig('location')">库区设置</ElDropdownItem></ElDropdownMenu></template>
           </ElDropdown>
-          <ElButton class="erp-button-motion" v-if="stockKind === 'SEMI' && canReceiveTubeCoating" type="primary" :icon="Plus" @click="router.push({ name: 'inventory-tube-return' })">喷塑入库</ElButton>
           <ElButton class="erp-button-motion" v-if="stockKind === 'RAW' && canReceive" type="primary" :icon="Plus" @click="inboundOpen = true">材料入库</ElButton>
         </div>
       </header>

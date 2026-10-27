@@ -184,7 +184,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
     <template v-else>
       <header class="page-title-row"><div><h1>品质确认</h1><p>核对仓库到货，填写退货数量并确认合格入库数量。</p></div><ElButton :icon="Refresh" :disabled="locked" @click="loadBatches">刷新</ElButton></header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
-      <section class="surface bulk-card">
+      <section class="surface bulk-card erp-flat-form">
         <div class="bulk-row"><h2>本次质检设置</h2><div class="date-field"><label>质检日期</label><ElInput :model-value="qualityDate" :prefix-icon="Calendar" disabled aria-label="质检日期" /></div><div class="bulk-controls"><label for="bulk-return">退货数量</label><ElInput id="bulk-return" v-model="bulk.returnQuantity" class="quantity-input" :disabled="locked" maxlength="19" inputmode="decimal" aria-label="批量退货数量"><template #append>按行单位</template></ElInput><ElInput v-model="bulk.remark" :disabled="locked" maxlength="3000" placeholder="批量质检说明（可选）" aria-label="批量质检说明" /><ElButton :disabled="locked || !!loadError" @click="applyBulk">应用到已勾选</ElButton></div></div>
       </section>
       <section class="surface table-card">
@@ -213,7 +213,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMes
         </div>
         <footer><span>已勾选 {{ selectedRows.length }} 项 · {{ returnCount }} 项有退货</span><strong :class="{ complete: allComplete }">{{ allComplete ? `全部 ${rows.length} 项填写完整` : `已完成 ${completeCount} / ${rows.length} 项，请检查退货数量` }}</strong></footer>
       </section>
-      <footer class="submit-bar"><div class="submit-notice"><ElIcon><WarningFilled /></ElIcon><span>确认后合格数量计入库存；有退货的明细自动生成退货单，在采购管理 → 退货明细中处理。</span></div><ElButton :disabled="locked || !batch" @click="saveDraft">保存质检草稿</ElButton><ElButton type="primary" :loading="confirming" :disabled="!canSubmit" @click="confirmInbound">确认并入库</ElButton></footer>
+      <footer class="submit-bar"><div class="submit-notice"><ElIcon><WarningFilled /></ElIcon><span>确认后合格数量计入库存；有退货的明细自动生成退货单，在仓库 → 退货明细中处理。</span></div><ElButton :disabled="locked || !batch" @click="saveDraft">保存质检草稿</ElButton><ElButton type="primary" :loading="confirming" :disabled="!canSubmit" @click="confirmInbound">确认并入库</ElButton></footer>
     </template>
   </section>
 </template>
@@ -254,8 +254,9 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .batch-selector > .el-select { width: 320px; }
 .table-head > strong { margin-right: 16px; font-size: 13px; white-space: nowrap; }
 .quality-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-.quality-table { width: 100%; min-width: 1634px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.quality-table { width: 100%; min-width: 1634px; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--erp-table-body-fill); }
 .quality-table th, .quality-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: center; overflow-wrap: anywhere; }
+.quality-table th:nth-child(2), .quality-table td:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
 .quality-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
 .quality-table td { height: 58px; } .quality-table th:last-child, .quality-table td:last-child { border-right: 0; }
 .quality-table .quantity-cell { white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; }

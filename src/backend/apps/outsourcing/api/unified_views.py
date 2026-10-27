@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
 
-from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.core.api.permissions import HasActiveEmployee
 from apps.workshop_config.models import Craft, OutsourcingCode
 
 from ..models import OutsourcingFactory, OutsourcingOrder, OutsourcingOrderStatus
@@ -12,6 +12,7 @@ from ..selectors import factories_with_context
 from ..unified_selectors import (
     SOURCE_GROUP_LABELS, SOURCE_LABELS, VIEW_PERMISSIONS, UnifiedOrderFilters, unified_order_candidates, unified_order_rows,
 )
+from ..warehouse_access import WarehouseActionReadPermission, warehouse_crafts, warehouse_stage
 
 
 class UnifiedOutsourcingSummarySerializer(serializers.Serializer):
@@ -23,7 +24,8 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
 
     queryset = OutsourcingOrder.objects.none()
     serializer_class = UnifiedOutsourcingSummarySerializer
-    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
+    warehouse_read_actions = {'list', 'options'}
     action_permission_map = {"list": VIEW_PERMISSIONS, "options": VIEW_PERMISSIONS}
 
     @extend_schema(parameters=[UnifiedOrderFilters])
@@ -34,23 +36,27 @@ class UnifiedOutsourcingOrderViewSet(viewsets.GenericViewSet):
         page = list(self.paginate_queryset(unified_order_candidates(request, values)))
         return self.get_paginated_response(unified_order_rows(request, page, values))
 
+    @extend_schema(parameters=[UnifiedOrderFilters])
     @action(detail=False, methods=["get"])
     def options(self, request):
-        regular = request.user.has_perm(VIEW_PERMISSIONS[0])
+        warehouse = warehouse_stage(request)
+        regular = bool(warehouse) or request.user.has_perm(VIEW_PERMISSIONS[0])
         codes = OutsourcingCode.values if regular else ["POWDER_COATING"]
         crafts = Craft.objects.filter(craft_type="EXTERNAL", status="ACTIVE", outsourcing_code__in=codes).order_by("name", "id")
-        if enabled():
+        if warehouse:
+            crafts = warehouse_crafts(request, crafts)
+        elif enabled():
             regular_crafts = filter_crafts(crafts, request, VIEW_PERMISSIONS[0], "pk") if regular else crafts.none()
             metal_crafts = filter_crafts(crafts.filter(outsourcing_code="POWDER_COATING"), request, VIEW_PERMISSIONS[1], "pk") if request.user.has_perm(VIEW_PERMISSIONS[1]) else crafts.none()
             crafts = (regular_crafts | metal_crafts).distinct()
         visible_craft_ids = set(crafts.values_list("pk", flat=True))
         factories = OutsourcingFactory.objects.filter(status="ACTIVE")
-        if not regular or enabled():
+        if warehouse or not regular or enabled():
             factories = factories.filter(craft_links__craft__in=crafts).distinct()
         return Response({"data": {
             "crafts": [{"id": str(row.pk), "name": row.name, "outsourcing_code": row.outsourcing_code} for row in crafts],
             "factories": [{"id": str(row.pk), "name": row.name, "crafts": [
-                {"id": str(link.craft_id), "name": link.craft_name_snapshot} for link in row.prefetched_craft_links if not enabled() or link.craft_id in visible_craft_ids
+                {"id": str(link.craft_id), "name": link.craft_name_snapshot} for link in row.prefetched_craft_links if not (warehouse or enabled()) or link.craft_id in visible_craft_ids
             ]} for row in factories_with_context(factories).order_by("name", "id")],
             "statuses": [{"value": value, "label": label} for value, label in [
                 *OutsourcingOrderStatus.choices, ("PENDING_HANDOFF", "待交接"),

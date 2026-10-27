@@ -17,9 +17,18 @@ const moduleMenus: Record<string, string> = {
   access_control: 'settings', reference_data: 'settings', audit: 'settings',
 }
 const permissionMenus: Record<string, string> = {
-  'inventory.receive_material': 'procurement-management',
-  'inventory.quality_confirm_material': 'procurement-management',
-  'inventory.view_material_receipt': 'procurement-management',
+  // 领料资源同时包含金工流转权限，只有以下领料操作归仓库；后端模块名保持不变。
+  'material_issues.add_materialissue': 'warehouse-management',
+  'material_issues.change_materialissue': 'warehouse-management',
+  'material_issues.review_materialissue': 'warehouse-management',
+  'material_issues.submit_materialissue': 'warehouse-management',
+  'material_issues.view_materialissue': 'warehouse-management',
+  'outsourcing.confirm_dispatch_outsourcingorder': 'warehouse-management',
+  'outsourcing.confirm_return_outsourcingorder': 'warehouse-management',
+  'outsourcing.return_raw_outsourcingorder': 'warehouse-management',
+  'material_issues.confirm_metalprocessingexternalreturn': 'warehouse-management',
+  'access_control.confirm_purchasereturn': 'procurement-management',
+  'access_control.complete_purchasereturn': 'procurement-management',
   'access_control.manage_accounts': 'employee-management',
 }
 
@@ -34,7 +43,7 @@ export function groupAccessCatalog(catalog: CatalogEntry[]) {
   const result = new Map<string, { key: string; name: string; module: string; moduleName: string; entries: CatalogEntry[] }>()
   for (const entry of catalog) {
     const menu = permissionMenu(entry)
-    // 同一后端资源可包含不同菜单的操作，例如采购收货与仓库库存查看。
+    // 权限分组只改变权限编辑器的菜单归属，不改变后端资源和操作契约。
     const key = `${menu}:${entry.resource}`
     if (!result.has(key)) result.set(key, { key, name: entry.resource_name, module: menu, moduleName: labels.get(menu) || '其他权限', entries: [] })
     result.get(key)!.entries.push(entry)

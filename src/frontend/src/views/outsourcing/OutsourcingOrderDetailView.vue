@@ -23,9 +23,16 @@ import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
+const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
+const listPath = computed(() => warehouseWorkspace.value ? '/warehouse/outsourcing' : '/workshop/outsourcing')
+const canRemoveOrder = computed(() => Boolean(detail.value && !detail.value.direct_handoff
+  && (warehouseWorkspace.value ? !detail.value.can_delete && detail.value.can_revoke_dispatched : detail.value.can_delete)))
 const canViewRegular = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.view_outsourcingorder')))
-const canViewMetal = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('material_issues.view_metalprocessingsource')))
-const metalProjectionOnly = computed(() => canViewMetal.value && (!canViewRegular.value || route.query?.view === 'metal'))
+const canViewMetal = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('material_issues.view_metalprocessingsource')
+  || (warehouseWorkspace.value && auth.hasPermission('outsourcing.confirm_return_outsourcingorder'))))
+const metalProjectionOnly = computed(() => canViewMetal.value && (warehouseWorkspace.value
+  ? route.query?.view === 'metal' : !canViewRegular.value || route.query?.view === 'metal'))
 const detail = ref<OutsourcingOrderDetail | null>(null)
 const showMetalOperations = computed(() => canViewMetal.value && (detail.value?.direct_handoff
   || (route.query?.view === 'metal' && !detail.value?.dispatch)))
@@ -154,7 +161,7 @@ const hasDefectiveReturns = computed(() => returnRecordRows.value.some(row => Nu
 
 function productImage(imageFileId: string | null): string {
   if (!imageFileId || !detail.value?.id) return productImagePlaceholder
-  return outsourcingProductImageUrl(detail.value.id, imageFileId)
+  return outsourcingProductImageUrl(detail.value.id, imageFileId, warehouseWorkspace.value)
 }
 
 function useProductImageFallback(event: Event): void {
@@ -209,7 +216,7 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const result = await fetchOutsourcingOrder(id)
+    const result = await fetchOutsourcingOrder(id, ...warehouseArgs.value)
     if (request !== loadRequest) return
     detail.value = result.data
     etag.value = result.etag
@@ -221,12 +228,12 @@ async function load(): Promise<void> {
 }
 
 async function deleteOrder(): Promise<void> {
-  if (deleting.value || !detail.value || detail.value.direct_handoff || (!detail.value.can_delete && !detail.value.can_revoke_dispatched)) return
+  if (deleting.value || !detail.value || !canRemoveOrder.value) return
   deleting.value = true
   try {
-    const latest = await fetchOutsourcingOrder(detail.value.id)
+    const latest = await fetchOutsourcingOrder(detail.value.id, ...warehouseArgs.value)
     applyFlowResult(latest)
-    if (latest.data.direct_handoff || !latest.etag || (!latest.data.can_delete && !latest.data.can_revoke_dispatched)) {
+    if (latest.data.direct_handoff || !latest.etag || (warehouseWorkspace.value ? latest.data.can_delete || !latest.data.can_revoke_dispatched : !latest.data.can_delete)) {
       ElMessage.warning('当前外发单已不能删除，请核对最新状态。')
       return
     }
@@ -239,7 +246,7 @@ async function deleteOrder(): Promise<void> {
       })
       await deleteOutsourcingOrder(latest.data.id, latest.etag)
       ElMessage.success('外发单已永久删除，加工额度已释放。')
-      await router.replace('/workshop/outsourcing')
+      await router.replace(listPath.value)
       return
     }
     const { value } = await ElMessageBox.prompt(
@@ -278,7 +285,7 @@ function applyFlowResult(result: VersionedOutsourcingOrder): void {
 }
 
 onMounted(() => { void load() })
-watch(() => [route.params.orderId, route.query?.view], () => { void load() })
+watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value], () => { void load() })
 </script>
 
 <template>
@@ -286,11 +293,11 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
     <header class="outsourcing-heading detail-heading">
       <div class="detail-title"><h1>外发单详情</h1></div>
       <div class="heading-actions">
-        <ElButton @click="router.push('/workshop/outsourcing')">返回</ElButton>
+        <ElButton @click="router.push(listPath)">返回</ElButton>
         <ElButton v-if="metalProjectionOnly && canViewRegular" @click="router.replace({ path: route.path, query: { ...route.query, view: undefined, source_issue_line_id: undefined } })">查看基础详情</ElButton>
-        <ElButton v-if="(detail?.can_delete || detail?.can_revoke_dispatched) && !detail.direct_handoff" class="delete-order-button" type="danger" plain :loading="deleting" @click="deleteOrder">{{ detail.can_delete ? '永久删除外发单' : '撤销并退料' }}</ElButton>
-        <ElButton v-if="detail?.status === 'PENDING_DISPATCH' && !detail.dispatch && !detail.direct_handoff && canViewMetal && !showMetalOperations" @click="router.replace({ path: route.path, query: { ...route.query, view: 'metal' } })">选择金工加工件</ElButton>
-        <ElButton v-if="detail?.status === 'PENDING_DISPATCH' && !detail.dispatch && !detail.direct_handoff && showMetalOperations" @click="router.replace({ path: route.path, query: { ...route.query, view: undefined, source_issue_line_id: undefined } })">改选仓库原料</ElButton>
+        <ElButton v-if="canRemoveOrder && detail" class="delete-order-button" type="danger" plain :loading="deleting" @click="deleteOrder">{{ detail.can_delete ? '永久删除外发单' : '撤销并退料' }}</ElButton>
+        <ElButton v-if="!warehouseWorkspace && detail?.status === 'PENDING_DISPATCH' && !detail.dispatch && !detail.direct_handoff && canViewMetal && !showMetalOperations" @click="router.replace({ path: route.path, query: { ...route.query, view: 'metal' } })">选择金工加工件</ElButton>
+        <ElButton v-if="!warehouseWorkspace && detail?.status === 'PENDING_DISPATCH' && !detail.dispatch && !detail.direct_handoff && showMetalOperations" @click="router.replace({ path: route.path, query: { ...route.query, view: undefined, source_issue_line_id: undefined } })">改选仓库原料</ElButton>
         <OutsourcingFlowActions v-if="detail && !showMetalOperations" :detail="detail" :etag="etag" @updated="applyFlowResult" />
       </div>
     </header>
@@ -299,7 +306,7 @@ watch(() => [route.params.orderId, route.query?.view], () => { void load() })
     <ElAlert v-else-if="loadError" :title="loadError" type="error" show-icon :closable="false"><ElButton @click="load">重试</ElButton></ElAlert>
     <div v-else-if="loading || !detail" v-loading="loading" class="page-loading">正在加载外发单详情…</div>
     <template v-else>
-      <ElAlert v-if="detail.direct_handoff" data-testid="original-direct-handoff-note" :title="canViewMetal ? '此单由金工直接交接；在下方登记交接、回货及原单收尾，原料不重复扣库。' : '此单由金工直接交接，当前账号可查看基础详情；交接与回货操作需要金工来源权限。'" type="info" :closable="false" show-icon />
+      <ElAlert v-if="detail.direct_handoff" data-testid="original-direct-handoff-note" :title="warehouseWorkspace ? '此单由金工直接交接；仓库在下方登记合格回货入库，原料不重复扣库。' : canViewMetal ? '此单由金工直接交接；在下方登记交接及原单收尾，合格回货入库由仓库办理。' : '此单由金工直接交接，当前账号可查看基础详情；交接操作需要金工来源权限，合格回货入库由仓库办理。'" type="info" :closable="false" show-icon />
       <ElAlert v-if="detail.status === 'CANCELLED' && detail.dispatch && !detail.direct_handoff" :title="detail.stock_mode === 'PUBLIC_V2' ? '本单已撤销；发料记录保留，未用原料已退回原库区公共库存。' : '本单已撤销；发料记录保留，未用原料已退回原批次库存。'" type="success" :closable="false" show-icon />
       <section v-if="!showMetalOperations" class="detail-card order-workflow-card" :class="{ 'is-cancelled': detail.status === 'CANCELLED' }">
         <div class="detail-card-heading"><h2>流程步骤</h2><span>{{ detail.status_display }}</span></div>

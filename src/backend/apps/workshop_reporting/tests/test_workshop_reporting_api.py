@@ -233,6 +233,7 @@ class WorkshopReportingApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["data"]["schedule_product"]["order_number"], "WG-ORDER-001")
+        self.assertEqual(response.data["data"]["schedule_product"]["product_code"], self.product_line.product_code_snapshot)
         self.assertEqual(response.data["data"]["schedule_product"]["product_specification"], self.product_line.specification_snapshot)
         self.assertEqual(response.data["data"]["schedule_product"]["product_color"], self.product_line.color_name_snapshot)
         listed = next(
@@ -240,6 +241,7 @@ class WorkshopReportingApiTests(APITestCase):
             if item["id"] == str(self.schedule_product.pk)
         )
         self.assertEqual(listed["order_number"], "WG-ORDER-001")
+        self.assertEqual(listed["product_code"], self.product_line.product_code_snapshot)
 
     def test_metal_context_uses_all_craft_operations_and_verified_bom_parts(self):
         other_operation = Operation.objects.create(

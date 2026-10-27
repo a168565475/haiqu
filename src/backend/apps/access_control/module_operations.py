@@ -77,7 +77,10 @@ ACTION_OVERRIDES = {
     },
     'PurchaseOrderViewSet': {'update': 'procurement.change_purchaseorder', 'partial_update': 'procurement.change_purchaseorder',
         'complete': 'access_control.complete_purchaseorder', 'generate_sheets': 'access_control.generate_purchasesheets'},
-    'PurchaseReturnViewSet': {'confirm': 'access_control.confirm_purchasereturn', 'complete': 'access_control.complete_purchasereturn'},
+    'PurchaseReturnViewSet': {
+        'confirm': 'access_control.confirm_purchasereturn',
+        'complete': 'access_control.complete_purchasereturn',
+    },
     'PurchaseContractTemplateViewSet': {'list': 'procurement.view_purchasecontracttemplate', 'retrieve': 'procurement.view_purchasecontracttemplate',
         'create': 'procurement.add_purchasecontracttemplate', 'update': 'procurement.change_purchasecontracttemplate', 'partial_update': 'procurement.change_purchasecontracttemplate'},
     'SupplierPurchaseSheetViewSet': {

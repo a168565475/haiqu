@@ -225,12 +225,6 @@ class PipePurchaseOrderApiTests(APITestCase):
         self.assertEqual(line['calculation_snapshot']['calculation_version'], 3)
         self.assertEqual(Decimal(line['amount']), Decimal('2037.40'))
         self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
-        from types import SimpleNamespace
-        from apps.outsourcing.dispatch_services import ready_snapshot
-        from apps.outsourcing.material_flow import processing_basis
-        self.line.refresh_from_db()
-        snapshot = processing_basis(self.line)
-        self.assertEqual(ready_snapshot(SimpleNamespace(conversion_snapshot=snapshot))['allowance_pieces'], 2004)
 
     def test_legacy_bom_and_purchase_source_keep_original_snapshot(self):
         self.line.raw_values.pop('pipe_plan_version')

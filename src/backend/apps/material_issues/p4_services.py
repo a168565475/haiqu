@@ -413,8 +413,10 @@ def confirm_original_good_return(*, request, handoff_id, request_id, good_pieces
         return original_good_return_context(handoff, request)
     line, source, _snapshot = _source_for_request(request, handoff.source.issue_line_id)
     handoff.source = source
-    order = get_object_or_404(accessible_outsourcing_orders(request).select_for_update(of=("self",)).select_related(
-        "schedule", "craft"), pk=handoff.original_order_id)
+    # 授权查询可能含 DISTINCT；保留授权子查询，只锁原单基础表行。
+    visible_order_ids = accessible_outsourcing_orders(request).filter(pk=handoff.original_order_id).values("pk")
+    order = get_object_or_404(OutsourcingOrder.objects.filter(pk__in=visible_order_ids)
+        .select_for_update(of=("self",)).select_related("schedule", "craft"), pk=handoff.original_order_id)
     handoff.original_order = order
     _require_source_mode(order, source)
     allocation = _allocation_for_handoff(handoff)
@@ -516,7 +518,8 @@ def _handoff_return_state(handoff):
 def _source_result(source, line, request=None):
     handoffs = source.original_handoffs.all()
     if request is not None:
-        handoffs = scoped_records(handoffs, request, "material_issues.view_metalprocessingsource", "original_order__craft_id")
+        from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_original_handoffs
+        handoffs = handoffs.filter(pk__in=warehouse_original_handoffs(request)) if warehouse_stage(request) else scoped_records(handoffs, request, "material_issues.view_metalprocessingsource", "original_order__craft_id")
     line.processing_source = source
     result = source_data(line, detail=True)
     result["original_handoffs"] = [
@@ -840,7 +843,8 @@ def create_rework(*, request, unsprayed_return_id, request_id, completed_pieces,
 def rework_result(record, request=None):
     visible_orders = record.external_orders.all()
     if request is not None:
-        visible_orders = scoped_records(visible_orders, request, "material_issues.view_metalprocessingsource")
+        from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_rework_orders
+        visible_orders = visible_orders.filter(pk__in=warehouse_rework_orders(request)) if warehouse_stage(request) else scoped_records(visible_orders, request, "material_issues.view_metalprocessingsource")
     allocated = record.external_orders.aggregate(total=Sum("allocated_pieces"))["total"] or 0
     return {
         "id": str(record.pk), "unsprayed_return_id": str(record.unsprayed_return_id),

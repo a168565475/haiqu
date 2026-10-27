@@ -55,33 +55,64 @@ class PurchaseCompletionApiTests(MaterialInventoryApiTests):
         self.assertEqual(self.client.get(base + "stats/").data["data"]["total"], 0)
         self.assertEqual(self.client.get(base + "filter-options/").data["data"]["suppliers"], [])
 
-    def test_warehouse_and_quality_can_view_return_but_cannot_procurement_confirm(self):
+    def test_warehouse_can_view_and_track_return_but_procurement_confirms_it(self):
+        self.use_general_material()
         receipt = self.receive()
         self.assertEqual(self.confirm_quality(receipt, return_quantity="1.0000").status_code, 200)
         record = PurchaseReturn.objects.get()
-        for permission_codename in ["quality_confirm_material", "receive_material"]:
-            self.user.user_permissions.set(Permission.objects.filter(
-                codename__in=[permission_codename, "view_productiontask"],
-            ))
-            self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        self.user.user_permissions.set(Permission.objects.filter(
+            codename__in=["quality_confirm_material", "view_productiontask"],
+        ))
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        self.assertEqual(self.client.get("/api/v1/purchase-returns/", {"purchase_order_id": str(self.order.pk)}).status_code, 200)
+        quality_detail = self.client.get(f"/api/v1/purchase-returns/{record.pk}/")
+        self.assertEqual(quality_detail.status_code, 200, quality_detail.data)
+        self.assertEqual(
+            self.client.post(
+                f"/api/v1/purchase-returns/{record.pk}/confirm/", {}, format="json", HTTP_IF_MATCH=quality_detail["ETag"],
+            ).status_code,
+            403,
+        )
 
-            listing = self.client.get(
-                "/api/v1/purchase-returns/",
-                {"purchase_order_id": str(self.order.pk)},
-            )
-            self.assertEqual(listing.status_code, 200, listing.data)
-            self.assertEqual(listing.data["meta"]["total"], 1)
-            detail = self.client.get(f"/api/v1/purchase-returns/{record.pk}/")
-            self.assertEqual(detail.status_code, 200, detail.data)
-            self.assertEqual(
-                self.client.post(
-                    f"/api/v1/purchase-returns/{record.pk}/confirm/",
-                    {},
-                    format="json",
-                    HTTP_IF_MATCH=detail["ETag"],
-                ).status_code,
-                403,
-            )
+        warehouse_user = get_user_model().objects.create_user(username="warehouse_return_operator")
+        warehouse_employee = Employee.objects.create(user=warehouse_user, employee_code="WAREHOUSE_RETURN", display_name="退货仓管")
+        self.task.followers.add(warehouse_employee)
+        warehouse_user.user_permissions.set(
+            Permission.objects.filter(content_type__app_label="inventory", codename="receive_material")
+            | Permission.objects.filter(content_type__app_label="production_tasks", codename="view_productiontask")
+        )
+        warehouse_client = APIClient()
+        warehouse_client.force_authenticate(warehouse_user)
+        listing = warehouse_client.get("/api/v1/purchase-returns/", {"purchase_order_id": str(self.order.pk)})
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertEqual(listing.data["meta"]["total"], 1)
+        detail = warehouse_client.get(f"/api/v1/purchase-returns/{record.pk}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        confirmed = warehouse_client.post(
+            f"/api/v1/purchase-returns/{record.pk}/confirm/", {}, format="json", HTTP_IF_MATCH=detail["ETag"],
+        )
+        self.assertEqual(confirmed.status_code, 403, confirmed.data)
+
+        self.user.user_permissions.set(
+            Permission.objects.filter(content_type__app_label="procurement", codename__in=["submit_purchaseorder", "view_purchaseorder"])
+            | Permission.objects.filter(content_type__app_label="access_control", codename__in=["confirm_purchasereturn", "complete_purchasereturn"])
+            | Permission.objects.filter(content_type__app_label="production_tasks", codename="view_productiontask")
+        )
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        detail = self.client.get(f"/api/v1/purchase-returns/{record.pk}/")
+        confirmed = self.client.post(
+            f"/api/v1/purchase-returns/{record.pk}/confirm/", {}, format="json", HTTP_IF_MATCH=detail["ETag"],
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        record.refresh_from_db()
+        self.assertEqual(record.confirmed_by_employee_id, self.employee.pk)
+        detail = self.client.get(f"/api/v1/purchase-returns/{record.pk}/")
+        completed = self.client.post(
+            f"/api/v1/purchase-returns/{record.pk}/complete/", {}, format="json", HTTP_IF_MATCH=detail["ETag"],
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        record.refresh_from_db()
+        self.assertEqual(record.completed_by_employee_id, self.employee.pk)
 
         outsider = get_user_model().objects.create_user(username="warehouse_return_outsider")
         Employee.objects.create(user=outsider, employee_code="WAREHOUSE_OUT", display_name="范围外仓库")

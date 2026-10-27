@@ -69,8 +69,7 @@ export const sidebarMenuItems: MenuItem[] = [
     defaultChildKey: 'purchase-orders',
     children: [
       { key: 'purchase-orders', label: '采购订单', to: { name: 'purchase-orders' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.view_supplier'] },
-      { key: 'purchase-inbounds', label: '采购入库', to: { name: 'purchase-inbounds' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
-      { key: 'purchase-returns', label: '退货明细', to: { name: 'purchase-returns' }, permission: 'procurement.view_purchaseorder' },
+      { key: 'purchase-return-records', label: '退货记录', to: { name: 'purchase-return-records' }, anyPermissions: ['access_control.confirm_purchasereturn', 'procurement.submit_purchaseorder', 'procurement.view_purchaseorder'] },
     ],
   },
   {
@@ -81,7 +80,6 @@ export const sidebarMenuItems: MenuItem[] = [
       { key: 'workshop-scheduling', label: '计划排产', to: { name: 'workshop-scheduling' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-internal-plan', label: '内部计划', to: { name: 'workshop-metalworking-plan' }, permission: 'production_scheduling.view_productionschedule' },
       { key: 'workshop-outsourcing', label: '委外加工', to: { name: 'workshop-outsourcing' }, anyPermissions: ['outsourcing.view_outsourcingorder', 'material_issues.view_metalprocessingsource'] },
-      { key: 'material-issues', label: '生产领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
       { key: 'wage-schemes', label: '工价方案', to: { name: 'wage-schemes' }, permission: 'workshop_reporting.view_wagescheme' },
       { key: 'work-report-days', label: '报工记录', to: { name: 'work-report-days' }, allPermissions: ['workshop_reporting.view_workreport'] },
       { key: 'workshop-configuration', label: '生产配置', to: { name: 'workshop-configuration' }, permission: 'workshop_config.view_workshop' },
@@ -94,6 +92,10 @@ export const sidebarMenuItems: MenuItem[] = [
     children: [
       { key: 'finished-goods-inventory', label: '成品库存', to: { name: 'finished-goods-inventory' }, permission: 'inventory.view_finishedgoodsreceipt' },
       { key: 'material-inventory', label: '材料库存', to: { name: 'material-inventory' }, permission: 'inventory.view_materialinbound' },
+      { key: 'purchase-inbounds', label: '采购入库', to: { name: 'purchase-inbounds' }, anyPermissions: ['inventory.receive_material', 'inventory.quality_confirm_material'] },
+      { key: 'purchase-returns', label: '退货明细', to: { name: 'purchase-returns' }, anyPermissions: ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'] },
+      { key: 'material-issues', label: '生产领料', to: { name: 'material-issues' }, permission: 'material_issues.view_materialissue' },
+      { key: 'warehouse-outsourcing', label: '委外管理', to: { name: 'warehouse-outsourcing' }, anyPermissions: ['outsourcing.confirm_dispatch_outsourcingorder', 'outsourcing.confirm_return_outsourcingorder', 'outsourcing.return_raw_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn'] },
     ],
   },
   {

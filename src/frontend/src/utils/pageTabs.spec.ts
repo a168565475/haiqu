@@ -62,7 +62,6 @@ describe('全局页面选项卡身份', () => {
     ['sample-new', 'editApplication'],
     ['sample-new', 'sourceId'],
     ['bom-create', 'production_task_product_id'],
-    ['workshop-outsourcing-new', 'source_issue_line_id'],
     ['wage-scheme-new', 'craft_id'],
     ['work-report-new', 'schedule_product_id'],
     ['quotation-preview', 'version'],

@@ -66,6 +66,7 @@ const scheme = {
     operation_name: '切管',
     display_name: '前脚管-20*1.0*500',
     production_description: '按定位线精准下料',
+    required_quantity: '4000.0000',
     previous_price: '0.5000',
     revised_price: null,
     declared_price: '0.6000',
@@ -127,6 +128,8 @@ describe('工价方案审批确认', () => {
 
     expect(wrapper.text()).toContain('制作工序描述')
     expect(wrapper.text()).toContain('按定位线精准下料')
+    expect(wrapper.text()).toContain('4000')
+    expect(wrapper.text()).not.toContain('4000.0000')
     expect(wrapper.text()).toContain('备注')
     expect(wrapper.text()).toContain('首件确认后批量制作')
     expect(wrapper.text()).not.toContain('版本')

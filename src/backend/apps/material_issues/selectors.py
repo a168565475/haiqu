@@ -5,12 +5,12 @@ from apps.production_tasks.selectors import accessible_production_tasks, legacy_
 from .models import MaterialIssue, MaterialIssuePublicStockAllocation
 
 
-def accessible_material_issues(request):
+def accessible_material_issues(request, permission=None):
     queryset = MaterialIssue.objects.all()
-    if request.user.is_superuser or request.user.has_perm("material_issues.view_all_materialissue"):
+    if request.user.is_superuser or (permission is None and request.user.has_perm("material_issues.view_all_materialissue")):
         return queryset
     from apps.access_control.resource_scopes import enforcing, current_permission, resource_ids
-    code = current_permission(request, 'material_issues.view_materialissue')
+    code = permission or current_permission(request, 'material_issues.view_materialissue')
     if enforcing(request, code):
         from apps.access_control.resource_scopes import has_legacy_permission
         ids = resource_ids(request, code, 'WORKSHOP', include_legacy=False)

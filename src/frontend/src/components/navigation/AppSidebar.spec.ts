@@ -41,17 +41,17 @@ const secondaryIconKeys: Record<string, string[]> = {
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['products', 'product-catalog', 'raw-materials', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
-  'procurement-management': ['purchase-orders', 'purchase-inbounds', 'purchase-returns'],
-  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
-  'warehouse-management': ['finished-goods-inventory', 'material-inventory'],
+  'procurement-management': ['purchase-orders', 'purchase-return-records'],
+  'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
+  'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
 
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
-  'purchase-inbounds', 'purchase-returns', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
-  'workshop-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
+  'purchase-inbounds', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
+  'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
   'material-inventory', 'employee-list', 'wecom-attendance', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
@@ -164,7 +164,7 @@ describe('全局悬停侧栏', () => {
     await group('workshop').trigger('focus')
     const plate = panel().get('[data-sidebar-hover-plate]')
     expect(plate.attributes('data-hover-menu-key')).toBe('')
-    for (const key of ['workshop-scheduling', 'material-issues']) {
+    for (const key of ['workshop-scheduling']) {
       await panel().get(`[data-menu-key="${key}"]`).trigger('mouseenter')
       expect(wrapper.findAll('[data-sidebar-hover-plate]')).toHaveLength(1)
       expect(panel().get('[data-sidebar-hover-plate]').element).toBe(plate.element)
@@ -199,7 +199,7 @@ describe('全局悬停侧栏', () => {
     await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().find(`[data-menu-key="${missingKey}"]`).exists()).toBe(false)
     expect(panel().findAll('a, button, [tabindex]').map(item => item.attributes('data-menu-key'))).toEqual([
-      'finished-goods-inventory', 'material-inventory',
+      'finished-goods-inventory', 'material-inventory', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'warehouse-outsourcing',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
     const plate = panel().get('[data-sidebar-hover-plate]')
@@ -455,9 +455,18 @@ describe('全局悬停侧栏', () => {
     await setup()
     await group('workshop').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '计划排产', '内部计划', '委外加工', '生产领料', '工价方案', '报工记录', '生产配置',
+      '计划排产', '内部计划', '委外加工', '工价方案', '报工记录', '生产配置',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('workshop-scheduling')
+  })
+
+  it('仓库集中显示库存、采购入库、退货明细和生产领料', async () => {
+    await setup()
+    await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
+    expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
+      '成品库存', '材料库存', '采购入库', '退货明细', '生产领料', '委外管理',
+    ])
+    expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
   })
 
   it('仅有供应商权限仍可经采购默认入口进入原有采购页', async () => {
@@ -469,6 +478,16 @@ describe('全局悬停侧栏', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('purchase-orders')
     expect(group('procurement').attributes('aria-expanded')).toBe('false')
+  })
+
+  it('仅有委外回货权限时可以从仓库进入委外管理', async () => {
+    const { auth } = await setup()
+    auth.user = { ...auth.user!, username: 'warehouse-receiver', is_superuser: false,
+      permissions: ['outsourcing.confirm_return_outsourcingorder'] }
+    await nextTick()
+    await group('warehouse').trigger('focus')
+    expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['warehouse-outsourcing'])
+    expect(wrapper.find('[data-menu-key="workshop-management"]').exists()).toBe(false)
   })
 
   it('进入子页面仍默认收起，一级名称精简且唯一', async () => {
@@ -491,7 +510,7 @@ describe('全局悬停侧栏', () => {
     await advance(100)
     expect(panel().isVisible()).toBe(true)
     expect(panel().attributes('data-flyout-menu-key')).toBe('workshop-management')
-    expect(panel().findAll('[data-menu-key]')).toHaveLength(7)
+    expect(panel().findAll('[data-menu-key]')).toHaveLength(6)
   })
 
   it('跨入二级栏取消关闭，离开整个导航后收起', async () => {

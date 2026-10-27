@@ -141,7 +141,7 @@ EVENTS = {
     ),
     "MATERIAL_INSPECTION_CONFIRMED": _event(
         "MATERIAL_INSPECTION_CONFIRMED", "检验结果确认", "采购单 {{purchase_order_no}} 的到货单 {{document_no}} 检验结果：{{status}}。",
-        ["PURCHASING"], ["ROLE_MEMBERS"], "inventory.view_materialinbound", "material-inbound-detail",
+        ["WAREHOUSE_KEEPER", "PURCHASING"], ["ROLE_MEMBERS"], "inventory.view_materialinbound", "material-inbound-detail",
         variables=("document_no", "purchase_order_no", "accepted_quantity", "return_quantity",
                    "operator", "occurred_at", "status", "object_version"),
     ),
@@ -345,9 +345,9 @@ def target_for(event_code, object_id):
         "WORK_REPORT_SAVED": ("work-report-day-detail", "productionDate"),
         "WORK_REPORT_CORRECTED": ("work-report-day-detail", "productionDate"),
         "OUTSOURCING_LOSS_RECORDED": ("workshop-outsourcing-detail", "orderId"),
-        "TUBE_OUTSOURCING_SHORTAGE_RECORDED": ("workshop-outsourcing-tube-detail", "orderId"),
-        "OUTSOURCING_ORDER_CREATED": ("workshop-outsourcing-detail", "orderId"),
-        "TUBE_OUTSOURCING_ORDER_CREATED": ("workshop-outsourcing-tube-detail", "orderId"),
+        "TUBE_OUTSOURCING_SHORTAGE_RECORDED": ("workshop-outsourcing-tube-detail", "id"),
+        "OUTSOURCING_ORDER_CREATED": ("warehouse-outsourcing-detail", "orderId"),
+        "TUBE_OUTSOURCING_ORDER_CREATED": ("warehouse-outsourcing-tube-detail", "id"),
         "SAMPLE_SUBMITTED": ("sample-detail", "sampleId"),
         "SAMPLE_EFFECTIVE": ("sample-detail", "sampleId"),
         "SAMPLE_RETURNED": ("sample-detail", "sampleId"),
@@ -363,7 +363,15 @@ def target_for(event_code, object_id):
     }
     name, parameter = routes[event_code]
     value = object_id
-    if event_code == "MATERIAL_INSPECTION_CONFIRMED":
+    if event_code == "TUBE_OUTSOURCING_ORDER_CREATED":
+        from apps.outsourcing.models import TubeOutsourcingOrder
+        from apps.outsourcing.tube_models import TubeSourceKind
+        source = TubeOutsourcingOrder.objects.filter(pk=object_id).values_list("source_kind", flat=True).first()
+        if source is None:
+            return None
+        if source in {TubeSourceKind.METAL, TubeSourceKind.SEWING}:
+            name = "workshop-outsourcing-tube-detail"
+    elif event_code == "MATERIAL_INSPECTION_CONFIRMED":
         from apps.inventory.models import MaterialInbound
         value = MaterialInbound.objects.filter(pk=object_id).values_list("purchase_order_id", flat=True).first()
     elif event_code in {"WORK_REPORT_SAVED", "WORK_REPORT_CORRECTED"}:

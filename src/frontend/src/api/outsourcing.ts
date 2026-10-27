@@ -9,10 +9,7 @@ import type {
   OutsourcingDispatchContext,
   OutsourcingOptions,
   OutsourcingOrder,
-  OutsourcingOrderCreateInput,
   OutsourcingOrderDetail,
-  OutsourcingSourcePlan,
-  OutsourcingSourceBomContext,
   Paginated,
   VersionedFactory,
   VersionedOutsourcingOrder,
@@ -77,19 +74,17 @@ export async function fetchOutsourcingOrders(params: Record<string, unknown>): P
   return data
 }
 
-export async function createOutsourcingOrder(payload: OutsourcingOrderCreateInput): Promise<VersionedOutsourcingOrder> {
-  return versionedOrder(await apiClient.post<DataResponse<OutsourcingOrderDetail>>(orderPath, payload))
-}
-
-export async function fetchOutsourcingOrder(id: string): Promise<VersionedOutsourcingOrder> {
+export async function fetchOutsourcingOrder(id: string, warehouse = false): Promise<VersionedOutsourcingOrder> {
   return versionedOrder(await apiClient.get<DataResponse<OutsourcingOrderDetail>>(
-    `${orderPath}${encodeURIComponent(id)}/`,
+    `${orderPath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])
   ))
 }
 
-export function outsourcingProductImageUrl(orderId: string, fileId: string): string {
+export function outsourcingProductImageUrl(orderId: string, fileId: string, warehouse = false): string {
   const path = `${orderPath}${encodeURIComponent(orderId)}/product-files/${encodeURIComponent(fileId)}/`
-  return new URL(path, `${apiClient.defaults.baseURL || window.location.origin}/`).toString()
+  const url = new URL(path, `${apiClient.defaults.baseURL || window.location.origin}/`)
+  if (warehouse) url.searchParams.set('warehouse_stage', 'all')
+  return url.toString()
 }
 
 export async function cancelOutsourcingOrder(
@@ -144,9 +139,9 @@ export async function confirmOutsourcingDispatch(
   ))
 }
 
-export async function fetchOutsourcingDispatchContext(id: string): Promise<OutsourcingDispatchContext> {
+export async function fetchOutsourcingDispatchContext(id: string, warehouse = false): Promise<OutsourcingDispatchContext> {
   const { data } = await apiClient.get<DataResponse<OutsourcingDispatchContext>>(
-    `${orderPath}${encodeURIComponent(id)}/dispatch-context/`,
+    `${orderPath}${encodeURIComponent(id)}/dispatch-context/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])
   )
   return data.data
 }
@@ -179,30 +174,13 @@ export async function confirmOutsourcingReturn(
   ))
 }
 
-export async function fetchOutsourcingOptions(): Promise<OutsourcingOptions> {
-  const { data } = await apiClient.get<DataResponse<OutsourcingOptions>>(`${orderPath}options/`)
+export async function fetchOutsourcingOptions(warehouse = false): Promise<OutsourcingOptions> {
+  const { data } = await apiClient.get<DataResponse<OutsourcingOptions>>(`${orderPath}options/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : []))
   return data.data
 }
 
-export async function fetchOutsourcingSourcePlans(params: Record<string, unknown>): Promise<Paginated<OutsourcingSourcePlan>> {
-  const { data } = await apiClient.get<Paginated<OutsourcingSourcePlan>>(`${orderPath}source-plans/`, { params })
-  return data
-}
-
-export async function fetchOutsourcingSourceBom(
-  scheduleProductId: string,
-  craftId: string,
-): Promise<OutsourcingSourceBomContext> {
-  const encodedId = encodeURIComponent(scheduleProductId)
-  const { data } = await apiClient.get<DataResponse<OutsourcingSourceBomContext>>(
-    `${orderPath}source-products/${encodedId}/bom/`,
-    { params: { craft_id: craftId } },
-  )
-  return data.data
-}
-
-export async function fetchOutsourcingReconciliation(id: string): Promise<OutsourcingReconciliation> {
-  const { data } = await apiClient.get<DataResponse<OutsourcingReconciliation>>(`${orderPath}${encodeURIComponent(id)}/reconciliation/`)
+export async function fetchOutsourcingReconciliation(id: string, warehouse = false): Promise<OutsourcingReconciliation> {
+  const { data } = await apiClient.get<DataResponse<OutsourcingReconciliation>>(`${orderPath}${encodeURIComponent(id)}/reconciliation/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : []))
   return data.data
 }
 export async function confirmOutsourcingFlow(

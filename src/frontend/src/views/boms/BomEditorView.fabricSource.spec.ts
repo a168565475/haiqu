@@ -30,7 +30,7 @@ interface Editor {
   persistDraft: () => Promise<boolean>
 }
 async function open() {
-  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' } } } })
+  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { BomSectionSidebar: false, BomMaterialSectionTables: false, BomLineEditorForm: false, ElTableColumn: { template: '<div />' } } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
   vm.sections.forEach(section => { section.lines = [] })

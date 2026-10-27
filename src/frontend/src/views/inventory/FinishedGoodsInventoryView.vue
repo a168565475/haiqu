@@ -3,13 +3,14 @@ import { compactDecimal } from '@/utils/compactDecimal'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { useRoute, useRouter } from 'vue-router'
 import FinishedReceiptRecordsPanel from './FinishedReceiptRecordsPanel.vue'
+import FinishedGoodsOutboundListView from './FinishedGoodsOutboundListView.vue'
 import AssemblyPlanPicker from './AssemblyPlanPicker.vue'
 import { fetchFinishedLocations } from '@/api/finishedReceipts'
 import type { FinishedLocation } from '@/types/finishedReceipts'
 import '@/styles/finishedReceipts.scss'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -20,7 +21,9 @@ import type { FinishedGoodsInventoryRow } from '@/types/inventory'
 
 const route = useRoute()
 const router = useRouter()
-const stockTab = ref(route.query.tab === 'records' ? 'records' : 'stock')
+type StockTab = 'stock' | 'records' | 'outbounds'
+function readStockTab(value: unknown): StockTab { return value === 'records' || value === 'outbounds' ? value : 'stock' }
+const stockTab = ref(readStockTab(route.query.tab))
 const planPickerVisible = ref(false), stockDetailVisible = ref(false), stockDetailLoading = ref(false), stockDetailError = ref('')
 const stockDetailRow = ref<FinishedGoodsInventoryRow>(), stockLocations = ref<FinishedLocation[]>([])
 let stockDetailSequence = 0
@@ -34,7 +37,18 @@ async function openStockDetail(row: FinishedGoodsInventoryRow) {
 function toggleStock(row: FinishedGoodsInventoryRow, checked: boolean) {
  selectedRows.value = checked ? [...selectedRows.value.filter(v => v.inventory_key !== row.inventory_key), row] : selectedRows.value.filter(v => v.inventory_key !== row.inventory_key)
 }
-function switchStockTab(value: string) { stockTab.value = value; selectedRows.value = []; if(value === 'stock') void loadRows() }
+function switchStockTab(value: StockTab) {
+  if (stockTab.value === value) return
+  stockTab.value = value; selectedRows.value = []
+  if (value === 'stock') void loadRows()
+  void router.replace({ query: { ...route.query, tab: value } })
+}
+watch(() => route.query.tab, value => {
+  const next = readStockTab(value)
+  if (stockTab.value === next) return
+  stockTab.value = next; selectedRows.value = []
+  if (next === 'stock') void loadRows()
+})
 const auth = useAuthStore()
 const loading = ref(false); const errorMessage = ref(''); const rows = ref<FinishedGoodsInventoryRow[]>([])
 const page = ref(1); const pageSize = ref(50); const total = ref(0); const keyword = ref(''); const warehouseFilter = ref(''); const zoneFilter = ref('')
@@ -66,7 +80,7 @@ async function openOutbound() {
   void router.push({ name: 'finished-goods-outbound-new', query: { receipt_ids: selectedRows.value.flatMap(item => item.receipt_ids).join(',') } })
 }
 
-onMounted(() => { void Promise.all([loadRows(), loadOptions()]) })
+onMounted(() => { if (stockTab.value === 'stock') void loadRows(); void loadOptions() })
 </script>
 
 <template>
@@ -78,16 +92,19 @@ onMounted(() => { void Promise.all([loadRows(), loadOptions()]) })
         <div class="fg-heading-actions"><ElDropdown v-if="canConfigure" trigger="click" @command="openConfig"><ElButton class="erp-button-motion">仓库配置</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem command="warehouse">仓库信息</ElDropdownItem><ElDropdownItem command="location">库位信息</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElButton class="erp-button-motion" v-if="canInbound" type="primary" @click="planPickerVisible=true">成品入库</ElButton></div>
       </section>
     </section>
-    <FinishedReceiptRecordsPanel v-if="stockTab==='records'">
+    <FinishedReceiptRecordsPanel v-if="stockTab==='records'" :key="String(route.query.schedule_product_id || '') + ':' + String(route.query.product_line_id || '')">
       <template #heading><header class="fg-heading erp-list-heading"><h1>成品库存</h1></header></template>
       <template #actions><div class="fg-heading-actions"><ElDropdown v-if="canConfigure" trigger="click" @command="openConfig"><ElButton class="erp-button-motion">仓库配置</ElButton><template #dropdown><ElDropdownMenu><ElDropdownItem command="warehouse">仓库信息</ElDropdownItem><ElDropdownItem command="location">库位信息</ElDropdownItem></ElDropdownMenu></template></ElDropdown><ElButton class="erp-button-motion" v-if="canInbound" type="primary" @click="planPickerVisible=true">成品入库</ElButton></div></template>
       <template #default>
-      <nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button @click="switchStockTab('stock')">库存汇总</button><button class="active" @click="switchStockTab('records')">入库记录</button><button @click="router.push({name:'finished-goods-outbounds'})">出库记录</button></nav>
+      <nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button @click="switchStockTab('stock')">库存汇总</button><button class="active" @click="switchStockTab('records')">入库记录</button><button @click="switchStockTab('outbounds')">出库记录</button></nav>
       </template>
     </FinishedReceiptRecordsPanel>
+    <FinishedGoodsOutboundListView v-else-if="stockTab==='outbounds'" @select-stock="switchStockTab('stock')">
+      <nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button @click="switchStockTab('stock')">库存汇总</button><button @click="switchStockTab('records')">入库记录</button><button class="active" @click="switchStockTab('outbounds')">出库记录</button></nav>
+    </FinishedGoodsOutboundListView>
     <div v-else class="fg-stock-body erp-list-data">
 
-      <div class="fg-toolbar erp-list-toolbar"><nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button :class="{active:stockTab==='stock'}" @click="switchStockTab('stock')">库存汇总</button><button :class="{active:stockTab==='records'}" @click="switchStockTab('records')">入库记录</button><button @click="router.push({name:'finished-goods-outbounds'})">出库记录</button></nav><div class="fg-stock-selection"><span class="fg-muted">已选 {{selectedRows.length}} 条</span><ElButton class="erp-button-motion" v-if="canOutbound" :disabled="!selectedRows.length" @click="openOutbound">批量出库</ElButton></div></div>
+      <div class="fg-toolbar erp-list-toolbar"><nav class="fg-tabs erp-list-tabs" aria-label="成品库存视图"><button class="active" @click="switchStockTab('stock')">库存汇总</button><button @click="switchStockTab('records')">入库记录</button><button @click="switchStockTab('outbounds')">出库记录</button></nav><div class="fg-stock-selection"><span class="fg-muted">已选 {{selectedRows.length}} 条</span><ElButton class="erp-button-motion" v-if="canOutbound" :disabled="!selectedRows.length" @click="openOutbound">批量出库</ElButton></div></div>
       <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false"/>
       <section class="fg-stock-table" v-loading="loading"><div class="erp-list-table-frame"><div class="fg-table-scroll erp-list-table-scroll"><table class="fg-table erp-list-native-table erp-list-native-table--nowrap"><colgroup><col v-for="(width,i) in [50,130,80,120,160,95,165,90,95,65,105,75,90,95,135,120]" :key="i" :style="{width:width+'px'}"></colgroup><thead><tr><th class="center selection-cell"><input type="checkbox" aria-label="全选库存" :checked="rows.length>0&&selectedRows.length===rows.length" @change="selectedRows=($event.target as HTMLInputElement).checked?[...rows]:[]"></th><th v-for="name in ['生产任务单号','类别','产品编码','品名','货号','规格','颜色','当前库存','单位','仓库','库区','在库记录','占用箱位','最近入库日期','操作']" :key="name">{{name}}</th></tr></thead><tbody><tr v-for="row in rows" :key="row.inventory_key" :class="{selected:selectedRows.some(r=>r.inventory_key===row.inventory_key)}"><td class="center selection-cell"><input type="checkbox" :aria-label="'选择'+row.task_number+row.product_number+row.actual_color+row.zone_name" :checked="selectedRows.some(r=>r.inventory_key===row.inventory_key)" @change="toggleStock(row,($event.target as HTMLInputElement).checked)"></td><td>{{row.task_number||'—'}}</td><td>{{row.category||'—'}}</td><td :title="row.product_code">{{row.product_code||'—'}}</td><td :title="row.product_name">{{row.product_name}}</td><td>{{row.item_number||'—'}}</td><td :title="row.specification">{{row.specification||'—'}}</td><td>{{row.actual_color||'—'}}</td><td class="num">{{Number(row.inventory_quantity).toLocaleString()}}</td><td>{{row.unit_name}}</td><td>{{row.warehouse_name}}</td><td>{{row.zone_name}}</td><td class="num">{{row.batch_count}}</td><td class="num">{{row.occupied_box_slots??'未计算'}}</td><td>{{row.latest_inbound_time?new Date(row.latest_inbound_time).toLocaleDateString('sv-SE'):'—'}}</td><td><ElButton link type="primary" @click="openStockDetail(row)">库存详情</ElButton></td></tr></tbody></table><div class="fg-empty" v-if="!loading&&!rows.length">暂无符合条件的成品库存</div></div></div><footer class="fg-pager erp-list-footer"><span>共 {{total}} 条</span><ElPagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="sizes, prev, pager, next" @current-change="loadRows" @size-change="search"/></footer></section>
     </div>

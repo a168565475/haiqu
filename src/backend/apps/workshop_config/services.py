@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
@@ -16,6 +18,13 @@ class ActiveChildrenConflict(Conflict):
     def __init__(self, message, *, blockers):
         self.error_meta = {"blockers": blockers}
         super().__init__(message)
+
+
+def _next_operation_number():
+    while True:
+        candidate = f"OP-{uuid4().hex[:20].upper()}"
+        if not Operation.objects.filter(operation_number=candidate).exists():
+            return candidate
 
 
 def _snapshot(instance):
@@ -51,6 +60,8 @@ def _object_type(instance):
 
 @transaction.atomic
 def create_config(*, model_class, validated_data, actor_employee, request=None):
+    if model_class is Operation and not validated_data.get("operation_number"):
+        validated_data = {**validated_data, "operation_number": _next_operation_number()}
     instance = model_class(
         created_by_employee=actor_employee,
         updated_by_employee=actor_employee,

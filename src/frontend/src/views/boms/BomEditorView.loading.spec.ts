@@ -47,7 +47,7 @@ let wrapper: VueWrapper | undefined
 function open() {
   wrapper = shallowMount(BomEditorView, { global: {
     plugins: [ElementPlus], renderStubDefaultSlot: true,
-    stubs: { ElTableColumn: { template: '<div />' }, ElResult: { template: '<div><slot name="extra" /></div>' } },
+    stubs: { ElTableColumn: { template: '<div />' }, ElResult: { template: '<div><slot name="extra" /></div>' }, BomProductConfirmationDialogs: false },
   } })
   return wrapper.vm as unknown as Editor
 }

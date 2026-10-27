@@ -1,26 +1,31 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import { reactive } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
 import WarehouseConfigurationDialogs from '@/components/inventory/WarehouseConfigurationDialogs.vue'
 
-const api = vi.hoisted(() => ({ stock: vi.fn(), options: vi.fn(), warehouses: vi.fn(), zones: vi.fn(), locations: vi.fn() }))
+const api = vi.hoisted(() => ({ stock: vi.fn(), outbounds: vi.fn(), options: vi.fn(), warehouses: vi.fn(), zones: vi.fn(), locations: vi.fn() }))
 const auth = vi.hoisted(() => ({ hasPermission: vi.fn() }))
-const router = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }))
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
-vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
+vi.mock('vue-router', () => ({ useRoute: () => reactive(route), useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('@/directives/glassSpotlight', () => ({ vGlassSpotlight: {} }))
+vi.mock('@/directives/horizontalOverflow', () => ({ vHorizontalOverflow: {} }))
 vi.mock('@/api/inventory', async importOriginal => ({
   ...await importOriginal<object>(), fetchFinishedGoodsInventory: api.stock, fetchFinishedGoodsFilterOptions: api.options,
+  fetchFinishedGoodsOutbounds: api.outbounds,
   fetchWarehouses: api.warehouses, fetchZones: api.zones, fetchLocations: api.locations,
 }))
 let wrapper: ReturnType<typeof mount> | undefined
 beforeEach(() => {
   vi.resetAllMocks()
   route.query = {}
+  router.replace.mockImplementation(async ({ query }) => { reactive(route).query = query })
   auth.hasPermission.mockReturnValue(true)
   api.stock.mockResolvedValue({ results: [], count: 0 })
+  api.outbounds.mockResolvedValue({ items: [], total: 0 })
   api.options.mockResolvedValue({ warehouses: [], zones: [] })
   api.warehouses.mockResolvedValue([])
   api.zones.mockResolvedValue([])
@@ -28,9 +33,11 @@ beforeEach(() => {
 })
 afterEach(() => wrapper?.unmount())
 
-it('删除旧直接入库入口，保留装配待入库入口及历史记录导航', async () => {
+it('保留成品入库入口，库存汇总、入库记录、出库记录在同一页面切换', async () => {
   wrapper = mount(FinishedGoodsInventoryView, { global: {
-    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, FinishedReceiptRecordsPanel: true },
+    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true,
+      FinishedReceiptRecordsPanel: { template: '<section data-testid="receipt-panel"><slot/></section>' },
+    },
   } })
   await flushPromises()
   expect(wrapper.text()).not.toContain('其他入库')
@@ -38,8 +45,39 @@ it('删除旧直接入库入口，保留装配待入库入口及历史记录导�
   await wrapper.findAll('button').find(button => button.text() === '成品入库')!.trigger('click')
   expect(wrapper.findComponent({ name: 'AssemblyPlanPicker' }).props('modelValue')).toBe(true)
   await wrapper.findAll('button').find(button => button.text() === '出库记录')!.trigger('click')
-  expect(router.push).toHaveBeenCalledWith({ name: 'finished-goods-outbounds' })
+  await flushPromises()
+  expect(router.push).not.toHaveBeenCalled()
+  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
+  expect(wrapper.findAll('nav[aria-label="成品库存视图"]')).toHaveLength(1)
+  expect(wrapper.text()).toContain('暂无出库记录')
+  expect(route.query.tab).toBe('outbounds')
+  await wrapper.findAll('button').find(button => button.text() === '从库存选择出库')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.get('nav button.active').text()).toBe('库存汇总')
+  expect(route.query.tab).toBe('stock')
   await wrapper.findAll('button').find(button => button.text() === '入库记录')!.trigger('click')
+  expect(wrapper.find('[data-testid="receipt-panel"]').exists()).toBe(true)
+  expect(wrapper.get('nav button.active').text()).toBe('入库记录')
+  await wrapper.findAll('button').find(button => button.text() === '出库记录')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
+  expect(router.push).not.toHaveBeenCalled()
+})
+
+it('出库页签直达、刷新及已有页面内的地址变化保留选中视图和产品筛选', async () => {
+  route.query = { tab: 'outbounds', production_task_id: 'task-1', product_line_id: 'line-1' }
+  wrapper = mount(FinishedGoodsInventoryView, { global: {
+    plugins: [ElementPlus], stubs: { ElDialog: true, AssemblyPlanPicker: true, FinishedReceiptRecordsPanel: true },
+  } })
+  await flushPromises()
+  expect(wrapper.get('nav button.active').text()).toBe('出库记录')
+  expect(api.outbounds).toHaveBeenLastCalledWith(expect.objectContaining({ production_task_id: 'task-1', product_line_id: 'line-1' }))
+  expect(api.stock).not.toHaveBeenCalled()
+  await wrapper.findAll('button').find(button => button.text() === '库存汇总')!.trigger('click')
+  await flushPromises()
+  expect(route.query).toEqual({ tab: 'stock', production_task_id: 'task-1', product_line_id: 'line-1' })
+  reactive(route).query = { tab: 'records' }
+  await flushPromises()
   expect(wrapper.find('finished-receipt-records-panel-stub').exists()).toBe(true)
 })
 
@@ -117,7 +155,7 @@ it.each(['stock', 'records'])('%s 页签使用成品仓配置，成功保存只�
   configuration.vm.$emit('saved')
   await flushPromises()
   expect(api.options).toHaveBeenCalledTimes(2)
-  expect(api.stock).toHaveBeenCalledOnce()
+  expect(api.stock).toHaveBeenCalledTimes(tab === 'stock' ? 1 : 0)
   if (tab === 'stock') {
     expect(wrapper.findAllComponents({ name: 'ElOption' }).some(option => option.props('label') === '新增成品仓')).toBe(true)
   }

@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { createWageScheme, createWageSchemeChange, fetchReportingContext, fetchWageScheme, fetchWageSchemeHistory, submitWageScheme, updateWageScheme } from '@/api/workshopReporting'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import WorkshopConfigManager from '@/components/workshop/WorkshopConfigManager.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { ReportingContext, WageScheme, WageSchemeLineInput, WorkCountingMode } from '@/types/workshopReporting'
 import { isPlainWageMoney, sumWageAmounts } from '@/utils/wageMoney'
@@ -23,6 +24,7 @@ let contextRequestSequence = 0
 let historyRequestSequence = 0
 const form = reactive({ scheduleProductId: String(route.query.schedule_product_id || ''), workshopId: String(route.query.workshop_id || ''), craftIds: route.query.craft_id ? [String(route.query.craft_id)] : [] as string[], operationProductName: '', remark: '', historySourceSchemeId: null as string | null, lines: [] as WageSchemeLineInput[] })
 const historyVisible = ref(false); const historyLoading = ref(false); const historyRows = ref<WageScheme[]>([])
+const operationManagerVisible = ref(false)
 const scheduleProduct = computed(() => {
   const selected = context.value?.schedule_product
   if (selected?.id === form.scheduleProductId) return selected
@@ -65,6 +67,18 @@ function defaultCountingMode(): WorkCountingMode {
 }
 function addLine() { form.lines.push({ bom_line_id: null, craft_id: form.craftIds[0] || '', operation_id: '', display_name: '', counting_mode: defaultCountingMode(), production_description: '', previous_price: null, revised_price: null, declared_price: '', status: 'ACTIVE', note: '' }) }
 function operationChanged(line: WageSchemeLineInput) { const option = context.value?.operations.find(item => item.id === line.operation_id); if (option && !usesBomName.value && !line.display_name) line.display_name = option.name }
+function openOperationManager() {
+  if (!form.workshopId || !selectedCraftId.value) return ElMessage.warning('请先选择车间和工艺。')
+  operationManagerVisible.value = true
+}
+async function refreshOperationsAfterSave() {
+  try {
+    context.value = await fetchReportingContext(form.scheduleProductId || undefined)
+    operationManagerVisible.value = false
+  } catch (error) {
+    ElMessage.error(errorText(error))
+  }
+}
 function bomChanged(line: WageSchemeLineInput) {
   const option = bomItemsForCraft.value.find(item => item.id === line.bom_line_id)
   line.display_name = option?.label || ''
@@ -294,10 +308,11 @@ onMounted(load)
   <section v-loading="loading" class="wr-page wr-form-page erp-glass-form" :class="{ 'wr-form-page--change': isChange }" data-testid="wage-scheme-form">
     <header class="wr-heading wr-form-heading"><h1>{{ isChange ? '变更工价方案' : '新增工价方案' }}</h1></header>
     <div class="wr-form-grid"><section class="wr-card"><div class="wr-card-title"><h2>基本信息</h2></div><ElForm label-position="top">
-      <ElFormItem label="排产产品" required><ElSelect v-model="form.scheduleProductId" filterable placeholder="选择排产产品" :disabled="isChange"><ElOption v-for="item in context?.schedule_products || []" :key="item.id" :label="`${item.task_number} · ${item.product_name}（${item.product_number}）`" :value="item.id" /></ElSelect></ElFormItem>
+      <ElFormItem label="排产产品" required><ElSelect v-model="form.scheduleProductId" filterable placeholder="选择排产产品" :disabled="isChange"><ElOption v-for="item in context?.schedule_products || []" :key="item.id" :label="`${item.task_number} · ${item.product_name}（${item.product_code || item.product_number}）`" :value="item.id" /></ElSelect></ElFormItem>
       <ElFormItem label="所属生产订单"><ElInput data-testid="production-order-input" :model-value="scheduleProduct?.order_number || ''" readonly placeholder="选择排产产品后自动带出" /></ElFormItem>
       <ElFormItem label="车间" required><ElSelect v-model="form.workshopId" :disabled="isChange" placeholder="选择车间"><ElOption v-for="item in context?.workshops || []" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></ElFormItem>
       <ElFormItem label="工艺" required><ElSelect v-model="selectedCraftId" data-testid="wage-craft-select" filterable :disabled="isChange" placeholder="选择工艺"><ElOption v-for="item in craftOptions" :key="item.id" :label="item.name" :value="item.id" /></ElSelect></ElFormItem>
+      <ElFormItem label="工序配置"><ElButton data-testid="add-operation-button" type="primary" @click="openOperationManager">添加工序</ElButton></ElFormItem>
       <ElFormItem v-if="!isMetalWorkshop" data-testid="operation-product-name-field" label="工序品名" required><ElSelect v-model="form.operationProductName" filterable placeholder="选择工序目录中的品名"><ElOption v-for="item in operationProductNameOptions" :key="item" :label="item" :value="item" /></ElSelect></ElFormItem>
       <ElFormItem label="备注"><ElInput v-model="form.remark" type="textarea" :rows="4" maxlength="2000" show-word-limit /></ElFormItem>
     </ElForm></section><section class="wr-card wr-card--wide"><div class="wr-card-title"><h2>工价明细</h2><div><ElButton class="wr-history-button" @click="openHistory">选择历史数据</ElButton><ElButton class="wr-add-line-button" type="primary" :icon="Plus" @click="addLine">添加明细</ElButton></div></div>
@@ -317,6 +332,7 @@ onMounted(load)
     </section></div>
     <footer class="wr-form-actions"><ElButton @click="router.push({ name: 'wage-schemes' })">返回</ElButton><ElButton v-if="canSubmit" type="primary" :loading="saving" @click="submitForApproval">提交厂长审批</ElButton></footer>
     <AppWindowDialog v-model="historyVisible" title="引用历史批准工价" :width="1040" :height="680" destroy-on-close><ElTable v-loading="historyLoading" :data="historyRows" border height="540" empty-text="暂无可见的批准历史方案"><ElTableColumn prop="scheme_number" label="方案编号" width="170" /><ElTableColumn label="订单 / 产品" min-width="260"><template #default="{ row }">{{ row.production_task.task_number }} · {{ row.product.name }}</template></ElTableColumn><ElTableColumn label="车间 / 工艺" min-width="220"><template #default="{ row }">{{ row.workshop.name }} · {{ row.crafts.map((item: { name: string }) => item.name).join('、') }}</template></ElTableColumn><ElTableColumn label="有效期" width="190"><template #default="{ row }">{{ row.effective_from }} 至 {{ row.effective_to || '长期' }}</template></ElTableColumn><ElTableColumn label="操作" width="90" fixed="right"><template #default="{ row }"><ElButton link type="primary" @click="useHistory(row)">引用</ElButton></template></ElTableColumn></ElTable></AppWindowDialog>
+    <AppWindowDialog v-model="operationManagerVisible" title="添加工序" :width="1100" :height="720" destroy-on-close><WorkshopConfigManager kind="operations" :initial-workshop="form.workshopId" initial-craft-type="INTERNAL" :initial-craft="selectedCraftId" @saved="refreshOperationsAfterSave" /></AppWindowDialog>
   </section>
 </template>
 

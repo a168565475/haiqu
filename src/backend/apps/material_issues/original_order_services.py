@@ -43,13 +43,18 @@ def original_order_for_request(request, order_id, *, lock=False, permission=None
     from .p4_services import p4_schema_ready
     if not p4_schema_ready():
         raise Conflict("管材直接交接数据库升级尚未完成，暂不能读取或操作原单收尾。")
+    from apps.outsourcing.warehouse_access import warehouse_stage, warehouse_original_handoffs
+    warehouse_read = not lock and permission is None and request.method == 'GET' and warehouse_stage(request)
+    if warehouse_read:
+        permission = 'outsourcing.confirm_return_outsourcingorder'
     queryset = accessible_outsourcing_orders(request, permission=permission or current_permission(request, "material_issues.view_metalprocessingsource"))
     if lock:
         queryset = queryset.select_for_update(of=("self",))
     order = get_object_or_404(queryset.select_related("schedule", "craft"), pk=order_id)
     handoffs = MetalProcessingOriginalHandoff.objects.filter(original_order=order)
     # 原单级操作不得借单一可见来源处理同单中超出本人范围的其他来源。
-    if handoffs.exclude(source__issue_line__in=processing_lines(request)).exists():
+    outside_scope = handoffs.exclude(pk__in=warehouse_original_handoffs(request)) if warehouse_read else handoffs.exclude(source__issue_line__in=processing_lines(request))
+    if outside_scope.exists():
         from django.http import Http404
         raise Http404
     return order

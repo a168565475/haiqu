@@ -42,6 +42,7 @@ function reportingContext(productIds: string[]) {
     order_number: `ORDER-${id}`,
     product_name: `产品-${id}`,
     product_number: id,
+    product_code: `CODE-${id}`,
     product_line_id: `line-${id}`,
     order_quantity: '100',
   }))
@@ -109,7 +110,18 @@ async function applyFirstHistory(wrapper: ReturnType<typeof mount>) {
 }
 
 async function render() {
-  const wrapper = mount(WageSchemeFormView, { global: { plugins: [ElementPlus] } })
+  const wrapper = mount(WageSchemeFormView, {
+    global: {
+      plugins: [ElementPlus],
+      stubs: {
+        WorkshopConfigManager: {
+          props: ['kind', 'initialWorkshop', 'initialCraftType', 'initialCraft'],
+          emits: ['saved'],
+          template: '<div data-testid="operation-manager-stub" :data-initial-workshop="initialWorkshop" :data-initial-craft-type="initialCraftType" :data-initial-craft="initialCraft"><button data-testid="stub-operation-saved" @click="$emit(\'saved\')">保存工序</button></div>',
+        },
+      },
+    },
+  })
   wrappers.push(wrapper)
   await flushPromises()
   return wrapper
@@ -151,6 +163,46 @@ afterEach(() => {
 })
 
 describe('工价方案产品上下文切换', () => {
+  it('未选择车间或工艺时不能打开快捷新增工序弹窗', async () => {
+    const wrapper = await render()
+    const warning = vi.spyOn(ElMessage, 'warning')
+
+    await wrapper.find('[data-testid="add-operation-button"]').trigger('click')
+
+    expect(warning).toHaveBeenCalledWith('请先选择车间和工艺。')
+    expect(wrapper.find('[data-testid="stub-operation-saved"]').exists()).toBe(false)
+  })
+
+  it('快捷新增工序使用当前范围并刷新上下文但保留已有明细', async () => {
+    const wrapper = await render()
+    wrapper.findAllComponents(ElSelect)[1]!.vm.$emit('update:modelValue', 'workshop-1')
+    await nextTick()
+    selectByTestId(wrapper, 'wage-craft-select').vm.$emit('update:modelValue', 'craft-1')
+    await nextTick()
+    await wrapper.find('.wr-card--wide .el-button--primary').trigger('click')
+    await nextTick()
+    await wrapper.find('[data-testid="add-operation-button"]').trigger('click')
+    await nextTick()
+
+    const manager = document.body.querySelector<HTMLElement>('[data-testid="operation-manager-stub"]')
+    expect(manager).not.toBeNull()
+    expect(manager?.dataset.initialWorkshop).toBe('workshop-1')
+    expect(manager?.dataset.initialCraftType).toBe('INTERNAL')
+    expect(manager?.dataset.initialCraft).toBe('craft-1')
+
+    document.body.querySelector<HTMLButtonElement>('[data-testid="stub-operation-saved"]')?.click()
+    await flushPromises()
+    expect(api.context).toHaveBeenCalledTimes(2)
+    expect(document.body.querySelector('[data-testid="operation-manager-stub"]')).toBeNull()
+    expect(wrapper.findAll('.wr-wage-line-table .el-table__row')).toHaveLength(1)
+  })
+
+  it('排产产品选项显示产品编码', async () => {
+    const wrapper = await render()
+    const option = productSelect(wrapper).findAllComponents({ name: 'ElOption' })[0]!
+    expect(option.props('label')).toBe('TASK-product-a · 产品-product-a（CODE-product-a）')
+  })
+
   it('选择车间前不查询历史，历史请求及列表只保留当前车间', async () => {
     const first = await render()
     await first.find('.wr-history-button').trigger('click')

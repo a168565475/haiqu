@@ -9,8 +9,8 @@ vi.mock('@/api/outsourcing', () => ({ fetchOutsourcingOrder: api.regular }))
 vi.mock('@/utils/outsourcingPrint', () => ({ buildTubePrintDocument: api.tubeDocument, buildRegularPrintDocument: api.regularDocument }))
 const wrappers: ReturnType<typeof mount>[] = []
 const record = { id: 'tube-1', record_type: 'TUBE', source_kind: 'TUBE_METAL', detail_access: 'TUBE' } as UnifiedOutsourcingOrder
-function create(kind: 'processing' | 'spray' = 'processing', row = record) {
-  const wrapper = mount(OutsourcingPrintDialog, { props: { record: row, kind }, global: { stubs: {
+function create(kind: 'processing' | 'spray' = 'processing', row = record, warehouse = false) {
+  const wrapper = mount(OutsourcingPrintDialog, { props: { record: row, kind, warehouse }, global: { stubs: {
     AppWindowDialog: { template: '<section><slot/><slot name="footer"/></section>' },
     OutsourcingPrintDocument: { props: ['document'], template: '<article>{{ document.title }}</article>' },
     ElButton: { template: '<button><slot/></button>' }, ElAlert: { props: ['title'], template: '<div>{{ title }}</div>' }, ElSkeleton: true,
@@ -29,6 +29,14 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('外发打印只读加载与失败恢复', () => {
+  it('仓库打印沿用对应动作读取范围，不能退回车间查看范围', async () => {
+    create('processing', record, true)
+    await flushPromises()
+    expect(api.tube).toHaveBeenCalledWith('tube-1', true)
+    create('processing', { ...record, id: 'regular-1', record_type: 'ORIGINAL', detail_access: 'REGULAR' }, true)
+    await flushPromises()
+    expect(api.regular).toHaveBeenCalledWith('regular-1', true)
+  })
   it('读取最新管材详情，分别选择模板且每次仅调用一次打印', async () => {
     const wrapper = create('spray')
     expect(window.print).not.toHaveBeenCalled()

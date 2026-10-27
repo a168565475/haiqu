@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Document, Refresh } from '@element-plus/icons-vue'
@@ -19,9 +19,13 @@ import '@/styles/tubeOutsourcingDetail.scss'
 
 interface Column { key: string; label: string; width: number; num?: boolean }
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
+const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
+const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
+const listPath = computed(() => warehouseWorkspace.value ? '/warehouse/outsourcing' : '/workshop/outsourcing')
 const orderId = typeof route.params.id === 'string' ? route.params.id : ''
 const detail = ref<TubeOrderDetail | null>(null)
 const receipt = ref<TubeReceipt | null>(null)
+const receiptPermissionEtag = ref('')
 const endedPresentation = ref(true)
 const loading = ref(false), saving = ref(false), readError = ref(''), readStatus = ref<number | undefined>()
 const recheckError = ref(''), storageError = ref(false), pending = ref<TubePendingAction | null>(null)
@@ -50,10 +54,13 @@ const materialRows = computed(() => detail.value?.materials || [])
 const actorName = computed(() => auth.user?.employee?.display_name || auth.user?.display_name || auth.user?.username || '—')
 const locked = computed(() => loading.value || saving.value || Boolean(pending.value) || storageError.value || !showDetails.value)
 const hasLines = computed(() => rows.value.length > 0 && Number(detail.value?.total_quantity) > 0)
-const canDispatch = computed(() => !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_dispatch === true)
-const canCancel = computed(() => !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_cancel === true)
-const canCreate = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.add_outsourcingorder')))
-const canReceive = computed(() => !locked.value && Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.confirm_return_outsourcingorder')))
+const dispatchWorkspace = computed(() => Boolean(source.value) && warehouseWorkspace.value !== direct.value)
+const canDispatch = computed(() => dispatchWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_dispatch === true)
+const canCancel = computed(() => !warehouseWorkspace.value && !locked.value && hasLines.value && state.value === 'PENDING_DISPATCH' && detail.value?.permissions.can_cancel === true)
+const canCreate = computed(() => !warehouseWorkspace.value && Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.add_outsourcingorder')))
+const canReceive = computed(() => warehouseWorkspace.value && !locked.value && state.value === 'PROCESSING'
+  && receiptPermissionEtag.value === detail.value?.etag
+  && Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.confirm_return_outsourcingorder')))
 const hasDispatched = computed(() => ['PROCESSING', 'COMPLETED'].includes(state.value))
 const quantityLabel = computed(() => `${hasDispatched.value ? '已发' : state.value === 'CANCELLED' ? '原单' : '待发'}${quantityUnit.value}数`)
 const footerLabel = computed(() => hasDispatched.value ? '已发出' : state.value === 'CANCELLED' ? '原单数量' : '待发出')
@@ -131,14 +138,14 @@ async function loadDetail() {
   if (saving.value || pending.value || storageError.value) return
   const sequence = ++readSequence
   loading.value = true; readError.value = ''; readStatus.value = undefined
-  detail.value = null; receipt.value = null
+  detail.value = null; receipt.value = null; receiptPermissionEtag.value = ''
   try {
     let result: TubeOrderDetail
     let finalReceipt: TubeReceipt | null = null
     let preview: TubeReceiptPreview | null = null
     try {
       // 终态直接读取原单及最终凭证，不先查普通详情的动态最低报工。
-      preview = await fetchTubeReceiptPreview(orderId)
+      preview = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
     } catch (cause) {
       if (!isAxiosError(cause) || cause.response?.status !== 403) throw cause
       // 非终态预览需要回货权限；仅查看用户仍沿原详情的权限检查。
@@ -147,13 +154,14 @@ async function loadDetail() {
     if (preview && (!preview.order || preview.order.id !== orderId || !preview.order.etag || !Array.isArray(preview.order.lines))) throw new Error('外发单详情不完整，请重新加载。')
     if (preview?.order.status === 'COMPLETED') { result = preview.order; finalReceipt = preview.receipt }
     else {
-      result = await fetchTubeOrder(orderId)
+      result = await fetchTubeOrder(orderId, ...warehouseArgs.value)
       // 两次读取之间可能完成回货，此时重新读取最终凭证。
-      if (result.status === 'COMPLETED') { const completed = await fetchTubeReceiptPreview(orderId); result = completed.order; finalReceipt = completed.receipt }
+      if (result.status === 'COMPLETED') { const completed = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value); result = completed.order; finalReceipt = completed.receipt }
     }
     if (disposed || sequence !== readSequence) return
     if (result.id !== orderId || !result.etag || !Array.isArray(result.lines)) throw new Error('外发单详情不完整，请重新加载。')
     detail.value = result; receipt.value = finalReceipt; endedPresentation.value = result.status === 'COMPLETED'; recheckError.value = ''
+    receiptPermissionEtag.value = preview?.can_receive === true ? preview.etag : ''
   } catch (cause) {
     if (disposed || sequence !== readSequence) return
     readStatus.value = isAxiosError(cause) ? cause.response?.status : undefined
@@ -162,6 +170,12 @@ async function loadDetail() {
 }
 function openDispatch() { if (canDispatch.value) dialog.value = 'dispatch' }
 function openCancel() { if (canCancel.value) { cancellationRemark.value = ''; dialog.value = 'cancel' } }
+let openedEntryAction = ''
+watch(() => [showDetails.value, route.query?.action, warehouseWorkspace.value], () => {
+  if (route.query?.action !== 'dispatch' || openedEntryAction || !canDispatch.value) return
+  openedEntryAction = 'dispatch'
+  openDispatch()
+})
 function openBasis(row: TubeDetailLine) { selectedPart.value = row; dialog.value = 'basis' }
 function closeDialog(value: boolean) { if (!value && !saving.value) dialog.value = '' }
 function beforeClose(done: () => void) { if (!saving.value) done() }
@@ -182,7 +196,7 @@ async function recoverPending(allowRetry = false) {
   if (!action || saving.value || storageError.value) return
   saving.value = true
   try {
-    const result = await findTubeAction(action.order_id, action.payload.client_request_id)
+    const result = await findTubeAction(action.order_id, action.payload.client_request_id, ...warehouseArgs.value)
     if (!disposed) applyResult(result)
   } catch (cause) {
     if (disposed) return
@@ -190,11 +204,11 @@ async function recoverPending(allowRetry = false) {
       let replaySubmitted = false
       try {
         // 原请求未登记时仍只能重放原编号、原内容、原版本；先读取真实状态及权限。
-        const current = await fetchTubeOrder(action.order_id)
+        const current = await fetchTubeOrder(action.order_id, ...warehouseArgs.value)
         if (current.id !== action.order_id || !current.etag || !Array.isArray(current.lines)) throw new Error('原单详情不完整，请继续核对原请求。')
         if (['PROCESSING', 'COMPLETED', 'CANCELLED'].includes(current.status)) {
           // 第一次404和读取终态之间，原POST可能刚提交；再次查原编号后才能归因。
-          try { const confirmed = await findTubeAction(action.order_id, action.payload.client_request_id); if (!disposed) applyResult(confirmed) }
+          try { const confirmed = await findTubeAction(action.order_id, action.payload.client_request_id, ...warehouseArgs.value); if (!disposed) applyResult(confirmed) }
           catch (confirmationCause) {
             if (!isAxiosError(confirmationCause) || confirmationCause.response?.status !== 404) throw confirmationCause
             if (!disposed) {
@@ -206,7 +220,9 @@ async function recoverPending(allowRetry = false) {
           return
         }
         if (!allowRetry) { warn('原请求尚未登记。请点击“核对本次提交”，使用原请求编号继续核对。'); return }
-        const allowed = action.kind === 'DISPATCH' ? current.permissions.can_dispatch : current.permissions.can_cancel
+        const allowed = action.kind === 'DISPATCH'
+          ? warehouseWorkspace.value !== isDirectSource(current.source_kind) && current.permissions.can_dispatch
+          : !warehouseWorkspace.value && current.permissions.can_cancel
         if (current.id !== action.order_id || current.status !== 'PENDING_DISPATCH' || current.etag !== action.etag || !allowed) {
           if (!disposed) warn('原请求尚未登记，但原单状态、版本或操作权限已变化，不能自动重试。请继续核对原请求。')
           return
@@ -220,7 +236,7 @@ async function recoverPending(allowRetry = false) {
         const message = errorText(retryCause, '原请求结果仍未确认，请继续核对，不要重新发出或取消。')
         if (replaySubmitted && (status === 403 || status === 404)) {
           // 权限/入口拒绝重放，不证明先前在途请求未提交；再次查原编号，失败仍保留记录。
-          try { const confirmed = await findTubeAction(action.order_id, action.payload.client_request_id); if (!disposed) applyResult(confirmed) }
+          try { const confirmed = await findTubeAction(action.order_id, action.payload.client_request_id, ...warehouseArgs.value); if (!disposed) applyResult(confirmed) }
           catch { if (!disposed) warn(`${message} 原请求结果仍需核对，已保留请求记录，未生成新操作。`) }
           return
         }
@@ -264,7 +280,7 @@ async function submit(kind: 'DISPATCH' | 'CANCEL') {
       warn(message)
     } else {
       // 连接中断、服务器错误或登录失效不能等同于未写入，先查原请求。
-      try { if (!disposed) applyResult(await findTubeAction(action.order_id, action.payload.client_request_id)) }
+      try { if (!disposed) applyResult(await findTubeAction(action.order_id, action.payload.client_request_id, ...warehouseArgs.value)) }
       catch { if (!disposed) { dialog.value = ''; warn('提交结果尚未确认，请点击“核对本次提交”，继续核对原请求，避免重复办理。') } }
     }
   } finally { if (!disposed) saving.value = false }
@@ -287,7 +303,7 @@ onMounted(async () => {
   } catch { storageError.value = true; readError.value = '本地待核对记录无法读取，已暂停办理。请先核对之前的操作结果。'; return }
   if (pending.value) {
     // 详情可读，动作结果仍只按已保存的原请求编号核对。
-    try { detail.value = await fetchTubeOrder(orderId); endedPresentation.value = false } catch (cause) { readError.value = errorText(cause, '外发单读取失败。') }
+    try { detail.value = await fetchTubeOrder(orderId, ...warehouseArgs.value); endedPresentation.value = false } catch (cause) { readError.value = errorText(cause, '外发单读取失败。') }
     await recoverPending()
   } else await loadDetail()
 })
@@ -298,7 +314,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
   <section class="tube-outsourcing-detail-page d4-page" :class="{ 'd4-ended-page': endedPresentation || state === 'COMPLETED' }">
     <header class="page-heading">
       <div class="title-row"><h1>{{ categoryName }}外发单</h1><span v-if="state" class="status" :class="state === 'COMPLETED' ? 'success' : state === 'PROCESSING' ? 'info' : state === 'CANCELLED' ? 'neutral' : 'warning'">{{ stateLabel }}</span><span v-if="source" class="status">{{ sourceLabel }}</span><span v-if="detail" class="d4-order-code">{{ detail.order_number }}</span></div>
-      <ElButton :icon="ArrowLeft" :disabled="saving" @click="router.push('/workshop/outsourcing')">返回列表</ElButton>
+      <ElButton :icon="ArrowLeft" :disabled="saving" @click="router.push(listPath)">返回列表</ElButton>
     </header>
     <ElAlert v-if="pending" type="warning" :closable="false" show-icon title="提交结果尚未确认，请核对原请求结果，避免再次发出或取消。" />
     <ElAlert v-else-if="recheckError" type="warning" :closable="false" show-icon :title="`${recheckError} 尚未发出。可刷新重核原单数量；需要改量、加工厂或库区时，取消后重新创建。`" />
@@ -345,9 +361,9 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
     <footer v-else-if="!(showDetails && state === 'COMPLETED' && !pending)" class="footer-bar d4-footer">
       <div>{{ footerLabel }} <strong>{{ showDetails ? format(detail?.total_quantity) : '—' }}</strong> {{ quantityUnit }} <span v-if="showDetails" class="muted"> · {{ rows.length }} 个部位<span v-if="source === 'RAW_PIPE'"> · {{ format(detail?.total_stock_quantity) }} 根 / {{ meters(detail?.total_meters) }} 米</span></span><span v-if="showDetails" class="d4-planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(detail?.planned_amount) }}</strong> 元</span><small>{{ state === 'CANCELLED' ? '已取消 · 仓库库存未扣减' : state === 'COMPLETED' ? '整单回货已登记结束' : state === 'PROCESSING' ? '已按整单数量完成发出' : stockImpact }}</small></div>
       <ElButton v-if="pending" type="primary" :loading="saving" :disabled="storageError" @click="recoverPending(true)">核对本次提交</ElButton>
-      <template v-else-if="state === 'PENDING_DISPATCH'"><ElTooltip :disabled="detail?.permissions.can_cancel !== false" content="当前账号没有取消权限"><span><ElButton :disabled="!canCancel" @click="openCancel">取消外发单</ElButton></span></ElTooltip><ElTooltip :disabled="detail?.permissions.can_dispatch !== false" content="当前账号没有实际发出权限"><span><ElButton type="primary" :disabled="!canDispatch" @click="openDispatch">确认实际发出</ElButton></span></ElTooltip></template>
-      <ElButton v-else-if="state === 'PROCESSING'" type="primary" :disabled="!canReceive" @click="router.push({ name: 'workshop-outsourcing-tube-return', params: { id: orderId } })">{{ receiptTitle }}</ElButton>
-      <ElButton v-else-if="state === 'CANCELLED'" :disabled="locked || !hasLines || !canCreate" type="primary" @click="recreate">重新创建外发单</ElButton>
+      <template v-else-if="state === 'PENDING_DISPATCH'"><ElTooltip v-if="!warehouseWorkspace" :disabled="detail?.permissions.can_cancel !== false" content="当前账号没有取消权限"><span><ElButton :disabled="!canCancel" @click="openCancel">取消外发单</ElButton></span></ElTooltip><ElTooltip v-if="dispatchWorkspace" :disabled="detail?.permissions.can_dispatch !== false" content="当前账号没有实际发出权限"><span><ElButton type="primary" :disabled="!canDispatch" @click="openDispatch">确认实际发出</ElButton></span></ElTooltip></template>
+      <ElButton v-else-if="state === 'PROCESSING' && warehouseWorkspace" type="primary" :disabled="!canReceive" @click="canReceive && router.push({ name: 'warehouse-outsourcing-tube-return', params: { id: orderId } })">{{ receiptTitle }}</ElButton>
+      <ElButton v-else-if="state === 'CANCELLED' && !warehouseWorkspace" :disabled="locked || !hasLines || !canCreate" type="primary" @click="recreate">重新创建外发单</ElButton>
     </footer>
   </section>
 

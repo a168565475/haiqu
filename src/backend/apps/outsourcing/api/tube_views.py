@@ -24,6 +24,7 @@ from ..tube_receipt_services import confirm_tube_final_receipt
 from ..tube_receipt_selectors import (receipt_candidates, receipt_data, receipt_preview,
                                      receipt_queryset, require_receipt_read_access)
 from ..tube_kinds import CUTTING_SOURCES, source_category, output_unit
+from ..warehouse_access import warehouse_read_permission, warehouse_stage, warehouse_tube_orders
 from .tube_serializers import (TubeCancelWriteSerializer, TubeDispatchWriteSerializer,
     TubeOrderWriteSerializer, TubeSourceQuerySerializer, TubeReceiptCandidatesQuerySerializer,
     TubeReceiptWriteSerializer, TubeReceiptResponseSerializer, TubeReceiptPreviewResponseSerializer,
@@ -34,6 +35,9 @@ class TubeActionPermission(BasePermission):
     message = '当前账号没有执行外发单操作的权限。'
 
     def has_permission(self, request, view):
+        warehouse_allowed = warehouse_read_permission(request, view)
+        if warehouse_allowed is not None:
+            return warehouse_allowed
         permission = view.action_permission_map.get(view.action)
         permissions = permission if isinstance(permission, tuple) else (permission,)
         return any(value and module_policy.has_permission(request, value) for value in permissions)
@@ -41,6 +45,8 @@ class TubeActionPermission(BasePermission):
 
 class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, TubeActionPermission]
+    warehouse_read_actions = {'retrieve', 'action_by_request', 'receipt_preview', 'receipt'}
+    warehouse_read_permissions = (DISPATCH_PERMISSION, RETURN_PERMISSION)
     action_permission_map = {'options': VIEW_PERMISSION, 'source_context': VIEW_PERMISSION, 'product_image': VIEW_PERMISSION,
                              'create': CREATE_PERMISSION, 'by_request': VIEW_PERMISSION,
                              'retrieve': VIEW_PERMISSION, 'confirm_dispatch': DISPATCH_PERMISSION,
@@ -143,8 +149,14 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         pk = serializers.UUIDField().run_validation(pk)
         order = get_object_or_404(tube_order_queryset(), pk=pk)
-        require_saved_order_access(request, order)
+        self._require_detail_access(request, order)
         return self._detail_response(order, request)
+
+    def _require_detail_access(self, request, order):
+        if warehouse_stage(request):
+            get_object_or_404(warehouse_tube_orders(request), pk=order.pk)
+        else:
+            require_saved_order_access(request, order)
 
     def _detail_response(self, order, request, *, action_record=None, created=False):
         data = saved_order_data(order, request=request, action_record=action_record, created=created)
@@ -183,7 +195,7 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         pk = serializers.UUIDField().run_validation(pk)
         request_id = serializers.UUIDField().run_validation(request_id)
         order = get_object_or_404(tube_order_queryset(), pk=pk)
-        require_saved_order_access(request, order)
+        self._require_detail_access(request, order)
         record = get_object_or_404(TubeOutsourcingAction.objects.select_related('actor_employee'),
                                    order_id=order.pk, client_request_id=request_id)
         return self._detail_response(order, request, action_record=record)

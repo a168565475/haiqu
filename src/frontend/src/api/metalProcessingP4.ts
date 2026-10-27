@@ -15,8 +15,8 @@ const reworkPath = '/api/v1/metal-processing-reworks/'
 const orderPath = '/api/v1/metal-processing-external-orders/'
 const originalOrderPath = '/api/v1/metal-processing-original-orders/'
 
-export async function fetchP4OriginalOrder(id: string): Promise<P4OriginalOrderContext> {
-  return data(await apiClient.get<DataResponse<P4OriginalOrderContext>>(`${originalOrderPath}${encodeURIComponent(id)}/`))
+export async function fetchP4OriginalOrder(id: string, warehouse = false): Promise<P4OriginalOrderContext> {
+  return data(await apiClient.get<DataResponse<P4OriginalOrderContext>>(`${originalOrderPath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }
 
 export async function closeP4OriginalOrder(
@@ -43,8 +43,8 @@ export function newP4RequestId(): string {
   return createClientUuid()
 }
 
-export async function fetchP4Options(): Promise<P4Options> {
-  return data(await apiClient.get<DataResponse<P4Options>>(`${sourcePath}options/`))
+export async function fetchP4Options(warehouse = false): Promise<P4Options> {
+  return data(await apiClient.get<DataResponse<P4Options>>(`${sourcePath}options/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }
 
 export async function fetchP4Sources(params: Record<string, unknown> = {}): Promise<Paginated<P4Source>> {
@@ -52,8 +52,8 @@ export async function fetchP4Sources(params: Record<string, unknown> = {}): Prom
   return response.data
 }
 
-export async function fetchP4Source(id: string): Promise<P4Source> {
-  return data(await apiClient.get<DataResponse<P4Source>>(`${sourcePath}${encodeURIComponent(id)}/`))
+export async function fetchP4Source(id: string, warehouse = false): Promise<P4Source> {
+  return data(await apiClient.get<DataResponse<P4Source>>(`${sourcePath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }
 
 export async function fetchP4SourceClosurePreview(id: string): Promise<P4Source> {
@@ -84,8 +84,8 @@ export async function createP4OriginalHandoff(
   return data(await apiClient.post<DataResponse<P4Source>>(`${sourcePath}${encodeURIComponent(sourceId)}/handoffs/`, payload, { headers: { 'If-Match': etag } }))
 }
 
-export async function fetchP4Handoff(id: string): Promise<P4HandoffDetail> {
-  return data(await apiClient.get<DataResponse<P4HandoffDetail>>(`${handoffPath}${encodeURIComponent(id)}/`))
+export async function fetchP4Handoff(id: string, warehouse = false): Promise<P4HandoffDetail> {
+  return data(await apiClient.get<DataResponse<P4HandoffDetail>>(`${handoffPath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }
 
 export async function confirmP4OriginalGoodReturn(
@@ -123,8 +123,8 @@ export async function fetchP4ExternalOrders(): Promise<Paginated<P4ExternalOrder
   return { data: response.data.data, meta: { page: 1, page_size: response.data.data.length, total: response.data.meta.total, total_pages: 1 } }
 }
 
-export async function fetchP4ExternalOrder(id: string): Promise<P4ExternalOrder> {
-  return data(await apiClient.get<DataResponse<P4ExternalOrder>>(`${orderPath}${encodeURIComponent(id)}/`))
+export async function fetchP4ExternalOrder(id: string, warehouse = false): Promise<P4ExternalOrder> {
+  return data(await apiClient.get<DataResponse<P4ExternalOrder>>(`${orderPath}${encodeURIComponent(id)}/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }
 
 export async function adjustP4ExternalAllocation(
@@ -159,6 +159,6 @@ export async function closeP4ExternalOrder(
   return data(await apiClient.post<DataResponse<P4ExternalOrder>>(`${orderPath}${encodeURIComponent(id)}/close/`, payload, { headers: { 'If-Match': etag } }))
 }
 
-export async function fetchP4SemiStock(id: string): Promise<P4SemiStock> {
-  return data(await apiClient.get<DataResponse<P4SemiStock>>(`${orderPath}${encodeURIComponent(id)}/semi-stock/`))
+export async function fetchP4SemiStock(id: string, warehouse = false): Promise<P4SemiStock> {
+  return data(await apiClient.get<DataResponse<P4SemiStock>>(`${orderPath}${encodeURIComponent(id)}/semi-stock/`, ...(warehouse ? [{ params: { warehouse_stage: 'all' } }] : [])))
 }

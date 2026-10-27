@@ -27,11 +27,9 @@ from apps.production_scheduling.models import ProductionSchedule, ProductionSche
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductCategory, ProductionUnit
-from apps.workshop_config.models import Craft
 
 from ..dispatch_services import confirm_flow_dispatch
-from ..models import OutsourcingDispatchLine, OutsourcingFactory, OutsourcingMaterialItem, OutsourcingOrder, OutsourcingReturn, OutsourcingReturnLine
-from .numbering_concurrency import assert_reference_locks_allow_number_holder
+from ..models import OutsourcingDispatchLine, OutsourcingMaterialItem, OutsourcingOrder, OutsourcingReturn, OutsourcingReturnLine
 from .test_material_flow import MaterialFlowFixture
 
 
@@ -143,24 +141,7 @@ class PublicOutsourcingFixture(MaterialFlowFixture):
 
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True)
 class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
-    def test_one_incomplete_processing_row_does_not_break_other_public_candidates(self):
-        incomplete = BomLine.objects.get(pk=self.f.profile.pk)
-        incomplete.pk, incomplete.component_identity = uuid.uuid4(), uuid.uuid4()
-        incomplete.line_number = 99
-        incomplete.part_name = "缺少切割参数的部位"
-        for field in ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
-                      "suggested_bar_count", "suggested_purchase_meters"):
-            setattr(incomplete, field, None)
-        incomplete.save(force_insert=True)
-        response = self.f.get_bom(self.f.spray)
-        self.assertEqual(response.status_code, 200, response.data)
-        data = response.data["data"]
-        good = next(row for row in data["material_items"] if row["id"] == str(self.f.profile.pk))
-        bad = next(row for row in data["processing_items"] if row["id"] == str(incomplete.pk))
-        self.assertTrue(good["zones"])
-        self.assertTrue(bad["quantity_error"])
-
-    def test_public_candidates_creation_dispatch_never_read_inbound_batches(self):
+    def test_historical_public_order_dispatch_never_reads_inbound_batches(self):
         with patch("apps.outsourcing.dispatch_services.confirmed_batches", side_effect=AssertionError("不可读取采购批次")):
             with CaptureQueriesContext(connection) as queries:
                 order_id = self.create(amount="12")
@@ -177,15 +158,6 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         self.public_balance.refresh_from_db()
         self.pipe_balance.refresh_from_db()
         self.assertEqual((self.public_balance.quantity, self.pipe_balance.quantity), (98, 100))
-
-    def test_source_bom_candidates_have_zones_and_no_batches(self):
-        with patch("apps.outsourcing.dispatch_services.confirmed_batches", side_effect=AssertionError("不可读取采购批次")):
-            response = self.f.get_bom(self.f.spray)
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["data"]["stock_mode"], "PUBLIC_V2")
-        row = next(row for row in response.data["data"]["material_items"] if row["id"] == str(self.f.profile.pk))
-        self.assertEqual(row["candidates"], [])
-        self.assertEqual(len(row["zones"]), 1)
 
     def test_pipe_partial_raw_return_and_revoke_restore_once(self):
         order_id = self.create(amount="12")
@@ -309,7 +281,8 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
     def test_same_pool_multiple_parts_accumulate_roots_before_debit(self):
         second = BomLine.objects.get(pk=self.f.profile.pk)
         second.pk, second.component_identity, second.line_number, second.part_name = uuid.uuid4(), uuid.uuid4(), 2, "后脚管"
-        plan = pipe_plan(cutting_length_mm=750, pieces_per_product=4, pieces_per_bar=4, order_quantity=100)
+        plan = pipe_plan(cutting_length_mm=750, pieces_per_product=4, pieces_per_bar=4, order_quantity=100,
+                         calculation_version=2)
         for name in ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters"):
             setattr(second, name, plan[name])
         second.save(force_insert=True)
@@ -334,16 +307,11 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
         self.assertEqual(self.public_balance.quantity, 3)
         self.assertFalse(OutsourcingDispatchLine.objects.exists())
 
-    def test_public_mode_rejects_batch_choice_and_invalid_output_properties(self):
+    def test_public_dispatch_rejects_batch_choice(self):
         order_id = self.create(amount="12")
         material = OutsourcingMaterialItem.objects.get(allocation__processing_item__order_product__order_id=order_id)
         self.post(order_id, "confirm-dispatch", {"request_id": str(uuid.uuid4()), "lines": [{"material_item_id": str(material.pk),
             "inbound_line_id": str(self.pipe_batch.pk), "requested_quantity": "12"}]}, expected=400)
-        self.f.profile.raw_values.pop("tube_thickness")
-        self.f.profile.save()
-        response = self.f.create_order(self.payload(amount="12"))
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(OutsourcingOrder.objects.count(), 1)
 
     def test_mode_gate_blocks_new_writes_but_allows_confirmed_retry(self):
         order_id = self.create(amount="12")
@@ -371,21 +339,6 @@ class PublicOutsourcingFlowTests(PublicOutsourcingFixture, APITestCase):
 @override_settings(PUBLIC_STOCK_FLOW_ENABLED=True)
 class PublicOutsourcingConcurrencyTests(PublicOutsourcingFixture, TransactionTestCase):
     serialized_rollback = True
-
-    def test_creation_reference_locks_allow_other_wf_order_foreign_keys(self):
-        payload = self.payload(amount="12")
-
-        def create():
-            client = APIClient()
-            client.force_authenticate(get_user_model().objects.get(pk=self.f.user.pk))
-            response = client.post("/api/v1/outsourcing-orders/", payload, format="json", HTTP_HOST="localhost")
-            self.assertEqual(response.status_code, 201, response.data)
-            return response.data["data"]["order_number"]
-
-        references = [(Craft, self.f.spray.pk), (OutsourcingFactory, self.f.factory.pk)]
-        references.extend((ProductionUnit, pk) for pk in ProductionUnit.objects.filter(
-            status="ACTIVE", archived_at__isnull=True).values_list("pk", flat=True))
-        assert_reference_locks_allow_number_holder(self, create, references)
 
     def test_raw_return_and_another_dispatch_lock_schedule_before_task(self):
         from ..reconciliation_services import confirm_raw_return
@@ -419,7 +372,8 @@ class PublicOutsourcingConcurrencyTests(PublicOutsourcingFixture, TransactionTes
                 if not returning and not schedule_held.wait(8):
                     raise AssertionError("退料没有取得排产锁")
                 order = OutsourcingOrder.objects.get(pk=first if returning else second)
-                request = SimpleNamespace(headers={"If-Match": etag_for_instance(order)}, META={})
+                request = SimpleNamespace(headers={"If-Match": etag_for_instance(order)}, META={},
+                    user=get_user_model().objects.get(pk=self.f.user.pk), employee=self.f.employee)
                 with connections["default"].execute_wrapper(coordinate):
                     if returning:
                         confirm_raw_return(order_id=order.pk, request_id=uuid.uuid4(),
@@ -459,7 +413,8 @@ class PublicOutsourcingConcurrencyTests(PublicOutsourcingFixture, TransactionTes
             try:
                 order = OutsourcingOrder.objects.get(pk=order_id)
                 item = OutsourcingMaterialItem.objects.get(allocation__processing_item__order_product__order=order)
-                request = SimpleNamespace(headers={"If-Match": etag_for_instance(order)}, META={})
+                request = SimpleNamespace(headers={"If-Match": etag_for_instance(order)}, META={},
+                    user=get_user_model().objects.get(pk=self.f.user.pk), employee=self.f.employee)
                 barrier.wait(timeout=10)
                 confirm_flow_dispatch(order_id=order.pk, request_id=uuid.uuid4(), line_inputs=[{
                     "material_item_id": item.pk, "zone_id": self.pipe_batch.zone_id, "requested_quantity": Decimal(12)}],

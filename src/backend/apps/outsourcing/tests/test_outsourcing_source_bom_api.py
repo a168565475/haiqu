@@ -5,11 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.test import override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
+from apps.access_control.models import RoleActionGrant, RoleGrantResource
 from apps.audit.models import AuditLog
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType, BomStatus
 from apps.customers.models import CustomerAccount
@@ -26,7 +27,9 @@ from apps.inventory.models import (
     WarehouseZone,
 )
 from apps.inventory.stock_services import credit_confirmed_inbound_line, credit_material_stock, debit_material_stock
-from apps.organizations.models import Employee
+from apps.organizations.models import (
+    Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, OrganizationUnit, RoleProfile,
+)
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.production_scheduling.models import (
     ProductionSchedule,
@@ -73,6 +76,13 @@ class OutsourcingSourceBomApiTests(APITestCase):
             user=self.user,
             employee_code="OUTSOURCING-BOM-USER",
             display_name="委外 BOM 测试员",
+        )
+        warehouse_department, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_WAREHOUSE", defaults={"unit_name": "仓库部"},
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=warehouse_department,
+            effective_from=timezone.now() - timedelta(days=1),
         )
         self.client = APIClient()
         self.client.force_authenticate(self.user)
@@ -245,78 +255,6 @@ class OutsourcingSourceBomApiTests(APITestCase):
             },
         )
 
-    def get_bom(self, craft):
-        return self.client.get(
-            f"/api/v1/outsourcing-orders/source-products/{self.schedule_product.pk}/bom/",
-            {"craft_id": str(craft.pk)},
-            HTTP_HOST="localhost",
-        )
-
-    def test_sewing_returns_latest_product_bom_cutting_and_fabric_materials_without_writes(self):
-        before = (
-            OutsourcingOrder.objects.count(),
-            OutsourcingProcessingItem.objects.count(),
-            OutsourcingMaterialItem.objects.count(),
-        )
-        response = self.get_bom(self.sewing)
-        self.assertEqual(response.status_code, 200, response.data)
-        data = response.data["data"]
-        self.assertEqual(data["bom"]["bom_number"], "BOM-OBM-002")
-        self.assertEqual(data["processing_section_label"], "裁剪明细")
-        self.assertEqual([row["part_name"] for row in data["processing_items"]], ["椅面裁片"])
-        self.assertEqual(data["processing_items"][0]["category"], "委外布面")
-        self.assertEqual(data["processing_items"][0]["color"], "卡其色")
-        self.assertEqual(data["processing_items"][0]["required_quantity"], Decimal("200.0000"))
-        self.assertEqual(data["processing_items"][0]["unit"], self.processing_unit.unit_name)
-        self.assertEqual({row["category"] for row in data["material_items"]}, {"FABRIC", "AUXILIARY"})
-        self.assertEqual(data["material_items"][0]["reference_required_quantity"], Decimal("150"))
-        self.assertEqual(before, (
-            OutsourcingOrder.objects.count(),
-            OutsourcingProcessingItem.objects.count(),
-            OutsourcingMaterialItem.objects.count(),
-        ))
-
-    def test_spray_returns_profile_processing_and_profile_hardware_materials(self):
-        response = self.get_bom(self.spray)
-        self.assertEqual(response.status_code, 200, response.data)
-        data = response.data["data"]
-        self.assertEqual(data["processing_section_label"], "管材类")
-        self.assertEqual([row["part_name"] for row in data["processing_items"]], ["前脚管"])
-        self.assertEqual(data["processing_items"][0]["category"], "管材类")
-        self.assertEqual(data["processing_items"][0]["material"], "铁")
-        self.assertEqual(data["processing_items"][0]["color"], "哑黑")
-        self.assertEqual(data["processing_items"][0]["required_quantity"], Decimal("400.0000"))
-        self.assertEqual(data["processing_items"][0]["unit"], "支")
-        self.assertEqual(data["processing_items"][0]["dispatched_quantity"], 0)
-        self.assertEqual(data["processing_items"][0]["inbound_quantity"], Decimal("400.0000"))
-        self.assertEqual(data["processing_items"][0]["inbound_unit"], "支")
-        self.assertEqual({row["category"] for row in data["material_items"]}, {"PROFILE", "HARDWARE"})
-        profile = next(row for row in data["material_items"] if row["category"] == "PROFILE")
-        self.assertEqual(profile["reference_required_quantity"], Decimal("400.0000"))
-        self.assertEqual(profile["default_issue_quantity"], Decimal("400.0000"))
-        self.assertEqual(profile["quantity_source_field"], "unit_consumption*order_quantity")
-        self.assertEqual(profile["quantity_source_text"], "4 × 100")
-        self.assertEqual(profile["quantity_parse_status"], "READY")
-        self.assertEqual(profile["procurement_required_quantity"], Decimal("25.0000"))
-        self.assertEqual(profile["procurement_source_field"], "branch_count")
-        self.assertEqual(profile["procurement_source_text"], "25")
-        hardware = next(row for row in data["material_items"] if row["category"] == "HARDWARE")
-        self.assertEqual(hardware["material_number"], "HW-001")
-        self.assertEqual(hardware["reference_required_quantity"], Decimal("800.0000"))
-        self.assertEqual(hardware["default_issue_quantity"], Decimal("800.0000"))
-        self.assertEqual(hardware["quantity_source_field"], "unit_consumption*order_quantity")
-        self.assertEqual(hardware["quantity_source_text"], "8 × 100")
-        self.assertEqual(hardware["quantity_parse_status"], "READY")
-        self.assertEqual(hardware["procurement_required_quantity"], Decimal("800.0000"))
-        self.assertEqual(hardware["procurement_source_field"], "unit_consumption*order_quantity")
-
-    def test_rejects_craft_not_linked_to_schedule_product(self):
-        unlinked = self.create_craft("委外测试未关联裁剪", OutsourcingCode.CUTTING)
-        response = self.get_bom(unlinked)
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("不包含所选厂外工艺", str(response.data))
-
-
 class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
     def setUp(self):
         super().setUp()
@@ -384,12 +322,31 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
         }
 
     def create_order(self, payload):
-        return self.client.post(
-            "/api/v1/outsourcing-orders/",
-            payload,
-            format="json",
-            HTTP_HOST="localhost",
+        """构造历史单据后读取真实详情，保留下游测试的响应格式。"""
+        from rest_framework.response import Response
+        from .historical_orders import create_historical_order
+
+        order = create_historical_order(payload, self.employee)
+        detail = self.client.get(f"/api/v1/outsourcing-orders/{order.pk}/", HTTP_HOST="localhost")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        return Response(detail.data, status=201, headers={"ETag": detail["ETag"]})
+
+    def grant_read_scope(self):
+        permission = Permission.objects.get(
+            content_type__app_label="outsourcing", codename="view_outsourcingorder",
         )
+        group = Group.objects.create(name=f"OUTSOURCING-READ-{uuid.uuid4().hex.upper()}")
+        group.permissions.add(permission)
+        role = RoleProfile.objects.create(
+            auth_group=group, role_code=group.name, display_name="历史外发单指定工艺读取",
+        )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.employee, role_profile=role, effective_from=timezone.now() - timedelta(days=1),
+        )
+        grant = RoleActionGrant.objects.create(role=role, permission=permission, scope="CRAFT")
+        RoleGrantResource.objects.create(grant=grant, craft=self.sewing)
+        self.user.user_permissions.set([permission])
+        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
 
     def current_fabric_payload(self):
         """仅为编号验收用例补齐已确认 BOM、米制投入和套制产出。"""
@@ -462,59 +419,9 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
             }],
         }
 
-    def test_create_persists_nested_order_without_inventory_write(self):
-        response = self.create_order(self.current_fabric_payload())
-        self.assertEqual(response.status_code, 201, response.data)
-        order = OutsourcingOrder.objects.get(pk=response.data["data"]["id"])
-        self.assertRegex(order.order_number, rf"^WF{timezone.localdate():%y%m%d}[0-9]{{3,}}$")
-        self.assertEqual(order.status, OutsourcingOrderStatus.PENDING_DISPATCH)
-        self.assertEqual(order.products.count(), 1)
-        self.assertEqual(OutsourcingProcessingItem.objects.filter(order_product__order=order).count(), 1)
-        self.assertEqual(OutsourcingFactoryAllocation.objects.filter(processing_item__order_product__order=order).count(), 1)
-        material = OutsourcingMaterialItem.objects.get(allocation__processing_item__order_product__order=order)
-        processing = OutsourcingProcessingItem.objects.get(order_product__order=order)
-        self.assertEqual(processing.quantity, Decimal("80.0000"))
-        self.assertEqual(processing.unit_id, self.processing_unit.pk)
-        self.assertEqual(material.planned_issue_quantity, Decimal("120.0000"))
-        self.assertEqual(response.data["data"]["planned_amount"], "200.0000")
-        allocation = response.data["data"]["products"][0]["processing_items"][0]["allocations"][0]
-        self.assertEqual(allocation["unit_price"], "2.5000")
-        self.assertEqual(allocation["materials"][0]["planned_issue_quantity"], "120.0000")
-        self.assertIsNone(response.data["data"]["dispatch"])
-
-    def test_create_persists_procurement_converted_material_total(self):
-        response = self.create_order(self.spray_payload())
-        self.assertEqual(response.status_code, 201, response.data)
-        material = OutsourcingMaterialItem.objects.get(
-            allocation__processing_item__order_product__order_id=response.data["data"]["id"]
-        )
-        self.assertEqual(material.reference_required_quantity, Decimal("400.0000"))
-        self.assertEqual(material.planned_issue_quantity, Decimal("400.0000"))
-        self.assertEqual(material.consumption_basis, "BOM_USAGE_X_ORDER")
-        self.assertEqual(material.material_snapshot["quantity_source_text"], "4 × 100")
-        self.assertEqual(material.material_snapshot["procurement_required_quantity"], "25.0000")
-        self.assertEqual(material.material_snapshot["procurement_source_text"], "25")
-
-    def test_create_is_idempotent_and_rejects_changed_payload_for_same_request_id(self):
-        request_id = uuid.uuid4()
-        payload = self.payload(request_id=request_id)
-        first = self.create_order(payload)
-        second = self.create_order(payload)
-        self.assertEqual(first.status_code, 201, first.data)
-        self.assertEqual(second.status_code, 200, second.data)
-        self.assertEqual(first.data["data"]["id"], second.data["data"]["id"])
-        self.assertEqual(OutsourcingOrder.objects.filter(client_request_id=request_id).count(), 1)
-
-        changed = self.payload(request_id=request_id, delivery_offset=21)
-        conflict = self.create_order(changed)
-        self.assertEqual(conflict.status_code, 409, conflict.data)
-
-    def test_quota_is_reserved_then_released_by_pending_dispatch_cancel(self):
+    def test_historical_pending_order_can_be_cancelled_only_once(self):
         first = self.create_order(self.payload(quantity=80))
         self.assertEqual(first.status_code, 201, first.data)
-        blocked = self.create_order(self.payload(quantity=121))
-        self.assertEqual(blocked.status_code, 409, blocked.data)
-        self.assertIn("最多可外发 120.0000 委外测试片", str(blocked.data))
 
         cancel = self.client.post(
             f"/api/v1/outsourcing-orders/{first.data['data']['id']}/cancel/",
@@ -535,44 +442,6 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
         )
         self.assertEqual(repeated_cancel.status_code, 409, repeated_cancel.data)
 
-        replacement = self.create_order(self.payload(quantity=200))
-        self.assertEqual(replacement.status_code, 201, replacement.data)
-
-    def test_processing_quota_is_independent_between_crafts(self):
-        sewing = self.create_order(self.payload(quantity=200))
-        self.assertEqual(sewing.status_code, 201, sewing.data)
-
-        source = self.get_bom(self.screen_printing)
-        self.assertEqual(source.status_code, 200, source.data)
-        candidate = source.data["data"]["processing_items"][0]
-        self.assertEqual(candidate["outsourced_quantity"], 0)
-        self.assertEqual(candidate["available_quantity"], Decimal("200.0000"))
-
-        screen_printing_payload = self.payload(quantity=200)
-        screen_printing_payload["craft_id"] = str(self.screen_printing.pk)
-        screen_printing = self.create_order(screen_printing_payload)
-        self.assertEqual(screen_printing.status_code, 201, screen_printing.data)
-
-    def test_processing_candidate_separates_reserved_and_dispatched_quantity(self):
-        created = self.create_order(self.payload(quantity=40))
-        self.assertEqual(created.status_code, 201, created.data)
-
-        pending_source = self.get_bom(self.sewing)
-        self.assertEqual(pending_source.status_code, 200, pending_source.data)
-        pending_candidate = pending_source.data["data"]["processing_items"][0]
-        self.assertEqual(pending_candidate["outsourced_quantity"], 40)
-        self.assertEqual(pending_candidate["dispatched_quantity"], 0)
-        self.assertEqual(pending_candidate["available_quantity"], Decimal("160.0000"))
-
-        OutsourcingOrder.objects.filter(pk=created.data["data"]["id"]).update(
-            status=OutsourcingOrderStatus.PROCESSING,
-        )
-        dispatched_source = self.get_bom(self.sewing)
-        self.assertEqual(dispatched_source.status_code, 200, dispatched_source.data)
-        dispatched_candidate = dispatched_source.data["data"]["processing_items"][0]
-        self.assertEqual(dispatched_candidate["outsourced_quantity"], 40)
-        self.assertEqual(dispatched_candidate["dispatched_quantity"], 40)
-        self.assertEqual(dispatched_candidate["available_quantity"], Decimal("160.0000"))
 
     def test_pending_dispatch_order_can_be_physically_deleted(self):
         created = self.create_order(self.current_fabric_payload())
@@ -594,11 +463,6 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
             object_id=order_id,
             action="DELETED",
         ).exists())
-        replacement = self.create_order(self.current_fabric_payload())
-        self.assertEqual(replacement.status_code, 201, replacement.data)
-        prefix = f"WF{timezone.localdate():%y%m%d}"
-        self.assertEqual(replacement.data["data"]["order_number"],
-            f"{prefix}{int(created.data['data']['order_number'][len(prefix):]) + 1:03d}")
 
     def test_order_cannot_be_deleted_after_dispatch_state(self):
         created = self.create_order(self.payload())
@@ -622,17 +486,13 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
         self.assertEqual(deleted.status_code, 409, deleted.data)
         self.assertTrue(OutsourcingOrder.objects.filter(pk=order.pk).exists())
 
+    @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_detail_hides_cancel_capability_without_cancel_permission(self):
         created = self.create_order(self.payload())
         self.assertEqual(created.status_code, 201, created.data)
         self.user.is_superuser = False
         self.user.save(update_fields=["is_superuser"])
-        self.user.user_permissions.add(Permission.objects.get(
-            content_type__app_label="outsourcing",
-            codename="view_outsourcingorder",
-        ))
-        if hasattr(self.user, "_perm_cache"):
-            del self.user._perm_cache
+        self.grant_read_scope()
 
         response = self.client.get(
             f"/api/v1/outsourcing-orders/{created.data['data']['id']}/",
@@ -659,6 +519,7 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
         )
         self.assertIsNone(response.data["data"]["products"][0]["image_file_id"])
 
+    @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_product_image_is_available_with_outsourcing_view_permission_only(self):
         created = self.create_order(self.payload())
         self.assertEqual(created.status_code, 201, created.data)
@@ -681,13 +542,7 @@ class OutsourcingOrderWriteApiTests(OutsourcingSourceBomApiTests):
 
             self.user.is_superuser = False
             self.user.save(update_fields=["is_superuser"])
-            self.user.user_permissions.set([
-                Permission.objects.get(
-                    content_type__app_label="outsourcing",
-                    codename="view_outsourcingorder",
-                )
-            ])
-            self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+            self.grant_read_scope()
 
             detail = self.client.get(
                 f"/api/v1/outsourcing-orders/{order_id}/",
@@ -821,8 +676,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             "lines": [{
                 "material_item_id": str(material_item.pk),
                 "inbound_line_id": str(self.material_inbound_line.pk),
-                "source_quantity": "120.0000",
-                "material_quantity": "120.0000",
+                "requested_quantity": "120.0000",
                 "conversion_factor": "1.00000000",
                 "conversion_evidence": "",
                 "match_method": "REFERENCE_ID",
@@ -830,7 +684,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             }],
         }
 
-    def test_profile_dispatch_uses_bom_total_but_deducts_converted_procurement_quantity(self):
+    def test_historical_profile_without_pipe_basis_rejects_dispatch_without_stock_write(self):
         tube_unit = ProductionUnit.objects.get(unit_name="支")
         material_category, _ = ProductCategory.objects.get_or_create(
             category_name="管材",
@@ -899,8 +753,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
                 "lines": [{
                     "material_item_id": str(material_item.pk),
                     "inbound_line_id": str(tube_inbound_line.pk),
-                    "source_quantity": "25.0000",
-                    "material_quantity": "400.0000",
+                    "requested_quantity": "400.0000",
                     "conversion_factor": "16.00000000",
                     "conversion_evidence": "BOM 采购支数 25 根，外发加工总需求 400 根",
                     "match_method": "REFERENCE_ID",
@@ -912,14 +765,16 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             HTTP_HOST="localhost",
         )
 
-        self.assertEqual(dispatched.status_code, 200, dispatched.data)
+        self.assertEqual(dispatched.status_code, 400, dispatched.data)
+        blockers = dispatched.data["error"]["field_errors"]["blockers"]
+        self.assertTrue(any(
+            row["code"] == "REQUIREMENT_UNRESOLVED" and row["bom_line_id"] == str(self.profile.pk)
+            for row in blockers
+        ), blockers)
         tube_balance.refresh_from_db()
-        self.assertEqual(tube_balance.quantity, Decimal("5.0000"))
-        requirement = tube_material.order_requirements.get(production_task=self.product_line.production_task)
-        self.assertEqual(requirement.outsourcing_issued_quantity, Decimal("25.0000"))
-        dispatch_line = OutsourcingDispatchLine.objects.get(material_item=material_item)
-        self.assertEqual(dispatch_line.source_quantity, Decimal("25.0000"))
-        self.assertEqual(dispatch_line.material_quantity, Decimal("400.0000"))
+        self.assertEqual(tube_balance.quantity, Decimal("30.0000"))
+        self.assertFalse(OutsourcingDispatch.objects.filter(order_id=order_id).exists())
+        self.assertFalse(tube_material.order_requirements.filter(outsourcing_issued_quantity__gt=0).exists())
 
     def test_dispatch_deducts_shared_allowance_and_return_creates_semi_finished_balance(self):
         created = self.create_order(self.current_fabric_payload())
@@ -927,9 +782,6 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         order_id = created.data["data"]["id"]
         dispatch_request_id = str(uuid.uuid4())
         dispatch_payload = self.dispatch_payload(order_id)
-        dispatch_payload["lines"][0]["requested_quantity"] = "120.0000"
-        dispatch_payload["lines"][0].pop("source_quantity")
-        dispatch_payload["lines"][0].pop("material_quantity")
         dispatch_payload["request_id"] = dispatch_request_id
         dispatched = self.client.post(
             f"/api/v1/outsourcing-orders/{order_id}/confirm-dispatch/",
@@ -1078,7 +930,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         self.assertEqual(defective_balance.quantity, Decimal("7"))
 
     def test_dispatch_context_exposes_confirmed_inbound_batch_without_writes(self):
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         order_id = created.data["data"]["id"]
 
         response = self.client.get(
@@ -1095,7 +947,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         self.assertEqual(material["candidates"][0]["material_unit"], self.material_unit.unit_name)
         self.assertEqual(self.material_balance.quantity, Decimal("200"))
 
-    def test_dispatch_supports_unit_code_alias_and_cross_unit_conversion(self):
+    def test_dispatch_accepts_unit_code_alias_but_rejects_cross_unit_conversion(self):
         self.material_inbound_line.source_unit_text_snapshot = self.material_unit.unit_code
         self.material_inbound_line.save(update_fields=["source_unit_text_snapshot", "updated_at"])
         cross_unit_line = MaterialInboundLine.objects.get(pk=self.material_inbound_line.pk)
@@ -1119,7 +971,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             snapshot={"source_unit": "卷", "conversion_evidence": "测试预换算入库"},
         )
 
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         order_id = created.data["data"]["id"]
         context = self.client.get(
             f"/api/v1/outsourcing-orders/{order_id}/dispatch-context/",
@@ -1131,7 +983,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             for row in context.data["data"]["materials"][0]["candidates"]
         }
         self.assertTrue(candidates[str(self.material_inbound_line.pk)]["same_unit"])
-        self.assertFalse(candidates[str(cross_unit_line.pk)]["same_unit"])
+        self.assertNotIn(str(cross_unit_line.pk), candidates)
 
         material_item = OutsourcingMaterialItem.objects.get(
             allocation__processing_item__order_product__order_id=order_id
@@ -1144,8 +996,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
                 "lines": [{
                     "material_item_id": str(material_item.pk),
                     "inbound_line_id": str(cross_unit_line.pk),
-                    "source_quantity": "60.0000",
-                    "material_quantity": "120.0000",
+                    "requested_quantity": "120.0000",
                     "conversion_factor": "2.00000000",
                     "conversion_evidence": "每卷验收折合 2 米",
                     "match_method": "REFERENCE_ID",
@@ -1156,14 +1007,25 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             HTTP_IF_MATCH=created.headers["ETag"],
             HTTP_HOST="localhost",
         )
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("不允许任意换算比例", str(response.data))
+        self.material_balance.refresh_from_db()
+        self.assertEqual(self.material_balance.quantity, Decimal("320"))
+        self.assertFalse(OutsourcingDispatch.objects.filter(order_id=order_id).exists())
+
+        accepted = self.client.post(
+            f"/api/v1/outsourcing-orders/{order_id}/confirm-dispatch/",
+            self.dispatch_payload(order_id), format="json",
+            HTTP_IF_MATCH=created.headers["ETag"], HTTP_HOST="localhost",
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
         dispatch_line = OutsourcingDispatch.objects.get(order_id=order_id).lines.get()
-        self.assertEqual(dispatch_line.source_quantity, Decimal("60"))
+        self.assertEqual(dispatch_line.source_quantity, Decimal("120"))
         self.assertEqual(dispatch_line.material_quantity, Decimal("120"))
-        self.assertEqual(dispatch_line.conversion_factor, Decimal("2"))
+        self.assertEqual(dispatch_line.conversion_factor, Decimal("1"))
 
     def test_dispatch_batch_available_quantity_includes_other_stock_outflows(self):
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         order_id = created.data["data"]["id"]
         debit_material_stock(
             raw_material=self.raw_material,
@@ -1198,7 +1060,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         self.assertEqual(self.material_balance.quantity, Decimal("30"))
 
     def test_return_rejects_quantity_above_factory_allocation(self):
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         dispatched = self.client.post(
             f"/api/v1/outsourcing-orders/{created.data['data']['id']}/confirm-dispatch/",
             self.dispatch_payload(created.data["data"]["id"]),
@@ -1206,6 +1068,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             HTTP_IF_MATCH=created.headers["ETag"],
             HTTP_HOST="localhost",
         )
+        self.assertEqual(dispatched.status_code, 200, dispatched.data)
         allocation = OutsourcingFactoryAllocation.objects.get(
             processing_item__order_product__order_id=created.data["data"]["id"]
         )
@@ -1230,21 +1093,17 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
             HTTP_IF_MATCH=dispatched.headers["ETag"],
             HTTP_HOST="localhost",
         )
-        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("剩余加工套数", str(response.data))
         self.assertFalse(SemiFinishedStockBalance.objects.exists())
 
+    @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_warehouse_actions_require_their_dedicated_permissions(self):
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         order_id = created.data["data"]["id"]
         self.user.is_superuser = False
         self.user.save(update_fields=["is_superuser"])
-        self.user.user_permissions.set([
-            Permission.objects.get(
-                content_type__app_label="outsourcing",
-                codename="view_outsourcingorder",
-            )
-        ])
-        self.client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+        self.grant_read_scope()
 
         detail = self.client.get(f"/api/v1/outsourcing-orders/{order_id}/", HTTP_HOST="localhost")
         self.assertEqual(detail.status_code, 200, detail.data)
@@ -1269,7 +1128,7 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         )
 
     def test_dispatch_rejects_changed_bom_source_before_stock_write(self):
-        created = self.create_order(self.payload())
+        created = self.create_order(self.current_fabric_payload())
         order_id = created.data["data"]["id"]
         self.fabric.notes = "外发单创建后变更"
         self.fabric.save(update_fields=["notes", "updated_at"])
@@ -1288,7 +1147,10 @@ class OutsourcingWarehouseFlowApiTests(OutsourcingOrderWriteApiTests):
         self.assertFalse(OutsourcingDispatch.objects.filter(order_id=order_id).exists())
 
     def test_dispatch_rejects_changed_fabric_inventory_mapping_before_stock_write(self):
-        created = self.create_order(self.payload())
+        payload = self.current_fabric_payload()
+        self.fabric.raw_values.pop("source_inventory_material_id", None)
+        self.fabric.save(update_fields=["raw_values", "updated_at"])
+        created = self.create_order(payload)
         order_id = created.data["data"]["id"]
         replacement = RawMaterialInformation.objects.create(
             material_number="OUT-MAT-002",

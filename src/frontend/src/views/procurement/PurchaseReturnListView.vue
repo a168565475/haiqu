@@ -13,11 +13,16 @@ import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery } fr
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const isProcurementView = computed(() => route.name === 'purchase-return-records')
 const canView = computed(() => auth.user?.is_superuser === true
   || auth.hasPermission('procurement.view_purchaseorder')
   || auth.hasPermission('inventory.receive_material')
   || auth.hasPermission('inventory.quality_confirm_material'))
-const canAdvance = (row: PurchaseReturn) => auth.moduleCan(row.status === 'QUALITY_GENERATED' ? 'access_control.confirm_purchasereturn' : 'access_control.complete_purchasereturn', 'procurement.submit_purchaseorder')
+const canAdvance = (row: PurchaseReturn) => {
+  if (!isProcurementView.value) return false
+  const permission = row.status === 'QUALITY_GENERATED' ? 'access_control.confirm_purchasereturn' : 'access_control.complete_purchasereturn'
+  return auth.moduleCan(permission, 'procurement.submit_purchaseorder')
+}
 const purchaseOrderId = computed(() => typeof route.query.purchase_order_id === 'string' ? route.query.purchase_order_id : '')
 const returnFrom = computed(() => route.query.from === 'inbound' ? 'inbound' : route.query.from === 'orders' ? 'orders' : '')
 const backLabel = computed(() => returnFrom.value === 'inbound' ? '返回采购入库' : '返回采购订单')
@@ -180,7 +185,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; optionsVersion++; res
           <ElTableColumn label="完成时间" width="145" show-overflow-tooltip><template #default="{ row }"><span class="secondary">{{ time(row.completed_at) }}</span></template></ElTableColumn>
           <ElTableColumn label="生成时间" width="160" show-overflow-tooltip><template #default="{ row }">{{ time(row.created_at) }}</template></ElTableColumn>
           <ElTableColumn label="操作" width="72" fixed="right" align="center" class-name="operation-column" label-class-name="operation-column">
-            <template #default="{ row }"><ElButton v-if="row.status === 'COMPLETED'" @click="viewDetails(row)">查看</ElButton><ElButton v-else :disabled="!canAdvance(row) || !!busyId || loading || !['QUALITY_GENERATED', 'PROCUREMENT_CONFIRMED'].includes(row.status)" :loading="busyId === row.id" :title="canAdvance(row) ? '' : '没有此退货操作权限'" @click="advance(row)">{{ row.status === 'QUALITY_GENERATED' ? '确认' : '完成' }}</ElButton></template>
+            <template #default="{ row }"><ElButton v-if="row.status === 'COMPLETED'" @click="viewDetails(row)">查看</ElButton><template v-else-if="isProcurementView"><ElButton :disabled="!canAdvance(row) || !!busyId || loading || !['QUALITY_GENERATED', 'PROCUREMENT_CONFIRMED'].includes(row.status)" :loading="busyId === row.id" :title="canAdvance(row) ? '' : '没有此退货操作权限'" @click="advance(row)">{{ row.status === 'QUALITY_GENERATED' ? '确认' : '完成' }}</ElButton></template><span v-else class="secondary">仅跟踪</span></template>
           </ElTableColumn>
           <template #empty><div class="table-empty">{{ rowsError ? '记录加载失败，请刷新重试' : loading ? '正在加载退货记录…' : '暂无符合条件的退货记录' }}</div></template>
         </ElTable>

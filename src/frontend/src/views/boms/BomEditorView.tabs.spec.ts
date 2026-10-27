@@ -30,7 +30,7 @@ const record = {
 const versioned = (overrides = {}) => ({ data: { ...record, ...overrides }, etag: 'v1' })
 function open() {
   return shallowMount(BomEditorView, { attachTo: document.body, global: { plugins: [ElementPlus], renderStubDefaultSlot: true,
-    stubs: { ElButton: false, ElInput: false, ElTableColumn: { template: '<div />' } } } })
+    stubs: { BomProductInfoDialog: false, BomProductOverview: false, BomQuantityCompareCard: false, BomSectionSidebar: false, BomProductConfirmationDialogs: false, ElButton: false, ElInput: false, ElTableColumn: { template: '<div />' } } } })
 }
 beforeEach(() => {
   vi.clearAllMocks(); auth.editable = true

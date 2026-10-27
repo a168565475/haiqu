@@ -25,7 +25,7 @@ interface Editor {
   tubeCalculations: (line: BomLineInput) => Record<string, string>
 }
 async function open(values: Partial<BomLineInput> = {}) {
-  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' } } } })
+  const wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' }, BomLineEditorForm: false } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
   vm.sections.forEach(section => { section.lines = [] })

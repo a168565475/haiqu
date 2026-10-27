@@ -27,7 +27,13 @@ import type {
   WorkshopEmployeeStatus,
 } from '@/types/workshopConfig'
 
-const props = defineProps<{ kind: EditableResourceKind }>()
+const props = defineProps<{
+  kind: EditableResourceKind
+  initialWorkshop?: string
+  initialCraftType?: CraftType
+  initialCraft?: string
+}>()
+const emit = defineEmits<{ (event: 'saved'): void }>()
 
 const auth = useAuthStore()
 const permissionModel = computed(() => ({
@@ -45,7 +51,7 @@ const canChange = computed(() => can('change'))
 const metadata = computed(() => ({
   employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名、工号或岗位' },
   crafts: { title: '工艺信息管理', createLabel: '新增工艺', search: '搜索工艺或车间' },
-  operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索编号、品名、工艺或工序' },
+  operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索品名、工艺或工序' },
 })[props.kind])
 
 const rows = ref<WorkshopConfigRecord[]>([])
@@ -64,11 +70,11 @@ let requestSequence = 0
 const filters = reactive({
   keyword: '',
   status: '',
-  workshop: '',
+  workshop: props.initialWorkshop || '',
   position: '',
   isSupervisor: '' as '' | boolean,
-  craftType: '' as '' | CraftType,
-  craft: '',
+  craftType: props.initialCraftType || '' as '' | CraftType,
+  craft: props.initialCraft || '',
 })
 
 const editorVisible = ref(false)
@@ -88,7 +94,6 @@ const form = reactive({
   planCategory: null as PlanCategory | null,
   outsourcingCode: null as OutsourcingCode | null,
   craft: '',
-  operationNumber: '',
   productName: '',
 })
 
@@ -215,7 +220,6 @@ function resetForm(): void {
   form.planCategory = null
   form.outsourcingCode = null
   form.craft = ''
-  form.operationNumber = ''
   form.productName = ''
   editingId.value = ''
   editingEtag.value = ''
@@ -252,7 +256,6 @@ async function openEdit(row: WorkshopConfigRecord): Promise<void> {
       form.workshop = craft.workshop || ''
     } else if (props.kind === 'operations') {
       const operation = value as Operation
-      form.operationNumber = operation.operation_number
       form.productName = operation.product_name
       form.craft = operation.craft
     }
@@ -273,7 +276,6 @@ function validateForm(): string {
     if (form.planCategory === 'METAL' && workshops.value.find(item => item.id === form.workshop)?.name !== '金工车间') return '金工计划只能映射金工车间的工艺。'
   }
   if (props.kind === 'operations') {
-    if (!form.operationNumber.trim()) return '请输入唯一工序编号。'
     if (!form.craft) return '请选择工艺。'
     if (!isMetalCraft(selectedFormCraft.value) && !form.productName.trim()) return '请输入品名。'
     if (!form.name.trim()) return '请输入工序名称。'
@@ -302,7 +304,6 @@ function buildPayload(): WorkshopConfigInput {
     }
   }
   return {
-    operation_number: form.operationNumber.trim(),
     product_name: isMetalCraft(selectedFormCraft.value) ? '' : form.productName.trim(),
     craft: form.craft,
     name: form.name.trim(),
@@ -323,6 +324,7 @@ async function save(): Promise<void> {
     else await updateWorkshopConfig(props.kind, editingId.value, payload, editingEtag.value)
     editorVisible.value = false
     ElMessage.success(editorMode.value === 'create' ? '新增成功。' : '保存成功。')
+    emit('saved')
     await reloadAll()
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '保存失败，请检查填写内容后重试。'))
@@ -452,6 +454,8 @@ onMounted(() => { void reloadAll() })
           <ElTableColumn prop="workshop_name" label="车间" min-width="180" fixed />
           <ElTableColumn prop="position" label="岗位" min-width="180" />
           <ElTableColumn label="姓名" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ employeeLabel(row) }}</template></ElTableColumn>
+          <ElTableColumn prop="department" label="部门" min-width="160" show-overflow-tooltip />
+          <ElTableColumn prop="roles" label="角色" min-width="180" show-overflow-tooltip />
           <ElTableColumn label="是否为主管" width="130"><template #default="{ row }"><ElTag :type="row.is_supervisor ? 'success' : 'info'" effect="dark">{{ row.is_supervisor ? '是' : '否' }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="车间任职" width="110"><template #default="{ row }"><ElTag :type="!row.workshop ? 'info' : row.status === 'ACTIVE' ? 'success' : 'warning'" effect="dark">{{ !row.workshop ? '未安排' : row.status === 'ACTIVE' ? '任职中' : '已离岗' }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
@@ -473,7 +477,6 @@ onMounted(() => { void reloadAll() })
         </ElTable>
 
         <ElTable v-else v-loading="loading" :data="operationRows" row-key="id" height="100%">
-          <ElTableColumn prop="operation_number" label="工序编号" min-width="150" fixed />
           <ElTableColumn prop="product_name" label="品名" min-width="210" show-overflow-tooltip />
           <ElTableColumn prop="craft_name" label="工艺" min-width="160" />
           <ElTableColumn prop="craft_type_display" label="类型" width="90" />
@@ -510,7 +513,6 @@ onMounted(() => { void reloadAll() })
           <ElAlert title="厂内必须选择车间，计划分类用于归入金工、裁剪、车缝或装配计划；厂外工艺不参与四类计划。" type="warning" :closable="false" />
         </template>
         <template v-else>
-          <ElFormItem label="工序编号" required><ElInput v-model="form.operationNumber" maxlength="50" placeholder="管理员手工填写唯一编号" /></ElFormItem>
           <ElFormItem label="工艺" required><ElSelect v-model="form.craft" filterable placeholder="请选择工艺"><ElOption v-for="item in crafts" :key="item.id" :label="`${item.name}（${item.craft_type_display}）`" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
           <ElFormItem v-if="!isMetalCraft(selectedFormCraft)" label="品名" required><ElInput v-model="form.productName" maxlength="200" placeholder="本期使用独立文本" /></ElFormItem>
           <ElFormItem label="类型（自动）"><ElInput :model-value="selectedFormCraft?.craft_type_display || ''" disabled /></ElFormItem>

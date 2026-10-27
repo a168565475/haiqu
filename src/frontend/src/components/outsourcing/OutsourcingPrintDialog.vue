@@ -9,7 +9,7 @@ import type { UnifiedOutsourcingOrder } from '@/types/unifiedOutsourcing'
 import type { OutsourcingPrintDocumentData, OutsourcingPrintKind } from '@/types/outsourcingPrint'
 import { buildRegularPrintDocument, buildTubePrintDocument } from '@/utils/outsourcingPrint'
 
-const props = defineProps<{ record: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind }>()
+const props = defineProps<{ record: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind; warehouse?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const printDocument = ref<OutsourcingPrintDocumentData | null>(null)
 const loading = ref(false)
@@ -40,7 +40,7 @@ async function load(): Promise<void> {
   printDocument.value = null
   try {
     if (props.record.record_type === 'TUBE') {
-      const detail = await fetchTubeOrder(props.record.id)
+      const detail = props.warehouse ? await fetchTubeOrder(props.record.id, true) : await fetchTubeOrder(props.record.id)
       if (!active) return
       if (props.kind === 'spray' && (detail.category === 'cutting' || !['RAW_PIPE', 'PUBLIC_SEMI', 'METAL'].includes(detail.source_kind))) {
         error.value = '管材喷塑打印仅支持管材喷塑单。'
@@ -48,7 +48,7 @@ async function load(): Promise<void> {
       }
       printDocument.value = buildTubePrintDocument(detail, props.kind)
     } else if (props.record.record_type === 'ORIGINAL' && props.record.detail_access === 'REGULAR' && props.kind === 'processing') {
-      const detail = await fetchOutsourcingOrder(props.record.id)
+      const detail = props.warehouse ? await fetchOutsourcingOrder(props.record.id, true) : await fetchOutsourcingOrder(props.record.id)
       if (!active) return
       printDocument.value = buildRegularPrintDocument(detail.data)
     } else {

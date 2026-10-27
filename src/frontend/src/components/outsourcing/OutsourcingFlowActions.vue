@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import { confirmOutsourcingDispatch, confirmOutsourcingFlow, confirmOutsourcingReturn, fetchOutsourcingDispatchContext, fetchOutsourcingOptions, fetchOutsourcingReconciliation } from '@/api/outsourcing'
@@ -11,6 +12,9 @@ import { pipeMeters } from '@/utils/pipeQuantities'
 import type { OutsourcingConversion } from '@/types/outsourcing'
 
 const props = defineProps<{ detail: OutsourcingOrderDetail; etag: string }>()
+const route = useRoute()
+const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
+const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
 const emit = defineEmits<{ updated: [value: VersionedOutsourcingOrder] }>()
 const publicStock = computed(() => props.detail.stock_mode === 'PUBLIC_V2')
 type Mode = 'dispatch' | 'return' | 'raw' | 'record' | 'complete'
@@ -83,6 +87,7 @@ function removeZone(row: DispatchRow) {
 
 function actionAllowed(next: Mode): boolean {
   if (props.detail.direct_handoff || props.detail.status === 'CANCELLED') return false
+  if (['dispatch', 'return', 'raw'].includes(next) !== warehouseWorkspace.value) return false
   return Boolean({
     dispatch: props.detail.can_confirm_dispatch, return: props.detail.can_confirm_return,
     raw: props.detail.can_return_raw, record: props.detail.can_reconcile,
@@ -112,7 +117,7 @@ async function load() {
   error.value = ''
   try {
     if (mode.value === 'dispatch') {
-      context.value = await fetchOutsourcingDispatchContext(props.detail.id)
+      context.value = await fetchOutsourcingDispatchContext(props.detail.id, ...warehouseArgs.value)
       dispatchRows.value = [...context.value.materials]
         .sort((left, right) => left.factory_name.localeCompare(right.factory_name, 'zh-CN'))
         .map(material => ({
@@ -120,10 +125,10 @@ async function load() {
           zone_id: material.zones.length === 1 ? material.zones[0]!.zone_id : '', quantity: '',
         }))
     } else {
-      state.value = await fetchOutsourcingReconciliation(props.detail.id)
+      state.value = await fetchOutsourcingReconciliation(props.detail.id, ...warehouseArgs.value)
       factoryId.value = factories.value[0]?.id || ''
       if (mode.value === 'return') {
-        options.value = await fetchOutsourcingOptions()
+        options.value = await fetchOutsourcingOptions(...warehouseArgs.value)
         receipt.value = { date: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
           receiver: options.value.receivers?.[0]?.id || '', goodZone: options.value.semi_finished_zones?.[0]?.id || '',
           badZone: publicStock.value ? '' : options.value.defective_zones?.[0]?.id || '', delivery: '' }
@@ -145,6 +150,15 @@ async function open(next: Mode) {
   reason.value = ''; kind.value = 'RAW_INPUT'; context.value = null; state.value = null
   await load()
 }
+
+let openedEntryAction = ''
+watch(() => [route.query?.action, props.detail.id, props.detail.status, warehouseWorkspace.value], () => {
+  const action = route.query?.action
+  if (!warehouseWorkspace.value || !['dispatch', 'return', 'raw'].includes(String(action)) || openedEntryAction) return
+  if (!actionAllowed(action as Mode)) return
+  openedEntryAction = String(action)
+  void open(action as Mode)
+}, { immediate: true })
 
 function entries(inputOnly = false): OutsourcingReconciliationInput[] {
   if (!inputOnly && !reason.value.trim()) throw new Error('请填写登记原因。')
@@ -242,11 +256,11 @@ async function submit() {
 
 <template>
   <div v-if="!detail.direct_handoff && detail.status !== 'CANCELLED'" class="flow-actions">
-    <ElButton v-if="detail.can_confirm_dispatch" type="primary" @click="open('dispatch')">确认外发</ElButton>
-    <ElButton v-if="detail.can_confirm_return" type="primary" @click="open('return')">登记回货</ElButton>
-    <ElButton v-if="detail.can_return_raw" @click="open('raw')">原料退回</ElButton>
-    <ElButton v-if="detail.can_reconcile" @click="open('record')">投入与损耗</ElButton>
-    <ElButton v-if="detail.dispatch" @click="open('complete')">结清检查</ElButton>
+    <ElButton v-if="actionAllowed('dispatch')" type="primary" @click="open('dispatch')">确认外发</ElButton>
+    <ElButton v-if="actionAllowed('return')" type="primary" @click="open('return')">登记回货</ElButton>
+    <ElButton v-if="actionAllowed('raw')" @click="open('raw')">原料退回</ElButton>
+    <ElButton v-if="actionAllowed('record')" @click="open('record')">投入与损耗</ElButton>
+    <ElButton v-if="actionAllowed('complete')" @click="open('complete')">结清检查</ElButton>
   </div>
   <AppWindowDialog v-model="visible" :title="title" :width="mode === 'dispatch' ? 1700 : 1320" :height="820" :close-on-click-modal="false" :close-on-press-escape="!busy" :before-close="done => { if (!busy) done() }" destroy-on-close>
     <div v-loading="loading" class="flow-body" :class="{ 'flow-body--dispatch': mode === 'dispatch' }">

@@ -41,6 +41,8 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="display_name", read_only=True)
     employee_status = serializers.CharField(source="status", read_only=True)
     employee_archived = serializers.BooleanField(read_only=True, default=False)
+    department = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
     workshop_name = serializers.CharField(source="workshop.name", read_only=True, default="未安排")
     position = serializers.CharField(source="workshop_position", allow_blank=True, required=False)
     is_supervisor = serializers.BooleanField(source="workshop_is_supervisor", required=False)
@@ -51,7 +53,7 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             "id", "workshop", "workshop_name", "position", "name", "is_supervisor", "status",
-            "employee", "employee_code", "employee_name", "employee_status", "employee_archived",
+            "employee", "employee_code", "employee_name", "employee_status", "employee_archived", "department", "roles",
             "status_display", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "employee_code", "created_at", "updated_at"]
@@ -70,6 +72,28 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
         if not workshop:
             attrs["workshop_is_supervisor"] = False
         return attrs
+
+    def get_department(self, obj):
+        rows = getattr(obj, "_workshop_departments", None)
+        if rows is None:
+            return "未分配"
+        names = []
+        for row in rows:
+            name = row.organization_unit.unit_name
+            if name and name not in names:
+                names.append(name)
+        return "、".join(names) or "未分配"
+
+    def get_roles(self, obj):
+        rows = getattr(obj, "_workshop_roles", None)
+        if rows is None:
+            return "未分配"
+        names = []
+        for row in rows:
+            name = row.role_profile.display_name
+            if name and name not in names:
+                names.append(name)
+        return "、".join(names) or "未分配"
 
 
 class CraftSerializer(serializers.ModelSerializer):
@@ -125,6 +149,7 @@ class CraftSerializer(serializers.ModelSerializer):
 
 
 class OperationSerializer(serializers.ModelSerializer):
+    operation_number = serializers.CharField(required=False, allow_blank=True, default="")
     product_name = serializers.CharField(required=False, allow_blank=True, default="")
     craft_name = serializers.CharField(source="craft.name", read_only=True)
     craft_type = serializers.CharField(source="craft.craft_type", read_only=True)
@@ -148,7 +173,8 @@ class OperationSerializer(serializers.ModelSerializer):
         ]
 
     def validate_operation_number(self, value):
-        return _normalized_text(value, "工序编号").upper()
+        value = str(value or "").strip()
+        return value.upper() if value else ""
 
     def validate_product_name(self, value):
         return str(value or "").strip()
@@ -158,6 +184,10 @@ class OperationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        if self.instance and "operation_number" in attrs and attrs["operation_number"] not in {"", self.instance.operation_number}:
+            raise serializers.ValidationError({"operation_number": "工序编号由系统维护，不能修改。"})
+        if self.instance and not attrs.get("operation_number"):
+            attrs.pop("operation_number", None)
         craft = attrs.get("craft", getattr(self.instance, "craft", None))
         status = attrs.get("status", getattr(self.instance, "status", RecordStatus.ACTIVE))
         if status == RecordStatus.ACTIVE and craft and craft.status != RecordStatus.ACTIVE:

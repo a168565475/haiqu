@@ -7,9 +7,9 @@ import * as receiptApi from '@/api/tubeReceipts'
 import type { TubeOrderDetail, TubePendingAction } from '@/types/tubeOutsourcing'
 import TubeOutsourcingDetailView from './TubeOutsourcingDetailView.vue'
 
-const routing = vi.hoisted(() => ({ push: vi.fn() }))
+const routing = vi.hoisted(() => ({ push: vi.fn(), route: { params: { id: 'order-1' }, query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'warehouse' } } }))
 const permission = vi.hoisted(() => ({ canReceive: true }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: 'order-1' }, query: {} }), useRouter: () => routing }))
+vi.mock('vue-router', () => ({ useRoute: () => routing.route, useRouter: () => routing }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: false, display_name: '真实经办人' }, hasPermission: (name: string) => name === 'outsourcing.confirm_return_outsourcingorder' ? permission.canReceive : true }) }))
 vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), dispatchTubeOrder: vi.fn(), cancelTubeOrder: vi.fn(), findTubeAction: vi.fn() }))
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn() }))
@@ -39,7 +39,7 @@ function result(kind: 'DISPATCH' | 'CANCEL', requestId: string): TubeOrderDetail
 }
 interface ViewModel {
   detail: TubeOrderDetail | null; pending: TubePendingAction | null; dialog: string; dispatchDate: string; cancellationRemark: string
-  recheckError: string; readError: string; storageError: boolean; canDispatch: boolean; canCancel: boolean
+  recheckError: string; readError: string; storageError: boolean; canDispatch: boolean; canCancel: boolean; canReceive: boolean
   submit: (kind: 'DISPATCH' | 'CANCEL') => Promise<void>; recoverPending: (allowRetry?: boolean) => Promise<void>
   loadDetail: () => Promise<void>; openBasis: (row: TubeOrderDetail['lines'][number]) => void; recreate: () => void
 }
@@ -50,7 +50,7 @@ async function mountPage() {
   return { wrapper, vm: wrapper.vm as unknown as ViewModel }
 }
 beforeEach(() => {
-  vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true
+  vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true; routing.route.meta.outsourcingWorkspace = 'warehouse'; routing.route.query = {}
   vi.mocked(receiptApi.fetchTubeReceiptPreview).mockRejectedValue(httpError(403))
   vi.mocked(api.fetchTubeOrder).mockResolvedValue(structuredClone(base))
   vi.mocked(api.findTubeAction).mockRejectedValue(httpError(404))
@@ -60,7 +60,32 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('管材外发详情与整单动作', () => {
+  it('车间不显示库存来源发料与入库，直接调用也不能发料', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
+    const { wrapper, vm } = await mountPage()
+    expect(wrapper.findAll('button').some(button => button.text() === '确认实际发出')).toBe(false)
+    await vm.submit('DISPATCH')
+    expect(api.dispatchTubeOrder).not.toHaveBeenCalled()
+    vm.detail!.status = 'PROCESSING'; await flushPromises()
+    expect(wrapper.findAll('button').some(button => button.text() === '喷塑入库')).toBe(false)
+  })
+  it('仓库不显示车间直接交接与取消操作，不能绕过方法提交', async () => {
+    const data = structuredClone(base); data.source_kind = 'METAL'
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(data)
+    const { wrapper, vm } = await mountPage()
+    expect(wrapper.findAll('button').some(button => ['确认实际发出', '取消外发单'].includes(button.text()))).toBe(false)
+    await vm.submit('DISPATCH'); await vm.submit('CANCEL')
+    expect(api.dispatchTubeOrder).not.toHaveBeenCalled(); expect(api.cancelTubeOrder).not.toHaveBeenCalled()
+  })
+  it('仓库列表发料入口只打开确认弹窗，不自动写入', async () => {
+    routing.route.query = { action: 'dispatch' }
+    const { vm } = await mountPage()
+    expect(vm.dialog).toBe('dispatch')
+    expect(api.dispatchTubeOrder).not.toHaveBeenCalled()
+    expect(api.fetchTubeOrder).toHaveBeenCalledWith('order-1', true)
+  })
   it('裁片直发复用原详情和发出确认，按套展示报工与辅料', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
     const current = structuredClone(base)
     current.source_kind = 'SEWING'; current.craft_id = 'embroidery'; current.craft_name = '刺绣'
     current.materials = [{ ...hardwareMaterials[0]!, name: '织唛' }]
@@ -129,11 +154,34 @@ describe('管材外发详情与整单动作', () => {
     expect(wrapper.findAll('button').some(button => button.text() === '确认实际发出')).toBe(false)
   })
   it('加工中喷塑入库接到D3，无回货权限则沿原按钮禁用', async () => {
-    vi.mocked(api.fetchTubeOrder).mockResolvedValue({ ...structuredClone(base), status: 'PROCESSING' })
+    const processing = { ...structuredClone(base), status: 'PROCESSING' }
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(processing)
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue({ order: processing, etag: processing.etag, can_receive: true, blockers: [], actor_name: '', today: '2026-09-30', warehouses: [], zones: [], receipt: null })
     const { wrapper } = await mountPage(); const button = wrapper.findAll('button').find(item => item.text() === '喷塑入库')!
     expect(button.attributes('disabled')).toBeUndefined(); await button.trigger('click')
-    expect(routing.push).toHaveBeenCalledWith({ name: 'workshop-outsourcing-tube-return', params: { id: 'order-1' } })
+    expect(routing.push).toHaveBeenCalledWith({ name: 'warehouse-outsourcing-tube-return', params: { id: 'order-1' } })
     permission.canReceive = false; const denied = await mountPage(); expect(denied.wrapper.findAll('button').find(item => item.text() === '喷塑入库')!.attributes('disabled')).toBeDefined()
+  })
+  it('有全局回货权限但当前单预览拒绝时，入库按钮禁用且不跳转', async () => {
+    const processing = { ...structuredClone(base), status: 'PROCESSING' }
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(processing)
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue({ order: processing, etag: processing.etag, can_receive: false, blockers: ['当前账号没有该外发单的回货确认权限。'], actor_name: '', today: '2026-09-30', warehouses: [], zones: [], receipt: null })
+    const { wrapper, vm } = await mountPage()
+    const button = wrapper.findAll('button').find(item => item.text() === '喷塑入库')!
+    expect(vm.canReceive).toBe(false)
+    expect(button.attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    expect(routing.push).not.toHaveBeenCalled()
+  })
+  it.each([403, 500])('已取得入库许可后重新预览失败%s，不沿用之前的许可', async status => {
+    const processing = { ...structuredClone(base), status: 'PROCESSING' }
+    vi.mocked(api.fetchTubeOrder).mockResolvedValue(processing)
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue({ order: processing, etag: processing.etag, can_receive: true, blockers: [], actor_name: '', today: '2026-09-30', warehouses: [], zones: [], receipt: null })
+    const { vm } = await mountPage()
+    expect(vm.canReceive).toBe(true)
+    vi.mocked(receiptApi.fetchTubeReceiptPreview).mockRejectedValue(httpError(status))
+    await vm.loadDetail()
+    expect(vm.canReceive).toBe(false)
   })
   it('已结束缺少最终凭证时保留原单状态，凭证入口禁用且不能再办理发出或回货', async () => {
     const completed = { ...structuredClone(base), status: 'COMPLETED' }
@@ -161,6 +209,7 @@ describe('管材外发详情与整单动作', () => {
     expect(wrapper.text()).not.toContain('结清'); expect(wrapper.text()).not.toContain('重新加工')
   })
   it('取消备注可空，原单保留并出现带相同来源的重建入口', async () => {
+    routing.route.meta.outsourcingWorkspace = 'workshop'
     const { vm } = await mountPage(); vm.cancellationRemark = '   '
     await vm.submit('CANCEL')
     expect(api.cancelTubeOrder).toHaveBeenCalledWith('order-1', { client_request_id: expect.any(String), remark: '' }, '"order-1:v1"')
@@ -219,7 +268,7 @@ describe('管材外发详情与整单动作', () => {
   it('刷新恢复只查询原UUID，404不自动再次写入', async () => {
     const action: TubePendingAction = { order_id: 'order-1', kind: 'DISPATCH', etag: '"order-1:v1"', payload: { client_request_id: 'existing-uuid', actual_dispatch_date: '2026-09-30' } }
     localStorage.setItem(key, JSON.stringify(action)); const { vm } = await mountPage()
-    expect(api.findTubeAction).toHaveBeenCalledWith('order-1', 'existing-uuid'); expect(api.dispatchTubeOrder).not.toHaveBeenCalled()
+    expect(api.findTubeAction).toHaveBeenCalledWith('order-1', 'existing-uuid', true); expect(api.dispatchTubeOrder).not.toHaveBeenCalled()
     expect(vm.pending).toEqual(action); expect(vm.canDispatch).toBe(false)
   })
   it('核对时原单版本或权限已变不能重放写入', async () => {

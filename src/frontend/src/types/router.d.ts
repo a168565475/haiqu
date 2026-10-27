@@ -10,6 +10,7 @@ declare module 'vue-router' {
     requiresAuth?: boolean
     layout?: 'erp'
     activeMenu?: string
+    outsourcingWorkspace?: 'warehouse'
     headerTitle?: string
     breadcrumbs?: AppBreadcrumbItem[]
     pageWidth?: 'fluid' | 'contained'

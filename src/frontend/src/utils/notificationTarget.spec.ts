@@ -61,17 +61,39 @@ describe('通知命名路由白名单', () => {
     expect(() => notificationRoute(code!, { ...target, route_name: 'material-issue-detail', params: { issueId: id } })).toThrow()
   })
   it('两类委外分别进入真实对象页面，拒绝混传路由', () => {
-    const regular = { ...target, route_name: 'workshop-outsourcing-detail', params: { orderId: id } }
-    const tube = { ...regular, route_name: 'workshop-outsourcing-tube-detail' }
+    const regular = { ...target, route_name: 'warehouse-outsourcing-detail', params: { orderId: id } }
+    const tube = { ...regular, route_name: 'warehouse-outsourcing-tube-detail', params: { id } }
     expect(notificationRoute('OUTSOURCING_ORDER_CREATED', regular).name).toBe(regular.route_name)
     expect(notificationRoute('TUBE_OUTSOURCING_ORDER_CREATED', tube).name).toBe(tube.route_name)
     expect(() => notificationRoute('OUTSOURCING_ORDER_CREATED', tube)).toThrow()
     expect(() => notificationRoute('TUBE_OUTSOURCING_ORDER_CREATED', regular)).toThrow()
   })
+  it('旧委外通知兼容仓库入口，车间直交及旧管材参数严格保留对应对象', () => {
+    expect(notificationRoute('OUTSOURCING_ORDER_CREATED', {
+      ...target, route_name: 'workshop-outsourcing-detail', params: { orderId: id },
+    })).toEqual({ name: 'warehouse-outsourcing-detail', params: { orderId: id } })
+    for (const params of [{ id }, { orderId: id }] as Record<string, string>[]) {
+      expect(notificationRoute('TUBE_OUTSOURCING_ORDER_CREATED', {
+        ...target, route_name: 'workshop-outsourcing-tube-detail', params,
+      })).toEqual({ name: 'workshop-outsourcing-tube-detail', params: { id } })
+    }
+    for (const params of [{ orderId: id }, { id, orderId: id }, { id, url: 'https://evil.test' }] as Record<string, string>[]) {
+      expect(() => notificationRoute('TUBE_OUTSOURCING_ORDER_CREATED', {
+        ...target, route_name: 'warehouse-outsourcing-tube-detail', params,
+      })).toThrow()
+    }
+    const forgedTube = {
+      ...target, route_name: 'workshop-outsourcing-tube-detail', params: { id }, query: { source: 'RAW_PIPE' },
+    }
+    expect(() => notificationRoute('TUBE_OUTSOURCING_ORDER_CREATED', forgedTube)).toThrow()
+  })
   it('更正及损耗使用各自固定目标，删除知悉拒绝任何伪造目标', () => {
     expect(notificationRoute('WORK_REPORT_CORRECTED', { ...target, route_name: 'work-report-day-detail', params: { productionDate: '2026-10-21' } }).name).toBe('work-report-day-detail')
     expect(notificationRoute('OUTSOURCING_LOSS_RECORDED', { ...target, route_name: 'workshop-outsourcing-detail', params: { orderId: id } }).name).toBe('workshop-outsourcing-detail')
-    expect(notificationRoute('TUBE_OUTSOURCING_SHORTAGE_RECORDED', { ...target, route_name: 'workshop-outsourcing-tube-detail', params: { orderId: id } }).name).toBe('workshop-outsourcing-tube-detail')
+    for (const params of [{ id }, { orderId: id }] as Record<string, string>[]) {
+      expect(notificationRoute('TUBE_OUTSOURCING_SHORTAGE_RECORDED', { ...target, route_name: 'workshop-outsourcing-tube-detail', params }))
+        .toEqual({ name: 'workshop-outsourcing-tube-detail', params: { id } })
+    }
     expect(() => notificationRoute('WORK_REPORT_DELETED', target)).toThrow()
   })
   it('检验目标参数允许采购单UUID而非到货UUID；日期路由严格校验', () => {

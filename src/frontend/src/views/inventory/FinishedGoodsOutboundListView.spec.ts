@@ -30,7 +30,7 @@ it('同单不同产品逐行保留各自数量、单位和仓库，整单费用�
   expect(rows).toHaveLength(2)
   for (const value of ['CODE-A', '产品A', '10×20', '红', '2,000', '800', '300', '箱', '成品仓A']) expect(rows[0].text()).toContain(value)
   for (const value of ['CODE-B', '产品B', '20×30', '蓝', '1,500', '600', '200', '个', '成品仓B']) expect(rows[1].text()).toContain(value)
-  expect(wrapper.text().match(/12\.50/g)).toHaveLength(1)
+  expect(wrapper.findAll('td').filter(cell => cell.text() === '12.5')).toHaveLength(1)
   expect(rows[0].get('td').attributes('rowspan')).toBe('2')
   expect(rows.every(row => row.classes().includes('last-document'))).toBe(true)
   expect(rows[0].findAll('.document-cell')).toHaveLength(6)
@@ -73,4 +73,21 @@ it('失败后清除旧明细；来源数量缺失显示未知，真实零值保�
   await flushPromises()
   expect(wrapper.text()).toContain('出库记录读取失败')
   expect(wrapper.text()).not.toContain('CODE-A')
+})
+
+it('出库记录保留成品库存标题和页签位置，选择库存通知父页面切换', async () => {
+  wrapper = mount(FinishedGoodsOutboundListView, {
+    global: { plugins: [ElementPlus] },
+    slots: { default: '<nav aria-label="成品库存视图">库存汇总 入库记录 出库记录</nav>' },
+  })
+  await flushPromises()
+  expect(wrapper.get('h1').text()).toBe('成品库存')
+  expect(wrapper.get('.erp-list-data .erp-list-toolbar nav').text()).toContain('出库记录')
+  expect(wrapper.text()).not.toContain('返回库存')
+  await wrapper.findAll('button').find(button => button.text() === '查看出货单')!.trigger('click')
+  expect(api.push).toHaveBeenCalledWith({ name: 'finished-goods-outbound-detail', params: { outboundId: 'out-1' } })
+  api.push.mockClear()
+  await wrapper.findAll('button').find(button => button.text() === '从库存选择出库')!.trigger('click')
+  expect(wrapper.emitted('select-stock')).toHaveLength(1)
+  expect(api.push).not.toHaveBeenCalled()
 })

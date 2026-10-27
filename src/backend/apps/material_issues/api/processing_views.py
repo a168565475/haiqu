@@ -7,7 +7,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.organizations.selectors import active_department_employees
-from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
+from apps.core.api.permissions import HasActiveEmployee
+from apps.outsourcing.warehouse_access import (
+    WarehouseActionReadPermission, warehouse_stage, warehouse_original_handoffs,
+    warehouse_rework_orders, warehouse_crafts,
+)
 
 from ..processing_selectors import processing_lines, readable_processing_lines, source_data
 from ..processing_services import record_processing
@@ -28,7 +32,9 @@ WRITE_RESPONSES = {200: ProcessingSourceResponseSerializer, **{
 
 
 class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
-    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
+    warehouse_read_actions = ('list', 'retrieve', 'options')
+    warehouse_read_permissions = ('outsourcing.confirm_return_outsourcingorder', 'material_issues.confirm_metalprocessingexternalreturn')
     serializer_class = ProcessingSourceReadSerializer
     lookup_value_regex = "[0-9a-fA-F-]{36}"
     action_permission_map = {
@@ -46,6 +52,12 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
             from ..models import MaterialIssueLine
             return MaterialIssueLine.objects.none()
         if self.action in {'list', 'retrieve', 'closure_preview'}:
+            if self.action in self.warehouse_read_actions and warehouse_stage(self.request):
+                from ..models import MaterialIssueLine
+                return MaterialIssueLine.objects.filter(
+                    Q(pk__in=warehouse_original_handoffs(self.request).values('source__issue_line_id'))
+                    | Q(pk__in=warehouse_rework_orders(self.request).values('source__issue_line_id')),
+                ).select_related('issue__product_line', 'issue__production_task', 'requirement', 'processing_source').order_by('-issue__issued_at', 'issue_id', 'line_number', 'id')
             return readable_processing_lines(self.request)
         return processing_lines(self.request, scoped=self.action not in {'completions', 'close'},
             permission=self.action_permission_map.get(self.action))
@@ -67,7 +79,10 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
             elif key == "component_identity":
                 queryset = queryset.filter(conversion_snapshot__component_identity=str(value))
             elif key == "original_order_id":
-                require_order_craft(request, 'material_issues.view_metalprocessingsource', value)
+                if warehouse_stage(request):
+                    queryset = queryset.filter(pk__in=warehouse_original_handoffs(request).filter(original_order_id=value).values('source__issue_line_id'))
+                else:
+                    require_order_craft(request, 'material_issues.view_metalprocessingsource', value)
                 queryset = queryset.filter(processing_source__original_handoffs__original_order_id=value).distinct()
             elif key == "source_id":
                 queryset = queryset.filter(processing_source__id=value)
@@ -99,7 +114,7 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
         from apps.workshop_config.models import Craft
 
         crafts = Craft.objects.filter(craft_type="EXTERNAL", outsourcing_code="POWDER_COATING", status="ACTIVE")
-        crafts = filter_crafts(crafts, request, "material_issues.view_metalprocessingsource", "pk")
+        crafts = warehouse_crafts(request, crafts) if warehouse_stage(request) else filter_crafts(crafts, request, "material_issues.view_metalprocessingsource", "pk")
         visible_craft_ids = set(crafts.values_list("pk", flat=True))
         factories = factories_with_context(OutsourcingFactory.objects.filter(
             status="ACTIVE", craft_links__craft__in=crafts,
@@ -108,6 +123,9 @@ class MetalProcessingSourceViewSet(viewsets.GenericViewSet):
             warehouse__warehouse_type=WarehouseType.SEMI_FINISHED).select_related("warehouse")
         receivers = active_department_employees("DEPT_WAREHOUSE")
         orders = accessible_outsourcing_orders(request).filter(craft__in=crafts).exclude(status="CANCELLED")
+        if warehouse_stage(request):
+            # 仓库仅使用回货库区和收货人，不提供车间新建外发的候选原单。
+            orders = orders.none()
         return Response({"data": {
             "crafts": [{"id": str(row.pk), "name": row.name, "outsourcing_code": row.outsourcing_code} for row in crafts],
             "factories": [{"id": str(row.pk), "name": row.name, "crafts": [

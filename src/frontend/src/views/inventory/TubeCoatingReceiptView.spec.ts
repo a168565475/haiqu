@@ -4,10 +4,10 @@ import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/tubeReceipts'
 import type { TubeOrderDetail } from '@/types/tubeOutsourcing'
-import type { TubeReceipt, TubeReceiptCandidate, TubeReceiptInput, TubeReceiptPending, TubeReceiptPreview } from '@/types/tubeReceipts'
+import type { TubeReceipt, TubeReceiptInput, TubeReceiptPending, TubeReceiptPreview } from '@/types/tubeReceipts'
 import TubeCoatingReceiptView from './TubeCoatingReceiptView.vue'
 
-const routing = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), route: { name: 'workshop-outsourcing-tube-return', params: { id: 'order-1' }, query: {} as Record<string, string> } }))
+const routing = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), route: { name: 'warehouse-outsourcing-tube-return', params: { id: 'order-1' }, query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'warehouse' } } }))
 const permission = vi.hoisted(() => ({ canReceive: true }))
 vi.mock('vue-router', () => ({ useRoute: () => routing.route, useRouter: () => routing }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: false }, hasPermission: (name: string) => name === 'outsourcing.confirm_return_outsourcingorder' ? permission.canReceive : true }) }))
@@ -44,10 +44,10 @@ function savedRequest(): TubeReceiptPending { return { order_id: 'order-1', etag
 interface Row { order_line_id: string; dispatched_quantity: string; received: string; reason: string; zone: string; zone_name: string }
 interface ViewModel {
   preview: TubeReceiptPreview | null; rows: Row[]; pending: TubeReceiptPending | null; storageError: boolean; readError: string; canEdit: boolean; isEnded: boolean
-  receiptDate: string; warehouse: string; remark: string; dialog: string; search: string; candidatePage: number; candidates: TubeReceiptCandidate[]; candidateError: string
+  receiptDate: string; warehouse: string; remark: string; dialog: string
   finishReceipt: () => Promise<void>; openConfirm: () => void; recoverPending: (retry?: boolean) => Promise<void>; showReceipt: () => Promise<void>
-  requestWarehouseChange: (value: string) => void; confirmWarehouseChange: () => void; openPicker: () => void; selectOrder: (item: TubeReceiptCandidate) => void
-  loadCandidates: (reset?: boolean) => Promise<void>; returnToSource: () => void
+  requestWarehouseChange: (value: string) => void; confirmWarehouseChange: () => void
+  returnToSource: () => void
 }
 const wrappers: ReturnType<typeof mount>[] = []
 async function mountPage() {
@@ -57,11 +57,26 @@ async function mountPage() {
 }
 function receive(vm: ViewModel, quantity = '20') { vm.rows[0]!.received = quantity; vm.rows[0]!.reason = quantity === '20' ? '' : '实物少回'; vm.warehouse = 'warehouse-1'; vm.rows[0]!.zone = 'zone-1' }
 beforeEach(() => {
-  vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true; routing.route.name = 'workshop-outsourcing-tube-return'; routing.route.params.id = 'order-1'; routing.route.query = {}
+  routing.route.meta.outsourcingWorkspace = 'warehouse'
+  vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true; routing.route.name = 'warehouse-outsourcing-tube-return'; routing.route.params.id = 'order-1'; routing.route.query = {}
   vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValue(structuredClone(base))
   vi.mocked(api.confirmTubeReceipt).mockImplementation(async (_, payload) => makeReceipt(payload))
   vi.mocked(api.findTubeReceipt).mockRejectedValue(httpError(404))
   vi.mocked(api.fetchTubeReceiptCandidates).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50 })
+})
+
+it('旧车间表单上下文不能确认入库或重放旧请求', async () => {
+  routing.route.meta.outsourcingWorkspace = 'workshop'
+  routing.route.name = 'workshop-outsourcing-tube-return'
+  const { vm } = await mountPage()
+  receive(vm)
+  vm.openConfirm(); await vm.finishReceipt()
+  expect(vm.canEdit).toBe(false)
+  expect(api.confirmTubeReceipt).not.toHaveBeenCalled()
+  vm.pending = savedRequest()
+  await vm.recoverPending(true)
+  expect(api.findTubeReceipt).toHaveBeenCalled()
+  expect(api.confirmTubeReceipt).not.toHaveBeenCalled()
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.useRealTimers() })
 
@@ -148,7 +163,7 @@ describe('D3整单喷塑回货', () => {
     const { vm } = await mountPage(); receive(vm)
     vi.mocked(api.confirmTubeReceipt).mockImplementationOnce(async (_, payload) => { vi.mocked(api.findTubeReceipt).mockResolvedValue(makeReceipt(payload)); throw new AxiosError('超时', 'ECONNABORTED') })
     await vm.finishReceipt(); expect(api.confirmTubeReceipt).toHaveBeenCalledTimes(1); expect(vm.pending).toBeNull(); expect(vm.isEnded).toBe(true)
-    expect(api.findTubeReceipt).toHaveBeenCalledWith('order-1', vi.mocked(api.confirmTubeReceipt).mock.calls[0]![1].client_request_id)
+    expect(api.findTubeReceipt).toHaveBeenCalledWith('order-1', vi.mocked(api.confirmTubeReceipt).mock.calls[0]![1].client_request_id, true)
   })
   it('未知结果锁内容；人工同版本重试只使用原UUID原payload原If-Match', async () => {
     const { vm } = await mountPage(); receive(vm, '18'); vi.mocked(api.confirmTubeReceipt).mockRejectedValueOnce(new AxiosError('超时')); await vm.finishReceipt()
@@ -158,7 +173,7 @@ describe('D3整单喷塑回货', () => {
   })
   it('重载恢复仅GET原UUID，404不自动写入，原输入完整恢复', async () => {
     const saved = savedRequest(); localStorage.setItem(key, JSON.stringify(saved)); const { vm } = await mountPage()
-    expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); expect(api.findTubeReceipt).toHaveBeenCalledWith('order-1', 'existing-uuid'); expect(vm.pending).toEqual(saved); expect(vm.rows[0]!.reason).toBe('未收到')
+    expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); expect(api.findTubeReceipt).toHaveBeenCalledWith('order-1', 'existing-uuid', true); expect(vm.pending).toEqual(saved); expect(vm.rows[0]!.reason).toBe('未收到')
   })
   it('首次原单读取失败但原UUID已确认，补齐真实预览后恢复', async () => {
     const saved = savedRequest(), result = makeReceipt(saved.payload); localStorage.setItem(key, JSON.stringify(saved))
@@ -202,7 +217,7 @@ describe('D3整单喷塑回货', () => {
   it('只读查看入库记录使用真实receipt接口，保留0行及历史库区', async () => {
     const saved = savedRequest(), result = makeReceipt(saved.payload); vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValue({ ...structuredClone(base), order: { ...structuredClone(order), status: 'COMPLETED' }, can_receive: false, receipt: result })
     vi.mocked(api.fetchTubeReceipt).mockResolvedValue(result); const { vm } = await mountPage(); await vm.showReceipt()
-    expect(api.fetchTubeReceipt).toHaveBeenCalledWith('order-1'); expect(vm.rows[0]).toEqual(expect.objectContaining({ received: '0', reason: '未收到', zone: '' })); expect(routing.push).not.toHaveBeenCalled()
+    expect(api.fetchTubeReceipt).toHaveBeenCalledWith('order-1', true); expect(vm.rows[0]).toEqual(expect.objectContaining({ received: '0', reason: '未收到', zone: '' })); expect(routing.push).not.toHaveBeenCalled()
   })
   it('只有查看权限时后端已完成预览可只读，无办理入口', async () => {
     permission.canReceive = false; const result = makeReceipt(savedRequest().payload)
@@ -226,17 +241,16 @@ describe('D3整单喷塑回货', () => {
     vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValue({ ...structuredClone(base), order: { ...structuredClone(order), status }, can_receive: false })
     const { vm, wrapper } = await mountPage(); expect(vm.canEdit).toBe(false); expect(wrapper.find('.d3-lines').exists()).toBe(false); await vm.finishReceipt(); expect(api.confirmTubeReceipt).not.toHaveBeenCalled()
   })
-  it('库存入口先选真实待回货单；分页可继续加载，错误可重试且无静默漏页', async () => {
-    routing.route.name = 'inventory-tube-return'; routing.route.params.id = ''; const item: TubeReceiptCandidate = { id: 'order-1', order_number: 'WF-real', task_number: 'SC-real', task_order_number: 'DD-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '产品', color: '黑色', source_kind: 'RAW_PIPE', source_label: '原材料', actual_dispatch_date: base.today, expected_return_date: '2026-10-15', total_quantity: '20', factory_names: ['甲厂'] }
-    vi.mocked(api.fetchTubeReceiptCandidates).mockResolvedValueOnce({ items: [item], total: 2, page: 1, page_size: 50 }).mockRejectedValueOnce(new AxiosError('第二页断线')).mockResolvedValueOnce({ items: [{ ...item, id: 'order-2' }], total: 2, page: 2, page_size: 50 })
-    const { vm, wrapper } = await mountPage(); expect(api.fetchTubeReceiptPreview).not.toHaveBeenCalled(); vm.openPicker(); await flushPromises()
-    await vm.loadCandidates(false); expect(vm.candidateError).toBe('待回货列表读取失败，请重试。'); expect(vm.candidatePage).toBe(1); expect(wrapper.text()).toContain('重试')
-    await vm.loadCandidates(false); expect(vm.candidates).toHaveLength(2); expect(vm.candidateError).toBe(''); vm.selectOrder(item)
-    expect(routing.replace).toHaveBeenCalledWith({ name: 'inventory-tube-return', query: { order_id: 'order-1' } }); vm.returnToSource(); expect(routing.push).toHaveBeenCalledWith({ name: 'material-inventory', query: { stock_kind: 'SEMI' } })
-  })
-  it('分页总数未读完却返回空页，提示可重试而非隐藏剩余单据', async () => {
-    const { vm } = await mountPage(); vi.mocked(api.fetchTubeReceiptCandidates).mockResolvedValue({ items: [], total: 51, page: 1, page_size: 50 }); vm.openPicker(); await flushPromises()
-    expect(vm.candidateError).toBe('待回货列表不完整，请重试。'); expect(vm.candidatePage).toBe(0); expect(vm.candidates).toHaveLength(0)
+  it('缺少外发单时返回仓库委外管理，不再提供选单入口或弹窗', async () => {
+    routing.route.params.id = ''
+    const { vm, wrapper } = await mountPage()
+    expect(api.fetchTubeReceiptPreview).not.toHaveBeenCalled()
+    expect(api.fetchTubeReceiptCandidates).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请从仓库委外管理选择外发单办理入库')
+    expect(wrapper.findAll('button').some(button => button.text() === '选择外发单')).toBe(false)
+    expect(wrapper.find('.d3-select-order').exists()).toBe(false)
+    vm.returnToSource()
+    expect(routing.push).toHaveBeenCalledWith({ name: 'warehouse-outsourcing' })
   })
   it('损坏请求记录和另一页待核对记录不得覆盖并重新办理', async () => {
     localStorage.setItem(key, '{bad-json'); const { vm } = await mountPage(); expect(vm.storageError).toBe(true); expect(api.confirmTubeReceipt).not.toHaveBeenCalled()

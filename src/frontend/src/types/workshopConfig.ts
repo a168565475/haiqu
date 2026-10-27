@@ -34,6 +34,8 @@ export interface WorkshopEmployee {
   employee_name: string | null
   employee_status: string | null
   employee_archived: boolean
+  department: string
+  roles: string
   is_supervisor: boolean
   status: WorkshopEmployeeStatus
   status_display: string
@@ -98,7 +100,6 @@ export interface CraftInput {
 }
 
 export interface OperationInput {
-  operation_number: string
   product_name: string
   craft: string
   name: string

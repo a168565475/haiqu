@@ -9,6 +9,7 @@ import { vHorizontalOverflow } from '@/directives/horizontalOverflow'
 import type { FinishedGoodsOutbound, MaterialReceivingOptions } from '@/types/inventory'
 
 const route = useRoute(), router = useRouter()
+const emit = defineEmits<{ 'select-stock': [] }>()
 const rows = ref<FinishedGoodsOutbound[]>([]), total = ref(0), loading = ref(false), errorMessage = ref(''), optionsError = ref('')
 const page = ref(1), pageSize = ref(50), keyword = ref(''), warehouse = ref('')
 const applied = ref({ q: '', warehouseId: '' })
@@ -55,7 +56,7 @@ const columns = [
 <template>
   <section class="outbound-list-page erp-glass-list">
     <section v-glass-spotlight class="erp-list-filter">
-      <header class="erp-list-heading"><h1>出库记录</h1></header>
+      <header class="erp-list-heading"><h1>成品库存</h1></header>
       <div class="outbound-filters erp-list-filters">
         <ElInput v-model="keyword" clearable placeholder="搜索出货单号、生产任务单号或产品信息" @keyup.enter="search" @clear="search" />
         <ElSelect v-model="warehouse" clearable placeholder="全部仓库" @change="search">
@@ -64,12 +65,12 @@ const columns = [
         <div class="erp-list-filter-actions">
           <ElButton class="erp-button-motion" @click="reset">重置</ElButton>
           <ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton>
-          <ElButton class="erp-button-motion" @click="router.push({ name: 'finished-goods-inventory' })">返回库存</ElButton>
-          <ElButton class="erp-button-motion" type="primary" @click="router.push({ name: 'finished-goods-inventory' })">从库存选择出库</ElButton>
+          <ElButton class="erp-button-motion" type="primary" @click="emit('select-stock')">从库存选择出库</ElButton>
         </div>
       </div>
     </section>
     <section class="erp-list-data">
+      <div class="fg-toolbar erp-list-toolbar"><slot /></div>
       <ElAlert v-if="errorMessage || optionsError" :title="errorMessage || optionsError" type="error" :closable="false" show-icon />
       <div v-loading="loading" class="erp-list-table-frame">
         <div v-horizontal-overflow class="erp-list-table-scroll scroll-actions-container">

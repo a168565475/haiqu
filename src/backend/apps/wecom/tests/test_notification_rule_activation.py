@@ -54,6 +54,14 @@ class NotificationRuleActivationTests(TestCase):
             self.assertIn('confirmed_by', event['allowed_variables'])
             self.assertIn('confirmed_at', event['allowed_variables'])
 
+    def test_material_inspection_confirmation_defaults_to_warehouse_access(self):
+        from apps.wecom.notification_access import EVENT_OBJECT_PERMISSIONS
+        from apps.wecom.notification_catalog import get_event
+
+        event = get_event('MATERIAL_INSPECTION_CONFIRMED')
+        self.assertEqual(event['default_role_codes'], ['WAREHOUSE_KEEPER', 'PURCHASING'])
+        self.assertEqual(EVENT_OBJECT_PERMISSIONS['MATERIAL_INSPECTION_CONFIRMED'], ('inventory.view_materialinbound', 'procurement.view_purchaseorder'))
+
     def test_existing_pending_rule_keeps_manual_disabled_state(self):
         event = next(event for event in all_events() if event['event_code'] == 'SEMI_FINISHED_RECEIPT_SUBMITTED')
         from apps.wecom.notification_selectors import default_rule_payload

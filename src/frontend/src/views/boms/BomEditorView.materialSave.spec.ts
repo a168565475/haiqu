@@ -30,7 +30,7 @@ interface Editor {
 }
 let wrapper: VueWrapper | undefined
 async function open() {
-  wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' } } } })
+  wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' }, BomMaterialCreateDialogs: false } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
   vm.sections.forEach(section => { section.lines = [] })

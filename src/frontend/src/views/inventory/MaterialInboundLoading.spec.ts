@@ -5,8 +5,7 @@ import * as api from '@/api/inventory'
 import MaterialPurchaseInboundView from './MaterialPurchaseInboundView.vue'
 import PurchaseInboundListView from '../procurement/PurchaseInboundListView.vue'
 
-vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'order-1' } }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'order-1' } }), useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 vi.mock('@/api/inventory', async original => ({ ...await original<typeof import('@/api/inventory')>(),
   fetchProcurementInboundOrders: vi.fn(), fetchMaterialInventoryOptions: vi.fn(), fetchMaterialReceivingOptions: vi.fn(),
@@ -163,6 +162,29 @@ describe('采购入库读取', () => {
     expect(vm.canOpenReceiving(completed)).toBe(false)
     expect(vm.hasRowActions(completed)).toBe(false)
     expect(vm.hasRowActions({ ...completed, workflow_status: 'PENDING_QUALITY' })).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('批量收货按分类只应用到该分类的已勾选明细', async () => {
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValueOnce({ data: [
+      { ...line, id: 'pipe', category: '管材' },
+      { ...line, id: 'hardware', category: '五金', part_name: '螺丝' },
+      { ...line, id: 'unselected-pipe', category: '管材', part_name: '备用管' },
+    ], etag: '"receiving-v2"' } as never)
+    const wrapper = mount(MaterialPurchaseInboundView); await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      rows: Array<{ included: boolean; warehouseId: string; zoneId: string }>
+      bulk: { category: string; warehouseId: string; zoneId: string }
+      applyBulkZone: () => void
+    }
+    vm.rows[2]!.included = false
+    vm.bulk.category = '管材'; vm.bulk.warehouseId = 'wh'; vm.bulk.zoneId = 'zone'
+    vm.applyBulkZone()
+    expect(vm.rows.map(row => [row.warehouseId, row.zoneId])).toEqual([
+      ['wh', 'zone'], ['', ''], ['', ''],
+    ])
+    expect(wrapper.find('[aria-label="批量分类"]').exists()).toBe(true)
+    expect(wrapper.find('.page-title-row p').exists()).toBe(false)
     wrapper.unmount()
   })
 })

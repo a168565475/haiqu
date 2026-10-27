@@ -134,12 +134,15 @@ class ProcurementInventoryNotificationTests(APITestCase):
         self.f.purchase_line.section_type_snapshot = "ACCESSORY"
         self.f.purchase_line.section_title_snapshot = "配件"
         self.f.purchase_line.save()
+        self.warehouse_member = None
         for event, name, permission in [
             ("MATERIAL_RECEIPT_RECORDED", "U06_QUALITY", "inventory.quality_confirm_material"),
-            ("MATERIAL_INSPECTION_CONFIRMED", "U06_PURCHASE", "procurement.view_purchaseorder"),
+            ("MATERIAL_INSPECTION_CONFIRMED", "U06_WAREHOUSE", "inventory.view_materialinbound"),
             ("PURCHASE_ORDER_COMPLETED", "U06_ADMIN", "procurement.view_purchaseorder"),
         ]:
             member, role = receiver(self.f.employee, name, permission)
+            if event == "MATERIAL_INSPECTION_CONFIRMED":
+                self.warehouse_member = member
             create_rule(event, self.f.employee, [role.role_code])
 
     def test_partial_receipts_quality_returns_completion_and_target(self):
@@ -150,6 +153,7 @@ class ProcurementInventoryNotificationTests(APITestCase):
         self.assertEqual(self.f.complete_order().status_code, 409)
         self.assertEqual(self.f.confirm_quality(receipt, return_quantity="1.0000").status_code, 200)
         inspected = NotificationEvent.objects.get(event_code="MATERIAL_INSPECTION_CONFIRMED")
+        self.assertEqual(inspected.recipients.get().employee_id, self.warehouse_member.pk)
         self.assertEqual(inspected.target["params"], {"id": str(self.f.order.pk)})
         self.assertEqual(inspected.object_id, received.object_id)
         self.assertIn("合格：3.0000PCS", inspected.rendered_body)

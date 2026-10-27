@@ -5,6 +5,8 @@ import type { OutsourcingOrderDetail } from '@/types/outsourcing'
 import OutsourcingFlowActions from './OutsourcingFlowActions.vue'
 
 const api = vi.hoisted(() => ({ context: vi.fn(), reconciliation: vi.fn(), options: vi.fn(), dispatch: vi.fn(), returned: vi.fn(), flow: vi.fn() }))
+const route = vi.hoisted(() => ({ meta: { outsourcingWorkspace: 'warehouse' } }))
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('@/api/outsourcing', () => ({
   fetchOutsourcingDispatchContext: api.context, fetchOutsourcingReconciliation: api.reconciliation,
   fetchOutsourcingOptions: api.options, confirmOutsourcingDispatch: api.dispatch,
@@ -25,6 +27,7 @@ function createView(overrides: Partial<OutsourcingOrderDetail> = {}) {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  route.meta.outsourcingWorkspace = 'warehouse'
   api.context.mockResolvedValue({ materials: [] })
   api.reconciliation.mockResolvedValue({ outputs: [], raw_materials: [] })
   api.options.mockResolvedValue({ receivers: [], semi_finished_zones: [], defective_zones: [] })
@@ -52,10 +55,10 @@ describe('旧外发入口门禁', () => {
   it('普通外发的旧入口仍按原有权限显示并能打开', async () => {
     const wrapper = createView()
     const buttons = wrapper.findAll('.flow-actions button').map(button => button.text())
-    expect(buttons).toEqual(['确认外发', '登记回货', '原料退回', '投入与损耗', '结清检查'])
+    expect(buttons).toEqual(['确认外发', '登记回货', '原料退回'])
     await wrapper.findAll('button').find(button => button.text() === '确认外发')!.trigger('click')
     await flushPromises()
-    expect(api.context).toHaveBeenCalledWith('order-1')
+    expect(api.context).toHaveBeenCalledWith('order-1', true)
     expect((wrapper.vm as any).visible).toBe(true)
   })
 
@@ -89,6 +92,19 @@ describe('旧外发入口门禁', () => {
     expect(wrapper.find('.flow-actions').exists()).toBe(false)
     expect(vm.error).toContain('不可执行')
   })
+})
+
+it('车间隐藏并阻止仓库动作，保留投入损耗及结清', async () => {
+  route.meta.outsourcingWorkspace = 'workshop'
+  const wrapper = createView()
+  expect(wrapper.findAll('.flow-actions button').map(button => button.text())).toEqual(['投入与损耗', '结清检查'])
+  const vm = wrapper.vm as any
+  for (const mode of ['dispatch', 'return', 'raw']) {
+    await vm.open(mode)
+    vm.mode = mode
+    await vm.submit()
+  }
+  for (const call of Object.values(api)) expect(call).not.toHaveBeenCalled()
 })
 
 it('本次可领为零的空行不进入确认发料请求', async () => {

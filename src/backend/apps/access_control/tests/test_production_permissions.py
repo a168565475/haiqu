@@ -165,6 +165,18 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         self.assertIn('inventory.view_internalsemifinishedreceipt', rows)
         self.assertIn('inventory.view_finishedgoodsreceipt', rows)
 
+    def test_purchasing_template_can_execute_quality_generated_returns(self):
+        ids = dict(Workshop.objects.values_list('name', 'pk'))
+        rows = {row['permission'] for row in templates(ids)['PURCHASING']}
+        self.assertIn('access_control.confirm_purchasereturn', rows)
+        self.assertIn('access_control.complete_purchasereturn', rows)
+
+    def test_warehouse_template_only_tracks_quality_generated_returns(self):
+        ids = dict(Workshop.objects.values_list('name', 'pk'))
+        rows = {row['permission'] for row in templates(ids)['WAREHOUSE_KEEPER']}
+        self.assertNotIn('access_control.confirm_purchasereturn', rows)
+        self.assertNotIn('access_control.complete_purchasereturn', rows)
+
     def test_pending_receipt_deletion_grants_follow_confirmed_roles(self):
         ids = dict(Workshop.objects.values_list('name', 'pk'))
         rows = templates(ids)

@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 import { isCuttingSource, tubeSourceLabels } from '@/utils/tubeOutsourcing'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Refresh, Search } from '@element-plus/icons-vue'
+import { ArrowLeft, Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import TubeOutsourcingDetailTable from '@/components/outsourcing/TubeOutsourcingDetailTable.vue'
-import { confirmTubeReceipt, fetchTubeReceipt, fetchTubeReceiptCandidates, fetchTubeReceiptPreview, findTubeReceipt } from '@/api/tubeReceipts'
+import { confirmTubeReceipt, fetchTubeReceipt, fetchTubeReceiptPreview, findTubeReceipt } from '@/api/tubeReceipts'
 import { useAuthStore } from '@/stores/auth'
-import type { CuttingAttributes, TubeDetailLine, TubeSourceKind } from '@/types/tubeOutsourcing'
-import type { TubeReceipt, TubeReceiptCandidate, TubeReceiptPending, TubeReceiptPreview } from '@/types/tubeReceipts'
+import type { CuttingAttributes, TubeDetailLine } from '@/types/tubeOutsourcing'
+import type { TubeReceipt, TubeReceiptPending, TubeReceiptPreview } from '@/types/tubeReceipts'
 import '@/styles/tubeCoatingReceipt.scss'
 
 interface Entry extends CuttingAttributes {
@@ -21,19 +21,16 @@ interface Entry extends CuttingAttributes {
 }
 interface Column { key: string; label: string; width: number; num?: boolean }
 const auth = useAuthStore(), router = useRouter(), route = useRoute()
-const entry = route.name === 'inventory-tube-return' ? 'inventory' : 'order'
-const orderId = typeof route.params.id === 'string' ? route.params.id : typeof route.query.order_id === 'string' ? route.query.order_id : ''
+const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
+const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
+const orderId = typeof route.params.id === 'string' ? route.params.id : ''
 const preview = ref<TubeReceiptPreview | null>(null), rows = ref<Entry[]>([])
 const loading = ref(false), saving = ref(false), recordLoading = ref(false), readError = ref(''), readStatus = ref<number | undefined>()
 const pending = ref<TubeReceiptPending | null>(null), storageError = ref(false)
-const dialog = ref<'' | 'select' | 'confirm' | 'warehouse'>('')
+const dialog = ref<'' | 'confirm' | 'warehouse'>('')
 const receiptDate = ref(''), remark = ref(''), warehouse = ref(''), pendingWarehouse = ref('')
-const search = ref(''), pickerSource = ref<TubeSourceKind | ''>('')
-const candidates = ref<TubeReceiptCandidate[]>([]), candidateTotal = ref(0), candidatePage = ref(0)
-const candidateLoading = ref(false), candidateError = ref('')
 const pendingKey = `tube-coating-receipt:v1:${auth.user?.id || 'unknown'}:${orderId}`
-let disposed = false, previewSequence = 0, candidateSequence = 0
-let searchTimer: ReturnType<typeof setTimeout> | undefined
+let disposed = false, previewSequence = 0
 
 const labels = tubeSourceLabels
 const order = computed(() => preview.value?.order || null)
@@ -41,7 +38,6 @@ const cutting = computed(() => order.value ? isCuttingSource(order.value.source_
 const quantityUnit = computed(() => cutting.value ? '套' : '支')
 const receiptTitle = computed(() => cutting.value ? '裁片回货入库' : '喷塑入库')
 const receivedStage = computed(() => cutting.value ? `已${order.value?.craft_name || '加工'}` : '已喷塑')
-const sourceOptions = computed(() => (Object.entries(labels) as Array<[TubeSourceKind, string]>).filter(([kind]) => isCuttingSource(kind) === cutting.value))
 const receipt = computed(() => preview.value?.receipt || null)
 const sourceLabel = computed(() => order.value ? labels[order.value.source_kind] || '—' : '—')
 const isEnded = computed(() => order.value?.status === 'COMPLETED' && Boolean(receipt.value))
@@ -49,7 +45,7 @@ const inapplicable = computed(() => Boolean(order.value) && !['PROCESSING', 'COM
 const showDetails = computed(() => Boolean(preview.value) && !loading.value && !readError.value && !inapplicable.value)
 const hasPermission = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.confirm_return_outsourcingorder')))
 const formLocked = computed(() => loading.value || saving.value || Boolean(pending.value) || storageError.value || !showDetails.value)
-const canEdit = computed(() => !formLocked.value && !isEnded.value && order.value?.status === 'PROCESSING' && preview.value?.can_receive === true && rows.value.length > 0)
+const canEdit = computed(() => warehouseWorkspace.value && hasPermission.value && !formLocked.value && !isEnded.value && order.value?.status === 'PROCESSING' && preview.value?.can_receive === true && rows.value.length > 0)
 const warehouses = computed(() => preview.value?.warehouses || [])
 const zones = computed(() => (preview.value?.zones || []).filter(zone => zone.warehouse_id === warehouse.value))
 const warehouseLabel = computed(() => receipt.value?.warehouse_name || warehouses.value.find(item => item.id === warehouse.value)?.name || '—')
@@ -79,12 +75,6 @@ const columns = computed<Column[]>(() => [
   { key: 'unit_price', label: `加工单价（元/${quantityUnit.value}）`, width: 145, num: true }, { key: 'planned_amount', label: '计划金额（元）', width: 135, num: true },
 ])
 const orderLinesById = computed(() => new Map((order.value?.lines || []).map(line => [line.id, line])))
-const pickerColumns = computed<Column[]>(() => [
-  { key: 'order_number', label: '外发单号', width: 210 }, { key: 'source_label', label: '材料来源', width: 160 }, { key: 'task_number', label: '生产任务单', width: 190 },
-  { key: 'product_name', label: '产品名称', width: 190 }, { key: 'factory_names', label: '加工厂', width: 250 },
-  { key: 'total_quantity', label: `实发（${quantityUnit.value}）`, width: 100, num: true }, { key: 'actual_dispatch_date', label: '实际发出日', width: 130 },
-  { key: 'status', label: '状态', width: 85 }, { key: 'action', label: '操作', width: 125 },
-])
 function format(value: unknown): string { return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN') }
 function receivedValue(row: Entry): number | null {
   const text = row.received.trim()
@@ -135,43 +125,12 @@ async function loadPreview(preserve = true) {
   const sequence = ++previewSequence
   loading.value = true; readError.value = ''; readStatus.value = undefined
   try {
-    const result = await fetchTubeReceiptPreview(orderId)
+    const result = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
     if (!disposed && sequence === previewSequence) usePreview(result, preserve)
   } catch (cause) {
     if (!disposed && sequence === previewSequence) { readStatus.value = isAxiosError(cause) ? cause.response?.status : undefined; readError.value = errorText(cause, '外发单读取失败，请重新加载。') }
   } finally { if (!disposed && sequence === previewSequence) loading.value = false }
 }
-async function loadCandidates(reset = false) {
-  if (!hasPermission.value || saving.value || pending.value || storageError.value || (candidateLoading.value && !reset)) return
-  if (reset) { candidates.value = []; candidatePage.value = 0; candidateTotal.value = 0 }
-  if (!reset && candidatePage.value && candidates.value.length >= candidateTotal.value) return
-  const sequence = ++candidateSequence, page = candidatePage.value + 1
-  candidateLoading.value = true; candidateError.value = ''
-  try {
-    const result = await fetchTubeReceiptCandidates({ ...(cutting.value ? { category: 'cutting' } : {}), search: search.value.trim(), ...(pickerSource.value ? { source_kind: pickerSource.value } : {}), page, page_size: 50 })
-    if (disposed || sequence !== candidateSequence) return
-    if (!Array.isArray(result.items) || result.page !== page || !Number.isSafeInteger(result.total) || result.total < 0 || (!result.items.length && result.total > candidates.value.length)) throw new Error('待回货列表不完整，请重试。')
-    candidates.value = [...new Map([...candidates.value, ...result.items].map(item => [item.id, item])).values()]
-    candidatePage.value = result.page; candidateTotal.value = result.total
-  } catch (cause) { if (!disposed && sequence === candidateSequence) candidateError.value = errorText(cause, '待回货列表读取失败，请重试。') }
-  finally { if (!disposed && sequence === candidateSequence) candidateLoading.value = false }
-}
-function candidateScrolled(event: Event) {
-  const element = event.target as HTMLElement
-  if (element.scrollTop + element.clientHeight >= element.scrollHeight - 60) void loadCandidates(false)
-}
-function openPicker() { if (!saving.value && !pending.value && !storageError.value && hasPermission.value) { dialog.value = 'select'; void loadCandidates(true) } }
-function selectOrder(item: TubeReceiptCandidate) {
-  if (pending.value || saving.value || storageError.value || !candidates.value.some(candidate => candidate.id === item.id)) return
-  dialog.value = ''
-  void router.replace({ name: 'inventory-tube-return', query: { order_id: item.id, ...(isCuttingSource(item.source_kind) ? { category: 'cutting' } : {}) } })
-}
-watch([search, pickerSource], () => {
-  if (dialog.value !== 'select') return
-  if (searchTimer) clearTimeout(searchTimer)
-  candidateSequence += 1; candidateLoading.value = false; candidates.value = []; candidatePage.value = 0; candidateTotal.value = 0
-  searchTimer = setTimeout(() => { if (!disposed && dialog.value === 'select') void loadCandidates(true) }, 300)
-})
 function validateQuantity(row: Entry): boolean {
   if (receivedValue(row) === null) { warn(`${row.part_name}：实收须为0至${format(row.dispatched_quantity)}的整数，空白按0${quantityUnit.value}处理。`); return false }
   return true
@@ -217,7 +176,7 @@ function confirmResult(result: TubeReceipt) {
 async function completeRequest(result: TubeReceipt) {
   // 刷新时原单读取可能失败；原请求已确认也必须补齐真实订单依据再展示结果。
   if (!preview.value) {
-    const current = await fetchTubeReceiptPreview(orderId)
+    const current = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
     if (disposed) return
     usePreview(current, true)
   }
@@ -232,17 +191,17 @@ async function recoverPending(allowRetry = false) {
   const request = pending.value
   if (!request || saving.value || storageError.value) return
   saving.value = true
-  try { const result = await findTubeReceipt(orderId, request.payload.client_request_id); if (!disposed) await completeRequest(result) }
+  try { const result = await findTubeReceipt(orderId, request.payload.client_request_id, ...warehouseArgs.value); if (!disposed) await completeRequest(result) }
   catch (cause) {
     if (disposed) return
     if (!isAxiosError(cause) || cause.response?.status !== 404) { warn(errorText(cause, '原请求结果仍需核对，请勿重复办理。')); return }
     let replaySubmitted = false
     try {
-      const current = await fetchTubeReceiptPreview(orderId)
+      const current = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value)
       if (current.order?.id !== orderId || !current.etag) throw new Error('原单依据不完整，请继续核对原请求。')
       if (current.receipt && current.order.status === 'COMPLETED') {
         // 原POST可能在首次404后刚提交，先二次核对原编号，避免误认为其他操作。
-        try { const confirmed = await findTubeReceipt(orderId, request.payload.client_request_id); if (!disposed) { usePreview(current, true); confirmResult(confirmed) } }
+        try { const confirmed = await findTubeReceipt(orderId, request.payload.client_request_id, ...warehouseArgs.value); if (!disposed) { usePreview(current, true); confirmResult(confirmed) } }
         catch (confirmationCause) {
           if (!isAxiosError(confirmationCause) || confirmationCause.response?.status !== 404) throw confirmationCause
           if (!disposed) { usePreview(current, true); clearPending(); dialog.value = ''; readError.value = ''; warn('原请求未登记，此单已由其他操作完成回货。已展示当前真实结果，未重复办理。') }
@@ -250,7 +209,7 @@ async function recoverPending(allowRetry = false) {
         return
       }
       if (!allowRetry) { warn('原请求尚未登记。请点击“核对本次提交”，继续使用原请求编号核对。'); return }
-      if (current.order.status !== 'PROCESSING' || !current.can_receive || current.etag !== request.etag) { warn('原单状态、版本或操作权限已变化，不能自动重试。请继续核对原请求。'); return }
+      if (!warehouseWorkspace.value || !hasPermission.value || current.order.status !== 'PROCESSING' || !current.can_receive || current.etag !== request.etag) { warn('原单状态、版本或操作权限已变化，不能自动重试。请继续核对原请求。'); return }
       replaySubmitted = true
       const result = await confirmTubeReceipt(orderId, request.payload, request.etag)
       if (!disposed) { usePreview(current, true); confirmResult(result) }
@@ -258,7 +217,7 @@ async function recoverPending(allowRetry = false) {
       if (disposed) return
       const status = isAxiosError(retryCause) ? retryCause.response?.status : undefined
       if (replaySubmitted && (status === 403 || status === 404)) {
-        try { const confirmed = await findTubeReceipt(orderId, request.payload.client_request_id); if (!disposed) confirmResult(confirmed) }
+        try { const confirmed = await findTubeReceipt(orderId, request.payload.client_request_id, ...warehouseArgs.value); if (!disposed) confirmResult(confirmed) }
         catch { if (!disposed) warn('原请求结果仍需核对，已保留原请求记录，未生成新操作。') }
       } else if (replaySubmitted && status && [400, 409, 412, 428].includes(status)) await handleRejection(retryCause)
       else warn(errorText(retryCause, '原请求结果仍需核对，请勿重复办理。'))
@@ -284,7 +243,7 @@ async function finishReceipt() {
     const status = isAxiosError(cause) ? cause.response?.status : undefined
     if (status && [400, 403, 404, 409, 412, 428].includes(status)) await handleRejection(cause)
     else {
-      try { const result = await findTubeReceipt(orderId, request.payload.client_request_id); if (!disposed) confirmResult(result) }
+      try { const result = await findTubeReceipt(orderId, request.payload.client_request_id, ...warehouseArgs.value); if (!disposed) confirmResult(result) }
       catch { if (!disposed) { dialog.value = ''; warn('提交结果尚未确认，请点击“核对本次提交”，使用原请求编号核对，避免重复入库或结束。') } }
     }
   } finally { if (!disposed) saving.value = false }
@@ -292,13 +251,13 @@ async function finishReceipt() {
 async function showReceipt() {
   if (!isEnded.value || pending.value || recordLoading.value || saving.value) return
   recordLoading.value = true
-  try { const result = await fetchTubeReceipt(orderId); if (!disposed) { useReceipt(result); document.getElementById('d3-receipt-result')?.scrollIntoView({ block: 'nearest' }) } }
+  try { const result = await fetchTubeReceipt(orderId, ...warehouseArgs.value); if (!disposed) { useReceipt(result); document.getElementById('d3-receipt-result')?.scrollIntoView({ block: 'nearest' }) } }
   catch (cause) { if (!disposed) warn(errorText(cause, '本次回货记录读取失败，请重试。')) }
   finally { if (!disposed) recordLoading.value = false }
 }
 function returnToSource() {
   if (saving.value || pending.value) return
-  void router.push(entry === 'order' ? { name: 'workshop-outsourcing-tube-detail', params: { id: orderId } } : { name: 'material-inventory', query: { stock_kind: 'SEMI' } })
+  void router.push(orderId ? { name: 'warehouse-outsourcing-tube-detail', params: { id: orderId } } : { name: 'warehouse-outsourcing' })
 }
 function restoreRequest(request: TubeReceiptPending) {
   const saved = request.payload
@@ -321,20 +280,20 @@ onMounted(async () => {
   } catch { storageError.value = true; readError.value = '本地待核对请求无法读取，已暂停办理。请先核对之前的回货结果。'; return }
   if (pending.value) {
     loading.value = true
-    try { const result = await fetchTubeReceiptPreview(orderId); if (!disposed) { usePreview(result, false); if (!result.receipt) restoreRequest(pending.value!) } }
+    try { const result = await fetchTubeReceiptPreview(orderId, ...warehouseArgs.value); if (!disposed) { usePreview(result, false); if (!result.receipt) restoreRequest(pending.value!) } }
     catch (cause) { if (!disposed) readError.value = errorText(cause, '外发单读取失败，请核对原请求。') }
     finally { if (!disposed) loading.value = false }
     if (!disposed) await recoverPending(false)
   } else await loadPreview(false)
 })
-onBeforeUnmount(() => { disposed = true; previewSequence += 1; candidateSequence += 1; if (searchTimer) clearTimeout(searchTimer) })
+onBeforeUnmount(() => { disposed = true; previewSequence += 1 })
 </script>
 
 <template>
   <section class="tube-coating-receipt-page d3-page">
     <header class="page-heading">
       <div class="title-row"><h1>{{ receiptTitle }}</h1><span class="status">外发入库</span><template v-if="order"><span class="status" :class="isEnded ? 'success' : inapplicable ? 'neutral' : 'info'">{{ isEnded ? '已结束' : order.status === 'PENDING_DISPATCH' ? '待外发' : order.status === 'CANCELLED' ? '已取消' : '加工中' }}</span><span class="d3-order-code">{{ order.order_number }}</span></template></div>
-      <div class="actions"><ElButton v-if="entry === 'inventory' && !isEnded" :disabled="saving || Boolean(pending) || storageError || !hasPermission" @click="openPicker">选择外发单</ElButton><ElButton :icon="ArrowLeft" :disabled="saving || Boolean(pending)" @click="returnToSource">{{ entry === 'order' ? '返回外发单' : '返回半成品' }}</ElButton></div>
+      <div class="actions"><ElButton :icon="ArrowLeft" :disabled="saving || Boolean(pending)" @click="returnToSource">{{ orderId ? '返回外发单' : '返回委外管理' }}</ElButton></div>
     </header>
     <ElAlert v-if="pending && !showDetails" title="提交结果尚未确认，请核对本次原请求结果，避免重复入库或结束。当前填写内容已锁定。" type="warning" :closable="false" show-icon />
     <ElAlert v-if="storageError" title="本地请求记录无法安全读取或清理，已暂停新操作，请先核对原请求结果。" type="warning" :closable="false" show-icon />
@@ -365,7 +324,7 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1; candidateSequence
     </template>
     <div v-else class="panel d3-fallback">
       <ElSkeleton v-if="loading" :rows="9" animated />
-      <template v-else><ElEmpty :description="!orderId ? hasPermission ? '请先选择加工中且未登记整单回货的外发单' : `当前账号没有办理${receiptTitle}的权限` : readError || (order?.status === 'CANCELLED' ? `此外发单已取消，不能办理${receiptTitle}` : order?.status === 'PENDING_DISPATCH' ? `此外发单尚未实际发出，不能办理${receiptTitle}` : '暂无可办理的回货明细')" /><ElButton v-if="!orderId" type="primary" :disabled="!hasPermission || Boolean(pending) || storageError" @click="openPicker">选择外发单</ElButton><ElButton v-else-if="readError && ![401, 403, 404].includes(readStatus || 0) && !pending && !storageError" :icon="Refresh" @click="loadPreview(true)">重新加载</ElButton></template>
+      <template v-else><ElEmpty :description="!orderId ? '请从仓库委外管理选择外发单办理入库' : readError || (order?.status === 'CANCELLED' ? `此外发单已取消，不能办理${receiptTitle}` : order?.status === 'PENDING_DISPATCH' ? `此外发单尚未实际发出，不能办理${receiptTitle}` : '暂无可办理的回货明细')" /><ElButton v-if="orderId && readError && ![401, 403, 404].includes(readStatus || 0) && !pending && !storageError" :icon="Refresh" @click="loadPreview(true)">重新加载</ElButton></template>
     </div>
     <footer class="footer-bar d3-footer">
       <div class="d3-footer-total"><span>实发 <strong>{{ showDetails ? format(totalSent) : '—' }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ showDetails && !hasInvalidQuantity ? format(totalReceived) : '—' }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ showDetails && !hasInvalidQuantity ? format(totalDifference) : '—' }}</strong> {{ quantityUnit }}</span><span v-if="showDetails">计划加工金额 <strong>{{ formatOutsourcingMoney(order?.planned_amount) }}</strong> 元</span><small v-if="isEnded" :title="receipt?.receipt_number">已结束 · {{ positiveRows.length ? `${positiveRows.length}个部位已入${receivedStage}公共库存` : `整单实收0${quantityUnit}，未增加库存` }}</small></div>
@@ -392,14 +351,6 @@ onBeforeUnmount(() => { disposed = true; previewSequence += 1; candidateSequence
       <div class="notice warning d3-once-note"><strong>整单只登记一次。</strong> {{ totalReceived ? `仅实收大于0的部位按对应库区增加${receivedStage}公共库存。` : '本次实收全部为0，仅保存回货结果，不增加库存。' }}全部部位（含0{{ quantityUnit }}）共同结束，差额及原因保留；确认后不能追加回货或修改本次结果。</div>
     </div>
     <template #footer><div class="d3-confirm-footer"><div><span>计划加工金额 <strong>{{ formatOutsourcingMoney(order?.planned_amount) }}</strong> 元</span><span>实发 <strong>{{ format(totalSent) }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ format(totalReceived) }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ format(totalDifference) }}</strong> {{ quantityUnit }}</span></div><ElButton :disabled="saving" @click="dialog = ''">返回核对</ElButton><ElButton type="primary" :loading="saving" :disabled="!canEdit" @click="finishReceipt">{{ totalReceived ? '确认入库并结束' : '确认结束' }}</ElButton></div></template>
-  </AppWindowDialog>
-
-  <AppWindowDialog :model-value="dialog === 'select'" :title="cutting ? '选择裁片待回货外发单' : '选择喷塑待回货外发单'" :width="1600" class="tube-coating-receipt-dialog" @update:model-value="closeDialog">
-    <div class="d3-select-order"><div class="filterbar d3-picker-filter"><ElInput v-model="search" :prefix-icon="Search" placeholder="搜索外发单号、生产任务单、产品、加工厂" aria-label="搜索外发单" /><ElSelect v-model="pickerSource" clearable placeholder="全部材料来源" aria-label="筛选材料来源" popper-class="tube-coating-select-popper"><ElOption v-for="[value, label] in sourceOptions" :key="value" :value="value" :label="label" /></ElSelect><span class="spacer" /><span class="muted">加工中 · 已实际发出 · 尚未登记整单回货</span><ElButton :icon="Refresh" :disabled="candidateLoading" @click="loadCandidates(true)">刷新</ElButton></div>
-      <ElAlert v-if="candidateError" :title="candidateError" type="error" :closable="false" show-icon><ElButton link :disabled="candidateLoading" @click="loadCandidates(candidatePage === 0)">重试</ElButton></ElAlert>
-      <TubeOutsourcingDetailTable :columns="pickerColumns" :rows="candidates" class="d3-picker-lines" :empty="candidateLoading ? '正在加载待回货外发单…' : '暂无符合条件的待回货外发单'" @scroll="candidateScrolled"><template #cell-source_label="{ row }">{{ labels[row.source_kind] }}</template><template #cell-factory_names="{ row }"><span class="cell-text" :title="row.factory_names.join('、')">{{ row.factory_names.join('、') }}</span></template><template #cell-total_quantity="{ row }">{{ format(row.total_quantity) }}</template><template #cell-status><span class="status info">加工中</span></template><template #cell-action="{ row }"><ElButton link :aria-label="`选择${row.order_number}`" @click="selectOrder(row)">选择并办理</ElButton></template></TubeOutsourcingDetailTable>
-      <div v-if="candidateLoading && candidates.length" class="d3-picker-loading muted">正在加载下一页…</div>
-    </div><template #footer><ElButton @click="dialog = ''">关闭</ElButton></template>
   </AppWindowDialog>
 
   <AppWindowDialog :model-value="dialog === 'warehouse'" title="切换目标仓库" :width="620" class="tube-coating-receipt-dialog" @update:model-value="closeDialog">

@@ -5,7 +5,7 @@ import OutsourcingOrderDetailView from './OutsourcingOrderDetailView.vue'
 
 const api = vi.hoisted(() => ({ fetch: vi.fn(), remove: vi.fn(), revoke: vi.fn(), push: vi.fn(), replace: vi.fn() }))
 const auth = vi.hoisted(() => ({ permissions: new Set(['outsourcing.view_outsourcingorder']) }))
-const route = vi.hoisted(() => ({ params: { orderId: 'order-1' }, path: '/workshop/outsourcing/order-1', query: {} as Record<string, string> }))
+const route = vi.hoisted(() => ({ params: { orderId: 'order-1' }, path: '/workshop/outsourcing/order-1', query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'workshop' } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, hasPermission: (permission: string) => auth.permissions.has(permission) }) }))
 vi.mock('@/api/outsourcing', () => ({ fetchOutsourcingOrder: api.fetch, deleteOutsourcingOrder: api.remove, revokeDispatchedOutsourcingOrder: api.revoke, outsourcingProductImageUrl: () => '' }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
@@ -35,10 +35,30 @@ async function createView(detail: Record<string, unknown> = structuredClone(base
   await flushPromises()
   return wrapper
 }
-beforeEach(() => { vi.resetAllMocks(); route.query = {}; auth.permissions = new Set(['outsourcing.view_outsourcingorder']) })
+beforeEach(() => { route.meta.outsourcingWorkspace = 'workshop'; vi.resetAllMocks(); route.query = {}; auth.permissions = new Set(['outsourcing.view_outsourcingorder']) })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('原外发详情的直接交接展示及保护', () => {
+  it('仓库仅有入库权限查看普通原料单仍读取普通详情，不误入金工投影', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
+    auth.permissions = new Set(['outsourcing.confirm_return_outsourcingorder'])
+    const wrapper = await createView({ ...structuredClone(baseDetail), direct_handoff: false })
+    expect(api.fetch).toHaveBeenCalledWith('order-1', true)
+    expect(wrapper.find('metal-processing-p4-view-stub').exists()).toBe(false)
+    expect(wrapper.find('outsourcing-flow-actions-stub').exists()).toBe(true)
+  })
+  it('车间不能通过详情方法撤销并退料，仓库不显示永久删除', async () => {
+    const detail = { ...structuredClone(baseDetail), direct_handoff: false, can_delete: false, can_revoke_dispatched: true }
+    const workshop = await createView(detail)
+    expect(workshop.find('.delete-order-button').exists()).toBe(false)
+    await (workshop.vm as any).deleteOrder()
+    expect(api.revoke).not.toHaveBeenCalled()
+    route.meta.outsourcingWorkspace = 'warehouse'
+    const warehouse = await createView({ ...detail, can_delete: true, can_revoke_dispatched: false })
+    expect(warehouse.find('.delete-order-button').exists()).toBe(false)
+    await (warehouse.vm as any).deleteOrder()
+    expect(api.remove).not.toHaveBeenCalled()
+  })
   it('同一加工厂不同部位按各分配显示真实单价，不把首行价格当成全厂统一价', async () => {
     const detail = structuredClone(baseDetail)
     const first = detail.products[0]!.processing_items[0]!
@@ -127,6 +147,7 @@ describe('原外发详情的直接交接展示及保护', () => {
   })
 
   it('普通已发料单撤销前重取版本，填写原因后退料并保留已取消详情', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
     const detail = { ...structuredClone(baseDetail), direct_handoff: false, can_delete: false, can_revoke_dispatched: true, status: 'PROCESSING', status_display: '加工中', returns: [], dispatch: { id: 'dispatch-1', dispatch_date: '2026-09-22', lines: [] } }
     const wrapper = await createView(detail)
     const latest = { ...detail, version: 2 }

@@ -11,7 +11,7 @@ const isView = computed(() => props.action === 'view')
 const confirmationDone = computed(() => !!props.record && props.record.status !== 'QUALITY_GENERATED')
 const completionDone = computed(() => !!props.record && props.record.status === 'COMPLETED')
 const hoveredRowId = ref('')
-const title = computed(() => isView.value ? '退货明细' : isComplete.value ? '完成退货' : '确认退货')
+const title = computed(() => isView.value ? '退货明细' : isComplete.value ? '完成退货' : '采购确认退货')
 const emit = defineEmits<{ cancel: []; confirm: [] }>()
 function close() { if (!props.submitting) emit('cancel') }
 function quantity(value: string): string {
@@ -35,7 +35,7 @@ function time(value: string | null): string {
         <aside class="return-status-rail" aria-label="退货处理流程">
           <ol>
             <li class="done"><span class="step-circle"><ElIcon><Check /></ElIcon></span><div><strong>品质生成</strong><small>{{ record.generated_by_name || '—' }}</small><time>{{ time(record.created_at) }}</time></div></li>
-            <li :class="{ done: confirmationDone, current: !isView && !isComplete }" :aria-current="!isView && !isComplete ? 'step' : undefined"><span class="step-circle"><ElIcon v-if="confirmationDone"><Check /></ElIcon><template v-else>2</template></span><div><strong>确认退货</strong><small>{{ record.confirmed_by_name || '待采购确认' }}</small><time>{{ time(record.confirmed_at) }}</time></div></li>
+            <li :class="{ done: confirmationDone, current: !isView && !isComplete }" :aria-current="!isView && !isComplete ? 'step' : undefined"><span class="step-circle"><ElIcon v-if="confirmationDone"><Check /></ElIcon><template v-else>2</template></span><div><strong>采购确认退货</strong><small>{{ record.confirmed_by_name || '待采购确认' }}</small><time>{{ time(record.confirmed_at) }}</time></div></li>
             <li :class="{ done: completionDone, current: isComplete }" :aria-current="isComplete ? 'step' : undefined"><span class="step-circle"><ElIcon v-if="completionDone"><Check /></ElIcon><template v-else>3</template></span><div><strong>退货完成</strong><small>{{ record.completed_by_name || '待完成' }}</small><time>{{ time(record.completed_at) }}</time></div></li>
           </ol>
         </aside>
@@ -63,7 +63,7 @@ function time(value: string | null): string {
         </section>
       </div>
     </template>
-    <template #footer><ElButton :disabled="submitting" @click="close">{{ isView ? '关闭' : '取消' }}</ElButton><ElButton v-if="!isView" type="primary" :loading="submitting" :disabled="submitting || !record || record.status !== (isComplete ? 'PROCUREMENT_CONFIRMED' : 'QUALITY_GENERATED') || !record.lines.length" @click="emit('confirm')">{{ submitting ? '正在确认…' : isComplete ? '确认退货完成' : '确认退货' }}</ElButton></template>
+    <template #footer><ElButton :disabled="submitting" @click="close">{{ isView ? '关闭' : '取消' }}</ElButton><ElButton v-if="!isView" type="primary" :loading="submitting" :disabled="submitting || !record || record.status !== (isComplete ? 'PROCUREMENT_CONFIRMED' : 'QUALITY_GENERATED') || !record.lines.length" @click="emit('confirm')">{{ submitting ? '正在确认…' : isComplete ? '确认退货完成' : '采购确认退货' }}</ElButton></template>
   </ElDialog>
 </template>
 

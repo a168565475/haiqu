@@ -17,6 +17,11 @@ def can_record(request, permission, kind, pk):
 
 
 def scoped_records(queryset, request, permission, craft_field='craft_id', source_field='source__issue_line'):
+    if permission.startswith('outsourcing.') and craft_field.endswith('__craft_id'):
+        from apps.outsourcing.selectors import accessible_outsourcing_orders
+        # 工艺范围不能替代库存/车间来源范围，尤其不能让 STOCK 授权读取直接交接。
+        order_field = craft_field.removesuffix('__craft_id')
+        queryset = queryset.filter(**{order_field + '__in': accessible_outsourcing_orders(request, permission=permission)})
     legacy = queryset.filter(**{source_field + '__in': processing_lines(request, scoped=False, permission=permission)})
     candidates = queryset.filter(**{source_field + '__in': processing_lines(request, permission=permission)})
     return craft_access_union(candidates, legacy, request, permission, craft_field)

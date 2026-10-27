@@ -7,7 +7,7 @@ import MaterialPurchaseInboundView from './MaterialPurchaseInboundView.vue'
 
 const permissions = vi.hoisted(() => ({ receive: true }))
 vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'sample-order' } }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'sample-order' } }), useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (permission: string) => permission !== 'inventory.receive_material' || permissions.receive }) }))
 vi.mock('@/api/inventory', () => ({
   fetchMaterialReceivingOptions: vi.fn(), fetchEligibleMaterialPurchaseOrders: vi.fn(),

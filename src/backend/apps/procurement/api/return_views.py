@@ -73,7 +73,8 @@ class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
     action_permission_map = {
         "list": return_read_permissions, "retrieve": return_read_permissions,
         "stats": return_read_permissions, "filter_options": return_read_permissions,
-        "confirm": "procurement.submit_purchaseorder", "complete": "procurement.submit_purchaseorder",
+        "confirm": "procurement.submit_purchaseorder",
+        "complete": "procurement.submit_purchaseorder",
     }
     serializer_class = PurchaseReturnSerializer
 

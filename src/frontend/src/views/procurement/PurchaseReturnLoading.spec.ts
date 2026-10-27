@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/purchaseReturns'
 import PurchaseReturnListView from './PurchaseReturnListView.vue'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: { purchase_order_id: 'order-context', from: 'inbound' } }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ name: 'purchase-return-records', query: { purchase_order_id: 'order-context', from: 'inbound' } }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true, moduleCan: () => true }) }))
 vi.mock('@/api/purchaseReturns', () => ({ fetchPurchaseReturns: vi.fn(), fetchReturnOptions: vi.fn(), fetchPurchaseReturn: vi.fn(), advancePurchaseReturn: vi.fn() }))
 const record = { id: 'return-1', return_number: 'TH01', status: 'QUALITY_GENERATED', lines: [{ id: 'line-1', quantity: '1' }] }

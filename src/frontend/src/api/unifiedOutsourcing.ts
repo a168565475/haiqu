@@ -10,14 +10,15 @@ export async function fetchUnifiedOutsourcingOrders(params: Record<string, unkno
   return data
 }
 
-export async function fetchUnifiedOutsourcingOptions(): Promise<UnifiedOutsourcingOptions> {
-  const { data } = await apiClient.get<DataResponse<UnifiedOutsourcingOptions>>(`${path}options/`)
+export async function fetchUnifiedOutsourcingOptions(warehouse = false): Promise<UnifiedOutsourcingOptions> {
+  const { data } = await apiClient.get<DataResponse<UnifiedOutsourcingOptions>>(`${path}options/`, warehouse ? { params: { warehouse_stage: 'all' } } : undefined)
   return data.data
 }
 
-export function unifiedOutsourcingDetailPath(row: UnifiedOutsourcingOrder): string {
-  if (row.record_type === 'TUBE') return `/workshop/outsourcing/tube/${encodeURIComponent(row.id)}`
-  if (row.record_type === 'REWORK') return `/workshop/outsourcing/rework/${encodeURIComponent(row.id)}`
-  const target = `/workshop/outsourcing/${encodeURIComponent(row.id)}`
+export function unifiedOutsourcingDetailPath(row: UnifiedOutsourcingOrder, warehouse = false): string {
+  const base = warehouse ? '/warehouse/outsourcing' : '/workshop/outsourcing'
+  if (row.record_type === 'TUBE') return `${base}/tube/${encodeURIComponent(row.id)}`
+  if (row.record_type === 'REWORK') return `${base}/rework/${encodeURIComponent(row.id)}`
+  const target = `${base}/${encodeURIComponent(row.id)}`
   return row.detail_access === 'METAL' ? `${target}?view=metal` : target
 }

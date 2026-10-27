@@ -49,7 +49,8 @@ it('手工入库只取材料仓和库区，未填写时不能提交', async () =
   expect(api.createManualMaterialReceipt).not.toHaveBeenCalled(); wrapper.unmount()
 })
 it('材料入库在列表弹出，关闭不跳页，成功刷新当前库存', async () => {
-  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
+  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus], stubs: { ElButton: { template: '<button><slot /></button>' } } } }); await flushPromises()
+  expect(wrapper.findAll('button').some(button => button.text() === '材料入库')).toBe(true)
   const vm = wrapper.vm as unknown as { inboundOpen: boolean }
   vm.inboundOpen = true; await flushPromises()
   wrapper.findComponent(ManualMaterialInboundDialog).vm.$emit('close'); await flushPromises()
@@ -90,12 +91,14 @@ it('材料库存遵循紧凑列表字段规范', async () => {
 })
 it('半成品库存入口从路由读取库存性质并传递加工状态筛选', async () => {
   routeState.query.stock_kind = 'SEMI'
-  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus] } }); await flushPromises()
+  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus], stubs: { ElButton: { template: '<button><slot /></button>' } } } }); await flushPromises()
   expect(api.fetchMaterialInventory).toHaveBeenCalledWith(expect.objectContaining({ stock_kind: 'SEMI', processing_status: undefined }))
   const source = readFileSync(resolve(process.cwd(), 'src/views/inventory/MaterialInventoryView.vue'), 'utf8')
   expect(source).toContain('placeholder="加工状态：全部"')
   expect(source).toContain('label="加工状态"')
-  expect(source).toContain("name: 'inventory-tube-return'")
+  expect(wrapper.findAll('button').some(button => button.text() === '喷塑入库')).toBe(false)
+  expect(wrapper.findAll('button').some(button => button.text() === '入库记录')).toBe(true)
+  expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
   expect(source).toContain('processing_status_label')
   wrapper.unmount()
 })

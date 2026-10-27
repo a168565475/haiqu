@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox, useZIndex } from 'element-plus'
-import { Delete, Edit, FullScreen, Plus } from '@element-plus/icons-vue'
+import { Plus } from '@element-plus/icons-vue'
 
 import {
-  bomLineImageUrl,
   confirmBomProduct,
   deleteBomDraftLineImage,
   deleteBomLineImage,
@@ -30,18 +28,20 @@ import {
   verifyBom,
 } from '@/api/boms'
 import { fetchAllProductionDataRecords } from '@/api/productionData'
-import AuxiliaryReferenceCreateDialog from '@/components/AuxiliaryReferenceCreateDialog.vue'
 import BomLineEditorDialog from '@/components/BomLineEditorDialog.vue'
-import BomLineImageSummary from '@/components/BomLineImageSummary.vue'
 import BomPrintDocument from '@/components/boms/BomPrintDocument.vue'
-import BomProductImage from '@/components/boms/BomProductImage.vue'
-import HardwareRawMaterialCreateDialog from '@/components/HardwareRawMaterialCreateDialog.vue'
-import ProductCreateDialog from '@/components/products/ProductCreateDialog.vue'
-import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
-import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import BomLineImageManager from './BomLineImageManager.vue'
+import BomLineEditorForm from './BomLineEditorForm.vue'
+import BomMaterialSectionTables from './BomMaterialSectionTables.vue'
+import BomMaterialPickerDialogs from './BomMaterialPickerDialogs.vue'
+import BomProductInfoDialog from './BomProductInfoDialog.vue'
+import BomProductOverview from './BomProductOverview.vue'
+import BomProductConfirmationDialogs from './BomProductConfirmationDialogs.vue'
+import BomMaterialCreateDialogs from './BomMaterialCreateDialogs.vue'
+import BomQuantityCompareCard from './BomQuantityCompareCard.vue'
+import BomSectionSidebar from './BomSectionSidebar.vue'
 import { fetchProductOptions } from '@/api/products'
 import type { InquiryItem } from '@/types/inquiry'
-import PinyinFilterSelect from '@/components/production/PinyinFilterSelect.vue'
 import { useAuthStore } from '@/stores/auth'
 import type {
   BomAuxiliaryProductOption,
@@ -57,17 +57,26 @@ import type {
   BomPlasticMaterial,
   BomProductColorOption,
   BomSemiFinishedMaterial,
-  BomSection,
   BomSectionInput,
-  BomSectionType,
 } from '@/types/bom'
 import type { ProductInformation, ProductInformationInput, ProductOptions } from '@/types/product'
 import type { ProductColor } from '@/types/productionData'
 import { createProductionDataRecord } from '@/api/productionData'
-import { pipePlan, pipePlanForBomLine } from '@/utils/materialFlow'
+import { pipePlan } from '@/utils/materialFlow'
 import { cuttingCalculation, cuttingCompatibilityValues, legacyPipeCuttingValues } from '@/utils/bomCuttingQuantities'
 import { cuttingSpecificationError } from '@/utils/cuttingSpecification'
 import { useBomMaterialCandidates } from './useBomMaterialCandidates'
+import {
+  blankLine as createBlankLine,
+  createDraftKey,
+  decimalDifferenceText,
+  decimalFraction,
+  decimalValuesEqual,
+  editableLine as normalizeEditableLine,
+  number,
+  tubeCalculations as calculateTubeCalculations,
+  withFixedSections,
+} from './bomEditorHelpers'
 import type {
   TubeCoatingColor,
   TubeDiameter,
@@ -140,7 +149,7 @@ const productConfirmColors = ref<ProductColor[]>([])
 const productConfirmCatalogError = ref('')
 const productConfirmCatalogLoading = ref(false)
 const productConfirmError = ref('')
-const productConfirmDialog = ref<InstanceType<typeof InquiryProductDialog>>()
+const productConfirmDialog = ref<InstanceType<typeof BomProductConfirmationDialogs>>()
 const productCreateInitial = ref<Partial<ProductInformationInput>>({})
 const productCreateReviewDraft = ref<InquiryItem | null>(null)
 const productCreateUnitCode = ref('')
@@ -311,24 +320,8 @@ const initialDrawerDraftImageIds = ref<string[]>([])
 const preserveDrawerDraftImagesOnClose = ref(false)
 const imageManagerVisible = ref(false)
 const imageManagerStandalone = ref(false)
-const imageFileInput = ref<HTMLInputElement | null>(null)
 const imageManagerZIndex = ref(0)
 const { nextZIndex } = useZIndex()
-
-interface FixedSectionDefinition {
-  title: string
-  section_type: BomSectionType
-}
-
-const fixedSectionDefinitions: FixedSectionDefinition[] = [
-  { title: '管材类', section_type: 'PROFILE' },
-  { title: '五金件', section_type: 'ACCESSORY' },
-  { title: '塑料件类', section_type: 'ACCESSORY' },
-  { title: '辅料类', section_type: 'FABRIC' },
-  { title: '面料类', section_type: 'FABRIC' },
-  { title: '包材类', section_type: 'ACCESSORY' },
-  { title: '裁剪明细', section_type: 'FABRIC' },
-]
 
 const canEdit = computed(() => authStore.hasPermission('boms.change_bom'))
 const canCreateProduct = computed(() => Boolean(
@@ -523,198 +516,6 @@ function syncCuttingValues(line: BomLineInput) {
     line.cutting_pieces_per_set = null
     line.cutting_sets_per_product = null
   }
-}
-
-function blankLine(defaultUnit = ''): BomLineInput {
-  return {
-    client_key: createDraftKey(),
-    category: '', material: '', part_name: '', specification: '', raw_material: '', length_value: '',
-    unit_consumption: '', total_consumption: '', unit: defaultUnit, hardness: '', original_material_length: '',
-    branch_count: '', budget_quantity: '', inventory_quantity: '', weight_grams: '', cut_piece_quantity: '',
-    purchase_consumption: '', source_order_quantity: '', total_purchase_quantity: '', notes: '',
-    tube_shape: '', tube_diameter: '', tube_thickness: '', tube_coating_color: '',
-    coating_unit_area_sqm: '', purchase_unit_weight_kg: '', tube_cut_piece_count: '',
-    source_inventory_material_id: null,
-    source_raw_material_id: null, hardware_material_number: '', hardware_color: '', hardware_flow_unit: '',
-    unit_material_weight_kg: '', powder_coating_color: '', powder_coating_unit_area_sqm: '',
-    plastic_material_number: '', plastic_color: '',
-    source_packaging_material_id: null, packaging_material_number: '', packaging_color: '', units_per_box: '',
-    source_cutting_material_id: null, cutting_material_number: '', cutting_item_type: '',
-    cutting_item_type_display: '', cutting_category: '', cutting_color: '', images: [],
-    draft_key: '', draft_images: [],
-    source_accessory_product_name_id: null, source_accessory_specification_id: null,
-    source_accessory_color_id: null, source_accessory_material_id: null, accessory_color: '',
-    source_fabric_material_id: null, source_fabric_specification_id: null,
-    source_fabric_width_id: null, source_product_color_id: null, fabric_width: '',
-    fabric_color_card: '', fabric_color_code: '', fabric_color_name: '',
-  }
-}
-
-function editableLine(line: BomLine): BomLineInput {
-  return {
-    id: line.id,
-    category: line.category,
-    material: line.material,
-    part_name: line.part_name,
-    specification: line.specification,
-    raw_material: line.raw_material,
-    length_value: line.length_value,
-    unit_consumption: line.unit_consumption,
-    total_consumption: line.total_consumption,
-    unit: line.unit,
-    hardness: line.hardness,
-    original_material_length: line.original_material_length,
-    branch_count: line.branch_count,
-    budget_quantity: line.budget_quantity,
-    inventory_quantity: line.inventory_quantity,
-    weight_grams: line.weight_grams,
-    cut_piece_quantity: line.cut_piece_quantity,
-    purchase_consumption: line.purchase_consumption,
-    source_order_quantity: line.source_order_quantity,
-    total_purchase_quantity: line.total_purchase_quantity,
-    notes: line.notes,
-    tube_shape: line.tube_shape,
-    tube_diameter: line.tube_diameter,
-    tube_thickness: line.tube_thickness,
-    tube_coating_color: line.tube_coating_color,
-    coating_unit_area_sqm: line.coating_unit_area_sqm,
-    purchase_unit_weight_kg: line.purchase_unit_weight_kg,
-    tube_cut_piece_count: line.tube_cut_piece_count,
-    source_inventory_material_id: line.source_inventory_material_id || null,
-    fabric_source_line_id: line.fabric_source_line_id || null,
-    fabric_meters_per_set: line.fabric_meters_per_set || null,
-    cutting_pieces_per_set: line.cutting_pieces_per_set ?? null,
-    fabric_meters_per_piece: line.fabric_meters_per_piece ?? null,
-    cutting_sets_per_product: line.cutting_sets_per_product ?? null,
-    source_raw_material_id: line.source_raw_material_id || null,
-    hardware_material_number: line.hardware_material_number || '',
-    hardware_color: line.hardware_color || '',
-    hardware_flow_unit: line.hardware_flow_unit || '',
-    unit_material_weight_kg: line.unit_material_weight_kg || '',
-    powder_coating_color: line.powder_coating_color || '',
-    powder_coating_unit_area_sqm: line.powder_coating_unit_area_sqm || '',
-    plastic_material_number: line.plastic_material_number || '',
-    plastic_color: line.plastic_color || '',
-    source_packaging_material_id: line.source_packaging_material_id || null,
-    packaging_material_number: line.packaging_material_number || '',
-    packaging_color: line.packaging_color || '',
-    units_per_box: line.units_per_box || '',
-    source_cutting_material_id: line.source_cutting_material_id || null,
-    cutting_material_number: line.cutting_material_number || '',
-    cutting_item_type: line.cutting_item_type || '',
-    cutting_item_type_display: line.cutting_item_type_display || '',
-    cutting_category: line.cutting_category || '',
-    cutting_color: line.cutting_color || '',
-    images: [...(line.images || [])],
-    draft_key: '',
-    draft_images: [],
-    source_accessory_product_name_id: line.source_accessory_product_name_id || null,
-    source_accessory_specification_id: line.source_accessory_specification_id || null,
-    source_accessory_color_id: line.source_accessory_color_id || null,
-    source_accessory_material_id: line.source_accessory_material_id || null,
-    accessory_color: line.accessory_color || '',
-    source_fabric_material_id: line.source_fabric_material_id || null,
-    source_fabric_specification_id: line.source_fabric_specification_id || null,
-    source_fabric_width_id: line.source_fabric_width_id || null,
-    source_product_color_id: line.source_product_color_id || null,
-    fabric_width: line.fabric_width || '',
-    fabric_color_card: line.fabric_color_card || '',
-    fabric_color_code: line.fabric_color_code || '',
-    fabric_color_name: line.fabric_color_name || '',
-  }
-}
-
-function editableSection(section: BomSection): BomSectionInput {
-  const lines = section.lines.map((line) => {
-    const editable = editableLine(line)
-    if (section.section_type === 'PROFILE') {
-      if (!editable.unit) editable.unit = 'PCS'
-      normalizeTubeCutPieceCount(editable)
-    }
-    return editable
-  })
-  return {
-    id: section.id,
-    section_type: section.section_type,
-    title: section.title,
-    lines: lines.length || section.section_type !== 'PROFILE' ? lines : [blankLine('根')],
-  }
-}
-
-function defaultTubeSection(): BomSectionInput {
-  return { section_type: 'PROFILE', title: '管材类', lines: [blankLine('根')] }
-}
-
-function emptyFixedSection(definition: FixedSectionDefinition): BomSectionInput {
-  return definition.section_type === 'PROFILE'
-    ? defaultTubeSection()
-    : { section_type: definition.section_type, title: definition.title, lines: [] }
-}
-
-function matchingFixedTitle(section: BomSectionInput, usedTitles: Set<string>) {
-  if (section.section_type === 'PROFILE') return '管材类'
-  const title = section.title.replace(/\s+/g, '')
-  const keywordMatches = [
-    { title: '裁剪明细', pattern: /裁剪|裁片/ },
-    { title: '塑料件类', pattern: /塑料/ },
-    { title: '包材类', pattern: /包材|包装/ },
-    { title: '五金件', pattern: /五金|配件/ },
-    { title: '面料类', pattern: /面料|面辅料/ },
-    { title: '辅料类', pattern: /辅料/ },
-  ]
-  const keywordMatch = keywordMatches.find((item) => item.pattern.test(title) && !usedTitles.has(item.title))
-  if (keywordMatch) return keywordMatch.title
-  const candidates = section.section_type === 'FABRIC'
-    ? ['面料类', '辅料类', '裁剪明细']
-    : ['五金件', '塑料件类', '包材类']
-  return candidates.find((candidate) => !usedTitles.has(candidate)) || section.title
-}
-
-function fixedTitleFromLine(line: BomLineInput, fallbackTitle: string) {
-  if (line.source_cutting_material_id || line.cutting_material_number || /裁剪|裁片/.test(line.category)) return '裁剪明细'
-  if (line.source_packaging_material_id || line.packaging_material_number || line.units_per_box || /包材|包装/.test(line.category)) return '包材类'
-  if (line.hardware_material_number || /五金/.test(line.category)) return '五金件'
-  if (line.plastic_material_number || /塑料/.test(line.category)) return '塑料件类'
-  if (line.source_fabric_material_id || line.fabric_width || line.fabric_color_card || line.fabric_color_code || line.fabric_color_name || /面料/.test(line.category)) return '面料类'
-  if (line.source_accessory_product_name_id || line.source_accessory_material_id || line.accessory_color || /辅料/.test(line.category)) return '辅料类'
-  return fallbackTitle
-}
-
-function withFixedSections(sourceSections: BomSection[]) {
-  const usedTitles = new Set<string>()
-  const fixedOrder = new Map(fixedSectionDefinitions.map((item, index) => [item.title, index]))
-  const sectionByTitle = new Map<string, BomSectionInput>()
-  for (const sourceSection of sourceSections) {
-    const section = editableSection(sourceSection)
-    const fixedTitle = matchingFixedTitle(section, usedTitles)
-    if (!fixedOrder.has(fixedTitle)) continue
-    usedTitles.add(fixedTitle)
-    const canonicalSection: BomSectionInput = {
-      ...section,
-      title: fixedTitle,
-      lines: [...(sectionByTitle.get(fixedTitle)?.lines || [])],
-    }
-    sectionByTitle.set(fixedTitle, canonicalSection)
-    for (const line of section.lines) {
-      const lineTitle = fixedTitleFromLine(line, fixedTitle)
-      const target = sectionByTitle.get(lineTitle)
-      if (target) target.lines.push(line)
-      else {
-        const definition = fixedSectionDefinitions.find((item) => item.title === lineTitle)
-        if (definition) sectionByTitle.set(lineTitle, { section_type: definition.section_type, title: lineTitle, lines: [line] })
-      }
-    }
-  }
-  for (const definition of fixedSectionDefinitions) {
-    if (!sectionByTitle.has(definition.title)) sectionByTitle.set(definition.title, emptyFixedSection(definition))
-  }
-  const tubeSection = sectionByTitle.get('管材类')
-  if (tubeSection && !tubeSection.lines.length) tubeSection.lines.push(blankLine('根'))
-  const preserved = [...sectionByTitle.values()]
-  return preserved.sort((left, right) => (
-    (fixedOrder.get(left.title) ?? fixedSectionDefinitions.length)
-    - (fixedOrder.get(right.title) ?? fixedSectionDefinitions.length)
-  ))
 }
 
 function applyVersioned(result: { data: BomDetail; etag: string }) {
@@ -1071,17 +872,6 @@ function confirmPackagingSelection() {
 function openCuttingPicker() {
   if (!canEdit.value || !isCuttingSection.value) return
   void cuttingPicker.open()
-}
-
-function createDraftKey() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
-  const bytes = new Uint8Array(16)
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
-  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256)
-  bytes[6] = ((bytes[6] || 0) & 0x0f) | 0x40
-  bytes[8] = ((bytes[8] || 0) & 0x3f) | 0x80
-  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 function cuttingLine(item: BomSemiFinishedMaterial): BomLineInput {
@@ -1604,10 +1394,6 @@ function displayLineImages(line: BomLineInput): CuttingDisplayImage[] {
   return [...(line.images || []), ...(line.draft_images || [])]
 }
 
-function sortedLineImages(line: BomLineInput) {
-  return displayLineImages(line).sort((left, right) => left.position - right.position)
-}
-
 function isDraftLineImage(image: CuttingDisplayImage): image is BomDraftLineImage {
   return 'draft_key' in image
 }
@@ -1679,13 +1465,10 @@ function closeImageManager() {
 }
 
 function openImageFilePicker() {
-  if (!imageManagerIsBusy() && editingLineDraft.value && displayLineImages(editingLineDraft.value).length < 20) {
-    imageFileInput.value?.click()
-  }
+  // 文件选择器由 BomLineImageManager 内部触发；保留事件入口兼容旧逻辑。
 }
 
 function resetImageManager() {
-  imageFileInput.value = null
   if (imageManagerStandalone.value) resetLineDrawer()
   imageManagerStandalone.value = false
 }
@@ -1799,12 +1582,6 @@ async function cleanupDraftImages(images: BomDraftLineImage[]) {
     cleaningCuttingDraftImages.value = false
   }
   return failedIds
-}
-
-function fileSizeText(sizeBytes: number) {
-  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return '0 KB'
-  if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`
-  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 function openLineDrawer(index: number) {
@@ -2266,97 +2043,19 @@ async function submitVerification() {
   }
 }
 
-function number(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === '') return '—'
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 4 }).format(parsed) : String(value)
+function tubeCalculations(line: BomLineInput) {
+  return calculateTubeCalculations(line, bom.value)
 }
 
-function decimalValuesEqual(leftValue: string | number, rightValue: string | number) {
-  const left = decimalFraction(leftValue)
-  const right = decimalFraction(rightValue)
-  return Boolean(left && right && left.numerator * right.denominator === right.numerator * left.denominator)
+function blankLine(defaultUnit = ''): BomLineInput {
+  return createBlankLine(defaultUnit)
 }
 
-function decimalDifferenceText(value: string | number, baseline: string | number) {
-  const current = decimalFraction(value)
-  const base = decimalFraction(baseline)
-  if (!current || !base) return '—'
-  const numerator = current.numerator * base.denominator - base.numerator * current.denominator
-  const denominator = current.denominator * base.denominator
-  const difference = halfUpFixedText(numerator, denominator, 4).replace(/\.?0+$/, '') || '0'
-  return `${numerator > 0n ? '+' : ''}${number(difference)}`
+function editableLine(line: BomLine): BomLineInput {
+  return normalizeEditableLine(line)
 }
-
-type TubeCalculationKey =
-  | 'total_consumption'
-  | 'tube_cut_length_m'
-  | 'suggested_purchase_meters'
-  | 'branch_count'
-  | 'long_material_unit_weight_kg'
-  | 'tube_unit_weight_kg'
-  | 'long_material_total_weight_kg'
-
-
-
-interface DecimalFraction {
-  numerator: bigint
-  denominator: bigint
-}
-
-function decimalFraction(value: string | number | null | undefined): DecimalFraction | null {
-  const text = String(value ?? '').trim()
-  const match = text.match(/^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/)
-  if (!match || (!match[2] && !match[3])) return null
-  const exponent = Number(match[4] || 0)
-  if (!Number.isInteger(exponent) || Math.abs(exponent) > 100) return null
-  const fractionDigits = match[3] || ''
-  const digits = `${match[2] || '0'}${fractionDigits}`.replace(/^0+(?=\d)/, '')
-  let numerator = BigInt(digits || '0')
-  let scaleDigits = fractionDigits.length - exponent
-  if (scaleDigits < 0) {
-    numerator *= 10n ** BigInt(-scaleDigits)
-    scaleDigits = 0
-  }
-  if (match[1] === '-') numerator = -numerator
-  return { numerator, denominator: 10n ** BigInt(scaleDigits) }
-}
-
-function halfUpFixedText(numerator: bigint, denominator: bigint, fractionDigits: number) {
-  if (denominator <= 0n || fractionDigits < 0) return ''
-  const negative = numerator < 0n
-  const absoluteNumerator = negative ? -numerator : numerator
-  const factor = 10n ** BigInt(fractionDigits)
-  const scaledNumerator = absoluteNumerator * factor
-  const quotient = scaledNumerator / denominator
-  const remainder = scaledNumerator % denominator
-  const rounded = quotient + (remainder * 2n >= denominator ? 1n : 0n)
-  const whole = rounded / factor
-  const fraction = fractionDigits ? `.${String(rounded % factor).padStart(fractionDigits, '0')}` : ''
-  return `${negative && rounded !== 0n ? '-' : ''}${whole}${fraction}`
-}
-
-function calculationText(value: number | null, fractionDigits = 4, keepTrailingZeros = false) {
-  if (value === null || !Number.isFinite(value)) return '—'
-  const fraction = decimalFraction(value)
-  if (!fraction) return '—'
-  const text = halfUpFixedText(fraction.numerator, fraction.denominator, fractionDigits)
-  return keepTrailingZeros ? text : text.replace(/\.?0+$/, '')
-}
-
-function tubeCalculations(line: BomLineInput): Record<TubeCalculationKey, string> {
-  const savedLine = line.id ? bom.value?.sections.flatMap(section => section.lines).find(saved => saved.id === line.id) : undefined
-  const plan = pipePlanForBomLine(line, String(bom.value?.order_quantity || ''), savedLine)
-  const length = plan ? Number(plan.tube_cut_length_m) : null
-  const unitWeight = plan ? Number(line.length_value) * Number(line.unit_consumption) * 0.464 / 1000 : null
-  return {
-    total_consumption: plan?.total_consumption || '—', tube_cut_length_m: plan?.tube_cut_length_m || '—',
-    branch_count: plan?.branch_count || '—', suggested_purchase_meters: plan?.suggested_purchase_meters || '—',
-    long_material_unit_weight_kg: calculationText(length === null ? null : length * 0.464),
-    tube_unit_weight_kg: calculationText(unitWeight),
-    long_material_total_weight_kg: calculationText(plan && length !== null ? Number(plan.branch_count) * length * 0.464 : null),
-  }
-}
+// 保留原编辑器实例上的转换入口；实现本身已集中到辅助模块。
+void editableLine
 
 function printPage() {
   window.print()
@@ -2377,6 +2076,7 @@ onBeforeUnmount(() => {
   if (advancingLineUnlockTimer !== undefined) window.clearTimeout(advancingLineUnlockTimer)
   window.removeEventListener('keydown', closeTableFullscreen)
 })
+
 </script>
 
 <template>
@@ -2403,58 +2103,34 @@ onBeforeUnmount(() => {
       <template #extra><ElButton class="bom-error-state__retry" type="primary" @click="loadBom">重新加载</ElButton></template>
     </ElResult>
     <template v-else-if="bom">
-      <InquiryProductDialog
+      <BomProductConfirmationDialogs
         ref="productConfirmDialog"
         v-model="productConfirmVisible"
-        scene="bom"
-        :item="productConfirmItem"
-        :context-title="`${bom.production_task_number} · ${bom.product_name_snapshot}`"
-        :reviewed="bom.product_information_confirmed"
-        :categories="productConfirmOptions.categories"
-        :units="productConfirmOptions.units"
-        :colors="productConfirmColors"
-        :currencies="[]"
-        :can-upload="false"
+        v-model:create-product-visible="productConfirmCreateVisible"
+        v-model:create-color-visible="productConfirmColorCreateVisible"
+        :bom="bom"
+        :product-confirm-item="productConfirmItem"
+        :product-confirm-options="productConfirmOptions"
+        :product-confirm-colors="productConfirmColors"
         :can-create-product="canCreateProduct"
-        :can-create-color="canCreateProductColor"
-        :busy="productConfirmLoading"
-        :close-on-confirm="false"
-        :catalog-error="productConfirmCatalogError"
-        :catalog-loading="productConfirmCatalogLoading"
-        :save-error="productConfirmError"
+        :can-create-product-color="canCreateProductColor"
+        :product-confirm-loading="productConfirmLoading"
+        :product-confirm-catalog-error="productConfirmCatalogError"
+        :product-confirm-catalog-loading="productConfirmCatalogLoading"
+        :product-confirm-error="productConfirmError"
+        :product-create-initial="productCreateInitial"
+        :product-create-unit-code="productCreateUnitCode"
+        :product-create-item-number="productCreateItemNumber"
+        :product-color-draft="productColorDraft"
+        :format-number="number"
+        :submit-product="createProductForBom"
         @confirm="confirmProductInformation"
         @retry-catalog="loadProductConfirmCatalog"
         @create-product="prepareConfirmedProductCreate"
         @create-color="openConfirmedColorCreate"
-      >
-        <template #business>
-          <div class="bom-review-context">
-            <h3>本条生产任务</h3>
-            <div class="bom-review-context__fields">
-              <label><span>数量（只读）</span><ElInput :model-value="`${number(bom.order_quantity)} ${bom.product_unit_name}`" readonly aria-label="任务数量" /></label>
-              <label><span>要求日期（只读）</span><ElInput :model-value="bom.planned_end_date || '—'" readonly aria-label="任务要求日期" /></label>
-            </div>
-            <h3>来源明细</h3>
-            <dl>
-              <div><dt>生产任务</dt><dd>{{ bom.production_task_number }}</dd></div>
-              <div><dt>销售订单</dt><dd>{{ bom.source_sales_order_number || '未关联销售订单' }}</dd></div>
-              <div><dt>当前 BOM</dt><dd>{{ bom.bom_number }}</dd></div>
-            </dl>
-            <h3>产品图片</h3>
-            <p>沿用业务单据中的图片，本次核对不修改或覆盖图片。</p>
-            <p class="bom-review-context__rule">{{ bom.status === 'VERIFIED' ? '当前 BOM 已确认；本次修改仅保存当前 BOM，不再次覆盖上游。' : '确认 BOM 后，按首次确认规则更新询盘、报价、销售和生产产品信息。样品、数量、价格及日期保持原值。' }}</p>
-          </div>
-        </template>
-      </InquiryProductDialog>
-      <ProductCreateDialog v-model="productConfirmCreateVisible" :initial-values="productCreateInitial" :initial-unit-code="productCreateUnitCode" :initial-item-number="productCreateItemNumber" :submit-product="createProductForBom" @created="handleConfirmedProductCreated" />
-      <AppWindowDialog v-model="productConfirmColorCreateVisible" title="新增颜色" :width="520" :close-on-click-modal="false" :close-on-press-escape="!productConfirmLoading" :show-close="!productConfirmLoading">
-        <ElForm label-position="top" class="bom-color-create-form">
-          <ElFormItem label="色卡" required><ElInput v-model="productColorDraft.color_card" maxlength="100" placeholder="例如：A卡" /></ElFormItem>
-          <ElFormItem label="色号" required><ElInput v-model="productColorDraft.color_code" maxlength="100" placeholder="例如：001" /></ElFormItem>
-          <ElFormItem label="颜色名称" required><ElInput v-model="productColorDraft.color_name" maxlength="200" placeholder="例如：黑色" /></ElFormItem>
-        </ElForm>
-        <template #footer><ElButton :disabled="productConfirmLoading" @click="productConfirmColorCreateVisible = false">取消</ElButton><ElButton type="primary" :loading="productConfirmLoading" @click="createConfirmedColor">保存颜色</ElButton></template>
-      </AppWindowDialog>
+        @created="handleConfirmedProductCreated"
+        @save-color="createConfirmedColor"
+      />
       <header class="editor-heading">
         <div>
           <div class="title-line">
@@ -2475,61 +2151,19 @@ onBeforeUnmount(() => {
       </nav>
       <section v-show="activeEditorTab === 'product'" id="bom-product-panel" class="card product-card" role="tabpanel" aria-labelledby="bom-product-tab">
         <header><h2>订单与产品</h2><ElButton plain @click="openProductConfirmDialog">查看产品信息</ElButton></header>
-        <div class="product-overview">
-          <BomProductImage v-if="activeEditorTab === 'product'" :task-id="bom.production_task_id || ''" :product-line-id="bom.production_task_product_id || ''" />
-          <div class="product-details">
-            <section><h3>基本信息</h3><dl>
-              <div><dt>BOM 编号</dt><dd>{{ bom.bom_number }}</dd></div>
-              <div><dt>订单号</dt><dd>{{ bom.order_number || '—' }}</dd></div>
-              <div><dt>产品编号</dt><dd>{{ bom.product_code_snapshot || bom.product_number_snapshot || '—' }}</dd></div>
-              <div><dt>货号</dt><dd>{{ bom.item_number_snapshot || '—' }}</dd></div>
-            </dl></section>
-            <section><h3>产品属性</h3><dl>
-              <div><dt>产品名称</dt><dd>{{ bom.product_name_snapshot }}</dd></div>
-              <div><dt>产品规格</dt><dd>{{ bom.specification_snapshot || '—' }}</dd></div>
-              <div><dt>单位</dt><dd>{{ bom.product_unit_name || '—' }}</dd></div>
-              <div><dt>颜色</dt><dd>{{ bom.product_color_snapshot || '—' }}</dd></div>
-              <div><dt>材质</dt><dd>{{ bom.material_snapshot || '—' }}</dd></div>
-            </dl></section>
-            <section><h3>数量信息</h3><dl>
-              <div><dt>当前订单数量</dt><dd class="quantity-value">{{ number(bom.current_order_quantity) }}</dd></div>
-              <div><dt>BOM 订单数量</dt><dd>{{ number(bom.order_quantity) }}</dd></div>
-              <div><dt>原表数量</dt><dd>{{ number(bom.source_quantity) }}</dd></div>
-              <div><dt>批次合计</dt><dd>{{ number(bom.batch_quantity) }}</dd></div>
-            </dl></section>
-          </div>
-        </div>
+        <BomProductOverview v-if="activeEditorTab === 'product'" :bom="bom" />
       </section>
 
-      <AppWindowDialog v-model="productInfoVisible" title="产品信息" width="640px" append-to-body destroy-on-close>
-        <div class="bom-product-info-dialog">
-          <p class="bom-product-info-dialog__hint">以下为当前 BOM 保存的产品信息快照。图片不随 BOM 产品确认回写。</p>
-          <dl>
-            <div><dt>产品 ID</dt><dd>{{ bom.product_master_id || '尚未关联产品库' }}</dd></div>
-            <div><dt>产品编号</dt><dd>{{ bom.product_number_snapshot || '—' }}</dd></div>
-            <div><dt>产品编码</dt><dd>{{ bom.product_code_snapshot || '—' }}</dd></div>
-            <div><dt>货号</dt><dd>{{ bom.item_number_snapshot || '—' }}</dd></div>
-            <div><dt>类别</dt><dd>{{ bom.product_category_snapshot || '—' }}</dd></div>
-            <div><dt>产品名称</dt><dd>{{ bom.product_name_snapshot || '—' }}</dd></div>
-            <div><dt>规格</dt><dd>{{ bom.specification_snapshot || '—' }}</dd></div>
-            <div><dt>单位</dt><dd>{{ bom.product_unit_name || '—' }}</dd></div>
-            <div><dt>颜色</dt><dd>{{ bom.product_color_snapshot || '—' }}</dd></div>
-            <div><dt>材质</dt><dd>{{ bom.material_snapshot || '—' }}</dd></div>
-          </dl>
-        </div>
-        <template #footer><ElButton @click="productInfoVisible = false">关闭</ElButton></template>
-      </AppWindowDialog>
+      <BomProductInfoDialog v-model="productInfoVisible" :bom="bom" />
 
       <div v-show="activeEditorTab === 'materials'" id="bom-material-panel" role="tabpanel" aria-labelledby="bom-material-tab">
       <div class="editor-grid">
-        <aside class="card section-sidebar">
-          <h2>物料分类</h2>
-          <div v-if="sections.length" class="section-tabs">
-            <button v-for="group in sectionNavigationGroups" :key="group.label" type="button" :class="{ active: group.label === activeNavigationLabel }" :disabled="!group.indexes.length" @click="selectNavigationGroup(group.indexes)">
-              <span>{{ group.label }}</span><b>{{ group.count }}</b>
-            </button>
-          </div>
-        </aside>
+        <BomSectionSidebar
+          :groups="sectionNavigationGroups"
+          :active-label="activeNavigationLabel"
+          :has-sections="sections.length > 0"
+          @select="selectNavigationGroup"
+        />
         <main class="card material-card">
           <header class="material-heading">
             <div><h2>{{ activeSection?.title || '用料明细' }}</h2><span>{{ activeSection?.lines.length || 0 }} 行 · {{ materialReferenceHint }}</span></div>
@@ -2548,227 +2182,45 @@ onBeforeUnmount(() => {
             <ElAlert v-if="(isAuxiliarySection || isFabricSection) && editorReferenceOptionsError" class="reference-options-error" type="error" :title="editorReferenceOptionsError" show-icon :closable="false">
               <template #default><ElButton size="small" @click="ensureEditorReferenceOptions">重新加载生产维护数据</ElButton></template>
             </ElAlert>
-             <ElTable v-if="activeSection.section_type === 'PROFILE'" class="erp-table-editor tube-table prototype-tube-table" :data="activeSection.lines" border empty-text="当前型材暂无用料，点击“添加材料”开始录入">
-               <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                 <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
-                 <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click.stop="removeLine(scope.$index)" /></ElTooltip></div></div></template>
-               </ElTableColumn>
-               <ElTableColumn prop="part_name" label="部件名称" min-width="130" />
-               <ElTableColumn prop="material" label="材质" width="90" />
-                <ElTableColumn label="喷塑颜色" min-width="120">
-                  <template #default="scope">
-                    <ElSelect v-model="scope.row.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
-                      <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
-                    </ElSelect>
-                  </template>
-                </ElTableColumn>
-               <ElTableColumn label="规格" min-width="118"><template #default="scope"><ElTooltip :content="scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}`" placement="top"><span class="profile-ellipsis-value">{{ scope.row.specification || `${scope.row.tube_diameter || '—'} × ${scope.row.tube_thickness || '—'}` }}</span></ElTooltip></template></ElTableColumn>
-               <ElTableColumn prop="length_value" label="切割长度（mm）" width="100" ><template #default="{ row }">{{ compactDecimal(row.length_value) }}</template></ElTableColumn>
-               <ElTableColumn prop="unit_consumption" label="单耗" width="78" ><template #default="{ row }">{{ compactDecimal(row.unit_consumption) }}</template></ElTableColumn>
-               <ElTableColumn label="总需求（支）" width="110"><template #default="scope"><b>{{ tubeCalculations(scope.row).total_consumption }}</b></template></ElTableColumn>
-               <ElTableColumn prop="tube_cut_piece_count" label="切割支数" width="90" />
-               <ElTableColumn label="原材料长度（m）" width="105"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).tube_cut_length_m) }}</template></ElTableColumn>
-               <ElTableColumn label="采购根数" width="90"><template #default="scope"><b>{{ tubeCalculations(scope.row).branch_count }}</b></template></ElTableColumn>
-               <ElTableColumn label="建议采购米数" width="115"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_meters) }}</template></ElTableColumn>
-               <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
-             </ElTable>
-            <ElTable v-else-if="isHardwareSection" class="erp-table-editor hardware-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前五金件暂无数据，点击“选择数据”批量添加">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header>
-                  <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
-                    <ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" />
-                  </ElTooltip>
-                </template>
-                <template #default="scope">
-                  <div class="table-index-cell">
-                    <span class="table-row-number">{{ scope.$index + 1 }}</span>
-                    <div v-if="canEdit" class="table-row-actions">
-
-                      <ElTooltip content="编辑当前行" placement="top">
-                        <ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" />
-                      </ElTooltip>
-                      <ElTooltip content="删除当前行" placement="top">
-                        <ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" />
-                      </ElTooltip>
-                    </div>
-                  </div>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="品名" min-width="160" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="材质" width="100" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.material || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.hardware_color) }}</span></template></ElTableColumn>
-              <ElTableColumn label="规格" min-width="140" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单位" width="80"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单个用量" width="110"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="单个材料重量（kg）" width="170"><template #default="scope"><ElInput v-model="scope.row.unit_material_weight_kg" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="喷塑颜色" min-width="165">
-                <template #default="scope">
-                  <ElSelect v-model="scope.row.powder_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
-                    <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
-                  </ElSelect>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="喷塑单个面积（㎡）" width="175"><template #default="scope"><ElInput v-model="scope.row.powder_coating_unit_area_sqm" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable v-else-if="isPlasticSection" class="erp-table-editor plastic-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前塑料件暂无数据，点击“选择数据”批量添加">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header>
-                  <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
-                    <ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" />
-                  </ElTooltip>
-                </template>
-                <template #default="scope">
-                  <div class="table-index-cell">
-                    <span class="table-row-number">{{ scope.$index + 1 }}</span>
-                    <div v-if="canEdit" class="table-row-actions">
-
-                      <ElTooltip content="编辑当前行" placement="top">
-                        <ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" />
-                      </ElTooltip>
-                      <ElTooltip content="删除当前行" placement="top">
-                        <ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" />
-                      </ElTooltip>
-                    </div>
-                  </div>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="品名" min-width="190" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="材质" width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.material || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="颜色" min-width="140" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.plastic_color) }}</span></template></ElTableColumn>
-              <ElTableColumn label="规格" min-width="150" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单位" width="80"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单个用量" width="130"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="220"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable v-else-if="isAuxiliarySection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor auxiliary-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前辅料暂无数据，点击“选择辅料”批量添加">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header>
-                  <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
-                    <ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" />
-                  </ElTooltip>
-                </template>
-                <template #default="scope">
-                  <div class="table-index-cell">
-                    <span class="table-row-number">{{ scope.$index + 1 }}</span>
-                    <div v-if="canEdit" class="table-row-actions">
-
-                      <ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip>
-                      <ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip>
-                    </div>
-                  </div>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="品名" min-width="180" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*规格" min-width="150">
-                <template #default="scope">
-                  <ElSelect v-if="auxiliaryLineHasActiveProduct(scope.row)" v-model="scope.row.source_accessory_specification_id" filterable :disabled="!canEdit" placeholder="选择规格" @change="setAuxiliarySpecification(scope.row, $event)"><ElOption v-for="item in auxiliarySpecificationOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-                  <span v-else class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="*颜色" min-width="150">
-                <template #default="scope">
-                  <ElSelect v-if="auxiliaryLineHasActiveProduct(scope.row)" v-model="scope.row.source_accessory_color_id" filterable :disabled="!canEdit" placeholder="选择颜色" @change="setAuxiliaryColor(scope.row, $event)"><ElOption v-for="item in auxiliaryColorOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-                  <span v-else class="hardware-readonly-cell">{{ scope.row.accessory_color || '—' }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="*材质" min-width="140">
-                <template #default="scope">
-                  <ElSelect v-if="auxiliaryLineHasActiveProduct(scope.row)" v-model="scope.row.source_accessory_material_id" filterable :disabled="!canEdit" placeholder="选择材质" @change="setAuxiliaryMaterial(scope.row, $event)"><ElOption v-for="item in auxiliaryMaterialOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-                  <span v-else class="hardware-readonly-cell">{{ scope.row.material || '—' }}</span>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="单位" width="80"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '待维护' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单个用量" width="125"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="190"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable v-else-if="isFabricSection" v-loading="editorReferenceOptionsLoading" class="erp-table-editor fabric-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前面料暂无数据，点击“添加面料”开始录入">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header>
-                  <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip>
-                </template>
-                <template #default="scope">
-                  <div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="规格" min-width="140"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_specification_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.specification || '选择规格'" @change="setFabricSpecification(scope.row, $event)"><ElOption v-for="item in fabricSpecificationOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="材质" min-width="130"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_material_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.material || '选择材质'" @change="setFabricMaterial(scope.row, $event)"><ElOption v-for="item in fabricMaterialOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="色卡" min-width="200"><template #default="scope"><ElSelect v-model="scope.row.source_product_color_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="fabricColorSnapshot(scope.row) || '选择色卡 / 颜色 / 色号'" @change="setFabricColor(scope.row, $event)"><ElOption v-for="item in fabricColorOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="颜色" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="色号" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_code || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="门幅" min-width="120"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_width_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.fabric_width || '选择门幅'" @change="setFabricWidth(scope.row, $event)"><ElOption v-for="item in fabricWidthOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="单个用量" width="120"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="裁片" min-width="150"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit" maxlength="300" placeholder="填写裁片" /></template></ElTableColumn>
-              <ElTableColumn label="单位" width="70"><template #default><span class="hardware-readonly-cell">米</span></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable v-else-if="isPackagingSection" class="erp-table-editor packaging-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前包材暂无数据，点击“选择包材”批量添加">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
-                <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
-              </ElTableColumn>
-              <ElTableColumn label="品号" width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.packaging_material_number || scope.row.raw_material || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="品名" min-width="165" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="材质" width="105" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.material || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.packaging_color) }}</span></template></ElTableColumn>
-              <ElTableColumn label="规格" min-width="155" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="单位" width="76"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*箱数（多少一箱）" width="170"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="numeric" :disabled="!canEdit" placeholder="填写正整数" /></template></ElTableColumn>
-              <ElTableColumn label="*单个用量" width="125"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前裁剪明细暂无数据，点击“选择裁剪”批量添加">
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
-                <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
-              </ElTableColumn>
-              <ElTableColumn label="裁剪名称" min-width="125"><template #default="scope"><template v-if="cuttingQuantities(scope.row).mode !== 'legacy' && cuttingQuantities(scope.row).error"><ElTooltip placement="top-start" effect="light" popper-class="cutting-name-error-tooltip" :show-after="100" :teleported="true"><template #content><span role="alert">{{ cuttingQuantities(scope.row).error }}</span></template><span class="hardware-readonly-cell cutting-name-tooltip-anchor has-error" tabindex="0">{{ scope.row.part_name || '—' }}</span></ElTooltip></template><span v-else class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*规格" min-width="140"><template #default="scope"><ElInput v-model="scope.row.specification" :disabled="!canEdit" maxlength="500" placeholder="必填，不能填 /" aria-label="裁剪规格" aria-required="true" /></template></ElTableColumn>
-              <ElTableColumn label="裁片量（片/套）" width="125"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径，按根/支流转；此处为开发试算展示'">{{ legacyPipeCuttingValues(scope.row)?.pieces }}</span><ElInput v-else v-model="scope.row.cutting_pieces_per_set" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="裁片量（片/套）" /></template></ElTableColumn>
-              <ElTableColumn label="每成品套数（套/成品）" width="155"><template #default="scope"><span v-if="legacyPipeCuttingValues(scope.row)" class="cutting-legacy-value" :title="'管材旧口径没有该布料字段，开发试算按 1 套展示'">{{ legacyPipeCuttingValues(scope.row)?.sets }}</span><ElInput v-else v-model="scope.row.cutting_sets_per_product" inputmode="numeric" :disabled="!canEdit" placeholder="待填写" aria-label="每成品套数（套/成品）" /></template></ElTableColumn>
-              <ElTableColumn label="订单裁剪套数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderSets || '—' }}</template></ElTableColumn>
-              <ElTableColumn label="订单裁剪片数" width="125"><template #default="scope">{{ cuttingQuantities(scope.row).orderPieces || '—' }}</template></ElTableColumn>
-              <ElTableColumn label="流转单位" width="100"><template #default="scope"><ElInput v-if="cuttingQuantities(scope.row).mode === 'legacy'" v-model="scope.row.unit" :disabled="!canEdit" maxlength="50" placeholder="填写单位" /><span v-else>套</span></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="260"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
-            </ElTable>
-            <ElTable class="erp-table-editor" v-else-if="activeSection.lines.length" :data="activeSection.lines" border scrollbar-always-on>
-              <ElTableColumn width="64" fixed="left" align="center" header-align="center" class-name="control-column" label-class-name="control-column-header">
-                <template #header>
-                  <ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top">
-                    <ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" />
-                  </ElTooltip>
-                </template>
-                <template #default="scope">
-                  <div class="table-index-cell">
-                    <span class="table-row-number">{{ scope.$index + 1 }}</span>
-                    <div v-if="canEdit" class="table-row-actions">
-
-                      <ElTooltip content="编辑当前行" placement="top">
-                        <ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" />
-                      </ElTooltip>
-                      <ElTooltip content="删除当前行" placement="top">
-                        <ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" />
-                      </ElTooltip>
-                    </div>
-                  </div>
-                </template>
-              </ElTableColumn>
-              <ElTableColumn label="材质" width="112"><template #default="scope"><ElInput v-model="scope.row.material" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="配件 / 裁片名称" min-width="170"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn v-if="activeSection.section_type !== 'FABRIC'" label="规格 / 厚度" min-width="145"><template #default="scope"><ElInput v-model="scope.row.specification" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn v-if="activeSection.section_type === 'FABRIC'" label="原材料" min-width="160"><template #default="scope"><ElInput v-model="scope.row.raw_material" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn v-if="activeSection.section_type === 'FABRIC'" label="裁片量" width="100"><template #default="scope"><ElInput v-model="scope.row.cut_piece_quantity" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="单耗" width="100"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="当前需求" width="120"><template #default="scope"><ElInput v-model="scope.row.total_consumption" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="单位" width="90"><template #default="scope"><ElInput v-model="scope.row.unit" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="备注" min-width="160"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
-            </ElTable>
+            <BomMaterialSectionTables
+              v-if="activeSection.section_type === 'PROFILE' || isHardwareSection || isPlasticSection || isAuxiliarySection || isFabricSection || isPackagingSection || isCuttingSection || activeSection.lines.length"
+              :active-section="activeSection"
+              :is-hardware-section="isHardwareSection"
+              :is-plastic-section="isPlasticSection"
+              :is-auxiliary-section="isAuxiliarySection"
+              :is-fabric-section="isFabricSection"
+              :is-packaging-section="isPackagingSection"
+              :is-cutting-section="isCuttingSection"
+              :can-edit="canEdit"
+              :table-fullscreen="tableFullscreen"
+              :tube-options-loading="tubeOptionsLoading"
+              :editor-reference-options-loading="editorReferenceOptionsLoading"
+              :tube-coating-colors="tubeCoatingColors"
+              :toggle-table-fullscreen="toggleTableFullscreen"
+              :open-line-drawer="openLineDrawer"
+              :remove-line="removeLine"
+              :open-line-image-manager="openLineImageManager"
+              :tube-calculations="tubeCalculations"
+              :format-hardware-color="formatHardwareColor"
+              :auxiliary-line-has-active-product="auxiliaryLineHasActiveProduct"
+              :auxiliary-specification-options="auxiliarySpecificationOptions"
+              :set-auxiliary-specification="setAuxiliarySpecification"
+              :auxiliary-color-options="auxiliaryColorOptions"
+              :set-auxiliary-color="setAuxiliaryColor"
+              :auxiliary-material-options="auxiliaryMaterialOptions"
+              :set-auxiliary-material="setAuxiliaryMaterial"
+              :fabric-specification-options="fabricSpecificationOptions"
+              :set-fabric-specification="setFabricSpecification"
+              :fabric-material-options="fabricMaterialOptions"
+              :set-fabric-material="setFabricMaterial"
+              :fabric-color-snapshot="fabricColorSnapshot"
+              :fabric-color-options="fabricColorOptions"
+              :set-fabric-color="setFabricColor"
+              :fabric-width-options="fabricWidthOptions"
+              :set-fabric-width="setFabricWidth"
+              :cutting-quantities="cuttingQuantities"
+              :legacy-pipe-cutting-values="legacyPipeCuttingValues"
+            />
             <div v-else class="pending-section-fields">
               <strong>{{ activeSection.title }}</strong>
               <span>该固定分区的填写字段待后续完善，本轮不套用其他分区的字段。</span>
@@ -2798,19 +2250,15 @@ onBeforeUnmount(() => {
 
       </div>
 
-      <section class="card quantity-compare-card">
-        <header><h2>数量对比与确认</h2><span>所有数量均按当前颜色产品明细范围计算</span></header>
-        <div class="quantity-compare-grid">
-          <label><span>订单依据数量</span><strong>{{ number(bom.order_quantity) }}</strong></label>
-          <label><span>当前任务数量</span><strong>{{ number(bom.current_order_quantity) }}</strong></label>
-          <label><span>Excel 原表数量</span><strong>{{ number(bom.source_quantity) }}</strong></label>
-          <label class="difference"><span>数量差异</span><strong>{{ number(bom.quantity_difference) }}</strong></label>
-          <label><span>生产批次数量</span><strong>{{ number(bom.batch_quantity) }}</strong></label>
-          <ElInput v-if="quantityMismatch" v-model="quantityReason" maxlength="500" show-word-limit placeholder="填写数量差异确认原因" :disabled="!canVerify" />
-          <div v-else class="quantity-confirmed">数量一致，无需填写差异原因</div>
-          <ElButton v-if="(bom.is_order_quantity_outdated || bom.is_order_product_outdated) && canSync" type="warning" plain :loading="syncingQuantity" @click="requestOrderQuantitySync(false)">同步订单信息</ElButton>
-        </div>
-      </section>
+      <BomQuantityCompareCard
+        :bom="bom"
+        :quantity-mismatch="quantityMismatch"
+        v-model:quantity-reason="quantityReason"
+        :can-verify="canVerify"
+        :syncing-quantity="syncingQuantity"
+        :can-sync="canSync"
+        @sync="requestOrderQuantitySync(false)"
+      />
 
       </div>
       <BomLineEditorDialog
@@ -2819,188 +2267,47 @@ onBeforeUnmount(() => {
         :before-close="beforeLineDrawerClose"
         @closed="resetLineDrawer"
       >
-        <div v-if="editingLineDraft" class="line-drawer-form">
-          <ElAlert
-            v-if="(editingSection?.title === '辅料类' || editingSection?.title === '面料类') && editorReferenceOptionsError"
-            class="reference-options-error drawer-field--wide"
-            type="error"
-            :title="editorReferenceOptionsError"
-            show-icon
-            :closable="false"
-          >
-            <template #default><ElButton size="small" @click="ensureEditorReferenceOptions">重新加载生产维护数据</ElButton></template>
-          </ElAlert>
-          <template v-if="editingSection?.section_type === 'PROFILE'">
-            <label class="drawer-field">
-              <span>形状</span>
-              <PinyinFilterSelect v-model="editingLineDraft.tube_shape" :options="tubeShapes" label-key="shape_name" :loading="tubeOptionsLoading" placeholder="选择形状" aria-label="形状" />
-            </label>
-            <label class="drawer-field">
-              <span>品名</span>
-              <PinyinFilterSelect v-model="editingLineDraft.part_name" :options="tubeProductNames" label-key="product_name" :loading="tubeOptionsLoading" placeholder="选择品名" aria-label="品名" />
-            </label>
-            <label class="drawer-field">
-              <span>材质</span>
-              <PinyinFilterSelect v-model="editingLineDraft.material" :options="tubeMaterials" label-key="material_name" :loading="tubeOptionsLoading" placeholder="选择材质" aria-label="材质" />
-            </label>
-            <label class="drawer-field">
-              <span>规格</span>
-              <ElSelect v-model="editingLineDraft.tube_diameter" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择规格" aria-label="规格">
-                <ElOption v-for="item in tubeDiameters" :key="item.id" :label="item.diameter_value" :value="item.diameter_value" />
-              </ElSelect>
-            </label>
-            <label class="drawer-field">
-              <span>厚度</span>
-              <ElSelect v-model="editingLineDraft.tube_thickness" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择厚度" aria-label="厚度">
-                <ElOption v-for="item in tubeThicknesses" :key="item.id" :label="item.thickness_value" :value="item.thickness_value" />
-              </ElSelect>
-            </label>
-            <label class="drawer-field"><span>切割长度（mm）</span><ElInput v-model="editingLineDraft.length_value" inputmode="numeric" placeholder="正整数毫米" aria-label="切割长度（mm）" /></label>
-            <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field"><span>原材料单位</span><strong class="drawer-readonly-value">根</strong></label>
-            <label class="drawer-field"><span>原材料长度（m）</span><strong class="drawer-readonly-value">{{ editingLineCalculations?.tube_cut_length_m }}</strong></label>
-            <label class="drawer-field"><span>切割支数</span><ElInput v-model="editingLineDraft.tube_cut_piece_count" inputmode="decimal" placeholder="填写" aria-label="切割支数" @blur="normalizeTubeCutPieceCount(editingLineDraft)" /></label>
-            <label class="drawer-field">
-              <span>喷塑颜色</span>
-              <ElSelect v-model="editingLineDraft.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择颜色" aria-label="喷塑颜色">
-                <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
-              </ElSelect>
-            </label>
-            <label class="drawer-field"><span>喷塑单个面积（㎡）</span><ElInput v-model="editingLineDraft.coating_unit_area_sqm" inputmode="decimal" placeholder="填写" aria-label="喷塑单个面积" /></label>
-            <label class="drawer-field drawer-purchase-weight-field"><span>采购单个重量（kg）</span><ElInput v-model="editingLineDraft.purchase_unit_weight_kg" inputmode="decimal" placeholder="填写" aria-label="采购单个重量" /></label>
-            <div class="drawer-field drawer-image-field">
-              <span>图片</span>
-              <div class="drawer-image-field-value">
-                <span>{{ displayLineImages(editingLineDraft).length }} / 20 张</span>
-                <ElButton size="small" plain type="primary" @click="openLineImageManager()">
-                  {{ displayLineImages(editingLineDraft).length ? '管理图片' : '上传图片' }}
-                </ElButton>
-              </div>
-            </div>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="3" maxlength="500" show-word-limit aria-label="备注" /></label>
-
-            <section v-if="editingLineCalculations" class="drawer-calculations">
-              <h3>自动计算</h3>
-              <div class="drawer-calculation-grid">
-                <label><span>总耗</span><strong>{{ editingLineCalculations.total_consumption }}</strong></label>
-                <label><span>原材料长度（m）</span><strong>{{ compactDecimal(editingLineCalculations.tube_cut_length_m) }}</strong></label>
-                <label><span>采购根数</span><strong>{{ editingLineCalculations.branch_count }}</strong></label>
-                <label><span>建议采购米数</span><strong>{{ compactDecimal(editingLineCalculations.suggested_purchase_meters) }}</strong></label>
-                <label><span>长料单重（kg）</span><strong>{{ editingLineCalculations.long_material_unit_weight_kg }}</strong></label>
-                <label><span>单重（kg）</span><strong>{{ editingLineCalculations.tube_unit_weight_kg }}</strong></label>
-                <label><span>长料总重量（kg）</span><strong>{{ editingLineCalculations.long_material_total_weight_kg }}</strong></label>
-              </div>
-            </section>
-          </template>
-
-          <template v-else-if="editingSection?.title === '五金件'">
-            <label class="drawer-field"><span>品名</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
-            <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong></label>
-            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ formatHardwareColor(editingLineDraft.hardware_color) }}</strong></label>
-            <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong></label>
-            <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
-            <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field"><span>单个材料重量（kg）</span><ElInput v-model="editingLineDraft.unit_material_weight_kg" inputmode="decimal" placeholder="填写" aria-label="单个材料重量" /></label>
-            <label class="drawer-field">
-              <span>喷塑颜色</span>
-              <ElSelect v-model="editingLineDraft.powder_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" placeholder="选择颜色" aria-label="喷塑颜色">
-                <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
-              </ElSelect>
-            </label>
-            <label class="drawer-field"><span>喷塑单个面积（㎡）</span><ElInput v-model="editingLineDraft.powder_coating_unit_area_sqm" inputmode="decimal" placeholder="填写" aria-label="喷塑单个面积" /></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-
-          <template v-else-if="editingSection?.title === '塑料件类'">
-            <label class="drawer-field"><span>品名</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
-            <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong></label>
-            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ formatHardwareColor(editingLineDraft.plastic_color) }}</strong></label>
-            <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong></label>
-            <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
-            <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-
-          <template v-else-if="editingSection?.title === '辅料类'">
-            <label class="drawer-field"><span>品名</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
-            <label v-if="auxiliaryLineHasActiveProduct(editingLineDraft)" class="drawer-field">
-              <span>*规格</span>
-              <ElSelect v-model="editingLineDraft.source_accessory_specification_id" filterable placeholder="选择规格" aria-label="辅料规格" @change="setAuxiliarySpecification(editingLineDraft, $event)"><ElOption v-for="item in auxiliarySpecificationOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-            </label>
-            <label v-else class="drawer-field"><span>*规格</span><strong class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong></label>
-            <label v-if="auxiliaryLineHasActiveProduct(editingLineDraft)" class="drawer-field">
-              <span>*颜色</span>
-              <ElSelect v-model="editingLineDraft.source_accessory_color_id" filterable placeholder="选择颜色" aria-label="辅料颜色" @change="setAuxiliaryColor(editingLineDraft, $event)"><ElOption v-for="item in auxiliaryColorOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-            </label>
-            <label v-else class="drawer-field"><span>*颜色</span><strong class="drawer-readonly-value">{{ editingLineDraft.accessory_color || '—' }}</strong></label>
-            <label v-if="auxiliaryLineHasActiveProduct(editingLineDraft)" class="drawer-field">
-              <span>*材质</span>
-              <ElSelect v-model="editingLineDraft.source_accessory_material_id" filterable placeholder="选择材质" aria-label="辅料材质" @change="setAuxiliaryMaterial(editingLineDraft, $event)"><ElOption v-for="item in auxiliaryMaterialOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect>
-            </label>
-            <label v-else class="drawer-field"><span>*材质</span><strong class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong></label>
-            <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '待维护' }}</strong></label>
-            <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-
-          <template v-else-if="editingSection?.title === '面料类'">
-            <label class="drawer-field"><span>规格</span><ElSelect v-model="editingLineDraft.source_fabric_specification_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.specification || '选择规格'" aria-label="面料规格" @change="setFabricSpecification(editingLineDraft, $event)"><ElOption v-for="item in fabricSpecificationOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
-            <label class="drawer-field"><span>材质</span><ElSelect v-model="editingLineDraft.source_fabric_material_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.material || '选择材质'" aria-label="面料材质" @change="setFabricMaterial(editingLineDraft, $event)"><ElOption v-for="item in fabricMaterialOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
-            <label class="drawer-field drawer-field--wide"><span>色卡</span><ElSelect v-model="editingLineDraft.source_product_color_id" filterable clearable :value-on-clear="null" :placeholder="fabricColorSnapshot(editingLineDraft) || '选择色卡 / 颜色 / 色号'" aria-label="面料色卡颜色色号" @change="setFabricColor(editingLineDraft, $event)"><ElOption v-for="item in fabricColorOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
-            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ editingLineDraft.fabric_color_name || '—' }}</strong></label>
-            <label class="drawer-field"><span>色号</span><strong class="drawer-readonly-value">{{ editingLineDraft.fabric_color_code || '—' }}</strong></label>
-            <label class="drawer-field"><span>门幅</span><ElSelect v-model="editingLineDraft.source_fabric_width_id" filterable clearable :value-on-clear="null" :placeholder="editingLineDraft.fabric_width || '选择门幅'" aria-label="面料门幅" @change="setFabricWidth(editingLineDraft, $event)"><ElOption v-for="item in fabricWidthOptions(editingLineDraft)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></label>
-            <label class="drawer-field"><span>单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-            <label class="drawer-field"><span>裁片</span><ElInput v-model="editingLineDraft.part_name" maxlength="300" placeholder="填写裁片" aria-label="裁片" /></label>
-            <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">米</strong></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-
-          <template v-else-if="editingSection?.title === '包材类'">
-            <label class="drawer-field"><span>品号</span><strong class="drawer-readonly-value">{{ editingLineDraft.packaging_material_number || editingLineDraft.raw_material || '—' }}</strong></label>
-            <label class="drawer-field"><span>品名</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
-            <label class="drawer-field"><span>材质</span><strong class="drawer-readonly-value">{{ editingLineDraft.material || '—' }}</strong></label>
-            <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ formatHardwareColor(editingLineDraft.packaging_color) }}</strong></label>
-            <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ editingLineDraft.specification || '—' }}</strong></label>
-            <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
-            <label class="drawer-field"><span>*箱数（多少一箱）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="numeric" placeholder="填写正整数" aria-label="箱数（多少一箱）" /></label>
-            <label class="drawer-field"><span>*单个用量</span><ElInput v-model="editingLineDraft.unit_consumption" inputmode="decimal" placeholder="填写" aria-label="单个用量" /></label>
-          </template>
-
-          <template v-else-if="editingSection?.title === '裁剪明细'">
-            <label class="drawer-field drawer-field--wide"><span>来源面料</span><strong v-if="isPipeCuttingLine(editingLineDraft)" class="drawer-readonly-value">管材半成品 · 不关联面料</strong><template v-else><ElSelect v-model="editingFabricSourceKey" filterable placeholder="选择本 BOM 的面料" aria-label="来源面料" no-data-text="请先在面料分类添加并选择面料"><ElOption v-for="line in fabricSourceLines" :key="line.id || line.client_key" :label="`${line.part_name || '面料'} · ${line.fabric_color_name || line.material} · ${line.specification}`" :value="(line.id || line.client_key)!" /></ElSelect><small>材质和颜色自动使用来源面料，保存 BOM 时一并保存关联。</small></template></label>
-            <label class="drawer-field"><span>裁片量（片/套）</span><template v-if="legacyPipeCuttingValues(editingLineDraft)"><strong class="drawer-readonly-value cutting-legacy-value">{{ legacyPipeCuttingValues(editingLineDraft)?.pieces }}</strong></template><ElInput v-else v-model="editingLineDraft.cutting_pieces_per_set" inputmode="numeric" placeholder="每套有多少片" aria-label="裁片量（片/套）" /></label>
-            <label class="drawer-field"><span>每成品套数（套/成品）</span><template v-if="legacyPipeCuttingValues(editingLineDraft)"><strong class="drawer-readonly-value cutting-legacy-value">{{ legacyPipeCuttingValues(editingLineDraft)?.sets }}</strong></template><ElInput v-else v-model="editingLineDraft.cutting_sets_per_product" inputmode="numeric" placeholder="每个成品需要多少套" aria-label="每成品套数（套/成品）" /></label>
-            <ElAlert v-if="editingCuttingCalculation?.error" data-testid="cutting-calculation-error" class="drawer-field--wide" type="warning" :closable="false" show-icon :title="editingCuttingCalculation.error" />
-            <div class="cutting-order-calculations drawer-field--wide">
-              <label class="drawer-field"><span>订单裁剪套数</span><strong data-testid="cutting-order-sets">{{ editingCuttingCalculation?.orderSets ? `${editingCuttingCalculation.orderSets} 套` : '待补充' }}</strong><small>BOM 订单 {{ number(bom?.order_quantity) }} × 每成品套数</small></label>
-              <label class="drawer-field"><span>订单裁剪片数</span><strong data-testid="cutting-order-pieces">{{ editingCuttingCalculation?.orderPieces ? `${editingCuttingCalculation.orderPieces} 片` : '待补充' }}</strong><small>订单套数 × 裁片量</small></label>
-            </div>
-            <label class="drawer-field"><span>裁剪名称</span><strong class="drawer-readonly-value">{{ editingLineDraft.part_name || '—' }}</strong></label>
-            <label class="drawer-field"><span>*规格</span><ElInput v-model="editingLineDraft.specification" maxlength="500" placeholder="填写实际尺寸或明确型号" aria-label="规格" aria-required="true" /><small>规格必填，不能用“/”等占位符；原资料未填写时请在这里补齐。</small></label>
-            <label class="drawer-field"><span>流转单位</span><ElInput v-if="editingCuttingCalculation?.mode === 'legacy'" v-model="editingLineDraft.unit" maxlength="50" placeholder="填写单位" aria-label="单位" /><strong v-else class="drawer-readonly-value">套</strong></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="3" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-
-          <template v-else>
-            <label class="drawer-field"><span>材质</span><ElInput v-model="editingLineDraft.material" aria-label="材质" /></label>
-            <label class="drawer-field"><span>配件 / 裁片名称</span><ElInput v-model="editingLineDraft.part_name" aria-label="配件或裁片名称" /></label>
-            <label v-if="editingSection?.section_type !== 'FABRIC'" class="drawer-field"><span>规格 / 厚度</span><ElInput v-model="editingLineDraft.specification" aria-label="规格或厚度" /></label>
-            <label v-if="editingSection?.section_type === 'FABRIC'" class="drawer-field"><span>原材料</span><ElInput v-model="editingLineDraft.raw_material" aria-label="原材料" /></label>
-            <label v-if="editingSection?.section_type === 'FABRIC'" class="drawer-field"><span>裁片量</span><ElInput v-model="editingLineDraft.cut_piece_quantity" aria-label="裁片量" /></label>
-            <label class="drawer-field"><span>单耗</span><ElInput v-model="editingLineDraft.unit_consumption" aria-label="单耗" /></label>
-            <label class="drawer-field"><span>当前需求</span><ElInput v-model="editingLineDraft.total_consumption" aria-label="当前需求" /></label>
-            <label class="drawer-field"><span>单位</span><ElInput v-model="editingLineDraft.unit" aria-label="单位" /></label>
-            <label class="drawer-field drawer-field--wide"><span>备注</span><ElInput v-model="editingLineDraft.notes" type="textarea" :rows="4" maxlength="500" show-word-limit aria-label="备注" /></label>
-          </template>
-          <section v-if="editingSection?.section_type !== 'PROFILE'" class="drawer-image-action drawer-field--wide">
-            <div><strong>用料图片</strong><span>{{ displayLineImages(editingLineDraft).length }} / 20</span></div>
-            <ElButton size="small" plain type="primary" @click="openLineImageManager()">
-              {{ displayLineImages(editingLineDraft).length ? '管理图片' : '上传图片' }}
-            </ElButton>
-          </section>
-        </div>
-        <template #footer>
+        <BomLineEditorForm
+          v-model:editing-fabric-source-key="editingFabricSourceKey"
+          :editing-section="editingSection"
+          :editing-line-draft="editingLineDraft"
+          :editor-reference-options-error="editorReferenceOptionsError"
+          :ensure-editor-reference-options="ensureEditorReferenceOptions"
+          :tube-shapes="tubeShapes"
+          :tube-product-names="tubeProductNames"
+          :tube-materials="tubeMaterials"
+          :tube-diameters="tubeDiameters"
+          :tube-thicknesses="tubeThicknesses"
+          :tube-coating-colors="tubeCoatingColors"
+          :tube-options-loading="tubeOptionsLoading"
+          :editing-line-calculations="editingLineCalculations"
+          :normalize-tube-cut-piece-count="normalizeTubeCutPieceCount"
+          :display-line-images="displayLineImages"
+          :open-line-image-manager="openLineImageManager"
+          :format-hardware-color="formatHardwareColor"
+          :auxiliary-line-has-active-product="auxiliaryLineHasActiveProduct"
+          :auxiliary-specification-options="auxiliarySpecificationOptions"
+          :set-auxiliary-specification="setAuxiliarySpecification"
+          :auxiliary-color-options="auxiliaryColorOptions"
+          :set-auxiliary-color="setAuxiliaryColor"
+          :auxiliary-material-options="auxiliaryMaterialOptions"
+          :set-auxiliary-material="setAuxiliaryMaterial"
+          :fabric-specification-options="fabricSpecificationOptions"
+          :set-fabric-specification="setFabricSpecification"
+          :fabric-color-snapshot="fabricColorSnapshot"
+          :fabric-color-options="fabricColorOptions"
+          :set-fabric-color="setFabricColor"
+          :fabric-material-options="fabricMaterialOptions"
+          :set-fabric-material="setFabricMaterial"
+          :fabric-width-options="fabricWidthOptions"
+          :set-fabric-width="setFabricWidth"
+          :is-pipe-cutting-line="isPipeCuttingLine"
+          :fabric-source-lines="fabricSourceLines"
+          :legacy-pipe-cutting-values="legacyPipeCuttingValues"
+          :editing-cutting-calculation="editingCuttingCalculation"
+          :bom="bom"
+          :number="number"
+        />        <template #footer>
           <div class="line-drawer-footer">
             <ElButton :disabled="Boolean(uploadingCuttingImagesLineId || deletingCuttingImageId || cleaningCuttingDraftImages)" @click="cancelLineDrawer">取消</ElButton>
             <ElButton :loading="calculatingLine" :disabled="saving || Boolean(uploadingCuttingImagesLineId || deletingCuttingImageId || cleaningCuttingDraftImages)" @click="applyLineDrawer">应用修改</ElButton>
@@ -3009,371 +2316,181 @@ onBeforeUnmount(() => {
         </template>
       </BomLineEditorDialog>
 
-      <AppWindowDialog
+      <BomLineImageManager
         v-model="imageManagerVisible"
-        class="line-image-manager-dialog"
-        title="用料图片"
-        width="860px"
-        append-to-body
-        destroy-on-close
+        :line="editingLineDraft"
+        :section-title="editingSection?.title || ''"
+        :line-index="editingLineIndex"
+        :can-edit="canEdit"
+        :busy="imageManagerIsBusy()"
+        :uploading="Boolean(uploadingCuttingImagesLineId)"
+        :deleting-image-id="deletingCuttingImageId"
         :z-index="imageManagerZIndex"
-        :close-on-click-modal="false"
         :before-close="beforeImageManagerClose"
+        @upload="uploadLineImages"
+        @remove="removeLineImage"
+        @open-file-picker="openImageFilePicker"
+        @close="closeImageManager"
         @closed="resetImageManager"
-      >
-        <div v-if="editingLineDraft" class="line-image-manager">
-          <header class="line-image-manager-toolbar">
-            <div>
-              <strong>{{ editingSection?.title }} · 第 {{ editingLineIndex + 1 }} 行</strong>
-              <span>{{ editingLineDraft.part_name || '未填写品名' }} · {{ displayLineImages(editingLineDraft).length }} / 20 张</span>
-            </div>
-            <ElButton
-              size="small"
-              plain
-              type="primary"
-              :loading="Boolean(uploadingCuttingImagesLineId)"
-              :disabled="imageManagerIsBusy() || displayLineImages(editingLineDraft).length >= 20"
-              @click="openImageFilePicker"
-            >
-              {{ uploadingCuttingImagesLineId ? '上传中…' : '上传图片' }}
-            </ElButton>
-            <input
-              ref="imageFileInput"
-              class="line-image-file-input"
-              type="file"
-              multiple
-              accept=".jpg,.jpeg,.png,.gif,.webp,image/jpeg,image/png,image/gif,image/webp"
-              aria-label="上传用料图片"
-              :disabled="imageManagerIsBusy() || displayLineImages(editingLineDraft).length >= 20"
-              @change="uploadLineImages"
-            >
-          </header>
-          <div v-if="displayLineImages(editingLineDraft).length" class="cutting-image-grid">
-            <article v-for="image in sortedLineImages(editingLineDraft)" :key="image.id">
-              <ElImage :src="bomLineImageUrl(image.content_url)" :preview-src-list="sortedLineImages(editingLineDraft).map((item) => bomLineImageUrl(item.content_url))" preview-teleported fit="cover" />
-              <div><strong :title="image.name">{{ image.name }}</strong><span>{{ fileSizeText(image.size_bytes) }}</span></div>
-              <ElButton type="danger" link :loading="deletingCuttingImageId === image.id" :disabled="imageManagerIsBusy()" @click="removeLineImage(image)">删除</ElButton>
-            </article>
-          </div>
-          <ElEmpty v-else :image-size="64" description="暂无用料图片，点击右上角按钮上传" />
-        </div>
-        <template #footer>
-          <ElButton type="primary" :disabled="imageManagerIsBusy()" @click="closeImageManager">完成</ElButton>
-        </template>
-      </AppWindowDialog>
-
-      <AppWindowDialog
-        v-model="hardwarePickerVisible"
-        class="hardware-picker-dialog"
-        title="选择五金数据"
-        width="1180px"
-        append-to-body
-        destroy-on-close
-        :close-on-click-modal="false"
-        @closed="resetHardwarePicker"
-      >
-        <div class="hardware-picker-source">
-          <strong>数据来源：原料信息 / 材料 / 五金</strong>
-          <span>只显示“五金”类别，支持跨页多选；确认后写入当前 BOM，不会修改原料主数据。</span>
-        </div>
-        <div class="hardware-picker-toolbar hardware-picker-toolbar--hardware">
-          <ElSelect
-            v-model="hardwarePickerMaterialName"
-            clearable
-            filterable
-            :value-on-clear="''"
-            :loading="hardwareGroupLoading"
-            placeholder="全部品名分组"
-            aria-label="五金品名分组"
-            :filter-method="filterHardwareGroups"
-            @change="searchHardwareCandidates"
-            @visible-change="clearHardwareGroupFilter"
-          >
-            <ElOption
-              v-for="group in visibleHardwareGroups"
-              :key="group.material_name"
-              :label="`${group.material_name}（${group.count}）`"
-              :value="group.material_name"
-            />
-          </ElSelect>
-          <ElInput v-model="hardwarePickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchHardwareCandidates" @clear="searchHardwareCandidates" />
-          <ElButton type="primary" @click="searchHardwareCandidates">查询</ElButton>
-          <ElTooltip
-            :disabled="canCreateHardwareRawMaterial"
-            content="需要“查看原料信息”和“新增原料信息”权限"
-            placement="top"
-          >
-            <span class="hardware-create-button-wrap">
-              <ElButton
-                data-testid="hardware-create-raw-material"
-                :icon="Plus"
-                :disabled="!canCreateHardwareRawMaterial"
-                @click="openHardwareCreate"
-              >
-                新增五金原料
-              </ElButton>
-            </span>
-          </ElTooltip>
-        </div>
-        <ElAlert v-if="hardwareGroupError" class="hardware-picker-error" type="warning" :title="hardwareGroupError" show-icon :closable="false">
-          <template #default><ElButton size="small" @click="loadHardwareGroups">重新加载品名分组</ElButton></template>
-        </ElAlert>
-        <ElAlert v-if="hardwarePickerError" class="hardware-picker-error" type="error" :title="hardwarePickerError" show-icon :closable="false">
-          <template #default><ElButton size="small" @click="loadHardwareCandidates">重新加载</ElButton></template>
-        </ElAlert>
-        <ElTable
-          v-loading="hardwarePickerLoading"
-          class="hardware-picker-table"
-          :data="hardwareCandidates"
-          row-key="id"
-          border
-          max-height="460"
-          empty-text="暂无符合条件的五金数据"
-          :row-class-name="hardwarePickerRowClass"
-          @row-click="toggleHardwareRow"
-        >
-          <ElTableColumn width="52" align="center" header-align="center">
-            <template #header>
-              <ElCheckbox :model-value="hardwarePageAllSelected" :indeterminate="hardwarePageSelectionIndeterminate" aria-label="全选当前页五金数据" @change="toggleHardwarePage" />
-            </template>
-            <template #default="scope">
-              <ElCheckbox :model-value="Boolean(selectedHardware[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="toggleHardwareCandidate(scope.row, $event)" />
-            </template>
-          </ElTableColumn>
-          <ElTableColumn prop="material_name" label="品名" min-width="165" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
-          <ElTableColumn prop="material" label="材质" width="100" show-overflow-tooltip />
-          <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
-          <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />
-          <ElTableColumn prop="unit_name" label="单位" width="76" />
-          <ElTableColumn label="单个材料重量（kg）" width="160"><template #default="scope">{{ compactDecimal(scope.row.weight_kg, '待填写') }}</template></ElTableColumn>
-          <ElTableColumn label="流转单位" width="90"><template #default="scope">{{ scope.row.flow_unit || '—' }}</template></ElTableColumn>
-        </ElTable>
-        <div class="hardware-picker-pagination">
-          <span>已选择 {{ selectedHardwareCount }} 条</span>
-          <ElPagination :current-page="hardwarePickerPage" :page-size="hardwarePickerPageSize" :total="hardwarePickerTotal" layout="total, prev, pager, next" @current-change="changeHardwarePage" />
-        </div>
-        <template #footer>
-          <div class="hardware-picker-footer">
-            <span>确认后可在五金件表格中填写用量、单重和喷塑信息。</span>
-            <div>
-              <ElButton @click="hardwarePickerVisible = false">取消</ElButton>
-              <ElButton type="primary" :disabled="!selectedHardwareCount" @click="confirmHardwareSelection">确认添加（{{ selectedHardwareCount }}）</ElButton>
-            </div>
-          </div>
-        </template>
-      </AppWindowDialog>
-
-      <HardwareRawMaterialCreateDialog
-        v-model="hardwareCreateVisible"
-        category-name="五金"
-        title="新增五金原料"
-        subject-label="五金原料"
-        :stage-material="(payload, display) => stageRawMaterial('hardware', payload, display)"
       />
 
-      <AppWindowDialog
-        v-model="plasticPickerVisible"
-        class="hardware-picker-dialog"
-        title="选择塑料件数据"
-        width="1180px"
-        append-to-body
-        destroy-on-close
-        :close-on-click-modal="false"
-        @closed="resetPlasticPicker"
-      >
-        <div class="hardware-picker-source">
-          <strong>数据来源：原料信息 / 材料 / 塑料件</strong>
-          <span>支持搜索、分页和跨页多选；确认后只在当前 BOM 中填写用量和备注。</span>
-        </div>
-        <div class="hardware-picker-toolbar hardware-picker-toolbar--grouped">
-          <ElSelect v-model="plasticPickerMaterialName" clearable filterable :value-on-clear="''" :loading="plasticGroupLoading" placeholder="全部品名分组" aria-label="塑料件品名分组" :filter-method="filterPlasticGroups" @change="searchPlasticCandidates" @visible-change="clearPlasticGroupFilter">
-            <ElOption v-for="group in visiblePlasticGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
-          </ElSelect>
-          <ElInput v-model="plasticPickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchPlasticCandidates" @clear="searchPlasticCandidates" />
-          <ElButton type="primary" @click="searchPlasticCandidates">查询</ElButton>
-          <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('plastic')">新增原料</ElButton>
-        </div>
-        <ElAlert v-if="plasticGroupError" class="hardware-picker-error" type="warning" :title="plasticGroupError" show-icon :closable="false">
-          <template #default><ElButton size="small" @click="loadPlasticGroups">重新加载品名分组</ElButton></template>
-        </ElAlert>
-        <ElAlert v-if="plasticPickerError" class="hardware-picker-error" type="error" :title="plasticPickerError" show-icon :closable="false">
-          <template #default><ElButton size="small" @click="loadPlasticCandidates">重新加载</ElButton></template>
-        </ElAlert>
-        <ElTable v-loading="plasticPickerLoading" class="plastic-picker-table picker-selectable-table" :data="plasticCandidates" row-key="id" border max-height="460" empty-text="暂无符合条件的塑料件数据" :row-class-name="plasticPickerRowClass" @row-click="togglePlasticRow">
-          <ElTableColumn width="52" align="center" header-align="center">
-            <template #header><ElCheckbox :model-value="plasticPageAllSelected" :indeterminate="plasticPageSelectionIndeterminate" aria-label="全选当前页塑料件数据" @change="togglePlasticPage" /></template>
-            <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPlastic[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePlasticCandidate(scope.row, $event)" /></template>
-          </ElTableColumn>
-          <ElTableColumn prop="material_name" label="品名" min-width="190" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
-          <ElTableColumn prop="material" label="材质" width="120" show-overflow-tooltip />
-          <ElTableColumn label="颜色" min-width="145" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
-          <ElTableColumn prop="specification" label="规格" min-width="170" show-overflow-tooltip />
-          <ElTableColumn prop="unit_name" label="单位" width="90" />
-        </ElTable>
-        <div class="hardware-picker-pagination">
-          <span>已选择 {{ selectedPlasticCount }} 条</span>
-          <ElPagination :current-page="plasticPickerPage" :page-size="plasticPickerPageSize" :total="plasticPickerTotal" layout="total, prev, pager, next" @current-change="changePlasticPage" />
-        </div>
-        <template #footer>
-          <div class="hardware-picker-footer">
-            <span>确认后保留主数据快照，表格中只需填写单个用量和备注。</span>
-            <div><ElButton @click="plasticPickerVisible = false">取消</ElButton><ElButton type="primary" :disabled="!selectedPlasticCount" @click="confirmPlasticSelection">确认添加（{{ selectedPlasticCount }}）</ElButton></div>
-          </div>
-        </template>
-      </AppWindowDialog>
-
-      <AppWindowDialog
-        v-model="auxiliaryPickerVisible"
-        class="hardware-picker-dialog"
-        title="选择辅料品名"
-        width="1180px"
-        append-to-body
-        destroy-on-close
-        :close-on-click-modal="false"
-        @closed="resetAuxiliaryPicker"
-      >
-        <div class="hardware-picker-source">
-          <strong>数据来源：系统设置 / 生产维护 / 辅料维护</strong>
-          <span>同一品名后续可以再次添加，以填写不同的规格、颜色或材质组合。</span>
-        </div>
-        <div class="hardware-picker-toolbar hardware-picker-toolbar--grouped">
-          <PinyinFilterSelect v-model="auxiliaryPickerProductName" :options="editorReferenceOptions?.auxiliary_products || []" label-key="product_name" :loading="editorReferenceOptionsLoading" placeholder="全部品名分组" aria-label="辅料品名分组" @update:model-value="searchAuxiliaryCandidates" />
-          <ElInput v-model="auxiliaryPickerKeyword" clearable maxlength="100" placeholder="搜索辅料品名、规格或颜色" @keyup.enter="searchAuxiliaryCandidates" @clear="searchAuxiliaryCandidates" />
-          <ElButton type="primary" @click="searchAuxiliaryCandidates">查询</ElButton>
-          <ElButton :icon="Plus" @click="openAuxiliaryCreate">新增辅料资料</ElButton>
-        </div>
-        <ElAlert v-if="editorReferenceOptionsError" class="hardware-picker-error" type="error" :title="editorReferenceOptionsError" show-icon :closable="false">
-          <template #default><ElButton size="small" @click="ensureEditorReferenceOptions">重新加载</ElButton></template>
-        </ElAlert>
-        <ElTable v-loading="editorReferenceOptionsLoading" class="auxiliary-picker-table picker-selectable-table" :data="auxiliaryCandidates" row-key="id" border max-height="460" empty-text="暂无符合条件的辅料品名" :row-class-name="auxiliaryPickerRowClass" @row-click="toggleAuxiliaryRow">
-          <ElTableColumn width="52" align="center" header-align="center">
-            <template #header><ElCheckbox :model-value="auxiliaryPageAllSelected" :indeterminate="auxiliaryPageSelectionIndeterminate" aria-label="全选当前页可选辅料" @change="toggleAuxiliaryPage" /></template>
-            <template #default="scope"><ElTooltip :disabled="auxiliaryProductMaintenanceTip(scope.row) === '可选择'" :content="auxiliaryProductMaintenanceTip(scope.row)" placement="right"><span><ElCheckbox :model-value="Boolean(selectedAuxiliaryProducts[scope.row.id])" :disabled="!auxiliaryProductIsSelectable(scope.row)" :aria-label="`选择 ${scope.row.product_name}`" @click.stop @change="toggleAuxiliaryCandidate(scope.row, $event)" /></span></ElTooltip></template>
-          </ElTableColumn>
-          <ElTableColumn prop="product_name" label="品名" min-width="180" show-overflow-tooltip />
-          <ElTableColumn label="归属规格" min-width="230" show-overflow-tooltip><template #default="scope">{{ auxiliarySpecificationSummary(scope.row) }}</template></ElTableColumn>
-          <ElTableColumn label="归属颜色" min-width="230" show-overflow-tooltip><template #default="scope">{{ auxiliaryColorSummary(scope.row) }}</template></ElTableColumn>
-          <ElTableColumn label="单位" width="90"><template #default="scope">{{ scope.row.unit_name || '待维护' }}</template></ElTableColumn>
-          <ElTableColumn label="状态" width="150" align="center"><template #default="scope"><span class="picker-status-tag" :class="auxiliaryProductMaintenanceTip(scope.row) === '可选择' ? 'is-success' : 'is-warning'">{{ auxiliaryProductMaintenanceTip(scope.row) }}</span></template></ElTableColumn>
-        </ElTable>
-        <div class="hardware-picker-pagination">
-          <span>已选择 {{ selectedAuxiliaryProductCount }} 条</span>
-          <ElPagination :current-page="auxiliaryPickerPage" :page-size="auxiliaryPickerPageSize" :total="auxiliaryPickerTotal" layout="total, prev, pager, next" @current-change="changeAuxiliaryPage" />
-        </div>
-        <template #footer>
-          <div class="hardware-picker-footer">
-            <span>缺少归属规格或颜色时不能选择；缺少单位时可添加，但需到“辅料维护”补全。</span>
-            <div><ElButton @click="auxiliaryPickerVisible = false">取消</ElButton><ElButton type="primary" :disabled="!selectedAuxiliaryProductCount" @click="confirmAuxiliarySelection">确认添加（{{ selectedAuxiliaryProductCount }}）</ElButton></div>
-          </div>
-        </template>
-      </AppWindowDialog>
-
-      <AppWindowDialog
-        v-model="packagingPickerVisible"
-        class="hardware-picker-dialog"
-        title="选择包材数据"
-        width="1180px"
-        append-to-body
-        destroy-on-close
-        :close-on-click-modal="false"
-        @closed="resetPackagingPicker"
-      >
-        <div class="hardware-picker-source">
-          <strong>数据来源：原料信息 / 材料 / 包材</strong>
-          <span>支持品名分组、关键词、分页和跨页多选；确认后填写箱数与单个用量。</span>
-        </div>
-        <div class="hardware-picker-toolbar hardware-picker-toolbar--grouped">
-          <ElSelect v-model="packagingPickerMaterialName" clearable filterable :value-on-clear="''" :loading="packagingGroupLoading" placeholder="全部品名分组" aria-label="包材品名分组" :filter-method="filterPackagingGroups" @change="searchPackagingCandidates" @visible-change="clearPackagingGroupFilter">
-            <ElOption v-for="group in visiblePackagingGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
-          </ElSelect>
-          <ElInput v-model="packagingPickerKeyword" clearable maxlength="100" placeholder="搜索品名、材质、颜色或规格" @keyup.enter="searchPackagingCandidates" @clear="searchPackagingCandidates" />
-          <ElButton type="primary" @click="searchPackagingCandidates">查询</ElButton>
-          <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('packaging')">新增原料</ElButton>
-        </div>
-        <ElAlert v-if="packagingGroupError" class="hardware-picker-error" type="warning" :title="packagingGroupError" show-icon :closable="false"><template #default><ElButton size="small" @click="loadPackagingGroups">重新加载品名分组</ElButton></template></ElAlert>
-        <ElAlert v-if="packagingPickerError" class="hardware-picker-error" type="error" :title="packagingPickerError" show-icon :closable="false"><template #default><ElButton size="small" @click="loadPackagingCandidates">重新加载</ElButton></template></ElAlert>
-        <ElTable v-loading="packagingPickerLoading" class="packaging-picker-table picker-selectable-table" :data="packagingCandidates" row-key="id" border max-height="460" empty-text="暂无符合条件的包材数据" :row-class-name="packagingPickerRowClass" @row-click="togglePackagingRow">
-          <ElTableColumn width="52" align="center" header-align="center">
-            <template #header><ElCheckbox :model-value="packagingPageAllSelected" :indeterminate="packagingPageSelectionIndeterminate" aria-label="全选当前页包材数据" @change="togglePackagingPage" /></template>
-            <template #default="scope"><ElCheckbox :model-value="Boolean(selectedPackaging[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="togglePackagingCandidate(scope.row, $event)" /></template>
-          </ElTableColumn>
-          <ElTableColumn prop="material_name" label="品名" min-width="180" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
-          <ElTableColumn prop="material" label="材质" width="115" show-overflow-tooltip />
-          <ElTableColumn label="颜色" min-width="135" show-overflow-tooltip><template #default="scope">{{ formatHardwareColor(scope.row.color_name) }}</template></ElTableColumn>
-          <ElTableColumn prop="specification" label="规格" min-width="170" show-overflow-tooltip />
-          <ElTableColumn prop="unit_name" label="单位" width="86" />
-        </ElTable>
-        <div class="hardware-picker-pagination"><span>已选择 {{ selectedPackagingCount }} 条</span><ElPagination :current-page="packagingPickerPage" :page-size="packagingPickerPageSize" :total="packagingPickerTotal" layout="total, prev, pager, next" @current-change="changePackagingPage" /></div>
-        <template #footer><div class="hardware-picker-footer"><span>每箱装数不会从规格数字自动推断，需在 BOM 中人工填写。</span><div><ElButton @click="packagingPickerVisible = false">取消</ElButton><ElButton type="primary" :disabled="!selectedPackagingCount" @click="confirmPackagingSelection">确认添加（{{ selectedPackagingCount }}）</ElButton></div></div></template>
-      </AppWindowDialog>
-
-      <AppWindowDialog
-        v-model="cuttingPickerVisible"
-        class="hardware-picker-dialog"
-        title="选择裁剪数据"
-        width="1180px"
-        append-to-body
-        destroy-on-close
-        :close-on-click-modal="false"
-        @closed="resetCuttingPicker"
-      >
-        <div class="hardware-picker-source">
-          <strong>数据来源：原料信息 / 半成品</strong>
-          <span>找不到现有裁片时可直接“新增裁片”；确认添加后须补齐规格和裁片用量。</span>
-        </div>
-        <div class="hardware-picker-toolbar hardware-picker-toolbar--grouped">
-          <ElSelect v-model="cuttingPickerMaterialName" clearable filterable :value-on-clear="''" :loading="cuttingGroupLoading" placeholder="全部品名分组" aria-label="裁剪品名分组" :filter-method="filterCuttingGroups" @change="searchCuttingCandidates" @visible-change="clearCuttingGroupFilter">
-            <ElOption v-for="group in visibleCuttingGroups" :key="group.material_name" :label="`${group.material_name}（${group.count}）`" :value="group.material_name" />
-          </ElSelect>
-          <ElInput v-model="cuttingPickerKeyword" clearable maxlength="100" placeholder="搜索品名或规格" @keyup.enter="searchCuttingCandidates" @clear="searchCuttingCandidates" />
-          <ElButton type="primary" @click="searchCuttingCandidates">查询</ElButton>
-          <ElButton :icon="Plus" :disabled="!canCreateRawMaterial" @click="openRawMaterialCreate('cutting')">新增裁片</ElButton>
-        </div>
-        <ElAlert v-if="cuttingGroupError" class="hardware-picker-error" type="warning" :title="cuttingGroupError" show-icon :closable="false"><template #default><ElButton size="small" @click="loadCuttingGroups">重新加载品名分组</ElButton></template></ElAlert>
-        <ElAlert v-if="cuttingPickerError" class="hardware-picker-error" type="error" :title="cuttingPickerError" show-icon :closable="false"><template #default><ElButton size="small" @click="loadCuttingCandidates">重新加载</ElButton></template></ElAlert>
-        <ElTable v-loading="cuttingPickerLoading" class="cutting-picker-table picker-selectable-table" :data="cuttingCandidates" row-key="id" border max-height="460" empty-text="暂无符合条件的裁剪数据" :row-class-name="cuttingPickerRowClass" @row-click="toggleCuttingRow">
-          <ElTableColumn width="52" align="center" header-align="center">
-            <template #header><ElCheckbox :model-value="cuttingPageAllSelected" :indeterminate="cuttingPageSelectionIndeterminate" aria-label="全选当前页裁剪数据" @change="toggleCuttingPage" /></template>
-            <template #default="scope"><ElCheckbox :model-value="Boolean(selectedCutting[scope.row.id])" :aria-label="`选择 ${scope.row.material_name}`" @click.stop @change="toggleCuttingCandidate(scope.row, $event)" /></template>
-          </ElTableColumn>
-          <ElTableColumn prop="material_name" label="裁剪名称" min-width="175" show-overflow-tooltip><template #default="scope"><span v-if="pendingRawMaterials[scope.row.id]" class="pending-material-label">暂存</span>{{ scope.row.material_name }}</template></ElTableColumn>
-          <ElTableColumn prop="category_name" label="类别" width="120" show-overflow-tooltip />
-          <ElTableColumn prop="specification" label="规格" min-width="150" show-overflow-tooltip />
-          <ElTableColumn prop="unit_name" label="单位" width="80" />
-        </ElTable>
-        <div class="hardware-picker-pagination"><span>已选择 {{ selectedCuttingCount }} 条</span><ElPagination :current-page="cuttingPickerPage" :page-size="cuttingPickerPageSize" :total="cuttingPickerTotal" layout="total, prev, pager, next" @current-change="changeCuttingPage" /></div>
-        <template #footer><div class="hardware-picker-footer"><span>确认添加后即可打开行编辑抽屉批量上传图片，无需先保存 BOM。</span><div><ElButton @click="cuttingPickerVisible = false">取消</ElButton><ElButton type="primary" :disabled="!selectedCuttingCount" @click="confirmCuttingSelection">确认添加（{{ selectedCuttingCount }}）</ElButton></div></div></template>
-      </AppWindowDialog>
-
-      <HardwareRawMaterialCreateDialog
-        v-model="plasticCreateVisible"
-        category-name="塑料件"
-        title="新增塑料件原料"
-        subject-label="塑料件原料"
-        test-id="plastic-raw-material-create-dialog"
-        :stage-material="(payload, display) => stageRawMaterial('plastic', payload, display)"
+      <BomMaterialPickerDialogs
+        v-model:hardware-picker-visible="hardwarePickerVisible"
+        v-model:hardware-picker-material-name="hardwarePickerMaterialName"
+        v-model:hardware-picker-keyword="hardwarePickerKeyword"
+        :hardware-group-loading="hardwareGroupLoading"
+        :hardware-picker-loading="hardwarePickerLoading"
+        :hardware-group-error="hardwareGroupError"
+        :hardware-picker-error="hardwarePickerError"
+        :visible-hardware-groups="visibleHardwareGroups"
+        :hardware-candidates="hardwareCandidates"
+        :selected-hardware="selectedHardware"
+        :hardware-picker-page="hardwarePickerPage"
+        :hardware-picker-page-size="hardwarePickerPageSize"
+        :hardware-picker-total="hardwarePickerTotal"
+        :selected-hardware-count="selectedHardwareCount"
+        :hardware-page-all-selected="hardwarePageAllSelected"
+        :hardware-page-selection-indeterminate="hardwarePageSelectionIndeterminate"
+        :can-create-hardware-raw-material="canCreateHardwareRawMaterial"
+        :reset-hardware-picker="resetHardwarePicker"
+        v-model:plastic-picker-visible="plasticPickerVisible"
+        v-model:plastic-picker-material-name="plasticPickerMaterialName"
+        v-model:plastic-picker-keyword="plasticPickerKeyword"
+        :plastic-group-loading="plasticGroupLoading"
+        :plastic-picker-loading="plasticPickerLoading"
+        :plastic-group-error="plasticGroupError"
+        :plastic-picker-error="plasticPickerError"
+        :visible-plastic-groups="visiblePlasticGroups"
+        :plastic-candidates="plasticCandidates"
+        :selected-plastic="selectedPlastic"
+        :plastic-picker-page="plasticPickerPage"
+        :plastic-picker-page-size="plasticPickerPageSize"
+        :plastic-picker-total="plasticPickerTotal"
+        :selected-plastic-count="selectedPlasticCount"
+        :plastic-page-all-selected="plasticPageAllSelected"
+        :plastic-page-selection-indeterminate="plasticPageSelectionIndeterminate"
+        :can-create-raw-material="canCreateRawMaterial"
+        :reset-plastic-picker="resetPlasticPicker"
+        v-model:auxiliary-picker-visible="auxiliaryPickerVisible"
+        v-model:auxiliary-picker-product-name="auxiliaryPickerProductName"
+        v-model:auxiliary-picker-keyword="auxiliaryPickerKeyword"
+        :auxiliary-candidates="auxiliaryCandidates"
+        :selected-auxiliary-products="selectedAuxiliaryProducts"
+        :auxiliary-picker-page="auxiliaryPickerPage"
+        :auxiliary-picker-page-size="auxiliaryPickerPageSize"
+        :auxiliary-picker-total="auxiliaryPickerTotal"
+        :selected-auxiliary-product-count="selectedAuxiliaryProductCount"
+        :auxiliary-page-all-selected="auxiliaryPageAllSelected"
+        :auxiliary-page-selection-indeterminate="auxiliaryPageSelectionIndeterminate"
+        :editor-reference-options="editorReferenceOptions"
+        :editor-reference-options-loading="editorReferenceOptionsLoading"
+        :editor-reference-options-error="editorReferenceOptionsError"
+        :reset-auxiliary-picker="resetAuxiliaryPicker"
+        v-model:packaging-picker-visible="packagingPickerVisible"
+        v-model:packaging-picker-material-name="packagingPickerMaterialName"
+        v-model:packaging-picker-keyword="packagingPickerKeyword"
+        :packaging-group-loading="packagingGroupLoading"
+        :packaging-picker-loading="packagingPickerLoading"
+        :packaging-group-error="packagingGroupError"
+        :packaging-picker-error="packagingPickerError"
+        :visible-packaging-groups="visiblePackagingGroups"
+        :packaging-candidates="packagingCandidates"
+        :selected-packaging="selectedPackaging"
+        :packaging-picker-page="packagingPickerPage"
+        :packaging-picker-page-size="packagingPickerPageSize"
+        :packaging-picker-total="packagingPickerTotal"
+        :selected-packaging-count="selectedPackagingCount"
+        :packaging-page-all-selected="packagingPageAllSelected"
+        :packaging-page-selection-indeterminate="packagingPageSelectionIndeterminate"
+        :reset-packaging-picker="resetPackagingPicker"
+        v-model:cutting-picker-visible="cuttingPickerVisible"
+        v-model:cutting-picker-material-name="cuttingPickerMaterialName"
+        v-model:cutting-picker-keyword="cuttingPickerKeyword"
+        :cutting-group-loading="cuttingGroupLoading"
+        :cutting-picker-loading="cuttingPickerLoading"
+        :cutting-group-error="cuttingGroupError"
+        :cutting-picker-error="cuttingPickerError"
+        :visible-cutting-groups="visibleCuttingGroups"
+        :cutting-candidates="cuttingCandidates"
+        :selected-cutting="selectedCutting"
+        :cutting-picker-page="cuttingPickerPage"
+        :cutting-picker-page-size="cuttingPickerPageSize"
+        :cutting-picker-total="cuttingPickerTotal"
+        :selected-cutting-count="selectedCuttingCount"
+        :cutting-page-all-selected="cuttingPageAllSelected"
+        :cutting-page-selection-indeterminate="cuttingPageSelectionIndeterminate"
+        :reset-cutting-picker="resetCuttingPicker"
+        :pending-raw-materials="pendingRawMaterials"
+        :format-hardware-color="formatHardwareColor"
+        :filter-hardware-groups="filterHardwareGroups"
+        :search-hardware-candidates="searchHardwareCandidates"
+        :clear-hardware-group-filter="clearHardwareGroupFilter"
+        :load-hardware-groups="loadHardwareGroups"
+        :load-hardware-candidates="loadHardwareCandidates"
+        :toggle-hardware-row="toggleHardwareRow"
+        :hardware-picker-row-class="hardwarePickerRowClass"
+        :toggle-hardware-page="toggleHardwarePage"
+        :toggle-hardware-candidate="toggleHardwareCandidate"
+        :change-hardware-page="changeHardwarePage"
+        :open-hardware-create="openHardwareCreate"
+        :confirm-hardware-selection="confirmHardwareSelection"
+        :filter-plastic-groups="filterPlasticGroups"
+        :search-plastic-candidates="searchPlasticCandidates"
+        :clear-plastic-group-filter="clearPlasticGroupFilter"
+        :load-plastic-groups="loadPlasticGroups"
+        :load-plastic-candidates="loadPlasticCandidates"
+        :toggle-plastic-row="togglePlasticRow"
+        :plastic-picker-row-class="plasticPickerRowClass"
+        :toggle-plastic-page="togglePlasticPage"
+        :toggle-plastic-candidate="togglePlasticCandidate"
+        :change-plastic-page="changePlasticPage"
+        :open-raw-material-create="openRawMaterialCreate"
+        :confirm-plastic-selection="confirmPlasticSelection"
+        :search-auxiliary-candidates="searchAuxiliaryCandidates"
+        :ensure-editor-reference-options="ensureEditorReferenceOptions"
+        :toggle-auxiliary-row="toggleAuxiliaryRow"
+        :auxiliary-picker-row-class="auxiliaryPickerRowClass"
+        :toggle-auxiliary-page="toggleAuxiliaryPage"
+        :toggle-auxiliary-candidate="toggleAuxiliaryCandidate"
+        :change-auxiliary-page="changeAuxiliaryPage"
+        :open-auxiliary-create="openAuxiliaryCreate"
+        :confirm-auxiliary-selection="confirmAuxiliarySelection"
+        :auxiliary-product-maintenance-tip="auxiliaryProductMaintenanceTip"
+        :auxiliary-product-is-selectable="auxiliaryProductIsSelectable"
+        :auxiliary-specification-summary="auxiliarySpecificationSummary"
+        :auxiliary-color-summary="auxiliaryColorSummary"
+        :filter-packaging-groups="filterPackagingGroups"
+        :search-packaging-candidates="searchPackagingCandidates"
+        :clear-packaging-group-filter="clearPackagingGroupFilter"
+        :load-packaging-groups="loadPackagingGroups"
+        :load-packaging-candidates="loadPackagingCandidates"
+        :toggle-packaging-row="togglePackagingRow"
+        :packaging-picker-row-class="packagingPickerRowClass"
+        :toggle-packaging-page="togglePackagingPage"
+        :toggle-packaging-candidate="togglePackagingCandidate"
+        :change-packaging-page="changePackagingPage"
+        :confirm-packaging-selection="confirmPackagingSelection"
+        :filter-cutting-groups="filterCuttingGroups"
+        :search-cutting-candidates="searchCuttingCandidates"
+        :clear-cutting-group-filter="clearCuttingGroupFilter"
+        :load-cutting-groups="loadCuttingGroups"
+        :load-cutting-candidates="loadCuttingCandidates"
+        :toggle-cutting-row="toggleCuttingRow"
+        :cutting-picker-row-class="cuttingPickerRowClass"
+        :toggle-cutting-page="toggleCuttingPage"
+        :toggle-cutting-candidate="toggleCuttingCandidate"
+        :change-cutting-page="changeCuttingPage"
+        :confirm-cutting-selection="confirmCuttingSelection"
       />
-      <HardwareRawMaterialCreateDialog
-        v-model="packagingCreateVisible"
-        category-name="包材"
-        title="新增包材原料"
-        subject-label="包材原料"
-        test-id="packaging-raw-material-create-dialog"
-        :stage-material="(payload, display) => stageRawMaterial('packaging', payload, display)"
-      />
-      <HardwareRawMaterialCreateDialog
-        v-model="cuttingCreateVisible"
-        item-type="SEMI_FINISHED"
-        title="新增裁片"
-        subject-label="裁片"
-        require-cutting-specification
-        inherit-fabric-attributes
-        test-id="cutting-raw-material-create-dialog"
-        :stage-material="(payload, display) => stageRawMaterial('cutting', payload, display)"
-      />
-      <AuxiliaryReferenceCreateDialog
-        v-model="auxiliaryCreateVisible"
-        @created="handleAuxiliaryCreated"
+
+      <BomMaterialCreateDialogs
+        v-model:hardware-create-visible="hardwareCreateVisible"
+        v-model:plastic-create-visible="plasticCreateVisible"
+        v-model:packaging-create-visible="packagingCreateVisible"
+        v-model:cutting-create-visible="cuttingCreateVisible"
+        v-model:auxiliary-create-visible="auxiliaryCreateVisible"
+        :stage-raw-material="stageRawMaterial"
+        :handle-auxiliary-created="handleAuxiliaryCreated"
       />
     </template>
   </section>
@@ -3382,11 +2499,6 @@ onBeforeUnmount(() => {
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;
 @use '@/styles/theme/detail' as detail;
-.pending-material-label { margin-right: 6px; color: token.$crm-warning; font-size: 12px; }
-.bom-review-context { font-size: 13px; color: token.$crm-text-regular; h3 { margin: 20px 0 12px; font-size: 13px; line-height: 20px; color: token.$crm-text-primary; &:first-child { margin-top: 0; } } p { margin: 0; line-height: 20px; } dl { margin: 0; } dl > div { margin: 0 0 12px; } dt { color: token.$crm-text-secondary; margin-bottom: 4px; } dd { margin: 0; overflow-wrap: anywhere; } }
-.bom-review-context__fields { display: grid; gap: 12px; label > span { display: block; margin-bottom: 8px; color: token.$crm-text-secondary; } :deep(.el-input__wrapper) { height: 32px; min-height: 32px; box-sizing: border-box; background: token.$crm-color-subtle; } }
-.bom-review-context .bom-review-context__rule { margin-top: 20px; padding-top: 16px; border-top: 1px solid token.$crm-border-default; color: token.$crm-text-secondary; }
-
 .bom-editor-page { min-width: 0; min-height: 0; padding: 0; box-sizing: border-box; background: transparent; color: var(--erp-color-text-primary); }
 .page-state { min-height: min(760px, max(0px, calc(100dvh - 130px))); }
 .bom-error-state__icon { display: block; width: 72px; height: 72px; }
@@ -3406,39 +2518,15 @@ onBeforeUnmount(() => {
 .bom-editor-tabs button:hover { background: token.$crm-color-subtle; }
 .bom-editor-tabs button[aria-selected='true'] { border-bottom-color: token.$crm-primary; color: token.$crm-primary; font-weight: 600; }
 .bom-editor-tabs button:focus-visible { outline: 2px solid token.$crm-focus; outline-offset: 2px; }
-.product-overview { display: grid; grid-template-columns: minmax(240px, 32%) minmax(0, 1fr); align-items: start; gap: 24px; margin-top: 16px; }
-.product-details { min-width: 0; }
-.product-details section + section { margin-top: 16px; padding-top: 16px; border-top: 1px solid token.$crm-border-default; }
-.product-details h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; line-height: 20px; }
-.product-details dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; margin: 0; }
-.product-details dl > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; min-width: 0; font-size: 13px; line-height: 24px; }
-.product-details dt { color: token.$crm-text-secondary; }
-.product-details dd { margin: 0; color: token.$crm-text-primary; overflow-wrap: anywhere; }
-.product-details .quantity-value { color: token.$crm-primary; font-weight: 600; }
-.bom-product-info-dialog__hint { margin: 0 0 14px; color: var(--erp-color-text-secondary); font-size: 13px; }
-.bom-product-info-dialog dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin: 0; }
-.bom-product-info-dialog dl > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-subtle); }
-.bom-product-info-dialog dt { margin-bottom: 4px; color: var(--erp-color-text-secondary); font-size: 12px; }
-.bom-product-info-dialog dd { margin: 0; overflow-wrap: anywhere; color: var(--erp-color-text-primary); font-size: 13px; }
 .quantity-warning { display: grid; grid-template-columns: minmax(0, 1fr) 440px auto; gap: 18px; align-items: center; min-height: 62px; margin-top: 12px; padding: 8px 14px; box-sizing: border-box; border: 1px solid var(--erp-color-warning-border); border-radius: 8px; background: var(--erp-color-warning-soft); color: var(--erp-color-warning); font-size: 12px; }
 .quantity-warning__summary { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
 .quantity-warning strong { color: var(--erp-color-warning); }
 .editor-grid { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 14px; margin-top: 14px; align-items: stretch; }
-.section-sidebar { min-width: 0; padding: 14px 0; overflow: hidden; }
-.section-sidebar h2 { padding: 0 16px 12px; border-bottom: 1px solid var(--erp-color-border); }
-.section-sidebar .section-tabs { display: grid; min-height: 0; gap: 0; overflow: visible; border: 0; }
-.section-sidebar .section-tabs button { display: flex; width: 100%; height: 46px; align-items: center; justify-content: space-between; padding: 0 16px; border: 0; border-left: 3px solid transparent; color: var(--erp-color-text-secondary); text-align: left; }
-.section-sidebar .section-tabs button b { color: var(--erp-color-text-muted); font-size: 12px; font-weight: 500; }
-.section-sidebar .section-tabs button.active { border-bottom: 0; border-left-color: var(--erp-color-brand); color: var(--erp-color-brand); background: var(--erp-color-selected); }
-.section-sidebar .section-tabs button.active b { color: var(--erp-color-brand); }
 .material-card { min-width: 0; padding: 14px 12px 12px; }
 .material-heading { padding: 0 4px 12px; }
 .material-heading > div:first-child { display: flex; align-items: baseline; gap: 18px; }
 .material-heading span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .material-actions { display: flex; gap: 8px; }
-.section-tabs { display: flex; align-items: center; gap: 20px; min-height: 38px; overflow-x: auto; border-bottom: 1px solid var(--erp-color-border); }
-.section-tabs button { height: 38px; flex: none; padding: 0 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--erp-color-text-secondary); cursor: pointer; white-space: nowrap; }
-.section-tabs button.active { border-bottom-color: var(--erp-color-brand); color: var(--erp-color-brand); font-weight: 700; }
 .section-editor { min-width: 0; }
 .section-editor.is-table-fullscreen { position: fixed; z-index: 1900; inset: 0; padding: 16px; overflow: auto; box-sizing: border-box; background: var(--erp-color-subtle); }
 .reference-options-error { margin: 10px 0; }
@@ -3465,7 +2553,6 @@ onBeforeUnmount(() => {
 .section-editor :deep(.el-input__wrapper:hover), .section-editor :deep(.el-input__wrapper.is-focus), .section-editor :deep(.el-select__wrapper:hover), .section-editor :deep(.el-select__wrapper.is-focused) { background: var(--erp-input-background); box-shadow: 0 0 0 1px var(--erp-input-focus-border) inset; }
 .section-editor :deep(.el-input__inner::placeholder), .section-editor :deep(.el-select__placeholder) { color: var(--erp-input-placeholder); }
 .hardware-readonly-cell { display: flex; min-height: 32px; align-items: center; padding: 0 7px; overflow: hidden; box-sizing: border-box; color: var(--erp-input-readonly-text); text-overflow: ellipsis; white-space: nowrap; }
-.cutting-legacy-value { display: flex; min-height: 32px; align-items: center; padding: 0 7px; box-sizing: border-box; border: 1px solid var(--erp-input-border); border-radius: 5px; background: var(--erp-input-readonly-background); color: var(--erp-input-readonly-text); font-variant-numeric: tabular-nums; }
 .calculated-cell { display: flex; min-height: 32px; align-items: center; padding: 0 8px; box-sizing: border-box; border: 1px solid var(--erp-input-border); border-radius: 5px; background: var(--erp-input-readonly-background); color: var(--erp-input-readonly-text); font-variant-numeric: tabular-nums; }
 .calculation-panel { @include detail.inset; margin-top: 12px; padding: 12px; }
 .calculation-panel > header { display: flex; justify-content: space-between; color: var(--erp-color-text-secondary); font-size: 12px; }
@@ -3473,63 +2560,13 @@ onBeforeUnmount(() => {
 .calculation-grid article { min-height: 72px; padding: 10px; box-sizing: border-box; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-surface); }
 .calculation-grid article strong, .calculation-grid article span { display: block; font-size: 12px; }
 .calculation-grid article span { margin-top: 8px; color: var(--erp-color-brand); line-height: 20px; }
-.quantity-compare-card { margin-top: 12px; padding: 14px 16px; }
-.quantity-compare-card > header { display: flex; align-items: baseline; gap: 18px; }
-.quantity-compare-card > header span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.quantity-compare-grid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)) minmax(260px, 1.65fr) auto; align-items: stretch; margin-top: 10px; }
-.quantity-compare-grid label { min-height: 64px; padding: 8px 12px; border: 1px solid var(--erp-color-border); border-right: 0; background: var(--erp-color-surface); }
-.quantity-compare-grid label span, .quantity-compare-grid label strong { display: block; }
-.quantity-compare-grid label span { color: var(--erp-color-text-secondary); font-size: 11px; }
-.quantity-compare-grid label strong { margin-top: 8px; font-size: 18px; font-variant-numeric: tabular-nums; }
-.quantity-compare-grid label.difference strong { color: var(--erp-color-warning); }
-.quantity-compare-grid > .el-input, .quantity-confirmed { min-height: 64px; box-sizing: border-box; border: 1px solid var(--erp-color-border); }
-.quantity-compare-grid > .el-input :deep(.el-input__wrapper) { border-radius: 0; box-shadow: none; }
-.quantity-confirmed { display: flex; align-items: center; padding: 0 14px; color: var(--erp-color-success); background: var(--erp-color-success-soft); font-size: 12px; }
-.quantity-compare-grid > .el-button { height: 64px; margin-left: 10px; }
 .line-editor-drawer :deep(.el-drawer__header) { margin-bottom: 0; padding-bottom: 18px; border-bottom: 1px solid var(--erp-color-border); color: var(--erp-color-text-primary); font-weight: 700; }
 .line-editor-drawer :deep(.el-drawer__body) { padding: 20px; }
 .line-editor-drawer :deep(.el-drawer__footer) { padding: 14px 20px; border-top: 1px solid var(--erp-color-border); }
-.line-drawer-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
-.drawer-field { display: block; min-width: 0; }
-.drawer-field > span { display: block; margin-bottom: 7px; color: var(--erp-color-text-secondary); font-size: 13px; }
-.drawer-readonly-value { display: flex; min-height: 32px; align-items: center; padding: 7px 10px; box-sizing: border-box; border: 1px solid var(--erp-input-border); border-radius: 6px; background: var(--erp-input-readonly-background); color: var(--erp-input-readonly-text); font-size: 13px; font-weight: 500; }
-.drawer-field--wide, .drawer-calculations { grid-column: 1 / -1; }
-.drawer-calculations { padding-top: 2px; }
 .cutting-name-tooltip-anchor.has-error { color: var(--erp-color-danger); cursor: help; text-decoration: underline dotted var(--erp-color-danger); text-underline-offset: 3px; }
 :global(.cutting-name-error-tooltip.el-popper.is-light) { max-width: 280px; padding: 7px 10px; border-color: var(--erp-color-danger-border); background: var(--erp-color-danger-soft); color: var(--erp-color-danger); font-size: 12px; line-height: 18px; }
 :global(.cutting-name-error-tooltip.el-popper.is-light .el-popper__arrow::before) { border-color: var(--erp-color-danger-border); background: var(--erp-color-danger-soft); }
-.cutting-order-calculations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-subtle); }
-.cutting-order-calculations strong { display: block; color: var(--erp-color-brand); font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
-.cutting-order-calculations small { display: block; margin-top: 5px; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 1.5; }
-.drawer-calculations h3 { margin: 0 0 10px; color: var(--erp-color-text-primary); font-size: 14px; }
-.drawer-image-field-value { display: flex; min-height: 32px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; box-sizing: border-box; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-readonly); }
-.drawer-image-field-value > span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.drawer-calculation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.drawer-calculation-grid label { min-width: 0; padding: 10px; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-readonly); }
-.drawer-calculation-grid span, .drawer-calculation-grid strong { display: block; }
-.drawer-calculation-grid span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.drawer-calculation-grid strong { margin-top: 5px; overflow: hidden; color: var(--erp-color-text-regular); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.drawer-image-action { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; box-sizing: border-box; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-readonly); }
-.drawer-image-action > div { display: flex; align-items: center; gap: 10px; }
-.drawer-image-action strong { color: var(--erp-color-text-regular); font-size: 13px; }
-.drawer-image-action span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .line-drawer-footer { display: flex; justify-content: flex-end; gap: 8px; }
-.hardware-picker-source { display: flex; justify-content: space-between; gap: 20px; padding: 10px 12px; border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-subtle); color: var(--erp-color-text-secondary); font-size: 12px; }
-.hardware-picker-source strong { color: var(--erp-color-brand-hover); }
-.hardware-picker-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin: 14px 0 12px; }
-.hardware-picker-toolbar--hardware { grid-template-columns: 240px minmax(0, 1fr) auto auto; }
-.hardware-picker-toolbar--grouped { grid-template-columns: 240px minmax(0, 1fr) auto auto; }
-.hardware-create-button-wrap { display: inline-flex; }
-.hardware-picker-error { margin-bottom: 12px; }
-.hardware-picker-table :deep(.el-table__row) { cursor: pointer; }
-.hardware-picker-table :deep(.el-table__row.is-picker-selected > td.el-table__cell) { background: var(--erp-table-selected); }
-.picker-selectable-table :deep(.el-table__row) { cursor: pointer; }
-.picker-selectable-table :deep(.el-table__row.is-picker-selected > td.el-table__cell) { background: var(--erp-table-selected); }
-.picker-selectable-table :deep(.el-table__row.is-picker-disabled) { cursor: not-allowed; }
-.hardware-picker-pagination { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 16px; color: var(--erp-color-text-regular); font-size: 13px; }
-.hardware-picker-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-.hardware-picker-footer > span { color: var(--erp-color-text-secondary); font-size: 12px; }
-.hardware-picker-footer > div { display: flex; gap: 8px; }
 .picker-status-tag { min-width: 56px; height: 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0 8px; box-sizing: border-box; border: 0; border-radius: 999px; color: var(--erp-tag-success-text); font-family: "Noto Sans SC", sans-serif; font-size: 12px; line-height: 18px; font-weight: 500; white-space: nowrap; }
 .picker-status-tag.is-success { background: var(--erp-tag-success-background); }
 .picker-status-tag.is-warning { background: var(--erp-tag-warning-background); }
@@ -3567,20 +2604,6 @@ onBeforeUnmount(() => {
 :global(.bom-reference-create-dialog .el-button) { min-height: 32px; border-radius: 5px; font-weight: 500; transition: none; }
 :global(.bom-reference-create-dialog .el-button:not(.el-button--primary):not(.is-disabled)) { color: var(--erp-button-secondary-text); background: var(--erp-button-secondary-background); border-color: var(--erp-button-secondary-border); }
 :global(.bom-reference-create-dialog .el-button--primary:not(.is-disabled)) { --el-button-bg-color: var(--erp-button-primary-background); --el-button-border-color: var(--erp-button-primary-background); --el-button-text-color: var(--erp-button-primary-text); color: var(--erp-button-primary-text) !important; background-color: var(--erp-button-primary-background) !important; border-color: var(--erp-button-primary-border) !important; }
-.line-image-manager { min-height: 310px; }
-.line-image-manager-toolbar { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--erp-color-border); }
-.line-image-manager-toolbar > div { min-width: 0; }
-.line-image-manager-toolbar strong, .line-image-manager-toolbar span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.line-image-manager-toolbar strong { color: var(--erp-color-text-primary); font-size: 14px; }
-.line-image-manager-toolbar span { margin-top: 5px; color: var(--erp-color-text-secondary); font-size: 12px; }
-.line-image-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
-.cutting-image-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
-.cutting-image-grid article { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--erp-color-border); border-radius: 6px; background: var(--erp-color-surface); }
-.cutting-image-grid :deep(.el-image) { width: 72px; height: 56px; border-radius: 4px; background: var(--erp-color-readonly); }
-.cutting-image-grid article > div { min-width: 0; }
-.cutting-image-grid article > div strong, .cutting-image-grid article > div span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cutting-image-grid article > div strong { color: var(--erp-color-text-regular); font-size: 12px; }
-.cutting-image-grid article > div span { margin-top: 5px; color: var(--erp-color-text-muted); font-size: 11px; }
 /* BOM-V3-03：六类导航、行选择与下方物料明细编辑。 */
 .title-line { gap: 14px; }
 .title-line h1 { font-family: "Noto Serif SC", "Songti SC", serif; font-size: 28px; line-height: 40px; letter-spacing: -.3px; }
@@ -3588,10 +2611,6 @@ onBeforeUnmount(() => {
 .editor-status-tag.verified { color: var(--erp-tag-success-text); background: var(--erp-tag-success-background); }
 .heading-actions .el-button { min-width: 94px; }
 .heading-actions :deep(.el-button--primary:not(.is-disabled)) { color: var(--erp-button-primary-text); background: var(--erp-button-primary-background); border-color: var(--erp-button-primary-border); }
-.section-sidebar { padding: 10px 0; }
-.section-sidebar h2 { padding: 0 16px 10px; font-size: 14px; line-height: 22px; white-space: nowrap; }
-.section-sidebar .section-tabs button { width: calc(100% - 12px); height: 46px; margin: 0 6px; padding: 0 12px; font-size: 13px; }
-.section-sidebar .section-tabs button:disabled { cursor: default; opacity: 1; }
 .material-card { padding: 10px; }
 .material-heading { padding: 0 2px 8px; }
 .material-heading > div:first-child { gap: 12px; }
@@ -3619,22 +2638,11 @@ onBeforeUnmount(() => {
 .calculation-result span { margin-top: 7px; color: var(--erp-color-text-secondary); font-size: 11px; }
 .calculation-result strong { margin-top: 3px; font-family: "Noto Serif SC", "Songti SC", serif; font-size: 18px; }
 .material-detail-panel > p { margin: 7px 0 0; color: var(--erp-color-text-secondary); font-size: 11px; }
-.quantity-compare-card { margin: 10px 0 0 188px; padding: 10px 12px; }
-.quantity-compare-card > header h2 { font-family: "Noto Serif SC", "Songti SC", serif; font-size: 17px; }
-.quantity-compare-grid { margin-top: 7px; }
-.quantity-compare-grid label, .quantity-compare-grid > .el-input, .quantity-confirmed { min-height: 58px; }
-.quantity-compare-grid label strong { margin-top: 6px; font-size: 17px; }
-.quantity-compare-grid > .el-button { height: 58px; }
 .bom-color-create-form { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .bom-color-create-form :deep(.el-form-item:last-child) { grid-column: 1 / -1; }
 
 @media (max-width: 1400px) {
-  .product-details dl { grid-template-columns: 1fr; }
   .editor-grid { grid-template-columns: 176px minmax(0, 1fr); }
-  .quantity-compare-card { margin-left: 188px; }
-  .quantity-compare-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .quantity-compare-grid label { border-right: 1px solid var(--erp-color-border); }
-  .quantity-compare-grid > .el-button { min-width: 0; margin-left: 0; }
   .material-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 </style>

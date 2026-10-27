@@ -22,8 +22,8 @@ export async function findTubeOrder(requestId: string): Promise<TubeOrderResult>
   const response = await apiClient.get<DataResponse<TubeOrderResult>>(`${path}by-request/${encodeURIComponent(requestId)}/`, { timeout: 15000 })
   return response.data.data
 }
-export async function fetchTubeOrder(id: string): Promise<TubeOrderDetail> {
-  const response = await apiClient.get<DataResponse<TubeOrderDetail>>(`${path}${encodeURIComponent(id)}/`, { timeout: 15000 })
+export async function fetchTubeOrder(id: string, warehouse = false): Promise<TubeOrderDetail> {
+  const response = await apiClient.get<DataResponse<TubeOrderDetail>>(`${path}${encodeURIComponent(id)}/`, { timeout: 15000, ...(warehouse ? { params: { warehouse_stage: 'all' } } : {}) })
   return response.data.data
 }
 export async function dispatchTubeOrder(id: string, payload: TubeDispatchInput, etag: string): Promise<TubeOrderDetail> {
@@ -34,7 +34,7 @@ export async function cancelTubeOrder(id: string, payload: TubeCancelInput, etag
   const response = await apiClient.post<DataResponse<TubeOrderDetail>>(`${path}${encodeURIComponent(id)}/cancel/`, payload, { timeout: 30000, headers: { 'If-Match': etag } })
   return response.data.data
 }
-export async function findTubeAction(id: string, requestId: string): Promise<TubeOrderDetail> {
-  const response = await apiClient.get<DataResponse<TubeOrderDetail>>(`${path}${encodeURIComponent(id)}/action-by-request/${encodeURIComponent(requestId)}/`, { timeout: 15000 })
+export async function findTubeAction(id: string, requestId: string, warehouse = false): Promise<TubeOrderDetail> {
+  const response = await apiClient.get<DataResponse<TubeOrderDetail>>(`${path}${encodeURIComponent(id)}/action-by-request/${encodeURIComponent(requestId)}/`, { timeout: 15000, ...(warehouse ? { params: { warehouse_stage: 'all' } } : {}) })
   return response.data.data
 }

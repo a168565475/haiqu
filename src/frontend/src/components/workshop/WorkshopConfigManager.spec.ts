@@ -2,7 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import ElementPlus, { ElDropdown, ElFormItem, ElInput, ElSelect } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { WorkshopEmployee } from '@/types/workshopConfig'
+import type { Craft, Operation, WorkshopEmployee } from '@/types/workshopConfig'
 import WorkshopConfigManager from './WorkshopConfigManager.vue'
 
 const api = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn() }))
@@ -25,7 +25,19 @@ vi.mock('element-plus', async (importOriginal) => ({
 const legacy: WorkshopEmployee = {
   id: 'assignment-1', workshop: 'workshop-1', workshop_name: '金工车间', position: '组长',
   name: '同名员工', employee: 'assignment-1', employee_code: 'E001', employee_name: '同名员工', employee_status: 'ACTIVE',
-  employee_archived: false, is_supervisor: true, status: 'ACTIVE', status_display: '在职',
+  employee_archived: false, department: '生产部', roles: '生产主管', is_supervisor: true, status: 'ACTIVE', status_display: '在职',
+  created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
+}
+const operation: Operation = {
+  id: 'operation-1', operation_number: 'OP-LEGACY-001', product_name: '', craft: 'craft-1', craft_name: '管材加工',
+  craft_type: 'INTERNAL', craft_type_display: '厂内', workshop: 'workshop-1', workshop_name: '金工车间', name: '弯管',
+  reporting_unit: null, reporting_unit_name: null, status: 'ACTIVE', status_display: '启用',
+  created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
+}
+const operationCraft: Craft = {
+  id: 'craft-1', craft_type: 'INTERNAL', craft_type_display: '厂内', plan_category: 'METAL', plan_category_display: '金工计划',
+  outsourcing_code: null, outsourcing_code_display: null, workshop: 'workshop-1', workshop_name: '金工车间', name: '管材加工',
+  status: 'ACTIVE', status_display: '启用', operation_count: 1, active_operation_count: 1,
   created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
 }
 const wrappers: VueWrapper[] = []
@@ -72,6 +84,12 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach((wrapper) => wrapper.unmount()))
 
 describe('车间直接配置行政生产员工', () => {
+  it('员工表显示行政部门和角色', async () => {
+    const wrapper = await render()
+    expect(wrapper.text()).toContain('生产部')
+    expect(wrapper.text()).toContain('生产主管')
+  })
+
   it('不提供新增员工入口，也不加载或更换员工身份', async () => {
     const wrapper = await render()
     expect(button(wrapper, '新增员工')).toBeUndefined()
@@ -142,5 +160,48 @@ describe('车间直接配置行政生产员工', () => {
     const wrapper = await render()
     wrapper.getComponent(ElDropdown).vm.$emit('command', 'toggle'); await flushPromises()
     expect(api.update).toHaveBeenCalledExactlyOnceWith('employees', legacy.id, { status: 'LEFT' }, '"assignment-v1"')
+  })
+})
+
+describe('工序配置自动编号与快捷筛选', () => {
+  async function renderOperations(props: Record<string, unknown> = {}) {
+    api.list.mockImplementation((kind: string) => Promise.resolve({
+      data: kind === 'workshops' ? [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }] : kind === 'crafts' ? [operationCraft] : [operation],
+      meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
+    }))
+    api.detail.mockResolvedValue({ data: operation, etag: '"operation-v1"' })
+    const wrapper = mount(WorkshopConfigManager, {
+      props: { kind: 'operations', ...props },
+      global: {
+        plugins: [ElementPlus],
+        stubs: { AppWindowDialog: { props: ['modelValue'], template: '<section v-if="modelValue" role="dialog"><slot/><slot name="footer"/></section>' } },
+      },
+    })
+    wrappers.push(wrapper)
+    await flushPromises()
+    return wrapper
+  }
+
+  it('工序列表和表单不显示编号，创建请求由页面省略编号', async () => {
+    const wrapper = await renderOperations()
+    expect(wrapper.text()).not.toContain('工序编号')
+    await button(wrapper, '新增工序').trigger('click')
+    expect(wrapper.findAllComponents(ElFormItem).some((item) => item.props('label') === '工序编号')).toBe(false)
+    await setSelect(wrapper, '工艺', 'craft-1')
+    field(wrapper, '工序名称').getComponent(ElInput).vm.$emit('update:modelValue', '新增弯管')
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.create).toHaveBeenCalledExactlyOnceWith('operations', {
+      product_name: '', craft: 'craft-1', name: '新增弯管', status: 'ACTIVE',
+    })
+  })
+
+  it('按当前车间、厂内类型和工艺初始化筛选，并在保存后发出 saved 事件', async () => {
+    const wrapper = await renderOperations({ initialWorkshop: 'workshop-1', initialCraftType: 'INTERNAL', initialCraft: 'craft-1' })
+    expect(api.list.mock.calls.some(([kind, query]) => kind === 'operations' && query.workshop === 'workshop-1' && query.craft_type === 'INTERNAL' && query.craft === 'craft-1')).toBe(true)
+    await button(wrapper, '新增工序').trigger('click')
+    await setSelect(wrapper, '工艺', 'craft-1')
+    field(wrapper, '工序名称').getComponent(ElInput).vm.$emit('update:modelValue', '新增冲孔')
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 })

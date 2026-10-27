@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MetalProcessingP4View from './MetalProcessingP4View.vue'
 
 const auth = vi.hoisted(() => ({ superuser: true, permissions: new Set<string>() }))
-const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const route = vi.hoisted(() => ({ query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'workshop' } }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 const api = vi.hoisted(() => ({
   sources: vi.fn(), source: vi.fn(), orders: vi.fn(), options: vi.fn(), legacy: vi.fn(),
@@ -66,6 +66,7 @@ async function createView(props: { mode?: 'sources' | 'original' | 'rework'; emb
 function state(wrapper: ReturnType<typeof mount>): any { return wrapper.vm }
 
 beforeEach(() => {
+  route.meta.outsourcingWorkspace = 'workshop'
   vi.resetAllMocks()
   auth.superuser = true
   auth.permissions.clear()
@@ -120,6 +121,7 @@ describe('统一入口内的单据与来源范围', () => {
   })
 
   it('原单详情只显示该原单交接，整单收尾拒绝不隐藏合法来源', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
     api.source.mockResolvedValue({ ...completedSource, original_handoffs: [
       { ...handoffDetail, factory_name: '本单加工厂', unsprayed_returns: [] },
       { ...handoffDetail, id: 'other-handoff', original_order_id: 'other-order', factory_name: '其他单加工厂', unsprayed_returns: [] },
@@ -133,6 +135,21 @@ describe('统一入口内的单据与来源范围', () => {
     expect(wrapper.text()).toContain('整单含不可访问来源')
     expect(wrapper.findAll('button').some(button => button.text() === '登记合格回货')).toBe(true)
     expect(wrapper.find('.p4-layout').exists()).toBe(false)
+  })
+
+  it.each([false, true])('仓库原单查看来源入口遵守来源查看权限：%s', async canViewSource => {
+    route.meta.outsourcingWorkspace = 'warehouse'
+    auth.superuser = false
+    auth.permissions.add('outsourcing.confirm_return_outsourcingorder')
+    if (canViewSource) auth.permissions.add('material_issues.view_metalprocessingsource')
+    api.originalOrder.mockRejectedValue(new Error('无整单收尾权限'))
+    const wrapper = await createView({ mode: 'original', embedded: true, originalOrderId: 'original-order' })
+    const button = wrapper.findAll('button').find(item => item.text() === '查看来源')
+    expect(Boolean(button)).toBe(canViewSource)
+    if (button) {
+      await button.trigger('click')
+      expect(router.push).toHaveBeenCalledWith({ path: '/workshop/outsourcing', query: { tab: 'sources', source_issue_line_id: 'line-1' } })
+    } else expect(router.push).not.toHaveBeenCalled()
   })
 
   it('重加工详情按新单和来源ID读取，计划分配不会显示为实际交接', async () => {
@@ -198,6 +215,7 @@ describe('统一入口内的单据与来源范围', () => {
   })
 
   it('重加工详情回货成功重取本单和已展开库存，不重载全部外发单', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
     const order = { id: 'new-order', order_number: '新单-99', source_id: 'source-1',
       original_return_id: 'return-1', rework_id: 'rework-1', factory_name: '喷塑厂', craft_name: '喷塑',
       allocated_pieces: 12, handoff_pieces: 12, returned_good_pieces: 0, remaining_return_pieces: 12,
@@ -344,6 +362,7 @@ describe('管材外发闭环写入边界', () => {
   })
 
   it('结清后追加回货备注留空时不调用写接口', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
     const wrapper = await createView()
     const vm = state(wrapper)
     vm.openNewReturn({ id: 'order-1', status: 'CLOSED', remaining_return_pieces: 6, etag: '"order-1"' })
@@ -368,6 +387,7 @@ describe('管材外发闭环写入边界', () => {
 })
 
 describe('原外发单正常合格回货', () => {
+  beforeEach(() => { route.meta.outsourcingWorkspace = 'warehouse' })
   async function ready() {
     const wrapper = await createView()
     const vm = state(wrapper)
@@ -433,7 +453,7 @@ describe('原外发单正常合格回货', () => {
     expect(api.handoffDetail).not.toHaveBeenCalled()
     auth.permissions.add('outsourcing.confirm_return_outsourcingorder')
     await vm.openOriginalGoodReturn({ id: 'handoff-1' })
-    expect(api.handoffDetail).toHaveBeenCalledWith('handoff-1')
+    expect(api.handoffDetail).toHaveBeenCalledWith('handoff-1', true)
     auth.permissions.clear()
     await vm.submit()
     expect(api.originalGoodReturn).not.toHaveBeenCalled()
@@ -486,6 +506,35 @@ describe('原外发单正常合格回货', () => {
     await opening
     expect(vm.originalGoodContext.original_order_id).toBe('new-original')
   })
+})
+
+it('车间保留金工交接，但禁止打开和直接提交合格入库', async () => {
+  const wrapper = await createView()
+  const vm = state(wrapper)
+  expect(vm.canAct('handoff')).toBe(true)
+  expect(vm.canAct('original-good-return')).toBe(false)
+  await vm.openOriginalGoodReturn(handoffDetail)
+  expect(api.handoffDetail).not.toHaveBeenCalled()
+  vm.dialog = 'original-good-return'
+  await vm.submit()
+  expect(api.originalGoodReturn).not.toHaveBeenCalled()
+})
+
+it('仓库仅开放合格入库，禁止交接、重加工和结清写入', async () => {
+  route.meta.outsourcingWorkspace = 'warehouse'
+  const wrapper = await createView()
+  const vm = state(wrapper)
+  expect(vm.canAct('original-good-return')).toBe(true)
+  expect(vm.canAct('new-return')).toBe(true)
+  for (const action of ['handoff', 'new-handoff', 'return', 'rework', 'order', 'close', 'allocation', 'original-close']) {
+    expect(vm.canAct(action)).toBe(false)
+    vm.dialog = action
+    await vm.submit()
+  }
+  expect(api.handoff).not.toHaveBeenCalled()
+  expect(api.externalHandoff).not.toHaveBeenCalled()
+  expect(api.originalClose).not.toHaveBeenCalled()
+  expect(api.returned).not.toHaveBeenCalled()
 })
 
 describe('新外发交接前调整分配', () => {
@@ -779,6 +828,7 @@ describe('原单备注结清与后续补登记', () => {
   })
 
   it('结清后合格补回原因必填，保留原结清快照且不增加回货上限', async () => {
+    route.meta.outsourcingWorkspace = 'warehouse'
     const wrapper = await createView(); const vm = state(wrapper)
     api.handoffDetail.mockResolvedValueOnce({ ...handoffDetail, good_return_context: {
       ...goodContext, original_order_status: 'CLOSED', post_closure: true, closure, remaining_return_pieces: 12,
@@ -816,7 +866,7 @@ describe('原单备注结清与后续补登记', () => {
   it('回齐后两类追加按钮锁定，打开陈旧行也以最新已完成状态拒绝退回', async () => {
     api.source.mockResolvedValue({ ...completedSource, original_handoffs: [{ ...handoffDetail, original_order_status: 'COMPLETED' }] })
     const wrapper = await createView(); const vm = state(wrapper)
-    expect(wrapper.get('[data-testid="original-good-return-button"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="original-good-return-button"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="original-unsprayed-return-button"]').attributes('disabled')).toBeDefined()
     api.handoffDetail.mockResolvedValueOnce({ ...handoffDetail, original_order_status: 'COMPLETED', remaining_return_pieces: 0 })
     await vm.openReturn(handoffDetail)

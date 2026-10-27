@@ -131,7 +131,7 @@ describe('角色权限按模块与行批量勾选', () => {
     expect(wrapper.get('[aria-label="任务本行全选"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('[aria-label="本模块全选"]').attributes('disabled')).toBeDefined()
   })
-  it('按菜单全选生产包含 BOM，采购收货独立归采购，工作台说明复用业务权限', async () => {
+  it('按菜单全选生产包含 BOM，采购入库权限归仓库，工作台说明复用业务权限', async () => {
     api.getCatalog.mockResolvedValue([
       entries[0],
       entry('boms.view_bom', 'BOM', 'view', { module: 'boms', module_name: 'BOM' }),
@@ -143,7 +143,7 @@ describe('角色权限按模块与行批量勾选', () => {
     expect(wrapper.get('.access-matrix').text()).not.toContain('材料入库')
     await wrapper.get('[aria-label="本模块全选"]').setValue(true)
     expect(draft(wrapper).map(grant => grant.permission)).toEqual(['production.view', 'boms.view_bom'])
-    await selectModule(wrapper, 'procurement-management')
+    await selectModule(wrapper, 'warehouse-management')
     await wrapper.get('[aria-label="本模块全选"]').setValue(true)
     expect(draft(wrapper).map(grant => grant.permission)).toEqual(['production.view', 'boms.view_bom', 'inventory.receive_material'])
     await selectModule(wrapper, 'workbench')

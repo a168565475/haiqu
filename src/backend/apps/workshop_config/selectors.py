@@ -1,6 +1,7 @@
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
+from django.utils import timezone
 
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment
 from apps.organizations.selectors import active_department_employees
 
 from .models import RecordStatus
@@ -22,7 +23,24 @@ def workshops_with_statistics(queryset):
 
 
 def employees_with_context(queryset):
-    return queryset.select_related("workshop")
+    now = timezone.now()
+    departments = EmployeeOrganizationAssignment.objects.filter(
+        effective_from__lte=now,
+        organization_unit__archived_at__isnull=True,
+        organization_unit__status="ACTIVE",
+    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).select_related("organization_unit").order_by(
+        "-is_primary", "organization_unit__unit_name", "id",
+    )
+    roles = EmployeeRoleAssignment.objects.filter(
+        effective_from__lte=now,
+        role_profile__archived_at__isnull=True,
+    ).filter(Q(effective_to__isnull=True) | Q(effective_to__gt=now)).select_related("role_profile").order_by(
+        "role_profile__display_name", "id",
+    )
+    return queryset.select_related("workshop").prefetch_related(
+        Prefetch("organization_assignments", queryset=departments, to_attr="_workshop_departments"),
+        Prefetch("role_assignments", queryset=roles, to_attr="_workshop_roles"),
+    )
 
 
 def active_employees(queryset):

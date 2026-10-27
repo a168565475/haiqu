@@ -68,7 +68,7 @@ const fastReadLoadingRoute = computed(() => [
   'quotations', 'quotation-preview',
   'samples', 'sample-detail', 'sample-material-detail', 'sample-inventory', 'sample-outbound', 'sample-loans',
   'material-inventory', 'finished-goods-inventory', 'material-inbound-details',
-  'boms', 'purchase-orders', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'material-quality-confirmation',
+  'boms', 'purchase-orders', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
 ].includes(String(route.name || '')))
 const compactBusinessRoutes = [
   'customer-duplicates', 'contacts',
@@ -82,13 +82,14 @@ const glassDetailRoute = computed(() => (glassDetailRouteNames as readonly strin
 const glassFormRoute = computed(() => (glassFormRouteNames as readonly string[]).includes(String(route.name || '')))
 const compactBusinessRoute = computed(() => !glassDetailRoute.value && !glassFormRoute.value && compactBusinessRoutes.includes(String(route.name || '')))
 const glassListRoute = computed(() => (glassListRouteNames as readonly string[]).includes(String(route.name || '')))
-const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop-outsourcing-tube-detail', 'material-issue-detail'].includes(String(route.name))) && (glassListRoute.value || [
+const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop-outsourcing-tube-detail', 'warehouse-outsourcing-tube-detail', 'material-issue-detail'].includes(String(route.name))) && (glassListRoute.value || [
   'assembly-finished-receipt', 'finished-goods-inventory', 'internal-semi-receipt', 'semi-receipt-records',
-  'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return', 'inventory-tube-return',
+  'workshop-outsourcing-tube-new', 'workshop-outsourcing-tube-detail', 'workshop-outsourcing-tube-return',
+  'warehouse-outsourcing-tube-detail', 'warehouse-outsourcing-tube-return',
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
-  'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns',
+  'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',
@@ -106,7 +107,8 @@ const contentScrollRoutes = [
   'task-detail',
   'wage-scheme-new', 'wage-scheme-change',
   'work-report-new', 'work-report-edit', 'work-report-day-detail',
-  'workshop-outsourcing-new', 'workshop-outsourcing-rework-detail', 'workshop-outsourcing-detail', 'workshop-outsourcing-factory-detail',
+  'workshop-outsourcing-rework-detail', 'workshop-outsourcing-detail', 'workshop-outsourcing-factory-detail',
+  'warehouse-outsourcing-rework-detail', 'warehouse-outsourcing-detail',
   'purchase-order-detail', 'purchase-inbound-detail',
 ]
 const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(route.name || '')))

@@ -18,6 +18,11 @@ from .tube_selectors import (RETURN_PERMISSION, SOURCE_LABELS, VIEW_PERMISSION, 
 
 
 def require_receipt_read_access(request, order):
+    from django.shortcuts import get_object_or_404
+    from .warehouse_access import warehouse_stage, warehouse_tube_orders
+    if warehouse_stage(request):
+        get_object_or_404(warehouse_tube_orders(request), pk=order.pk)
+        return
     # 每个动作单独检查自己的原单工艺范围，不能拼接两种权限的范围。
     for permission in (VIEW_PERMISSION, RETURN_PERMISSION):
         if not module_policy.has_permission(request, permission):
@@ -120,12 +125,17 @@ def receipt_data(receipt, *, created=False):
 
 
 def receipt_preview(order, request):
-    if order.status == 'COMPLETED':
+    from .warehouse_access import warehouse_stage
+    warehouse = warehouse_stage(request)
+    if warehouse or order.status == 'COMPLETED':
         require_receipt_read_access(request, order)
     else:
         require_saved_order_access(request, order, RETURN_PERMISSION)
     receipt = receipt_queryset().filter(order=order).first()
     blockers = []
+    if warehouse and not (module_policy.has_permission(request, RETURN_PERMISSION)
+            and saved_orders_for_permission(request, RETURN_PERMISSION).filter(pk=order.pk).exists()):
+        blockers.append('当前账号没有该外发单的回货确认权限。')
     if order.status != 'PROCESSING':
         blockers.append({'PENDING_DISPATCH': '原单尚未实际发出。', 'CANCELLED': '原单已取消。',
                          'COMPLETED': '原单已一次性结束，不能追加回货。'}.get(order.status, '原单状态不能登记回货。'))

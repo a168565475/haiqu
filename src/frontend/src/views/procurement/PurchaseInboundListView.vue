@@ -4,12 +4,13 @@ import { computed, onMounted, ref } from 'vue'
 import { MoreFilled, Search } from '@element-plus/icons-vue'
 
 import { fetchProcurementInboundOrders } from '@/api/inventory'
-import { router } from '@/router'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
 import type { ProcurementInboundOrder, ProcurementInboundProductSummary } from '@/types/inventory'
 
 const auth = useAuthStore()
+const router = useRouter()
 const canReceive = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.receive_material'))
 const canQuality = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const canView = computed(() => canReceive.value || canQuality.value)

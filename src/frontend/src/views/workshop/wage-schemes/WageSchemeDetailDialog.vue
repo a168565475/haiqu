@@ -8,6 +8,7 @@ import { fetchWageScheme } from '@/api/workshopReporting'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import type { WageScheme } from '@/types/workshopReporting'
+import { compactDecimal } from '@/utils/compactDecimal'
 import { formatWageMoney } from '@/utils/wageMoney'
 
 const props = defineProps<{
@@ -212,8 +213,8 @@ onBeforeUnmount(() => linesSectionObserver?.disconnect())
             <ElTableColumn prop="declared_price" label="申报工价" width="88" align="center" class-name="is-money">
               <template #default="{ row }">{{ formatWageMoney(row.declared_price) }}</template>
             </ElTableColumn>
-            <ElTableColumn prop="required_quantity" label="需完成次数" width="110" align="right"><template #default="{ row }">{{ row.required_quantity ?? '—' }}</template></ElTableColumn>
-            <ElTableColumn prop="completed_quantity" label="已完成次数" width="110" align="right"><template #default="{ row }">{{ row.completed_quantity ?? '—' }}</template></ElTableColumn>
+            <ElTableColumn prop="required_quantity" label="需完成次数" width="110" align="right"><template #default="{ row }">{{ compactDecimal(row.required_quantity) }}</template></ElTableColumn>
+            <ElTableColumn prop="completed_quantity" label="已完成次数" width="110" align="right"><template #default="{ row }">{{ compactDecimal(row.completed_quantity) }}</template></ElTableColumn>
             <ElTableColumn prop="completed_amount" label="已完成金额" width="120" align="right" class-name="is-money">
               <template #default="{ row }">{{ formatWageMoney(row.completed_amount) }}</template>
             </ElTableColumn>

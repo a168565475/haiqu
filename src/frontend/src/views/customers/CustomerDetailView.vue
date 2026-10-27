@@ -3,17 +3,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  Box,
-  Document,
-  TrendCharts,
-  User,
-} from '@element-plus/icons-vue'
-
 import CustomerActivityTag from '@/components/customers/CustomerActivityTag.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import CustomerOverviewV2 from '@/views/customers/CustomerOverviewV2.vue'
 import CustomerEditDialog from '@/views/customers/CustomerEditDialog.vue'
+import CustomerTransferPanel from '@/views/customers/CustomerTransferPanel.vue'
+import CustomerTimelinePanel from '@/views/customers/CustomerTimelinePanel.vue'
+import CustomerEditWorkspace from '@/views/customers/CustomerEditWorkspace.vue'
 import CustomerRelatedRecordsV2 from '@/components/customers/CustomerRelatedRecordsV2.vue'
 import ComplaintListView from '@/views/complaints/ComplaintListView.vue'
 import TaskCenterView from '@/views/tasks/TaskCenterView.vue'
@@ -1222,86 +1218,37 @@ onBeforeUnmount(() => {
         @retry-tasks="loadCustomerOpenTasks"
       />
 
-      <main v-else-if="mode === 'edit'" class="edit-page">
-        <header class="edit-page-header">
-          <p>客户管理 / 客户列表 / 客户编辑</p>
-          <div class="edit-title-row">
-            <div><h1>编辑客户</h1><ElTag type="success">正常</ElTag><span>{{ customer.account_code }} · {{ customer.account_name }}</span></div>
-            <div><small>最后保存：{{ customerUpdatedLabel }}</small><ElButton @click="router.push({ name: 'customers' })">返回列表</ElButton></div>
-          </div>
-        </header>
-
-        <ElAlert v-if="duplicateMatches.length" class="edit-duplicate-alert" type="warning" :title="`发现 ${duplicateMatches.length} 个疑似重复客户，已排除当前客户`" show-icon :closable="false" />
-
-        <section class="edit-workspace">
-          <aside class="edit-section-nav">
-            <div class="edit-progress"><strong>客户资料</strong><span>资料完整度 {{ profileCompleteness }}%</span><ElProgress :percentage="profileCompleteness" :show-text="false" :stroke-width="4" /></div>
-            <button :class="{ active: editActiveSection === 'profile' }" type="button" @click="scrollEditSection('profile')"><ElIcon><Document /></ElIcon>主体资料</button>
-            <button :class="{ active: editActiveSection === 'address' }" type="button" @click="scrollEditSection('address')"><ElIcon><Box /></ElIcon>地址信息</button>
-            <button :class="{ active: editActiveSection === 'attributes' }" type="button" @click="scrollEditSection('attributes')"><ElIcon><TrendCharts /></ElIcon>客户属性</button>
-            <button :class="{ active: editActiveSection === 'ownership' }" type="button" @click="scrollEditSection('ownership')"><ElIcon><User /></ElIcon>归属与标签</button>
-            <div class="edit-nav-tip"><strong>{{ editCompletedCount }} / 11 项必填已完成</strong><span>保存时将统一校验</span></div>
-          </aside>
-
-          <ElForm label-position="top" class="edit-form">
-            <section id="edit-section-profile" class="edit-form-card profile-card">
-              <header><div><ElIcon><Document /></ElIcon><strong>主体资料</strong><span>带 * 为必填</span></div><small v-if="checkingDuplicate">正在查重…</small></header>
-              <div class="figma-form-grid">
-                <ElFormItem label="客户名称 *" required><ElInput v-model="editForm.accountName" /></ElFormItem><ElFormItem label="客户简称"><ElInput v-model="editForm.shortName" /></ElFormItem><ElFormItem label="法定主体名称"><ElInput v-model="editForm.entityLegalName" /></ElFormItem><ElFormItem label="网站 / 域名"><ElInput v-model="editForm.website" /></ElFormItem>
-                <ElFormItem label="一级地区 *" required><ElSelect v-model="editForm.primaryRegionId" filterable><ElOption v-for="item in options?.primary_regions" :key="item.id" :label="item.region_name" :value="item.id" /></ElSelect></ElFormItem><ElFormItem label="二级地区"><ElSelect v-model="editForm.secondaryRegionId" filterable clearable :disabled="!editForm.primaryRegionId"><ElOption v-for="item in secondaryRegionOptions" :key="item.id" :label="item.region_name" :value="item.id" /></ElSelect></ElFormItem><ElFormItem label="默认语言"><ElSelect v-model="editDisplayForm.defaultLanguage"><ElOption label="English" value="English" /><ElOption label="简体中文" value="简体中文" /></ElSelect></ElFormItem><ElFormItem label="税号 / 注册号"><ElInput v-model="editForm.taxIdentifier" /></ElFormItem>
-              </div>
-            </section>
-
-            <section id="edit-section-address" class="edit-form-card address-card">
-              <header>
-                <div><ElIcon><Box /></ElIcon><strong>地址信息</strong><small>已保存 {{ addresses.length }} 条</small><ElTag v-if="creatingNewAddress" type="success" size="small">待新增 {{ appendedAddressDrafts.length }} 条</ElTag></div>
-                <div class="address-actions">
-                  <ElSelect v-if="addresses.length" v-model="activeAddressId" size="small" @change="selectAddress"><ElOption v-for="address in addresses" :key="address.id" :label="formatAddressOption(address)" :value="address.id" /></ElSelect>
-                  <ElButton text @click="startAddAddress">＋ 添加地址</ElButton>
-                </div>
-              </header>
-              <div class="figma-form-grid">
-                <ElFormItem label="地址类型 *" required><ElSelect v-model="editDisplayForm.addressType"><ElOption label="办公地址" value="办公地址" /><ElOption label="收货地址" value="收货地址" /></ElSelect></ElFormItem><ElFormItem label="国家 / 地区 *" required><ElSelect v-model="editForm.addressCountryCode"><ElOption v-for="item in options?.country_options" :key="item.id" :label="formatCountryOption(item)" :value="item.item_code" :disabled="item.disabled" /></ElSelect></ElFormItem><ElFormItem label="州 / 省"><ElInput v-model="editForm.stateProvince" /></ElFormItem><ElFormItem label="城市"><ElInput v-model="editForm.city" /></ElFormItem>
-                <ElFormItem label="详细地址 *" required><ElInput v-model="editForm.addressLine1" /></ElFormItem><ElFormItem label="邮编"><ElInput v-model="editForm.postalCode" /></ElFormItem><ElFormItem label="收货联系人"><ElInput v-model="editForm.recipientName" /></ElFormItem><ElFormItem label="收货电话"><ElInput v-model="editForm.recipientPhone" /></ElFormItem>
-              </div>
-              <div v-for="(draft, index) in appendedAddressDrafts" :key="index" class="appended-address-block">
-                <div class="appended-address-heading">
-                  <strong>新增地址 {{ index + 1 }}</strong>
-                  <ElButton text type="danger" @click="removeAppendedAddress(index)">删除此条</ElButton>
-                </div>
-                <div class="figma-form-grid">
-                  <ElFormItem label="地址类型 *" required><ElSelect v-model="draft.addressType"><ElOption label="办公地址" value="办公地址" /><ElOption label="收货地址" value="收货地址" /></ElSelect></ElFormItem><ElFormItem label="国家 / 地区 *" required><ElSelect v-model="draft.countryCode"><ElOption v-for="item in options?.country_options" :key="item.id" :label="formatCountryOption(item)" :value="item.item_code" :disabled="item.disabled" /></ElSelect></ElFormItem><ElFormItem label="州 / 省"><ElInput v-model="draft.stateProvince" /></ElFormItem><ElFormItem label="城市"><ElInput v-model="draft.city" /></ElFormItem>
-                  <ElFormItem label="详细地址 *" required><ElInput v-model="draft.addressLine1" /></ElFormItem><ElFormItem label="邮编"><ElInput v-model="draft.postalCode" /></ElFormItem><ElFormItem label="收货联系人"><ElInput v-model="draft.recipientName" /></ElFormItem><ElFormItem label="收货电话"><ElInput v-model="draft.recipientPhone" /></ElFormItem>
-                </div>
-              </div>
-            </section>
-
-            <section id="edit-section-attributes" class="edit-form-card attributes-card">
-              <header><div><ElIcon><TrendCharts /></ElIcon><strong>客户属性</strong></div></header>
-              <div class="figma-form-grid">
-                <ElFormItem label="客户类型 *" required><ElSelect v-model="editForm.typeIds" multiple collapse-tags><ElOption v-for="item in options?.customer_types" :key="item.id" :label="item.display_name" :value="item.id" :disabled="item.disabled" /></ElSelect></ElFormItem><ElFormItem label="客户来源 *" required><ElSelect v-model="editForm.sourceId"><ElOption v-for="item in options?.customer_sources" :key="item.id" :label="item.display_name" :value="item.id" :disabled="item.disabled" /></ElSelect></ElFormItem><ElFormItem label="客户等级 *" required><ElSelect v-model="editForm.gradeId"><ElOption v-for="item in options?.customer_grades" :key="item.id" :label="item.display_name" :value="item.id" :disabled="item.disabled" /></ElSelect></ElFormItem>
-                <ElFormItem label="所属行业"><ElSelect v-model="editForm.industryId" clearable><ElOption v-for="item in options?.industries" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem><ElFormItem label="感兴趣产品"><ElSelect v-model="editForm.interestedProductIds" multiple collapse-tags clearable><ElOption v-for="item in options?.interested_products" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem><ElFormItem label="询盘关键词"><ElInput v-model="editForm.inquiryKeywords" /></ElFormItem><ElFormItem label="生命周期"><ElSelect v-model="editForm.lifecycleStage"><ElOption v-for="item in options?.lifecycle_stages" :key="item.item_code" :label="item.display_name" :value="item.item_code" /></ElSelect></ElFormItem>
-              </div>
-            </section>
-
-            <section id="edit-section-ownership" class="edit-form-card ownership-card">
-              <header><div><ElIcon><User /></ElIcon><strong>归属与标签</strong></div></header>
-                <div class="figma-form-grid ownership-fields">
-                  <ElFormItem label="负责人 *" required><ElInput :model-value="customer.primary_owner?.display_name || ''" readonly /></ElFormItem>
-                  <ElFormItem label="业务员"><ElInput :model-value="sourceSalespersonNames" readonly /></ElFormItem>
-                  <ElFormItem label="分管人"><ElInput :model-value="sourceManagerNames" readonly /></ElFormItem>
-                </div>
-            </section>
-          </ElForm>
-        </section>
-
-        <footer class="edit-action-bar">
-          <span><i :class="{ saved: !editIsDirty }"></i>{{ editIsDirty ? '有未保存修改 · 保存时将校验全部必填项' : '所有修改已保存' }}</span>
-          <div><ElButton @click="router.push({ name: 'customer-detail', params: { customerId } })">取消</ElButton><ElButton :loading="saving" @click="saveProfile(false, true)">保存草稿</ElButton><ElButton :loading="saving" @click="saveProfile(true)">保存并返回</ElButton><ElButton type="primary" :loading="saving" @click="saveProfile(false)">保存</ElButton></div>
-        </footer>
-      </main>
-
-
+      <CustomerEditWorkspace
+        v-else-if="mode === 'edit'"
+        :customer="customer"
+        :customer-updated-label="customerUpdatedLabel"
+        :options="options"
+        :duplicate-matches="duplicateMatches"
+        :checking-duplicate="checkingDuplicate"
+        :profile-completeness="profileCompleteness"
+        :edit-completed-count="editCompletedCount"
+        :edit-is-dirty="editIsDirty"
+        :edit-active-section="editActiveSection"
+        :edit-form="editForm"
+        :edit-display-form="editDisplayForm"
+        :secondary-region-options="secondaryRegionOptions"
+        :addresses="addresses"
+        :active-address-id="activeAddressId"
+        :creating-new-address="creatingNewAddress"
+        :appended-address-drafts="appendedAddressDrafts"
+        :source-salesperson-names="sourceSalespersonNames"
+        :source-manager-names="sourceManagerNames"
+        :saving="saving"
+        :format-country-option="formatCountryOption"
+        :format-address-option="formatAddressOption"
+        @back-to-list="router.push({ name: 'customers' })"
+        @cancel="router.push({ name: 'customer-detail', params: { customerId } })"
+        @scroll-section="scrollEditSection"
+        @select-address="selectAddress"
+        @start-add-address="startAddAddress"
+        @remove-address="removeAppendedAddress"
+        @save="saveProfile"
+      />
       <main v-else-if="mode === 'tasks'" class="customer-task-embed">
         <ElEmpty v-if="!canViewTasks" description="当前账号无权查看客户任务" />
         <TaskCenterView
@@ -1333,67 +1280,44 @@ onBeforeUnmount(() => {
         :sales-metrics="customer"
       />
 
-      <main v-else-if="mode === 'timeline'" class="customer-timeline-v2 erp-glass-list">
-        <section class="customer-timeline-v2__filters erp-list-filter erp-list-filters">
-          <ElInput v-model="timelineFilters.keyword" placeholder="搜索主题、内容、编号" clearable @keyup.enter="loadTimeline(true)" />
-          <ElSelect v-model="timelineFilters.eventType" clearable placeholder="类型：全部"><ElOption label="沟通" value="COMMUNICATION" /><ElOption label="任务" value="TASK" /><ElOption label="客户资料" value="CUSTOMER" /></ElSelect>
-          <ElDatePicker v-model="timelineFilters.occurredFrom" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="开始时间" />
-          <ElDatePicker v-model="timelineFilters.occurredTo" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="结束时间" />
-          <div class="erp-list-filter-actions">
-            <ElButton class="erp-button-motion" @click="resetTimelineFilters">重置</ElButton>
-            <ElButton class="erp-button-motion" type="primary" @click="loadTimeline(true)">应用筛选</ElButton>
-          </div>
-        </section>
-
-        <div class="customer-timeline-v2__workspace">
-          <section v-loading="timelineLoading" class="customer-timeline-v2__list-panel erp-list-surface">
-            <header><div><h2>客户时间轴</h2><small>{{ timeline.length }} 条已加载</small></div><ElButton class="erp-button-motion" @click="exportTimeline">导出记录</ElButton></header>
-            <div v-if="timeline.length" class="customer-timeline-v2__list">
-              <article v-for="event in timeline" :key="event.id" class="customer-timeline-v2__event">
-                <time>{{ formatDate(event.occurred_at) }}</time>
-                <span class="customer-timeline-v2__dot" aria-hidden="true" />
-                <div>
-                  <div><CustomerActivityTag :label="getTimelineEventTypeLabel(event.event_type)" tone="info" /><strong :title="event.title">{{ event.title }}</strong></div>
-                  <p :title="event.summary || ''">{{ event.summary || '无补充摘要' }}</p>
-                  <small>来源：{{ getTimelineSourceTypeLabel(event.source_type) }} · 只读业务事实</small>
-                </div>
-              </article>
-              <ElButton v-if="timelineCursor" class="customer-timeline-v2__more" :loading="timelineLoading" @click="loadTimeline(false)">加载更多记录</ElButton>
-            </div>
-            <ElEmpty v-else description="暂无符合条件的时间线记录" />
-          </section>
-
-          <section class="customer-timeline-v2__composer erp-list-surface erp-flat-form">
-            <header><div><h2>记录沟通</h2><span>保存后写入客户时间轴</span></div></header>
-            <ElAlert v-if="communicationResult" :title="communicationResult.message" :type="communicationResult.type" :closable="false" show-icon />
-            <ElForm label-position="top" :disabled="communicationSaving || !!communicationResult">
-              <ElFormItem label="沟通方式" required><ElRadioGroup v-model="communicationForm.type"><ElRadioButton v-for="item in communicationTypeOptions" :key="item.id" :value="item.code">{{ item.label }}</ElRadioButton></ElRadioGroup></ElFormItem>
-              <div class="customer-timeline-v2__form-grid">
-                <ElFormItem label="联系人"><ElSelect v-model="communicationForm.contactId" clearable placeholder="选择联系人"><ElOption v-for="item in contacts" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></ElFormItem>
-                <ElFormItem label="沟通方向" required><ElSelect v-model="communicationForm.direction"><ElOption label="去电 / 发出" value="OUTBOUND" /><ElOption label="来电 / 收到" value="INBOUND" /><ElOption label="内部沟通" value="INTERNAL" /></ElSelect></ElFormItem>
-                <ElFormItem label="沟通时间" required><ElDatePicker v-model="communicationForm.occurredAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></ElFormItem>
-              </div>
-              <ElFormItem label="主题" required><ElInput v-model="communicationForm.subject" maxlength="250" placeholder="输入本次沟通主题" /></ElFormItem>
-              <ElFormItem label="沟通内容" required><ElInput v-model="communicationForm.content" type="textarea" :rows="5" maxlength="5000" show-word-limit placeholder="记录关键需求、结论与待办" /></ElFormItem>
-              <div class="customer-timeline-v2__attachment" title="当前沟通接口暂未接入附件字段"><strong>附件</strong><span>附件接口尚未接入，暂不可上传</span></div>
-              <section class="customer-timeline-v2__followup">
-                <ElCheckbox v-model="communicationForm.createTask" :disabled="!canTask">同时创建下一步跟进任务</ElCheckbox>
-                <div v-if="communicationForm.createTask" class="customer-timeline-v2__form-grid customer-timeline-v2__form-grid--two"><ElFormItem label="任务标题"><ElInput v-model="communicationForm.taskTitle" /></ElFormItem><ElFormItem label="截止时间"><ElDatePicker v-model="communicationForm.taskDueAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></ElFormItem></div>
-              </section>
-            </ElForm>
-            <footer><ElButton :disabled="communicationSaving" @click="clearCommunicationForm">{{ communicationResult ? '开始新沟通' : '清空' }}</ElButton><ElButton type="primary" :disabled="!canCommunicate || !!communicationResult" :loading="communicationSaving" @click="saveCommunication">保存沟通</ElButton></footer>
-          </section>
-        </div>
-      </main>
-
-      <main v-else class="transfer-page erp-glass-list">
-        <header class="section-heading erp-list-surface"><div><h2>客户转移申请</h2><p>转移客户归属，不修改历史订单和财务事实。</p></div><ElButton class="erp-button-motion" @click="router.push({ name: 'customer-detail', params: { customerId } })">取消</ElButton></header>
-        <section class="transfer-grid">
-          <ElCard shadow="never"><template #header><strong>转移设置</strong></template><ElAlert :title="`当前负责人：${customer.primary_owner?.display_name || '未分配'}`" type="info" :closable="false" /><ElForm label-position="top"><ElFormItem label="接收人" required><ElSelect v-model="transferForm.ownerId" filterable><ElOption v-for="owner in options?.owner_options.filter((item) => item.id !== customer?.primary_owner?.id)" :key="owner.id" :label="owner.display_name" :value="owner.id" /></ElSelect></ElFormItem><ElFormItem label="转移原因" required><ElInput v-model="transferForm.reason" type="textarea" :rows="4" maxlength="2000" /></ElFormItem><ElCheckbox checked disabled>通知原负责人和接收人</ElCheckbox></ElForm><ElButton type="primary" :loading="transferLoading" :disabled="!canTransfer" @click="submitTransfer">预览并提交</ElButton></ElCard>
-          <ElCard shadow="never"><template #header><strong>关联对象影响</strong></template><ElDescriptions :column="1" border><ElDescriptionsItem label="联系人">{{ summary?.counts.contacts || 0 }} 个，保持归属客户不变</ElDescriptionsItem><ElDescriptionsItem label="进行中询价">{{ summary?.counts.open_inquiries || 0 }} 个，自动归属接收人可见范围</ElDescriptionsItem><ElDescriptionsItem label="有效报价">{{ summary?.counts.open_quotations || 0 }} 个，历史版本不改写</ElDescriptionsItem><ElDescriptionsItem label="样品跟进">{{ summary?.counts.active_samples || 0 }} 个，状态不变</ElDescriptionsItem><ElDescriptionsItem label="未完成任务">{{ summary?.counts.open_tasks || 0 }} 个，审批执行时按后端策略处理</ElDescriptionsItem></ElDescriptions></ElCard>
-          <ElCard shadow="never"><template #header><strong>审批与历史</strong></template><ElAlert title="未完成任务保留原任务事实与负责人；客户可见范围在转移获批后随新归属更新。" type="warning" :closable="false" show-icon /><ElTimeline v-if="transferRequests.length"><ElTimelineItem v-for="item in transferRequests" :key="item.id" :timestamp="formatDate(item.submitted_at)"><strong>{{ item.from_employee.display_name }} → {{ item.to_employee.display_name }}</strong><p>{{ item.request_reason }}</p><p v-if="item.decision_note" class="muted">处理说明：{{ item.decision_note }}</p><div class="transfer-actions"><ElTag>{{ item.status }}</ElTag><template v-if="item.status === 'PENDING'"><ElButton v-if="canApproveTransfer" size="small" type="success" :loading="transferLoading" @click="decideTransfer(item, 'approve')">审批通过</ElButton><ElButton v-if="canApproveTransfer" size="small" type="danger" plain :loading="transferLoading" @click="decideTransfer(item, 'reject')">驳回</ElButton><ElButton v-if="canCancelTransfer(item)" size="small" :loading="transferLoading" @click="decideTransfer(item, 'cancel')">取消申请</ElButton></template></div></ElTimelineItem></ElTimeline><ElEmpty v-else description="暂无转移申请" :image-size="70" /></ElCard>
-        </section>
-      </main>
+      <CustomerTimelinePanel
+        v-else-if="mode === 'timeline'"
+        :timeline="timeline"
+        :timeline-loading="timelineLoading"
+        :timeline-cursor="timelineCursor"
+        :timeline-filters="timelineFilters"
+        :contacts="contacts"
+        :communication-type-options="communicationTypeOptions"
+        :communication-form="communicationForm"
+        :communication-result="communicationResult"
+        :communication-saving="communicationSaving"
+        :can-task="canTask"
+        :can-communicate="canCommunicate"
+        :format-date="formatDate"
+        :get-timeline-event-type-label="getTimelineEventTypeLabel"
+        :get-timeline-source-type-label="getTimelineSourceTypeLabel"
+        @load-timeline="loadTimeline"
+        @reset-filters="resetTimelineFilters"
+        @export="exportTimeline"
+        @clear-form="clearCommunicationForm"
+        @save-communication="saveCommunication"
+      />
+      <CustomerTransferPanel
+        v-else
+        :customer="customer"
+        :summary="summary"
+        :options="options"
+        :transfer-form="transferForm"
+        :transfer-requests="transferRequests"
+        :transfer-loading="transferLoading"
+        :can-transfer="canTransfer"
+        :can-approve-transfer="canApproveTransfer"
+        :can-cancel-transfer="canCancelTransfer"
+        :format-date="formatDate"
+        @cancel="router.push({ name: 'customer-detail', params: { customerId } })"
+        @submit="submitTransfer"
+        @decide="decideTransfer"
+      />
     </template>
 
     <CustomerEditDialog v-model="editDialogVisible" :customer-id="customerId" @saved="handleCustomerEdited" @cancelled="handleCustomerEdited(customerId)" />
@@ -1653,61 +1577,17 @@ onBeforeUnmount(() => {
   color: token.$crm-text-disabled;
   cursor: not-allowed;
 }
-.customer-timeline-v2.erp-glass-list { height: auto; min-width: 0; padding: 0; font-size: 13px; line-height: 20px; }
-.customer-timeline-v2__filters { gap: 8px; }
-.customer-timeline-v2__filters :deep(.el-input) { width: 250px; max-width: 100%; }
-.customer-timeline-v2__filters :deep(.el-select) { width: 150px; }
-.customer-timeline-v2__filters :deep(.el-date-editor) { width: 185px; max-width: 100%; }
-.customer-timeline-v2__filters :deep(.el-button) { margin: 0; }
-.customer-timeline-v2__workspace { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; gap: 14px; }
-.customer-timeline-v2__list-panel, .customer-timeline-v2__composer { min-width: 0; padding: 16px; }
-.customer-timeline-v2__list-panel > header, .customer-timeline-v2__composer > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.customer-timeline-v2__list-panel h2, .customer-timeline-v2__composer h2 { margin: 0; font-family: token.$crm-font-body; font-size: 16px; font-weight: 700; line-height: 24px; }
-.customer-timeline-v2__list-panel header span, .customer-timeline-v2__composer header span, .customer-timeline-v2__list-panel header small { color: token.$crm-text-secondary; font-size: 12px; line-height: 18px; }
-.customer-timeline-v2__list-panel header div, .customer-timeline-v2__composer header div { display: flex; flex-direction: column; gap: 4px; }
-.customer-timeline-v2__list { min-width: 0; }
-.customer-timeline-v2__event { display: grid; grid-template-columns: 112px 12px minmax(0, 1fr); align-items: start; gap: 10px; padding: 14px 0; border-bottom: 1px solid token.$crm-border-subtle; }
-.customer-timeline-v2__event:last-of-type { border-bottom: 0; }
-.customer-timeline-v2__event time { color: token.$crm-text-muted; font-size: 12px; line-height: 20px; }
-.customer-timeline-v2__dot { width: 8px; height: 8px; margin-top: 7px; border: 2px solid token.$crm-color-surface; border-radius: 50%; background: token.$crm-primary; box-shadow: 0 0 0 1px token.$crm-primary; }
-.customer-timeline-v2__event > div { min-width: 0; }
-.customer-timeline-v2__event > div > div { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px; }
-.customer-timeline-v2__event strong { font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.customer-timeline-v2__event p { margin: 6px 0; color: token.$crm-text-regular; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.customer-timeline-v2__event small { color: token.$crm-text-muted; font-size: 12px; overflow-wrap: anywhere; }
-.customer-timeline-v2__more { width: 100%; margin: 12px 0 0; }
-.customer-timeline-v2__composer :deep(.el-form-item) { margin-bottom: 14px; }
-.customer-timeline-v2__composer :deep(.el-form-item__label) { height: auto; margin-bottom: 4px; color: token.$crm-text-regular; font-size: 12px; line-height: 20px; }
-.customer-timeline-v2__composer :deep(.el-select), .customer-timeline-v2__composer :deep(.el-date-editor) { width: 100%; min-width: 0; }
-.customer-timeline-v2__composer :deep(.el-radio-group) { display: flex; flex-wrap: wrap; gap: 6px; }
-.customer-timeline-v2__composer :deep(.el-radio-button__inner) { height: 32px; padding: 0 12px; border: 1px solid token.$crm-border-default; border-radius: var(--erp-radius-control); font-size: 12px; line-height: 30px; box-shadow: none; }
-.customer-timeline-v2__form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
-.customer-timeline-v2__form-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
-.customer-timeline-v2__form-grid--two { margin-top: 12px; }
-.customer-timeline-v2__attachment { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; border: 1px dashed token.$crm-border-default; border-radius: var(--erp-radius-control); color: token.$crm-text-muted; background: token.$crm-color-subtle; font-size: 12px; }
-.customer-timeline-v2__attachment strong { color: token.$crm-text-secondary; }
-.customer-timeline-v2__followup { margin-top: 12px; padding-top: 12px; border-top: 1px solid token.$crm-border-subtle; }
-.customer-timeline-v2__composer > footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid token.$crm-border-subtle; }
-.customer-timeline-v2__composer > footer :deep(.el-button) { margin: 0; }
 @media (max-width: 1599px) {
   .customer-overview-heading { grid-template-columns: minmax(0, 1fr); }
   .customer-overview-actions { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: 6px; }
 }
-@media (max-width: 980px) {
-  .customer-timeline-v2__workspace { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 600px) {
-  .customer-timeline-v2__event { grid-template-columns: 12px minmax(0, 1fr); }
-  .customer-timeline-v2__event time { grid-column: 1 / -1; }
-  .customer-timeline-v2__form-grid { grid-template-columns: minmax(0, 1fr); }
-}
-.customer-header, .customer-identity, .header-actions, .detail-tabs, .section-heading, .timeline-filters, .sticky-actions { display: flex; align-items: center; }
+.customer-header, .customer-identity, .header-actions, .detail-tabs, .timeline-filters, .sticky-actions { display: flex; align-items: center; }
 .customer-hero { border-bottom: 1px solid var(--erp-color-border); background: var(--erp-color-surface); }
 .detail-meta-row { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 7px 24px 0; color: var(--erp-color-text-regular); font-size: 12px; }
 .customer-header { min-height: 65px; justify-content: space-between; gap: 18px; padding: 2px 24px 12px; }
 .customer-identity { min-width: 0; gap: 12px; }
 .customer-identity h1 { max-width: 320px; flex: none; overflow: hidden; margin: 0; color: var(--erp-color-text-primary); font-size: 26px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.customer-identity p, .section-heading p { min-width: 0; overflow: hidden; margin: 0; color: var(--erp-color-text-regular); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.customer-identity p { min-width: 0; overflow: hidden; margin: 0; color: var(--erp-color-text-regular); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { flex: none; display: grid; width: 40px; height: 40px; place-items: center; border-radius: 9px; color: var(--erp-color-text-inverse); background: var(--erp-color-brand); font-weight: 700; }
 .grade-tag { min-width: 72px; justify-content: center; border: 0; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); }
 .status-tag { min-width: 72px; justify-content: center; border: 0; }
@@ -1789,75 +1669,6 @@ onBeforeUnmount(() => {
 .related-table-card :deep(.el-tag) { min-width: 72px; height: 24px; justify-content: center; border: 0; border-radius: 6px; color: var(--erp-tag-neutral-text); background: var(--erp-tag-neutral-background); font-size: 11px; }
 .related-table-card :deep(.el-button) { height: 28px; margin: 0; border-radius: 6px; font-size: 12px; }
 .timeline-page :deep(.el-card__header) { display: flex; justify-content: space-between; }
-.section-heading { justify-content: space-between; margin-bottom: 14px; }
-.section-heading h2 { margin: 0; font-size: 24px; }
-.edit-page { width: min(1320px, calc(100% - 48px)); margin: 24px auto 0; padding-bottom: 24px; }
-.edit-page-header { height: 72px; }
-.edit-page-header > p { margin: 0 0 8px; color: var(--erp-color-text-regular); font-size: 12px; line-height: 14px; }
-.edit-title-row, .edit-title-row > div { display: flex; align-items: center; }
-.edit-title-row { height: 44px; justify-content: space-between; }
-.edit-title-row > div { gap: 12px; }
-.edit-title-row h1 { margin: 0; color: var(--erp-color-text-primary); font-size: 26px; line-height: 32px; }
-.edit-title-row span, .edit-title-row small { color: var(--erp-color-text-regular); font-size: 13px; }
-.edit-title-row :deep(.el-tag) { width: 72px; height: 24px; border: 0; border-radius: 6px; }
-.edit-title-row :deep(.el-button) { width: 96px; height: 32px; margin-left: 0; border-color: var(--erp-color-border); border-radius: 8px; }
-.edit-duplicate-alert { margin-bottom: 8px; }
-.edit-workspace { height: 808px; display: grid; grid-template-columns: 196px minmax(0, 1fr); overflow: hidden; margin-top: 16px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); box-shadow: 0 8px 18px color-mix(in srgb, var(--erp-shadow-color) 10%, transparent); }
-.edit-section-nav { padding: 24px 16px; border-right: 1px solid var(--erp-color-border); background: var(--erp-color-surface); }
-.edit-progress { height: 46px; display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
-.edit-progress strong { color: var(--erp-color-text-primary); font-size: 14px; line-height: 17px; }
-.edit-progress span { color: var(--erp-color-text-regular); font-size: 11px; line-height: 13px; }
-.edit-progress :deep(.el-progress-bar__outer) { background: var(--erp-color-subtle); }
-.edit-progress :deep(.el-progress-bar__inner) { background: var(--erp-color-surface); }
-.edit-section-nav > button { width: 164px; height: 40px; display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 0 12px; border: 0; border-radius: 8px; color: var(--erp-color-text-primary); background: transparent; font-size: 13px; cursor: pointer; }
-.edit-section-nav > button:hover { background: var(--erp-color-hover); }
-.edit-section-nav > button.active { color: var(--erp-color-text-primary); background: var(--erp-color-selected); font-weight: 600; }
-.edit-section-nav > button :deep(.el-icon) { width: 20px; height: 20px; font-size: 20px; }
-.edit-nav-tip { height: 66px; display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 10px; border: 1px solid var(--erp-color-border); border-radius: 7px; background: var(--erp-color-surface); }
-.edit-nav-tip strong { font-size: 11px; line-height: 14px; }
-.edit-nav-tip span { color: var(--erp-color-text-regular); font-size: 10px; }
-.edit-form { height: 808px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding: 24px; scroll-behavior: smooth; }
-.edit-form-card { flex: none; box-sizing: border-box; padding: 12px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); scroll-margin-top: 24px; }
-.edit-form-card.profile-card { height: 182px; }
-.edit-form-card.address-card { min-height: 180px; }
-.edit-form-card.attributes-card { height: 170px; padding-top: 10px; }
-.edit-form-card.ownership-card { height: 192px; }
-.edit-form-card > header { height: 20px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.edit-form-card > header > div { display: flex; align-items: center; gap: 8px; }
-.edit-form-card > header strong { color: var(--erp-color-text-primary); font-size: 14px; line-height: 17px; }
-.edit-form-card > header span, .edit-form-card > header small { color: var(--erp-color-text-regular); font-size: 10px; }
-.edit-form-card > header :deep(.el-icon) { width: 20px; height: 20px; color: var(--erp-color-text-regular); font-size: 20px; }
-.edit-form-card > header :deep(.el-button) { height: 28px; padding: 0 12px; color: var(--erp-color-text-primary); font-size: 12px; }
-.address-actions { display: flex; align-items: center; gap: 6px; }
-.address-actions :deep(.el-select) { width: 172px; }
-.address-actions :deep(.el-select__wrapper) { min-height: 28px; }
-.appended-address-block { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--erp-color-border); }
-.appended-address-heading { height: 28px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.appended-address-heading strong { color: var(--erp-color-text-primary); font-size: 12px; }
-.appended-address-heading :deep(.el-button) { height: 28px; margin: 0; padding: 0 4px; font-size: 11px; }
-.figma-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 16px; }
-.figma-form-grid :deep(.el-form-item) { height: 52px; margin: 0; }
-.figma-form-grid :deep(.el-form-item__label), .customer-tags-field :deep(.el-form-item__label) { height: 17px; margin: 0; padding: 0; color: var(--erp-color-text-secondary); font-size: 11px; line-height: 13px; }
-.figma-form-grid :deep(.el-form-item__content) { height: 32px; line-height: 32px; }
-.figma-form-grid :deep(.el-select), .figma-form-grid :deep(.el-input) { width: 100%; }
-.figma-form-grid :deep(.el-input__wrapper), .figma-form-grid :deep(.el-select__wrapper), .customer-tags-field :deep(.el-select__wrapper) { min-height: 32px; padding: 0 12px; border-radius: 8px; box-shadow: 0 0 0 1px var(--erp-color-border) inset; }
-.figma-form-grid :deep(.el-input__inner), .figma-form-grid :deep(.el-select__placeholder), .figma-form-grid :deep(.el-select__selected-item), .customer-tags-field :deep(.el-select__selected-item) { color: var(--erp-input-text); font-size: 13px; }
-.customer-tags-field { height: 52px; margin: 8px 0 0; }
-.customer-tags-field :deep(.el-form-item__content) { height: 32px; display: flex; flex-wrap: nowrap; gap: 8px; }
-.selected-tag-list { display: flex; align-items: center; gap: 8px; }
-.selected-tag-list :deep(.el-tag) { min-width: 72px; height: 24px; justify-content: center; border: 0; border-radius: 6px; font-size: 11px; }
-.customer-tags-field :deep(.el-button) { height: 28px; padding: 0 4px; color: var(--erp-color-brand); font-size: 12px; }
-.customer-tags-field > :deep(.el-form-item__content) > span { color: var(--erp-color-text-secondary); font-size: 10px; white-space: nowrap; }
-.tag-create-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px 64px; align-items: center; gap: 10px; }
-.tag-create-tip { margin: 8px 0 18px; color: var(--erp-color-text-secondary); font-size: 12px; }
-.tag-choice-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.edit-action-bar { height: 56px; display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 0 16px; border: 1px solid var(--erp-color-border); border-radius: 8px; background: var(--erp-color-surface); }
-.edit-action-bar > span { display: flex; align-items: center; gap: 8px; color: var(--erp-color-text-regular); font-size: 11px; }
-.edit-action-bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--erp-color-warning); }
-.edit-action-bar i.saved { background: var(--erp-color-success); }
-.edit-action-bar > div { display: flex; gap: 8px; }
-.edit-action-bar :deep(.el-button) { width: 96px; height: 32px; margin: 0; border-radius: 8px; }
-.edit-action-bar :deep(.el-button--primary) { border-color: var(--erp-button-primary-border); background: var(--erp-button-primary-surface); }
 .form-grid { display: grid; gap: 0 12px; }
 .form-grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .form-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
@@ -1870,22 +1681,6 @@ onBeforeUnmount(() => {
 .timeline-event strong { margin-left: 10px; }
 .timeline-event p { margin: 10px 0; }
 .timeline-event small { color: var(--erp-color-text-regular); }
-.transfer-grid { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 12px; }
-.transfer-grid :deep(.el-select) { width: 100%; }
-.transfer-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.transfer-page.erp-glass-list { height: auto; margin: 0; font-size: 13px; line-height: 20px; }
-.transfer-page .section-heading { margin: 0; padding: 16px; gap: 12px; }
-.transfer-page .section-heading h2 { margin: 0 0 4px; font-size: 16px; line-height: 24px; }
-.transfer-page .section-heading p { white-space: normal; }
-.transfer-page .transfer-grid { min-width: 0; align-items: start; gap: 14px; }
-.transfer-grid :deep(.el-card) { min-width: 0; border: 1px solid var(--erp-glass-border); border-radius: var(--erp-glass-radius); background: var(--erp-glass-surface); box-shadow: var(--erp-glass-shadow); backdrop-filter: var(--erp-glass-backdrop); }
-.transfer-grid :deep(.el-card__header) { padding: 14px 16px; border-bottom: 1px solid var(--erp-color-border); font-size: 16px; }
-.transfer-grid :deep(.el-card__body) { padding: 16px; }
-.transfer-grid :deep(.el-form) { margin-top: 14px; }
-.transfer-grid :deep(.el-form-item__label) { font-size: 12px; line-height: 20px; }
-.transfer-grid :deep(.el-alert), .transfer-grid :deep(.el-timeline) { margin-bottom: 14px; }
-.transfer-grid :deep(.el-timeline) { padding-left: 12px; }
-.transfer-grid :deep(.el-descriptions__cell) { font-size: 13px; overflow-wrap: anywhere; }
 
 .customer-detail-page--compact-controls :deep(.el-button) {
   height: 32px !important;
@@ -1960,7 +1755,7 @@ onBeforeUnmount(() => {
 :global(.customer-detail-drawer .el-form-item) {
   margin-bottom: 12px;
 }
-@media (max-width: 1200px) { .metric-grid { grid-template-columns: repeat(3, 1fr); } .overview-grid, .transfer-grid { grid-template-columns: 1fr; } .form-grid.four { grid-template-columns: repeat(2, 1fr); } .edit-page { width: calc(100% - 32px); } .edit-workspace { grid-template-columns: 168px minmax(0, 1fr); } .edit-section-nav { padding-inline: 10px; } .edit-section-nav > button { width: 146px; } .figma-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .edit-form-card.profile-card, .edit-form-card.attributes-card { height: 300px; } .edit-form-card.address-card { min-height: 300px; } .edit-form-card.ownership-card { height: 240px; } }
+@media (max-width: 1200px) { .metric-grid { grid-template-columns: repeat(3, 1fr); } .overview-grid { grid-template-columns: 1fr; } .form-grid.four { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 1500px) { .customer-task-header-button { display: none; } }
-@media (max-width: 800px) { .customer-header, .section-heading, .sticky-actions, .related-module-heading { align-items: stretch; flex-direction: column; } .customer-identity { flex-wrap: wrap; } .timeline-layout { grid-template-columns: 1fr; } .timeline-filters { align-items: stretch; flex-direction: column; } .metric-grid, .form-grid.four, .form-grid.two { grid-template-columns: 1fr; } .detail-tabs { overflow-x: auto; } .related-module-page { padding: 12px; overflow: hidden; } .related-table-card { overflow-x: auto; } .related-table-card :deep(.el-table) { min-width: 900px; } .edit-page { width: calc(100% - 24px); margin-top: 12px; } .edit-title-row, .edit-title-row > div, .edit-action-bar { align-items: flex-start; flex-direction: column; } .edit-page-header { height: auto; margin-bottom: 12px; } .edit-title-row { height: auto; gap: 12px; } .edit-workspace { height: auto; display: block; } .edit-section-nav { display: none; } .edit-form { height: auto; overflow: visible; padding: 12px; } .figma-form-grid { grid-template-columns: 1fr; } .edit-form-card.profile-card, .edit-form-card.address-card, .edit-form-card.attributes-card, .edit-form-card.ownership-card { height: auto; } .edit-action-bar { height: auto; gap: 12px; padding: 12px; } .edit-action-bar > div { width: 100%; flex-wrap: wrap; } }
+@media (max-width: 800px) { .customer-header, .sticky-actions, .related-module-heading { align-items: stretch; flex-direction: column; } .customer-identity { flex-wrap: wrap; } .timeline-layout { grid-template-columns: 1fr; } .timeline-filters { align-items: stretch; flex-direction: column; } .metric-grid, .form-grid.four, .form-grid.two { grid-template-columns: 1fr; } .detail-tabs { overflow-x: auto; } .related-module-page { padding: 12px; overflow: hidden; } .related-table-card { overflow-x: auto; } .related-table-card :deep(.el-table) { min-width: 900px; } }
 </style>

@@ -48,7 +48,7 @@ type Page = {
 }
 let wrapper: ReturnType<typeof shallowMount> | undefined
 async function render() {
-  wrapper = shallowMount(CustomerDetailView, { global: { plugins: [ElementPlus] } })
+  wrapper = shallowMount(CustomerDetailView, { global: { plugins: [ElementPlus], stubs: { CustomerTimelinePanel: false } } })
   await flushPromises()
   const page = wrapper.vm as unknown as Page
   Object.assign(page.communicationForm, { subject: '确认产品交期', content: '约定下周反馈', taskTitle: '核对交期' })

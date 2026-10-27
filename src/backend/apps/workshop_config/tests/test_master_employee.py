@@ -2,6 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.db import connection
 from django.test import override_settings
 from django.utils import timezone
@@ -10,7 +11,7 @@ from rest_framework.test import APITestCase
 from apps.core.api.concurrency import etag_for_instance
 from apps.material_issues.models import MaterialIssue
 from apps.material_issues.services import _validate_relations
-from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, EmployeeRoleAssignment, OrganizationUnit, RoleProfile
 from apps.workshop_config.models import Workshop
 from apps.workshop_config.selectors import active_employees
 
@@ -42,6 +43,25 @@ class MasterWorkshopEmployeeTests(APITestCase):
         self.assertEqual(Employee.objects.count(), count)
         self.assertNotIn("workshop_config_employee", connection.introspection.table_names())
         self.assertIn(self.client.post("/api/v1/workshop-config/employees/", {}, format="json").status_code, (403, 405))
+
+    def test_roster_displays_current_department_and_roles(self):
+        role = RoleProfile.objects.create(
+            auth_group=Group.objects.create(name="生产跟单角色"),
+            role_code="PRODUCTION_FOLLOWER",
+            display_name="生产跟单",
+        )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.worker,
+            role_profile=role,
+            effective_from=timezone.now() - timedelta(days=1),
+        )
+
+        response = self.client.get("/api/v1/workshop-config/employees/")
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data["data"][0]
+        self.assertEqual(row["department"], self.assignment.organization_unit.unit_name)
+        self.assertEqual(row["roles"], "生产跟单")
 
     def test_edit_only_workshop_fields_and_clear_without_removing_master(self):
         count = Employee.objects.count()

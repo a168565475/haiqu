@@ -14,7 +14,7 @@ from apps.core.auth import active_employee_for
 from . import notification_selectors as selectors, notification_services as services
 from . import notification_preview_selectors as preview_selectors, notification_preview_services as preview_services
 from .models import NotificationPreviewAttempt
-from .notification_catalog import get_event
+from .notification_catalog import get_event, target_for
 from .notification_serializers import (
     NotificationListSerializer, NotificationPreviewResponseSerializer,
     NotificationPreviewSerializer, NotificationReadSerializer, NotificationRuleListSerializer,
@@ -161,7 +161,13 @@ class NotificationTargetView(NotificationPersonalView):
         recipient = selectors.inbox_queryset(employee.pk).filter(pk=recipient_id).first()
         if recipient is None or not selectors.target_accessible(recipient, request.user) or recipient.event.target is None:
             raise NotFound("通知目标当前不可访问。")
-        return Response({"data": {"target": recipient.event.target}})
+        target = recipient.event.target
+        # 点击时按真实来源更新入口，兼容历史通知；列表读取不增加逐条来源查询。
+        if recipient.event.event_code in {"OUTSOURCING_ORDER_CREATED", "TUBE_OUTSOURCING_ORDER_CREATED"}:
+            target = target_for(recipient.event.event_code, recipient.event.object_id)
+        if target is None:
+            raise NotFound("通知目标当前不可访问。")
+        return Response({"data": {"target": target}})
 
 
 class NotificationInboxDetailView(NotificationPersonalView):

@@ -267,8 +267,8 @@ class CraftResourceApiTests(ScopedActorMixin, APITestCase):
         self.assertEqual({row['id'] for row in response.data['data']['crafts']}, {str(self.spray.pk)})
         for factory in response.data['data']['factories']:
             self.assertTrue({row['id'] for row in factory['crafts']} <= {str(self.spray.pk)})
-        denied = self.client.get('/api/v1/outsourcing-orders/source-plans/', {'craft_id': str(self.other.pk)})
-        self.assertEqual(denied.status_code, 403, denied.data)
+        retired = self.client.get('/api/v1/outsourcing-orders/source-plans/', {'craft_id': str(self.other.pk)})
+        self.assertEqual(retired.status_code, 404)
 
     def test_legacy_plus_empty_craft_does_not_remove_original_task_boundary(self):
         grant = self.grant('outsourcing.view_outsourcingorder', 'CRAFT')
@@ -289,7 +289,7 @@ class CraftResourceApiTests(ScopedActorMixin, APITestCase):
         reworks = response.data['data']['original_handoffs'][0]['unsprayed_returns'][0]['reworks']
         self.assertNotIn(str(self.order.pk), reworks[0]['external_order_ids'])
 
-    def test_legacy_create_cannot_use_new_craft_to_unlock_other_craft_on_same_schedule(self):
+    def test_shared_source_selector_cannot_unlock_other_craft_on_same_schedule(self):
         grant = self.grant('outsourcing.add_outsourcingorder', 'CRAFT', [self.spray])
         self.scope_user.user_permissions.add(grant.permission)
         from apps.outsourcing.selectors import outsourcing_source_schedules
@@ -297,10 +297,6 @@ class CraftResourceApiTests(ScopedActorMixin, APITestCase):
             'outsourcing.add_outsourcingorder', self.spray.pk).filter(pk=self.order.source.issue_line.issue.product_line.schedule_products.first().schedule_id).exists())
         self.assertFalse(outsourcing_source_schedules(self.scoped_request(),
             'outsourcing.add_outsourcingorder', self.other.pk).exists())
-        from apps.outsourcing.services import create_order
-        with self.assertRaises(Http404):
-            create_order(request=self.scoped_request(), actor_employee=self.scope_employee,
-                validated_data={'craft_id': self.other.pk, 'schedule_id': self.order.source.issue_line.issue.product_line.schedule_products.first().schedule_id})
 
     def test_new_source_scope_does_not_lend_legacy_create_permission_to_other_destination(self):
         grant = self.grant('material_issues.create_metalprocessingexternalorder', 'CRAFT', [self.spray])

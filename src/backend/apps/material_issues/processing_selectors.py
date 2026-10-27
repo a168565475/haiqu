@@ -38,11 +38,16 @@ def digest(value):
 
 
 def processing_lines(request, *, scoped=True, permission=None):
-    from apps.access_control.resource_scopes import current_permission, has_resource_grant, filter_crafts
+    from apps.access_control.resource_scopes import current_permission, has_resource_grant, filter_crafts, has_legacy_permission
     from apps.outsourcing.models import OutsourcingOrderProduct
     from .models import MaterialIssue, MetalProcessingExternalOrder
+    explicit_permission = permission
     permission = permission or current_permission(request, 'material_issues.view_metalprocessingsource')
-    issues = accessible_material_issues(request)
+    # 仅独立旧直授保留旧领料可见范围，资源动作继续按自身范围筛选。
+    legacy_scope = (explicit_permission is None and has_legacy_permission(request, permission)
+                    and request.user.has_perm("material_issues.view_all_materialissue"))
+    issues = (accessible_material_issues(request) if not scoped or legacy_scope
+              else accessible_material_issues(request, permission=permission))
     if scoped and has_resource_grant(request, permission, 'CRAFT'):
         products = filter_crafts(OutsourcingOrderProduct.objects.all(), request, permission, 'order__craft_id', include_legacy=False)
         issues = issues | MaterialIssue.objects.filter(

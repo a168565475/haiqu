@@ -3,10 +3,9 @@ import { pipeRootError } from '@/utils/pipeQuantities'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Calendar, Refresh, Tickets, WarningFilled } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { createMaterialReceiving, createSampleMaterialReceiving, fetchEligibleMaterialLinesWithVersion, fetchEligibleMaterialPurchaseOrders, fetchMaterialReceivingOptions } from '@/api/inventory'
 import { useAuthStore } from '@/stores/auth'
-import { router } from '@/router'
 import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, MaterialReceivingOptions, SampleMaterialReceivingPayload } from '@/types/inventory'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import { createClientUuid } from '@/utils/clientUuid'
@@ -21,6 +20,7 @@ interface ReceivingRow {
 }
 const auth = useAuthStore()
 const route = useRoute()
+const router = useRouter()
 const canReceive = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.receive_material'))
 const canQuality = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.quality_confirm_material'))
 const baseLoading = ref(false)
@@ -36,7 +36,7 @@ const options = ref<MaterialReceivingOptions>({ warehouses: [], zones: [] })
 const rows = ref<ReceivingRow[]>([])
 const hoveredRowId = ref('')
 const hoveredSupplierRowId = ref('')
-const bulk = reactive({ warehouseId: '', zoneId: '' })
+const bulk = reactive({ category: '', warehouseId: '', zoneId: '' })
 function localToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
@@ -49,6 +49,9 @@ const isSample = computed(() => selectedOrder.value?.source_type === 'SAMPLE')
 const receivingVersion = ref('')
 let sampleAttempt: { fingerprint: string; payload: SampleMaterialReceivingPayload } | null = null
 const selectedRows = computed(() => isSample.value ? rows.value : rows.value.filter((row) => row.included))
+const bulkCategories = computed(() => [...new Set(rows.value.map((row) => row.line.category?.trim() || '未分类'))])
+const bulkSelectedRows = computed(() => selectedRows.value.filter((row) => !bulk.category || (row.line.category?.trim() || '未分类') === bulk.category))
+const bulkApplyLabel = computed(() => isSample.value ? (bulk.category ? '应用到当前分类' : '应用到全部') : '应用到已勾选')
 const warehouseZones = (warehouseId: string) => options.value.zones.filter((zone) => zone.warehouse === warehouseId)
 const bulkZones = computed(() => warehouseZones(bulk.warehouseId))
 function hasZone(row: Pick<ReceivingRow, 'warehouseId' | 'zoneId'>) {
@@ -111,7 +114,8 @@ function applyBulkZone() {
   if (locked.value || !canReceive.value) return
   if (!hasZone(bulk)) return ElMessage.warning('请先完整选择材料仓和库区。')
   if (!selectedRows.value.length) return ElMessage.warning('请先勾选物料。')
-  selectedRows.value.forEach((row) => { row.warehouseId = bulk.warehouseId; row.zoneId = bulk.zoneId })
+  if (!bulkSelectedRows.value.length) return ElMessage.warning('当前分类没有已勾选物料。')
+  bulkSelectedRows.value.forEach((row) => { row.warehouseId = bulk.warehouseId; row.zoneId = bulk.zoneId })
 }
 async function loadBase() {
   if (locked.value || !canReceive.value) return
@@ -184,6 +188,7 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
       if (!hasZone(row)) row.zoneId = ''
       return row
     })
+    if (!bulkCategories.value.includes(bulk.category)) { bulk.category = '' }
   } catch (error) {
     if (!disposed && request === linesRequest) loadError.value = apiMessage(error, '采购明细加载失败，请刷新重试。')
   } finally { if (request === linesRequest) linesLoading.value = false }
@@ -245,7 +250,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
     <div v-if="!canReceive" class="empty-state"><h1>无权进行采购入库</h1><p>请联系管理员开通采购入库权限。</p></div>
     <template v-else>
       <header class="page-title-row">
-        <div><h1>采购入库</h1><p>{{ isSample ? '确认样品采购材料全部到齐，并登记材料仓和库区。' : '核对当前采购单的到货数量，并登记材料仓和库区。' }}</p></div>
+        <div><h1>采购入库</h1></div>
         <div class="head-actions"><ElButton :icon="Refresh" :loading="loading" :disabled="locked" @click="loadBase">刷新</ElButton><ElButton :icon="Tickets" :disabled="submitting" @click="router.push({ name: 'purchase-inbounds' })">返回列表</ElButton></div>
       </header>
       <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
@@ -254,9 +259,10 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
           <h2>本次到货设置</h2>
           <div class="date-field"><label>到货日期</label><ElDatePicker v-model="form.inboundDate" aria-label="到货日期" type="date" value-format="YYYY-MM-DD" :prefix-icon="Calendar" :disabled="locked" :disabled-date="(date: Date) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date) > localToday()" /></div>
           <div class="bulk-controls">
-            <ElSelect v-model="bulk.warehouseId" aria-label="批量材料仓" placeholder="选择材料仓" :disabled="locked" @change="bulkWarehouseChanged"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect>
+            <ElSelect v-model="bulk.category" aria-label="批量分类" placeholder="选择分类" clearable :disabled="locked || !rows.length"><ElOption v-for="category in bulkCategories" :key="category" :label="category" :value="category" /></ElSelect>
+            <ElSelect v-model="bulk.warehouseId" aria-label="批量材料仓" placeholder="选择材料仓" :disabled="locked" @change="bulkWarehouseChanged"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect>
             <ElSelect v-model="bulk.zoneId" aria-label="批量库区" placeholder="选择库区" :disabled="locked || !bulk.warehouseId"><ElOption v-for="item in bulkZones" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect>
-            <ElButton :disabled="locked || !selectedRows.length" @click="applyBulkZone">{{ isSample ? '应用到全部' : '应用到已勾选' }}</ElButton>
+            <ElButton :disabled="locked || !bulkSelectedRows.length" @click="applyBulkZone">{{ bulkApplyLabel }}</ElButton>
           </div>
         </div>
       </section>
@@ -281,7 +287,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
               </ElTooltip>
               <td class="purchase-quantity-cell" :title="row.line.raw_bar_length_m ? `${formatQuantity(row.line.purchased_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
               <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ row.line.raw_bar_length_m ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
-              <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_number + ' · ' + item.warehouse_name" :value="item.id" /></ElSelect></td>
+              <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="'第 ' + (index + 1) + ' 项库区'" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
               <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="'第 ' + (index + 1) + ' 项差异说明'" :maxlength="3000" :disabled="locked" /></td>
               <td><ElTag :type="hasZone(row) && validQuantity(row) ? 'success' : 'warning'" round>{{ hasZone(row) && validQuantity(row) ? '已完善' : '待完善' }}</ElTag></td>
@@ -322,8 +328,9 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .date-field { gap: 10px; } .date-field label { white-space: nowrap; color: token.$crm-text-secondary; }
 .date-field :deep(.el-date-editor) { width: 190px; height: 32px; }
 .bulk-controls { gap: 10px; height: 32px; }
-.bulk-controls > .el-select:first-child { width: 180px; }
-.bulk-controls > .el-select:nth-child(2) { width: 150px; }
+.bulk-controls > .el-select:nth-child(1) { width: 120px; }
+.bulk-controls > .el-select:nth-child(2) { width: 180px; }
+.bulk-controls > .el-select:nth-child(3) { width: 150px; }
 .bulk-controls > .el-button { width: 140px; }
 .table-card { box-sizing: border-box; height: calc(100dvh - 356px); min-height: 370px; display: flex; flex-direction: column; overflow: hidden; margin-bottom: 16px; }
 .table-head { flex: 0 0 51px; justify-content: space-between; padding: 0 21px; border-bottom: 1px solid token.$crm-border-subtle; }
@@ -333,8 +340,9 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .table-order-meta strong { color: token.$crm-text-primary; font-weight: 500; }
 .table-head > strong { margin-right: 16px; font-size: 13px; white-space: nowrap; }
 .receiving-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-.receiving-table { width: 100%; min-width: 1684px; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.receiving-table { width: 100%; min-width: 1684px; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--erp-table-body-fill); }
 .receiving-table th, .receiving-table td { box-sizing: border-box; padding: 4px 8px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: center; overflow-wrap: anywhere; }
+.receiving-table th:nth-child(2), .receiving-table td:nth-child(2) { white-space: nowrap; overflow-wrap: normal; }
 .receiving-table th { height: 44px; position: sticky; top: 0; z-index: 2; background: var(--erp-table-header-fill); font-size: 12px; font-weight: 500; color: var(--erp-table-header-text); }
 .receiving-table td { height: 58px; } .receiving-table th:last-child, .receiving-table td:last-child { border-right: 0; }
 .receiving-table .purchase-quantity-cell { white-space: nowrap; overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; }
@@ -364,4 +372,14 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .inventory-workflow :deep(.el-checkbox__inner) { width: 14px; height: 14px; border-radius: 2px; }
 .inventory-workflow :deep(.invalid-field .el-input__wrapper) { box-shadow: 0 0 0 1px token.$crm-danger inset; }
 .empty-state { padding: 80px; text-align: center; color: token.$crm-text-secondary; }
+@media (max-width: 1400px) {
+  .bulk-row { gap: 12px; }
+  .date-field { gap: 6px; }
+  .date-field :deep(.el-date-editor) { width: 150px; }
+  .bulk-controls { gap: 6px; }
+  .bulk-controls > .el-select:nth-child(1) { width: 100px; }
+  .bulk-controls > .el-select:nth-child(2) { width: 150px; }
+  .bulk-controls > .el-select:nth-child(3) { width: 120px; }
+  .bulk-controls > .el-button { width: 120px; }
+}
 </style>

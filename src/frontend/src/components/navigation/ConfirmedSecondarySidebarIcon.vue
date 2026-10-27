@@ -210,8 +210,8 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M12 2v13m-3-3 3 3 3-3"/></g>
     </g>
 
-    <g v-else-if="name === 'purchase-returns'">
-      <title>退货明细</title>
+    <g v-else-if="name === 'purchase-returns' || name === 'purchase-return-records'">
+      <title>{{ name === 'purchase-return-records' ? '退货记录' : '退货明细' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="m2 13 6-3 6 3v7l-6 3-6-3Z"/></g>
       <path d="m2 13 6 3 6-3M8 16v7"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M21 13V7a3 3 0 0 0-3-3h-7m3-3-3 3 3 3"/></g>
@@ -232,7 +232,7 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M18 15.5V18l2 1"/></g>
     </g>
 
-    <g v-else-if="name === 'workshop-outsourcing'">
+    <g v-else-if="name === 'workshop-outsourcing' || name === 'warehouse-outsourcing'">
       <title>委外加工</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M2 21V11h3V7h3v6l4-3v11Zm14-8h6v8h-6Z"/></g>
       <path d="M6 17h2m11-1v2"/>

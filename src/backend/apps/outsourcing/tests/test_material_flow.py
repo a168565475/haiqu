@@ -23,7 +23,7 @@ from . import test_outsourcing_source_bom_api as fixtures
 
 class MaterialFlowFixture:
     def setUp(self):
-        self.f = fixtures.OutsourcingWarehouseFlowApiTests(methodName="test_create_persists_nested_order_without_inventory_write")
+        self.f = fixtures.OutsourcingWarehouseFlowApiTests(methodName="test_pending_dispatch_order_can_be_physically_deleted")
         self.f.setUp()
         self.client = self.f.client
         f = self.f
@@ -180,13 +180,6 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         source = OutsourcingDispatchLine.objects.get(dispatch__order_id=order_id)
         self.assertEqual((source.inbound_line_id, source.zone_id, source.source_quantity),
             (self.f.material_inbound_line.pk, self.f.material_balance.zone_id, Decimal("100")))
-
-    def test_create_rejects_price_finer_than_one_cent(self):
-        payload = self.payload()
-        payload["products"][0]["processing_items"][0]["allocations"][0]["unit_price"] = "2.5050"
-        response = self.f.create_order(payload)
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(OutsourcingOrder.objects.filter(client_request_id=payload["client_request_id"]).exists())
 
     def test_revoke_dispatched_pipe_restores_original_batch_and_allowance_once(self):
         order_id = self.create()
@@ -422,33 +415,6 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(available[self.f.material_inbound_line.pk], 101)
         self.assertEqual(SemiFinishedStockBalance.objects.get(quality="AVAILABLE").unit.unit_name, "套")
 
-    def test_fabric_zero_set_creation_is_rejected_without_fictitious_output(self):
-        response = self.f.create_order(self.payload("FABRIC", "1", output_sets="0"))
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(OutsourcingOrder.objects.exists())
-
-    def test_nonwhole_pipe_create_is_rejected(self):
-        response = self.f.create_order(self.payload(amount="400"))
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(OutsourcingOrder.objects.exists())
-
-    def test_fabric_missing_mapping_blocks_before_creation(self):
-        self.f.cutting.fabric_source_line = None
-        self.f.cutting.save()
-        response = self.f.create_order(self.payload("FABRIC", "100"))
-        self.assertEqual(response.status_code, 400, response.data)
-
-    def test_missing_input_quantity_is_not_guessed(self):
-        payload = self.payload()
-        del payload["products"][0]["processing_items"][0]["allocations"][0]["input_quantity"]
-        self.assertEqual(self.f.create_order(payload).status_code, 400)
-
-    def test_pending_orders_do_not_consume_stock_or_allowance(self):
-        self.create()
-        self.create()
-        self.assertFalse(OrderMaterialRequirement.objects.filter(outsourcing_issued_quantity__gt=0).exists())
-        self.assertFalse(MaterialStockMovement.objects.filter(direction="OUT").exists())
-
     def test_shared_allowance_blocks_second_dispatch_and_rolls_back(self):
         first, second = self.create(), self.create()
         self.dispatch(first)
@@ -534,15 +500,6 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
             response = self.client.post(f"/api/v1/outsourcing-orders/{order_id}/{action}/", {}, format="json", HTTP_HOST="localhost")
             self.assertEqual(response.status_code, 403, response.data)
 
-    def test_source_preview_and_reconciliation_are_read_only(self):
-        counts = (OrderMaterialRequirement.objects.count(), MaterialStockMovement.objects.count())
-        response = self.f.get_bom(self.f.spray)
-        self.assertEqual(response.status_code, 200, response.data)
-        row = response.data["data"]["processing_items"][0]
-        self.assertEqual(row["unit"], "支")
-        self.assertEqual(Decimal(row["available_quantity"]), 408)
-        self.assertEqual(counts, (OrderMaterialRequirement.objects.count(), MaterialStockMovement.objects.count()))
-
     def test_nonwhole_each_batch_rejects_even_if_total_whole(self):
         order_id = self.create()
         second = copy.copy(self.pipe_batch)
@@ -591,8 +548,8 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(source.source_unit_snapshot, "根")
         self.assertEqual(source.issued_piece_count, 402)
 
-    def test_batch_preselection_persists_without_debit_and_revalidates(self):
-        # 无关的历史失效批次不得阻断新来源查询或预选保存。
+    def test_historical_batch_preselection_is_read_and_revalidated_on_dispatch(self):
+        # 无关的历史失效批次不得阻断旧单发料上下文和库存核对。
         bad_batch = copy.copy(self.f.material_inbound_line)
         bad_batch.pk = None
         bad_raw = copy.copy(self.f.raw_material)
@@ -602,7 +559,6 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         bad_raw.save()
         bad_batch.raw_material_information = bad_raw
         bad_batch.save()
-        self.assertEqual(self.f.get_bom(self.f.spray).status_code, 200)
         payload = self.payload()
         payload['products'][0]['materials'][0]['planned_batches'] = [
             {'inbound_line_id': str(self.pipe_batch.pk), 'quantity': '402'}]
@@ -616,11 +572,7 @@ class MaterialFlowApiTests(MaterialFlowFixture, APITestCase):
         self.assertEqual(context.data['data']['materials'][0]['planned_batches'][0]['quantity'], '402.0000')
         self.dispatch(order_id)
 
-    def test_wrong_length_preselection_and_dispatch_are_rejected(self):
-        payload = self.payload()
-        payload['products'][0]['materials'][0]['planned_batches'] = [
-            {'inbound_line_id': str(self.f.material_inbound_line.pk), 'quantity': '402'}]
-        self.assertEqual(self.f.create_order(payload).status_code, 400)
+    def test_wrong_length_dispatch_is_rejected(self):
         order_id = self.create()
         material = OutsourcingMaterialItem.objects.get(allocation__processing_item__order_product__order_id=order_id)
         self.post(order_id, 'confirm-dispatch', {'request_id': str(uuid.uuid4()), 'lines': [

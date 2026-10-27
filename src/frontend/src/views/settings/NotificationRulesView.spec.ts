@@ -48,6 +48,57 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks() })
 
 describe('通知规则页面', () => {
+  it('列表只显示业务环节和模板名称，不显示事件编码与标题模板副本', async () => {
+    const hiddenRule = { ...rule, event_code: 'EVENT_CODE_SHOULD_BE_HIDDEN', title_template: '标题模板副本不应显示' }
+    api.getNotificationRules.mockResolvedValue({ data: [hiddenRule], roles: rule.recipient_roles })
+    const wrapper = await render()
+    const table = wrapper.find('.rules-table')
+    expect(table.text()).toContain(hiddenRule.display_name)
+    expect(table.text()).toContain(hiddenRule.name)
+    expect(table.text()).not.toContain(hiddenRule.event_code)
+    expect(table.text()).not.toContain(hiddenRule.title_template)
+  })
+
+  it('接收角色只显示角色名称，不显示角色描述提示', async () => {
+    const warningRule = { ...rule, warnings: ['角色描述不应显示'] }
+    api.getNotificationRules.mockResolvedValue({ data: [warningRule], roles: rule.recipient_roles })
+    const wrapper = await render()
+    const table = wrapper.find('.rules-table')
+    expect(table.text()).toContain('技术')
+    expect(table.text()).not.toContain('角色描述不应显示')
+  })
+
+  it('接收角色选择器只显示角色名称，保留角色编码作为值', async () => {
+    const wrapper = await edit()
+    const roleSelect = wrapper.findAllComponents(ElSelect).at(0)!
+    expect(roleSelect.findAllComponents(ElOption).map(option => [option.props('label'), option.props('value')])).toEqual([
+      ['技术', 'TECHNICAL'],
+    ])
+  })
+
+  it('通知规则按侧边栏菜单顺序分组', async () => {
+    const procurementRule = { ...rule, event_code: 'PURCHASE_ORDER_COMPLETED', display_name: '采购手动完结', name: '采购通知', title_template: '采购标题' }
+    const warehouseRules = [
+      { ...rule, event_code: 'MATERIAL_RECEIPT_RECORDED', display_name: '材料到货登记', name: '仓库到货通知', title_template: '仓库到货标题' },
+      { ...rule, event_code: 'MATERIAL_INSPECTION_CONFIRMED', display_name: '材料质检确认', name: '仓库质检通知', title_template: '仓库质检标题' },
+      { ...rule, event_code: 'MATERIAL_ISSUE_SUBMITTED', display_name: '生产领料提交', name: '仓库领料通知', title_template: '仓库领料标题' },
+    ]
+    const sampleRule = { ...rule, event_code: 'SAMPLE_SUBMITTED', display_name: '打样申请提交', name: '样品通知', title_template: '样品标题' }
+    api.getNotificationRules.mockResolvedValue({ data: [procurementRule, rule, sampleRule, ...warehouseRules], roles: rule.recipient_roles })
+    const wrapper = await render()
+    const tabs = wrapper.find('.notification-rule-tabs')
+    expect(tabs.exists()).toBe(true)
+    expect(tabs.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['样品', '生产', '采购', '仓库'])
+    expect(tabs.find('[data-notification-group="sample-management"] .rules-table').text()).toContain(sampleRule.display_name)
+    expect(tabs.find('[data-notification-group="production-management"] .rules-table').text()).toContain(rule.display_name)
+    expect(tabs.find('[data-notification-group="procurement-management"] .rules-table').text()).toContain(procurementRule.display_name)
+    const warehouseTable = tabs.find('[data-notification-group="warehouse-management"] .rules-table').text()
+    for (const warehouseRule of warehouseRules) expect(warehouseTable).toContain(warehouseRule.display_name)
+    await tabs.findAll('[role="tab"]').find(tab => tab.text() === '采购')!.trigger('click')
+    await flushPromises()
+    expect(tabs.find('[data-notification-group="procurement-management"] .rules-table').isVisible()).toBe(true)
+  })
+
   it('嵌入配置窗口时保留通知编辑及发送中的窗口，完成并取消后允许关闭', async () => {
     let finish!: (value: unknown) => void
     api.sendNotificationPreview.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))

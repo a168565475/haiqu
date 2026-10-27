@@ -128,14 +128,6 @@
   .d3-confirm-footer { display: flex; align-items: center; gap: 12px; width: 100%; }
   .d3-confirm-footer > div { margin-right: auto; display: flex; gap: 28px; }
   .d3-confirm-footer strong { font-size: 16px; margin: 0 5px; color: var(--erp-color-brand); font-weight: 600; }
-  .filterbar { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
-  .d3-picker-filter { margin-bottom: 16px; }
-  .d3-picker-filter .el-input { width: 380px; }
-  .d3-picker-filter .el-select { width: 170px; }
-  .d3-picker-filter .spacer { flex: 1; }
-  .d3-picker-lines { min-height: 166px; max-height: 440px; }
-  .d3-picker-loading { padding-top: 12px; }
-  .d3-select-order > .el-alert { margin-bottom: 12px; }
   .d3-warehouse-confirm p { margin: 0 0 14px; }
   .d3-warehouse-confirm p:last-child { margin-bottom: 0; }
   .d3-warehouse-confirm strong { font-weight: 600; margin: 0 5px; }

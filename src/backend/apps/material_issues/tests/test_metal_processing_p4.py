@@ -773,10 +773,10 @@ class MetalProcessingOriginalClosureTests(OriginalClosureFixture, APITestCase):
         self.assertIsNone(context["closure"])
         self.assertEqual(context["post_closure_returns"], [])
 
-    def test_closed_order_locks_legacy_actions_and_preserves_dispatched_reference(self):
+    def test_closed_order_locks_legacy_actions_and_preserves_handoff_reference(self):
         self.prepare_original()
-        before = self.client.get(f"/api/v1/outsourcing-orders/source-products/{self.f.schedule_product.pk}/bom/",
-            {"craft_id": str(self.f.spray.pk)}).data["data"]["processing_items"]
+        before = list(MetalProcessingOriginalHandoff.objects.filter(original_order_id=self.original_order)
+            .order_by("pk").values_list("pk", "handoff_pieces"))
         self.original_write("close", {"request_id": str(uuid.uuid4()), "remark": "仍未回货，备注结清"})
         detail = self.client.get(f"/api/v1/outsourcing-orders/{self.original_order}/").data["data"]
         self.assertEqual(detail["status"], "CLOSED")
@@ -784,9 +784,9 @@ class MetalProcessingOriginalClosureTests(OriginalClosureFixture, APITestCase):
             self.assertFalse(detail[name], name)
         self.post(f"/api/v1/outsourcing-orders/{self.original_order}/complete/", {"request_id": str(uuid.uuid4())},
                   expected=409, etag=self.client.get(f"/api/v1/outsourcing-orders/{self.original_order}/")["ETag"])
-        after = self.client.get(f"/api/v1/outsourcing-orders/source-products/{self.f.schedule_product.pk}/bom/",
-            {"craft_id": str(self.f.spray.pk)}).data["data"]["processing_items"]
-        self.assertEqual([row["dispatched_quantity"] for row in before], [row["dispatched_quantity"] for row in after])
+        after = list(MetalProcessingOriginalHandoff.objects.filter(original_order_id=self.original_order)
+            .order_by("pk").values_list("pk", "handoff_pieces"))
+        self.assertEqual(before, after)
 
     def test_closure_validation_permission_scope_csrf_etag_and_retry(self):
         from django.middleware.csrf import _get_new_csrf_string

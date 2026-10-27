@@ -10,6 +10,10 @@ from rest_framework.response import Response
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from apps.outsourcing.selectors import accessible_outsourcing_orders
 from apps.outsourcing.models import OutsourcingOrder
+from apps.outsourcing.warehouse_access import (
+    REWORK_RETURN_PERMISSION, RETURN_PERMISSION, WarehouseActionReadPermission,
+    warehouse_original_handoffs, warehouse_rework_orders, warehouse_stage,
+)
 
 from ..models import (
     MetalProcessingExternalOrder, MetalProcessingOriginalHandoff,
@@ -36,7 +40,9 @@ from ..original_order_services import original_closure_data, original_order_cont
 
 class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
     serializer_class = P4RecordResponseSerializer
-    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
+    warehouse_read_actions = {'retrieve'}
+    warehouse_read_permissions = (RETURN_PERMISSION,)
     action_permission_map = {
         "retrieve": "material_issues.view_metalprocessingsource",
         "returns": "material_issues.register_metalprocessingunsprayedreturn",
@@ -47,6 +53,9 @@ class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MetalProcessingOriginalHandoff.objects.none()
+        if self.action in self.warehouse_read_actions and warehouse_stage(self.request):
+            return warehouse_original_handoffs(self.request).select_related('source', 'original_order', 'factory').prefetch_related(
+                'unsprayed_returns', 'unsprayed_returns__reworks')
         queryset = MetalProcessingOriginalHandoff.objects.filter(
             source__issue_line__in=processing_lines(self.request),
             original_order__in=accessible_outsourcing_orders(self.request),
@@ -58,7 +67,8 @@ class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, pk=None):
         handoff = get_object_or_404(self.get_queryset(), pk=pk)
         from ..processing_selectors import frozen_source, source_etag
-        line = get_object_or_404(processing_lines(request), pk=handoff.source.issue_line_id)
+        permission = RETURN_PERMISSION if warehouse_stage(request) else None
+        line = get_object_or_404(processing_lines(request, permission=permission), pk=handoff.source.issue_line_id)
         return Response({"data": {
             "id": str(handoff.pk), "source_id": str(handoff.source_id),
             "original_order_id": str(handoff.original_order_id), "original_order_number": handoff.original_order.order_number,
@@ -103,7 +113,9 @@ class MetalProcessingOriginalHandoffViewSet(viewsets.GenericViewSet):
 class MetalProcessingOriginalOrderViewSet(viewsets.GenericViewSet):
     serializer_class = P4RecordResponseSerializer
     queryset = OutsourcingOrder.objects.none()
-    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
+    warehouse_read_actions = {'retrieve'}
+    warehouse_read_permissions = (RETURN_PERMISSION,)
     action_permission_map = {
         "retrieve": "material_issues.view_metalprocessingsource",
         "close": "outsourcing.complete_outsourcingorder",
@@ -207,7 +219,9 @@ class MetalProcessingReworkViewSet(viewsets.GenericViewSet):
 
 class MetalProcessingExternalOrderViewSet(viewsets.GenericViewSet):
     serializer_class = P4OrderResponseSerializer
-    permission_classes = [HasActiveEmployee, BusinessActionPermission]
+    permission_classes = [HasActiveEmployee, WarehouseActionReadPermission]
+    warehouse_read_actions = {'retrieve', 'semi_stock'}
+    warehouse_read_permissions = (REWORK_RETURN_PERMISSION,)
     action_permission_map = {
         "list": "material_issues.view_metalprocessingsource",
         "retrieve": "material_issues.view_metalprocessingsource",
@@ -222,6 +236,9 @@ class MetalProcessingExternalOrderViewSet(viewsets.GenericViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return MetalProcessingExternalOrder.objects.none()
+        if self.action in self.warehouse_read_actions and warehouse_stage(self.request):
+            return warehouse_rework_orders(self.request).select_related('source', 'factory', 'craft', 'rework', 'original_return').prefetch_related(
+                'handoff', 'good_returns', 'closure')
         queryset = MetalProcessingExternalOrder.objects.filter(
             source__issue_line__in=processing_lines(self.request),
         ).select_related("source", "factory", "craft", "rework", "original_return").prefetch_related("handoff", "good_returns", "closure")

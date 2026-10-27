@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
-import { ElButton, ElInput, ElMessage, ElOption, ElSelect, ElSwitch, ElTag } from 'element-plus'
+import { ElButton, ElInput, ElMessage, ElOption, ElSelect, ElSwitch, ElTabPane, ElTabs, ElTag } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { groupNotificationRules } from '@/config/notificationMenuGroups'
 import * as api from '@/api/notifications'
 import type { NotificationPreview, NotificationRule, NotificationRuleWrite, NotificationPreviewDraft, NotificationPreviewAttempt, NotificationPreviewRecipients } from '@/types/notifications'
 
@@ -39,8 +40,10 @@ const sentPreviewId = ref('')
 const sendForbidden = ref(false)
 const sendError = ref('')
 const attempt = ref<NotificationPreviewAttempt>()
+const activeGroup = ref('')
 const canSend = computed(() => canManage.value && auth.user?.is_superuser === true && auth.managementCan('access_control.manage_wecom') && !sendForbidden.value)
 const busy = computed(() => saving.value || sending.value)
+const groupedRules = computed(() => groupNotificationRules(rules.value))
 const awaitingOutcome = computed(() => sendStarted.value && (!attempt.value || ['PROCESSING', 'UNCERTAIN'].includes(attempt.value.status)))
 const sendReady = computed(() => canSend.value && recipients.value?.available && bindingId.value && preview.value?.preview_token && previewDraft.value && !preview.value.send_blocked_reason && !previewExpired.value && !busy.value && !sendStarted.value)
 const form = reactive<NotificationRuleWrite>({ name: '', title_template: '', body_template: '', recipient_role_codes: [], recipient_scope: 'ROLE_MEMBERS', enabled: false })
@@ -84,7 +87,7 @@ function clearEditor(): void {
 
 function clearPage(): void {
   pageVersion++
-  rules.value = []; roles.value = []; loading.value = false; loadError.value = ''; notice.value = ''
+  rules.value = []; roles.value = []; activeGroup.value = ''; loading.value = false; loadError.value = ''; notice.value = ''
   clearEditor()
 }
 
@@ -250,6 +253,9 @@ function canClose(): boolean {
 defineExpose({ canClose })
 
 watch(form, clearPreview, { flush: 'sync' })
+watch(groupedRules, groups => {
+  if (!groups.some(group => group.key === activeGroup.value)) activeGroup.value = groups[0]?.key || ''
+}, { immediate: true })
 watch(() => auth.user?.is_superuser === true && auth.managementCan('access_control.manage_wecom'), allowed => {
   clearSendState()
   recipientRequest++; recipients.value = undefined; bindingId.value = ''; sendForbidden.value = false
@@ -275,7 +281,13 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
     <section v-else-if="!loadError" class="rules-card">
       <div v-if="loading" class="empty-state" role="status">正在读取通知规则…</div>
       <div v-else-if="!rules.length" class="empty-state">暂无已登记通知规则。</div>
-      <div v-else class="table-scroll" role="region" aria-label="通知规则列表" tabindex="0"><table class="rules-table"><thead><tr><th>业务环节</th><th>模板</th><th>接收角色</th><th>范围</th><th>状态</th><th v-if="!props.embedded">版本</th><th>操作</th></tr></thead><tbody><tr v-for="rule in rules" :key="rule.event_code"><td><strong>{{ rule.display_name }}</strong><small>{{ rule.event_code }}</small></td><td><span>{{ rule.name }}</span><small>{{ rule.title_template }}</small></td><td>{{ roleNames(rule) }}<small v-for="warning in rule.warnings" :key="warning" class="rule-warning">{{ warning }}</small></td><td>{{ scopeLabel(rule) }}</td><td><ElTag :type="rule.enabled ? 'success' : 'info'">{{ rule.enabled ? '启用' : '停用' }}</ElTag></td><td v-if="!props.embedded">v{{ rule.version }}</td><td><ElButton link type="primary" @click="openEditor(rule)">编辑</ElButton></td></tr></tbody></table></div>
+      <ElTabs v-else v-model="activeGroup" class="notification-rule-tabs">
+        <ElTabPane v-for="group in groupedRules" :key="group.key" :name="group.key" :label="group.label">
+          <div class="table-scroll" role="region" :aria-label="`${group.label}通知规则列表`" tabindex="0" :data-notification-group="group.key">
+            <table class="rules-table"><thead><tr><th>业务环节</th><th>模板</th><th>接收角色</th><th>范围</th><th>状态</th><th v-if="!props.embedded">版本</th><th>操作</th></tr></thead><tbody><tr v-for="rule in group.rules" :key="rule.event_code"><td><strong>{{ rule.display_name }}</strong></td><td><span>{{ rule.name }}</span></td><td>{{ roleNames(rule) }}</td><td>{{ scopeLabel(rule) }}</td><td><ElTag :type="rule.enabled ? 'success' : 'info'">{{ rule.enabled ? '启用' : '停用' }}</ElTag></td><td v-if="!props.embedded">v{{ rule.version }}</td><td><ElButton link type="primary" @click="openEditor(rule)">编辑</ElButton></td></tr></tbody></table>
+          </div>
+        </ElTabPane>
+      </ElTabs>
     </section>
     <AppWindowDialog v-if="canManage" v-model="dialogVisible" title="编辑通知规则" :width="920" :min-width="280" :close-on-click-modal="false" :before-close="closeDialog" destroy-on-close>
       <template v-if="selected">
@@ -289,7 +301,7 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
             <label for="notification-name">模板名称<ElInput id="notification-name" :disabled="busy" v-model="form.name" maxlength="100" /></label>
             <label for="notification-title">标题<ElInput id="notification-title" :disabled="busy" v-model="form.title_template" maxlength="200" /></label>
             <label for="notification-body">正文<ElInput id="notification-body" :disabled="busy" v-model="form.body_template" type="textarea" :rows="6" maxlength="8192" /></label>
-            <label for="notification-roles">接收角色<ElSelect id="notification-roles" :disabled="busy" v-model="form.recipient_role_codes" multiple collapse-tags collapse-tags-tooltip placeholder="选择角色"><ElOption v-for="role in availableRoles" :key="role.role_code" :label="`${role.display_name}（${role.role_code}）`" :value="role.role_code" /></ElSelect></label>
+            <label for="notification-roles">接收角色<ElSelect id="notification-roles" :disabled="busy" v-model="form.recipient_role_codes" multiple collapse-tags collapse-tags-tooltip placeholder="选择角色"><ElOption v-for="role in availableRoles" :key="role.role_code" :label="role.display_name" :value="role.role_code" /></ElSelect></label>
             <label for="notification-scope">接收范围<ElSelect id="notification-scope" :disabled="busy" v-model="form.recipient_scope"><ElOption v-for="scope in selected.supported_scopes" :key="scope" :label="selected.scope_labels[scope] || scope" :value="scope" /></ElSelect></label>
             <label class="switch-line"><span>启用规则</span><ElSwitch v-model="form.enabled" :disabled="busy" aria-label="启用规则" /></label>
             <p v-if="operationError" class="error" role="alert">{{ operationError }}</p>
@@ -347,7 +359,7 @@ onBeforeUnmount(() => { disposed = true; clearPage() })
 .table-scroll { overflow-x:auto; border-radius:inherit; }
 .notification-rules-page { min-width: 0; color: var(--erp-color-text-primary); }
 .page-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:14px; }.page-heading h1 { margin:0; font-size:20px; line-height:28px; }.page-heading p { margin:4px 0 0; color:var(--erp-color-text-secondary); font-size:12px; }
-.rules-card,.empty-card { border:1px solid var(--erp-glass-border); border-radius:12px; background:var(--erp-glass-surface); box-shadow:var(--erp-glass-shadow); }.empty-card,.empty-state { padding:48px 20px; text-align:center; color:var(--erp-color-text-secondary); }.rules-table { width:100%; min-width:760px; border-collapse:collapse; font-size:13px; }.rules-table th,.rules-table td { padding:12px 14px; border-bottom:1px solid var(--erp-color-border); text-align:left; vertical-align:top; }.rules-table th { color:var(--erp-color-text-secondary); font-size:12px; font-weight:500; }.rules-table tr:last-child td { border-bottom:0; }.rules-table small { display:block; margin-top:4px; color:var(--erp-color-text-secondary); font-size:11px; overflow-wrap:anywhere; }.notice,.error { margin:0 0 12px; padding:10px 12px; border-radius:8px; font-size:12px; }.notice { background:var(--erp-color-info-soft); color:var(--erp-color-text-secondary); }.error { background:var(--erp-color-danger-soft); color:var(--erp-color-danger); }.dialog-grid { display:grid; grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr); gap:16px; }.editor { min-width:0; display:flex; flex-direction:column; gap:11px; }.editor label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--erp-color-text-secondary); }.event-label { overflow-wrap:anywhere; margin:0; font-weight:600; color:var(--erp-color-text-primary); }.hint { margin:0; color:var(--erp-color-text-secondary); font-size:11px; line-height:1.7; overflow-wrap:anywhere; }.switch-line { flex-direction:row !important; align-items:center; justify-content:space-between; }.preview { min-width:0; padding:12px; border-radius:9px; background:var(--erp-color-info-soft); min-height:200px; }.preview-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }.preview-scope { overflow-wrap:anywhere; margin:12px 0 8px; color:var(--erp-color-text-secondary); font-size:11px; }.preview-message { margin-top:12px; padding:12px; border:1px solid var(--erp-color-border-subtle); border-radius:8px; background:var(--erp-glass-inner-background); }.preview-message strong { overflow-wrap:anywhere; font-size:13px; }.preview-message p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.7; }
+.rules-card,.empty-card { border:1px solid var(--erp-glass-border); border-radius:12px; background:var(--erp-glass-surface); box-shadow:var(--erp-glass-shadow); }.empty-card,.empty-state { padding:48px 20px; text-align:center; color:var(--erp-color-text-secondary); }.notification-rule-tabs { min-width:0; margin:14px; }.notification-rule-tabs :deep(.el-tabs__header) { margin-bottom:14px; }.rules-table { width:100%; min-width:760px; border-collapse:collapse; font-size:13px; }.rules-table th,.rules-table td { padding:12px 14px; border-bottom:1px solid var(--erp-color-border); text-align:left; vertical-align:top; }.rules-table th { color:var(--erp-color-text-secondary); font-size:12px; font-weight:500; }.rules-table tr:last-child td { border-bottom:0; }.rules-table small { display:block; margin-top:4px; color:var(--erp-color-text-secondary); font-size:11px; overflow-wrap:anywhere; }.notice,.error { margin:0 0 12px; padding:10px 12px; border-radius:8px; font-size:12px; }.notice { background:var(--erp-color-info-soft); color:var(--erp-color-text-secondary); }.error { background:var(--erp-color-danger-soft); color:var(--erp-color-danger); }.dialog-grid { display:grid; grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr); gap:16px; }.editor { min-width:0; display:flex; flex-direction:column; gap:11px; }.editor label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--erp-color-text-secondary); }.event-label { overflow-wrap:anywhere; margin:0; font-weight:600; color:var(--erp-color-text-primary); }.hint { margin:0; color:var(--erp-color-text-secondary); font-size:11px; line-height:1.7; overflow-wrap:anywhere; }.switch-line { flex-direction:row !important; align-items:center; justify-content:space-between; }.preview { min-width:0; padding:12px; border-radius:9px; background:var(--erp-color-info-soft); min-height:200px; }.preview-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; }.preview-scope { overflow-wrap:anywhere; margin:12px 0 8px; color:var(--erp-color-text-secondary); font-size:11px; }.preview-message { margin-top:12px; padding:12px; border:1px solid var(--erp-color-border-subtle); border-radius:8px; background:var(--erp-glass-inner-background); }.preview-message strong { overflow-wrap:anywhere; font-size:13px; }.preview-message p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.7; }
 .variable-group { margin-top:12px; }.variable-group h3 { margin:0 0 6px; font-size:12px; font-weight:600; }.variable-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }.variable-table th,.variable-table td { padding:5px 6px; border-bottom:1px solid var(--erp-color-border-subtle); text-align:left; overflow-wrap:anywhere; }.variable-table th { font-weight:500; color:var(--erp-color-text-secondary); }.variable-table th:first-child { width:38%; }.variable-table code { white-space:normal; font-size:11px; }.preview-placeholder { margin:12px 0; }.preview-send { margin-top:16px; display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--erp-color-border-subtle); padding-top:12px; font-size:12px; }.send-actions { display:flex; gap:8px; flex-wrap:wrap; }.send-actions .el-button + .el-button { margin-left:0; }
 .card-example { display:flex; align-items:flex-start; gap:8px; }.card-example .el-button { flex-shrink:0; }.template-card strong { display:block; }.template-card .template-card-source { margin:0 0 10px; color:var(--erp-color-text-secondary); }.template-card .template-card-description { color:var(--erp-color-text-secondary); }.template-card-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid var(--erp-color-border-subtle); color:var(--erp-color-text-secondary); font-size:12px; }
 @media (max-width:700px) { .dialog-grid { grid-template-columns:1fr; } }

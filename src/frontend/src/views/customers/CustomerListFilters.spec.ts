@@ -135,38 +135,37 @@ describe('客户列表常用筛选与已应用条件', () => {
     dialog.vm.$emit('created', 'created-2', false)
     expect(routerPush).toHaveBeenLastCalledWith({ name: 'customer-detail', params: { customerId: 'created-2' } })
   })
-  it('统计卡未返回时显示加载状态，成功后只在卡内展示接口总数', async () => {
+  it('列表页不显示客户总数卡片，接口总数仍供分页使用', async () => {
     const request = pendingCustomers()
     vi.mocked(fetchCustomers).mockReturnValueOnce(request.promise)
     const wrapper = await renderPage()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('加载中…')
+    expect(wrapper.find('[data-customer-stat]').exists()).toBe(false)
+    expect(wrapper.find('[data-customer-total]').exists()).toBe(false)
+    expect(wrapper.getComponent(ElPagination).props('total')).toBe(0)
     expect(wrapper.find('.crm-page-header__count').exists()).toBe(false)
     expect(wrapper.find('.table-footer__total').exists()).toBe(false)
-    expect(wrapper.get('[data-customer-stat]').attributes('aria-label')).toContain('不代表真实趋势')
-    expect(wrapper.get('[data-customer-stat]').text()).not.toMatch(/趋势示意|个客户/)
 
     request.resolve({ data: [], meta: { page: 1, page_size: 50, total: 1250, total_pages: 25 } })
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('1,250')
     expect(wrapper.getComponent(ElPagination).props('total')).toBe(1250)
     await wrapper.get('.filter-control--search input').setValue('尚未应用')
-    expect(wrapper.get('[data-customer-total]').text()).toBe('1,250')
+    expect(wrapper.getComponent(ElPagination).props('total')).toBe(1250)
   })
 
-  it('刷新失败不显示旧总数或假零，成功空列表才显示零', async () => {
+  it('刷新失败显示错误状态，成功空列表后分页总数为零', async () => {
     const wrapper = await renderPage()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('150')
+    expect(wrapper.getComponent(ElPagination).props('total')).toBe(150)
     vi.mocked(fetchCustomers).mockRejectedValueOnce(new Error('连接失败'))
     await wrapper.get('[data-apply-customer-filters]').trigger('click')
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('加载失败')
+    expect(wrapper.find('[data-customer-stat]').exists()).toBe(false)
+    expect(wrapper.get('[role="alert"]').text()).toContain('客户列表加载失败')
 
     vi.mocked(fetchCustomers).mockResolvedValueOnce({
       data: [], meta: { page: 1, page_size: 50, total: 0, total_pages: 0 },
     })
     await wrapper.get('[role="alert"] button').trigger('click')
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('0')
     expect(wrapper.getComponent(ElPagination).props('total')).toBe(0)
   })
 
@@ -187,7 +186,6 @@ describe('客户列表常用筛选与已应用条件', () => {
       earlier.reject(new Error('旧请求失败'))
     }
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('7')
     expect(wrapper.getComponent(ElPagination).props('total')).toBe(7)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
@@ -201,30 +199,36 @@ describe('客户列表常用筛选与已应用条件', () => {
     await wrapper.get('[data-apply-customer-filters]').trigger('click')
     earlier.resolve({ data: [], meta: { page: 1, page_size: 50, total: 89, total_pages: 2 } })
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('加载中…')
     expect(wrapper.getComponent({ name: 'ElTable' }).attributes('aria-busy')).toBe('true')
     latest.resolve({ data: [], meta: { page: 1, page_size: 50, total: 7, total_pages: 1 } })
     await flushPromises()
-    expect(wrapper.get('[data-customer-total]').text()).toBe('7')
+    expect(wrapper.getComponent(ElPagination).props('total')).toBe(7)
   })
 
   it('筛选卡仅保留四个条件，表格卡顶部放新建和导出，并保留业务列顺序', async () => {
     const wrapper = await renderPage()
-    const panel = wrapper.get('.filter-panel')
+    const panel = wrapper.get('.erp-list-filter')
+    expect(wrapper.get('[data-customer-list-page]').classes()).toContain('erp-glass-list')
+    expect(panel.classes()).toContain('erp-list-filter')
     expect(panel.getComponent(CrmPageHeader).props('title')).toBe('客户列表')
     const form = panel.get('form')
+    expect(form.classes()).toContain('erp-list-filters')
     expect(form.findComponent(ElInput).exists()).toBe(true)
     expect(form.findAllComponents({ name: 'ElSelect' }).map((item: VueWrapper<SelectInstance>) => item.props('ariaLabel')))
       .toEqual(['客户状态', '客户等级', '国家或地区'])
     expect(wrapper.find('.filter-more-button').exists()).toBe(false)
     expect(wrapper.find('.advanced-filter-grid').exists()).toBe(false)
     expect(wrapper.findAll('button').some(button => /更多筛选|高级筛选|导入/.test(button.text()))).toBe(false)
-    const surface = wrapper.get('.data-surface')
+    const surface = wrapper.get('.erp-list-data')
+    expect(surface.classes()).toContain('erp-list-data')
     const toolbar = surface.get('[data-customer-toolbar]')
+    expect(toolbar.classes()).toContain('erp-list-toolbar')
     const actions = toolbar.findAll('button').map(button => button.text())
     expect(actions.some(text => text.includes('新建客户'))).toBe(true)
     expect(actions.some(text => text.includes('导出'))).toBe(true)
     expect(surface.element.firstElementChild).toBe(toolbar.element)
+    expect(surface.find('.erp-list-table-frame').exists()).toBe(true)
+    expect(surface.find('.erp-list-footer').exists()).toBe(true)
     expect(wrapper.findAll('.el-table__header-wrapper th .cell').map(cell => cell.text())).toEqual([
       '客户名称', '国家/地区', '等级', '客户状态', '负责人', '近12个月销售额',
       '最近订单', '最近联系', '下次跟进', '跟进状态', '风险', '操作',
@@ -289,7 +293,7 @@ describe('客户列表常用筛选与已应用条件', () => {
     await flushPromises()
     expect(fetchCustomers).toHaveBeenCalledExactlyOnceWith({ page: 1, page_size: 50, ordering: '-updated_at' })
     expect((wrapper.get('.filter-control--search input').element as HTMLInputElement).value).toBe('')
-    expect(wrapper.get('.filter-panel').findAllComponents({ name: 'ElSelect' }).map((item: VueWrapper<SelectInstance>) => item.props('modelValue'))).toEqual(['', '', ''])
+    expect(wrapper.get('.erp-list-filter').findAllComponents({ name: 'ElSelect' }).map((item: VueWrapper<SelectInstance>) => item.props('modelValue'))).toEqual(['', '', ''])
   })
 
   it.each([

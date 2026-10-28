@@ -7,6 +7,7 @@ export const systemSettings = [
   { key: 'masterData', name: '基础资料中心', description: '维护国家、币种、单位等资料' },
   { key: 'numberRules', name: '编号规则', description: '查看业务单据的编号方式' },
   { key: 'notifications', name: '通知规则', description: '配置业务通知与接收范围' },
+  { key: 'sendRecords', name: '发送记录', description: '查看企微接收人、内容与发送结果' },
   { key: 'theme', name: '界面主题', description: '选择界面配色与显示风格' },
   { key: 'parameters', name: '业务参数', description: '维护业务参数与配置草稿' },
   { key: 'wecom', name: '企业微信管理', description: '管理企微接入与应用消息' },
@@ -36,6 +37,7 @@ export function canOpenSystemSetting(auth: ReturnType<typeof useAuthStore>, key:
     case 'inquiry': return auth.hasPermission('workflow.view_slapolicy')
     case 'numberRules': return canView(['numberrule'])
     case 'notifications': return auth.managementCan('access_control.manage_notifications')
+    case 'sendRecords': return auth.managementCan('access_control.manage_notifications') || auth.managementCan('access_control.manage_wecom')
     case 'wecom': return auth.managementCan('access_control.manage_wecom')
     case 'access': return auth.canReadAccessDirectory
     case 'dictionary': return canView(['dictionarytype', 'referencedictionary'])

@@ -2,6 +2,7 @@ import { apiClient } from './request'
 import { isAxiosError } from 'axios'
 import type { NotificationInboxResponse, NotificationItem, NotificationTarget, NotificationPreview, NotificationRule, NotificationRuleResponse, NotificationRuleWrite, NotificationRulesResponse } from '@/types/notifications'
 import type { NotificationPreviewRecipients, NotificationPreviewSend, NotificationPreviewAttempt } from '@/types/notifications'
+import type { NotificationSendRecord, NotificationSendRecordQuery, NotificationSendRecordsResponse } from '@/types/notifications'
 
 const root = '/api/v1/notifications/'
 const ruleRoot = `${root}rules/`
@@ -102,4 +103,30 @@ export function notificationInboxError(error: unknown, fallback: string): string
   if (error.response?.status === 403) return '当前身份无法访问消息，请检查员工状态或重新登录。'
   if (error.response?.status === 404) return '该消息或业务对象已删除，或当前已无访问权限。'
   return fallback
+}
+
+const recordSources = new Set(['BUSINESS', 'RULE_PREVIEW', 'MESSAGE_TEST'])
+const recordStatuses = new Set(['PENDING', 'PROCESSING', 'ACCEPTED', 'FAILED', 'UNCERTAIN', 'SKIPPED'])
+
+export async function getNotificationSendRecords(params: NotificationSendRecordQuery, signal?: AbortSignal): Promise<NotificationSendRecordsResponse> {
+  if (!recordSources.has(params.source) || !Number.isSafeInteger(params.page) || params.page < 1
+    || !Number.isSafeInteger(params.page_size) || params.page_size < 1 || params.page_size > 50
+    || (params.status !== undefined && (!recordStatuses.has(params.status)
+      || (params.source !== 'BUSINESS' && ['PENDING', 'SKIPPED'].includes(params.status))))) throw new Error('发送记录查询条件无效')
+  const { data } = await apiClient.get<NotificationSendRecordsResponse>(`${root}send-records/`, { ...options(), params, signal })
+  if (!data || !Array.isArray(data.data) || !Number.isSafeInteger(data.count) || data.count < 0
+    || !Number.isSafeInteger(data.page) || data.page < 1 || !Number.isSafeInteger(data.page_size) || data.page_size < 1 || data.page_size > 50
+    || !data.data.every((row: NotificationSendRecord) => row && row.source === params.source && recordStatuses.has(row.status)
+      && ['id', 'recipient_name', 'event_code', 'event_name', 'title', 'body', 'error_code', 'created_at'].every(key => typeof row[key as keyof NotificationSendRecord] === 'string')
+      && Number.isSafeInteger(row.attempt_count) && row.attempt_count >= 0
+      && (row.sent_at === null || typeof row.sent_at === 'string') && (row.finished_at === null || typeof row.finished_at === 'string'))) {
+    throw new Error('发送记录响应无效')
+  }
+  return data
+}
+
+export function notificationSendRecordsError(error: unknown): string {
+  if (isAxiosError(error) && error.response?.status === 401) return '登录状态已失效，请重新登录后查看发送记录。'
+  if (isAxiosError(error) && error.response?.status === 403) return '当前账号无权查看该来源的发送记录。'
+  return '发送记录加载失败，请稍后重试。'
 }

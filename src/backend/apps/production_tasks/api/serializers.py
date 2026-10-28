@@ -209,7 +209,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
     def validate_task_number(self, value):
-        queryset = ProductionTask.objects.filter(task_number=value)
+        queryset = ProductionTask.objects.filter(task_number=value, archived_at__isnull=True)
         current_task_id = self.context.get("current_task_id")
         if current_task_id:
             queryset = queryset.exclude(pk=current_task_id)

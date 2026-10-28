@@ -405,7 +405,7 @@ class ProductionTaskViewSet(
             filename=business_file.original_name,
         )
 
-    @extend_schema(responses={204: None}, description="物理删除已取消、无下游且未实际生产的任务；必须提供 If-Match。")
+    @extend_schema(responses={204: None}, description="删除已取消、无有效下游且未实际生产的任务；仅关联已删除 BOM 时归档任务并保留历史，否则物理删除。删除后可重新使用任务单号，新旧任务按独立 ID 关联。必须提供 If-Match。")
     def destroy(self, request, *args, **kwargs):
         task = self.get_object()
         require_matching_etag(request, task)

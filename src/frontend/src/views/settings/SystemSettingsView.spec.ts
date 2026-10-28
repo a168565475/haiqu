@@ -26,6 +26,7 @@ vi.mock('./InquiryHandlingSettingsView.vue', () => ({ default: pages.component('
 vi.mock('./MasterDataCenterView.vue', () => ({ default: pages.component('masterData') }))
 vi.mock('./NumberRulesView.vue', () => ({ default: pages.component('numberRules') }))
 vi.mock('./NotificationRulesView.vue', () => ({ default: pages.component('notifications') }))
+vi.mock('./NotificationDeliveryRecordsView.vue', () => ({ default: pages.component('sendRecords') }))
 vi.mock('./ThemeSettingsView.vue', () => ({ default: pages.component('theme') }))
 vi.mock('./ReferenceDataSettingsView.vue', () => ({ default: pages.component('referenceData') }))
 vi.mock('./WeComSettingsView.vue', () => ({ default: pages.component('wecom') }))
@@ -65,9 +66,10 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('系统配置卡片与页面窗口', () => {
-  it('首页展示11个入口，未点击时不实例化任何业务页面', () => {
+  it('首页展示12个入口，未点击时不实例化任何业务页面', () => {
     const wrapper = render()
-    expect(keys(wrapper)).toHaveLength(11)
+    expect(keys(wrapper)).toHaveLength(12)
+    expect(keys(wrapper).indexOf('sendRecords')).toBe(keys(wrapper).indexOf('notifications') + 1)
     expect(pages.created).not.toHaveBeenCalled()
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
@@ -86,7 +88,7 @@ describe('系统配置卡片与页面窗口', () => {
   })
   it.each([
     ['production', 'production'], ['email', 'email'], ['inquiry', 'inquiry'], ['masterData', 'masterData'],
-    ['numberRules', 'numberRules'], ['notifications', 'notifications'], ['theme', 'theme'],
+    ['numberRules', 'numberRules'], ['notifications', 'notifications'], ['sendRecords', 'sendRecords'], ['theme', 'theme'],
     ['parameters', 'referenceData'], ['wecom', 'wecom'], ['access', 'access'], ['dictionary', 'referenceData'],
   ] as const)('%s 加载原来的 %s 页面并保持当前路由', async (key, target) => {
     const wrapper = render()
@@ -99,7 +101,7 @@ describe('系统配置卡片与页面窗口', () => {
     const dialog = wrapper.findComponent(AppWindowDialog)
     expect(dialog.props()).toMatchObject({ fullscreen: true, edgeToEdge: true, destroyOnClose: true, closeOnClickModal: false, width: 1120, height: 740 })
     if (key === 'parameters' || key === 'dictionary') expect(wrapper.get('[data-loaded-page]').attributes('data-section')).toBe(key)
-    if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'wecom', 'access'].includes(key)) expect(wrapper.get('[data-loaded-page]').attributes('data-embedded')).toBe('true')
+    if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'wecom', 'access'].includes(key)) expect(wrapper.get('[data-loaded-page]').attributes('data-embedded')).toBe('true')
   })
   it('子页面拒绝关闭时保留窗口和路由，通过后销毁且可再次打开', async () => {
     const wrapper = render()

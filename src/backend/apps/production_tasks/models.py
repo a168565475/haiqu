@@ -43,7 +43,7 @@ class ProductionRunBatchStatus(models.TextChoices):
 
 
 class ProductionTask(ArchivableModel):
-    task_number = models.CharField(max_length=50, unique=True, validators=[uppercase_code_validator])
+    task_number = models.CharField(max_length=50, db_index=True, validators=[uppercase_code_validator])
     contract_number = models.CharField(max_length=50, unique=True, validators=[uppercase_code_validator])
     order_source = models.CharField(max_length=20, choices=OrderSource.choices)
     order_number = models.CharField(max_length=100)
@@ -179,6 +179,10 @@ class ProductionTask(ArchivableModel):
             ("start_productiontask", "可开始生产任务单"),
         ]
         constraints = [
+            models.UniqueConstraint(
+                fields=["task_number"], condition=Q(archived_at__isnull=True),
+                name="prod_task_active_number_uniq",
+            ),
             models.CheckConstraint(
                 condition=Q(tax_rate__isnull=True) | Q(includes_tax=True, tax_rate__in=[3, 5, 7]),
                 name="prod_task_tax_rate_valid",

@@ -46,10 +46,38 @@ def external_business_relations(model):
             and not relation.many_to_many]
 
 
-def external_business_blocker(instance):
+def external_business_blocker(instance, *, retained_bom_ids=()):
     for relation in external_business_relations(type(instance)):
-        if relation.related_model._base_manager.filter(**{relation.field.name: instance.pk}).exists():
+        related = relation.related_model._base_manager.filter(**{relation.field.name: instance.pk})
+        if relation.related_model._meta.label_lower == "boms.bom":
+            related = related.exclude(pk__in=retained_bom_ids)
+        if related.exists():
             return business_relation_message(relation)
+    return ""
+
+
+def archived_bom_business_blocker(bom_ids):
+    """归档任务前仍检查历史 BOM 及用料的下游；本组内部版本和用料关系保留。"""
+    from apps.boms.models import Bom, BomLine, BomSection
+
+    records = {
+        Bom: list(bom_ids),
+        BomSection: list(BomSection.objects.filter(bom_id__in=bom_ids).values_list("pk", flat=True)),
+        BomLine: list(BomLine.objects.filter(section__bom_id__in=bom_ids).values_list("pk", flat=True)),
+    }
+    for model, record_ids in records.items():
+        for relation in external_business_relations(model):
+            related_model = relation.related_model
+            # BOM 自身的分组和图片随历史记录保留，不属于下游业务。
+            if related_model._meta.app_label == "boms" and relation.field.name not in {
+                "copied_from", "fabric_source_line",
+            }:
+                continue
+            related = related_model._base_manager.filter(**{f"{relation.field.name}__in": record_ids})
+            if related_model in records:
+                related = related.exclude(pk__in=records[related_model])
+            if related.exists():
+                return business_relation_message(relation)
     return ""
 
 

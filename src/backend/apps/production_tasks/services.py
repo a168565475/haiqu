@@ -889,7 +889,7 @@ def _create_numbered_task(**values):
             return ProductionTask.objects.create(**values)
     except IntegrityError as exc:
         constraint = getattr(getattr(exc.__cause__, "diag", None), "constraint_name", "")
-        if constraint == "production_task_task_number_key":
+        if constraint in {"production_task_task_number_key", "prod_task_active_number_uniq"}:
             raise ValidationError({"task_number": "生产任务单号已存在，请更换后重试。"}) from exc
         raise
 
@@ -1107,7 +1107,8 @@ def update_production_task(*, task, validated_data, files, actor_employee, reque
 
 @transaction.atomic
 def delete_production_task(*, task, actor_employee, request):
-    from .selectors import external_business_blocker
+    from apps.boms.models import Bom
+    from .selectors import archived_bom_business_blocker, external_business_blocker
 
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
     require_matching_etag(request, task)
@@ -1121,10 +1122,17 @@ def delete_production_task(*, task, actor_employee, request):
            for batch in runs):
         raise Conflict("生产批已有开工或实际生产记录，不能删除。")
     products = list(task.products.select_for_update().all())
+    archived_bom_ids = list(Bom.objects.select_for_update().filter(
+        Q(production_task=task) | Q(product_line__in=products),
+        archived_at__isnull=False,
+    ).values_list("pk", flat=True))
     for record in [task, *products, *runs, *task.delivery_batches.all()]:
-        blocker = external_business_blocker(record)
+        blocker = external_business_blocker(record, retained_bom_ids=archived_bom_ids)
         if blocker:
             raise Conflict(blocker)
+    blocker = archived_bom_business_blocker(archived_bom_ids) if archived_bom_ids else ""
+    if blocker:
+        raise Conflict(blocker)
     before_data = _snapshot(task)
     before_data["deleted_records"] = json.loads(json.dumps({
         "task": ProductionTask.objects.filter(pk=task.pk).values().get(),
@@ -1135,9 +1143,20 @@ def delete_production_task(*, task, actor_employee, request):
         "delivery_batches": list(task.delivery_batches.values()),
         "run_batches": list(task.run_batches.values()),
     }, cls=DjangoJSONEncoder))
+    after_data = {"deleted": True}
+    if archived_bom_ids:
+        # 列表删除的 BOM 仍受外键保护；归档任务以保留原始 BOM、图片及审计链。
+        task.archived_at = timezone.now()
+        task.archived_by_employee = actor_employee
+        task.archive_reason = "已取消任务删除，保留已删除 BOM 历史"
+        task.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+        after_data.update(deletion_mode="ARCHIVE", archived_at=task.archived_at.isoformat(),
+                          retained_bom_ids=[str(pk) for pk in archived_bom_ids])
     write_audit_log(object_type="PRODUCTION_TASK", object_id=task.pk, **_audit_context(task),
                     action="DELETED", actor_employee=actor_employee, before_data=before_data,
-                    after_data={"deleted": True}, request=request)
+                    after_data=after_data, request=request)
+    if archived_bom_ids:
+        return
     try:
         # 只移除本单所有的关联记录，BusinessFile、销售、产品和审计均不删除。
         ProductionTaskDetail.objects.filter(product_line__production_task=task).delete()

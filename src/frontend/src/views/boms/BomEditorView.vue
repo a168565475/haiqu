@@ -626,15 +626,34 @@ async function createConfirmedColor() {
   if (productConfirmLoading.value) return
   productConfirmLoading.value = true
   try {
-    const result = await createProductionDataRecord<ProductColor>('product-colors', {
+    const values = {
       color_card: draft.color_card.trim(), color_code: draft.color_code.trim(), color_name: draft.color_name.trim(),
-      status: 'ACTIVE', sort_order: 0, description: '',
-    })
-    productConfirmColors.value = [...productConfirmColors.value.filter(color => color.id !== result.data.id), result.data]
-    productConfirmDialog.value?.applyCreatedColor(result.data)
+    }
+    const findExisting = (colors: ProductColor[]) => colors.find(color => color.status === 'ACTIVE' && !color.archived_at
+      && color.color_card === values.color_card && color.color_code === values.color_code && color.color_name === values.color_name)
+    // 新增基础颜色与确认 BOM 产品是两次保存；刷新后应复用已经建档的颜色。
+    productConfirmColors.value = await fetchAllProductionDataRecords<ProductColor>('product-colors')
+    let color = findExisting(productConfirmColors.value)
+    let reused = Boolean(color)
+    if (!color) {
+      try {
+        color = (await createProductionDataRecord<ProductColor>('product-colors', {
+          ...values, status: 'ACTIVE', sort_order: 0, description: '',
+        })).data
+      } catch (error) {
+        if (!(error instanceof AxiosError) || error.response?.status !== 400) throw error
+        // 其他人可能在查询与提交之间新增了同一颜色，再读取一次再决定是否报错。
+        productConfirmColors.value = await fetchAllProductionDataRecords<ProductColor>('product-colors')
+        color = findExisting(productConfirmColors.value)
+        if (!color) throw error
+        reused = true
+      }
+    }
+    productConfirmColors.value = [...productConfirmColors.value.filter(item => item.id !== color.id), color]
+    productConfirmDialog.value?.applyCreatedColor(color)
     productConfirmColorCreateVisible.value = false
     productColorDraft.value = { color_card: '', color_code: '', color_name: '' }
-    ElMessage.success('颜色已新增并选入本次核对。')
+    ElMessage.success(reused ? '已选用已有颜色，请继续确认产品信息。' : '颜色已新增并选入，请继续确认产品信息。')
   } catch (error) {
     ElMessage.error(apiError(error, '颜色新增失败，请检查权限和重复数据。'))
   } finally {

@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.db.models import Q
 from rest_framework import serializers
+from rest_framework.validators import UniqueTogetherValidator
 
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import (
@@ -348,6 +349,12 @@ class ProductColorSerializer(serializers.ModelSerializer):
             "status", "sort_order", "description", "created_at", "updated_at", "archived_at",
         ]
         read_only_fields = ["id", "image_url", "has_image", "created_at", "updated_at", "archived_at"]
+        validators = [
+            UniqueTogetherValidator(
+                queryset=ProductColor.objects.all(), fields=["color_card", "color_code", "color_name"],
+                message="该色卡、色号和颜色名称的组合已存在，请选择已有颜色；若已停用或归档，请先核实基础资料。",
+            ),
+        ]
 
     def get_image_url(self, instance) -> str | None:
         if not instance.image_file_id:

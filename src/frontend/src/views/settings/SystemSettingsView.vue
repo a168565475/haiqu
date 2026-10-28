@@ -29,6 +29,7 @@ const loaders: Record<SystemSettingsKey, () => Promise<{ default: Component }>> 
   masterData: () => import('./MasterDataCenterView.vue'),
   numberRules: () => import('./NumberRulesView.vue'),
   notifications: () => import('./NotificationRulesView.vue'),
+  sendRecords: () => import('./NotificationDeliveryRecordsView.vue'),
   theme: () => import('./ThemeSettingsView.vue'),
   parameters: () => import('./ReferenceDataSettingsView.vue'),
   wecom: () => import('./WeComSettingsView.vue'),
@@ -38,7 +39,7 @@ const loaders: Record<SystemSettingsKey, () => Promise<{ default: Component }>> 
 const pageProps = computed(() => {
   const key = activeEntry.value?.key
   if (key === 'parameters' || key === 'dictionary') return { section: key }
-  if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'access', 'wecom'].includes(key || '')) return { embedded: true }
+  if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'access', 'wecom'].includes(key || '')) return { embedded: true }
   return {}
 })
 

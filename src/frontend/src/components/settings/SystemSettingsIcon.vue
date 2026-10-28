@@ -45,6 +45,12 @@ const reusedIcon = computed(() => menuIcons[props.name] || '')
       <path class="fill-accent no-stroke" d="M24 14c6 0 9 3 9 9v10h-6V22c0-3-1-5-3-8Z" />
       <path class="accent" d="M3 15 6 9m36 0 3 6" />
     </g>
+    <g v-else-if="name === '发送记录'">
+      <path class="fill-light" d="M8 4h24l8 8v32H8Z" />
+      <path class="fill-muted" d="M32 4v8h8" />
+      <path d="M15 18h18M15 25h10M15 32h7" />
+      <path class="accent" d="m27 35 4 4 10-11" />
+    </g>
     <g v-else-if="name === '企业微信管理'">
       <path class="fill-muted" d="M27 17c10 0 17 5 17 13 0 4-2 7-5 9l1 6-7-4c-11 2-20-3-20-11 0-7 5-12 14-13Z" />
       <path class="fill-light" d="M21 4C11 4 4 10 4 18c0 5 3 9 7 11l-1 7 8-5c12 2 22-4 22-13C40 10 32 4 21 4Z" />

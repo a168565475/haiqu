@@ -130,3 +130,35 @@ export interface NotificationInboxResponse {
   page: number
   page_size: number
 }
+
+export type NotificationRecordSource = 'BUSINESS' | 'RULE_PREVIEW' | 'MESSAGE_TEST'
+
+export interface NotificationSendRecord {
+  id: string
+  source: NotificationRecordSource
+  recipient_name: string
+  event_code: string
+  event_name: string
+  title: string
+  body: string
+  status: NotificationChannelStatus
+  error_code: string
+  attempt_count: number
+  created_at: string
+  sent_at: string | null
+  finished_at: string | null
+}
+
+export interface NotificationSendRecordQuery {
+  source: NotificationRecordSource
+  page: number
+  page_size: number
+  status?: NotificationChannelStatus
+}
+
+export interface NotificationSendRecordsResponse {
+  data: NotificationSendRecord[]
+  count: number
+  page: number
+  page_size: number
+}

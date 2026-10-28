@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .send_record_views import NotificationSendRecordsView
 from .notification_views import (
     NotificationDeliveriesView, NotificationInboxView, NotificationReadView,
     NotificationRuleDetailView, NotificationRulePreviewView, NotificationRulesView,
@@ -9,6 +10,7 @@ from .notification_views import (
 
 
 urlpatterns = [
+    path("send-records/", NotificationSendRecordsView.as_view(), name="notification-send-records"),
     path("rules/", NotificationRulesView.as_view(), name="notification-rules"),
     path("rules/<str:event_code>/", NotificationRuleDetailView.as_view(), name="notification-rule-detail"),
     path("rules/<str:event_code>/preview/", NotificationRulePreviewView.as_view(), name="notification-rule-preview"),

@@ -360,9 +360,9 @@ function viewExistingSchedule() {
 </template>
 
 <style scoped lang="scss">
-.task-schedule-dialog__content { box-sizing: border-box; min-height: 0; height: 100%; display: flex; flex-direction: column; padding: 16px 20px 14px; color: var(--erp-color-text-primary); background: var(--erp-color-surface); }
+.task-schedule-dialog__content { box-sizing: border-box; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: auto; padding: 16px 20px 14px; color: var(--erp-color-text-primary); background: var(--erp-color-surface); }
 .task-schedule-dialog__error { margin-bottom: 12px; }
-.schedule-readiness { border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-surface); }
+.schedule-readiness { flex: none; border: 1px solid var(--erp-color-border); border-radius: 5px; background: var(--erp-color-surface); }
 .schedule-readiness header { min-height: 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-readiness header strong { font-family: 'Noto Serif SC', serif; font-size: 18px; }
 .schedule-readiness header span { color: var(--erp-color-text-secondary); font-size: 12px; }
@@ -399,12 +399,12 @@ function viewExistingSchedule() {
 .schedule-product-row__info b { font-size: 14px; line-height: 22px; }
 .schedule-product-row__status { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 7px; }
 .schedule-product-row__status > span:first-child { color: var(--erp-color-text-secondary); font-size: 11px; }
-.schedule-editor { display: flex; flex-direction: column; padding: 0 18px; }
+.schedule-editor { display: flex; flex-direction: column; overflow: auto; padding: 0 18px; }
 .schedule-editor__heading { height: 76px; flex: none; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-editor__heading h2 { margin: 0; font-family: 'Noto Serif SC', serif; font-size: 22px; line-height: 30px; }
 .schedule-editor__heading span { color: var(--erp-color-text-secondary); font-size: 12px; }
 .schedule-editor :deep(.el-button), .schedule-editor :deep(.el-input__wrapper), .schedule-editor :deep(.el-select__wrapper), .schedule-editor :deep(.el-date-editor), .schedule-editor :deep(.el-input-number) { height: 32px; min-height: 32px; }
-.schedule-editor__section { padding: 18px 0; border-bottom: 1px solid var(--erp-color-border-subtle); }
+.schedule-editor__section { flex: none; padding: 18px 0; border-bottom: 1px solid var(--erp-color-border-subtle); }
 .schedule-editor__section h3 { margin: 0 0 14px; font-family: 'Noto Serif SC', serif; font-size: 17px; }
 .quantity-section label { display: grid; grid-template-columns: 120px 240px; align-items: center; }
 .quantity-section label > span, .schedule-date-grid label > span, .schedule-craft-grid label > span { color: var(--erp-color-text-regular); font-size: 13px; }

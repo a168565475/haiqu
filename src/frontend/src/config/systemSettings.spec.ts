@@ -44,6 +44,8 @@ describe('系统配置卡片访问范围', () => {
   it.each([
     ['access_control.manage_wecom', 'wecom'],
     ['access_control.manage_notifications', 'notifications'],
+    ['access_control.manage_wecom', 'sendRecords'],
+    ['access_control.manage_notifications', 'sendRecords'],
   ] as const)('%s 只能通过有效角色的模块范围访问', (permission, key) => {
     const auth = useAuthStore()
     auth.user!.permissions = [permission]
@@ -68,9 +70,9 @@ describe('系统配置卡片访问范围', () => {
   it('非admin超级用户不能越过管理角色判定，admin仍沿用现有管理例外', () => {
     const auth = useAuthStore()
     auth.user!.is_superuser = true
-    const managementKeys: SystemSettingsKey[] = ['wecom', 'notifications', 'access']
-    expect(managementKeys.map(key => canOpenSystemSetting(auth, key))).toEqual([false, false, false])
+    const managementKeys: SystemSettingsKey[] = ['wecom', 'notifications', 'sendRecords', 'access']
+    expect(managementKeys.map(key => canOpenSystemSetting(auth, key))).toEqual([false, false, false, false])
     auth.user!.username = 'admin'
-    expect(managementKeys.map(key => canOpenSystemSetting(auth, key))).toEqual([true, true, true])
+    expect(managementKeys.map(key => canOpenSystemSetting(auth, key))).toEqual([true, true, true, true])
   })
 })

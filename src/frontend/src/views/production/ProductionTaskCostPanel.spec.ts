@@ -5,13 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/productionCosts'
 import ProductionTaskCostPanel from './ProductionTaskCostPanel.vue'
 
-const permissions = vi.hoisted(() => ({ view: true, manage: true }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (code: string) => code.endsWith('view_productiontaskcost') ? permissions.view : permissions.manage }) }))
+const permissions = vi.hoisted(() => ({ view: true, manage: true, void: true }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (code: string) => code.endsWith('view_productiontaskcost') ? permissions.view : code === 'access_control.void_productiontaskexpense' ? permissions.void : permissions.manage }) }))
 vi.mock('@/api/productionCosts', () => ({ fetchProductionTaskCostSummary: vi.fn(), fetchProductionTaskExpenses: vi.fn(), createProductionTaskExpense: vi.fn(), updateProductionTaskExpense: vi.fn(), voidProductionTaskExpense: vi.fn() }))
 const summary = (task = 'one') => ({ task_id: task, currency: 'CNY', order_amount: '100.00', recorded_cost: '120.00', current_difference: '-20.00', cost_ratio: '120.00', complete: true, missing_count: 0, warnings: [], categories: [{ key: 'other', label: '其他费用', amount: '120.00', count: 1, missing_count: 0, items: [{ id: 'expense-e', source_type: 'EXPENSE', source_id: 'e', number: '', label: '运费', amount: '120.00', currency: 'CNY', amount_cny: '120.00', missing_reason: null, href: null, occurred_on: '2026-10-26' }] }] })
 function render() { return mount(ProductionTaskCostPanel, { props: { taskId: 'one' }, global: { plugins: [ElementPlus], stubs: { AppWindowDialog: { template: '<div v-if="modelValue"><slot/><slot name="footer"/></div>', props: ['modelValue'] }, RouterLink: { template: '<a><slot/></a>' } } } }) }
 describe('生产任务成本面板', () => {
-  beforeEach(() => { vi.clearAllMocks(); permissions.view = true; permissions.manage = true; vi.mocked(api.fetchProductionTaskCostSummary).mockResolvedValue(summary() as never); vi.mocked(api.fetchProductionTaskExpenses).mockResolvedValue([]) })
+  beforeEach(() => { vi.clearAllMocks(); permissions.view = true; permissions.manage = true; permissions.void = true; vi.mocked(api.fetchProductionTaskCostSummary).mockResolvedValue(summary() as never); vi.mocked(api.fetchProductionTaskExpenses).mockResolvedValue([]) })
   it('无查看权限时不读取、不暴露金额或维护动作', async () => { permissions.view = false; const wrapper = render(); await flushPromises(); expect(api.fetchProductionTaskCostSummary).not.toHaveBeenCalled(); expect(api.fetchProductionTaskExpenses).not.toHaveBeenCalled(); expect(wrapper.text()).not.toContain('120.00'); expect(wrapper.find('[data-test="add-expense"]').exists()).toBe(false); wrapper.unmount() })
   it('展示负差额，按需展开费用，来源无地址时不生成链接', async () => { const wrapper = render(); await flushPromises(); expect(wrapper.get('[data-test="difference"]').classes()).toContain('is-negative'); expect(api.fetchProductionTaskExpenses).not.toHaveBeenCalled(); await wrapper.get('[data-test="category-other"]').trigger('click'); await flushPromises(); expect(api.fetchProductionTaskExpenses).toHaveBeenCalledWith('one'); expect(wrapper.text()).toContain('运费'); expect(wrapper.find('a').exists()).toBe(false); wrapper.unmount() })
   it('不完整时仅显示已知成本，差额与比例不推算', async () => { vi.mocked(api.fetchProductionTaskCostSummary).mockResolvedValue({ ...summary(), complete: false, missing_count: 2, current_difference: null, cost_ratio: null } as never); const wrapper = render(); await flushPromises(); expect(wrapper.text()).toContain('已知部分'); expect(wrapper.text()).toContain('2 项'); expect(wrapper.get('[data-test="difference"]').text()).toBe('—'); expect(wrapper.text()).not.toContain('120.00%'); wrapper.unmount() })
@@ -19,12 +19,26 @@ describe('生产任务成本面板', () => {
   it('登记校验金额并以 UUID 保存，保存后刷新汇总和费用', async () => { vi.mocked(api.createProductionTaskExpense).mockResolvedValue({ id: 'e' } as never); const wrapper = render(); await flushPromises(); await wrapper.get('[data-test="add-expense"]').trigger('click'); await wrapper.get('[data-test="save-expense"]').trigger('click'); expect(api.createProductionTaskExpense).not.toHaveBeenCalled(); await wrapper.get('input[data-test="description"]').setValue('运输费用'); await wrapper.get('input[data-test="amount"]').setValue('12.50'); await wrapper.get('[data-test="save-expense"]').trigger('click'); await flushPromises(); expect(api.createProductionTaskExpense).toHaveBeenCalledWith('one', expect.objectContaining({ description: '运输费用', amount: '12.50', client_request_id: expect.stringMatching(/^[0-9a-f-]{36}$/) })); expect(api.fetchProductionTaskCostSummary).toHaveBeenCalledTimes(2); expect(api.fetchProductionTaskExpenses).toHaveBeenCalled(); wrapper.unmount() })
   it('只有查看权限时允许展开，但隐藏费用维护入口', async () => {
     permissions.manage = false
+    permissions.void = false
     const wrapper = render()
     await flushPromises()
     expect(wrapper.find('[data-test="add-expense"]').exists()).toBe(false)
     await wrapper.get('[data-test="category-other"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('.expense-actions').exists()).toBe(false)
+    wrapper.unmount()
+  })
+  it('费用编辑和作废分别授权，财务编辑权限不能调用作废', async () => {
+    permissions.void = false
+    const expense = { id: 'e', etag: 'v1', expense_type: 'TRANSPORT' as const, description: '运费', amount: '120.00', occurred_on: '2026-10-26', remark: '' }
+    vi.mocked(api.fetchProductionTaskExpenses).mockResolvedValue([expense])
+    const wrapper = render()
+    await flushPromises()
+    await wrapper.get('[data-test="category-other"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.expense-actions button').map(button => button.text())).toEqual(['编辑'])
+    await (wrapper.vm as unknown as { voidExpense: (value: typeof expense) => Promise<void> }).voidExpense(expense)
+    expect(api.voidProductionTaskExpense).not.toHaveBeenCalled()
     wrapper.unmount()
   })
   it('没有记录时显示空态，订单金额为零不显示比例', async () => {

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { ElButton, ElImage } from 'element-plus'
 
 import { bomLineImageUrl } from '@/api/boms'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import type { BomDraftLineImage, BomLineImage, BomLineInput } from '@/types/bom'
 
 const props = defineProps<{
@@ -20,16 +21,18 @@ const images = computed<(BomLineImage | BomDraftLineImage)[]>(() =>
 )
 
 const previewUrls = computed(() => images.value.map((image) => bomLineImageUrl(image.content_url)))
+const imageResources = useProtectedResourceUrls(previewUrls)
 </script>
 
 <template>
   <div class="bom-line-image-summary">
-    <div v-if="images.length" class="image-thumbnails">
+    <div v-if="images.length && imageResources.active.value" class="image-thumbnails">
       <ElImage
-        v-for="image in images.slice(0, 3)"
-        :key="image.id"
-        :src="bomLineImageUrl(image.content_url)"
-        :preview-src-list="previewUrls"
+        v-for="(image, index) in images.slice(0, 3)"
+        :key="`${image.id}:${imageResources.urlFor(bomLineImageUrl(image.content_url))}`"
+        :initial-index="index"
+        :src="imageResources.urlFor(bomLineImageUrl(image.content_url))"
+        :preview-src-list="imageResources.urlsFor(previewUrls)"
         preview-teleported
         fit="cover"
         @click.stop

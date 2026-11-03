@@ -5,7 +5,13 @@ import type { ScheduleProductExecution } from '@/types/scheduleExecution'
 import { formatScheduleMoney, formatScheduleQuantity, formatScheduleUnitPrice, groupScheduleOutsourcingOrders } from '@/utils/scheduleExecution'
 
 const navigation = vi.hoisted(() => ({ push: vi.fn() }))
+const access = vi.hoisted(() => ({ followed: false }))
 vi.mock('vue-router', () => ({ useRouter: () => navigation }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
+  user: { is_superuser: !access.followed, effective_access: { actions: {
+    'material_issues.view_materialissue': { scopes: ['FOLLOWED'], sources: [{ type: 'ROLE', scope: 'FOLLOWED' }] },
+  }, legacy_sources: [] } }, canReadAccessDirectory: false, hasPermission: () => true,
+}) }))
 const wrappers: ReturnType<typeof mount>[] = []
 function fixture(): ScheduleProductExecution {
   return {
@@ -36,7 +42,7 @@ function createView(summary: ScheduleProductExecution | null = fixture(), extraP
   wrappers.push(wrapper)
   return wrapper
 }
-beforeEach(() => { vi.clearAllMocks() })
+beforeEach(() => { vi.clearAllMocks(); access.followed = false })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('排产金额字符串展示', () => {
@@ -163,6 +169,15 @@ describe('本产品外发单归并', () => {
 })
 
 describe('排产产品关联信息', () => {
+  it('跟单保留逐条关联详情，隐藏独立领料列表入口', async () => {
+    access.followed = true
+    const wrapper = createView()
+    expect(wrapper.find('.schedule-execution__all').exists()).toBe(false)
+    await wrapper.get('[aria-label="查看领料单LL-001"]').trigger('click')
+    expect(navigation.push).toHaveBeenLastCalledWith({ name: 'material-issue-detail', params: { issueId: 'issue-1' } })
+    await wrapper.get('.schedule-execution__table--outsourcing button').trigger('click')
+    expect(navigation.push).toHaveBeenLastCalledWith('/workshop/outsourcing/tube/order-1')
+  })
   it('每真实工艺独立显示，报工金额不按报工进度重算', () => {
     const summary = fixture()
     summary.internal_plans.push({ ...summary.internal_plans[0]!, craft_id: 'craft-2', craft_name: '布面打孔', workshop_id: 'workshop-2', scheme_id: 'scheme-2' })

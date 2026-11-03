@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from django.contrib.postgres.aggregates import ArrayAgg
 from django.db.models import Count, Exists, F, Max, OuterRef, Prefetch, Q, Sum, Value, Subquery
 from django.db.models.functions import Coalesce
+from .product_identity import finished_product_selection_key
 from apps.production_tasks.models import ProductionTaskProduct
+from apps.material_catalog.models import MaterialCatalog
 
 from apps.procurement.models import (
     PurchaseOrder,
@@ -33,6 +35,54 @@ from .models import (
     WarehouseLocation,
     WarehouseZone,
 )
+
+
+def scoped_inventory_records(queryset, request, permission, *, task_lookup, workshop_lookup=None):
+    """记录范围按当前读取动作取并集；FOLLOWED绝不包含无任务的手工/样品记录。"""
+    from apps.access_control import module_policy
+    from apps.access_control.role_policy import filter_task_scope, role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+    from apps.access_control.sales_policy import access_for
+
+    scopes = role_scopes(request, permission)
+    if not module_policy.enabled() and 'FOLLOWED' not in scopes:
+        return queryset
+    access = access_for(request)
+    if not access['active']:
+        return queryset.none()
+    if access['is_superuser'] or has_legacy_permission(request, permission):
+        return queryset
+    selected = filter_task_scope(request, queryset, permission, task_lookup=task_lookup).distinct()
+    if workshop_lookup and 'WORKSHOP' in scopes:
+        ids = {pk for source in access['actions'].get(permission, {}).get('sources', [])
+               if source.get('scope') == 'WORKSHOP' for pk in source.get('resource_ids', [])}
+        selected = selected | queryset.filter(**{f'{workshop_lookup}__in': ids}).distinct()
+    return selected.distinct()
+
+
+def scoped_finished_receipts(queryset, request, permission='inventory.view_finishedgoodsreceipt'):
+    return scoped_inventory_records(queryset, request, permission,
+        task_lookup='production_task_product__production_task',
+        workshop_lookup='assembly_source__schedule_product__crafts__craft__workshop_id')
+
+
+def scoped_finished_outbounds(queryset, request):
+    """混合任务出库单必须每条明细都可读，避免整单/附件泄漏其它任务。"""
+    permission = 'inventory.view_finishedgoodsoutbound'
+    allowed_receipts = scoped_finished_receipts(FinishedGoodsReceipt.objects.all(), request, permission)
+    inaccessible = FinishedGoodsOutboundLine.objects.filter(outbound_id=OuterRef('pk')).exclude(receipt_id__in=allowed_receipts.values('id'))
+    visible = FinishedGoodsOutboundLine.objects.filter(outbound_id=OuterRef('pk'), receipt_id__in=allowed_receipts.values('id'))
+    return queryset.filter(Exists(visible), ~Exists(inaccessible))
+
+
+def require_inventory_overview(request, permission='inventory.view_materialinbound'):
+    from apps.access_control.role_policy import role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+    from rest_framework.exceptions import PermissionDenied
+
+    scopes = role_scopes(request, permission)
+    if scopes == {'FOLLOWED'} and not request.user.is_superuser and not has_legacy_permission(request, permission):
+        raise PermissionDenied('当前权限仅可在关联任务中读取库存来源和出入库记录。')
 
 
 def finished_goods_outbounds(*, keyword="", warehouse_id=None, production_task_id=None, product_line_id=None):
@@ -121,11 +171,13 @@ def locations_with_usage(queryset=None):
     )
 
 
-def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", category="", production_task_id="", exclude_sample=False):
+def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", category="", production_task_id="", exclude_sample=False, request=None):
     queryset = FinishedGoodsReceipt.objects.filter(
         status=FinishedGoodsReceiptStatus.CONFIRMED,
         remaining_quantity__gt=0,
     )
+    if request is not None:
+        queryset = scoped_finished_receipts(queryset, request)
     if exclude_sample:
         queryset = queryset.exclude(source_type="SAMPLE_INVENTORY")
     if production_task_id:
@@ -147,9 +199,12 @@ def finished_goods_inventory_rows(*, keyword="", warehouse_id="", zone_id="", ca
         queryset = queryset.filter(location__zone_id=zone_id)
     if category:
         queryset = queryset.filter(category_snapshot=category)
+    queryset = queryset.annotate(product_selection_key=finished_product_selection_key())
     return (
         queryset.values(
             "production_task_product__product_id",
+            "production_task_product__product_catalog_id",
+            "product_selection_key",
             "task_number_snapshot",
             "category_snapshot",
             "product_number_snapshot",
@@ -337,6 +392,33 @@ def eligible_material_lines(purchase_order_id, *, read_optimized=False):
         for line in lines
         if Decimal(line.actual_purchase_quantity) - Decimal(totals.get(line.pk, 0)) > 0
     ]
+
+
+def material_receiving_warehouse_suggestions(lines):
+    catalog_ids = {line.material_catalog_id for line in lines if line.material_catalog_id}
+    if not catalog_ids:
+        return {}
+    catalogs = {catalog.pk: catalog for catalog in MaterialCatalog.objects.filter(
+        pk__in=catalog_ids, archived_at__isnull=True,
+    ).select_related("base_warehouse", "semi_warehouse")}
+    warehouse_ids = {warehouse_id for catalog in catalogs.values()
+                     for warehouse_id in (catalog.base_warehouse_id, catalog.semi_warehouse_id) if warehouse_id}
+    warehouses_with_zones = set(WarehouseZone.objects.filter(
+        warehouse_id__in=warehouse_ids, status="ACTIVE", warehouse__status="ACTIVE",
+    ).values_list("warehouse_id", flat=True))
+    suggestions = {}
+    for line in lines:
+        catalog = catalogs.get(line.material_catalog_id)
+        state = line.material_selection_snapshot.get("processing_state") if isinstance(line.material_selection_snapshot, dict) else None
+        if catalog is None or state not in {"RAW", "PROCESSED"}:
+            continue
+        # 冻结状态决定仓型；当前目录仅建议收货位置，不改变历史材料快照。
+        warehouse = catalog.base_warehouse if state == "RAW" else catalog.semi_warehouse
+        expected_type = "MATERIAL" if state == "RAW" else "SEMI_FINISHED"
+        if (warehouse is not None and warehouse.status == "ACTIVE" and warehouse.warehouse_type == expected_type
+                and warehouse.pk in warehouses_with_zones):
+            suggestions[line.pk] = str(warehouse.pk)
+    return suggestions
 
 
 def procurement_inbound_supplier_summaries(lines):

@@ -115,11 +115,18 @@ export async function issueQuotationVersion(versionId: string, etag: string): Pr
 }
 
 export async function createQuotationLine(versionId: string, payload: QuotationLinePayload, etag: string): Promise<{ data: QuotationLine; etag: string }> {
-  return withEtag<QuotationLine>(await apiClient.post(`/api/v1/quotation-versions/${versionId}/lines/`, payload, { headers: { 'If-Match': etag } }))
+  return withEtag<QuotationLine>(await apiClient.post(`/api/v1/quotation-versions/${versionId}/lines/`, quotationLineInput(payload), { headers: { 'If-Match': etag } }))
 }
 
 export async function updateQuotationLine(lineId: string, payload: Partial<QuotationLinePayload>, etag: string): Promise<{ data: QuotationLine; etag: string }> {
-  return withEtag<QuotationLine>(await apiClient.patch(`/api/v1/quotation-lines/${lineId}/`, payload, { headers: { 'If-Match': etag } }))
+  return withEtag<QuotationLine>(await apiClient.patch(`/api/v1/quotation-lines/${lineId}/`, quotationLineInput(payload), { headers: { 'If-Match': etag } }))
+}
+function quotationLineInput({ product_selection_snapshot: _snapshot, product_selection, ...line }: Partial<QuotationLinePayload>) {
+  return {
+    ...line,
+    ...(line.product_catalog_id || product_selection?.draft ? { product_id: null, product_category_id: null, product_color_id: null } : {}),
+    ...(product_selection ? { product_selection } : {}),
+  }
 }
 export async function syncQuotationLineToInquiry(lineId: string, inquiryEtag: string, quotationEtag: string): Promise<{ inquiryItemId: string; inquiryEtag: string; quotationEtag: string }> {
   const response = await apiClient.post<{ data: { inquiry_item_id: string; inquiry_etag: string } }>(

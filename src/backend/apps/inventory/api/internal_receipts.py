@@ -1,7 +1,7 @@
-from django.db.models import Q
+from django.db.models import Q, Case, When, DateField, CharField
 from django.db.models.fields.json import KeyTextTransform
 import re
-from django.db.models.functions import Coalesce, TruncDate
+from django.db.models.functions import Coalesce, TruncDate, Cast
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework import serializers, viewsets
@@ -12,6 +12,7 @@ from rest_framework.response import Response
 
 from apps.core.api.permissions import HasActiveEmployee, BusinessActionPermission
 from apps.production_tasks.selectors import accessible_production_tasks
+from apps.outsourcing.plan_correction_stock import CORRECTION_SOURCES
 from ..internal_receipt_quantities import ReceiptQuantityError
 from ..internal_receipt_services import load_receipt_context, preview_data, submit_receipt, confirm_receipt, delete_pending_receipt
 from ..receipt_permissions import can_delete_pending_receipt
@@ -95,17 +96,23 @@ TUBE_SOURCE_LABELS = {'RAW_PIPE':'原材料','PUBLIC_SEMI':'未喷塑半成品',
 
 
 def record_data(row):
-    attributes = row.balance.identity_snapshot
     snapshot = row.snapshot or {}
+    identity = snapshot.get('public_identity') or {}
+    attributes = identity.get('identity_snapshot') or row.balance.identity_snapshot
     outgoing = row.direction == 'OUT'
     internal = row.source_type == 'INTERNAL_SEMI_RECEIPT' or (outgoing and row.source_type == 'MATERIAL_ISSUE')
     source_label = {'MATERIAL_ISSUE':'生产领用出库', 'OUTSOURCING_DISPATCH':'外发出库',
         'TUBE_OUTSOURCING_DISPATCH':'管材外发出库'}.get(row.source_type, '半成品出库') if outgoing else ('厂内入库' if internal else '外发入库')
+    if row.source_type in CORRECTION_SOURCES:
+        source_label = ('外发' if snapshot.get('record_kind') == 'DISPATCH' else '入库') + (
+            '删除冲销' if snapshot.get('operation') == 'DELETE' else '调整差额')
     return dict(id=str(row.pk),receipt_number=row.business_number or snapshot.get('issue_number') or snapshot.get('dispatch_number') or snapshot.get('receipt_number') or snapshot.get('return_number') or snapshot.get('order_number') or str(row.source_id),
         direction=row.direction, source='INTERNAL' if internal else 'EXTERNAL',source_display=source_label,
         production_order=row.production_task.task_number if row.production_task_id else '',
         product=row.product_line.product_name_snapshot if row.product_line_id else '',
         attributes=attributes,stage=STAGES.get(attributes.get('completed_craft',{}).get('code'),''),
+        input_material_selection_snapshot=(snapshot.get('input_material_selection_snapshot') or attributes.get('material_selection_snapshot', {})) if outgoing else snapshot.get('input_material_selection_snapshot', {}),
+        output_material_selection_snapshot={} if outgoing else (snapshot.get('output_material_selection_snapshot') or attributes.get('material_selection_snapshot', {})),
         quantity=str(row.quantity),unit=attributes.get('unit_name',''),
         receipt_date=str(row.business_date),status='已出库' if outgoing else '已入库',
         warehouse=row.balance.zone.warehouse.warehouse_name,zone=row.balance.zone.zone_name,
@@ -121,6 +128,8 @@ def pending_record_data(receipt, request=None):
         id=str(receipt.pk), receipt_number=receipt.receipt_number, direction='IN', source='INTERNAL',
         source_display='厂内入库（待确认）', production_order=receipt.source_snapshot.get('production_order', ''),
         product=receipt.source_snapshot.get('product', ''), attributes=attributes,
+        input_material_selection_snapshot=(line.input_snapshot or {}).get('input_material_selection_snapshot', {}) if line else {},
+        output_material_selection_snapshot=attributes.get('material_selection_snapshot', {}),
         stage=STAGES.get(attributes.get('completed_craft', {}).get('code'), '厂内半成品'),
         quantity=str(quantity), unit=line.unit.unit_name if line else attributes.get('unit_name', ''),
         receipt_date=str(receipt.receipt_date), status=receipt.status,
@@ -235,6 +244,7 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         from ..tube_receipt_services import require_receipt_recovery_access, receipt_result
         request_id = serializers.UUIDField().run_validation(request_id)
         receipt = get_object_or_404(InternalSemiFinishedReceipt.objects.select_related('schedule_product'), request_id=request_id)
+        get_object_or_404(accessible_production_tasks(request), pk=receipt.schedule_product.schedule.production_task_id)
         require_receipt_recovery_access(request, receipt)
         return Response({'data': receipt_result(receipt)})
 
@@ -242,20 +252,29 @@ class InternalReceiptViewSet(viewsets.ViewSet):
         params = RecordFilter(data=request.query_params)
         params.is_valid(raise_exception=True)
         if params.validated_data['direction'] == 'OUT':
-            return PublicStockMovement.objects.filter(direction='OUT', balance__stock_kind='SEMI',
+            return PublicStockMovement.objects.filter(direction='OUT', balance__stock_kind__in=['SEMI', 'CATALOG_SEMI'],
                 production_task_id__in=accessible_production_tasks(request).values('id')).select_related(
                     'balance__zone__warehouse','production_task','product_line','actor_employee').annotate(
-                        business_number=KeyTextTransform('issue_number', 'snapshot'),
-                        business_date=TruncDate('occurred_at')).order_by('-occurred_at','-id')
-        return PublicStockMovement.objects.filter(direction='IN',balance__stock_kind='SEMI',
+                        business_number=Coalesce(KeyTextTransform('business_number', 'snapshot'), KeyTextTransform('issue_number', 'snapshot')),
+                        business_date=Case(When(source_type__in=CORRECTION_SOURCES,
+                            then=Cast(KeyTextTransform('business_date', 'snapshot'), DateField())),
+                            default=TruncDate('occurred_at'), output_field=DateField())).order_by('-occurred_at','-id')
+        return PublicStockMovement.objects.filter(direction='IN',balance__stock_kind__in=['SEMI', 'CATALOG_SEMI'],
             production_task_id__in=accessible_production_tasks(request).values('id'),
-                    source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN']).select_related(
+                    source_type__in=['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN','TUBE_OUTSOURCING_RETURN', *CORRECTION_SOURCES]).select_related(
                 'balance__zone__warehouse','production_task','product_line','actor_employee').annotate(
-                    business_number=Coalesce('internal_receipt_line__receipt__receipt_number','outsourcing_return_line__return_record__return_number','metal_processing_good_return__return_number','tube_outsourcing_receipt_line__receipt__receipt_number'),
-                    business_date=Coalesce('internal_receipt_line__receipt__receipt_date',
+                    business_number=Coalesce(KeyTextTransform('business_number', 'snapshot'),
+                        'internal_receipt_line__receipt__receipt_number','outsourcing_return_line__return_record__return_number','metal_processing_good_return__return_number','tube_outsourcing_receipt_line__receipt__receipt_number',
+                        'outsourcing_plan_receipt_line__receipt__receipt_number', output_field=CharField()),
+                    business_date=Case(When(source_type__in=CORRECTION_SOURCES,
+                        then=Cast(KeyTextTransform('business_date', 'snapshot'), DateField())),
+                        When(source_type='TUBE_OUTSOURCING_RETURN', snapshot__is_plan=True,
+                            then=Cast(KeyTextTransform('receipt_date', 'snapshot'), DateField())),
+                        default=Coalesce('internal_receipt_line__receipt__receipt_date',
                         'outsourcing_return_line__return_record__return_date','metal_processing_good_return__return_date',
                         'tube_outsourcing_receipt_line__receipt__receipt_date',
-                        TruncDate('occurred_at'))).order_by('-created_at','-id')
+                        'outsourcing_plan_receipt_line__receipt__receipt_date',
+                        TruncDate('occurred_at')), output_field=DateField())).order_by('-created_at','-id')
 
     @extend_schema(parameters=[RecordFilter],responses={200:ReceiptResponse})
     def list(self,request):
@@ -315,6 +334,12 @@ class InternalReceiptViewSet(viewsets.ViewSet):
             return Response({'data': pending_record_data(pending, request)})
         row = get_object_or_404(self.records(request),pk=pk)
         data = record_data(row)
+        if row.source_type in CORRECTION_SOURCES:
+            data['source_detail'] = {**row.snapshot, 'source_type': row.source_type,
+                'is_plan': True, 'source_number': row.snapshot.get('order_number', ''),
+                'before_quantity': str(row.before_quantity), 'after_quantity': str(row.after_quantity),
+                'quantity': str(row.quantity), 'direction': row.direction}
+            return Response({'data': data})
         if row.direction == 'OUT':
             data['source_detail'] = {'before_quantity':str(row.before_quantity), 'after_quantity':str(row.after_quantity)}
             return Response({'data':data})
@@ -351,6 +376,9 @@ class InternalReceiptViewSet(viewsets.ViewSet):
                 source_kind = str(snapshot.get('source_kind') or '')
                 data['source_detail'].update(
                     source_type=row.source_type,
+                    is_plan=bool(snapshot.get('is_plan')),
+                    order_id=str(snapshot.get('order_id') or ''),
+                    output_unit=data['unit'] or ('套' if source_kind in ('PUBLIC_CUTTING', 'SEWING') else '支'),
                     source_number=str(snapshot.get('order_number') or ''),
                     receipt_number=str(snapshot.get('receipt_number') or data['receipt_number']),
                     source_kind=source_kind,

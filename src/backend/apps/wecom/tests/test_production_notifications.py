@@ -1,9 +1,11 @@
 """单元06：隔离PostgreSQL中的真实业务服务/API，不发送企微、不模拟对象授权。"""
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from threading import Barrier
 from tempfile import TemporaryDirectory
 
 from django.db import close_old_connections, connections, transaction
+from django.contrib.auth.models import Group, Permission
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -13,7 +15,7 @@ from apps.audit.models import AuditLog
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.exceptions import Conflict
 from apps.inventory.models import MaterialInbound, MaterialStockMovement
-from apps.organizations.models import EmployeeRoleAssignment
+from apps.organizations.models import EmployeeRoleAssignment, RoleProfile
 from apps.production_tasks.services import submit_production_task, transition_production_task
 from apps.wecom.models import NotificationDelivery, NotificationEvent, NotificationRule
 from apps.wecom.notification_selectors import recipient_payload
@@ -44,6 +46,13 @@ class ProductionConfirmationNotificationTests(APITestCase):
         self.member, self.role = receiver(self.f.employee, "U06_TECH", "production_tasks.view_productiontask")
         create_rule("PRODUCTION_TASK_CONFIRMED", self.f.employee, [self.role.role_code])
         self.admin_role = grant_role(self.f.employee, "ADMINISTRATION", "production_tasks.confirm_productiontask")
+        RoleActionGrant.objects.create(role=self.admin_role, scope="MODULE", permission=Permission.objects.get(
+            content_type__app_label="access_control", codename="edit_productionplan"))
+        follower_role, _ = RoleProfile.objects.get_or_create(role_code="MERCHANDISER", defaults={
+            "display_name": "跟单", "auth_group": Group.objects.get_or_create(name="U06_MERCHANDISER")[0],
+        })
+        EmployeeRoleAssignment.objects.create(employee=self.f.employee, role_profile=follower_role,
+            effective_from=timezone.now() - timedelta(minutes=1))
         self.f.task.status = "DRAFT"
         self.f.task.includes_tax = False
         self.f.task.save()
@@ -248,9 +257,9 @@ class SchedulingNotificationTests(APITestCase):
         self.f.test_create_requires_all_boms_to_be_verified()
         self.assertFalse(NotificationEvent.objects.exists())
 
-    def test_purchase_gate_remains(self):
-        self.f.test_create_requires_completed_purchase_order()
-        self.assertFalse(NotificationEvent.objects.exists())
+    def test_uncompleted_purchase_does_not_block_schedule_notification(self):
+        self.f.test_create_allows_uncompleted_purchase_order()
+        self.assertEqual(NotificationEvent.objects.filter(event_code="PRODUCTION_PLAN_CREATED").count(), 1)
 
 
 @override_settings(**SETTINGS)
@@ -283,14 +292,17 @@ class PurchaseCoverageAndPublicationTests(APITestCase):
         self.assertEqual(order.production_task.products.count(), 2)
         self.assertEqual(order.lines.values("product_line_id_snapshot").distinct().count(), 1)
         source = evaluate_purchase_source(order.production_task)
-        self.assertIn("PURCHASE_ORDER_EXISTS", [item["code"] for item in source["blockers"]])
+        self.assertIn("BOM_SELECTION_REQUIRED", [item["code"] for item in source["blockers"]])
         self.assertFalse(source["can_create"])
+        selected = evaluate_purchase_source(order.production_task, bom_id=order.lines.first().bom_id)
+        self.assertIn("PURCHASE_ORDER_EXISTS", [item["code"] for item in selected["blockers"]])
+        self.assertFalse(selected["can_create"])
 
     def test_single_and_batch_supplier_publication_do_not_notify(self):
         from apps.procurement.tests.test_purchase_order_api import PurchaseOrderApiTests
         f = PurchaseOrderApiTests()
         f.setUp()
-        with TemporaryDirectory(prefix="supplier-", dir="/app/.tmp/unit06_15cb0") as media, f.settings(MEDIA_ROOT=media):
+        with TemporaryDirectory(prefix="notification-supplier-") as media, f.settings(MEDIA_ROOT=media):
             f.test_batch_publish_is_atomic_and_rejects_duplicate_selection()
         self.assertFalse(NotificationEvent.objects.exists())
 

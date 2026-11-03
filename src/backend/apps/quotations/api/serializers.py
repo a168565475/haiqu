@@ -16,6 +16,7 @@ from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.inquiries.models import Inquiry
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
 from apps.reference_data.models import Currency, Incoterm, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
 from ..models import (
     Quotation,
@@ -264,8 +265,11 @@ class QuotationPriceMatrixSerializer(serializers.Serializer):
 
 
 class QuotationLineSerializer(serializers.ModelSerializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, write_only=True)
+    product_selection_snapshot = serializers.JSONField(read_only=True)
     line_number = serializers.IntegerField(required=False, min_value=1)
-    unit_code = serializers.CharField(max_length=30, validators=[uppercase_code_validator])
+    unit_code = serializers.CharField(max_length=30, allow_blank=True, validators=[uppercase_code_validator])
     line_total = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True)
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False, allow_null=True)
@@ -331,6 +335,9 @@ class QuotationLineSerializer(serializers.ModelSerializer):
             "lineage_id",
             "source_inquiry_item",
             "product_id",
+            "product_catalog_id",
+            "product_selection",
+            "product_selection_snapshot",
             "product_specification",
             "product_category_id",
             "product_unit_id",
@@ -387,6 +394,17 @@ class QuotationLineSerializer(serializers.ModelSerializer):
         if self.instance is None and attrs.get("unit_price") is None:
             raise serializers.ValidationError({"unit_price": "新建手工报价明细时必须填写单价。"})
         current = self._saved_line
+        catalog_id = attrs.get("product_catalog_id", getattr(current, "product_catalog_id", None))
+        uses_entry = bool(catalog_id or (attrs.get("product_selection") or {}).get("draft") or getattr(current, "product_selection_snapshot", {}).get("entry_state") == "draft")
+        if uses_entry:
+            if attrs.get("product") is not None:
+                raise serializers.ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+            attrs["product"] = None
+            attrs["product_category"] = None
+            attrs["product_color"] = None
+            attrs["product_unit"] = None
+        elif not attrs.get("unit_code", getattr(current, "unit_code", "")):
+            raise serializers.ValidationError({"unit_code": "请填写单位。"})
         product = attrs.get("product", getattr(current, "product", None))
         product_changed = current is None or "product" in attrs and getattr(current, "product_id", None) != getattr(product, "pk", None)
         category = attrs.get("product_category", getattr(current, "product_category", None))
@@ -452,6 +470,12 @@ class QuotationLineUpdateSerializer(QuotationLineSerializer):
     def validate(self, attrs):
         if not attrs:
             raise serializers.ValidationError({"detail": "请至少提交一个需要修改的字段。"})
+        current = self._saved_line
+        uses_entry = bool(attrs.get("product_catalog_id", getattr(current, "product_catalog_id", None))
+                          or (attrs.get("product_selection") or {}).get("draft")
+                          or getattr(current, "product_selection_snapshot", {}).get("entry_state") == "draft")
+        if "unit_code" in attrs and not attrs["unit_code"] and not uses_entry:
+            raise serializers.ValidationError({"unit_code": "请填写单位。"})
         return attrs
 
 

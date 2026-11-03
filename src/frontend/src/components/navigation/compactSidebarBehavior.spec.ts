@@ -61,7 +61,7 @@ describe('常驻主栏的页面外壳', () => {
     expect(wrapper.get('.app-header__context').attributes('role')).toBeUndefined()
     expect(wrapper.find('[data-global-page-tabs]').exists()).toBe(true)
     expect(wrapper.get('img[alt="HiTree"]').attributes('src')).toContain('hitree-header-logo')
-    expect(wrapper.get('[data-current-user]').text()).toContain('超级管理员')
+    expect(wrapper.get('[data-current-user]').text()).toBe('管理员')
     expect(wrapper.find('.app-header__page-title').exists()).toBe(false)
     expect(wrapper.find('[data-breadcrumb]').exists()).toBe(false)
     expect(wrapper.find('.app-header__search-shell, .app-header__icon-action, .app-header__avatar').exists()).toBe(false)

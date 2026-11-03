@@ -6,7 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.paginator import UnorderedObjectListWarning
 from django.utils import timezone
@@ -15,7 +15,13 @@ from rest_framework.test import APIClient, APITestCase
 from apps.customers.models import CustomerAccount, CustomerEntityAddress, CustomerTransactionEntity
 from apps.boms.models import Bom, BomCreationMethod, BomStatus
 from apps.files.models import BusinessFile, FileScanStatus
-from apps.organizations.models import Employee
+from apps.organizations.models import (
+    Employee,
+    EmployeeOrganizationAssignment,
+    EmployeeRoleAssignment,
+    OrganizationUnit,
+    RoleProfile,
+)
 from apps.products.models import ProductInformation
 from apps.production_tasks.models import ProductionTask, ProductionTaskStatus
 from apps.reference_data.models import ProductColor
@@ -42,6 +48,30 @@ class SalesOrderApiTests(APITestCase):
             user=self.user,
             employee_code="SALES_ORDER_ADMIN",
             display_name="销售订单测试员工",
+        )
+        business, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_BUSINESS", defaults={"unit_name": "业务部"}
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=business, effective_from=timezone.now()
+        )
+        merchandiser = RoleProfile.objects.filter(role_code="MERCHANDISER").first()
+        if merchandiser is None:
+            group, _ = Group.objects.get_or_create(name="SALES_ORDER_MERCHANDISER_TEST")
+            merchandiser = RoleProfile.objects.create(
+                role_code="MERCHANDISER", display_name="跟单", auth_group=group
+            )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.employee, role_profile=merchandiser, effective_from=timezone.now()
+        )
+        production_department, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_PRODUCTION", defaults={"unit_name": "生产部"}
+        )
+        self.planner = Employee.objects.create(
+            employee_code="SALES_ORDER_PLANNER", display_name="生产计划测试员工"
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.planner, organization_unit=production_department, effective_from=timezone.now()
         )
         self.customer = CustomerAccount.objects.create(
             account_code="SALES_ORDER_CUSTOMER",
@@ -532,7 +562,7 @@ class SalesOrderApiTests(APITestCase):
             "planned_start_date": timezone.localdate().isoformat(),
             "planned_end_date": timezone.localdate().isoformat(),
             "production_priority": "NORMAL",
-            "planner_id": str(self.employee.pk),
+            "planner_id": str(self.planner.pk),
         }
         production = self.client.post(
             "/api/v1/production-tasks/create-from-sales-order/",

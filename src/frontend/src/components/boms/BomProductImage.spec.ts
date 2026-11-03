@@ -2,10 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import { apiClient } from '@/api/request'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import type { ProductionTask, ProductionTaskProduct, ProductionTaskProductImage } from '@/types/productionTask'
 import BomProductImage from './BomProductImage.vue'
 
-const getTask = vi.spyOn(apiClient, 'get')
+const getTask = vi.fn()
+const getFile = vi.fn()
+vi.spyOn(apiClient, 'get').mockImplementation(((url: string) => url.includes('/business-files/') ? getFile(url) : getTask(url)) as typeof apiClient.get)
 const image = (id: string): ProductionTaskProductImage => ({ id, name: `${id}.png`, content_type: 'image/png', size_bytes: 100 })
 const product = (id: string, images: ProductionTaskProductImage[] = []): ProductionTaskProduct => ({
   id, line_number: 1, product_id: 'master-1', source_delivery_batch_line_id: null, source_sales_order_line_id: null,
@@ -37,8 +41,17 @@ function open(taskId = 'task-1', productLineId = 'line-1') {
   wrappers.push(wrapper)
   return wrapper
 }
-beforeEach(() => { getTask.mockReset() })
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
+beforeEach(() => {
+  getTask.mockReset(); getFile.mockReset()
+  setActivePinia(createPinia())
+  useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '测试', is_superuser: true, employee: null, permissions: [], data_scope: 'ALL' } })
+  getFile.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }), headers: {} })
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = vi.fn(() => 'blob:bom-test-image')
+    static revokeObjectURL = vi.fn()
+  })
+})
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals() })
 
 describe('BOM 来源产品图片', () => {
   it('精确匹配产品明细，只展示该明细的第一张真实图片', async () => {
@@ -49,7 +62,8 @@ describe('BOM 来源产品图片', () => {
     const wrapper = open()
     await flushPromises()
     expect(wrapper.findAll('img')).toHaveLength(1)
-    expect(wrapper.get('img').attributes('src')).toBe('http://localhost:8000/api/v1/production-tasks/task-1/business-files/main-image/')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:bom-test-image')
+    expect(getFile.mock.calls[0]![0]).toContain('/api/v1/production-tasks/task-1/business-files/main-image/')
     expect(wrapper.get('img').attributes('alt')).toContain('折叠床')
   })
 
@@ -101,7 +115,7 @@ describe('BOM 来源产品图片', () => {
     await wrapper.get('button').trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(wrapper.get('img').attributes('src')).toContain('/business-files/main-image/')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:bom-test-image')
   })
 
   it.each([
@@ -125,7 +139,8 @@ describe('BOM 来源产品图片', () => {
     expect(wrapper.find('img').exists()).toBe(true)
     finishOld(response([product('line-1', [image('old-image')])]))
     await flushPromises()
-    expect(wrapper.get('img').attributes('src')).toBe('http://localhost:8000/api/v1/production-tasks/task-2/business-files/new-image/')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:bom-test-image')
+    expect(getFile.mock.calls.at(-1)![0]).toContain('/api/v1/production-tasks/task-2/business-files/new-image/')
   })
 
   it('只切换产品明细时清除旧图，旧请求失败不覆盖新结果', async () => {
@@ -138,7 +153,8 @@ describe('BOM 来源产品图片', () => {
     rejectOld({ isAxiosError: true, response: { status: 403 } })
     await flushPromises()
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
-    expect(wrapper.get('img').attributes('src')).toContain('/business-files/new-image/')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:bom-test-image')
+    expect(getFile.mock.calls.at(-1)![0]).toContain('/business-files/new-image/')
   })
 
   it('已有图片切换到缺失来源时立即移除旧图片', async () => {
@@ -159,6 +175,6 @@ describe('BOM 来源产品图片', () => {
     expect(wrapper.find('img').exists()).toBe(false)
     await wrapper.get('button').trigger('click')
     await flushPromises()
-    expect(wrapper.get('img').attributes('src')).toContain('/business-files/main-image/')
+    expect(wrapper.get('img').attributes('src')).toBe('blob:bom-test-image')
   })
 })

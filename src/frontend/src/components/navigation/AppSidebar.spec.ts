@@ -18,7 +18,7 @@ const boardEntries = [
 const sidebarIconKeys = [
   'workbench', 'customer-management', 'sample-management', 'product-management',
   'production-management', 'procurement-management', 'workshop-management', 'warehouse-management',
-  'employee-management', 'boards', 'settings',
+  'finance-management', 'employee-management', 'boards', 'settings',
 ] as const
 
 const settingsEntries = [
@@ -39,7 +39,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   workbench: ['production-workbench', 'production-overview', 'workshop-workbench'],
   'customer-management': ['customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'analytics'],
   'sample-management': ['samples', 'sample-library'],
-  'product-management': ['products', 'product-catalog', 'raw-materials', 'material-catalog'],
+  'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'purchase-return-records'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
@@ -52,7 +52,7 @@ const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
   'purchase-inbounds', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
-  'material-inventory', 'employee-list', 'wecom-attendance', ...settingsEntries.map(([name]) => name),
+  'material-inventory', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
 
@@ -64,6 +64,7 @@ async function setup() {
       'customers.view_customeraccount', 'customers.view_customercomplaint', 'inquiries.view_inquiry',
       'quotations.view_quotation', 'workflow.view_businesstask', 'samples.view_samplerequest',
       'samples.view_sampleinventoryline', 'products.view_productinformation', 'products.view_rawmaterialinformation',
+      'product_catalog.view_productcatalog', 'material_catalog.view_materialcatalog',
       'production_tasks.view_productiontask', 'boms.view_bom', 'procurement.view_purchaseorder',
       'workshop_config.view_workshop', 'production_scheduling.view_productionschedule',
       'material_issues.view_materialissue', 'workshop_reporting.view_wagescheme',
@@ -267,16 +268,18 @@ describe('全局悬停侧栏', () => {
     expect(panel().get('[data-sidebar-hover-plate]').attributes('data-hover-menu-key')).toBe('')
   })
 
-  it('独立产品管理保留旧产品信息默认入口，独立权限可打开新页面', async () => {
+  it('旧产品原料路由保留但菜单隐藏，独立权限默认进入新产品管理', async () => {
     expect(applicationRouter.resolve('/product-catalog').name).toBe('product-catalog')
     expect(applicationRouter.resolve('/products').name).toBe('products')
+    expect(applicationRouter.resolve('/raw-materials').name).toBe('raw-materials')
     const { auth, router } = await setup()
     auth.user = { ...auth.user!, is_superuser: false, permissions: ['product_catalog.view_productcatalog'] }
     await nextTick()
-    await group('product').trigger('click')
-    await advance(120)
+    await group('product').trigger('focus')
     expect(panel().findAll('[data-menu-key]').map(item => item.attributes('data-menu-key'))).toEqual(['product-catalog'])
-    await panel().get('[data-menu-key="product-catalog"]').trigger('click'); await flushPromises()
+    expect(panel().find('[data-menu-key="products"]').exists()).toBe(false)
+    expect(panel().find('[data-menu-key="raw-materials"]').exists()).toBe(false)
+    await group('product').trigger('click'); await flushPromises()
     expect(router.currentRoute.value.name).toBe('product-catalog')
   })
   it('管理员工作台分组隐藏主管与业务员版，保留生产入口', async () => {
@@ -379,7 +382,7 @@ describe('全局悬停侧栏', () => {
   it.each([
     ['customer', 'customers'],
     ['sample', 'samples'],
-    ['product', 'products'],
+    ['product', 'product-catalog'],
     ['production', 'production-tasks'],
     ['procurement', 'purchase-orders'],
     ['workshop', 'workshop-scheduling'],
@@ -494,7 +497,7 @@ describe('全局悬停侧栏', () => {
     await setup()
     expect(panel().exists()).toBe(false)
     expect(wrapper.findAll('.app-sidebar__menu-label').map(item => item.text())).toEqual(
-      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '行政', '看板', '配置'],
+      ['工作台', '客户', '样品', '产品', '生产', '采购', '车间', '仓库', '财务', '行政', '看板', '配置'],
     )
     expect(group('workshop').classes()).toContain('is-active')
   })

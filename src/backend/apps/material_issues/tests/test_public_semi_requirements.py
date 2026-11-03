@@ -87,7 +87,7 @@ class PublicSemiRequirementTests(PublicStockFixture, TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(Decimal(rows[0]["required_quantity"]), 1000)
         self.assertEqual(Decimal(rows[0]["available_stock"]), 5000)
-        self.assertEqual(Decimal(rows[0]["max_issue_quantity"]), 1000)
+        self.assertEqual(Decimal(rows[0]["max_issue_quantity"]), 5000)
         self.assertFalse(OrderSemiFinishedRequirement.objects.exists())
         self.assertEqual(list(OrderMaterialRequirement.objects.values()), raw_before)
         self.assertTrue(all(query["sql"].lstrip().upper().startswith("SELECT") for query in captured))
@@ -182,7 +182,7 @@ class PublicSemiRequirementTests(PublicStockFixture, TestCase):
         requirement.refresh_from_db()
         self.assertEqual(requirement.identity_key, self.semi_identity["identity_key"])
 
-    def test_requirement_reduction_below_issued_is_blocked(self):
+    def test_issue_sync_preserves_issued_above_reduced_suggestion_but_default_source_blocks(self):
         requirement = self.sync()
         OrderSemiFinishedRequirement.objects.filter(pk=requirement.pk).update(internal_issued_quantity=900)
         # 保留已有 500 件排产；改单耗使半成品净需求由 1000 支降至 500 支。
@@ -193,9 +193,14 @@ class PublicSemiRequirementTests(PublicStockFixture, TestCase):
                       "suggested_bar_count", "suggested_purchase_meters"):
             setattr(self.bom_line, field, plan[field])
         self.bom_line.save()
-        with self.assertRaises(InventoryStockValidationError) as raised:
-            sync_public_semi_requirements(self.header(), {requirement.pk})
-        self.assertEqual(raised.exception.api_error_code, "REQUIREMENT_BELOW_ISSUED")
+        _, blockers = build_public_semi_specs(self.task.pk, self.product_line.pk)
+        self.assertIn("REQUIREMENT_BELOW_ISSUED", {row["code"] for row in blockers})
+        synced = sync_public_semi_requirements(self.header(), {requirement.pk})[requirement.pk]
+        self.assertEqual((synced.required_quantity, synced.internal_issued_quantity), (500, 900))
+        rows, blockers = self.rows()
+        self.assertFalse(blockers, blockers)
+        self.assertEqual((Decimal(rows[0]["required_quantity"]), Decimal(rows[0]["internal_issued_quantity"]),
+                          Decimal(rows[0]["order_remaining"]), Decimal(rows[0]["max_issue_quantity"])), (500, 900, 0, 5000))
 
     def test_missing_bom_field_is_a_specific_blocker_not_matching_blank_inventory(self):
         self.bom_line.raw_values["tube_coating_color"] = "/"
@@ -277,5 +282,5 @@ class PublicSemiRequirementTests(PublicStockFixture, TestCase):
         self.assertFalse(blockers, blockers)
         cutting = next(row for row in rows if row["unit"] == "套")
         self.assertEqual(Decimal(cutting["required_quantity"]), 1500)
-        self.assertEqual(Decimal(cutting["max_issue_quantity"]), 1500)
+        self.assertEqual(Decimal(cutting["max_issue_quantity"]), 2000)
         self.assertTrue(cutting["conversion_snapshot"]["integer_required"])

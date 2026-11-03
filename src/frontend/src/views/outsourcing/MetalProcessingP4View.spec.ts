@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MetalProcessingP4View from './MetalProcessingP4View.vue'
 
-const auth = vi.hoisted(() => ({ superuser: true, permissions: new Set<string>() }))
+const auth = vi.hoisted(() => ({ superuser: true, permissions: new Set<string>(), followed: false }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'workshop' } }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
 const api = vi.hoisted(() => ({
@@ -17,7 +17,9 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
-  user: { get is_superuser() { return auth.superuser } },
+  user: { get is_superuser() { return auth.superuser }, effective_access: { actions: {
+    'material_issues.view_metalprocessingsource': { scopes: [auth.followed ? 'FOLLOWED' : 'MODULE'], sources: [] },
+  }, legacy_sources: [] } }, canReadAccessDirectory: false,
   hasPermission: (permission: string) => auth.permissions.has(permission),
 }) }))
 vi.mock('@/api/outsourcing', () => ({ fetchOutsourcingOptions: api.options, fetchOutsourcingOrders: api.legacy }))
@@ -54,7 +56,7 @@ const handoffDetail = { id: 'handoff-1', handoff_pieces: 12, returned_unsprayed_
   original_order_id: 'original-order', original_order_number: '原单-001', original_order_status: 'PARTIAL_RETURN',
   source_etag: '"source-1"', remaining_return_pieces: 12, return_blockers: [], good_return_context: goodContext }
 const wrappers: ReturnType<typeof mount>[] = []
-async function createView(props: { mode?: 'sources' | 'original' | 'rework'; embedded?: boolean; originalOrderId?: string; externalOrderId?: string } = {}) {
+async function createView(props: { mode?: 'sources' | 'original' | 'rework'; embedded?: boolean; originalOrderId?: string; externalOrderId?: string; entryAction?: string; actionOnly?: boolean } = {}) {
   const wrapper = mount(MetalProcessingP4View, {
     props,
     global: { plugins: [ElementPlus], stubs: { AppWindowDialog: { template: '<section><slot/><slot name="footer"/></section>' } } },
@@ -70,6 +72,7 @@ beforeEach(() => {
   route.meta.outsourcingWorkspace = 'workshop'
   vi.resetAllMocks()
   auth.superuser = true
+  auth.followed = false
   auth.permissions.clear()
   route.query = {}
   api.sources.mockResolvedValue({ data: [completedSource], meta: { total_pages: 1 } })
@@ -86,6 +89,22 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('统一入口内的单据与来源范围', () => {
+  it('跟单重加工详情返回关联任务，仓库返回仍保留委外管理', async () => {
+    auth.superuser = false
+    auth.followed = true
+    auth.permissions.add('material_issues.view_metalprocessingsource')
+    api.externalOrder.mockResolvedValue({ id: 'order-1', order_number: '重加工-1', source_id: 'source-1',
+      original_return_id: 'return-1', allocated_pieces: 5, handoff_pieces: 0, returned_good_pieces: 0,
+      status: 'PENDING_HANDOFF', good_returns: [], allocation_history: [] })
+    const wrapper = await createView({ mode: 'rework', externalOrderId: 'order-1' })
+    await wrapper.findAll('button').find(button => button.text() === '返回生产任务')!.trigger('click')
+    expect(router.push).toHaveBeenLastCalledWith({ name: 'production-task-detail', params: { taskId: 'task-1' } })
+    route.meta.outsourcingWorkspace = 'warehouse'
+    auth.permissions.add('material_issues.confirm_metalprocessingexternalhandoff')
+    const warehouse = await createView({ mode: 'rework', externalOrderId: 'order-1' })
+    await warehouse.findAll('button').find(button => button.text() === '返回委外管理')!.trigger('click')
+    expect(router.push).toHaveBeenLastCalledWith('/warehouse/outsourcing')
+  })
   it('重加工外发按支提交单价，非法单价不能提交', async () => {
     const wrapper = await createView()
     const vm = state(wrapper)
@@ -563,7 +582,8 @@ describe('仓库办理已建外发单交接', () => {
     api.externalOrder.mockResolvedValue(structuredClone(pendingOrder))
   })
 
-  it('只有原单交接权限也可由仓库深链接打开确认弹窗，确认后使用来源版本写入', async () => {
+  it('原单已有唯一厂家交接身份时，仓库深链接使用来源版本写入', async () => {
+    api.source.mockResolvedValue({ ...completedSource, original_handoffs: [{ ...handoffDetail, factory_id: 'factory', factory_name: '喷塑厂' }] })
     auth.permissions.add('material_issues.create_metalprocessingoriginalhandoff')
     route.query = { action: 'dispatch' }
     const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order' })
@@ -1134,4 +1154,48 @@ it('分配调整支持后端正整数上限范围，不截断为32位整数', as
   api.adjustAllocation.mockResolvedValue({})
   await vm.submit()
   expect(api.adjustAllocation.mock.calls[0]![1].allocated_pieces).toBe(amount)
+})
+
+describe('列表复用旧金工动作', () => {
+  beforeEach(() => {
+    route.meta.outsourcingWorkspace = 'warehouse'
+    api.originalOrder.mockResolvedValue({ original_order_id: 'original-order', can_handoff: true, totals: {}, parts: [] })
+  })
+  it('只读唯一厂家并使用原交接接口，成功更新及关闭宿主', async () => {
+    api.source.mockResolvedValue({ ...completedSource, original_handoffs: [{ ...handoffDetail, factory_id: 'factory', factory_name: '喷塑厂' }] })
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order', entryAction: 'dispatch', actionOnly: true })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBe('handoff')
+    expect(wrapper.find('[data-testid="unified-original-operations"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="handoff-factory-name"]').text()).toBe('喷塑厂')
+    vm.handoffForm.pieces = '12'
+    api.handoff.mockResolvedValue({ ...completedSource, available_pieces: 0 })
+    await vm.submit()
+    expect(api.handoff).toHaveBeenCalledWith('line-1', expect.objectContaining({ factory_id: 'factory', handoff_pieces: 12 }), '"source-1"')
+    expect(wrapper.emitted('updated')).toHaveLength(1)
+    expect(wrapper.emitted('closed')).toHaveLength(1)
+    expect(router.push).not.toHaveBeenCalled()
+  })
+  it('旧单缺少唯一厂家关联时阻断，不能默认首个加工厂', async () => {
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order', entryAction: 'dispatch', actionOnly: true })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBe('handoff')
+    expect(vm.handoffForm.factoryId).toBe('')
+    expect(vm.dialogError).toContain('没有唯一的加工厂对应记录')
+    vm.handoffForm.pieces = '12'; await vm.submit()
+    expect(api.handoff).not.toHaveBeenCalled()
+    expect(vm.submitDisabled).toBe(true)
+  })
+  it('多个来源先明确选择，不能把第一条材料自动发出', async () => {
+    api.sources.mockResolvedValue({ data: [completedSource, { ...completedSource, issue_line_id: 'line-2', source_id: 'source-2' }], meta: { total_pages: 1 } })
+    api.source.mockImplementation(async (id: string) => ({ ...completedSource, issue_line_id: id, source_id: id === 'line-2' ? 'source-2' : 'source-1', original_handoffs: [{ ...handoffDetail, factory_id: 'factory', factory_name: '喷塑厂' }] }))
+    const wrapper = await createView({ mode: 'original', originalOrderId: 'original-order', entryAction: 'dispatch', actionOnly: true })
+    const vm = state(wrapper)
+    expect(vm.dialog).toBeNull()
+    expect(wrapper.text()).toContain('请选择本次发出的材料来源')
+    vm.openSourceHandoff(vm.entrySources[1]); await flushPromises()
+    expect(vm.source.issue_line_id).toBe('line-2')
+    expect(vm.dialog).toBe('handoff')
+    expect(api.handoff).not.toHaveBeenCalled()
+  })
 })

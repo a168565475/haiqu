@@ -1,4 +1,14 @@
 import type { TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { ProcessingMaterialPair } from '@/types/processingMaterial'
+
+export function tubeMaterialColumn(row: ProcessingMaterialPair & { thickness?: string; spray_color?: string }, key: 'shape' | 'thickness' | 'spray_color'): string {
+  const output = row.output_material_selection_snapshot
+  const input = row.input_material_selection_snapshot
+  const value = key === 'spray_color'
+    ? (output?.processing_stage === 'POWDER_COATING' ? output.attributes?.color : undefined) || row.spray_color
+    : output?.attributes?.[key] || input?.attributes?.[key] || (key === 'thickness' ? row.thickness : undefined)
+  return value == null || value === '' ? '—' : String(value)
+}
 
 export const tubeSourceLabels: Record<TubeSourceKind, string> = {
   RAW_PIPE: '原材料', PUBLIC_SEMI: '未喷塑半成品', METAL: '未入库半成品',

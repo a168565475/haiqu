@@ -45,9 +45,39 @@ const compatibleRoutes: Record<string, string> = {
   TUBE_OUTSOURCING_ORDER_CREATED: 'workshop-outsourcing-tube-detail',
 }
 
+const taskTarget: [string, string] = ['production-task-detail', 'taskId']
+const outsideTargets: Array<[string, string]> = [
+  ['warehouse-outsourcing-detail', 'orderId'], ['workshop-outsourcing-detail', 'orderId'],
+  ['warehouse-outsourcing-tube-detail', 'id'], ['workshop-outsourcing-tube-detail', 'id'],
+]
+// 新岗位策略逐收件人生成目标；仅允许已登记事件的有限页面组合。
+const rolePolicyRoutes: Record<string, Array<[string, string?]>> = {
+  PRODUCTION_TASK_UPDATED: [taskTarget], PRODUCTION_TASK_STATUS_CHANGED: [taskTarget], PRODUCTION_EXPENSE_CHANGED: [taskTarget],
+  BOM_UPDATED: [['bom-preview', 'bomId']],
+  PRODUCTION_TASK_BOMS_CONFIRMED: [['purchase-order-create'], taskTarget],
+  MATERIAL_RECEIPT_RECORDED: [['purchase-order-detail', 'id']],
+  PRODUCTION_PLAN_UPDATED: [['workshop-scheduling-detail', 'scheduleId']],
+  PRODUCTION_PLAN_VOIDED: [['workshop-scheduling-detail', 'scheduleId']],
+  MATERIAL_ISSUE_ISSUED: [['material-issue-detail', 'issueId'], taskTarget],
+  INTERNAL_SEMI_RECEIPT_CONFIRMED: [taskTarget], ASSEMBLY_FINISHED_RECEIPT_CONFIRMED: [taskTarget],
+  FINISHED_GOODS_OUTBOUND_CONFIRMED: [taskTarget], WORK_REPORT_CORRECTED: [taskTarget],
+  OUTSOURCING_ORDER_CREATED: outsideTargets.slice(0, 2), TUBE_OUTSOURCING_ORDER_CREATED: outsideTargets.slice(2),
+  OUTSOURCING_ORDER_CANCELLED: outsideTargets, OUTSOURCING_DISPATCH_CONFIRMED: outsideTargets,
+  OUTSOURCING_RETURN_CONFIRMED: outsideTargets, OUTSOURCING_LOSS_RECORDED: outsideTargets.slice(0, 2),
+  TUBE_OUTSOURCING_SHORTAGE_RECORDED: outsideTargets.slice(2), OUTSOURCING_RECONCILED: outsideTargets,
+  COATING_REWORK_READY: [['warehouse-outsourcing-rework-detail', 'orderId']],
+  COATING_UNSPRAYED_RETURNED: [['warehouse-outsourcing-detail', 'orderId']],
+  COATING_REWORK_DISPATCHED: [['warehouse-outsourcing-rework-detail', 'orderId']],
+  COATING_REWORK_RECEIVED: [['warehouse-outsourcing-rework-detail', 'orderId']],
+  FINANCE_STATEMENT_CHANGED: [['finance-statements']], FINANCE_RECEIPT_CHANGED: [['finance-receipts']],
+}
+
 export function notificationRoute(eventCode: string, target: NotificationTarget): { name: string; params: Record<string, string>; query?: Record<string, string> } {
-  const allowed = Object.hasOwn(routes, eventCode) ? routes[eventCode] : undefined
-  const compatibleRoute = Object.hasOwn(compatibleRoutes, eventCode) ? compatibleRoutes[eventCode] : undefined
+  const original = Object.hasOwn(routes, eventCode) ? routes[eventCode] : undefined
+  const policy = target?.target_key === 'role-policy'
+  const alternatives = policy && Object.hasOwn(rolePolicyRoutes, eventCode) ? rolePolicyRoutes[eventCode]! : []
+  const allowed = policy ? [...(original ? [original] : []), ...alternatives].find(([name]) => name === target.route_name) : original
+  const compatibleRoute = !policy && Object.hasOwn(compatibleRoutes, eventCode) ? compatibleRoutes[eventCode] : undefined
   if (!allowed || !target || typeof target.object_id !== 'string' || !uuid.test(target.object_id)
     || (target.route_name !== allowed[0] && (!compatibleRoute || target.route_name !== compatibleRoute))
     || !target.params || typeof target.params !== 'object' || Array.isArray(target.params)

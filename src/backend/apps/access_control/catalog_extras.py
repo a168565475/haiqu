@@ -8,6 +8,10 @@ from .module_operations import MODULE_OPERATIONS
 from .management_permissions import MANAGEMENT_OPERATIONS
 
 EXTRA_OPERATIONS = MANAGEMENT_OPERATIONS + tuple((code, label, module) for code, label, module, _ in (*SALES_OPERATIONS, *MODULE_OPERATIONS)) + (
+    ("edit_productionplan", "修改生产计划日期、优先级和跟单员", "production_tasks"),
+    ("pause_productiontask", "暂停生产任务", "production_tasks"),
+    ("resume_productiontask", "恢复生产任务", "production_tasks"),
+    ("void_productiontaskexpense", "作废生产零星费用", "production_tasks"),
     ("confirm_salesorder", "确认销售订单", "sales_orders"),
     ("complete_salesorder", "完成销售订单", "sales_orders"),
     ("submit_purchaserequest", "提交采购申请", "procurement"),

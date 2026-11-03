@@ -1,4 +1,5 @@
 import type { CustomerEmployeeSummary, PageMeta } from './customer'
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
 
 export type SampleStatus =
   | 'DIRECTOR_REVIEW' | 'APPLICATION_RETURNED' | 'MATERIALS_PENDING'
@@ -38,6 +39,7 @@ export interface SampleOptions {
 }
 
 export interface SampleFormOptions {
+  is_salesperson?: boolean
   current_maker: SampleOwnerOption
   sample_types: SampleSelectOption[]
   shipping_methods: SampleSelectOption[]
@@ -87,6 +89,8 @@ export interface SampleFormContext {
     source_inquiry_item_id: string | null
     source_quotation_line_id: string | null
     product_id?: string | null
+    product_catalog_id?: string | null
+    product_selection_snapshot?: ProductSelectionSnapshot
     product_name: string
     specification: string
     source_quantity: string
@@ -130,6 +134,8 @@ export interface SampleProductSamplingDetailInput {
 }
 
 export interface SampleFormProductInput {
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
   id?: string
   client_key: string
   source_inquiry_item_id?: string | null
@@ -300,6 +306,8 @@ export interface SampleProductSamplingDetail {
 }
 
 export interface SampleProduct {
+  product_catalog_id?: string | null
+  product_selection_snapshot?: ProductSelectionSnapshot
   id: string
   line_number: number
   source_inquiry_item_id: string | null

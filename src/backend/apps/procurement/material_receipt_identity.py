@@ -18,6 +18,10 @@ class PurchaseMaterialIdentityMissing(PurchaseMaterialIdentityError):
 
 
 def build_purchase_material_snapshot(bom_line):
+    if bom_line.material_catalog_id:
+        from .catalog_materials import bom_catalog_fields
+        return {"schema_version": 1, "source": "PRODUCTION_PURCHASE", **bom_catalog_fields(bom_line),
+                "material_catalog_id": str(bom_line.material_catalog_id), "unit_id": bom_line.material_selection_snapshot["unit_id"]}
     material, _ = resolve_bom_line_raw_material(bom_line)
     if material is None or material.item_type != "MATERIAL":
         raise ValidationError({"lines": "采购明细必须关联有效的库存材料后才能保存。"})

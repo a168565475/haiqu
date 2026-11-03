@@ -6,6 +6,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Sum
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomLine
@@ -18,7 +19,7 @@ from apps.outsourcing.dispatch_services import batch_candidates, confirmed_batch
 from apps.products.material_identity import resolve_bom_line_raw_material
 from apps.production_tasks.models import ProductionTaskProduct
 from apps.reference_data.models import ProductionUnit
-from .models import MaterialIssueBatchAllocation, OrderMaterialRequirement
+from .models import MaterialIssueBatchAllocation, MaterialIssueLine, OrderMaterialRequirement
 from .pipe_requirements import PIPE_NAMESPACE, pipe_error, pipe_source_snapshot, sync_pipe_requirement
 
 
@@ -34,6 +35,8 @@ def pipe_specs(task_id, product_id):
     result, blockers = [], []
     unit = ProductionUnit.objects.filter(unit_name="支", archived_at__isnull=True, status="ACTIVE").first()
     for line in BomLine.objects.filter(section__bom=bom, cutting_length_mm__isnull=False).select_related("section__bom").order_by("id"):
+        if line.material_catalog_id:
+            continue
         try:
             raw, _ = resolve_bom_line_raw_material(line)
             if not unit or not raw or raw.unit.unit_name != "根" or raw.category.category_name != "管材":
@@ -60,6 +63,8 @@ def pipe_requirement_rows(task_id, product_id, exclude_issue_id=None, *, public_
     lengths = {Decimal(spec["snapshot"]["raw_bar_length_m"]) for spec in specs}
     batches = list(confirmed_batches().filter(measurement_kind="PIPE", raw_bar_length_m__in=lengths)) if lengths else []
     available = inbound_batch_available_quantities(batches)
+    stock_pending = pipe_pending_stock_quantities(
+        [spec["raw_material"].pk for spec in specs], exclude_issue_id=exclude_issue_id)
     rows = []
     for spec in specs:
         current, raw, snapshot = existing.get(spec["id"]), spec["raw_material"], spec["snapshot"]
@@ -75,7 +80,8 @@ def pipe_requirement_rows(task_id, product_id, exclude_issue_id=None, *, public_
             "color": raw.color.color_name if raw.color_id else raw.color_snapshot, "unit": "支",
             "required_quantity": str(snapshot["allowance_pieces"]), "internal_issued_quantity": str(internal),
             "outsourcing_issued_quantity": str(external), "pending_issue_quantity": str(waiting), "order_remaining": str(remaining),
-            "available_stock": str(stock), "max_issue_quantity": str(min(stock, remaining)),
+            "available_stock": str(stock),
+            "max_issue_quantity": str(max(stock - stock_pending.get(pipe_stock_pool(snapshot), 0) * Decimal(snapshot["pieces_per_bar"]), 0)),
             "warehouse_zones": list(dict.fromkeys(row["zone_name"] for row in candidates if row.get("zone_name"))),
             "bom_version": spec["line"].section.bom.version_number, "validation_errors": [],
              "conversion_snapshot": snapshot, "bom_attributes": bom_attribute_fields(spec["line"]),
@@ -85,7 +91,7 @@ def pipe_requirement_rows(task_id, product_id, exclude_issue_id=None, *, public_
 
 def sync_selected_pipes(issue, ids):
     specs, _ = pipe_specs(issue.production_task_id, issue.product_line_id)
-    return [sync_pipe_requirement(s["line"].pk) for s in specs if s["id"] in ids]
+    return [sync_pipe_requirement(s["line"].pk, allow_excess_issue=True) for s in specs if s["id"] in ids]
 
 
 def pipe_line_snapshot(requirement):
@@ -119,7 +125,63 @@ def semi_errors(balance, quantity):
     return errors
 
 
-def validate_pipe_lines(lines):
+def ordinary_pending_stock_quantities(raw_material_ids, *, exclude_issue_id=None):
+    from .public_issue_services import public_ordinary_pending_quantities
+    from apps.inventory.tube_outsourcing_reservations import tube_material_reserved_quantities
+    pending = defaultdict(Decimal, public_ordinary_pending_quantities(raw_material_ids, exclude_issue_id=exclude_issue_id))
+    _, reserved = tube_material_reserved_quantities(raw_material_ids=raw_material_ids)
+    for (raw_id, unit_id, _zone_id), quantity in reserved.items():
+        pending[(uuid.UUID(raw_id), uuid.UUID(unit_id))] += quantity
+    return pending
+
+
+def pipe_stock_pool(snapshot):
+    return str(snapshot["raw_material_id"]), Decimal(snapshot["raw_bar_length_m"])
+
+
+def pipe_pending_stock_quantities(raw_material_ids, *, exclude_issue_id=None):
+    # 旧批次根库存与公共根库存是两本账，只有普通原料余额由两种入口共用。
+    rows = MaterialIssueLine.objects.filter(
+        issue__status="PENDING_REVIEW", issue__stock_mode="LEGACY",
+        requirement__measurement_kind="PIPE", raw_material_id__in=raw_material_ids)
+    if exclude_issue_id:
+        rows = rows.exclude(issue_id=exclude_issue_id)
+    result = defaultdict(Decimal)
+    for row in rows:
+        result[pipe_stock_pool(row.conversion_snapshot)] += Decimal(
+            allocation_plan(row.requested_quantity, row.conversion_snapshot)["bar_count"])
+    return result
+
+
+def legacy_pending_stock(lines, *, exclude_issue_id=None):
+    from .services import pending_issue_quantities
+    raw_ids = {line.raw_material_id for line in lines if line.raw_material_id}
+    _, semi = pending_issue_quantities(
+        semi_balance_ids=[line.semi_finished_balance_id for line in lines if line.semi_finished_balance_id],
+        exclude_issue_id=exclude_issue_id)
+    return {
+        "ordinary": ordinary_pending_stock_quantities(raw_ids, exclude_issue_id=exclude_issue_id),
+        "pipe": pipe_pending_stock_quantities(raw_ids, exclude_issue_id=exclude_issue_id),
+        "semi": semi,
+    }
+
+
+def legacy_line_stock_quantities(line, *, pending=None):
+    pending = pending if pending is not None else legacy_pending_stock([line], exclude_issue_id=line.issue_id)
+    if line.line_type == "SEMI":
+        stock = line.semi_finished_balance.quantity
+        occupied = pending["semi"].get(line.semi_finished_balance_id, Decimal(0))
+    elif line.conversion_snapshot.get("kind") == "PIPE":
+        stock = line_stock(line)
+        occupied = pending["pipe"].get(pipe_stock_pool(line.conversion_snapshot), Decimal(0)) * Decimal(line.conversion_snapshot["pieces_per_bar"])
+    else:
+        stock = line_stock(line)
+        occupied = pending["ordinary"].get((line.raw_material_id, line.unit_id), Decimal(0))
+    return {"available_stock": str(stock), "pending_stock_quantity": str(occupied),
+            "max_issue_quantity": str(max(stock - occupied, Decimal(0)))}
+
+
+def validate_pipe_lines(lines, *, pending=None):
     required_bars, available_bars, errors = defaultdict(int), {}, []
     for line in lines:
         if line.conversion_snapshot.get("kind") != "PIPE":
@@ -130,7 +192,7 @@ def validate_pipe_lines(lines):
         except ValidationError:
             errors.append({"line_id": str(line.pk), "code": "PIPE_WHOLE_BAR_REQUIRED", "detail": "管材申请数量必须符合整根切割数量。"})
             continue
-        pool = (snapshot["raw_material_id"], str(snapshot["raw_bar_length_m"]))
+        pool = pipe_stock_pool(snapshot)
         required_bars[pool] += int(plan["bar_count"])
         if pool not in available_bars:
             available_bars[pool] = sum(
@@ -138,8 +200,10 @@ def validate_pipe_lines(lines):
                 0,
             )
     for pool, required in required_bars.items():
-        if required > available_bars.get(pool, 0):
-            errors.append({"code": "STOCK_INSUFFICIENT", "detail": "相同物料和规格的合格整根库存不足。"})
+        occupied = (pending or {}).get(pool, 0)
+        if required > max(available_bars.get(pool, 0) - occupied, 0):
+            errors.append({"code": "PENDING_ISSUE_CONFLICT" if occupied else "STOCK_INSUFFICIENT",
+                           "detail": "相同物料和规格的合格整根库存不足，已扣除其他待审核领料占用。"})
     return errors
 
 
@@ -244,5 +308,13 @@ def line_stock(line):
         return Decimal(public_line_quantities(line, exclude_issue_id=line.issue_id)["available_stock"])
     if line.conversion_snapshot.get("kind") == "PIPE":
         return sum((Decimal(r["available_input_quantity"]) for r in batch_candidates(line.conversion_snapshot)), Decimal(0))
-    from apps.inventory.stock_services import available_stock
-    return available_stock(line.raw_material_id, line.unit_id)
+    return ordinary_available_stock(line.raw_material_id, line.unit_id)
+
+
+def ordinary_available_stock(raw_material_id, unit_id):
+    """领料只使用实际可扣账的合格原料库位，不改变委外共享查询。"""
+    return MaterialStockBalance.objects.filter(
+        raw_material_id=raw_material_id, unit_id=unit_id, measurement_kind="OTHER",
+        quality="AVAILABLE", quantity__gt=0, zone__status="ACTIVE",
+        zone__warehouse__status="ACTIVE", zone__warehouse__warehouse_type="MATERIAL",
+    ).aggregate(total=Sum("quantity"))["total"] or Decimal(0)

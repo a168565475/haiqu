@@ -1,3 +1,4 @@
+import type { ProductSelectionSnapshot } from './productCatalog'
 import type { PageMeta } from './referenceData'
 import type { ProductionTaskStatus } from './productionTask'
 import type { ScheduleProgressStatus } from './workshopReporting'
@@ -23,7 +24,9 @@ export interface ScheduleOptions {
 
 export interface ScheduleTaskProduct {
   id: string
-  product_id: string
+  product_id: string | null
+  product_catalog_id?: string | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   line_number: number
   product_number: string
   product_code: string

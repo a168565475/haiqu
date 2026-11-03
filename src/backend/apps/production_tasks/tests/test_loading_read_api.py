@@ -62,18 +62,22 @@ class ProductionLoadingReadTests(APITestCase):
         self.assertEqual(data["split_delivery"], 1)
         self.assertEqual(self.get_stats({"search": "DOES-NOT-EXIST"})["all"], 0)
 
-    def test_filter_options_match_full_subset_without_editor_queries(self):
+    def test_basic_filter_options_only_return_salespeople_without_editor_queries(self):
         full = self.client.get("/api/v1/production-tasks/options/", HTTP_HOST="localhost")
         self.assertEqual(full.status_code, 200, full.data)
         with CaptureQueriesContext(connection) as queries:
             filtered = self.client.get("/api/v1/production-tasks/options/", {"scope": "filters"}, HTTP_HOST="localhost")
         self.assertEqual(filtered.status_code, 200, filtered.data)
-        keys = {"customers", "employees", "products", "statuses", "delivery_methods", "order_sources"}
-        self.assertEqual(set(filtered.data["data"]), keys)
-        self.assertEqual(filtered.data["data"], {key: full.data["data"][key] for key in keys})
+        self.assertEqual(set(filtered.data["data"]), {"salespeople"})
+        self.assertIn({"id": str(self.employee.pk), "display_name": self.employee.display_name},
+                      filtered.data["data"]["salespeople"])
+        self.assertNotIn(str(self.other.pk), {item["id"] for item in filtered.data["data"]["salespeople"]})
+        for item in filtered.data["data"]["salespeople"]:
+            self.assertEqual(set(item), {"id", "display_name"})
         self.assertTrue({"currencies", "units", "colors", "boolean_options", "detail_template"} <= full.data["data"].keys())
         sql = "\n".join(item["sql"] for item in queries)
-        for table in ["reference_currency", "reference_production_unit", "reference_product_color"]:
+        for table in ["reference_currency", "reference_production_unit", "reference_product_color",
+                      "product_information", "product_catalog"]:
             self.assertNotIn(f'FROM "{table}"', sql)
 
     def test_invalid_scope_and_filters_return_validation_errors(self):
@@ -86,6 +90,6 @@ class ProductionLoadingReadTests(APITestCase):
         user = get_user_model().objects.create_user(username="loading_no_permission")
         Employee.objects.create(user=user, employee_code="LOAD_DENIED", display_name="无权限")
         self.client.force_authenticate(user)
-        for path in ["stats", "options?scope=filters"]:
-            url = "/api/v1/production-tasks/options/?scope=filters" if path.startswith("options") else "/api/v1/production-tasks/stats/"
+        for path in ["stats/", "options/?scope=filters", "options/?scope=advanced_filters"]:
+            url = f"/api/v1/production-tasks/{path}"
             self.assertEqual(self.client.get(url, HTTP_HOST="localhost").status_code, 403)

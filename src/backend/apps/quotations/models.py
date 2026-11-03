@@ -259,6 +259,11 @@ class QuotationVersion(TimeStampedModel):
 
 
 class QuotationLine(TimeStampedModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="quotation_lines",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     quotation_version = models.ForeignKey(QuotationVersion, on_delete=models.PROTECT, related_name="lines")
     source_inquiry_item = models.ForeignKey(
         "inquiries.InquiryItem",
@@ -324,6 +329,10 @@ class QuotationLine(TimeStampedModel):
         db_table = "quotation_line"
         ordering = ["quotation_version", "line_number"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="quote_product_source_exclusive",
+            ),
             models.UniqueConstraint(fields=["quotation_version", "line_number"], name="quotation_line_number_uniq"),
             models.CheckConstraint(condition=Q(quantity__gt=0), name="quotation_line_qty_positive"),
             models.CheckConstraint(

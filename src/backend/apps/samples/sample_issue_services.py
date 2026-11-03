@@ -16,6 +16,7 @@ from apps.core.api.exceptions import Conflict
 from apps.customers.services import model_snapshot
 from apps.inventory.stock_services import debit_material_stock
 from apps.inventory.public_stock_cutover import stock_write_transaction
+from apps.material_catalog.saved_selection import validate_saved_material
 from apps.products.models import RawMaterialInformation
 from apps.reference_data.models import ProductionUnit
 
@@ -82,10 +83,22 @@ def _available_rows(sample, *, require_available=True):
         warehouse = _decimal(row.get("supplyQuantity"), "supplyQuantity")
         arrived = _decimal(row.get("arrivedQuantity"), "arrivedQuantity")
         available = warehouse + arrived
-        material = _active_material(row.get("rawMaterialId"))
+        if row.get('material_catalog_id'):
+            from .catalog_materials import sample_saved_selection
+            from apps.reference_data.models import ProductionUnit
+            snapshot = sample_saved_selection(row)
+            unit_filter = {'unit_name': '米'} if row.get('category') == 'tube' else {'pk': snapshot['unit_id']}
+            unit = ProductionUnit.objects.filter(**unit_filter, status='ACTIVE', archived_at__isnull=True).first()
+            if unit is None:
+                raise Conflict('所选材料单位已停用，不能领料。')
+            material = None
+        else:
+            material = _active_material(row.get("rawMaterialId"))
+            unit = material.unit
         result.append({
             "row": deepcopy(row),
             "material": material,
+            "unit": unit,
             "requested": requested,
             "warehouse": warehouse,
             "arrived": arrived,
@@ -101,12 +114,24 @@ def _pipe_plans(record, rows, *, lock=False):
     from .warehouse_stock import plan_other_issue
     linked = {line['key']: line.get('inventoryAllocations') for line in record.warehouse_draft.get('lines', [])}
     planned_other = {}
+    if lock:
+        from .warehouse_stock import stock_rows
+        from apps.inventory.public_stock_services import lock_public_stock_locations
+        zone_ids = {balance.zone_id for item in rows if item['row'].get('material_catalog_id')
+            for balance, _ in stock_rows(item['row'])[1]}
+        # 全单先锁仓库/库区再锁余额，沿公共入扣账顺序，避免跨材料反序等待。
+        lock_public_stock_locations(zone_ids)
     arrivals = {str(item["row"]["key"]): pipe_arrivals(record, item["row"]["key"])
-                for item in rows if item["row"].get("category") == "tube"}
+                for item in rows if item["row"].get("category") == "tube" and not item['row'].get('material_catalog_id')}
     pending_arrivals = pipe_arrival_reservations([arrival for batch in arrivals.values() for arrival in batch])
-    for item in sorted(rows, key=lambda value: (str(value["material"].pk), str(value["row"]["key"]))):
+    for item in sorted(rows, key=lambda value: (str(value['row'].get('material_catalog_id') or value["material"].pk), str(value["row"]["key"]))):
         row = item["row"]
         try:
+            if row.get('material_catalog_id'):
+                from .catalog_stock import plan_catalog_issue
+                plans[str(row['key'])] = plan_catalog_issue(record, row, linked.get(str(row['key'])),
+                    item['warehouse'], item['arrived'], planned=planned_other, lock=lock)
+                continue
             if row.get('category') != 'tube':
                 if linked.get(str(row['key'])) is not None:
                     plans[str(row['key'])] = plan_other_issue(
@@ -139,7 +164,14 @@ def _issue_etag(sample, plans):
 
 
 def _line_payload(line):
+    if line.material_catalog_id:
+        selected = validate_saved_material(line.material_selection_snapshot, material_catalog_id=line.material_catalog_id)
+        unit_label = '待核实' if line.category == 'tube' else selected['unit_name']
+    else:
+        unit_label = line.unit.unit_name
     return {
+        "material_catalog_id": str(line.material_catalog_id) if line.material_catalog_id else None,
+        "material_selection_snapshot": line.material_selection_snapshot,
         "id": str(line.id),
         "lineKey": str(line.line_key),
         "category": line.category,
@@ -147,7 +179,7 @@ def _line_payload(line):
         "specification": line.specification_snapshot,
         "material": line.material_snapshot,
         "color": line.color_snapshot,
-        "unitLabel": line.unit.unit_name,
+        "unitLabel": unit_label,
         "requestedQuantity": str(line.requested_quantity),
         "warehouseQuantity": str(line.warehouse_quantity),
         "arrivedQuantity": str(line.arrived_quantity),
@@ -155,6 +187,34 @@ def _line_payload(line):
         "issuedQuantity": None if line.issued_quantity is None else str(line.issued_quantity),
         "shortageQuantity": str(line.shortage_quantity),
     }
+
+
+def _issued_catalog_pipe_uses_meters(line, row, batches):
+    """历史米口径同时依靠原提交行和实际根米凭证，不读取当前单位名或修订稿。"""
+    if (not row or row.get('category') != 'tube' or row.get('pipeInputMode') != 'TOTAL_METERS'
+            or row.get('unitLabel') != '米' or str(row.get('material_catalog_id')) != str(line.material_catalog_id)
+            or row.get('material_selection_snapshot') != line.material_selection_snapshot
+            or line.material_selection_snapshot.get('unit_name') != '根' or line.issued_quantity is None):
+        return False
+    calculation = row.get('pipeCalculation')
+    if not isinstance(calculation, dict) or calculation.get('schema_version') != 3 or calculation.get('measurement_kind') != 'PIPE':
+        return False
+    try:
+        required = _decimal(row.get('quantity'), 'quantity', allow_zero=False)
+        if required != line.requested_quantity or _decimal(calculation.get('required_meters'), 'required_meters') != required:
+            return False
+        meters = Decimal('0')
+        for batch in batches:
+            bars = _decimal(batch['barCount'], 'barCount', allow_zero=False)
+            length = _decimal(batch['rawBarLengthM'], 'rawBarLengthM', allow_zero=False)
+            amount = _decimal(batch['meterQuantity'], 'meterQuantity', allow_zero=False)
+            if bars != bars.to_integral_value() or bars * length != amount:
+                return False
+            meters += amount
+        return meters == line.issued_quantity
+    except ValidationError:
+        # 仅历史数量边界缺失/损坏时保留待核实；程序和数据库错误仍上抛。
+        return False
 
 
 def issue_response(sample, request):
@@ -197,6 +257,8 @@ def issue_response(sample, request):
         for row in progress["lines"]:
             available = _decimal(row.get("supplyQuantity"), "supplyQuantity") + _decimal(row.get("arrivedQuantity"), "arrivedQuantity")
             lines.append({
+                "material_catalog_id": row.get('material_catalog_id'),
+                "material_selection_snapshot": row.get('material_selection_snapshot', {}),
                 "id": line_ids.get(str(row["key"])),
                 "lineKey": str(row["key"]),
                 "category": row.get("category", ""),
@@ -215,12 +277,19 @@ def issue_response(sample, request):
     procurement = getattr(record, "procurement_request", None)
     procurement_quantities = {str(row["key"]): row["shortageQuantity"] for row in procurement.lines} if procurement else {}
     issued_lines = {str(line.line_key): line for line in issue.lines.all()} if issue else {}
+    saved_rows = {str(row['key']): row for row in record.draft.get('lines', [])}
     for line in lines:
         key = line["lineKey"]
         line["procurementQuantity"] = str(procurement_quantities.get(key, "0"))
         batches = pipe_plan_payload(plans[key]) if key in plans and line['category'] == 'tube' else []
         if issue and issue.status == SampleMaterialIssueStatus.ISSUED and line["category"] == "tube":
-            batches = issued_pipe_payload(issue, issued_lines[key])
+            if line.get('material_catalog_id'):
+                issued_batches = issued_pipe_payload(issue, issued_lines[key])
+                if record.submitted_at and _issued_catalog_pipe_uses_meters(issued_lines[key], saved_rows.get(key), issued_batches):
+                    line['unitLabel'] = '米'
+                    batches = issued_batches
+            elif line['unitLabel'] == '米':
+                batches = issued_pipe_payload(issue, issued_lines[key])
         line["pipeBatches"] = batches
         line["barCount"] = sum(row["barCount"] for row in batches) if line["category"] == "tube" else None
     return {
@@ -271,7 +340,9 @@ def initiate_sample_material_issue(*, sample_id, request, client_request_id=None
             issue=issue,
             line_key=UUID(str(row["key"])),
             raw_material=item["material"],
-            unit=meter_unit if row.get("category") == "tube" else item["material"].unit,
+            material_catalog_id=row.get('material_catalog_id'),
+            material_selection_snapshot=deepcopy(row.get('material_selection_snapshot', {})),
+            unit=meter_unit if row.get("category") == "tube" else item['unit'],
             category=row.get("category", ""),
             name_snapshot=row.get("name", ""),
             specification_snapshot=row.get("specification", ""),
@@ -328,7 +399,7 @@ def confirm_sample_material_issue(*, sample_id, data, request):
         raise Conflict("领料材料需求已变化，请先核对来源。")
     # 整单先按稳定原料编号锁父对象，避免跨材料明细以随机行号交错加锁。
     list(RawMaterialInformation.objects.select_for_update(of=("self",)).filter(
-        pk__in=[item["material"].pk for item in rows],
+        pk__in=[item["material"].pk for item in rows if item['material'] is not None],
     ).order_by("id"))
     plans, blockers = _pipe_plans(record, rows, lock=True)
     if expected != _issue_etag(sample, plans):
@@ -342,7 +413,10 @@ def confirm_sample_material_issue(*, sample_id, data, request):
         if quantity > 0:
             snapshot = {"sample_issue_id": str(issue.id), "sample_issue_line_id": str(line.id),
                         "raw_material_id": str(line.raw_material_id), "unit_id": str(line.unit_id)}
-            if line.category == "tube":
+            if line.material_catalog_id:
+                from .catalog_stock import debit_catalog_plan
+                debit_catalog_plan(plans[str(line.line_key)], issue=issue, line=line, actor_employee=request.employee)
+            elif line.category == "tube":
                 debit_pipe_plan(plan=plans[str(line.line_key)], source_id=issue.id, source_line_id=line.id,
                                 actor_employee=request.employee, snapshot=snapshot)
             elif str(line.line_key) in plans:

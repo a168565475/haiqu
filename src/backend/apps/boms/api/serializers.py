@@ -3,6 +3,8 @@ from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from rest_framework import serializers
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
+from apps.product_catalog.selection import is_product_entry_snapshot
 
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.products.api.serializers import ProductInformationSerializer, RawMaterialInformationSerializer
@@ -41,6 +43,7 @@ FIXED_BOM_SECTIONS = (
 
 
 class BomLineSerializer(serializers.ModelSerializer):
+    material_catalog_id = serializers.UUIDField(read_only=True, allow_null=True)
     fabric_source_line_id = serializers.UUIDField(read_only=True, allow_null=True)
     tube_shape = serializers.SerializerMethodField()
     tube_diameter = serializers.SerializerMethodField()
@@ -48,6 +51,7 @@ class BomLineSerializer(serializers.ModelSerializer):
     tube_coating_color = serializers.SerializerMethodField()
     coating_unit_area_sqm = serializers.SerializerMethodField()
     purchase_unit_weight_kg = serializers.SerializerMethodField()
+    manual_tube_metrics = serializers.SerializerMethodField()
     tube_cut_piece_count = serializers.SerializerMethodField()
     tube_cut_length_m = serializers.SerializerMethodField()
     long_material_unit_weight_kg = serializers.SerializerMethodField()
@@ -169,6 +173,9 @@ class BomLineSerializer(serializers.ModelSerializer):
         if obj.section.section_type != BomSectionType.PROFILE:
             return ""
         return self._raw_value(obj, "purchase_unit_weight_kg")
+
+    def get_manual_tube_metrics(self, obj) -> bool:
+        return obj.section.section_type == BomSectionType.PROFILE and (obj.raw_values or {}).get("tube_metrics_manual") is True
 
     def get_tube_cut_piece_count(self, obj):
         if obj.section.section_type != BomSectionType.PROFILE:
@@ -376,6 +383,7 @@ class BomLineSerializer(serializers.ModelSerializer):
         model = BomLine
         fields = [
             "id",
+            "material_catalog_id", "material_selection_snapshot", "material_quantity",
             "component_identity", "cutting_length_mm", "pieces_per_product", "pieces_per_bar",
             "raw_bar_length_m", "suggested_bar_count", "suggested_purchase_meters",
             "fabric_source_line_id", "fabric_meters_per_set",
@@ -409,6 +417,7 @@ class BomLineSerializer(serializers.ModelSerializer):
             "tube_coating_color",
             "coating_unit_area_sqm",
             "purchase_unit_weight_kg",
+            "manual_tube_metrics",
             "tube_cut_piece_count",
             "tube_cut_length_m",
             "long_material_unit_weight_kg",
@@ -584,14 +593,6 @@ class BomAuxiliaryProductOptionSerializer(serializers.ModelSerializer):
         return build_pinyin_search(instance.product_name)
 
 
-class BomAuxiliaryCreateInputSerializer(serializers.Serializer):
-    product_name = serializers.CharField(max_length=200, allow_blank=False, trim_whitespace=True)
-    unit_name = serializers.CharField(max_length=50, allow_blank=False, trim_whitespace=True)
-    specification = serializers.CharField(max_length=300, allow_blank=False, trim_whitespace=True)
-    color = serializers.CharField(max_length=200, allow_blank=False, trim_whitespace=True)
-    material = serializers.CharField(max_length=150, allow_blank=True, required=False, trim_whitespace=True)
-
-
 class BomAccessoryMaterialOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccessoryMaterial
@@ -635,7 +636,19 @@ class BomEditorReferenceOptionsResponseSerializer(serializers.Serializer):
     data = BomEditorReferenceOptionsDataSerializer()
 
 
+class BomProductCategoryQuerySerializer(serializers.Serializer):
+    product_category_id = serializers.UUIDField(required=False, help_text="旧产品信息的类别。")
+    product_catalog_category_id = serializers.UUIDField(required=False, help_text="产品管理的类别，按 BOM 保存的产品快照筛选。")
+
+    def validate(self, attrs):
+        if attrs.get("product_category_id") and attrs.get("product_catalog_category_id"):
+            raise serializers.ValidationError({"product_catalog_category_id": "一次只能筛选一种来源的产品类别。"})
+        return attrs
+
+
 class BomListSerializer(serializers.ModelSerializer):
+    product_catalog_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_selection_snapshot = serializers.JSONField(read_only=True)
     production_task_number = serializers.CharField(source="production_task.task_number", read_only=True)
     order_number = serializers.CharField(source="production_task.order_number", read_only=True)
     product_color_snapshot = serializers.SerializerMethodField()
@@ -672,6 +685,7 @@ class BomListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Bom
         fields = [
+            "product_catalog_id", "product_selection_snapshot",
             "id",
             "bom_number",
             "version_number",
@@ -737,7 +751,7 @@ class BomListSerializer(serializers.ModelSerializer):
         return obj.product_color_name_snapshot if obj.product_information_confirmed_at else (obj.product_color_name_snapshot or obj.product_line.color_name_snapshot)
 
     def get_product_unit_name(self, obj) -> str:
-        return obj.product_unit_name_snapshot or obj.product_line.unit.unit_name
+        return obj.product_unit_name_snapshot or obj.product_line.unit_name
 
     def get_is_historical_unlinked(self, obj) -> bool:
         return obj.production_task.sales_order_id is None
@@ -792,6 +806,8 @@ class BomListSerializer(serializers.ModelSerializer):
         return any(
             [
                 obj.product_number_snapshot != product_line.product_number_snapshot,
+                obj.product_catalog_id != product_line.product_catalog_id,
+                obj.product_selection_snapshot != product_line.product_selection_snapshot,
                 obj.product_code_snapshot != product_line.product_code_snapshot,
                 obj.product_name_snapshot != product_line.product_name_snapshot,
                 obj.specification_snapshot != product_line.specification_snapshot,
@@ -845,10 +861,12 @@ class BomDetailSerializer(BomListSerializer):
         return CONFIGURED_FIELD_LABELS
 
     def get_product_information_confirmed(self, obj) -> bool:
-        return bool(obj.product_information_confirmed_at and obj.product_id and obj.product_color_id)
+        return bool(obj.product_information_confirmed_at and (is_product_entry_snapshot(obj.product_selection_snapshot) or obj.product_catalog_id or (obj.product_id and obj.product_color_id)))
 
 
 class BomProductConfirmationSerializer(serializers.Serializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, allow_null=True)
     product_id = serializers.PrimaryKeyRelatedField(
         source="product",
         queryset=ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True),
@@ -858,13 +876,20 @@ class BomProductConfirmationSerializer(serializers.Serializer):
     product_color_id = serializers.PrimaryKeyRelatedField(
         source="product_color",
         queryset=ProductColor.objects.filter(status="ACTIVE", archived_at__isnull=True),
+        required=False,
     )
     color_code = serializers.CharField(max_length=100, required=False, allow_blank=True)
     material = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        if ("product" in attrs) == ("new_product" in attrs):
-            raise serializers.ValidationError({"product_id": "请选择已有产品，或填写完整的新产品资料。"})
+        if attrs.get("new_product") is not None:
+            raise serializers.ValidationError({"new_product": "请使用逐项选填的产品信息，新产品在最终确认 BOM 时建档。"})
+        if attrs.get("product_catalog_id") or (attrs.get("product_selection") or {}).get("draft") is not None:
+            if attrs.get("product") or attrs.get("new_product"):
+                raise serializers.ValidationError({"product_catalog_id": "新产品与旧产品不能同时关联。"})
+            return attrs
+        if "product" not in attrs:
+            raise serializers.ValidationError({"product_id": "请选择或填写产品信息后再保存核对。"})
         return attrs
 
 
@@ -884,9 +909,9 @@ class ProductionTaskProductUpdateField(serializers.Field):
         values = serializer.validated_data
         if not values.get("details"):
             raise serializers.ValidationError("必须填写生产任务单明细。")
-        if values["unit"].pk != values["product"].unit_id:
+        if values.get("product") is not None and getattr(values.get("unit"), "pk", None) != values["product"].unit_id:
             raise serializers.ValidationError("单位必须使用产品生产维护单位。")
-        if values["color_code"] != values["product_color"].color_code:
+        if values.get("product_color") is not None and values.get("color_code", "") != values["product_color"].color_code:
             raise serializers.ValidationError("色号与所选色卡、颜色不匹配。")
         if values["currency"].code == "CNY" and values["exchange_rate"] != Decimal("1"):
             raise serializers.ValidationError("CNY 汇率必须为 1。")
@@ -938,7 +963,38 @@ class PendingRawMaterialSerializer(RawMaterialInformationSerializer):
         return value
 
 
+class BomCatalogSelectionSerializer(serializers.Serializer):
+    catalog_version = serializers.CharField(max_length=100)
+    scope = serializers.ChoiceField(choices=("BASE", "SPRAY"))
+    processing_state = serializers.ChoiceField(choices=("RAW", "PROCESSED"))
+    attributes = serializers.DictField(child=serializers.CharField(max_length=300), allow_empty=False)
+    product_color_id = serializers.UUIDField(required=False, allow_null=True)
+    color_card = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    color_code = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    color_name = serializers.CharField(required=False, max_length=200)
+    unit_id = serializers.UUIDField(required=False)
+    unit_name = serializers.CharField(required=False, max_length=50)
+    completed_craft = serializers.JSONField(required=False, allow_null=True)
+    semi_kind = serializers.ChoiceField(choices=("PIPE", "CUTTING", "HARDWARE"), required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if bool(attrs.get("unit_id")) == bool(attrs.get("unit_name")):
+            raise serializers.ValidationError("单位ID和新增单位文字必须二选一。")
+        craft = attrs.get("completed_craft")
+        if craft is not None:
+            if not isinstance(craft, dict) or set(craft) != {"id", "craft_type", "code"}:
+                raise serializers.ValidationError("完成工艺须包含ID、类型和代码。")
+            try:
+                craft["id"] = str(UUID(str(craft["id"])))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise serializers.ValidationError("完成工艺ID无效。") from exc
+        return attrs
+
+
 class BomLineWriteSerializer(serializers.Serializer):
+    material_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    material_selection = BomCatalogSelectionSerializer(required=False, write_only=True)
+    material_quantity = serializers.DecimalField(required=False, allow_null=True, max_digits=22, decimal_places=4, min_value=Decimal("0.0001"))
     id = serializers.UUIDField(required=False)
     client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     category = serializers.CharField(required=False, allow_blank=True, max_length=150, trim_whitespace=True)
@@ -967,6 +1023,9 @@ class BomLineWriteSerializer(serializers.Serializer):
     tube_coating_color = serializers.CharField(required=False, allow_blank=True, max_length=200, trim_whitespace=True)
     coating_unit_area_sqm = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     purchase_unit_weight_kg = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
+    manual_tube_metrics = serializers.BooleanField(required=False)
+    recalculate_tube_metrics = serializers.BooleanField(required=False, write_only=True)
+    expected_tube_formula_version = serializers.CharField(required=False, max_length=100, write_only=True)
     fabric_source_line_id = serializers.UUIDField(required=False, allow_null=True)
     fabric_source_client_key = serializers.UUIDField(required=False, allow_null=True, write_only=True)
     fabric_meters_per_set = serializers.DecimalField(read_only=True, allow_null=True, max_digits=18, decimal_places=4)
@@ -1064,6 +1123,25 @@ class BomSectionWriteSerializer(serializers.Serializer):
     section_type = serializers.ChoiceField(choices=BomSectionType.choices)
     title = serializers.CharField(max_length=300, trim_whitespace=True)
     lines = BomLineWriteSerializer(many=True, allow_empty=True, max_length=5000)
+
+
+class BomTubeCalculationPreviewInputSerializer(serializers.Serializer):
+    tube_shape = serializers.CharField(max_length=100)
+    tube_diameter = serializers.CharField(max_length=100)
+    tube_thickness = serializers.CharField(max_length=100)
+    length_value = serializers.CharField(max_length=100)
+    tube_cut_piece_count = serializers.CharField(required=False, allow_blank=True, max_length=100)
+
+
+class BomTubeCalculationPreviewResultSerializer(serializers.Serializer):
+    coating_unit_area_sqm = serializers.CharField()
+    purchase_unit_weight_kg = serializers.CharField()
+    long_material_unit_weight_kg = serializers.CharField(allow_blank=True)
+    formula_version = serializers.CharField()
+
+
+class BomTubeCalculationPreviewResponseSerializer(serializers.Serializer):
+    data = BomTubeCalculationPreviewResultSerializer()
 
 
 class BomMaterialFlowPreviewInputSerializer(serializers.Serializer):
@@ -1488,6 +1566,19 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 for line in section.lines.all()
             }
 
+        from ..catalog_selection import uses_catalog, validate_catalog_input
+        original_sections = sections
+        for section in sections:
+            for line in section["lines"]:
+                old = existing_lines.get(line.get("id"))
+                if line.get("material_quantity") is not None and not uses_catalog(line, old):
+                    raise serializers.ValidationError("显式材料总量仅用于新目录管材的非根单位分支。")
+                if uses_catalog(line, old):
+                    validate_catalog_input(line, old)
+        # 旧来源校验只处理旧身份；新身份由保存服务校验目录、版本、权限、属性及工艺。
+        # 重复行/图片和固定分区校验已对完整请求执行，行归属仍在保存服务验证。
+        sections = [{**section, "lines": [line for line in section["lines"]
+                    if not uses_catalog(line, existing_lines.get(line.get("id")))]} for section in sections]
         fabric_reference_line_ids = set()
         for section in sections:
             if section["title"].strip() != "面料类":
@@ -1849,24 +1940,9 @@ class BomUpdateInputSerializer(serializers.Serializer):
                     f"“包材类”第 {line_number} 行请先通过“选择数据”添加包材资料。"
                 )
             units_per_box = str(line.get("units_per_box", "")).strip()
-            unit_consumption = str(line.get("unit_consumption", "")).strip()
             if not units_per_box:
                 raise serializers.ValidationError(
                     f"“包材类”第 {line_number} 行请填写箱数（多少一箱）。"
-                )
-            if not unit_consumption:
-                raise serializers.ValidationError(
-                    f"“包材类”第 {line_number} 行请填写单个用量。"
-                )
-            try:
-                parsed_consumption = Decimal(unit_consumption)
-            except (InvalidOperation, ValueError) as exc:
-                raise serializers.ValidationError(
-                    f"“包材类”第 {line_number} 行的单个用量必须是有效数字。"
-                ) from exc
-            if not parsed_consumption.is_finite() or parsed_consumption <= 0:
-                raise serializers.ValidationError(
-                    f"“包材类”第 {line_number} 行的单个用量必须大于 0。"
                 )
             if not source_id:
                 continue
@@ -2079,7 +2155,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
                 validate_cutting_specification(
                     line.get("specification", existing_line.specification if existing_line else ""), line_number,
                 )
-        return sections
+        return original_sections
 
 
 class BomMaterialSaveLocationSerializer(serializers.Serializer):

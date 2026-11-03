@@ -90,7 +90,9 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         response = self.client.post(f'/api/v1/access/employees/{target.pk}/account/',
             {'username': 'u03-ordinary-account', 'password': 'Unit03StrongSecret835!'},
             format='json', HTTP_IF_MATCH=etag_for_instance(target))
-        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.status_code, 403, response.data)
+        target.refresh_from_db()
+        self.assertIsNone(target.user_id)
 
     def test_direct_legacy_management_grant_does_not_make_manager(self):
         from django.contrib.auth.models import Permission
@@ -151,8 +153,8 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         from apps.access_control.catalog import PERMISSION_CODES, validate_grants
         ids = dict(Workshop.objects.values_list('name', 'pk'))
         rows = templates(ids)
-        self.assertEqual(len(rows), 20)
-        for role in ('FACTORY_MANAGER', 'GENERAL_MANAGER'):
+        self.assertEqual(len(rows), 25)
+        for role in ('ROLE_C13D18A990C54B1CB0561F0E3C1B09D4', 'GENERAL_MANAGER'):
             self.assertEqual({row['permission'] for row in rows[role]}, set(PERMISSION_CODES))
             validate_grants(rows[role])
             self.assertTrue(all(row['scope'] == 'OWN' for row in rows[role] if row['permission'].startswith('preferences.')))
@@ -196,9 +198,9 @@ class ProductionPermissionTests(ScopedActorMixin, APITestCase):
         rows = templates(ids)
         for code, expected in (
             ('inventory.delete_internalsemifinishedreceipt',
-             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'METAL_DIRECTOR', 'SEWING_DIRECTOR'}),
+             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'ROLE_C13D18A990C54B1CB0561F0E3C1B09D4', 'METAL_DIRECTOR', 'SEWING_DIRECTOR'}),
             ('inventory.delete_finishedgoodsreceipt',
-             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'ASSEMBLY_DIRECTOR'}),
+             {'WAREHOUSE_KEEPER', 'FACTORY_MANAGER', 'GENERAL_MANAGER', 'ROLE_C13D18A990C54B1CB0561F0E3C1B09D4', 'ASSEMBLY_DIRECTOR'}),
         ):
             actual = {role for role, grants in rows.items() if any(row['permission'] == code for row in grants)}
             self.assertEqual(actual, expected)
@@ -235,6 +237,7 @@ class ProductionConfirmationApiTests(ScopedActorMixin, APITestCase):
         self.scoped_actor()
         self.grant('production_tasks.view_productiontask')
         self.grant('production_tasks.submit_productiontask')
+        self.grant('production_tasks.change_productiontask')
         grant = self.grant('production_tasks.confirm_productiontask')
         grant.role.role_code = 'ADMINISTRATION'; grant.role.save()
         self.url = f"/api/v1/production-tasks/{self.created.data['data']['id']}/"
@@ -405,12 +408,17 @@ class RoleConfigurationTests(APITestCase):
         from apps.access_control.management.commands.initialize_access_roles import INITIAL_ROLES
         from apps.access_control.management.commands.configure_production_roles import role_plan
         from apps.access_control.models import RoleActionGrant
+        from apps.access_control.production_role_templates import GROUP_ONLY_ROLES, PENDING, templates
+        from apps.access_control.superuser_services import SUPERUSER_ROLE_CODES
         from django.contrib.auth.models import Group
         from apps.organizations.models import Employee, RoleProfile
         admin = get_user_model().objects.create_superuser('admin')
         Employee.objects.create(user=admin, employee_code='U03-CONFIG', display_name='测试配置操作者')
         for code, name in INITIAL_ROLES:
             RoleProfile.objects.create(auth_group=Group.objects.create(name='U03-' + code), role_code=code, display_name=name)
+        existing = set(RoleProfile.objects.values_list('role_code', flat=True))
+        for code in (set(GROUP_ONLY_ROLES) | SUPERUSER_ROLE_CODES) - existing:
+            RoleProfile.objects.create(auth_group=Group.objects.create(name='U03-' + code), role_code=code, display_name=code)
         plan = role_plan()
         kwargs = {'apply': True, 'database_name': connection.settings_dict['NAME'], 'actor_username': 'admin',
             'expected_digest': plan['digest']}
@@ -419,11 +427,11 @@ class RoleConfigurationTests(APITestCase):
         result = json.loads(output.getvalue())
         self.assertTrue(result['applied'])
         self.assertTrue(all(not row['added'] for row in result['roles']))
-        self.assertTrue(all(not row['after'] for row in result['roles'] if row['role_code'] in (
-            'PMC', 'MERCHANDISER', 'OUTSOURCING', 'COATING_MATERIALS', 'SALESPERSON', 'ACCOUNT_MANAGER')))
+        self.assertTrue(all(not row['after'] for row in result['roles'] if row['role_code'] in set(PENDING) | set(GROUP_ONLY_ROLES)))
+        desired = templates(dict(Workshop.objects.values_list('name', 'pk')))
         for row in result['roles']:
             if row['role_code'] in ('FINANCE', 'CASHIER'):
-                self.assertEqual({grant['permission'] for grant in row['after']}, {f'finance.{action}_{resource}' for resource in ('financeaccount', 'accountingsubject') for action in ('view', 'add', 'change', 'delete')})
+                self.assertEqual(row['after'], desired[row['role_code']])
         count = RoleActionGrant.objects.count()
         kwargs['expected_digest'] = result['digest']
         call_command('configure_production_roles', stdout=StringIO(), **kwargs)

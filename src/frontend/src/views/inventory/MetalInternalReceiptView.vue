@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { isAxiosError } from 'axios'
+import { isAxiosError, isCancel } from 'axios'
+import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Document, Refresh } from '@element-plus/icons-vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -19,8 +21,17 @@ interface PendingReceipt { payload: MetalReceiptPayload; etag: string; conflict?
 
 const route = useRoute(), router = useRouter(), auth = useAuthStore()
 const planId = typeof route.query.schedule_product_id === 'string' ? route.query.schedule_product_id : ''
-// 沿用旧金工页的待核对记录键，更新页面后仍能核对原请求。
+// 历史无主键只做存在检测，所有新记录按已核验的 user.id 隔离。
 const pendingKey = `internal-receipt-pending:${planId}:METAL`
+const owned = useIdentityOwnedStorage({ storage: 'session', key: pendingKey, legacyKeys: [pendingKey] })
+let pendingRaw: string | null = null
+function checkStorage(): boolean {
+  if (!owned.isCurrent()) { storageError.value = true; loading.value = false; error.value = '身份尚未核验或已变化，请核验身份后重新打开本页。'; return false }
+  try {
+    if (owned.legacyExists()) { storageError.value = true; loading.value = false; error.value = '发现历史无主待核对记录，已原样隔离保留并暂停新提交。请联系管理员人工核对，不能认领或删除后重试。'; return false }
+    return !storageError.value
+  } catch { storageError.value = true; loading.value = false; error.value = '本地待核对请求记录无法读取，已暂停新入库，请联系管理员人工核对。'; return false }
+}
 const conflictMessage = '原请求编号的保存内容与本次内容不一致，已保留原请求，请先核对入库记录。'
 const preview = ref<MetalReceiptPreview | null>(null), rows = ref<ReceiptRow[]>([])
 const loading = ref(true), saving = ref(false), error = ref(''), forbidden = ref(false), storageError = ref(false)
@@ -29,8 +40,9 @@ const pending = ref<PendingReceipt | null>(null), dialog = ref(''), selectedPart
 let loadVersion = 0, disposed = false
 const canReceive = computed(() => !!auth.user?.is_superuser || (auth.hasPermission('inventory.add_internalsemifinishedreceipt') && auth.hasPermission('inventory.view_internalsemifinishedreceipt')))
 const pageBlockers = computed(() => preview.value?.metal_processing.blockers || [])
+const processingUnavailable = computed(() => [...new Set(rows.value.map(row => row.processing_not_enabled_reason).filter((reason): reason is string => Boolean(reason)))])
 const futureBlockers = computed(() => preview.value?.metal_processing.future_blockers || [])
-const formLocked = computed(() => loading.value || saving.value || !!pending.value || storageError.value || !canReceive.value || forbidden.value || !!error.value || !!pageBlockers.value.length || !!futureBlockers.value.length)
+const formLocked = computed(() => !owned.isCurrent() || loading.value || saving.value || !!pending.value || storageError.value || !canReceive.value || forbidden.value || !!error.value || !!pageBlockers.value.length || !!futureBlockers.value.length)
 const showForm = computed(() => !!preview.value && !loading.value && !forbidden.value && canReceive.value)
 const warehouses = computed(() => Array.from(new Map((preview.value?.zones || []).map(zone => [zone.warehouse_id, { id: zone.warehouse_id, name: zone.warehouse }])).values()))
 const zones = computed(() => (preview.value?.zones || []).filter(zone => zone.warehouse_id === warehouseId.value))
@@ -114,13 +126,16 @@ function reset() { if (!formLocked.value) { rows.value.forEach(row => { row.quan
 function closeDialog(value: boolean) { if (!value && !saving.value) dialog.value = '' }
 
 async function load(preserve = true) {
+  if (!checkStorage()) return
   if (!planId) { error.value = '缺少金工计划，请从内部计划的产品行进入半成品入库。'; loading.value = false; return }
   if (!canReceive.value) { forbidden.value = true; loading.value = false; return }
   const version = ++loadVersion
   const quantities = new Map(rows.value.map(row => [row.bom_line_id, row.quantity]))
   loading.value = true; error.value = ''; forbidden.value = false
   try {
+    owned.assertCurrent()
     const data = await fetchMetalReceiptPreview(planId)
+    owned.assertCurrent()
     if (disposed || version !== loadVersion) return
     if (!data.metal_processing) throw new Error('当前环境尚未启用新版金工入库，缺少加工数量依据，暂不可办理。')
     if (data.plan_category !== 'METAL' || data.schedule_product_id !== planId || data.lines.some(line => !line.metal_processing)) throw new Error('入库接口未提供当前金工计划的完整数量依据，请刷新后重试。')
@@ -143,26 +158,39 @@ async function load(preserve = true) {
       warehouseId.value = ''; zoneId.value = ''
     } else if (!data.zones.some(zone => zone.id === zoneId.value && zone.warehouse_id === warehouseId.value)) zoneId.value = ''
   } catch (cause) {
-    if (disposed || version !== loadVersion) return
+    if (isCancel(cause) || !owned.isCurrent() || disposed || version !== loadVersion) return
     forbidden.value = isAxiosError(cause) && cause.response?.status === 403
     error.value = errorText(cause, '入库资料读取失败，请重试。')
-  } finally { if (!disposed && version === loadVersion) loading.value = false }
+  } finally { if (owned.isCurrent() && !disposed && version === loadVersion) loading.value = false }
 }
 
 function clearPending(): boolean {
-  try { sessionStorage.removeItem(pendingKey); pending.value = null; return true }
+  try {
+    owned.assertCurrent()
+    if (pendingRaw === null || !owned.removeIfUnchanged(pendingRaw)) throw Error('pending changed')
+    pending.value = null; pendingRaw = null; return true
+  }
   catch { storageError.value = true; error.value = '浏览器无法更新待核对请求记录，请先确认本次入库结果，暂勿再次提交。'; return false }
 }
 async function saved(result: InternalReceiptResult) {
+  owned.assertCurrent()
   const cleared = clearPending()
+  if (!cleared) return
   dialog.value = ''; ElMessage.success({ message: `已提交待入库，单号：${result.receipt_number}`, duration: 4500 })
   if (cleared) { rows.value.forEach(row => { row.quantity = '' }); await load(false) }
 }
 async function postPending(recovering = false) {
   const original = pending.value
-  if (!original) return
-  try { await saved(await confirmInternalReceipt(original.payload, original.etag)) }
+  if (!original || !checkStorage()) return
+  try {
+    owned.assertCurrent()
+    if (owned.read() !== pendingRaw) { storageError.value = true; error.value = '待核对请求记录已变化，请重新打开本页并联系管理员人工核对。'; return }
+    const result = await confirmInternalReceipt(original.payload, original.etag)
+    owned.assertCurrent()
+    await saved(result)
+  }
   catch (cause) {
+    if (isCancel(cause) || !owned.isCurrent()) return
     const status = isAxiosError(cause) ? cause.response?.status : undefined
     const code = isAxiosError(cause) ? cause.response?.data?.error?.code : undefined
     if (status === 409 && code === 'RECEIPT_REQUEST_DELETED') {
@@ -174,7 +202,10 @@ async function postPending(recovering = false) {
     if (status === 409) {
       dialog.value = ''
       original.conflict = true
-      try { sessionStorage.setItem(pendingKey, JSON.stringify(original)) }
+      try {
+        if (owned.read() !== pendingRaw) throw Error('pending changed')
+        const raw = JSON.stringify(original); owned.write(raw); pendingRaw = raw
+      }
       catch { storageError.value = true }
       error.value = conflictMessage
       warn(error.value)
@@ -192,6 +223,7 @@ async function postPending(recovering = false) {
       dialog.value = ''
       if (status === 412 || status === 428) {
         await load(true)
+        if (!owned.isCurrent()) return
         warn('数量依据已变化，已重新读取当前额度，请重新核对后确认入库。')
       } else {
         const message = errorText(cause, '未能入库，请检查填写内容。')
@@ -205,22 +237,29 @@ async function postPending(recovering = false) {
   }
 }
 async function recoverPending(allowRetry: boolean) {
-  if (!pending.value) return
+  if (!pending.value || !checkStorage()) return
   if (pending.value.conflict) { error.value = conflictMessage; return }
-  try { await saved(await findInternalReceipt(pending.value.payload.request_id)) }
+  try {
+    owned.assertCurrent()
+    if (owned.read() !== pendingRaw) { storageError.value = true; error.value = '待核对请求记录已变化，请重新打开本页并联系管理员人工核对。'; return }
+    const result = await findInternalReceipt(pending.value.payload.request_id)
+    owned.assertCurrent()
+    await saved(result)
+  }
   catch (cause) {
+    if (isCancel(cause) || !owned.isCurrent()) return
     if (allowRetry && isAxiosError(cause) && cause.response?.status === 404) { await postPending(true); return }
     error.value = ''
     warn(errorText(cause, '提交结果尚未确认，请点击“核对本次提交”，避免重复入库。'))
   }
 }
 async function save() {
-  if (saving.value || storageError.value || !canReceive.value) return
+  if (!checkStorage() || saving.value || storageError.value || !canReceive.value) return
   if (pending.value?.conflict) { warn(conflictMessage); return }
   if (!pending.value) {
     if (!validate() || !preview.value) return
     try {
-      if (sessionStorage.getItem(pendingKey)) { warn('已有待核对请求，请刷新本页核对原提交结果。'); return }
+      if (owned.read() !== null) { warn('已有待核对请求，请刷新本页核对原提交结果。'); return }
       const original: PendingReceipt = {
         etag: preview.value.etag,
         payload: {
@@ -229,19 +268,21 @@ async function save() {
           lines: entered.value.map(row => ({ bom_line_id: row.bom_line_id, quantity: String(wholeQuantity(row.quantity)) })),
         },
       }
-      sessionStorage.setItem(pendingKey, JSON.stringify(original)); pending.value = original
+      const raw = JSON.stringify(original); owned.write(raw); pendingRaw = raw; pending.value = original
     } catch { warn('浏览器无法保存请求编号，本次尚未提交。请允许本站会话存储后重试。'); return }
     saving.value = true; error.value = ''
-    try { await postPending() } finally { saving.value = false }
+    try { await postPending() } finally { if (owned.isCurrent()) saving.value = false }
   } else {
     saving.value = true; error.value = ''
-    try { await recoverPending(true) } finally { saving.value = false }
+    try { await recoverPending(true) } finally { if (owned.isCurrent()) saving.value = false }
   }
 }
 onMounted(async () => {
+  if (!checkStorage()) return
   try {
-    const text = sessionStorage.getItem(pendingKey)
-    if (text) {
+    const text = owned.read()
+    if (text !== null) {
+      pendingRaw = text
       const original = JSON.parse(text) as PendingReceipt
       const payload = original?.payload
       if (!original || typeof original.etag !== 'string' || !original.etag || !payload
@@ -256,7 +297,7 @@ onMounted(async () => {
     }
   } catch { storageError.value = true; loading.value = false; error.value = '本地待核对请求记录无法读取，已暂停新入库。请先核对之前的提交结果。'; return }
   await load(false)
-  if (pending.value && canReceive.value) { saving.value = true; try { await recoverPending(false) } finally { saving.value = false } }
+  if (owned.isCurrent() && pending.value && canReceive.value) { saving.value = true; try { await recoverPending(false) } finally { if (owned.isCurrent()) saving.value = false } }
 })
 onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
 </script>
@@ -266,6 +307,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
     <header class="page-heading"><div class="title-row"><h1>半成品入库</h1><span class="status info">厂内金工</span></div><ElButton :icon="Document" :disabled="saving" @click="router.push({ name: 'semi-receipt-records' })">入库记录</ElButton></header>
     <ElAlert v-if="futureBlockers.length" type="warning" :closable="false" show-icon :title="futureBlockers.join('；')" />
     <ElAlert v-else-if="pageBlockers.length" type="warning" :closable="false" show-icon :title="pageBlockers.join('；')" />
+    <ElAlert v-for="reason in processingUnavailable" :key="reason" type="warning" :closable="false" show-icon :title="reason" />
     <ElAlert v-if="pending" type="warning" :closable="false" show-icon title="提交结果尚未确认，请点击“核对本次提交”，避免重复入库。" />
     <ElAlert v-if="error && (preview || storageError)" type="error" :closable="false" show-icon :title="error"><ElButton v-if="!pending && !storageError" link @click="load(true)">重新加载</ElButton></ElAlert>
     <template v-if="showForm">
@@ -279,7 +321,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
           <label class="form-field"><span>加工状态</span><ElInput model-value="未喷塑" aria-label="加工状态" disabled /></label>
         </div>
         <MetalReceiptTable :columns="columns" :rows="rows" class="erp-table-editor d1-lines" empty="此金工计划暂无管材明细">
-          <template #cell-part="{ row }"><strong>{{ row.part }}</strong></template>
+          <template #cell-part="{ row }"><ProcessingMaterialDetails :materials="row"><strong>{{ row.part }}</strong></ProcessingMaterialDetails></template>
           <template #cell-usage="{ row }">{{ format(row.usage) }}</template>
           <template #cell-required="{ row }">{{ format(row.required) }}</template>
           <template #cell-issued="{ row }">{{ format(row.issued) }}</template>
@@ -298,7 +340,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
       <ElEmpty v-else-if="forbidden || !canReceive" description="当前账号没有半成品入库权限，请联系管理员" />
       <template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton v-if="!storageError" :icon="Refresh" @click="load(true)">重新加载</ElButton></template>
     </div>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>提交后由仓库确认，确认后增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ showForm ? format(total) : '—' }}</strong> 支 <span v-if="showForm" class="muted"> · {{ entered.length }} 个部位</span><small>提交后由仓库确认，确认后增加未喷塑公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="formLocked" @click="reset">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="!owned.isCurrent() || storageError || saving || !canReceive || (!pending && formLocked)" @click="confirmReceipt">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 
   <AppWindowDialog :model-value="dialog === 'basis'" :title="`${selectedPart?.part || ''} · 加工完成依据`" :width="960" modal-class="metal-receipt-dialog" @update:model-value="closeDialog">
@@ -320,7 +362,7 @@ onBeforeUnmount(() => { disposed = true; loadVersion += 1 })
   <AppWindowDialog :model-value="dialog === 'confirm'" title="确认半成品入库" :width="1120" modal-class="metal-receipt-dialog" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving" @update:model-value="closeDialog">
     <div class="d1-confirm">
       <div class="info-grid"><div class="info-cell"><span>收货日期</span><strong>{{ receiptDate }}</strong></div><div class="info-cell"><span>材料仓</span><strong>{{ warehouseName }}</strong></div><div class="info-cell"><span>库区</span><strong>{{ zoneName }}</strong></div><div class="info-cell"><span>生产任务单号</span><strong>{{ preview?.production_order }}</strong></div><div class="info-cell"><span>产品</span><strong>{{ preview?.product }}</strong></div><div class="info-cell"><span>加工状态</span><strong>未喷塑</strong></div></div>
-      <MetalReceiptTable :columns="confirmColumns" :rows="entered" class="d1-confirm-lines"><template #cell-available="{ row }">{{ format(capacity(row)) }}</template><template #cell-quantity="{ row }"><strong class="brand">{{ format(row.quantity) }}</strong></template></MetalReceiptTable>
+      <MetalReceiptTable :columns="confirmColumns" :rows="entered" class="d1-confirm-lines"><template #cell-part="{ row }"><ProcessingMaterialDetails :materials="row"><strong>{{ row.part }}</strong></ProcessingMaterialDetails></template><template #cell-available="{ row }">{{ format(capacity(row)) }}</template><template #cell-quantity="{ row }"><strong class="brand">{{ format(row.quantity) }}</strong></template></MetalReceiptTable>
       <p v-if="remark" class="d1-confirm-remark"><span class="muted">入库备注：</span>{{ remark }}</p>
       <div class="d1-confirm-total">本次入库 <strong class="brand">{{ format(total) }}</strong> 支 · {{ entered.length }} 个部位</div>
       <p class="muted d1-basis-note">提交后由仓库确认，确认后增加未喷塑公共半成品库存，已领原料不重复扣减。</p>

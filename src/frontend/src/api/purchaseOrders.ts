@@ -4,6 +4,7 @@ import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
   PaginatedPurchaseOrders,
+  PurchaseBatchType,
   PurchaseOrderDetail,
   PurchaseOrderInput,
   PurchaseOrderOptions,
@@ -80,8 +81,12 @@ export async function createPurchaseOrder(payload: PurchaseOrderInput): Promise<
   return versioned(await apiClient.post<DataResponse<PurchaseOrderDetail>>(basePath, payload))
 }
 
-export async function deletePurchaseOrder(id: string): Promise<void> {
-  await apiClient.delete(`${basePath}${id}/`)
+export async function deletePurchaseOrder(id: string, etag?: string): Promise<void> {
+  if (etag) {
+    await apiClient.delete(`${basePath}${id}/`, { headers: { 'If-Match': etag } })
+  } else {
+    await apiClient.delete(`${basePath}${id}/`)
+  }
 }
 
 export async function submitPurchaseOrder(id: string): Promise<PurchaseOrderDetail> {
@@ -100,6 +105,7 @@ export async function fetchVersionedPurchaseOrder(id: string): Promise<Versioned
 export async function updatePurchaseOrder(
   id: string,
   payload: {
+    batch_type?: PurchaseBatchType
     is_mailed: boolean | null
     lines: Array<{
       id: string

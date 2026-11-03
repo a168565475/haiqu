@@ -61,6 +61,9 @@ export function blankLine(defaultUnit = ''): BomLineInput {
 
 export function editableLine(line: BomLine): BomLineInput {
   return {
+    material_catalog_id: line.material_catalog_id,
+    material_quantity: line.material_quantity,
+    material_selection_snapshot: line.material_selection_snapshot,
     id: line.id,
     category: line.category,
     material: line.material,
@@ -86,6 +89,7 @@ export function editableLine(line: BomLine): BomLineInput {
     tube_diameter: line.tube_diameter,
     tube_thickness: line.tube_thickness,
     tube_coating_color: line.tube_coating_color,
+    manual_tube_metrics: line.manual_tube_metrics ?? false,
     coating_unit_area_sqm: line.coating_unit_area_sqm,
     purchase_unit_weight_kg: line.purchase_unit_weight_kg,
     tube_cut_piece_count: line.tube_cut_piece_count,
@@ -302,16 +306,33 @@ export function calculationText(value: number | null, fractionDigits = 4, keepTr
   return keepTrailingZeros ? text : text.replace(/\.?0+$/, '')
 }
 
+export function manualTubeMetricError(line: BomLineInput): string {
+  if (!line.manual_tube_metrics) return ''
+  for (const [field, label] of [['coating_unit_area_sqm', '喷塑单支面积'], ['purchase_unit_weight_kg', '单支重量']] as const) {
+    const text = String(line[field] ?? '').trim()
+    const value = decimalFraction(text)
+    if (text.length > 100 || !/^(?:\d+(?:\.\d{1,4})?|\.\d{1,4})$/.test(text) || !value || value.numerator < 0n
+      || value.numerator * 10000n > 9999999999999999n * value.denominator) {
+      return `请填写有效的${label}，范围为 0 至 999999999999.9999，最多保留 4 位小数。`
+    }
+  }
+  return ''
+}
+
 export function tubeCalculations(line: BomLineInput, bom: BomDetail | null): Record<TubeCalculationKey, string> {
   const savedLine = line.id ? bom?.sections.flatMap(section => section.lines).find(saved => saved.id === line.id) : undefined
   const plan = pipePlanForBomLine(line, String(bom?.order_quantity || ''), savedLine)
-  const length = plan ? Number(plan.tube_cut_length_m) : null
-  const unitWeight = plan ? Number(line.length_value) * Number(line.unit_consumption) * 0.464 / 1000 : null
+  const metrics = line.tube_calculation_preview
+  const unchanged = savedLine && ['tube_shape', 'tube_diameter', 'tube_thickness', 'length_value', 'tube_cut_piece_count'].every(
+    key => String(line[key as keyof BomLineInput] ?? '') === String(savedLine[key as keyof typeof savedLine] ?? ''),
+  )
+  const longWeight = line.manual_tube_metrics ? '' : metrics?.long_material_unit_weight_kg ?? (unchanged ? savedLine.long_material_unit_weight_kg : '')
+  const unitWeight = line.manual_tube_metrics ? line.purchase_unit_weight_kg : metrics?.purchase_unit_weight_kg ?? (unchanged && savedLine.raw_values?.tube_formula_snapshot ? savedLine.purchase_unit_weight_kg : '')
   return {
     total_consumption: plan?.total_consumption || '—', tube_cut_length_m: plan?.tube_cut_length_m || '—',
     branch_count: plan?.branch_count || '—', suggested_purchase_meters: plan?.suggested_purchase_meters || '—',
-    long_material_unit_weight_kg: calculationText(length === null ? null : length * 0.464),
-    tube_unit_weight_kg: calculationText(unitWeight),
-    long_material_total_weight_kg: calculationText(plan && length !== null ? Number(plan.branch_count) * length * 0.464 : null),
+    long_material_unit_weight_kg: longWeight || '—',
+    tube_unit_weight_kg: unitWeight || '—',
+    long_material_total_weight_kg: calculationText(plan && longWeight ? Number(plan.branch_count) * Number(longWeight) : null),
   }
 }

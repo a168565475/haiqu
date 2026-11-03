@@ -190,6 +190,11 @@ class Inquiry(ArchivableModel):
 
 
 class InquiryItem(TimeStampedModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="inquiry_items",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     inquiry = models.ForeignKey(Inquiry, on_delete=models.PROTECT, related_name="items")
     line_number = models.PositiveIntegerField()
     product = models.ForeignKey(
@@ -255,6 +260,10 @@ class InquiryItem(TimeStampedModel):
         db_table = "inquiry_item"
         ordering = ["inquiry", "line_number"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="inquiry_product_source_exclusive",
+            ),
             models.UniqueConstraint(fields=["inquiry", "line_number"], name="inquiry_item_line_uniq"),
             models.CheckConstraint(condition=Q(quantity__gt=0), name="inquiry_item_qty_positive"),
             models.CheckConstraint(

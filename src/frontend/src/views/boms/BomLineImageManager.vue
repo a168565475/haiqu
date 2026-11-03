@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { ElButton, ElEmpty, ElImage } from 'element-plus'
 
 import { bomLineImageUrl } from '@/api/boms'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import type { BomDraftLineImage, BomLineImage, BomLineInput } from '@/types/bom'
 
@@ -47,6 +48,8 @@ const images = computed<CuttingDisplayImage[]>(() => {
 
 const sortedImages = computed(() => [...images.value].sort((left, right) => left.position - right.position))
 const imageFileInput = ref<HTMLInputElement | null>(null)
+const previewUrls = computed(() => sortedImages.value.map((image) => bomLineImageUrl(image.content_url)))
+const imageResources = useProtectedResourceUrls(() => props.modelValue ? previewUrls.value : [])
 
 function openFilePicker() {
   if (props.canEdit && !props.busy && images.value.length < 20) {
@@ -104,8 +107,8 @@ function fileSizeText(sizeBytes: number) {
         >
       </header>
       <div v-if="images.length" class="cutting-image-grid">
-        <article v-for="image in sortedImages" :key="image.id">
-          <ElImage :src="bomLineImageUrl(image.content_url)" :preview-src-list="sortedImages.map((item) => bomLineImageUrl(item.content_url))" preview-teleported fit="cover" />
+        <article v-for="(image, index) in sortedImages" :key="image.id">
+          <ElImage v-if="imageResources.active.value" :key="imageResources.urlFor(bomLineImageUrl(image.content_url))" :initial-index="index" :src="imageResources.urlFor(bomLineImageUrl(image.content_url))" :preview-src-list="imageResources.urlsFor(previewUrls)" preview-teleported fit="cover" />
           <div><strong :title="image.name">{{ image.name }}</strong><span>{{ fileSizeText(image.size_bytes) }}</span></div>
           <ElButton type="danger" link :loading="props.deletingImageId === image.id" :disabled="!props.canEdit || props.busy" @click="emit('remove', image)">删除</ElButton>
         </article>

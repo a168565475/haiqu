@@ -191,10 +191,10 @@ def _calculate(scope_key, demands, inputs, history, requested, check_inputs):
         output_unit = _key(demand.output_unit, '产出单位')
         if check_inputs and input_unit != pools[source][0]:
             _error('UNIT_MISMATCH', 'BOM用量单位与实际投入单位不一致。', key)
-        if (input_unit, output_unit) not in {('支', '支'), ('米', '套')}:
+        if check_inputs and (input_unit, output_unit) not in {('支', '支'), ('米', '套')}:
             _error('UNIT_MISMATCH', '本期仅支持金工支→支、车缝米→套。', key)
         required = _number(demand.required, '部位需求', positive=True, whole=True)
-        if not check_inputs and ((input_unit, output_unit) != ('米', '套') or demand.input_per_output is not None):
+        if not check_inputs and (output_unit != '套' or demand.input_per_output is not None):
             _error('UNIT_MISMATCH', '只有车缝套数入库可以不核算材料投入。', key)
         usage = _number(demand.input_per_output, '每单位产出耗用', positive=True) if check_inputs else None
         if demand.output_unit == '支' and usage != 1:

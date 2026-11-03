@@ -46,7 +46,7 @@ def _hash(value):
 
 def public_semi_identity(requirement):
     return validate_public_identity({
-        "stock_kind": "SEMI", "identity_key": requirement.identity_key,
+        "stock_kind": requirement.identity_snapshot.get("stock_kind", "SEMI"), "identity_key": requirement.identity_key,
         "identity_snapshot": requirement.identity_snapshot, "raw_material_id": None,
         "raw_bar_length_m": None, "unit_id": str(requirement.unit_id),
     })
@@ -143,7 +143,7 @@ def _net_quantity(line, order_quantity):
 
 def _public_balances():
     return PublicStockBalance.objects.filter(
-        stock_kind="SEMI", quality="AVAILABLE", zone__status="ACTIVE",
+        stock_kind__in=["SEMI", "CATALOG_SEMI"], quality="AVAILABLE", zone__status="ACTIVE",
         zone__warehouse__status="ACTIVE", zone__warehouse__warehouse_type="SEMI_FINISHED",
         unit__status="ACTIVE", unit__archived_at__isnull=True,
     )
@@ -167,7 +167,7 @@ def _effective_issued(current, legacy):
     return current.internal_issued_quantity + legacy["issued"] - inherited
 
 
-def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None):
+def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None, allow_excess_issue=False):
     """只读构造当前接收产品的半成品需求，不因打开页面写入额度。"""
     try:
         task_id, product_id = UUID(str(task_id)), UUID(str(product_id))
@@ -255,7 +255,7 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None):
                 if current and (issued > 0 or existing_pending.get(requirement_id, ZERO) > 0 or legacy["pending"] > 0) and (
                         current.identity_key != identity["identity_key"] or current.identity_snapshot != identity["identity_snapshot"]):
                     _error("SOURCE_CHANGED", "该部位已有半成品领用或待审核占用，不能改换实物属性后重建额度。")
-                if issued > quantity:
+                if not allow_excess_issue and issued > quantity:
                     _error("REQUIREMENT_BELOW_ISSUED", "本订单半成品净需求低于历史已领数量。")
                 revision_source = {"schema_version": 1, "bom_id": str(bom.pk), "bom_line_id": str(line.pk),
                     "bom_version": bom.version_number, "component_identity": str(line.component_identity),
@@ -287,7 +287,7 @@ def build_public_semi_specs(task_id, product_id, *, exclude_issue_id=None):
 
 
 def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
-    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=exclude_issue_id)
+    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=exclude_issue_id, allow_excess_issue=True)
     ids = [item["id"] for item in specs]
     pending_query = MaterialIssueLine.objects.filter(issue__status="PENDING_REVIEW", semi_requirement_id__in=ids)
     if exclude_issue_id:
@@ -311,6 +311,11 @@ def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
     if exclude_issue_id:
         public_pending_query = public_pending_query.exclude(issue_id=exclude_issue_id)
     public_pending = {item["semi_requirement__identity_key"]: item["total"] for item in public_pending_query.values("semi_requirement__identity_key").annotate(total=Sum("requested_quantity"))}
+    from apps.inventory.tube_outsourcing_reservations import tube_public_reserved_quantities
+    reserved = tube_public_reserved_quantities([item["identity"] for item in specs])
+    for balance in balances:
+        pool = (balance.stock_kind, balance.identity_key, str(balance.unit_id))
+        public_pending[balance.identity_key] = public_pending.get(balance.identity_key, ZERO) + reserved.get((pool, str(balance.zone_id)), ZERO)
     component_totals = defaultdict(lambda: {
         "required": ZERO, "internal_issued": ZERO, "pending": ZERO,
     })
@@ -358,7 +363,7 @@ def public_semi_requirement_rows(task_id, product_id, exclude_issue_id=None):
             "outsourcing_issued_quantity": "0", "pending_issue_quantity": str(pending_quantity),
             "order_remaining": str(remaining), "available_stock": str(stock["quantity"]),
             "public_stock_quantity": str(stock["quantity"]), "public_pending_quantity": str(stock_pending),
-            "max_issue_quantity": str(min(remaining, available)), "bom_version": spec["bom"].version_number,
+            "max_issue_quantity": str(available), "bom_version": spec["bom"].version_number,
             "completed_craft": spec["completed_craft"].name, "processing_status": processing_status,
             "warehouse_zone": "；".join(stock["zones"]),
             "warehouse_zones": stock["zones"], "quality": "AVAILABLE", "batch_selection": False,
@@ -389,7 +394,7 @@ def sync_public_semi_requirements(issue, requested_ids):
         requested_ids = {UUID(str(value)) for value in requested_ids}
     except (ValueError, TypeError, AttributeError):
         _error("SEMI_REQUIREMENT_INVALID", "半成品需求编号格式不正确。")
-    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=issue.pk)
+    specs, blockers = build_public_semi_specs(task_id, product_id, exclude_issue_id=issue.pk, allow_excess_issue=True)
     selected = [item for item in specs if item["id"] in requested_ids]
     selected_components = {(item["component_identity"], item["unit"].pk) for item in selected}
     component_specs = [item for item in specs

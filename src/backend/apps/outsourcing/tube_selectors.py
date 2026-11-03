@@ -194,6 +194,7 @@ def require_saved_order_access(request, order, permission=VIEW_PERMISSION):
 
 
 def saved_order_data(order, *, created=False, request=None, action_record=None, include_metal_basis=True):
+    include_metal_basis = include_metal_basis and not order.is_plan and not order.plan_id
     from decimal import Decimal, InvalidOperation
     from apps.access_control import module_policy
     from rest_framework.exceptions import APIException
@@ -223,6 +224,10 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         meters = snapshot.get('meters')
         component = basis['components'].get(str(line.component_identity)) if basis else None
         lines.append({'id': str(line.pk), 'component_identity': str(line.component_identity),
+            'input_material_catalog_id': str(line.input_material_catalog_id) if line.input_material_catalog_id else None,
+            'output_material_catalog_id': str(line.output_material_catalog_id) if line.output_material_catalog_id else None,
+            'input_material_selection_snapshot': line.input_material_selection_snapshot,
+            'output_material_selection_snapshot': line.output_material_selection_snapshot,
             **line_price_data(line),
             **{key: snapshot.get(key) for key in CUTTING_FIELDS},
             'part_name': snapshot.get('part_name', ''), 'factory_id': str(line.factory_id),
@@ -251,6 +256,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
     from .tube_materials import material_data
     result = {**summary, 'task_order_number': task_order_number,
         'id': str(order.pk), 'order_number': order.order_number, 'status': order.status,
+        'is_plan': order.is_plan, 'plan_id': str(order.plan_id) if order.plan_id else None,
         'version': order.version, 'etag': etag_for_instance(order), 'created': created,
         'client_request_id': str(order.client_request_id), 'source_kind': order.source_kind,
         'source_label': SOURCE_LABELS[order.source_kind], 'zone_id': str(order.zone_id) if order.zone_id else None,
@@ -279,6 +285,9 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         result['action'] = {'id': str(action_record.pk), 'kind': action_record.kind,
             'client_request_id': str(action_record.client_request_id),
             'confirmed_at': action_record.created_at.isoformat(), 'actor_name': action_record.actor_employee.display_name}
+    if order.is_plan:
+        from .plan_selectors import plan_detail_data
+        result = plan_detail_data(order, result, request)
     return result
 
 

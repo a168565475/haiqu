@@ -21,10 +21,30 @@ const order = { id: 'order-1', source_type: 'PRODUCTION', order_number: 'CGDD261
 
 describe('采购详情管材根数', () => {
   beforeEach(() => { vi.mocked(api.fetchPurchaseOrderReadDetail).mockResolvedValue(order as never) })
+  it('新目录管材保留原根数显示及米单价', async () => {
+    const physical = { material_catalog_id: 'catalog-1' }
+    vi.mocked(api.fetchPurchaseOrderReadDetail).mockResolvedValue({ ...order,
+      lines: [{ ...line, ...physical }],
+      inbounds: [{ ...order.inbounds[0], lines: [{ ...inboundLine, ...physical, source_unit_text_snapshot: '米' }] }],
+      returns: [{ ...order.returns[0], lines: [{ ...order.returns[0]!.lines[0], material_catalog_id: 'catalog-1', quantity: '33.5', unit: '米' }] }],
+    } as never)
+    const wrapper = shallowMount(PurchaseOrderDetailView); await flushPromises()
+    const cells = wrapper.get('[data-testid="detail-table-materials"] tbody tr').findAll('td')
+    expect(cells[3]!.text()).toBe('808 根')
+    expect(cells[4]!.text()).toContain('元/米')
+    expect(cells.slice(6).map(cell => cell.text())).toEqual(['800 根', '790 根', '10 根'])
+    expect(wrapper.get('tfoot tr').findAll('td')[3]!.text()).toBe('808 根')
+    await wrapper.get('#purchase-detail-tab-inbounds').trigger('click')
+    expect(wrapper.get('[data-testid="detail-table-inbounds"] tbody tr').findAll('td').slice(5, 8).map(cell => cell.text()))
+      .toEqual(['800 根', '790 根', '10 根'])
+    await wrapper.get('#purchase-detail-tab-returns').trigger('click')
+    expect(wrapper.get('[data-testid="detail-table-returns"] tbody tr').findAll('td')[5]!.text()).toBe('10 根')
+    wrapper.unmount()
+  })
   it('采购和收退合计均用根数，金额和米单价保持原计价口径', async () => {
     const wrapper = shallowMount(PurchaseOrderDetailView); await flushPromises()
     const cells = wrapper.get('[data-testid="detail-table-materials"] tbody tr').findAll('td')
-    expect(cells.slice(3).map(cell => cell.text())).toEqual(['808 根', '2.50 元/米', '6,767.00', '800 根', '790 根', '10 根'])
+    expect(cells.slice(3).map(cell => cell.text())).toEqual(['808 根', '2.5 元/米', '6,767', '800 根', '790 根', '10 根'])
     const totals = wrapper.get('tfoot tr').findAll('td')
     expect(totals[3]!.text()).toBe('808 根'); expect(totals[6]!.text()).toBe('800 根')
     await wrapper.get('#purchase-detail-tab-inbounds').trigger('click')

@@ -7,6 +7,7 @@ import '@icon-park/vue-next/styles/index.css'
 import { useAuthStore } from '@/stores/auth'
 import { systemSettings, canOpenSystemSetting } from '@/config/systemSettings'
 import { sidebarMenuItems as menuItems, settingsMenu, type MenuItem } from '@/config/sidebarMenu'
+import { canOpenMenu } from '@/router/pageAccess'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,18 +17,7 @@ const activeMenu = computed(() => {
 })
 
 const canShowMenuItem = (item: MenuItem) => {
-  if (item.key === 'employee-list') return authStore.canReadAccessDirectory
-  if (item.available === false) {
-    return false
-  }
-  if (item.anyPermissions) {
-    return authStore.user?.is_superuser === true || authStore.hasAnyPermission(item.anyPermissions)
-  }
-  if (item.allPermissions) {
-    return authStore.user?.is_superuser === true || item.allPermissions.every(permission => authStore.hasPermission(permission))
-  }
-  if (item.key === 'sales-orders' && authStore.user?.sales_access_enabled) return authStore.hasPermission('sales_orders.view_salesorder')
-  return !item.permission || authStore.hasPermission(item.permission)
+  return canOpenMenu(item, authStore)
 }
 
 const visibleMenuItems = computed(() => {

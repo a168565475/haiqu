@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { AlarmClock, Bell, Calendar, Check, CircleCheck, EditPen, Link, OfficeBuilding, Tickets, User } from '@element-plus/icons-vue'
 
+import ProtectedAttachmentLink from '@/components/common/ProtectedAttachmentLink.vue'
 import TaskReassignDialog from '@/components/tasks/TaskReassignDialog.vue'
 import TaskRescheduleDialog from '@/components/tasks/TaskRescheduleDialog.vue'
 import { fetchTask, fetchTaskActivity, fetchTaskOptions, postTaskAction, toggleTaskChecklist } from '@/api/tasks'
@@ -242,7 +243,7 @@ onMounted(async () => {
           </section>
           <section class="task-content__attachments">
             <div class="section-title"><h2>来源附件</h2><span>{{ task.source_attachments.length }} 个</span></div>
-            <div v-if="task.source_attachments.length" class="files"><article v-for="file in task.source_attachments" :key="file.id"><div><strong>{{ file.name }}</strong><small>{{ file.content_type }} · {{ Math.ceil(file.size_bytes / 1024) }} KB · 受控附件</small></div><div><a :href="file.preview_url" target="_blank" rel="noopener">预览</a><a :href="file.download_url">下载</a></div></article></div>
+            <div v-if="task.source_attachments.length" class="files"><article v-for="file in task.source_attachments" :key="file.id"><div><strong>{{ file.name }}</strong><small>{{ file.content_type }} · {{ Math.ceil(file.size_bytes / 1024) }} KB · 受控附件</small></div><div><ProtectedAttachmentLink :src="file.preview_url" :filename="file.name">预览</ProtectedAttachmentLink><ProtectedAttachmentLink :src="file.download_url" :filename="file.name" download>下载</ProtectedAttachmentLink></div></article></div>
             <div v-else class="attachment-empty">当前来源对象没有可展示的附件</div>
           </section>
         </section>

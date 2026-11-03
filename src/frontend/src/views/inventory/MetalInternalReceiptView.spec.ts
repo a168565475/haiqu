@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElMessage } from 'element-plus'
-import { AxiosError } from 'axios'
+import { AxiosError, CanceledError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/internalReceipts'
 import type { InternalReceiptResult, MetalReceiptLine, MetalReceiptPayload, MetalReceiptPreview, ReceiptPayload } from '@/types/internalReceipt'
@@ -8,11 +8,12 @@ import MetalInternalReceiptView from './MetalInternalReceiptView.vue'
 
 const access = vi.hoisted(() => ({ allowed: true }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: { schedule_product_id: 'plan-1', plan_category: 'METAL' } }), useRouter: () => ({ push: vi.fn(), back: vi.fn() }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 'actor', is_superuser: false }, hasPermission: () => access.allowed }) }))
+const identity = vi.hoisted(() => ({ user: { id: 7, is_superuser: false }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => access.allowed }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => identity }))
 vi.mock('@/api/internalReceipts', () => ({ fetchMetalReceiptPreview: vi.fn(), confirmInternalReceipt: vi.fn(), findInternalReceipt: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { closeAll: vi.fn(), warning: vi.fn(), success: vi.fn() } }))
 
-const pendingKey = 'internal-receipt-pending:plan-1:METAL'
+const pendingKey = 'internal-receipt-pending:plan-1:METAL:user:7'
 const line: MetalReceiptLine = {
   bom_line_id: 'front', component_identity: 'front-id', component_key: 'front-key', usage: '2', stage: '金工完成',
   specification: '圆管Φ22', attributes: { part_name: '前腿管', category: '型材', material: 'Q195', color: '本色', unit_name: '支', tube_thickness: '0.8', cutting_length_mm: 650 },
@@ -56,6 +57,7 @@ async function mountPage() {
 
 beforeEach(() => {
   vi.resetAllMocks(); sessionStorage.clear(); access.allowed = true
+  Object.assign(identity, { user: { id: 7, is_superuser: false }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 })
   vi.mocked(api.fetchMetalReceiptPreview).mockResolvedValue(structuredClone(preview))
   vi.mocked(api.confirmInternalReceipt).mockResolvedValue(structuredClone(result))
   vi.mocked(api.findInternalReceipt).mockRejectedValue(httpError(404))
@@ -63,6 +65,42 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('金工半成品入库', () => {
+  it.each(['', '{broken', '{"payload":{"request_id":"historical-uuid","lines":[{"quantity":2}]},"etag":"old"}'])('无主legacy原文隔离，不恢复、不回查、不允许新UUID绕过 %j', async raw => {
+    const key = 'internal-receipt-pending:plan-1:METAL'; sessionStorage.setItem(key, raw)
+    const { vm, wrapper } = await mountPage(); await vm.save()
+    expect(wrapper.text()).toContain('管理员人工核对')
+    expect(api.fetchMetalReceiptPreview).not.toHaveBeenCalled(); expect(api.findInternalReceipt).not.toHaveBeenCalled()
+    expect(api.confirmInternalReceipt).not.toHaveBeenCalled(); expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(sessionStorage.getItem(pendingKey)).toBeNull()
+  })
+  it('Axios取消只保留原pending，不启动恢复GET或再次POST', async () => {
+    const { vm } = await mountPage(); vm.rows[0]!.quantity = '2'
+    vi.mocked(api.confirmInternalReceipt).mockRejectedValueOnce(new CanceledError('identity boundary'))
+    await vm.save()
+    expect(api.findInternalReceipt).not.toHaveBeenCalled(); expect(api.confirmInternalReceipt).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem(pendingKey)).not.toBeNull()
+  })
+  it('A请求晚失败不能在B身份下启动恢复GET，A pending逐字保留', async () => {
+    const { vm } = await mountPage(); vm.rows[0]!.quantity = '2'
+    let reject!: (cause: Error) => void
+    vi.mocked(api.confirmInternalReceipt).mockReturnValueOnce(new Promise((_, fail) => { reject = fail }))
+    const operation = vm.save(); await flushPromises()
+    const raw = sessionStorage.getItem(pendingKey)
+    identity.user = { id: 8, is_superuser: false }; identity.identityGeneration++; identity.identityRequestGeneration++
+    reject(new AxiosError('late network failure')); await operation
+    expect(api.findInternalReceipt).not.toHaveBeenCalled(); expect(sessionStorage.getItem(pendingKey)).toBe(raw)
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:METAL:user:8')).toBeNull()
+  })
+  it('恢复GET迟到404也不能在新身份下按旧payload重试POST', async () => {
+    const payload = { request_id: 'original-id', schedule_product_id: 'plan-1', plan_category: 'METAL', zone_id: 'zone-1', receipt_date: '2026-09-29', remark: '', lines: [{ bom_line_id: 'front', quantity: 2 }] }
+    const raw = JSON.stringify({ etag: 'original-etag', payload }); sessionStorage.setItem(pendingKey, raw)
+    let reject!: (cause: Error) => void
+    vi.mocked(api.findInternalReceipt).mockReturnValueOnce(new Promise((_, fail) => { reject = fail }))
+    await mountPage()
+    identity.user = { id: 8, is_superuser: false }; identity.identityGeneration++; identity.identityRequestGeneration++
+    reject(httpError(404)); await flushPromises()
+    expect(api.confirmInternalReceipt).not.toHaveBeenCalled(); expect(sessionStorage.getItem(pendingKey)).toBe(raw)
+  })
   it('15列无勾选，先确认正数行，空白和0不提交', async () => {
     const { wrapper, vm } = await mountPage()
     expect(wrapper.findAll('.d1-lines th')).toHaveLength(15)

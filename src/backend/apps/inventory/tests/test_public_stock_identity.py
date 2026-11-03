@@ -115,9 +115,22 @@ class PublicStockIdentityTests(SimpleTestCase):
                     setattr(line, field, value)
                 self.assertNotEqual(initial, self.semi(line)["identity_key"])
 
+    def test_pipe_section_only_specification_uses_separate_thickness(self):
+        line = self.pipe_line()
+        line.specification = "25 × 25.00"
+        line.raw_values.update(tube_shape="方管", tube_diameter="25*25", tube_thickness="0.65")
+        identity = self.semi(line)
+        self.assertEqual(identity["identity_snapshot"]["tube_shape"], "方管")
+        self.assertEqual(identity["identity_snapshot"]["tube_thickness"], "0.65")
+        line.specification = "25*25*0.65*6000"
+        self.assertEqual(identity, self.semi(line))
+
     def test_pipe_size_conflict_and_unready_old_line_are_rejected(self):
         line = self.pipe_line()
         line.specification = "20*30*0.8*6140"
+        self.assert_invalid(lambda: self.semi(line), "specification")
+        line = self.pipe_line()
+        line.specification = "20*28*0.9*6140"
         self.assert_invalid(lambda: self.semi(line), "specification")
         line = self.pipe_line()
         line.raw_values["F"] = "20*30"

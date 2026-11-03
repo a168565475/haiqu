@@ -22,6 +22,7 @@ from .message_serializers import validate_plain_text
 from .models import NotificationDelivery, NotificationEvent, NotificationRecipient, NotificationRule, WeComBinding, WeComConfig
 from .notification_access import EVENT_OBJECT_PERMISSIONS, UNAVAILABLE_EVENT_OBJECTS, event_object_accessible, plan_workshop_ids
 from .notification_catalog import RECIPIENT_SCOPES, VARIABLE, current_body_template, get_event, target_for
+from .notification_display import render_notification_template
 from .notification_selectors import rule_etag, rule_warnings
 from .selectors import configuration_complete
 from .services import require_etag
@@ -53,11 +54,11 @@ def _template_names(text, allowed):
     return names
 
 
-def _render(text, allowed, context):
+def _render(text, allowed, context, *, format_times=True):
     names = _template_names(text, allowed)
     if any(name not in context or context[name] is None or str(context[name]).strip() == "" for name in names):
         raise ValidationError({"context": "事件缺少模板变量或变量为空。"})
-    return VARIABLE.sub(lambda match: str(context[match.group(1)]), text)
+    return render_notification_template(text, context, format_times=format_times)
 
 
 def _validate_rule(event, data):
@@ -75,6 +76,10 @@ def _validate_rule(event, data):
         raise ValidationError({"recipient_role_codes": "启用规则必须至少选择一个接收角色。"})
     if data["enabled"] and event["event_code"] == "SUPPLIER_PURCHASE_SHEET_PUBLISHED":
         raise ValidationError({"enabled": "供应商采购表发布已确定不通知，不能启用。"})
+    if data['recipient_scope'] == 'ROLE_POLICY':
+        from .notification_role_policy import ROLE_POLICIES
+        if set(codes) - set(ROLE_POLICIES.get(event['event_code'], {})):
+            raise ValidationError({'recipient_role_codes': '包含确认方案不接收该事件的岗位。'})
     names = _template_names(data["title_template"], event["allowed_variables"])
     names |= _template_names(data["body_template"], event["allowed_variables"])
     missing = sorted(set(event["required_variables"]) - names)
@@ -125,11 +130,20 @@ def preview_rule(event_code, data, variables):
     return {"event_code": event_code, "title": title, "body": body,
         "recipient_scope": data["recipient_scope"], "scope_label": RECIPIENT_SCOPES[data["recipient_scope"]],
         "recipient_role_codes": list(data["recipient_role_codes"]), "will_send": False,
-        "warnings": rule_warnings(event_code, data["recipient_role_codes"]),
+        "warnings": rule_warnings(event_code, data["recipient_role_codes"], scope=data['recipient_scope']),
         "recipient_note": "仅预览范围；实际接收人须结合真实业务对象及当前授权解析，不代表已找到接收人。"}
 
 
 def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
+    from .notification_role_policy import POLICY_SCOPE, enabled, matching_roles
+    from .notification_objects import object_facts, target_for_roles
+    policy_facts = None
+    if rule.recipient_scope == POLICY_SCOPE:
+        if not enabled():
+            return []
+        policy_facts = object_facts(event['event_code'], object_id, context)
+        if policy_facts is None:
+            return []
     now = timezone.now()
     workshop_ids = set()
     if rule.recipient_scope == "WORKSHOP":
@@ -161,6 +175,12 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
     # 同一次解析中按员工检查一次，仍保留该员工全部命中的接收角色。
     for item in candidates.values():
         employee = item["employee"]
+        if rule.recipient_scope == POLICY_SCOPE:
+            roles = matching_roles(event['event_code'], employee, item['roles'], policy_facts)
+            if roles:
+                selected.append({'employee': employee, 'roles': roles,
+                    'target': target_for_roles(event['event_code'], object_id, roles, policy_facts)})
+            continue
         if rule.recipient_scope == "SUBMITTER" and str(employee.pk) != str(context.get("submitter_id") or ""):
             continue
         if rule.recipient_scope == "WORKSHOP":
@@ -186,7 +206,7 @@ def _eligible_employees(event, rule, context, object_id, *, employee_id=None):
 def _validated_context(event, context):
     if not isinstance(context, dict):
         raise ValidationError({"context": "业务事件上下文必须是对象。"})
-    allowed = set(event["allowed_variables"]) | {"submitter_id", "workshop_id"}
+    allowed = set(event["allowed_variables"]) | {"submitter_id", "workshop_id", "actor_employee_id", "actor_role_codes", "audit_id"}
     if event["event_code"] == "PRODUCTION_TASK_BOMS_CONFIRMED":
         allowed.add("bom_versions")
     if set(context) - allowed:
@@ -214,7 +234,7 @@ def _validated_context(event, context):
 
 
 @transaction.atomic
-def register_business_event(*, event_code, idempotency_key, object_type, object_id=None, object_version="", context=None):
+def register_business_event(*, event_code, idempotency_key, object_type, object_id=None, object_version="", context=None, actor_employee=None):
     """业务成功事务内登记；只落库，不触发外部发送。调用方传入后端业务事实。"""
     event = get_event(event_code)
     if not isinstance(idempotency_key, (str, UUID)) or not isinstance(object_type, str) or not isinstance(object_version, (str, int)):
@@ -226,16 +246,28 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         object_id = str(UUID(str(object_id)))
     except (TypeError, ValueError):
         raise ValidationError("事件必须引用真实业务对象UUID。") from None
-    context = _validated_context(event, context or {})
+    context = dict(context or {})
+    from .notification_role_policy import enabled as confirmed_policy_enabled
+    if confirmed_policy_enabled() and actor_employee is not None:
+        from .notification_objects import active_role_codes
+        context['actor_employee_id'] = str(actor_employee.pk)
+        context['actor_role_codes'] = ','.join(sorted(active_role_codes(actor_employee.pk)))
+    context = _validated_context(event, context)
     if "object_version" in context and context["object_version"] != str(object_version):
         raise ValidationError({"context": "模板对象版本与事件版本不一致。"})
     context["object_version"] = str(object_version)
-    request_hash = _hash([event_code, object_type, object_id, str(object_version), context])
+    # 操作人岗位是发生时的收件依据；随后调岗不把同一业务重试变成另一个事件。
+    hash_context = {k: v for k, v in context.items() if k != 'actor_role_codes'}
+    request_hash = _hash([event_code, object_type, object_id, str(object_version), hash_context])
     _lock_key("notification-event:" + key)
     existing = NotificationEvent.objects.filter(idempotency_key=key).first()
     if existing:
         if existing.context.get("_request_hash") != request_hash:
-            raise Conflict("同一业务事件键已用于不同对象、版本或内容。")
+            # 开启新策略不重发已有历史动作；仅补入操作者元数据不改变既有业务事实。
+            legacy_context = {k: v for k, v in context.items() if k not in {'actor_employee_id', 'actor_role_codes'}}
+            legacy_hash = _hash([event_code, object_type, object_id, str(object_version), legacy_context])
+            if existing.context.get('actor_employee_id') or existing.context.get('_request_hash') != legacy_hash:
+                raise Conflict("同一业务事件键已用于不同对象、版本或内容。")
         return existing
     if event_code == "PRODUCTION_TASK_BOMS_CONFIRMED":
         from apps.boms.notification_events import current_task_bom_snapshot, snapshot_version
@@ -295,7 +327,8 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
             event=notification, employee=employee, employee_name=employee.display_name,
             role_codes=sorted(set(item["roles"])), scope=rule.recipient_scope,
             eligibility_snapshot={"required_permissions": list(EVENT_OBJECT_PERMISSIONS[event_code]),
-                                  "corp_id": config.corp_id if config else "", "agent_id": config.agent_id if config else ""},
+                                  "corp_id": config.corp_id if config else "", "agent_id": config.agent_id if config else "",
+                                  **({'target': item['target'], 'policy_version': '20261102'} if 'target' in item else {})},
         ))
     # UUID 在构造时生成；两类批量写入仍由外层事件事务保证全部成功或回滚。
     NotificationRecipient.objects.bulk_create(recipient_rows, batch_size=500)
@@ -304,7 +337,7 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
         employee = recipient.employee
         deliveries.append(NotificationDelivery(recipient=recipient, channel="IN_APP",
             idempotency_key=f"{notification.pk}:{employee.pk}:IN_APP", status="ACCEPTED", finished_at=timezone.now()))
-        admin_in_app_only = _admin_uses_in_app_only(employee)
+        admin_in_app_only = _admin_uses_in_app_only(employee, recipient.scope)
         deliveries.append(NotificationDelivery(recipient=recipient, channel="WECOM",
             idempotency_key=f"{notification.pk}:{employee.pk}:WECOM", user_id_snapshot=bindings.get(employee.pk, ""),
             status="SKIPPED" if admin_in_app_only else "PENDING",
@@ -314,7 +347,9 @@ def register_business_event(*, event_code, idempotency_key, object_type, object_
     return notification
 
 
-def _admin_uses_in_app_only(employee):
+def _admin_uses_in_app_only(employee, scope=None):
+    if scope == 'ROLE_POLICY':
+        return False
     return employee.user.is_superuser and employee.user.get_username() == "admin"
 
 
@@ -344,7 +379,7 @@ def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, def
         snapshot = SimpleNamespace(recipient_role_codes=recipient.role_codes, recipient_scope=recipient.scope)
         if not _eligible_employees(get_event(event.event_code), snapshot, event.context, event.object_id, employee_id=employee.pk):
             return _fail_delivery(locked, "RECIPIENT_NOT_ELIGIBLE")
-        if _admin_uses_in_app_only(employee):
+        if _admin_uses_in_app_only(employee, recipient.scope):
             locked.status, locked.error_code, locked.finished_at = "SKIPPED", "ADMIN_IN_APP_ONLY", timezone.now()
             locked.save(update_fields=["status", "error_code", "finished_at", "updated_at"])
             return locked
@@ -376,7 +411,7 @@ def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, def
         # 未投递的旧默认快照只调整排版；自定义正文、历史快照及站内记录不重写。
         if all(event.context.get(name) is not None and str(event.context[name]).strip()
                for name in VARIABLE.findall(definition["legacy_default_body"])):
-            legacy = _render(definition["legacy_default_body"], definition["allowed_variables"], event.context)
+            legacy = _render(definition["legacy_default_body"], definition["allowed_variables"], event.context, format_times=False)
             if body == legacy:
                 body = _render(definition["default_body"], definition["allowed_variables"], event.context)
         result = WeComClient(config).send_text_notice(binding.user_id, title=event.rendered_title,

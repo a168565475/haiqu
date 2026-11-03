@@ -9,7 +9,6 @@ import {
   deleteSampleInventoryReceipt,
   fetchSampleInventory,
   fetchSampleInventoryOptions,
-  fetchSampleInventorySummary,
 } from '@/api/samples'
 import SampleInventoryReceiptDialog from '@/components/samples/SampleInventoryReceiptDialog.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -17,25 +16,20 @@ import type {
   SampleInventoryOptions,
   SampleInventoryQuery,
   SampleInventoryRow,
-  SampleInventorySummary,
 } from '@/types/sample'
 
 const loading = ref(false)
 const router = useRouter()
 const authStore = useAuthStore()
-const summaryLoading = ref(false)
 const optionsLoading = ref(false)
 const errorMessage = ref('')
-const summaryError = ref('')
 const optionsError = ref('')
 let listRequest = 0
-let summaryRequest = 0
 let optionsRequest = 0
 const rows = ref<SampleInventoryRow[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
-const summary = ref<SampleInventorySummary | null>(null)
 const options = ref<SampleInventoryOptions>({ product_categories: [], locations: [] })
 const receiptDialogVisible = ref(false)
 const dialogMounted = ref(false)
@@ -72,37 +66,6 @@ const canDeleteReceipt = computed(() => (
 const canCreateReceipt = computed(() => authStore.hasPermission('samples.add_sampleinventoryreceipt'))
 const canViewOutbound = computed(() => authStore.hasPermission('samples.view_sampleinventoryoutboundline'))
 const canViewLoans = computed(() => authStore.hasPermission('samples.view_sampleinventoryloanline'))
-const monthlyMetrics = [
-  { key: 'inbound_this_month', label: '当月入库', shortLabel: '入库' },
-  { key: 'outbound_this_month', label: '当月出库', shortLabel: '出库' },
-  { key: 'loaned_this_month', label: '当月借出', shortLabel: '借出' },
-  { key: 'current_available', label: '当前可用库存', shortLabel: '当前库存' },
-] as const
-
-function isInventoryCount(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
-}
-
-const monthlyValues = computed(() => {
-  const values = monthlyMetrics.map(metric => summaryLoading.value ? undefined : summary.value?.[metric.key])
-  return monthlyMetrics.map((metric, index) => {
-    const value = values[index]
-    const known = isInventoryCount(value)
-    return {
-      ...metric,
-      value: known ? value : null,
-    }
-  })
-})
-const monthlyTitle = computed(() => {
-  const month = summary.value?.month
-  return month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)
-    ? `本月样品 · ${Number(month.slice(5))}月`
-    : '本月样品'
-})
-const monthlyDescription = computed(() => monthlyValues.value
-  .map(metric => `${metric.label}：${metric.value ?? '未知'}件`).join('；'))
-
 function getErrorMessage(error: unknown): string {
   if (!(error instanceof AxiosError)) return '请求失败，请稍后重试。'
   if (!error.response) return '网络连接异常，请检查后端服务后重试。'
@@ -154,27 +117,6 @@ async function loadRows() {
   }
 }
 
-async function loadSummary() {
-  const request = ++summaryRequest
-  summaryError.value = ''
-  summaryLoading.value = true
-  try {
-    const result = await fetchSampleInventorySummary()
-    if (request !== summaryRequest) return
-    summary.value = result
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(result.month || '')
-      || monthlyMetrics.some(metric => !isInventoryCount(result[metric.key]))) {
-      summaryError.value = '库存统计数据不完整，请重试。'
-    }
-  } catch (error) {
-    if (request !== summaryRequest) return
-    summary.value = null
-    summaryError.value = `库存统计加载失败：${getErrorMessage(error)}`
-  } finally {
-    if (request === summaryRequest) summaryLoading.value = false
-  }
-}
-
 async function loadOptions() {
   const request = ++optionsRequest
   optionsError.value = ''
@@ -208,7 +150,7 @@ function resetFilters() {
 }
 
 function refreshPage() {
-  void Promise.all([loadRows(), loadSummary(), loadOptions()])
+  void Promise.all([loadRows(), loadOptions()])
 }
 
 function handleReceiptCreated() {
@@ -320,21 +262,6 @@ onMounted(() => {
       </ElForm>
     </div>
     </div>
-    <aside class="sample-monthly-stat" :aria-label="monthlyDescription" :aria-busy="summaryLoading">
-      <div class="sample-monthly-stat__heading">
-        <span>{{ monthlyTitle }}</span>
-        <span>{{ summaryLoading ? '加载中' : '件' }}</span>
-      </div>
-      <div class="sample-monthly-stat__metrics">
-        <div v-for="metric in monthlyValues" :key="metric.key" class="sample-monthly-stat__metric" :data-monthly-metric="metric.key">
-          <strong class="sample-monthly-stat__value">{{ metric.value ?? '—' }}</strong>
-          <span class="sample-monthly-stat__label">{{ metric.shortLabel }}</span>
-        </div>
-      </div>
-      <div v-if="summaryError" class="sample-monthly-stat__error" role="alert">
-        <span>{{ summaryError }}</span><ElButton link @click="loadSummary">重试统计</ElButton>
-      </div>
-    </aside>
     </section>
 
     <section class="table-card erp-list-data">

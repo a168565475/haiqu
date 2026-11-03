@@ -20,6 +20,7 @@ import {
   uploadSupplierPurchaseSheetSealImage,
 } from '@/api/purchaseOrders'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import PurchaseSheetPublishConfirm from '@/components/procurement/PurchaseSheetPublishConfirm.vue'
 import PurchaseSheetOriginalPreview from '@/components/procurement/PurchaseSheetOriginalPreview.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
@@ -347,6 +348,11 @@ function sealImageUrl(): string {
   return supplierPurchaseSheetSealImageUrl(sheet.value.id, sheet.value.updated_at)
 }
 
+const imageResources = useProtectedResourceUrls(() => [
+  sealImageUrl(),
+  ...(sheet.value?.line_images || []).map(image => lineImageUrl(image.source_purchase_order_line_id)),
+])
+
 async function uploadLineImage(line: SupplierPurchaseSheetLine, file: UploadFile): Promise<void> {
   if (!sheet.value || !file.raw || !editable.value || !validateImage(file.raw)) return
   try {
@@ -485,7 +491,7 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
         </section>
         <section class="seal-section"><h2>甲方盖章图片</h2>
           <div class="seal-editor">
-            <ElImage v-if="sheet.seal_image" :src="sealImageUrl()" :preview-src-list="[sealImageUrl()]" fit="contain" />
+            <ElImage v-if="sheet.seal_image && imageResources.active.value" :src="imageResources.urlFor(sealImageUrl())" :preview-src-list="imageResources.urlsFor([sealImageUrl()])" fit="contain" />
             <span v-else>{{ autoSeal ? '下载原版 Excel 时自动带甲方章' : '暂未上传盖章图片' }}</span>
             <div v-if="editable && !autoSeal" class="seal-actions">
               <ElUpload :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/gif,image/webp" :disabled="busy" @change="(file: UploadFile) => runAction(() => uploadSealImage(file))">
@@ -558,7 +564,7 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
             </table>
                 <div class="media-total-row" :class="{ 'without-image': isPublished && !hasRepresentativeImage }">
                   <div v-if="!autoSeal && (!isPublished || hasRepresentativeImage)" class="contract-image-cell">
-                    <ElImage v-if="representativeImageLine && hasRepresentativeImage" :src="lineImageUrl(representativeImageLine.source_purchase_order_line_id)" :preview-src-list="[lineImageUrl(representativeImageLine.source_purchase_order_line_id)]" fit="contain" />
+                    <ElImage v-if="representativeImageLine && hasRepresentativeImage && imageResources.active.value" :src="imageResources.urlFor(lineImageUrl(representativeImageLine.source_purchase_order_line_id))" :preview-src-list="imageResources.urlsFor([lineImageUrl(representativeImageLine.source_purchase_order_line_id)])" fit="contain" />
                     <span v-else class="image-empty"><ElIcon><Picture /></ElIcon>暂无图片</span>
                     <div v-if="editable" class="representative-image-actions">
                       <ElUpload :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/gif,image/webp" :disabled="busy" @change="(file: UploadFile) => runAction(() => uploadRepresentativeImage(file))"><ElButton :disabled="!representativeImageLine || busy">{{ hasRepresentativeImage ? '替换图片' : '上传图片' }}</ElButton></ElUpload>
@@ -577,7 +583,7 @@ onBeforeUnmount(() => { previewRequest++; clearTimeout(previewTimer); canvasObse
             <div class="clause-row"><strong>六、争议解决</strong><p>{{ content.dispute_resolution }}</p></div>
             <div class="clause-row"><strong>七、合同生效</strong><p>{{ content.effectiveness }}</p></div>
             <div class="signature-label-row"><strong>甲方</strong><span></span></div>
-            <div class="signature-stamp-row"><div><ElImage v-if="sheet.seal_image" :src="sealImageUrl()" fit="contain" /></div><div aria-label="乙方签章留白"></div></div>
+            <div class="signature-stamp-row"><div><ElImage v-if="sheet.seal_image && imageResources.active.value" :src="imageResources.urlFor(sealImageUrl())" fit="contain" /></div><div aria-label="乙方签章留白"></div></div>
             <div class="signature-date-row"><span>请确认无误盖章回传</span><span>签订日期：{{ signingDate }}</span></div>
           </div>
         </article>

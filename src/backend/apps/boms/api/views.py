@@ -4,11 +4,11 @@ from decimal import Decimal, localcontext
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import Count, Prefetch, Q, Sum
+from django.db.models import Count, F, Prefetch, Q, Sum
 from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
-from drf_spectacular.utils import OpenApiParameter, extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -20,6 +20,7 @@ from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.products.models import ProductInformation, ProductStatus, RawMaterialInformation
+from apps.product_catalog.models import ProductCatalogCategory
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.services import replace_unbound_product_line
 from apps.production_tasks.selectors import accessible_production_tasks, production_tasks_with_context
@@ -63,7 +64,6 @@ from .serializers import (
     BomDetailSerializer,
     BomAccessoryMaterialOptionSerializer,
     BomAuxiliaryProductOptionSerializer,
-    BomAuxiliaryCreateInputSerializer,
     BomEditorReferenceOptionsResponseSerializer,
     BomFabricMaterialOptionSerializer,
     BomFabricSpecificationOptionSerializer,
@@ -73,6 +73,7 @@ from .serializers import (
     BomPipeMaterialMatchResponseSerializer,
     BomPipeMaterialMatchResultSerializer,
     BomListSerializer,
+    BomProductCategoryQuerySerializer,
     BomPreviewInputSerializer,
     BomProductConfirmationSerializer,
     BomProductColorOptionSerializer,
@@ -80,6 +81,8 @@ from .serializers import (
     BomRawMaterialGroupsResponseSerializer,
     BomUpdateInputSerializer,
     BomVerifyInputSerializer,
+    BomTubeCalculationPreviewInputSerializer,
+    BomTubeCalculationPreviewResponseSerializer,
 )
 
 
@@ -99,9 +102,20 @@ RAW_MATERIAL_LIST_PARAMETERS = [
 ]
 
 
+@extend_schema_view(list=extend_schema(parameters=[BomProductCategoryQuerySerializer]))
 class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, BusinessActionPermission]
     parser_classes = [JSONParser, FormParser, MultiPartParser]
+    @extend_schema(responses={200: {"type": "object", "properties": {"data": {"type": "object", "properties": {"crafts": {"type": "array", "items": {"type": "object"}}}}}}})
+    @action(detail=False, methods=["get"], url_path="material-selection-options")
+    def material_selection_options(self, request):
+        from apps.workshop_config.models import Craft
+        from apps.inventory.public_stock_identity import _craft
+        crafts = Craft.objects.filter(status="ACTIVE").filter(
+            Q(craft_type="INTERNAL", plan_category__in=["CUTTING", "SEWING"]) |
+            Q(craft_type="EXTERNAL", outsourcing_code__in=["CUTTING", "SEWING", "EMBROIDERY", "SCREEN_PRINTING"]))
+        return Response({"data": {"crafts": [{**_craft(craft), "name": craft.name} for craft in crafts]}})
+
     ordering = ["-updated_at", "-id"]
     action_permission_map = {
         "list": "boms.view_bom",
@@ -109,10 +123,12 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "stats": "boms.view_bom",
         "export": "boms.view_bom",
         "options": "boms.view_bom",
+        "material_selection_options": "boms.change_bom",
         "hardware_materials": "boms.change_bom",
         "pipe_materials": "boms.change_bom",
         "pipe_material_matches": "boms.change_bom",
         "material_flow_preview": "boms.change_bom",
+        "tube_calculation_preview": ("boms.add_bom", "boms.change_bom"),
         "fabric_materials": "boms.change_bom",
         "hardware_material_groups": "boms.change_bom",
         "plastic_materials": "boms.change_bom",
@@ -122,7 +138,6 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         "semi_finished_materials": "boms.change_bom",
         "semi_finished_material_groups": "boms.change_bom",
         "editor_reference_options": "boms.change_bom",
-        "create_auxiliary_reference": "boms.change_bom",
         "create": "boms.add_bom",
         "preview_import": "boms.add_bom",
         "partial_update": "boms.change_bom",
@@ -142,15 +157,23 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             if include_status:
                 queryset = queryset.filter(status=status_value)
 
-        category_id = self.request.query_params.get("product_category_id", "").strip()
+        category_filter = BomProductCategoryQuerySerializer(data={
+            key: self.request.query_params[key].strip()
+            for key in ("product_category_id", "product_catalog_category_id")
+            if self.request.query_params.get(key, "").strip()
+        })
+        category_filter.is_valid(raise_exception=True)
+        category_id = category_filter.validated_data.get("product_category_id")
         if category_id:
-            try:
-                UUID(category_id)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError({"product_category_id": "产品类别参数不正确。"}) from exc
             queryset = queryset.filter(
                 Q(product_category_id=category_id)
                 | Q(product_category__isnull=True, product_line__product__category_id=category_id)
+            )
+        catalog_category_id = category_filter.validated_data.get("product_catalog_category_id")
+        if catalog_category_id:
+            queryset = queryset.filter(
+                product_catalog__isnull=False,
+                product_selection_snapshot__category_id=str(catalog_category_id),
             )
 
         updated_after = self._date_param("updated_after")
@@ -224,6 +247,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             raise ValidationError({"export": "当前筛选超过 10000 条，请缩小筛选范围后导出。"})
         return boms_with_context(queryset.order_by(*self.ordering))
 
+    @extend_schema(parameters=[BomProductCategoryQuerySerializer])
     @action(detail=False, methods=["get", "post"])
     def export(self, request):
         rows = BomListSerializer(self._export_queryset(), many=True).data
@@ -300,7 +324,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 ProductionTaskStatus.IN_PRODUCTION,
             }:
                 raise Conflict("生产任务单必须经 PMC 确认后，才能创建 BOM。")
-            locked_line = ProductionTaskProduct.objects.select_for_update().select_related(
+            locked_line = ProductionTaskProduct.objects.select_for_update(of=("self",)).select_related(
                 "production_task", "unit", "currency"
             ).get(pk=product_line.pk)
             if product_update:
@@ -313,7 +337,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                     actor_employee=getattr(request, "employee", None),
                     request=request,
                 )
-            if source_bom and source_bom.product_line.product_id != locked_line.product_id:
+            if source_bom and (
+                source_bom.product_line.product_id != locked_line.product_id
+                or source_bom.product_catalog_id != locked_line.product_catalog_id
+            ):
                 raise ValidationError({"source_bom_id": "历史 BOM 必须与更换后的产品一致。"})
             bom = create_bom(
                 product_line=locked_line,
@@ -343,7 +370,9 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             bom=bom,
             product=serializer.validated_data.get("product"),
             new_product=serializer.validated_data.get("new_product"),
-            product_color=serializer.validated_data["product_color"],
+            product_color=serializer.validated_data.get("product_color"),
+            product_catalog_id=serializer.validated_data.get("product_catalog_id"),
+            product_selection=serializer.validated_data.get("product_selection"),
             color_code=serializer.validated_data.get("color_code", ""),
             material=serializer.validated_data.get("material"),
             actor_employee=getattr(request, "employee", None),
@@ -449,12 +478,20 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 raise ValidationError({"production_task_product_update": "币种必须与生产任务基础信息一致。"})
             if product_line.boms.exists():
                 raise Conflict("该颜色明细已经生成 BOM，不能更换产品。")
-            product_line.product = product_update["product"]
-            product_line.product_number_snapshot = product_update["product"].product_number
-            product_line.product_code_snapshot = product_update["product"].product_code
-            product_line.product_name_snapshot = product_update["product"].product_name
-            product_line.specification_snapshot = product_update["product"].specification
-            product_line.quantity = product_update["quantity"]
+            from apps.production_tasks.services import _prepare_catalog_products, _product_line_snapshot_values
+
+            # 预览复用保存时的产品校验，但只修改内存对象，不回写生产单。
+            with transaction.atomic():
+                prepared_update = dict(product_update)
+                _prepare_catalog_products([prepared_update], product_line.production_task)
+                values = _product_line_snapshot_values(
+                    product=prepared_update.pop("product", None),
+                    color=prepared_update.pop("product_color", None), data=prepared_update,
+                )
+                for field, value in values.items():
+                    setattr(product_line, field, value)
+                product_line.unit = prepared_update["unit"]
+                product_line.quantity = prepared_update["quantity"]
         preview = preview_imported_bom(
             serializer.validated_data["workbook"],
             getattr(request, "employee", None),
@@ -524,6 +561,15 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             for group in groups
         ]
         return Response({"data": BomRawMaterialGroupSerializer(data, many=True).data})
+
+    @extend_schema(request=BomTubeCalculationPreviewInputSerializer, responses=BomTubeCalculationPreviewResponseSerializer)
+    @action(detail=False, methods=["post"], url_path="tube-calculation-preview")
+    def tube_calculation_preview(self, request):
+        from ..tube_metrics import tube_calculation_preview
+
+        serializer = BomTubeCalculationPreviewInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response({"data": tube_calculation_preview(serializer.validated_data)})
 
     @extend_schema(request=BomMaterialFlowPreviewInputSerializer, responses=BomMaterialFlowPreviewResponseSerializer)
     @action(detail=False, methods=["post"], url_path="material-flow-preview")
@@ -672,55 +718,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         }
         return Response({"data": data})
 
-    @extend_schema(request=BomAuxiliaryCreateInputSerializer, responses=BomAuxiliaryProductOptionSerializer)
-    @action(detail=False, methods=["post"], url_path="create-auxiliary-reference")
-    def create_auxiliary_reference(self, request):
-        required_permissions = (
-            "reference_data.add_accessoryproductname",
-            "reference_data.add_accessoryspecification",
-            "reference_data.add_accessorycolor",
-            "reference_data.add_accessorymaterial",
-        )
-        if not request.user.is_superuser and not all(request.user.has_perm(code) for code in required_permissions):
-            raise PermissionDenied("需要辅料品名、规格、颜色和材质的新增权限。")
-        serializer = BomAuxiliaryCreateInputSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        values = serializer.validated_data
-        if AccessoryProductName.objects.filter(product_name=values["product_name"]).exists():
-            raise ValidationError({"product_name": "辅料品名已存在，请直接在选择页查询。"})
-
-        with transaction.atomic():
-            product = AccessoryProductName.objects.create(
-                product_name=values["product_name"],
-                unit_name=values["unit_name"],
-                status=ReferenceStatus.ACTIVE,
-            )
-            specification = AccessorySpecification.objects.create(
-                product_name=product,
-                specification_value=values["specification"],
-                status=ReferenceStatus.ACTIVE,
-            )
-            color = AccessoryColor.objects.create(
-                product_name=product,
-                color_name=values["color"],
-                status=ReferenceStatus.ACTIVE,
-            )
-            material_name = values.get("material", "")
-            if material_name:
-                existing_material = AccessoryMaterial.objects.filter(material_name=material_name).first()
-                if existing_material and (
-                    existing_material.status != ReferenceStatus.ACTIVE or existing_material.archived_at is not None
-                ):
-                    raise ValidationError({"material": "同名辅料材质已停用或归档，请先在生产维护中处理。"})
-                if existing_material is None:
-                    AccessoryMaterial.objects.create(
-                        material_name=material_name,
-                        status=ReferenceStatus.ACTIVE,
-                    )
-            product.active_specifications = [specification]
-            product.active_colors = [color]
-        return Response({"data": BomAuxiliaryProductOptionSerializer(product).data}, status=status.HTTP_201_CREATED)
-
+    @extend_schema(parameters=[BomProductCategoryQuerySerializer])
     @action(detail=False, methods=["get"])
     def stats(self, request):
         queryset = self._filtered_queryset(include_status=False)
@@ -746,8 +744,10 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             status=ReferenceStatus.ACTIVE,
             archived_at__isnull=True,
         ).values("id", "category_name")
+        # 筛选历史单据也需要已停用类别；不限制为可新选的类别。
+        catalog_categories = list(ProductCatalogCategory.objects.values("id", category_name=F("name")))
         if scope == "filters":
-            return Response({"data": {"product_categories": list(categories)}})
+            return Response({"data": {"product_categories": list(categories), "product_catalog_categories": catalog_categories}})
         tasks = []
         if request.user.has_perm("production_tasks.view_productiontask"):
             task_query = request.query_params.get("task_q", "").strip()
@@ -797,6 +797,8 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                         "task_status_display": task.get_status_display(),
                         "product_number": product.product_number_snapshot,
                         "product_id": product.product_id,
+                        "product_catalog_id": product.product_catalog_id,
+                        "product_selection_snapshot": product.product_selection_snapshot,
                         "product_code": product.product_code_snapshot,
                         "product_name": product.product_name_snapshot,
                         "specification": product.specification_snapshot,
@@ -856,6 +858,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                     "detail_template": list(load_sampling_detail_template()),
                     "history_boms": history,
                     "product_categories": list(categories),
+                    "product_catalog_categories": catalog_categories,
                     "creation_methods": [
                         {"value": value, "label": label} for value, label in BomCreationMethod.choices
                     ],

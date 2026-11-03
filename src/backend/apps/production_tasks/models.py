@@ -250,6 +250,11 @@ class ProductionTaskFollower(TimeStampedModel):
 
 
 class ProductionTaskProduct(TimeStampedModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="production_task_products",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     production_task = models.ForeignKey(ProductionTask, on_delete=models.PROTECT, related_name="products")
     line_number = models.PositiveIntegerField()
     product = models.ForeignKey(
@@ -304,6 +309,8 @@ class ProductionTaskProduct(TimeStampedModel):
     quantity = models.PositiveBigIntegerField(validators=[MinValueValidator(1)])
     unit = models.ForeignKey(
         "reference_data.ProductionUnit",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="production_task_products",
     )
@@ -327,6 +334,10 @@ class ProductionTaskProduct(TimeStampedModel):
         db_table = "production_task_product"
         ordering = ["production_task", "line_number"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="prod_task_product_source_exclusive",
+            ),
             models.UniqueConstraint(fields=["production_task", "line_number"], name="prod_task_product_line_unique"),
             models.CheckConstraint(condition=Q(quantity__gt=0), name="prod_task_product_qty_positive"),
             models.CheckConstraint(condition=Q(unit_price__gte=0), name="prod_task_product_price_nonnegative"),
@@ -338,6 +349,14 @@ class ProductionTaskProduct(TimeStampedModel):
             models.Index(fields=["product", "id"], name="prod_task_product_idx"),
         ]
 
+    @property
+    def unit_name(self):
+        return self.product_selection_snapshot.get("unit_name") or (self.unit.unit_name if self.unit_id else "")
+
+    @property
+    def unit_code(self):
+        return self.product_selection_snapshot.get("unit_code") or (self.unit.unit_code if self.unit_id else "")
+
     def clean(self):
         super().clean()
         if not self.sales_order_delivery_batch_line_id:
@@ -345,6 +364,9 @@ class ProductionTaskProduct(TimeStampedModel):
         source_line = self.sales_order_delivery_batch_line
         if self.production_task.sales_order_delivery_batch_id != source_line.delivery_batch_id:
             raise ValidationError({"sales_order_delivery_batch_line": "产品来源行必须属于生产任务选择的销售交付批次。"})
+        source_catalog_id = source_line.sales_order_line.product_catalog_id
+        if source_catalog_id and self.product_catalog_id != source_catalog_id:
+            raise ValidationError({"product_catalog": "销售来源产品不可替换。"})
         source_product_id = source_line.sales_order_line.product_id
         if source_product_id and self.product_id != source_product_id:
             raise ValidationError({"product": "销售来源产品不可替换。"})

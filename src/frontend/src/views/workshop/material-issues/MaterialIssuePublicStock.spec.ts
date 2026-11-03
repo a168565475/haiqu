@@ -1,4 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { apiClient } from '@/api/request'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MaterialIssueFormView from './MaterialIssueFormView.vue'
@@ -12,7 +14,7 @@ const api = vi.hoisted(() => ({ list: vi.fn(), options: vi.fn(), products: vi.fn
   create: vi.fn(), update: vi.fn(), submit: vi.fn(), preview: vi.fn(), confirm: vi.fn(), returned: vi.fn() }))
 vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('@/router', () => ({ router: { push: vi.fn(), replace: vi.fn(), back: vi.fn() } }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, is_superuser: true }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: () => true }) }))
 vi.mock('@/api/materialIssues', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/materialIssues')>(),
   fetchMaterialIssues: api.list,
@@ -59,6 +61,9 @@ function tableValue(wrapper: ReturnType<typeof mount>, label: string): string {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  setActivePinia(createPinia())
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new File(['png'], 'server-image.png', { type: 'image/png' }), headers: {} })
+  vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:server-image.png'); static revokeObjectURL = vi.fn() })
   route.params = {}
   route.query = { production_task_id: 'task-1', product_line_id: 'product-1', schedule_product_id: 'schedule-product-1', plan_category: 'ASSEMBLY' }
   api.options.mockResolvedValue({ production_tasks: [{ id: 'task-1', task_number: '生产001', customer_name: '客户' }],
@@ -66,9 +71,26 @@ beforeEach(() => {
   api.products.mockResolvedValue([product])
   api.requirements.mockResolvedValue({ items: [structuredClone(semi)], blockers: [] })
 })
-afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('领料产品展示', () => {
+  it.each(['PUBLIC_V2', null] as const)('待审%s超过BOM参考但可用库存足够时不报无法出库', async stockMode => {
+    const value = detail(stockMode)
+    value.status = 'PENDING_REVIEW'
+    Object.assign(value.lines[0]!, { requested_quantity: '80', order_remaining: '0', available_stock: '200', max_issue_quantity: '100' })
+    const wrapper = await detailView(value)
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('超过订单可领数量')
+  })
+
+  it('待审数量未超过物理余额但超过扣占用后的可用库存时提示阻断', async () => {
+    const value = detail()
+    value.status = 'PENDING_REVIEW'
+    Object.assign(value.lines[0]!, { requested_quantity: '80', available_stock: '200', max_issue_quantity: '60' })
+    const wrapper = await detailView(value)
+    expect(wrapper.get('.error-banner').text()).toContain('扣除其他占用后可领 60')
+    expect(wrapper.get('.error-banner').text()).not.toContain('订单可领数量')
+  })
   it.each([
     { specification_display: '47*55*79', color: '酒红色', material: 'PE', expected: ['47*55*79', '酒红色', 'PE'] },
     { specification_display: '', color: '', material: '', expected: ['—', '—', '—'] },
@@ -91,7 +113,8 @@ describe('领料产品展示', () => {
     const detailPage = await detailView({ ...detail(), product: imageProduct })
     for (const wrapper of [form, detailPage]) {
       const image = wrapper.find('.product-preview img')
-      expect(image.attributes('src')).toContain('/api/v1/material-issues/product-images/task-1/image-1/')
+      expect(image.attributes('src')).toBe('blob:server-image.png')
+      expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/api/v1/material-issues/product-images/task-1/image-1/'), expect.objectContaining({ responseType: 'blob', signal: expect.any(AbortSignal) }))
       expect(image.classes()).not.toContain('is-placeholder')
     }
   })

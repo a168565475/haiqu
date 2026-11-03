@@ -2,20 +2,25 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status, viewsets
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
+from apps.access_control.sales_policy import has_permission
+from apps.access_control import module_policy
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.pagination import StandardPageNumberPagination
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 
-from .. import selectors, services
+from .. import editing, selectors, services
 from ..models import ProductCatalog, ProductCatalogName
 from .serializers import (
     CatalogErrorResponseSerializer, CatalogOptionsResponseSerializer, ColorCreateSerializer,
     NameCreateSerializer, NameDetailResponseSerializer, NameDetailSerializer, NameListQuerySerializer,
     NameListResponseSerializer, NamePatchSerializer, ProductCreateSerializer, ProductDetailResponseSerializer,
     ProductListQuerySerializer, ProductListResponseSerializer, ProductPatchSerializer, ProductSummarySerializer,
+    EditorCreateSerializer, EditorResponseSerializer, EditorSaveSerializer,
+    ProductSelectionOptionsResponseSerializer,
 )
 
 
@@ -25,6 +30,19 @@ ERRORS = {code: CatalogErrorResponseSerializer for code in (400, 401, 403, 404, 
 VIEW = "product_catalog.view_productcatalog"
 ADD = "product_catalog.add_productcatalog"
 CHANGE = "product_catalog.change_productcatalog"
+SELECTION_VIEW = (VIEW, "inquiries.view_inquiry", "quotations.view_quotation", "quotations.view_quotationversion",
+                  "samples.view_samplerequest", "sales_orders.view_salesorder", "production_tasks.view_productiontask", "boms.view_bom")
+
+
+class ProductSelectionPermission(BasePermission):
+    message = "当前账号没有使用产品选择的业务权限。"
+
+    def has_permission(self, request, view):
+        for code in SELECTION_VIEW:
+            check = has_permission if code.split(".")[0] in {"inquiries", "quotations", "sales_orders"} else module_policy.has_permission
+            if check(request, code):
+                return True
+        return False
 
 
 class ProductCatalogPagination(StandardPageNumberPagination):
@@ -56,7 +74,8 @@ class ProductCatalogNameViewSet(CatalogViewSet):
     serializer_class = NameDetailSerializer
     queryset = ProductCatalogName.objects.none()
     pagination_class = None
-    action_permission_map = {"list": VIEW, "retrieve": VIEW, "create": ADD, "partial_update": CHANGE, "metadata": VIEW}
+    action_permission_map = {"list": VIEW, "retrieve": VIEW, "create": ADD, "partial_update": CHANGE,
+                             "editor": VIEW, "save_editor": CHANGE, "create_editor": ADD, "destroy": CHANGE, "metadata": VIEW}
 
     @extend_schema(parameters=[NameListQuerySerializer], responses={200: NameListResponseSerializer, **ERRORS})
     def list(self, request):
@@ -78,17 +97,47 @@ class ProductCatalogNameViewSet(CatalogViewSet):
     def partial_update(self, request, pk=None):
         return self.detail_response(services.rename_name(name_id=pk, value=self.validated(NamePatchSerializer)["name"], request=request))
 
+    @extend_schema(parameters=[ETAG], responses={200: EditorResponseSerializer, **ERRORS})
+    def editor(self, request, pk=None):
+        return self.detail_response(editing.read_editor(name_id=pk))
+
+    @extend_schema(request=EditorCreateSerializer, parameters=[ETAG], responses={201: EditorResponseSerializer, **ERRORS})
+    def create_editor(self, request):
+        return self.detail_response(editing.create_editor(data=self.validated(EditorCreateSerializer), request=request), status.HTTP_201_CREATED)
+
+    @extend_schema(request=EditorSaveSerializer, parameters=[IF_MATCH, ETAG], responses={200: EditorResponseSerializer, **ERRORS})
+    def save_editor(self, request, pk=None):
+        data = self.validated(EditorSaveSerializer)
+        if any("id" not in row for row in data["products"]) and not has_permission(request, ADD):
+            raise PermissionDenied("当前账号没有新增产品权限，未保存任何修改。")
+        return self.detail_response(editing.save_editor(name_id=pk, data=data, request=request))
+
+    @extend_schema(parameters=[IF_MATCH], responses={204: None, **ERRORS})
+    def destroy(self, request, pk=None):
+        editing.delete_name(name_id=pk, request=request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ProductCatalogViewSet(CatalogViewSet):
     serializer_class = ProductSummarySerializer
     queryset = ProductCatalog.objects.none()
     pagination_class = ProductCatalogPagination
     action_permission_map = {"list": VIEW, "retrieve": VIEW, "options_list": VIEW, "metadata": VIEW,
+                             "selection_options": SELECTION_VIEW,
                              "create": ADD, "partial_update": CHANGE, "add_color": CHANGE, "remove_color": CHANGE}
+
+    def get_permissions(self):
+        if self.action == "selection_options":
+            return [IsAuthenticated(), HasActiveEmployee(), ProductSelectionPermission()]
+        return super().get_permissions()
 
     @extend_schema(responses={200: CatalogOptionsResponseSerializer, **ERRORS})
     def options_list(self, request):
         return Response({"data": selectors.catalog_options()})
+
+    @extend_schema(responses={200: ProductSelectionOptionsResponseSerializer, **ERRORS})
+    def selection_options(self, request):
+        return Response({"data": selectors.selection_options()})
 
     @extend_schema(parameters=[ProductListQuerySerializer,
         OpenApiParameter("page", int, OpenApiParameter.QUERY, description="页码，从 1 开始。"),

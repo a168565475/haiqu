@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { canOpenPage } from '@/router/pageAccess'
 import type { PlanCategory } from '@/types/productionScheduling'
 import type { ScheduleInternalPlan, ScheduleOutsourcingOrderSummary, ScheduleProductExecution } from '@/types/scheduleExecution'
 import { formatScheduleMoney, formatScheduleQuantity, formatScheduleUnitPrice, groupScheduleOutsourcingOrders, scheduleAmountReason } from '@/utils/scheduleExecution'
@@ -16,6 +18,8 @@ const props = defineProps<{
   active: boolean
 }>()
 const router = useRouter()
+const auth = useAuthStore()
+const canOpenMaterialIssues = computed(() => canOpenPage('material-issues', auth))
 const wageVisible = ref(false)
 const wageSchemeId = ref<string | null>(null)
 const outsourcingOrders = computed(() => groupScheduleOutsourcingOrders(props.summary?.outsourcing.allowed ? props.summary.outsourcing.records : []))
@@ -75,6 +79,7 @@ function openOutsourcing(row: ScheduleOutsourcingOrderSummary) {
   else void router.push({ path: `/workshop/outsourcing/${id}`, query: row.detail_access === 'METAL' ? { view: 'metal' } : {} })
 }
 function openMaterialIssues() {
+  if (!canOpenMaterialIssues.value) return
   void router.push({ name: 'material-issues', query: { production_task_id: props.productionTaskId, product_line_id: props.productLineId } })
 }
 function openInventoryRecords(kind: 'finished-inbound' | 'finished-outbound' | 'semi-inbound' | 'semi-outbound') {
@@ -146,7 +151,7 @@ function openInventoryRecords(kind: 'finished-inbound' | 'finished-outbound' | '
       </section>
 
       <section class="schedule-execution__section" aria-label="本产品领料记录">
-        <header class="schedule-execution__heading"><h3>本产品领料记录</h3><span>按当前生产任务及产品关联</span><button v-if="summary.material_issues.allowed" class="schedule-execution__link schedule-execution__all" @click="openMaterialIssues">查看全部</button></header>
+        <header class="schedule-execution__heading"><h3>本产品领料记录</h3><span>按当前生产任务及产品关联</span><button v-if="summary.material_issues.allowed && canOpenMaterialIssues" class="schedule-execution__link schedule-execution__all" @click="openMaterialIssues">查看全部</button></header>
         <p v-if="!summary.material_issues.allowed" class="schedule-execution__state">当前账号没有查看本产品领料记录的权限。</p>
         <div v-else-if="summary.material_issues.records.length" class="schedule-execution__scroll" tabindex="0" aria-label="本产品领料记录表，可横向滚动">
           <table class="schedule-execution__table schedule-execution__table--materials" data-testid="material-issue-records-table">

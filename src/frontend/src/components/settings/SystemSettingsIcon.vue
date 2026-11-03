@@ -6,6 +6,7 @@ const props = defineProps<{ name: string }>()
 const menuIcons: Record<string, string> = {
   '生产维护': 'production-management',
   '业务参数': 'settings',
+  'Codex 连接设置': 'settings',
   '权限管理': 'access-management',
   '界面主题': 'theme-settings',
 }

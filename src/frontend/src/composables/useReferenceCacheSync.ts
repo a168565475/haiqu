@@ -5,6 +5,6 @@ import { useReferenceOptionsStore } from '@/stores/referenceOptions'
 export function useReferenceCacheSync() {
   const auth = useAuthStore()
   const options = useReferenceOptionsStore()
-  // 仅处理身份切换；配置按需读取，无定时器或聚焦版本请求。
-  watch(() => auth.user?.id, () => options.resetForIdentity(), { flush: 'sync' })
+  // 同账号版本轮换也清理；普通 /me 不改变此代次。配置仍按需读取，不增加轮询。
+  watch(() => auth.identityGeneration, () => options.resetForIdentity(), { flush: 'sync' })
 }

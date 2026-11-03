@@ -1,0 +1,75 @@
+/* 主题优先于按路由加载的 Vant 默认变量，避免切换页面后控件尺寸回退。 */
+html:root {
+  --mobile-primary: #2563eb;
+  --mobile-primary-soft: #eaf1ff;
+  --mobile-text: #172b4d;
+  --mobile-muted: #64748b;
+  --mobile-border: #dce4ef;
+  --mobile-canvas: #f3f6fa;
+  --mobile-surface: #fff;
+  --van-base-font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  font-family: var(--van-base-font-family);
+  color: var(--mobile-text); background: #e9eef5; font-size: 16px; line-height: 1.55;
+  font-synthesis: none; text-rendering: optimizeLegibility;
+  --van-primary-color: var(--mobile-primary); --van-success-color: #16835d;
+  --van-danger-color: #c73535; --van-text-color: var(--mobile-text);
+  --van-text-color-2: var(--mobile-muted); --van-text-color-3: var(--mobile-muted);
+  --van-field-placeholder-text-color: var(--mobile-muted);
+  --van-button-default-height: 48px; --van-button-normal-font-size: 16px;
+  --van-cell-font-size: 16px; --van-field-label-width: 5.8em;
+  --van-cell-vertical-padding: 14px; --van-dialog-border-radius: 12px;
+  --van-background: var(--mobile-canvas); --van-border-color: var(--mobile-border);
+  --van-nav-bar-height: 80px; --van-nav-bar-icon-color: var(--mobile-text);
+  --van-tabs-bottom-bar-color: var(--mobile-primary); --van-tab-active-text-color: var(--mobile-primary);
+  --van-progress-color: var(--mobile-primary); --van-progress-background: #e5ecf5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; font-family: var(--van-base-font-family); font-size: 16px; line-height: 1.55; color: var(--mobile-text); }
+button, input, textarea, select { font: inherit; }
+button { touch-action: manipulation; }
+a { color: var(--mobile-primary); text-underline-offset: 3px; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid var(--mobile-primary); outline-offset: 3px; }
+::selection { background: #dbe8ff; color: #173a7c; }
+input, textarea { caret-color: var(--mobile-primary); }
+#app { min-height: 100dvh; }
+.work-page { max-width: 640px; min-height: 100dvh; margin-inline: auto; background: var(--mobile-canvas); }
+.work-header { position: sticky; top: 0; z-index: 20; padding-top: env(safe-area-inset-top); background: var(--mobile-surface); border-bottom: 1px solid var(--mobile-border); }
+.work-header .van-nav-bar__title { max-width: none; margin: 0 76px 0 52px; text-align: left; }
+.work-header.is-home .van-nav-bar__title { margin-left: 20px; }
+.work-header .van-nav-bar__left { min-width: 48px; padding-left: 4px; }
+.back-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--mobile-text); }
+.work-header .van-nav-bar__arrow { font-size: 22px; }
+.work-header .van-nav-bar__right { padding-right: 12px; }
+.work-title { display: flex; align-items: center; gap: 12px; }
+.work-brand { display: grid; place-items: center; flex-shrink: 0; width: 42px; height: 42px; border-radius: 12px; background: var(--mobile-primary); color: #fff; }
+.work-header .work-brand .van-icon { color: #fff; }
+.work-heading { min-width: 0; }
+.work-heading h1 { margin: 0; font-size: 21px; font-weight: 700; line-height: 1.4; }
+.work-heading p { margin: 3px 0 0; font-size: 13px; font-weight: 400; color: var(--mobile-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-content { padding: 20px 16px 32px; }
+.has-footer .work-content { padding-bottom: 160px; }
+.work-footer { position: fixed; z-index: 25; bottom: 0; left: 50%; transform: translateX(-50%); width: min(100%, 640px); padding: 12px 16px max(14px, env(safe-area-inset-bottom)); background: var(--mobile-surface); border-top: 1px solid var(--mobile-border); }
+.page-stack { display: flex; flex-direction: column; gap: 16px; }
+.section-card { background: var(--mobile-surface); border-radius: 12px; padding: 18px 16px; }
+.section-title { font-size: 18px; font-weight: 700; margin: 0 0 12px; }
+.muted { color: var(--mobile-muted); font-size: 14px; }
+.error-panel { background: #fff1f0; color: #a32b2b; border-radius: 12px; padding: 14px 16px; overflow-wrap: anywhere; }
+.error-panel p { margin: 0 0 10px; }
+.summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; font-variant-numeric: tabular-nums; }
+.summary-grid dt { color: var(--mobile-muted); font-size: 13px; }
+.summary-grid dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.record-row { padding: 14px 0; border-bottom: 1px solid var(--mobile-border); }
+.record-row:last-child { border-bottom: 0; }
+.action-link { border: 0; background: none; color: var(--mobile-primary); font-weight: 600; padding: 10px 8px; min-height: 44px; font-size: 14px; }
+.action-link:disabled { opacity: .5; }
+.field-label { display: block; font-size: 14px; color: var(--mobile-muted); margin-bottom: 6px; }
+.van-button { font-weight: 600; border-radius: 10px; }
+.van-button--small { min-height: 44px; padding-inline: 14px; }
+.van-field__control { font-size: 16px; }
+.van-field__label { color: var(--mobile-text); }
+.van-cell { background: transparent; }
+.van-dialog__footer .van-button { min-height: 50px; }
+.van-popup--bottom { padding-bottom: env(safe-area-inset-bottom); }
+.van-radio__label, .van-checkbox__label { line-height: 1.6; }
+@media (min-width: 700px) { .work-page { border-inline: 1px solid var(--mobile-border); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }

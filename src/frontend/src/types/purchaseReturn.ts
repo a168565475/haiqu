@@ -2,6 +2,8 @@ import type { PageMeta } from './referenceData'
 
 export type ReturnOrderStatus = 'QUALITY_GENERATED' | 'PROCUREMENT_CONFIRMED' | 'COMPLETED'
 export interface PurchaseReturnLine {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   material_attributes_snapshot?: import('./purchaseOrder').MaterialAttributeSnapshot
   return_bar_count?: number | null; raw_bar_length_m?: string | null
   id: string; inbound_line_id: string; purchase_order_line_id: string

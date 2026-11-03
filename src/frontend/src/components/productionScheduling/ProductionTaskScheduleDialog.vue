@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, reactive, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -23,7 +24,7 @@ type BatchFillValue = Partial<ScheduleWriteItem> & {
 
 const props = defineProps<{
   modelValue: boolean
-  task: ProductionTask | null
+  task: Pick<ProductionTask, 'id' | 'task_number' | 'purchase_status' | 'purchase_status_display'> | null
 }>()
 
 const emit = defineEmits<{
@@ -198,7 +199,7 @@ function applyBatch(value: BatchFillValue) {
 function validate() {
   if (!candidate.value) return '排产来源尚未加载完成。'
   if (candidate.value.existing_schedule_id) return '该生产任务单已经存在有效排产计划。'
-  if (!schedulingReady.value) return schedulingBlockerText.value || 'BOM 已确认且采购已完成后才能排产。'
+  if (!schedulingReady.value) return schedulingBlockerText.value || 'BOM 已确认且满足排产条件后才能排产。'
   if (!selectedDrafts.value.length) return '请至少选择一个订单产品。'
   for (const item of selectedDrafts.value) {
     if (!Number.isInteger(item.planned_quantity) || item.planned_quantity < 1 || item.planned_quantity > item.product.quantity) {
@@ -274,7 +275,7 @@ function viewExistingSchedule() {
       </ElAlert>
 
       <section class="schedule-readiness" aria-label="排产前检查">
-        <header><strong>排产前检查</strong><span>BOM 已确认且采购已完成后才能排产。</span></header>
+        <header><strong>排产前检查</strong><span>BOM 已确认且满足任务、产品和工艺条件即可排产，采购进度仅供参考。</span></header>
         <div class="schedule-readiness__items">
           <div><span>PMC确认</span><ElTag class="readiness-tag is-success" effect="dark">已确认</ElTag></div>
           <div><span>BOM状态</span><ElTag class="readiness-tag" :class="verifiedBomCount === drafts.length && drafts.length ? 'is-success' : 'is-warning'" effect="dark">{{ bomSummary }}</ElTag></div>
@@ -295,7 +296,7 @@ function viewExistingSchedule() {
               @click="selectProduct(item)"
             >
               <ElCheckbox :model-value="item.selected" :aria-label="`选择${item.product.product_name}`" @click.stop @update:model-value="toggleProduct(item, Boolean($event))" />
-              <img
+              <ProtectedImage
                 :src="item.product.image_file_id ? scheduleProductImageUrl(candidate.id, item.product.image_file_id) : productImagePlaceholder"
                 :class="{ 'is-placeholder': !item.product.image_file_id }"
                 :alt="`${item.product.product_name}图片`"

@@ -27,6 +27,11 @@ class BomSectionType(models.TextChoices):
 
 
 class Bom(ArchivableModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="boms",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     bom_number = models.CharField(max_length=80, unique=True, validators=[uppercase_code_validator])
     production_task = models.ForeignKey(
         "production_tasks.ProductionTask",
@@ -158,6 +163,10 @@ class Bom(ArchivableModel):
             ("verify_bom", "可确认 BOM"),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="bom_product_source_exclusive",
+            ),
             models.UniqueConstraint(
                 fields=["product_line", "version_number"],
                 name="bom_product_version_unique",
@@ -211,6 +220,10 @@ class BomSection(TimeStampedModel):
 
 
 class BomLine(TimeStampedModel):
+    material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="bom_lines")
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
+    material_quantity = models.DecimalField(max_digits=22, decimal_places=4, null=True, blank=True)
     # 空的类型字段表示旧行尚未准备；不得在迁移时猜测或换算旧库存。
     component_identity = models.UUIDField(default=uuid.uuid4, editable=False)
     cutting_length_mm = models.PositiveBigIntegerField(null=True, blank=True)

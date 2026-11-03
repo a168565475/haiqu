@@ -27,10 +27,19 @@ const total = ref(0)
 const deletingId = ref('')
 const updatedRange = ref<[string, string] | null>(null)
 
-const filters = reactive<{ q: string; status: BomStatus | ''; product_category_id: string }>({
+const filters = reactive<{ q: string; status: BomStatus | ''; product_category_id: string; product_catalog_category_id: string }>({
   q: '',
   status: '',
   product_category_id: '',
+  product_catalog_category_id: '',
+})
+const categoryFilterValue = computed({
+  get: () => filters.product_catalog_category_id ? `catalog:${filters.product_catalog_category_id}` : filters.product_category_id,
+  set: (value: string | undefined) => {
+    const selected = value || ''
+    filters.product_catalog_category_id = selected.startsWith('catalog:') ? selected.slice(8) : ''
+    filters.product_category_id = selected.startsWith('catalog:') ? '' : selected
+  },
 })
 
 const canCreate = computed(() => (
@@ -55,6 +64,7 @@ function buildQuery(): BomQuery {
     q: filters.q.trim() || undefined,
     status: filters.status || undefined,
     product_category_id: filters.product_category_id || undefined,
+    product_catalog_category_id: filters.product_catalog_category_id || undefined,
     updated_after: updatedRange.value?.[0] || undefined,
     updated_before: updatedRange.value?.[1] || undefined,
   }
@@ -117,6 +127,7 @@ function resetFilters() {
   filters.q = ''
   filters.status = ''
   filters.product_category_id = ''
+  filters.product_catalog_category_id = ''
   updatedRange.value = null
   search()
 }
@@ -127,7 +138,7 @@ function openCreate() {
 }
 
 function openProductInformation() {
-  void router.push({ name: 'products' })
+  void router.push({ name: 'product-catalog' })
 }
 
 function number(value: string | number | null) {
@@ -223,8 +234,13 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
           <ElOption label="待确认" value="PENDING_CONFIRMATION" />
           <ElOption label="已确认" value="VERIFIED" />
         </ElSelect>
-        <ElSelect v-model="filters.product_category_id" :loading="optionsLoading" placeholder="产品类别：全部" clearable @change="search">
-          <ElOption v-for="item in options?.product_categories || []" :key="item.id" :label="item.category_name" :value="item.id" />
+        <ElSelect v-model="categoryFilterValue" :loading="optionsLoading" placeholder="产品类别：全部" clearable @change="search">
+          <ElOptionGroup v-if="options?.product_catalog_categories?.length" label="产品管理">
+            <ElOption v-for="item in options.product_catalog_categories" :key="item.id" :label="item.category_name" :value="`catalog:${item.id}`" />
+          </ElOptionGroup>
+          <ElOptionGroup v-if="options?.product_categories.length" label="旧产品信息">
+            <ElOption v-for="item in options.product_categories" :key="item.id" :label="item.category_name" :value="item.id" />
+          </ElOptionGroup>
         </ElSelect>
         <ElDatePicker
           v-model="updatedRange"
@@ -239,7 +255,7 @@ onBeforeUnmount(() => { ++latestRowsRequest; ++latestOptionsRequest })
         />
         <ElPopover popper-class="erp-list-filter-popover" placement="bottom-end" :width="260" trigger="click">
           <template #reference><ElButton class="erp-button-motion" :icon="ArrowDown">更多筛选</ElButton></template>
-          <div class="more-filter-panel"><span>当前页已展示全部可用筛选项。</span><ElButton text type="primary" @click="openProductInformation">产品信息</ElButton><ElButton text type="primary" @click="resetFilters">重置全部筛选</ElButton></div>
+          <div class="more-filter-panel"><span>当前页已展示全部可用筛选项。</span><ElButton text type="primary" @click="openProductInformation">产品管理</ElButton><ElButton text type="primary" @click="resetFilters">重置全部筛选</ElButton></div>
         </ElPopover>
       <div class="erp-list-filter-actions"><ElButton class="erp-button-motion" @click="resetFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="search">应用筛选</ElButton></div>
     </section>

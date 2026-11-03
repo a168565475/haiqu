@@ -25,11 +25,17 @@ class ProductionFollowerRoleTests(APITestCase):
         business, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
         production, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_PRODUCTION', defaults={'unit_name': '生产部'})
         for department in [business, production]:
-            EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=department, effective_from=timezone.now())
+            EmployeeOrganizationAssignment.objects.get_or_create(
+                employee=self.employee, organization_unit=department,
+                defaults={'effective_from': timezone.now()},
+            )
         self.role, _ = RoleProfile.objects.get_or_create(role_code='MERCHANDISER', defaults={
             'display_name': '跟单', 'auth_group': Group.objects.create(name='FOLLOWER_ROLE_TEST'),
         })
-        self.assignment = EmployeeRoleAssignment.objects.create(employee=self.follower, role_profile=self.role, effective_from=timezone.now() - timedelta(days=2))
+        self.assignment, _ = EmployeeRoleAssignment.objects.update_or_create(
+            employee=self.follower, role_profile=self.role,
+            defaults={'effective_from': timezone.now() - timedelta(days=2), 'effective_to': None},
+        )
 
     def create_task(self):
         response = self.client.post('/api/v1/production-tasks/', self.payload(), format='json')
@@ -86,7 +92,7 @@ class ProductionFollowerRoleTests(APITestCase):
     def test_filter_keeps_historical_followers_but_form_options_exclude_them(self):
         task, _ = self.create_task()
         task.followers.set([self.employee])
-        response = self.client.get('/api/v1/production-tasks/options/?scope=filters')
+        response = self.client.get('/api/v1/production-tasks/options/?scope=advanced_filters')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIn(str(self.employee.pk), {row['id'] for row in response.data['data']['employees']})
         self.test_full_options_use_role_instead_of_production_department()

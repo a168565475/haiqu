@@ -164,7 +164,7 @@ def unified_order_candidates(request, filters):
 
 def _tube_candidates(request, filters):
     queryset = warehouse_tube_orders(request) if filters.get('warehouse_stage') == 'all' else saved_orders_for_permission(request)
-    tubes = queryset.annotate(
+    tubes = queryset.filter(plan__isnull=True).annotate(
         record_type=Value("TUBE", output_field=CharField()),
         unified_access=Value("TUBE", output_field=CharField()),
         unified_source=Case(When(source_kind="METAL", then=Value("TUBE_METAL")),
@@ -184,7 +184,11 @@ def _tube_candidates(request, filters):
         tubes = tubes.filter(unified_source__in=SOURCE_GROUP_KINDS[filters["source_group"]])
     if filters.get("factory_id"):
         tubes = tubes.filter(Q(lines__factory_id=filters["factory_id"])
-                             | Q(materials__factory_id=filters["factory_id"])).distinct()
+                             | Q(materials__factory_id=filters["factory_id"])
+                             | (Q(is_plan=True, dispatch_batches__status__in=['PROCESSING', 'COMPLETED'],
+                                  dispatch_batches__actions__kind='DISPATCH') &
+                                (Q(dispatch_batches__lines__factory_id=filters['factory_id']) |
+                                 Q(dispatch_batches__materials__factory_id=filters['factory_id'])))).distinct()
     keyword = filters.get("search", "")
     if keyword:
         search = (Q(order_number__icontains=keyword)
@@ -340,27 +344,42 @@ def _tube_rows(candidates, filters):
     orders = TubeOutsourcingOrder.objects.filter(pk__in=sources).select_related(
         "schedule_product__schedule__production_task", "product_line", "craft",
     ).prefetch_related(
-        Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id"), to_attr="list_lines"),
+        Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id")),
         Prefetch("materials", queryset=TubeOutsourcingMaterial.objects.order_by("created_at", "id"), to_attr="list_materials"),
         Prefetch("actions", queryset=TubeOutsourcingAction.objects.all(), to_attr="list_actions"),
     )
     receipts = {receipt.order_id: receipt for receipt in TubeOutsourcingReceipt.objects.filter(order_id__in=sources)
         .prefetch_related(Prefetch("lines", queryset=TubeOutsourcingReceiptLine.objects.all(), to_attr="list_lines"))}
     factory_id, rows = str(filters.get("factory_id", "")), {}
+    orders = list(orders)
+    from .plan_selectors import plan_quantities
+    totals = plan_quantities(order for order in orders if order.is_plan)
+    plan_factories = defaultdict(dict)
+    for model in (TubeOutsourcingLine, TubeOutsourcingMaterial):
+        for value in model.objects.filter(order__plan_id__in=totals,
+                order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH').values(
+                    'order__plan_id', 'factory_id', 'snapshot__factory_name').distinct():
+            plan_factories[str(value['order__plan_id'])][str(value['factory_id'])] = value['snapshot__factory_name'] or ''
     for order in orders:
+        order.list_lines = list(order.lines.all())
         row = _base_row(order, "TUBE", sources[order.pk], "TUBE")
         from .tube_kinds import output_unit
         unit = output_unit(order.source_kind)
-        lines = [line for line in order.list_lines if not factory_id or str(line.factory_id) == factory_id]
+        lines = [line for line in order.list_lines if order.is_plan or not factory_id or str(line.factory_id) == factory_id]
         materials = [material for material in order.list_materials
-                     if not factory_id or str(material.factory_id) == factory_id]
+                     if order.is_plan or not factory_id or str(material.factory_id) == factory_id]
         factories = {}
         for line in [*lines, *materials]:
             snapshot = line.snapshot if isinstance(line.snapshot, dict) else {}
             factories[str(line.factory_id)] = snapshot.get("factory_name", "")
+        if order.is_plan:
+            factories.update(plan_factories[str(order.pk)])
+            for material in order.source_snapshot.get('planned_materials', []):
+                factories[str(material['factory_id'])] = material.get('factory_name', '')
         product = order.schedule_product.product_snapshot
         product = product if isinstance(product, dict) else {}
         row.update(
+            is_plan=order.is_plan,
             schedule_id=str(order.schedule_product.schedule_id),
             schedule_number=order.schedule_product.schedule.schedule_number,
             production_task_number=order.schedule_product.schedule.production_task.task_number,
@@ -372,8 +391,17 @@ def _tube_rows(candidates, filters):
             planned_amount=planned_amount(lines),
             receipt_state="MISSING" if order.status == "COMPLETED" else "NOT_RECEIVED", shortage_quantities=[],
         )
-        if factory_id:
+        if factory_id and not order.is_plan:
             row["factory_allocation_count"] = len(lines) + len(materials)
+        if order.is_plan:
+            summary = totals[str(order.pk)]['summary']
+            row.update(plan_summary=summary,
+                dispatched_quantities=[{'quantity': summary['dispatched_quantity'], 'unit': unit}],
+                returned_quantities=[{'quantity': summary['received_quantity'], 'unit': unit}],
+                receipt_state='RECORDED' if Decimal(summary['received_quantity']) > 0 else 'NOT_RECEIVED',
+                status_display='入库达标' if order.status == 'COMPLETED' else row['status_display'])
+            rows[row['row_key']] = row
+            continue
         actions = {action.kind: action for action in order.list_actions}
         dispatch = actions.get("DISPATCH")
         # 状态或保存数量不能单独证明实发；先核对整单动作，再按厂投影冻结明细。
@@ -460,13 +488,16 @@ def _warehouse_actions(request, rows):
         allowed[('ORIGINAL', action)] = set(map(str, warehouse_regular_orders(request, permission).filter(
             pk__in=original_ids, status__in=statuses).values_list('pk', flat=True)))
     allowed[('TUBE', 'dispatch')] = set(map(str, warehouse_tube_orders(request, DISPATCH_PERMISSION).filter(
-        pk__in=tube_ids, status='PENDING_DISPATCH').values_list('pk', flat=True)))
+        Q(status='PENDING_DISPATCH') | Q(is_plan=True, status__in=['PROCESSING', 'COMPLETED']),
+        pk__in=tube_ids).values_list('pk', flat=True)))
     receivable = warehouse_tube_orders(request, RETURN_PERMISSION).filter(pk__in=tube_ids, status='PROCESSING').filter(
         Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='DISPATCH')),
         ~Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='CANCEL')),
         ~Exists(TubeOutsourcingReceipt.objects.filter(order_id=OuterRef('pk'))),
     )
     allowed[('TUBE', 'return')] = set(map(str, receivable.values_list('pk', flat=True)))
+    allowed[('TUBE', 'return')].update(map(str, warehouse_tube_orders(request, RETURN_PERMISSION).filter(
+        pk__in=tube_ids, is_plan=True, status__in=['PROCESSING', 'COMPLETED']).values_list('pk', flat=True)))
     rework_ids = [row['id'] for row in rows.values() if row['record_type'] == 'REWORK']
     allowed[('REWORK', 'dispatch')] = set(map(str, warehouse_rework_orders(request, REWORK_HANDOFF_PERMISSION).filter(
         pk__in=rework_ids, status='PENDING_HANDOFF').values_list('pk', flat=True)))

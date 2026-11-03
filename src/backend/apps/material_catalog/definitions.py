@@ -15,7 +15,7 @@ def template(key, label, fields, *, supports_spray=False):
 CATEGORIES = [
     {"key": "TUBE", "label": "管材", "templates": [template("TUBE", "管材", [
         field("material", "材质"), field("color", "颜色"), field("shape", "截面形状", "shape"),
-        field("section_size", "截面尺寸", "dimension"), field("thickness", "厚度"), field("length", "长度"),
+        field("section_size", "规格", "dimension"), field("thickness", "厚度"), field("length", "长度"),
     ], supports_spray=True)]},
     {"key": "FABRIC", "label": "面料", "templates": [template("FABRIC", "面料", [
         field("material", "材质"), field("color", "颜色"), field("fabric_spec", "面料规格"),
@@ -60,7 +60,7 @@ CATEGORIES = [
             field("material", "材质"), field("color", "颜色"), field("specification", "规格"),
         ]),
     ]},
-    {"key": "FABRIC_SEMI", "label": "委外布面", "templates": [template("FABRIC_SEMI", "委外布面", [
+    {"key": "FABRIC_SEMI", "label": "裁片", "templates": [template("FABRIC_SEMI", "裁片", [
         field("material", "材质"), field("color", "颜色"), field("fabric_spec", "面料规格"),
         field("width", "门幅"),
         field("size", "加工后尺寸"), field("model", "款号/图号"), field("process", "加工做法/工艺版本"),

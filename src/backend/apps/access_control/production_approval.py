@@ -7,9 +7,9 @@ def check_production_approval(actor, task):
     if (actor is not None and actor.status == 'ACTIVE' and actor.archived_at is None
             and user is not None and user.is_active and user.is_superuser):
         return
-    # 仅有效行政角色且持有任务确认动作时允许此流程自确认。
+    # 仅已确认的行政、技术角色且持有任务确认动作时允许此流程自确认。
     if actor is not None and actor.status == 'ACTIVE' and actor.archived_at is None and current_assignments(actor).filter(
-        role_profile__role_code='ADMINISTRATION',
+        role_profile__role_code__in=('ADMINISTRATION', 'TECHNICAL'),
         role_profile__action_grants__permission__content_type__app_label='production_tasks',
         role_profile__action_grants__permission__codename='confirm_productiontask',
         role_profile__action_grants__scope='MODULE',

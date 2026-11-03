@@ -4,9 +4,11 @@ from .inventory_views import SampleInventoryLineViewSet
 from .loan_views import SampleInventoryLoanLineViewSet
 from .outbound_views import SampleInventoryOutboundLineViewSet
 from .views import SampleItemViewSet, SampleRequestViewSet, SampleShipmentViewSet
+from .material_source_views import SampleMaterialSourceViewSet
 
 
 router = SimpleRouter()
+router.register("sample-material-sources", SampleMaterialSourceViewSet, basename="sample-material-source")
 router.register("sample-requests", SampleRequestViewSet, basename="sample-request")
 router.register("sample-items", SampleItemViewSet, basename="sample-item")
 router.register("sample-shipments", SampleShipmentViewSet, basename="sample-shipment")

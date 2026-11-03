@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Box, Check, Delete, EditPen } from '@element-plus/icons-vue'
@@ -16,6 +18,7 @@ const authStore = useAuthStore()
 const quotation = ref<QuotationDetail | null>(null)
 const version = ref<QuotationVersionDetail | null>(null)
 const line = ref<QuotationLine | null>(null)
+const productUnitName = computed(() => productEntryUnitName(line.value))
 const versionEtag = ref('')
 const containerTiers = ref<QuotationContainerTier[]>([])
 const containerDialogVisible = ref(false)
@@ -92,7 +95,7 @@ const packagingReady = computed(() => Boolean(line.value?.packaging && Number(li
 const containerTiersReady = computed(() => containerTiers.value.length > 0)
 const configurationReady = computed(() => packagingReady.value && containerTiersReady.value)
 const validationItemsMissing = computed(() => [
-  Boolean(line.value?.specification_snapshot && line.value?.unit_code),
+  Boolean(line.value?.specification_snapshot && productUnitName.value),
   packagingReady.value,
   containerTiersReady.value,
 ].filter((ready) => !ready).length)
@@ -323,14 +326,14 @@ watch(lineId, (current, previous) => { if (current && current !== previous) { pr
         <main class="page-main">
           <section class="quotation-product-strip">
             <div class="quotation-product-media">
-              <img v-if="productImageUrl && !productImageFailed" :src="productImageUrl" :alt="`${line.product_description_snapshot || '产品'}图片`" @error="productImageFailed = true" />
+              <ProtectedImage v-if="productImageUrl && !productImageFailed" :src="productImageUrl" :alt="`${line.product_description_snapshot || '产品'}图片`" @error="productImageFailed = true" />
               <ElIcon v-else><Box /></ElIcon>
             </div>
             <div class="product-info-content">
-              <div class="product-info-heading"><b>产品信息</b><ElTag size="small" :type="line.specification_snapshot && line.unit_code ? 'success' : 'warning'">{{ line.specification_snapshot && line.unit_code ? '规格完整' : '规格待完善' }}</ElTag></div>
+              <div class="product-info-heading"><b>产品信息</b><ElTag size="small" :type="line.specification_snapshot && productUnitName ? 'success' : 'warning'">{{ line.specification_snapshot && productUnitName ? '规格完整' : '规格待完善' }}</ElTag></div>
               <dl class="product-info-table" aria-label="当前报价产品信息">
                 <div class="product-info-field"><dt>产品名称</dt><dd>{{ line.product_description_snapshot || '未填写' }}</dd></div>
-                <div class="product-info-field"><dt>数量 / 单位</dt><dd>{{ line.quantity }} {{ line.unit_code || '—' }}</dd></div>
+                <div class="product-info-field"><dt>数量 / 单位</dt><dd>{{ line.quantity }} {{ productUnitName || '—' }}</dd></div>
                 <div v-if="line.product_number_snapshot" class="product-info-field"><dt>品号</dt><dd>{{ line.product_number_snapshot }}</dd></div>
                 <div class="product-info-field"><dt>规格</dt><dd>{{ productSpecificationText }}</dd></div>
                 <div v-if="line.color_snapshot" class="product-info-field"><dt>颜色</dt><dd>{{ line.color_snapshot }}</dd></div>
@@ -344,20 +347,20 @@ watch(lineId, (current, previous) => { if (current && current !== previous) { pr
           <ElCard class="detail-card" shadow="never">
             <template #header><div class="card-title"><b>包装与箱规</b><span>填写外箱尺寸、每箱件数和箱数；毛重、净重可选。</span></div></template>
             <ElForm label-position="top" class="packaging-form">
-              <div class="dimension-grid"><ElFormItem label="长"><ElInput v-model="form.length_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="宽"><ElInput v-model="form.width_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="高"><ElInput v-model="form.height_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="每箱"><ElInput v-model="form.pieces_per_carton" inputmode="numeric" :disabled="!editable"><template #append>{{ line.unit_code }}</template></ElInput></ElFormItem><ElFormItem label="箱数"><ElInput v-model="form.carton_count" inputmode="numeric" :disabled="!editable"><template #append>CTN</template></ElInput></ElFormItem><ElFormItem label="毛重"><ElInput v-model="form.gross_weight_kg" inputmode="decimal" :disabled="!editable"><template #append>kg</template></ElInput></ElFormItem><ElFormItem label="净重"><ElInput v-model="form.net_weight_kg" inputmode="decimal" :disabled="!editable"><template #append>kg</template></ElInput></ElFormItem><ElFormItem label="CBM"><ElInput :model-value="cartonCbmPreview === '—' ? '' : `${cartonCbmPreview} m³`" disabled /></ElFormItem></div>
+              <div class="dimension-grid"><ElFormItem label="长"><ElInput v-model="form.length_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="宽"><ElInput v-model="form.width_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="高"><ElInput v-model="form.height_cm" inputmode="decimal" :disabled="!editable"><template #append>cm</template></ElInput></ElFormItem><ElFormItem label="每箱"><ElInput v-model="form.pieces_per_carton" inputmode="numeric" :disabled="!editable"><template #append>{{ productUnitName }}</template></ElInput></ElFormItem><ElFormItem label="箱数"><ElInput v-model="form.carton_count" inputmode="numeric" :disabled="!editable"><template #append>CTN</template></ElInput></ElFormItem><ElFormItem label="毛重"><ElInput v-model="form.gross_weight_kg" inputmode="decimal" :disabled="!editable"><template #append>kg</template></ElInput></ElFormItem><ElFormItem label="净重"><ElInput v-model="form.net_weight_kg" inputmode="decimal" :disabled="!editable"><template #append>kg</template></ElInput></ElFormItem><ElFormItem label="CBM"><ElInput :model-value="cartonCbmPreview === '—' ? '' : `${cartonCbmPreview} m³`" disabled /></ElFormItem></div>
               <p class="formula">单箱体积 = {{ form.length_cm || '长' }} × {{ form.width_cm || '宽' }} × {{ form.height_cm || '高' }} ÷ 1,000,000{{ cartonCbmPreview === '—' ? '' : ` = ${cartonCbmPreview} m³` }}，保留 3 位小数。</p>
             </ElForm>
           </ElCard>
 
           <ElCard class="detail-card" shadow="never">
             <template #header><div class="card-title"><b>装柜数量档</b><span>{{ containerTiers.length }} 条</span><ElButton class="black-button" :disabled="!canAddContainerTier || !line.packaging" :loading="saving" @click="openContainerDialog">＋ 新增装柜数量档</ElButton></div></template>
-            <ElTable :data="containerTiers" empty-text="暂无装柜数量档。"><ElTableColumn label="柜型" min-width="94"><template #default="{ row }"><b>{{ row.container_type_code }}</b></template></ElTableColumn><ElTableColumn label="容积/系数" min-width="130"><template #default="{ row }">{{ row.effective_volume_cbm }}m³ / {{ (Number(row.load_factor) * 100).toFixed(0) }}%</template></ElTableColumn><ElTableColumn prop="auto_carton_count" label="可装箱数" min-width="102"/><ElTableColumn label="报价数量" min-width="112"><template #default="{ row }"><b>{{ row.final_quantity }} {{ line.unit_code }}</b></template></ElTableColumn><ElTableColumn label="装柜单价" min-width="110"><template #default="{ row }">{{ version.currency_code }} {{ row.unit_price }}</template></ElTableColumn><ElTableColumn label="状态" min-width="72"><template #default="{ row }">{{ row.manual_carton_count === null ? '自动' : '已调整' }}</template></ElTableColumn><ElTableColumn v-if="canDeleteContainerTier" class-name="tier-row-action" label="操作" width="112" fixed="right"><template #default="{ row }"><ElButton text type="danger" :icon="Delete" @click="removeContainerTier(row)">删除</ElButton></template></ElTableColumn></ElTable>
+            <ElTable :data="containerTiers" empty-text="暂无装柜数量档。"><ElTableColumn label="柜型" min-width="94"><template #default="{ row }"><b>{{ row.container_type_code }}</b></template></ElTableColumn><ElTableColumn label="容积/系数" min-width="130"><template #default="{ row }">{{ row.effective_volume_cbm }}m³ / {{ (Number(row.load_factor) * 100).toFixed(0) }}%</template></ElTableColumn><ElTableColumn prop="auto_carton_count" label="可装箱数" min-width="102"/><ElTableColumn label="报价数量" min-width="112"><template #default="{ row }"><b>{{ row.final_quantity }} {{ productUnitName }}</b></template></ElTableColumn><ElTableColumn label="装柜单价" min-width="110"><template #default="{ row }">{{ version.currency_code }} {{ row.unit_price }}</template></ElTableColumn><ElTableColumn label="状态" min-width="72"><template #default="{ row }">{{ row.manual_carton_count === null ? '自动' : '已调整' }}</template></ElTableColumn><ElTableColumn v-if="canDeleteContainerTier" class-name="tier-row-action" label="操作" width="112" fixed="right"><template #default="{ row }"><ElButton text type="danger" :icon="Delete" @click="removeContainerTier(row)">删除</ElButton></template></ElTableColumn></ElTable>
             <p class="tier-footnote">ⓘ 装柜配置仅用于当前报价产品。</p>
           </ElCard>
 
         </main>
         <aside class="summary-column">
-          <ElCard shadow="never" class="summary-card"><template #header><div class="summary-title"><b>配置汇总</b><ElTag size="small" :type="configurationReady ? 'success' : 'warning'">{{ configurationReady ? '已完成' : `${validationItemsMissing}项待完善` }}</ElTag></div></template><div class="summary-line"><small>产品 {{ linePosition }}</small><strong>{{ line.product_description_snapshot }}</strong><b>{{ line.quantity }} {{ line.unit_code }}</b></div><h3>包装计算</h3><p><span>单箱体积</span><b>{{ line.packaging ? `${line.packaging.carton_cbm} m³` : '—' }}</b></p><p><span>每箱数量</span><b>{{ form.pieces_per_carton ? `${form.pieces_per_carton} ${line.unit_code}` : '—' }}</b></p><p><span>总箱数</span><b>{{ form.carton_count ? `${form.carton_count} CTN` : '—' }}</b></p><p><span>总体积</span><b>{{ totalCbm === '—' ? '—' : `${totalCbm} m³` }}</b></p><h3>完善情况</h3><p :class="['validation', { warning: !(line.specification_snapshot && line.unit_code) }] "><ElIcon><Check v-if="line.specification_snapshot && line.unit_code"/><EditPen v-else/></ElIcon> {{ line.specification_snapshot && line.unit_code ? '产品规格与单位完整' : '产品规格待完善' }}</p><p :class="['validation', { warning: !packagingReady }] "><ElIcon><Check v-if="packagingReady"/><EditPen v-else/></ElIcon> {{ packagingReady ? '包装信息已保存' : '包装信息尚未保存' }}</p><p :class="['validation', { warning: !containerTiersReady }] "><ElIcon><Check v-if="containerTiersReady"/><EditPen v-else/></ElIcon> {{ containerTiersReady ? '装柜数量档已配置' : '装柜数量档未配置' }}</p><ElAlert v-if="!containerTiersReady" title="请先保存包装信息，再新增至少 1 条装柜数量档。" type="warning" :closable="false" /><div class="summary-actions"><ElButton class="black-button" :disabled="!editable || !configurationReady" :title="completionReason" @click="completeConfiguration">完成配置并预览</ElButton></div><small class="summary-footnote">{{ completionReason }}</small></ElCard>
+          <ElCard shadow="never" class="summary-card"><template #header><div class="summary-title"><b>配置汇总</b><ElTag size="small" :type="configurationReady ? 'success' : 'warning'">{{ configurationReady ? '已完成' : `${validationItemsMissing}项待完善` }}</ElTag></div></template><div class="summary-line"><small>产品 {{ linePosition }}</small><strong>{{ line.product_description_snapshot }}</strong><b>{{ line.quantity }} {{ productUnitName }}</b></div><h3>包装计算</h3><p><span>单箱体积</span><b>{{ line.packaging ? `${line.packaging.carton_cbm} m³` : '—' }}</b></p><p><span>每箱数量</span><b>{{ form.pieces_per_carton ? `${form.pieces_per_carton} ${productUnitName}` : '—' }}</b></p><p><span>总箱数</span><b>{{ form.carton_count ? `${form.carton_count} CTN` : '—' }}</b></p><p><span>总体积</span><b>{{ totalCbm === '—' ? '—' : `${totalCbm} m³` }}</b></p><h3>完善情况</h3><p :class="['validation', { warning: !(line.specification_snapshot && productUnitName) }] "><ElIcon><Check v-if="line.specification_snapshot && productUnitName"/><EditPen v-else/></ElIcon> {{ line.specification_snapshot && productUnitName ? '产品规格与单位完整' : '产品规格待完善' }}</p><p :class="['validation', { warning: !packagingReady }] "><ElIcon><Check v-if="packagingReady"/><EditPen v-else/></ElIcon> {{ packagingReady ? '包装信息已保存' : '包装信息尚未保存' }}</p><p :class="['validation', { warning: !containerTiersReady }] "><ElIcon><Check v-if="containerTiersReady"/><EditPen v-else/></ElIcon> {{ containerTiersReady ? '装柜数量档已配置' : '装柜数量档未配置' }}</p><ElAlert v-if="!containerTiersReady" title="请先保存包装信息，再新增至少 1 条装柜数量档。" type="warning" :closable="false" /><div class="summary-actions"><ElButton class="black-button" :disabled="!editable || !configurationReady" :title="completionReason" @click="completeConfiguration">完成配置并预览</ElButton></div><small class="summary-footnote">{{ completionReason }}</small></ElCard>
         </aside>
       </div>
       <AppWindowDialog v-model="containerDialogVisible" class="quotation-container-dialog" title="新增装柜数量档" :width="850" :height="700" :close-on-click-modal="false">
@@ -369,7 +372,7 @@ watch(lineId, (current, previous) => { if (current && current !== previous) { pr
           <ElFormItem label="装载系数"><ElInput v-model="containerForm.load_factor_percent" inputmode="decimal" placeholder="例如 90" :disabled="saving"><template #append>%</template></ElInput></ElFormItem>
           <ElFormItem label="装柜单价"><ElInput v-model="containerForm.unit_price" inputmode="decimal" placeholder="例如 15.89" :disabled="saving"><template #append>{{ version.currency_code }}</template></ElInput></ElFormItem>
         </ElForm>
-        <div class="container-preview"><b>装柜数量预估</b><div><span>单箱体积&nbsp; {{ line.packaging?.carton_cbm || '—' }} m³</span><span>每箱数量&nbsp; {{ line.packaging?.pieces_per_carton || '—' }} {{ line.unit_code }}</span><strong>{{ containerPreview ? `${containerPreview.cartons} CTN / ${containerPreview.quantity} ${line.unit_code}` : '— CTN / — PCS' }}</strong></div><small>ⓘ 填写可用容积和装载系数后显示预计数量。</small></div>
+        <div class="container-preview"><b>装柜数量预估</b><div><span>单箱体积&nbsp; {{ line.packaging?.carton_cbm || '—' }} m³</span><span>每箱数量&nbsp; {{ line.packaging?.pieces_per_carton || '—' }} {{ productUnitName }}</span><strong>{{ containerPreview ? `${containerPreview.cartons} CTN / ${containerPreview.quantity} ${productUnitName}` : '— CTN / — PCS' }}</strong></div><small>ⓘ 填写可用容积和装载系数后显示预计数量。</small></div>
         <template #footer><ElButton :disabled="saving" @click="containerDialogVisible = false">取消</ElButton><ElButton class="black-button" :loading="saving" @click="saveContainerTier">保存装柜配置</ElButton></template>
       </AppWindowDialog>
     </template>

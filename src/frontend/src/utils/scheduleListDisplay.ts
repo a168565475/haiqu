@@ -10,9 +10,10 @@ export const scheduleRiskRank: Record<ScheduleRiskLevel, number> = { unknown: -1
 export function scheduleOutsourcingIndicator(status?: ScheduleOutsourcingStatus) {
   const state = status?.state || 'UNKNOWN'
   const color = state === 'NONE' ? '#72a7d1' : scheduleRiskColors[status?.risk === 'none' ? 'unknown' : status?.risk || 'unknown']
-  const symbol = state === 'NONE' ? '' : state === 'RETURNED' ? '✓' : status?.risk === 'urgent' ? '!'
+  const percentage = status?.is_plan && state !== 'UNKNOWN' && status.progress_percent != null && Number.isFinite(status.progress_percent) ? status.progress_percent : null
+  const symbol = percentage !== null ? `${Math.round(percentage)}%` : state === 'NONE' ? '' : state === 'RETURNED' ? '✓' : status?.risk === 'urgent' ? '!'
     : state === 'SHORTAGE' ? '缺' : state === 'WAITING' ? '待' : state === 'UNKNOWN' ? '?' : '外'
-  return { state, color, symbol, description: status?.description || '外发信息暂不可用', records: status?.records || [] }
+  return { state, color, symbol, percentage, description: status?.description || '外发信息暂不可用', records: status?.records || [] }
 }
 
 export function scheduleProductSummary(products: ScheduleProduct[]) {

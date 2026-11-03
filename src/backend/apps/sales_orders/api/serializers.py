@@ -9,6 +9,7 @@ from apps.customers.models import CustomerAccount, CustomerEntityAddress, Custom
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
 from apps.reference_data.models import ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 from apps.quotations.models import QuotationLine, QuotationVersion
 
@@ -70,6 +71,8 @@ class PriceExceptionSerializer(serializers.ModelSerializer):
 
 
 class SalesOrderLineReadSerializer(serializers.ModelSerializer):
+    product_catalog_id = serializers.UUIDField(read_only=True, allow_null=True)
+    product_selection_snapshot = serializers.JSONField(read_only=True)
     specification_display = serializers.SerializerMethodField()
     source_quotation_line_id = serializers.UUIDField(read_only=True, allow_null=True)
     product_id = serializers.UUIDField(read_only=True)
@@ -89,6 +92,8 @@ class SalesOrderLineReadSerializer(serializers.ModelSerializer):
             "line_number",
             "source_quotation_line_id",
             "product_id",
+            "product_catalog_id",
+            "product_selection_snapshot",
             "product_category_id",
             "product_unit_id",
             "product_color_id",
@@ -439,6 +444,8 @@ class SalesOrderDetailSerializer(SalesOrderListSerializer):
 
 
 class SalesOrderLineInputSerializer(serializers.Serializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, write_only=True)
     client_key = serializers.CharField(max_length=64)
     source_quotation_line_id = serializers.PrimaryKeyRelatedField(
         source="source_quotation_line",
@@ -493,6 +500,11 @@ class SalesOrderLineInputSerializer(serializers.Serializer):
     def validate(self, attrs):
         product = attrs.get("product")
         quote_line = attrs.get("source_quotation_line")
+        catalog_id = attrs.get("product_catalog_id", getattr(quote_line, "product_catalog_id", None))
+        if catalog_id or (attrs.get("product_selection") or {}).get("draft") or getattr(quote_line, "product_selection_snapshot", {}).get("entry_state") == "draft":
+            if product is not None:
+                raise serializers.ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+            return attrs  # 产品和选项由保存服务在同一事务中核验并固化。
         customer_name = str(attrs.get("customer_product_name_snapshot") or "").strip()
         if product is not None:
             submitted_name = customer_name

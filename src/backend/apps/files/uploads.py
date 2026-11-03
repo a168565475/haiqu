@@ -39,6 +39,7 @@ def save_scanned_image(
     storage_folder,
     field_label="图片",
     max_bytes=DEFAULT_MAX_IMAGE_BYTES,
+    pending_file=None,
 ):
     name = Path(uploaded_file.name or "image").name[:255]
     suffix = Path(name).suffix.lower()
@@ -84,11 +85,15 @@ def save_scanned_image(
             raise
 
         relative_key = Path(storage_folder) / timezone.now().strftime("%Y/%m") / f"{uuid.uuid4()}{suffix}"
+        file_id = uuid.uuid4()
+        if pending_file is not None:
+            pending_file(file_id, relative_key.as_posix(), digest.hexdigest())
         final_path = Path(settings.MEDIA_ROOT) / relative_key
         final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temporary_path), str(final_path))
         try:
             return BusinessFile.objects.create(
+                id=file_id,
                 uploaded_by_employee=actor_employee,
                 original_name=name,
                 storage_key=relative_key.as_posix(),

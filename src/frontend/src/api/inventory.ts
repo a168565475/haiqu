@@ -34,12 +34,12 @@ export async function fetchFinishedGoodsOutbound(id: string) {
   return data.data
 }
 export async function fetchMaterialInventory(params: Record<string, unknown>) { const { data } = await apiClient.get<PaginatedMaterialInventory>(`${root}material-inventory/`, { params }); return data }
-export async function fetchMaterialInventorySummary(stockItemId: string) { const { data } = await apiClient.get<DataResponse<MaterialInventorySummary>>(`${root}material-inventory/${stockItemId}/summary/`); return data.data }
-export async function fetchMaterialOrderPurchases(stockItemId: string) { const { data } = await apiClient.get<DataResponse<MaterialOrderPurchase[]>>(`${root}material-inventory/${stockItemId}/order-purchases/`); return data.data }
-export async function fetchMaterialOrderIssues(stockItemId: string) { const { data } = await apiClient.get<DataResponse<MaterialOrderIssue[]>>(`${root}material-inventory/${stockItemId}/order-issues/`); return data.data }
+export async function fetchMaterialInventorySummary(stockItemId: string, identityKey?: string) { const { data } = await apiClient.get<DataResponse<MaterialInventorySummary>>(`${root}material-inventory/${stockItemId}/summary/`, { params: { identity_key: identityKey } }); return data.data }
+export async function fetchMaterialOrderPurchases(stockItemId: string, identityKey?: string) { const { data } = await apiClient.get<DataResponse<MaterialOrderPurchase[]>>(`${root}material-inventory/${stockItemId}/order-purchases/`, { params: { identity_key: identityKey } }); return data.data }
+export async function fetchMaterialOrderIssues(stockItemId: string, identityKey?: string) { const { data } = await apiClient.get<DataResponse<MaterialOrderIssue[]>>(`${root}material-inventory/${stockItemId}/order-issues/`, { params: { identity_key: identityKey } }); return data.data }
 export async function fetchMaterialInventoryOptions() { const { data } = await apiClient.get<DataResponse<MaterialInventoryOptions>>(`${root}material-inventory/options/`); return data.data }
 export async function fetchMaterialReceivingOptions() {
-  const { data } = await apiClient.get<DataResponse<MaterialReceivingOptions>>(`${root}material-inventory/options/`, { params: { scope: 'receiving' } })
+  const { data } = await apiClient.get<DataResponse<MaterialReceivingOptions>>(`${root}material-inventory/options/`, { params: { scope: 'receiving', include_catalog_semi: true } })
   return data.data
 }
 export async function fetchMaterialFilterOptions() {

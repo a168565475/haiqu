@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed } from 'vue'
 import { scheduleProductImageUrl } from '@/api/productionScheduling'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
@@ -62,7 +63,7 @@ function imageFallback(event: Event) {
           <header><i />{{ stage.label }}<strong>{{ percentageText(stage.percentage) }}</strong></header>
           <div class="stage-product-list">
             <div v-for="item in stage.products" :key="item.product.id" class="stage-product" :style="{ '--product-risk-color': scheduleRiskColors[item.risk.level] }">
-              <img :src="item.product.image_file_id ? scheduleProductImageUrl(schedule.production_task_id, item.product.image_file_id) : productImagePlaceholder" :alt="`${item.product.product.product_name || '产品'}图片`" @error="imageFallback" />
+              <ProtectedImage :src="item.product.image_file_id ? scheduleProductImageUrl(schedule.production_task_id, item.product.image_file_id) : productImagePlaceholder" :alt="`${item.product.product.product_name || '产品'}图片`" @error="imageFallback" />
               <strong>{{ item.product.product.product_name || '未命名产品' }} · {{ item.product.product.color_name || '—' }}</strong>
               <div v-if="stage.key === 'OUTBOUND'" class="stage-product-date"><span>订单 {{ item.metric.order_quantity ?? '—' }} {{ item.product.unit_name }}</span><span>出库 {{ item.metric.outbound_quantity ?? '—' }} {{ item.product.unit_name }}</span></div>
               <div v-else class="stage-product-date"><span>计划日期</span><time>{{ item.metric.planned_date || '—' }}</time></div>
@@ -79,8 +80,8 @@ function imageFallback(event: Event) {
       <ElPopover trigger="hover" placement="bottom" :width="440" :show-after="120" :hide-after="120" :persistent="false" popper-class="schedule-stage-popover">
         <template #reference>
           <button type="button" class="schedule-stage-trigger schedule-outsourcing-trigger" :aria-label="`${stage.key === 'METAL' ? '金工' : '裁剪'}外发，${props.failed ? '外发信息加载失败，请刷新重试' : stage.outsourcing.description}`">
-            <span class="schedule-stage-ring schedule-outsourcing-ring" :class="{ 'is-empty': stage.outsourcing.state === 'NONE' }">
-              <svg viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="19" class="stage-fill" /></svg>
+            <span class="schedule-stage-ring schedule-outsourcing-ring" :class="{ 'is-empty': stage.outsourcing.state === 'NONE', 'is-plan': stage.outsourcing.percentage !== null }">
+              <svg viewBox="0 0 44 44" aria-hidden="true"><circle v-if="stage.outsourcing.percentage !== null" cx="22" cy="22" r="19" class="stage-track" /><circle cx="22" cy="22" r="19" class="stage-fill" :pathLength="stage.outsourcing.percentage !== null ? 100 : undefined" :stroke-dasharray="stage.outsourcing.percentage === null ? undefined : `${Math.min(100, stage.outsourcing.percentage)} 100`" /></svg>
               <span>{{ stage.outsourcing.symbol }}</span>
             </span>
             <span class="schedule-stage-label">{{ stage.key === 'METAL' ? '金工' : '裁剪' }}外发</span>
@@ -92,7 +93,7 @@ function imageFallback(event: Event) {
             <article v-for="record in stage.outsourcing.records" :key="record.id" class="outsourcing-record" :style="{ '--record-color': scheduleRiskColors[record.risk === 'none' ? 'unknown' : record.risk] }">
               <div class="outsourcing-record-title"><strong>{{ record.order_number }}</strong><span>{{ record.craft_name }}</span></div>
               <div class="outsourcing-record-facts"><span>{{ record.factory_name || '加工厂未填写' }}</span><span>交期 {{ record.expected_return_date || '—' }}</span></div>
-              <div class="outsourcing-record-facts"><b>{{ record.description }}</b><span>未回 {{ record.remaining_display }}</span></div>
+              <div class="outsourcing-record-facts"><b>{{ record.description }}</b><span>{{ record.is_plan ? '距BOM目标尚缺' : '未回' }} {{ record.remaining_display }}</span></div>
             </article>
           </div>
           <p v-else class="stage-empty">{{ props.failed ? '外发信息加载失败，请刷新重试' : stage.outsourcing.description }}</p>
@@ -116,6 +117,7 @@ function imageFallback(event: Event) {
 .stage-fill { stroke: var(--stage-color); stroke-linecap: round; }
 .schedule-stage-label { font-size: 11px; line-height: 16px; white-space: nowrap; }
 .schedule-outsourcing-ring { color: var(--stage-color); font-size: 13px; }
+.schedule-outsourcing-ring.is-plan { font-size: 10px; }
 .schedule-outsourcing-ring.is-empty svg { fill: color-mix(in srgb, var(--stage-color) 9%, transparent); stroke-width: 2; }
 .outsourcing-record-list { display: grid; gap: 8px; max-height: min(360px, 55vh); overflow-y: auto; }
 .outsourcing-record { padding: 10px; border: 1px solid var(--erp-table-grid); border-radius: 5px; background: var(--erp-color-subtle); font-size: 12px; }

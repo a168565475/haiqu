@@ -160,7 +160,8 @@ def issue_pipe_material(*, bom_line_id, allocations, source_type, source_id, sou
         if len(existing) != len(normalized) or any(item.source_id != source_id or item.snapshot.get("request_payload_hash") != payload_hash for item in existing):
             raise pipe_error("IDEMPOTENCY_CONFLICT", "同一发料来源已使用不同内容记账。")
         return existing
-    requirement = sync_pipe_requirement(bom_line_id)
+    is_material_issue = source_type == "MATERIAL_ISSUE"
+    requirement = sync_pipe_requirement(bom_line_id, allow_excess_issue=is_material_issue)
     if source_revision_hash != requirement.source_revision_hash:
         raise pipe_error("SOURCE_REVISION_CHANGED", "BOM来源已变化，请刷新后重新提交。")
     amounts = []
@@ -172,7 +173,7 @@ def issue_pipe_material(*, bom_line_id, allocations, source_type, source_id, sou
             raise pipe_error(error.code, str(error)) from error
     total_pieces = sum(row["requested_pieces"] for row in normalized)
     remaining = requirement.required_quantity - requirement.internal_issued_quantity - requirement.outsourcing_issued_quantity
-    if total_pieces > remaining:
+    if not is_material_issue and total_pieces > remaining:
         raise pipe_error("ORDER_ALLOWANCE_EXCEEDED", "外发与厂内领料累计超过该部位剩余额度。")
     lines = list(MaterialInboundLine.objects.select_for_update().filter(pk__in=[row["inbound_line_id"] for row in normalized]).order_by("id"))
     if len(lines) != len(normalized):

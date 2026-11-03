@@ -29,5 +29,6 @@ export const glassDetailRouteNames = [
   'workshop-outsourcing-factory-detail',
   'workshop-scheduling-detail',
   'purchase-order-detail',
+  'purchase-group-detail',
   'purchase-inbound-detail'
 ] as const

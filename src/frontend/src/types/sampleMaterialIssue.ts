@@ -10,6 +10,8 @@ export interface SampleMaterialIssuePipeBatch {
 }
 
 export interface SampleMaterialIssueLine {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   id: string | null
   lineKey: string
   category: string

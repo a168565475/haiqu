@@ -12,20 +12,22 @@
 .application-heading-actions .submit-error { max-width: 360px; margin: 0; color: token.$crm-danger; font-size: 13px; line-height: 20px; }
 .returned-note { margin: -4px 0 16px; padding: 10px 12px; border-left: 3px solid sample.$action-primary; color: token.$crm-text-secondary; background: token.$crm-color-surface; font-size: 13px; line-height: 20px; }
 .basic-section { min-width: 0; }
-.basic-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; padding: 0; }
+.basic-grid { display: grid; max-width: 1330px; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; padding: 0; }
 .basic-grid :deep(.el-form-item), .product-fields > :deep(.el-form-item:not(.requirements-field)), .dimensions-grid :deep(.el-form-item) { height: auto; min-height: 58px; }
 .sample-create-page .application-form :deep(.el-form-item) { min-width: 0; margin: 0; }
 .sample-create-page .application-form :deep(.el-form-item__label) { height: 20px; margin-bottom: 6px; padding: 0; color: token.$crm-text-primary; font-size: 12px; font-weight: 500; line-height: 20px; }
 .sample-create-page .application-form :deep(.el-form-item__content) { min-width: 0; line-height: 32px; }
-.sample-create-page .application-form :deep(.el-select), .sample-create-page .application-form :deep(.el-date-editor.el-input) { width: 100%; }
+.sample-create-page .application-form :deep(.el-input), .sample-create-page .application-form :deep(.el-select), .sample-create-page .application-form :deep(.el-date-editor.el-input) { width: 250px; max-width: 100%; }
+.sample-number-field { grid-column: span 2; }
+.sample-number-input { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 20px; width: 100%; }
 .sample-create-page .application-form :deep(.el-date-editor .el-input__prefix) { order: 2; margin-left: 8px; }
 .sample-create-page .application-form :deep(.el-date-editor .el-input__prefix-inner > :last-child) { margin-right: 0; }
-.application-columns { display: grid; grid-template-columns: minmax(0, 1042fr) minmax(0, 572fr); gap: 12px; margin-top: 12px; }
+.application-columns { display: grid; grid-template-columns: minmax(0, 1fr) 420px; align-items: start; gap: 12px; margin-top: 12px; }
 .product-section { min-width: 0; }
-.product-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); gap: 20px; }
-.product-image { display: grid; height: 238px; place-items: center; border: 1px solid token.$crm-border-subtle; border-radius: 4px; color: token.$crm-text-muted; background: token.$crm-color-page; font-size: 12px; }
-.product-fields { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
-.dimensions-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.product-body { min-width: 0; }
+.product-fields { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 250px)); align-items: start; gap: 12px 20px; }
+.dimensions-grid { display: contents; }
+.requirements-field { grid-column: 1 / -1; }
 .sample-create-page .requirements-field :deep(.el-textarea__inner) { height: 78px; line-height: 20px; }
 .sample-create-page .requirements-field :deep(.el-input__count) { right: 12px; bottom: 8px; color: token.$crm-text-muted; background: transparent; line-height: 22px; }
 .application-aside { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
@@ -34,34 +36,34 @@
 .field-label { margin: 0 0 8px; font-size: 14px; font-weight: 500; line-height: 22px; }
 .field-hint { margin: 8px 0 0; color: token.$crm-text-muted; font-size: 12px; line-height: 22px; }
 .upload-section :deep(.el-upload), .upload-section :deep(.el-upload-dragger) { width: 100%; }
-.upload-section :deep(.el-upload-dragger) { display: flex; height: 148px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 16px; border: 1px dashed token.$crm-border-default; border-radius: 4px; background: token.$crm-color-page; }
+.upload-section :deep(.el-upload-dragger) { display: flex; height: 148px; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 16px; border: 1px dashed token.$crm-border-default; border-radius: 4px; background: transparent; }
 .upload-icon { width: 40px; height: 36px; object-fit: contain; }
 .upload-section strong { font-size: 16px; font-weight: 500; line-height: 24px; }
 .upload-section :deep(.el-upload-dragger span) { color: token.$crm-text-muted; font-size: 12px; line-height: 22px; }
-.reference-preview { display: grid; height: 148px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; overflow: hidden; padding: 8px; border: 1px solid token.$crm-border-subtle; border-radius: 4px; background: token.$crm-color-page; }
+.reference-preview { display: grid; height: 148px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; overflow: hidden; padding: 8px; border: 1px solid token.$crm-border-subtle; border-radius: 4px; background: transparent; }
 .reference-preview img { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; }
 .reference-preview .el-button { position: static; }
-.quantity-section { min-width: 0; }
-.quantity-section :deep(h2) { margin-bottom: 10px; }
-.quantity-section :deep(.el-form-item__label) { margin-bottom: 4px; }
-.quantity-section :deep(.el-input-number) { width: calc(100% - 84px); }
-.quantity-section :deep(.el-input__inner) { text-align: left; }
-.quantity-unit { width: 84px; height: 32px; border: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; background: var(--erp-glass-inner-background); text-align: center; }
-.quantity-section .field-hint { margin-top: 4px; }
+.quantity-input { display: flex; width: 250px; max-width: 100%; }
+.quantity-input :deep(.el-input-number) { flex: 1; min-width: 0; width: auto; }
+.sample-create-page .quantity-input :deep(.el-input-number .el-input) { width: 100%; }
+.quantity-input :deep(.el-input__inner) { text-align: left; }
+.quantity-unit { flex: 0 0 50px; height: 32px; box-sizing: border-box; border: 1px solid token.$crm-border-subtle; color: token.$crm-text-secondary; background: var(--erp-glass-inner-background); text-align: center; }
 .product-option { display: flex; min-width: 0; align-items: center; gap: 16px; }
 .product-option-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .product-option-spec { max-width: 65%; overflow: hidden; color: token.$crm-text-secondary; font-size: 12px; font-weight: 400; text-overflow: ellipsis; }
 .application-error { padding: 24px; color: token.$crm-danger; background: token.$crm-color-surface; }
 @media (max-width: 1440px) {
-  .basic-grid { gap: 12px 16px; }
-  .product-body { grid-template-columns: 160px minmax(0, 1fr); gap: 20px; }
-  .dimensions-grid { gap: 8px; }
+  .product-fields { column-gap: 16px; }
 }
 @media (max-width: 1200px) {
   .basic-section, .product-section { height: auto; }
-  .basic-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .application-columns { grid-template-columns: 1fr; }
-  .application-aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1100px) { .basic-grid { grid-template-columns: repeat(3, minmax(0, 250px)); } }
+@media (max-width: 720px) {
+  .basic-grid { grid-template-columns: minmax(0, 250px); }
+  .sample-number-field { grid-column: auto; }
+  .sample-number-input { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
 .source-image-select { width: 100%; margin-bottom: 8px; }
 .sample-source-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-height: 60vh; overflow-y: auto; padding: 2px;

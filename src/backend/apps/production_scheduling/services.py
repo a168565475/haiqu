@@ -10,7 +10,6 @@ from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 from apps.boms.models import Bom, BomStatus
-from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.workshop_config.models import Craft, RecordStatus
 
@@ -56,7 +55,9 @@ def task_source_snapshot(task):
 
 def product_source_snapshot(product_line):
     return {
-        "product_id": str(product_line.product_id),
+        "product_id": str(product_line.product_id) if product_line.product_id else None,
+        "product_catalog_id": str(product_line.product_catalog_id) if product_line.product_catalog_id else None,
+        "product_selection_snapshot": product_line.product_selection_snapshot,
         "product_number": product_line.product_number_snapshot,
         "product_code": product_line.product_code_snapshot,
         "item_number": product_line.item_number_snapshot,
@@ -79,7 +80,7 @@ def source_revision(task, product_lines):
         "source": task_source_snapshot(task),
         "products": [
             {
-                "id": str(line.pk), "product_id": str(line.product_id), "quantity": line.quantity,
+                "id": str(line.pk), "product_id": str(line.product_id) if line.product_id else None, "quantity": line.quantity,
                 "unit_id": str(line.unit_id), "snapshot": product_source_snapshot(line),
             }
             for line in sorted(product_lines, key=lambda item: str(item.pk))
@@ -155,17 +156,6 @@ def _validated_source(production_task_id, items, expected_revision="", allowed_s
     ]
     if unverified_lines:
         raise Conflict("生产任务单内所有产品的 BOM 必须已确认后才能排产。")
-    from apps.procurement.selectors import purchase_orders_by_product, purchase_orders_with_product_ids
-    purchase_orders = list(purchase_orders_with_product_ids(
-        PurchaseOrder.objects.select_for_update(of=("self",))
-        .filter(production_task=task, archived_at__isnull=True)
-        .order_by("id")
-    ))
-    purchased_ids = purchase_orders_by_product(purchase_orders)
-    if (any(line.pk not in purchased_ids for line in all_lines)
-            or not purchase_orders
-            or any(order.status != PurchaseOrderStatus.COMPLETED for order in purchase_orders)):
-        raise Conflict("所有产品的采购订单必须为“已完成采购”后才能排产。")
     current_revision = source_revision(task, all_lines)
     accepted_revisions = {current_revision}
     if task.status == ProductionTaskStatus.IN_PRODUCTION:
@@ -334,6 +324,7 @@ def create_schedule(*, validated_data, actor_employee, request=None):
     # 一张计划一个创建事件；多车间关系由通知权限层从已保存工艺解析并按员工去重。
     register_business_event(
         event_code="PRODUCTION_PLAN_CREATED", idempotency_key=f"PRODUCTION_PLAN_CREATED:{schedule.pk}:1",
+        actor_employee=actor_employee,
         object_type="production_scheduling.ProductionSchedule", object_id=schedule.pk, object_version=1,
         context={"document_no": schedule.schedule_number, "operator": actor_employee.display_name,
                  "occurred_at": schedule.created_at.isoformat()},

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import type { InquiryItem } from '@/types/inquiry'
+import { emptyProductEntry } from '@/utils/productEntryDraft'
 import { blankProduct, decimalUnits, productAmount, quantitySummary, validateAttachment, validateProducts } from './inquiryEditorState'
 const item = (overrides: Partial<InquiryItem> = {}): InquiryItem => ({ product_description: '露营床', specification: '', color: '', material: '', quantity: '2000', unit_code: 'PCS', target_unit_price: '100', target_currency_code: 'USD', expected_date: null, product_match_status: 'PENDING', notes: '', ...overrides })
 describe('新建询盘边界', () => {
+  it('手填单位没有编码也可保存并按草稿单位名称汇总', () => {
+    const draft = { ...emptyProductEntry(), unit_name: '新单位' }
+    const typed = item({ unit_code: '', product_selection: { draft } })
+    expect(validateProducts([typed])).toBe('')
+    expect(quantitySummary([typed, { ...typed, quantity: '3' }])).toBe('2,003 新单位')
+    expect(validateProducts([{ ...typed, product_selection: { draft: { ...draft, unit_name: '' } } }])).toContain('单位不能为空')
+  })
   it('精确合计产品金额及不同单位的数量', () => {
     expect(productAmount([item()]).totals).toEqual([{ currency_code: 'USD', amount: '200000.00000000' }])
     expect(productAmount([item({ quantity: '99999999999999.9999', target_unit_price: '99999999999999.9999' })]).totals[0]?.amount).toBe('9999999999999999980000000000.00000001')

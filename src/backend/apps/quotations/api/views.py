@@ -308,6 +308,7 @@ class QuotationViewSet(
                     "container_types": tier_codes,
                     "quantity": str(line.quantity),
                     "unit_code": line.unit_code,
+                    "unit_name": line.product_selection_snapshot.get("unit_name") or line.unit_code,
                     "unit_price": str(line.unit_price),
                     "currency_code": version.currency_code,
                     "incoterm": terms.get("incoterm_label") or terms.get("incoterm_code") or "未填写",
@@ -315,12 +316,19 @@ class QuotationViewSet(
                     "status_label": version.get_status_display(),
                 })
         records.sort(key=lambda item: item["date"], reverse=True)
-        unit_codes = sorted({item["unit_code"] for item in records})
+        unit_codes = sorted({item["unit_code"] for item in records if item["unit_code"]})
+        unit_names = sorted({item["unit_name"] for item in records if item["unit_name"]})
+        unit_identities = {
+            ("code", item["unit_code"]) if item["unit_code"] else ("draft", item["unit_name"])
+            for item in records
+        }
         record_currencies = sorted({item["currency_code"] for item in records})
         calculation_warning = ""
         if len(record_currencies) > 1:
             calculation_warning = "当前筛选包含多个币种，请先选择单一币种后再计算趋势。"
-        elif len(unit_codes) > 1:
+        elif any(not item["unit_code"] and not item["unit_name"] for item in records):
+            calculation_warning = "当前筛选含尚未填写计量单位的产品，请补充单位后再计算趋势。"
+        elif len(unit_identities) > 1:
             calculation_warning = "当前筛选包含多个计量单位，请缩小到同一单位后再计算趋势。"
         prices = [] if calculation_warning else [Decimal(item["unit_price"]) for item in records]
         latest = prices[0] if prices else None
@@ -338,6 +346,7 @@ class QuotationViewSet(
             "source_label": "真实报价快照，不含订单成交、成本或市场价格",
             "calculation_warning": calculation_warning,
             "unit_codes": unit_codes,
+            "unit_names": unit_names,
             "filters": {
                 "customers": [{"value": str(item["customer_account_id"]), "label": item["customer_account__account_name"]} for item in customers],
                 "products": [{"value": item, "label": item} for item in product_options],

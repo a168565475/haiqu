@@ -69,7 +69,7 @@ export async function deleteInquiry(id: string, etag: string): Promise<{ deleted
   return dataOf<{ deleted_count: number }>(await apiClient.delete(`${path}${encodeURIComponent(id)}/`, { headers: { 'If-Match': etag } }))
 }
 export async function createInquiry(payload: InquiryCreateInput): Promise<VersionedInquiry> {
-  return versioned(await apiClient.post(path, payload))
+  return versioned(await apiClient.post(path, inquiryInput(payload)))
 }
 export async function uploadInquiryAttachment(id: string, file: File, uploadId: string, etag: string) {
   const body = new FormData()
@@ -79,7 +79,15 @@ export async function uploadInquiryAttachment(id: string, file: File, uploadId: 
   return { data: dataOf<import('@/types/inquiry').InquiryFile>(response), etag: typeof response.headers.etag === 'string' ? response.headers.etag : null }
 }
 export async function saveInquiryDraft(id: string, payload: InquiryDraftInput, etag: string): Promise<VersionedInquiry> {
-  return versioned(await apiClient.patch(`${path}${encodeURIComponent(id)}/draft/`, payload, { headers: { 'If-Match': etag } }))
+  return versioned(await apiClient.patch(`${path}${encodeURIComponent(id)}/draft/`, inquiryInput(payload), { headers: { 'If-Match': etag } }))
+}
+function inquiryInput(payload: InquiryDraftInput) {
+  if (!payload.items) return payload
+  return { ...payload, items: payload.items.map(({ product_selection_snapshot: _snapshot, product_selection, ...item }) => ({
+    ...item,
+    ...(item.product_catalog_id || product_selection?.draft ? { product_id: null, product_category_id: null, product_color_id: null } : {}),
+    ...(product_selection ? { product_selection } : {}),
+  })) }
 }
 export async function submitInquiry(id: string, etag: string): Promise<VersionedInquiry> {
   return versioned(await apiClient.post(`${path}${encodeURIComponent(id)}/submit/`, {}, { headers: { 'If-Match': etag } }))

@@ -36,6 +36,15 @@ def positive_integer(value, field, *, allow_zero=False):
     return int(decimal_quantity(value, field, places=0, max_digits=14, allow_zero=allow_zero))
 
 
+def packaging_quantity(*, units_per_box, order_quantity):
+    box = positive_integer(units_per_box, "units_per_box")
+    order = decimal_quantity(order_quantity, "order_quantity", allow_zero=True)
+    with localcontext() as context:
+        context.prec = 64
+        quantity = (order / box).to_integral_value(rounding=ROUND_CEILING)
+    return positive_integer(quantity, "packaging_quantity", allow_zero=True)
+
+
 def cutting_quantity_plan(*, cutting_pieces_per_set=None, cutting_sets_per_product=None, order_quantity):
     """裁片只计算套数与片数；两项全空保留旧记录，不从历史耗米猜数量。"""
     values = (cutting_pieces_per_set, cutting_sets_per_product)

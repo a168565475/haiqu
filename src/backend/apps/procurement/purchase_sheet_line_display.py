@@ -16,6 +16,20 @@ def purchase_sheet_line_display(line, *, sample_source=False):
     remark = _text(line.get("remark"))
     attributes = [f"材质：{material}"] if material else []
     colors = [remark] if sample_source and remark else []
+    selected = line.get("material_selection_snapshot")
+    if line.get("material_catalog_id") and isinstance(selected, dict):
+        from apps.material_catalog.saved_selection import validate_saved_material
+        from apps.material_catalog.definitions import TEMPLATES, SPRAY_FIELDS
+        selected = validate_saved_material(selected, material_catalog_id=line["material_catalog_id"])
+        labels = {field["key"]: field["label"] for field in [*TEMPLATES[selected["template_key"]]["fields"], *SPRAY_FIELDS]}
+        for key, value in selected["attributes"].items():
+            if key == "color":
+                colors.append(value)
+            elif key != "material":
+                attributes.append(f"{labels.get(key, key)}：{value}")
+        if remark and not sample_source:
+            attributes.append(f"要求：{remark}")
+        return {"specification": specification, "attributes": "；".join(attributes), "color": " / ".join(dict.fromkeys(colors))}
     snapshot = line.get("material_attributes_snapshot")
     snapshot = snapshot if isinstance(snapshot, dict) else {}
     fields = snapshot.get("fields")

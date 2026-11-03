@@ -16,6 +16,7 @@ from apps.outsourcing.models import (
     TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingOrder, TubeOutsourcingReceipt,
 )
 from apps.outsourcing.selectors import accessible_outsourcing_orders
+from apps.outsourcing.plan_selectors import plan_quantities
 from apps.outsourcing.tube_kinds import output_unit
 from apps.outsourcing.tube_prices import line_price_data
 from apps.outsourcing.tube_selectors import saved_orders_for_permission
@@ -181,12 +182,28 @@ def _projected_records(request, orders, task_ids, product_ids):
 
 
 def _tube_records(orders, product_ids):
-    orders = list(orders.filter(product_line_id__in=product_ids).select_related("craft").prefetch_related(
-        Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id"), to_attr="detail_lines"),
+    orders = list(orders.filter(product_line_id__in=product_ids, plan__isnull=True).select_related("craft").prefetch_related(
+        Prefetch("lines", queryset=TubeOutsourcingLine.objects.order_by("created_at", "id")),
         Prefetch("actions", queryset=TubeOutsourcingAction.objects.all(), to_attr="detail_actions")))
+    plans = [order for order in orders if order.is_plan]
+    quantities = plan_quantities(plans) if plans else {}
     receipts = {row.order_id: row for row in TubeOutsourcingReceipt.objects.filter(order__in=orders).prefetch_related("lines")}
     result = []
     for order in orders:
+        order.detail_lines = list(order.lines.all())
+        if order.is_plan:
+            for line in order.detail_lines:
+                values = quantities[str(order.pk)]["lines"][str(line.pk)]
+                unit = output_unit(order.source_kind)
+                record = _record(order, "TUBE", identity=line.pk, part_name=line.snapshot.get("part_name", ""),
+                    factory_name=line.snapshot.get("factory_name", ""), unit=unit, quantity=line.quantity,
+                    price=line.unit_price, access="TUBE")
+                record.update(**line_price_data(line), is_plan=True, expected_return_date=order.expected_return_date,
+                    bom_quantity=values["bom_quantity"], dispatched_quantity=values["dispatched_quantity"],
+                    dispatched_unit=unit, received_quantity=values["received_quantity"],
+                    reason="总单累计收发；进度按BOM目标，入库不配对外发批次。")
+                result.append((order.product_line_id, record))
+            continue
         actions = {row.kind: row for row in order.detail_actions}
         dispatch = actions.get("DISPATCH")
         valid_dispatch = (bool(order.detail_lines) and dispatch is not None and "CANCEL" not in actions

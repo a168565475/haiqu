@@ -431,8 +431,8 @@ class ProductionUnit(ProtectedReferenceModel):
 
 
 class ProductColor(ProtectedReferenceModel):
-    color_card = models.CharField(max_length=100)
-    color_code = models.CharField(max_length=100)
+    color_card = models.CharField(max_length=100, blank=True)
+    color_code = models.CharField(max_length=100, blank=True)
     color_name = models.CharField(max_length=200)
     image_file = models.ForeignKey(
         "files.BusinessFile",
@@ -620,6 +620,31 @@ class TubeShape(PinyinSearchModelMixin, ProtectedReferenceModel):
         return self.shape_name
 
 
+class TubeCalculationFormula(TimeStampedModel):
+    class Group(models.TextChoices):
+        ROUND = "ROUND", "圆管"
+        RECTANGULAR = "RECTANGULAR", "方管 / 矩形管"
+        OVAL = "OVAL", "椭圆管 / 扁圆管"
+
+    group_key = models.CharField(max_length=20, choices=Group.choices, unique=True)
+    area_expression = models.CharField(max_length=500)
+    weight_expression = models.CharField(max_length=500)
+
+    class Meta:
+        db_table = "reference_tube_calculation_formula"
+        ordering = ["group_key"]
+        default_permissions = ()
+        constraints = [
+            models.CheckConstraint(condition=Q(group_key__in=["ROUND", "RECTANGULAR", "OVAL"]), name="tube_formula_group_valid"),
+        ]
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("管材计算公式是固定配置，不允许删除。")
+
+    def __str__(self):
+        return self.get_group_key_display()
+
+
 class TubeCoatingColor(ProtectedReferenceModel):
     color_name = models.CharField(max_length=200, unique=True)
     sort_order = models.PositiveIntegerField(default=0)
@@ -722,6 +747,41 @@ class AccessoryMaterial(ProtectedReferenceModel):
 
     def __str__(self):
         return self.material_name
+
+
+class MaterialAttributePublicValue(ProtectedReferenceModel):
+    category_key = models.CharField(max_length=30)
+    template_key = models.CharField(max_length=30)
+    scope = models.CharField(max_length=10)
+    field_key = models.CharField(max_length=40)
+    value = models.CharField(max_length=300)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "reference_material_attribute_value"
+        ordering = ["sort_order", "value", "id"]
+        default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(fields=["category_key", "template_key", "scope", "field_key", "value"], name="ref_material_attribute_unique"),
+            models.CheckConstraint(condition=Q(scope__in=["BASE", "SPRAY"]), name="ref_material_attribute_scope"),
+            models.CheckConstraint(condition=~Q(value=""), name="ref_material_attribute_nonempty"),
+            models.CheckConstraint(condition=Q(status__in=ReferenceStatus.values), name="ref_material_attribute_status"),
+        ]
+
+
+class TubeShapeDimension(ProtectedReferenceModel):
+    shape = models.ForeignKey(TubeShape, on_delete=models.PROTECT, related_name="size_options")
+    diameter = models.ForeignKey(TubeDiameter, on_delete=models.PROTECT, related_name="shape_options")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "reference_tube_shape_dimension"
+        ordering = ["sort_order", "shape__shape_name", "diameter__diameter_value", "id"]
+        default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(fields=["shape", "diameter"], name="ref_tube_shape_dimension_unique"),
+            models.CheckConstraint(condition=Q(status__in=ReferenceStatus.values), name="ref_tube_shape_dimension_status"),
+        ]
 
 
 class NumberRule(ProtectedReferenceModel):

@@ -1,3 +1,4 @@
+from .catalog_materials import bom_catalog_fields, purchase_catalog_selection, physical_pipe_quantity, priced_quantity
 from .pipe_purchase import PIPE_PURCHASE_FIELDS, is_sample_total_meter_snapshot, pipe_source_snapshot, purchase_pipe_values, validate_pipe_purchase_source
 import hashlib
 import json
@@ -12,6 +13,7 @@ from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.boms.models import Bom, BomLine, BomSectionType, BomStatus
+from apps.boms.material_flow_calculations import MaterialFlowValueError, packaging_quantity
 from apps.core.api.concurrency import require_matching_etag
 from apps.core.api.exceptions import Conflict
 from apps.core.audit import write_audit_log
@@ -223,6 +225,16 @@ def _derived_quantity(line, bom, field_name):
 
 def _source_quantity(line, bom):
     section_type = line.section.section_type
+    if line.section.title.strip() == "包材类":
+        units_per_box = str((line.raw_values or {}).get("units_per_box", "")).strip()
+        try:
+            quantity = packaging_quantity(units_per_box=units_per_box, order_quantity=bom.order_quantity)
+        except MaterialFlowValueError:
+            status = PurchaseQuantityParseStatus.INVALID if units_per_box else PurchaseQuantityParseStatus.MISSING
+            return None, "units_per_box", units_per_box, line.unit, status
+        return Decimal(quantity), "units_per_box", units_per_box, line.unit, PurchaseQuantityParseStatus.READY
+    if line.material_catalog_id and line.section.title.strip() == "面料类" and line.unit != "米":
+        return None, "unit_consumption", "", line.unit, PurchaseQuantityParseStatus.MISSING
     if section_type == BomSectionType.PROFILE:
         try:
             snapshot = pipe_source_snapshot(line)
@@ -286,6 +298,7 @@ def _source_line(bom, section, line, product):
     required_quantity, source_field, source_text, source_unit, parse_status = _source_quantity(line, bom)
     suggested_category, confidence = _supplier_category_suggestion(line)
     return {
+        **bom_catalog_fields(line),
         "bom_id": str(bom.pk),
         "bom_number": bom.bom_number,
         "bom_status": bom.status,
@@ -442,6 +455,10 @@ def _bom_source_details(product, bom):
             for line in section.lines.all():
                 source_line = _source_line(bom, section, line, product)
                 source_lines.append(source_line)
+                if line.material_catalog_id:
+                    if source_line["quantity_parse_status"] != "READY":
+                        identity_errors.append({"bom_line_id": str(line.pk), "reason": "MATERIAL_QUANTITY_REQUIRED"})
+                    continue
                 material, source_key = resolve_bom_line_raw_material(
                     line,
                     cache=identity_cache,
@@ -511,7 +528,7 @@ def _bom_option(product, bom, blockers, line_count, global_blockers):
         "product_name": product.product_name_snapshot,
         "product_color": product.color_name_snapshot,
         "order_quantity": str(product.quantity),
-        "unit_name": product.unit.unit_name,
+        "unit_name": product.unit_name,
         "bom_id": str(bom.pk) if bom else None,
         "bom_number": bom.bom_number if bom else "",
         "bom_status": bom.status if bom else "MISSING",
@@ -538,6 +555,12 @@ def evaluate_purchase_source(task, bom_id=None):
     if orders is None:
         orders = purchase_orders_with_product_ids(PurchaseOrder.objects.filter(production_task=task))
     existing_by_product = purchase_orders_by_product(orders)
+    from .models import PurchaseGroup
+    existing_groups = {
+        group.product_line_id_snapshot: group for group in PurchaseGroup.objects.filter(
+            production_task=task, archived_at__isnull=True,
+        )
+    }
     if None in existing_by_product:
         global_blockers.append(
             _blocker(
@@ -567,6 +590,20 @@ def evaluate_purchase_source(task, bom_id=None):
                 existing_purchase_order_id=str(existing.pk),
                 existing_purchase_order_number=existing.order_number,
             ))
+        elif product.pk in existing_groups:
+            group = existing_groups[product.pk]
+            # 旧第一批无下游删除后，来源完全未变时沿用原总单重建，不生成第二份建议量。
+            can_reconnect = (
+                latest_bom is not None and group.source_bom_id_snapshot == latest_bom.pk
+                and group.source_revision == _purchase_source_revision(task, [product])
+                and not group.compatibility_issues and not group.batches.exists()
+                and not group.lines.exclude(compatibility_issues=[]).exists()
+            )
+            if not can_reconnect:
+                bom_blockers.append(_blocker(
+                    "PURCHASE_GROUP_EXISTS", "该产品已有采购总单，请在总单中新增批次。", product=product, bom=latest_bom,
+                    existing_purchase_group_id=str(group.pk), existing_purchase_group_number=group.group_number,
+                ))
         unavailable_blockers.extend(bom_blockers)
         option = _bom_option(product, latest_bom, bom_blockers, len(bom_lines), global_blockers)
         bom_options.append(option)
@@ -652,6 +689,9 @@ def purchase_order_audit_context(order):
 
 def purchase_order_snapshot(order):
     return {
+        "purchase_group_id": str(order.purchase_group_id) if order.purchase_group_id else None,
+        "batch_number": order.batch_number,
+        "batch_type": order.batch_type,
         "order_number": order.order_number,
         "production_task_id": str(order.production_task_id) if order.production_task_id else None,
         "source_type": order.source_type,
@@ -785,14 +825,16 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         pipe_values = {}
         if source_line["section_type"] == "PROFILE":
             pipe_values = purchase_pipe_values(pipe_source_snapshot(source_line["_bom_line"]), input_line)
-            quantity = pipe_values["actual_purchase_meters"]
+            quantity = physical_pipe_quantity(pipe_values["calculation_snapshot"], input_line, pipe_values)
         else:
             pipe_values["calculation_snapshot"] = build_purchase_material_snapshot(source_line["_bom_line"])
         unit_price = input_line.get("unit_price")
-        amount = _money(quantity * unit_price) if quantity is not None and unit_price is not None else None
+        price_quantity = priced_quantity(section_type=source_line["section_type"], material_catalog_id=source_line["material_catalog_id"], physical_quantity=quantity, pipe_values=pipe_values)
+        amount = _money(price_quantity * unit_price) if price_quantity is not None and quantity is not None and unit_price is not None else None
         amounts.append(amount)
         PurchaseOrderLine.objects.create(
             purchase_order=order,
+            **bom_catalog_fields(source_line["_bom_line"]),
             **pipe_values,
             line_number=line_number,
             bom=source_line["_bom"],
@@ -832,6 +874,8 @@ def create_purchase_order(*, validated_data, allowed_task_ids, actor_employee, r
         order.total_amount = _money(sum(amounts, Decimal("0")))
         order.save(update_fields=["total_amount", "updated_at"])
 
+    from .group_services import attach_purchase_order_group
+    attach_purchase_order_group(order)
     order = purchase_orders_with_context().get(pk=order.pk)
     write_audit_log(
         object_type="PURCHASE_ORDER",
@@ -936,16 +980,17 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         supplier = suppliers.get(str(supplier_id)) if supplier_id else None
         quantity = submitted.get("actual_purchase_quantity")
         from .reset_sources import refresh_reset_purchase_source
-        reset_source_fields = refresh_reset_purchase_source(line)
+        reset_source_fields = [] if order.batch_request_id else refresh_reset_purchase_source(line)
         validate_pipe_purchase_source(line)
         if line.raw_bar_length_m or is_sample_total_meter_snapshot(line.calculation_snapshot):
             pipe_input = {**submitted, 'quantity_difference_reason': submitted.get('quantity_difference_reason', line.quantity_difference_reason)}
             pipe_values = purchase_pipe_values(line.calculation_snapshot, pipe_input)
             for key, value in pipe_values.items():
                 setattr(line, key, value)
-            quantity = pipe_values["actual_purchase_meters"]
+            quantity = physical_pipe_quantity(line.calculation_snapshot, submitted, pipe_values)
         unit_price = submitted.get("unit_price")
-        amount = _money(quantity * unit_price) if quantity is not None and unit_price is not None else None
+        price_quantity = line.actual_purchase_meters if line.material_catalog_id and line.section_type_snapshot == "PROFILE" else quantity
+        amount = _money(price_quantity * unit_price) if price_quantity is not None and quantity is not None and unit_price is not None else None
         line.supplier = supplier
         line.supplier_number_snapshot = supplier.supplier_number if supplier else ""
         line.supplier_name_snapshot = supplier.supplier_name if supplier else ""
@@ -973,6 +1018,10 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
 
     if "is_mailed" in validated_data:
         order.is_mailed = validated_data["is_mailed"]
+    if "batch_type" in validated_data:
+        if not order.purchase_group_id or order.source_type != "PRODUCTION":
+            raise ValidationError({"batch_type": "只有生产采购总单的批次可以设置采购类型。"})
+        order.batch_type = validated_data["batch_type"]
     order.total_amount = (
         _money(sum(amounts, Decimal("0")))
         if order.currency_id and amounts and all(amount is not None for amount in amounts)
@@ -982,7 +1031,7 @@ def update_purchase_order(*, order_id, validated_data, allowed_task_ids, actor_e
         errors = _purchase_order_confirmation_errors(order, lines)
         if errors:
             raise ValidationError({"lines": errors})
-    order.save(update_fields=["is_mailed", "total_amount", "updated_at"])
+    order.save(update_fields=["is_mailed", "batch_type", "total_amount", "updated_at"])
     updated = purchase_orders_with_context().get(pk=order.pk)
     write_audit_log(
         object_type="PURCHASE_ORDER",
@@ -1040,6 +1089,7 @@ def confirm_purchase_order(*, order_id, allowed_task_ids, actor_employee, reques
 
 @transaction.atomic
 def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request=None):
+    _lock_purchase_task(order_id)
     order = (
         PurchaseOrder.objects.select_for_update(of=("self",))
         .filter(
@@ -1076,6 +1126,22 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
     )
     if any(sheet.purchase_request_allocations.exists() for sheet in sheets):
         raise Conflict("该采购订单生成的供应商采购表已关联采购申请分配，不能删除。")
+
+    if order.batch_request_id:
+        # 新批次保留幂等请求和序号，避免删除后重放同一请求重新下单。
+        require_matching_etag(request, order)
+        now = timezone.now()
+        order.archived_at = now
+        order.archived_by_employee = actor_employee
+        order.archive_reason = "删除未入库采购批次"
+        order.save(update_fields=["archived_at", "archived_by_employee", "archive_reason", "updated_at"])
+        SupplierPurchaseSheet.objects.filter(pk__in=[sheet.pk for sheet in sheets]).update(
+            archived_at=now, archived_by_employee=actor_employee, archive_reason="采购批次已删除", updated_at=now,
+        )
+        order.purchase_group.save(update_fields=["updated_at"])
+        write_audit_log(object_type="PURCHASE_ORDER", object_id=order.pk, **purchase_order_audit_context(order),
+                        action="ARCHIVED", actor_employee=actor_employee, before_data=before, request=request)
+        return
 
     sheet_ids = [sheet.pk for sheet in sheets]
     business_file_ids = {sheet.pdf_file_id for sheet in sheets if sheet.pdf_file_id}
@@ -1147,6 +1213,9 @@ def delete_purchase_order(*, order_id, allowed_task_ids, actor_employee, request
     from apps.samples.models import SampleMaterialPurchaseSource
     SampleMaterialPurchaseSource.objects.filter(purchase_order_line__purchase_order=order).delete()
     order.delete()
+    if order.purchase_group_id:
+        from .models import PurchaseGroup
+        PurchaseGroup.objects.filter(pk=order.purchase_group_id).update(updated_at=timezone.now())
     write_audit_log(
         object_type="PURCHASE_ORDER",
         object_id=order_id_value,

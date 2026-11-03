@@ -13,12 +13,72 @@ class StrictSerializer(serializers.Serializer):
         return super().to_internal_value(data)
 
 
+class ProductOptionListField(serializers.ListField):
+    def to_internal_value(self, data):
+        if not isinstance(data, list) or any(not isinstance(value, str) for value in data):
+            raise serializers.ValidationError("选项必须是文字列表。")
+        values = super().to_internal_value(data)
+        if len(set(values)) != len(values):
+            raise serializers.ValidationError("同一产品的选项不能重复。")
+        return values
+
+
 class ProductFieldsSerializer(StrictSerializer):
     product_code = serializers.CharField(max_length=100, allow_blank=True, trim_whitespace=False, required=False)
     item_number = serializers.CharField(max_length=100, allow_blank=True, trim_whitespace=False, required=False)
     specification = serializers.CharField(max_length=300, allow_blank=True, trim_whitespace=False, required=False)
     unit = serializers.CharField(max_length=80, allow_blank=True, trim_whitespace=False, required=False)
     scale = serializers.CharField(max_length=100, allow_blank=True, trim_whitespace=False, required=False)
+    materials = ProductOptionListField(child=serializers.CharField(max_length=200), max_length=500, required=False)
+    thicknesses = ProductOptionListField(child=serializers.CharField(max_length=80), max_length=500, required=False)
+
+
+class ProductEntryDraftSerializer(StrictSerializer):
+    category_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    category_name = serializers.CharField(max_length=150)
+    name_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    name = serializers.CharField(max_length=200)
+    item_number = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    specification = serializers.CharField(max_length=300, allow_blank=True)
+    product_code = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    unit_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    unit_name = serializers.CharField(max_length=80, allow_blank=True)
+    color_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    color_name = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    material = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
+    sources = serializers.DictField(child=serializers.ChoiceField(choices=("selected", "typed")))
+
+    def validate_sources(self, values):
+        fields = {"category_name", "name", "item_number", "specification", "product_code", "unit_name", "color_name", "material"}
+        if set(values) != fields:
+            raise serializers.ValidationError("必须逐项记录类别、品名、货号、规格、编码、单位、颜色和材质的填写来源。")
+        return values
+
+
+class ProductSelectionSerializer(StrictSerializer):
+    catalog_version = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    color_id = serializers.UUIDField(required=False, allow_null=True)
+    material = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    thickness = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    draft = ProductEntryDraftSerializer(required=False)
+
+    def validate(self, attrs):
+        if "draft" not in attrs and not attrs.get("catalog_version"):
+            raise serializers.ValidationError({"catalog_version": "请选择产品版本。"})
+        return attrs
+
+    def validate_catalog_version(self, value):
+        from django.utils.dateparse import parse_datetime
+
+        if not value:
+            return value
+        try:
+            parsed = parse_datetime(value)
+        except ValueError:
+            parsed = None
+        if parsed is None or parsed.tzinfo is None:
+            raise serializers.ValidationError("产品版本必须是包含时区的时间字符串。")
+        return value
 
 
 class ProductCreateSerializer(ProductFieldsSerializer):
@@ -53,6 +113,34 @@ class NamePatchSerializer(StrictSerializer):
 
 class ColorCreateSerializer(StrictSerializer):
     value = serializers.CharField(max_length=200)
+
+
+class EditorProductSerializer(ProductFieldsSerializer):
+    id = serializers.UUIDField(required=False)
+    colors = ProductOptionListField(child=serializers.CharField(max_length=200), max_length=500, required=False)
+
+
+class EditorSaveSerializer(NamePatchSerializer):
+    products = EditorProductSerializer(many=True, required=False, default=list)
+    delete_product_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+
+    def validate(self, attrs):
+        ids = [row["id"] for row in attrs["products"] if "id" in row]
+        deleted = attrs["delete_product_ids"]
+        if len(ids) != len(set(ids)) or len(deleted) != len(set(deleted)):
+            raise serializers.ValidationError("同一产品不能重复提交。")
+        if set(ids) & set(deleted):
+            raise serializers.ValidationError("同一产品不能同时修改和删除。")
+        return attrs
+
+
+class EditorCreateSerializer(NameCreateSerializer):
+    products = EditorProductSerializer(many=True, required=False, default=list)
+
+    def validate_products(self, values):
+        if any("id" in row for row in values):
+            raise serializers.ValidationError("新增品名不能携带已有产品。")
+        return values
 
 
 class NameListQuerySerializer(serializers.Serializer):
@@ -118,6 +206,8 @@ class ProductSummarySerializer(serializers.Serializer):
     unit = serializers.CharField(allow_blank=True)
     scale = serializers.CharField(allow_blank=True)
     colors = ColorSerializer(many=True)
+    materials = serializers.ListField(child=serializers.CharField())
+    thicknesses = serializers.ListField(child=serializers.CharField())
     updated_at = serializers.DateTimeField()
 
 
@@ -134,8 +224,51 @@ class ProductDetailSerializer(ProductSummarySerializer):
     source = ProductSourceSerializer(allow_null=True)
 
 
+class ProductSelectionOptionSerializer(ProductSummarySerializer):
+    catalog_version = serializers.CharField()
+    unit_id = serializers.UUIDField(allow_null=True)
+    unit_code = serializers.CharField(allow_blank=True)
+
+
+class ProductSelectionNameSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    category_id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ProductSelectionCategorySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class ProductSelectionUnitSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    unit_name = serializers.CharField()
+    unit_code = serializers.CharField()
+
+
+class ProductSelectionOptionsSerializer(serializers.Serializer):
+    categories = ProductSelectionCategorySerializer(many=True)
+    names = ProductSelectionNameSerializer(many=True)
+    products = ProductSelectionOptionSerializer(many=True)
+    units = ProductSelectionUnitSerializer(many=True)
+
+
+class ProductSelectionOptionsResponseSerializer(serializers.Serializer):
+    data = ProductSelectionOptionsSerializer()
+
+
 class ProductDetailResponseSerializer(serializers.Serializer):
     data = ProductDetailSerializer()
+
+
+class EditorDetailSerializer(serializers.Serializer):
+    name = NameDetailSerializer()
+    products = ProductSummarySerializer(many=True)
+
+
+class EditorResponseSerializer(serializers.Serializer):
+    data = EditorDetailSerializer()
 
 
 class PageMetaSerializer(serializers.Serializer):

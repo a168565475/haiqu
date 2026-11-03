@@ -33,13 +33,14 @@ const loaders: Record<SystemSettingsKey, () => Promise<{ default: Component }>> 
   theme: () => import('./ThemeSettingsView.vue'),
   parameters: () => import('./ReferenceDataSettingsView.vue'),
   wecom: () => import('./WeComSettingsView.vue'),
+  codex: () => import('./CodexConnectionSettingsView.vue'),
   access: () => import('./AccessManagementView.vue'),
   dictionary: () => import('./ReferenceDataSettingsView.vue'),
 }
 const pageProps = computed(() => {
   const key = activeEntry.value?.key
   if (key === 'parameters' || key === 'dictionary') return { section: key }
-  if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'access', 'wecom'].includes(key || '')) return { embedded: true }
+  if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'access', 'wecom', 'codex'].includes(key || '')) return { embedded: true }
   return {}
 })
 
@@ -70,7 +71,7 @@ async function openSetting(entry: SystemSettingsEntry) {
   }
   checking.value = true
   try {
-    await auth.ensureFreshAuthentication()
+    await auth.ensureAuthentication()
     if (disposed) return
     if (!auth.isAuthenticated) {
       await router.replace({ name: 'login', query: { redirect: '/settings' } })

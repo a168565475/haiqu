@@ -158,6 +158,9 @@ def credit_material_stock(
 
 
 def credit_confirmed_inbound_line(*, line, actor_employee):
+    if line.material_catalog_id:
+        from .catalog_receipts import credit_catalog_inbound
+        return credit_catalog_inbound(line=line, actor_employee=actor_employee)
     from .public_stock_mode import require_document_stock_mode
     if line.measurement_kind == 'PIPE':
         from .pipe_stock_services import credit_pipe_inbound
@@ -346,6 +349,8 @@ def debit_material_stock(
         )
         .order_by("zone_id", "id")
     )
+    if source_type == "MATERIAL_ISSUE":
+        balance_query = balance_query.filter(zone__warehouse__warehouse_type="MATERIAL")
     if zone is not None:
         balance_query = balance_query.filter(zone=zone)
     balances = list(balance_query)

@@ -7,12 +7,6 @@ function source(file: string): string {
 }
 
 describe('业务窗口外壳统一', () => {
-  it('辅料资料新增使用 AppWindowDialog', () => {
-    const content = source('AuxiliaryReferenceCreateDialog.vue')
-    expect(content).toContain("import AppWindowDialog from '@/components/common/AppWindowDialog.vue'")
-    expect(content).not.toMatch(/<ElDialog\b/)
-  })
-
   it('生产任务产品替换使用 AppWindowDialog', () => {
     const content = source('production/ProductionTaskProductUpdateDialog.vue')
     expect(content).toContain("import AppWindowDialog from '@/components/common/AppWindowDialog.vue'")

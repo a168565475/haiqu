@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElTooltip } from 'element-plus'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -33,6 +33,25 @@ beforeEach(() => {
 })
 
 describe('样品用料需求详情', () => {
+  it('保留用料表格列，整行经过时显示保存的规格厚度材质颜色，移出收起', async () => {
+    api.fetchMaterials.mockResolvedValueOnce({ available: true, canEdit: false, draft: { lines: [], notes: '' }, etag: 'v1',
+      progress: { ...progress, lines: [{ ...progress.lines[0], material_selection_snapshot: {
+        schema_version: 1, name: '圆管', template_key: 'TUBE', unit_name: '根',
+        attributes: { section_size: '25', thickness: '1.2', material: '铝合金6063', color: '哑黑' },
+      } }] } })
+    const wrapper = mount(MaterialDetailPage, { attachTo: document.body, global: { plugins: [ElementPlus, createPinia()] } })
+    try {
+      await flushPromises()
+      expect(wrapper.findAll('th').map(cell => cell.text())).not.toContain('厚度')
+      await wrapper.get('.material-detail-table tbody tr').trigger('mouseenter')
+      await flushPromises()
+      expect(wrapper.getComponent(ElTooltip).props('visible')).toBe(true)
+      const attributes = document.querySelector('.material-attribute-tooltip')?.textContent || ''
+      for (const value of ['规格25', '厚度1.2', '材质铝合金6063', '颜色哑黑']) expect(attributes).toContain(value)
+      await wrapper.get('.material-detail-table tbody tr').trigger('mouseleave')
+      expect(wrapper.getComponent(ElTooltip).props('visible')).toBe(false)
+    } finally { wrapper.unmount() }
+  })
   it('采购缺料身份使用窄接口，保留原页面并且不请求整份样品资料', async () => {
     const pinia = createPinia()
     useAuthStore(pinia).user = { id: 1, username: 'buyer', display_name: '采购员', is_superuser: false, employee: null,

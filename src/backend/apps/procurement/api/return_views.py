@@ -18,6 +18,8 @@ from ..models import PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus
 
 
 class PurchaseReturnLineSerializer(serializers.ModelSerializer):
+    material_catalog_id = serializers.UUIDField(source="inbound_line.material_catalog_id", read_only=True, allow_null=True)
+    material_selection_snapshot = serializers.JSONField(source="inbound_line.material_selection_snapshot", read_only=True)
     return_bar_count = serializers.IntegerField(source='inbound_line.return_bar_count', read_only=True, allow_null=True)
     raw_bar_length_m = serializers.DecimalField(source='inbound_line.raw_bar_length_m', max_digits=18, decimal_places=2, read_only=True, allow_null=True)
     purchase_order_line_id = serializers.UUIDField(source="inbound_line.purchase_order_line_id", read_only=True)
@@ -32,7 +34,7 @@ class PurchaseReturnLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PurchaseReturnLine
-        fields = ["id", "inbound_line_id", "purchase_order_line_id", "product_name", "material", "part_name", "specification", "material_attributes_snapshot", "color", "unit", "quantity", "quality_remark", "return_bar_count", "raw_bar_length_m"]
+        fields = ["id", "inbound_line_id", "purchase_order_line_id", "product_name", "material", "part_name", "specification", "material_attributes_snapshot", "material_catalog_id", "material_selection_snapshot", "color", "unit", "quantity", "quality_remark", "return_bar_count", "raw_bar_length_m"]
         read_only_fields = fields
 
     def get_color(self, obj):
@@ -61,7 +63,6 @@ class PurchaseReturnSerializer(serializers.ModelSerializer):
 
     def get_return_amount(self, instance) -> str | None:
         return purchase_return_amount(instance)
-
 
 class PurchaseReturnViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated, HasActiveEmployee, BusinessActionPermission]

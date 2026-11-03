@@ -104,6 +104,20 @@ def _estimated_line_amount(line):
         ))
 
 
+def _estimated_scheme_total(lines):
+    with localcontext() as context:
+        context.prec = 48
+        total = Decimal("0.0000")
+        for line in lines:
+            if line.status != WageSchemeLineStatus.ACTIVE:
+                continue
+            amount = _estimated_line_amount(line)
+            if amount is None:
+                return None
+            total += Decimal(amount)
+        return str(total)
+
+
 def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
     line_metrics = line_metrics or {}
     lines = []
@@ -191,6 +205,7 @@ def wage_scheme_data(scheme, *, detail=True, line_metrics=None):
         "remark": scheme.remark,
         "line_count": len(lines) if detail else scheme.lines.count(),
         "declared_total": str(sum((line.declared_price for line in scheme.lines.all() if line.status == WageSchemeLineStatus.ACTIVE), Decimal("0"))),
+        "estimated_total": _estimated_scheme_total(scheme.lines.all()),
         "lines": lines,
         "events": events,
         "approved_by": scheme.approved_by_employee.display_name if scheme.approved_by_employee_id else None,

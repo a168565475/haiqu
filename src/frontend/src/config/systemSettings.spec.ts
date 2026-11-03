@@ -18,6 +18,16 @@ beforeEach(() => {
 })
 
 describe('系统配置卡片访问范围', () => {
+  it('Codex连接仅允许独立管理权限，不借用企微或普通生产权限', () => {
+    const auth = useAuthStore()
+    expect(available()).not.toContain('codex')
+    grantManagement('access_control.manage_wecom')
+    expect(available()).not.toContain('codex')
+    grantManagement('access_control.manage_codex_connection')
+    expect(available()).toContain('codex')
+    auth.user!.employee!.status = 'INACTIVE'
+    expect(available()).not.toContain('codex')
+  })
   it('普通在职员工可管理自己的邮件和主题，不依赖字典权限', () => {
     expect(available()).toEqual(['email', 'theme'])
     useAuthStore().user!.employee = null

@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Haiqu production task extraction v1 - proposal, not model-validated",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1"
+      ]
+    },
+    "candidate_key": {
+      "type": "string"
+    },
+    "fields": {
+      "type": "object",
+      "properties": {
+        "task_number_original": {
+          "$ref": "#/$defs/textField"
+        },
+        "task_number_suggestion": {
+          "$ref": "#/$defs/textField"
+        },
+        "customer_contract_number": {
+          "$ref": "#/$defs/textField"
+        },
+        "preparer_text": {
+          "$ref": "#/$defs/textField"
+        },
+        "order_date": {
+          "$ref": "#/$defs/textField"
+        },
+        "delivery_date": {
+          "$ref": "#/$defs/textField"
+        },
+        "salesperson_text": {
+          "$ref": "#/$defs/textField"
+        },
+        "followers_text": {
+          "$ref": "#/$defs/textField"
+        },
+        "includes_tax": {
+          "$ref": "#/$defs/booleanField"
+        },
+        "tax_rate": {
+          "$ref": "#/$defs/textField"
+        },
+        "order_tolerance_percent": {
+          "$ref": "#/$defs/textField"
+        },
+        "is_repeat_order": {
+          "$ref": "#/$defs/booleanField"
+        },
+        "preproduction_sample_required": {
+          "$ref": "#/$defs/booleanField"
+        },
+        "delivery_method": {
+          "$ref": "#/$defs/textField"
+        }
+      },
+      "required": [
+        "task_number_original",
+        "task_number_suggestion",
+        "customer_contract_number",
+        "preparer_text",
+        "order_date",
+        "delivery_date",
+        "salesperson_text",
+        "followers_text",
+        "includes_tax",
+        "tax_rate",
+        "order_tolerance_percent",
+        "is_repeat_order",
+        "preproduction_sample_required",
+        "delivery_method"
+      ],
+      "additionalProperties": false
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "line_key": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "object",
+            "properties": {
+              "product_name": {
+                "$ref": "#/$defs/textField"
+              },
+              "specification": {
+                "$ref": "#/$defs/textField"
+              },
+              "color": {
+                "$ref": "#/$defs/textField"
+              },
+              "material": {
+                "$ref": "#/$defs/textField"
+              },
+              "quantity": {
+                "$ref": "#/$defs/textField"
+              },
+              "unit_text": {
+                "$ref": "#/$defs/textField"
+              },
+              "unit_price_cny": {
+                "$ref": "#/$defs/textField"
+              },
+              "production_requirements": {
+                "$ref": "#/$defs/textField"
+              },
+              "packaging_requirements": {
+                "$ref": "#/$defs/textField"
+              },
+              "product_identifier_original": {
+                "$ref": "#/$defs/textField"
+              },
+              "product_identifier_kind": {
+                "$ref": "#/$defs/textField"
+              },
+              "unit_price_original": {
+                "$ref": "#/$defs/textField"
+              },
+              "currency_original": {
+                "$ref": "#/$defs/textField"
+              }
+            },
+            "required": [
+              "product_name",
+              "specification",
+              "color",
+              "material",
+              "quantity",
+              "unit_text",
+              "unit_price_cny",
+              "production_requirements",
+              "packaging_requirements",
+              "product_identifier_original",
+              "product_identifier_kind",
+              "unit_price_original",
+              "currency_original"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "line_key",
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issue_key": {
+            "type": "string"
+          },
+          "product_line_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "field_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "MISSING_REQUIRED",
+              "CONFLICT",
+              "AMBIGUOUS_SCOPE",
+              "UNMATCHED",
+              "FORMULA_UNVERIFIED",
+              "IMAGE_UNRESOLVED",
+              "EXTERNAL_REFERENCE",
+              "UNMAPPED"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "issue_key",
+          "product_line_key",
+          "field_path",
+          "type",
+          "message",
+          "source_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "unmapped_content": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string"
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "summary",
+          "source_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "image_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "image_id": {
+            "type": "string"
+          },
+          "proposed_use": {
+            "type": "string",
+            "enum": [
+              "PRODUCT",
+              "PRODUCTION_REQUIREMENT",
+              "PACKAGING_REQUIREMENT",
+              "UNASSIGNED"
+            ]
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposed_product_line_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "image_id",
+          "proposed_use",
+          "source_ids",
+          "note",
+          "proposed_product_line_key"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "candidate_key",
+    "fields",
+    "products",
+    "issues",
+    "unmapped_content",
+    "image_candidates"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "textField": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "EXTRACTED",
+            "MISSING",
+            "CONFLICT"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "raw_text",
+        "source_ids",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "booleanField": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "raw_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "EXTRACTED",
+            "MISSING",
+            "CONFLICT"
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "raw_text",
+        "source_ids",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

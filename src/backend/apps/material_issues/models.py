@@ -30,7 +30,10 @@ class MaterialIssueAction(models.TextChoices):
 
 
 class OrderMaterialRequirement(TimeStampedModel):
-    measurement_kind = models.CharField(max_length=10, choices=[("OTHER", "原有单位"), ("PIPE", "管材支数")], default="OTHER")
+    measurement_kind = models.CharField(max_length=10, choices=[("OTHER", "原有单位"), ("PIPE", "管材支数"), ("CATALOG", "目录选料")], default="OTHER")
+    material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True, on_delete=models.PROTECT, related_name="order_requirements")
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
+    conversion_snapshot = models.JSONField(default=dict, blank=True)
     product_line = models.ForeignKey("production_tasks.ProductionTaskProduct", on_delete=models.PROTECT, null=True, blank=True, related_name="pipe_requirements")
     component_identity = models.UUIDField(null=True, blank=True)
     pieces_per_bar = models.PositiveBigIntegerField(null=True, blank=True)
@@ -44,6 +47,8 @@ class OrderMaterialRequirement(TimeStampedModel):
         "products.RawMaterialInformation",
         on_delete=models.PROTECT,
         related_name="order_requirements",
+        null=True,
+        blank=True,
     )
     unit = models.ForeignKey(
         "reference_data.ProductionUnit",
@@ -74,17 +79,18 @@ class OrderMaterialRequirement(TimeStampedModel):
             models.UniqueConstraint(fields=["production_task", "product_line", "component_identity"], condition=Q(measurement_kind="PIPE"), name="mat_req_pipe_component_uniq"),
             models.CheckConstraint(
                 condition=(Q(measurement_kind="OTHER", product_line__isnull=True, component_identity__isnull=True,
-                             pieces_per_bar__isnull=True, raw_bar_length_m__isnull=True)
+                             pieces_per_bar__isnull=True, raw_bar_length_m__isnull=True, raw_material__isnull=False, material_catalog__isnull=True)
                     | Q(measurement_kind="PIPE", line_type="RAW", product_line__isnull=False,
                         component_identity__isnull=False, pieces_per_bar__isnull=False, pieces_per_bar__gt=0,
-                        raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0)),
+                        raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0, raw_material__isnull=False, material_catalog__isnull=True)
+                    | Q(measurement_kind="CATALOG", line_type="RAW", product_line__isnull=False,
+                        component_identity__isnull=False, raw_material__isnull=True, material_catalog__isnull=False)),
                 name="mat_req_pipe_shape_valid",
             ),
             models.CheckConstraint(
-                condition=Q(measurement_kind="OTHER") | (
+                condition=Q(measurement_kind__in=["OTHER", "CATALOG"]) | (
                     Q(required_quantity=Floor(F("required_quantity")), internal_issued_quantity=Floor(F("internal_issued_quantity")),
-                      outsourcing_issued_quantity=Floor(F("outsourcing_issued_quantity")))
-                    & Q(required_quantity__gte=F("internal_issued_quantity") + F("outsourcing_issued_quantity"))),
+                      outsourcing_issued_quantity=Floor(F("outsourcing_issued_quantity")))),
                 name="mat_req_pipe_counts_valid",
             ),
             models.CheckConstraint(condition=Q(required_quantity__gt=0), name="mat_issue_req_qty_positive"),
@@ -272,6 +278,8 @@ class MaterialIssue(TimeStampedModel):
 
 
 class MaterialIssueLine(TimeStampedModel):
+    material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True, on_delete=models.PROTECT, related_name="material_issue_lines")
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
     semi_requirement = models.ForeignKey(OrderSemiFinishedRequirement, on_delete=models.PROTECT,
                                          null=True, blank=True, related_name="issue_lines")
     conversion_snapshot = models.JSONField(default=dict, blank=True)
@@ -346,6 +354,9 @@ class MaterialIssueLine(TimeStampedModel):
                         semi_finished_balance__isnull=True,
                         semi_requirement__isnull=True,
                     )
+                    | Q(line_type=MaterialIssueLineType.RAW, requirement__isnull=False,
+                        raw_material__isnull=True, material_catalog__isnull=False,
+                        semi_finished_balance__isnull=True, semi_requirement__isnull=True)
                     | Q(
                         line_type=MaterialIssueLineType.SEMI,
                         requirement__isnull=True,
@@ -365,6 +376,7 @@ class MaterialIssueLine(TimeStampedModel):
 class MaterialIssuePublicStockAllocation(TimeStampedModel):
     """记录实际扣减的公共库区余额，不关联采购入库批次。"""
 
+    stock_kind_snapshot = models.CharField(max_length=12, default="", blank=True)
     line = models.ForeignKey(MaterialIssueLine, on_delete=models.PROTECT, related_name="public_stock_allocations")
     balance = models.ForeignKey("inventory.PublicStockBalance", on_delete=models.PROTECT,
                                 related_name="material_issue_allocations")
@@ -380,9 +392,9 @@ class MaterialIssuePublicStockAllocation(TimeStampedModel):
         ordering = ["line", "balance", "id"]
         constraints = [
             models.UniqueConstraint(fields=["line", "balance"], name="mat_issue_public_alloc_uniq"),
-            models.CheckConstraint(condition=Q(requested_quantity__gt=0, stock_quantity__gt=0,
-                                               requested_quantity=Floor(F("requested_quantity")),
-                                               stock_quantity=Floor(F("stock_quantity")))
+            models.CheckConstraint(condition=Q(requested_quantity__gt=0, stock_quantity__gt=0)
+                                   & (Q(stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"])
+                                      | Q(requested_quantity=Floor(F("requested_quantity")), stock_quantity=Floor(F("stock_quantity"))))
                                    & (Q(meter_quantity__isnull=True) | Q(meter_quantity__gt=0)),
                                    name="mat_issue_public_alloc_qty"),
         ]

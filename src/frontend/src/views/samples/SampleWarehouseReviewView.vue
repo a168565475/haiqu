@@ -24,7 +24,9 @@ const etag = ref(''), errorMessage = ref(''), materialsError = ref(''), actionEr
 const canEdit = ref(false)
 const inventoryOpen = ref(false), inventoryLineKey = ref('')
 function openInventory(key = '') { inventoryLineKey.value = key; inventoryOpen.value = true }
-function applyInventory(lines: SampleWarehouseLine[]) { if (canEdit.value && !saving.value) draft.lines = lines }
+function applyInventory(lines: SampleWarehouseLine[]) {
+  if (canEdit.value && !saving.value) { draft.lines = lines; actionError.value = '' }
+}
 const draft = reactive<SampleWarehouseDraft>({ lines: [], notes: '' })
 const initialDraft = ref(JSON.stringify(draft))
 useSampleUnsavedChanges(() => initialDraft.value !== JSON.stringify(draft), '离开仓库核对页')

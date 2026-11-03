@@ -60,7 +60,7 @@ class CanManageOrganization(BasePermission):
         from .selectors import effective_access
         if active_employee_for(request.user) is None:
             return False
-        admin = request.user.is_superuser and request.user.get_username() == "admin"
+        admin = request.user.is_superuser
         if not admin:
             access = effective_access(request.user)
             sources = access["actions"].get("organizations.manage_organization", {}).get("sources", [])

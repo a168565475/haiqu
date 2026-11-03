@@ -2,12 +2,17 @@
 import { ref, watch } from 'vue'
 import { fetchSampleMaterials } from '@/api/sampleMaterials'
 import type { SampleMaterialProgress } from '@/types/sampleMaterial'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 import SampleSection from './SampleSection.vue'
 import SampleStatusTag from './SampleStatusTag.vue'
 const props = defineProps<{ sampleId: string; version?: string }>()
 const progress = ref<SampleMaterialProgress | null>(null)
+const hoveredRowKey = ref('')
 const error = ref(''), loading = ref(false)
 let generation = 0
+function handleCellMouseEnter(row: SampleMaterialProgress['lines'][number]) {
+  hoveredRowKey.value = row.key
+}
 async function load() {
   const current = ++generation
   loading.value = true; error.value = ''; progress.value = null
@@ -27,9 +32,9 @@ watch(() => [props.sampleId, props.version], load, { immediate: true })
     <p v-if="error" role="alert">{{ error }} <ElButton link @click="load">重试</ElButton></p>
     <template v-else-if="progress">
       <p v-if="progress.label === '无需用料'">打样部已确认无需用料，可进行生产和参数上传。</p>
-      <ElTable v-else-if="progress.lines.length" :data="progress.lines" size="small">
+      <ElTable v-else-if="progress.lines.length" :data="progress.lines" row-key="key" size="small" @cell-mouse-enter="handleCellMouseEnter" @mouseleave="hoveredRowKey = ''">
         <ElTableColumn prop="name" label="材料名称" min-width="120" />
-        <ElTableColumn prop="specification" label="规格" min-width="110" />
+        <ElTableColumn prop="specification" label="规格" min-width="110"><template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowKey === row.key" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields({ ...row, part_name: row.name })" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ row.specification }}</span></ElTooltip></template></ElTableColumn>
         <ElTableColumn prop="material" label="材质" min-width="80" />
         <ElTableColumn prop="color" label="颜色 / 色卡 / 色号" min-width="130" />
         <ElTableColumn prop="quantity" label="需求数量" width="90" />
@@ -69,4 +74,7 @@ watch(() => [props.sampleId, props.version], load, { immediate: true })
   }
 }
 .progress-note { margin: 12px 0 0; }
+.material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
+.material-attribute-tooltip > div { display: flex; gap: 8px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 </style>

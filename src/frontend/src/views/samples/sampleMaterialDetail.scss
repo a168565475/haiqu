@@ -35,6 +35,9 @@
 .material-detail-table tbody tr:last-child td { border-bottom: 0; }
 .material-detail-table .primary-text { color: token.$crm-text-primary; font-weight: 500; }
 .material-detail-table .specification { width: 220px; }
+.material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
+.material-attribute-tooltip > div { display: flex; gap: 8px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .material-detail-table th:nth-child(1), .material-detail-table td:nth-child(1) { width: 96px; }
 .material-detail-table th:nth-child(2), .material-detail-table td:nth-child(2) { width: 148px; }
 .material-detail-table th:nth-child(3), .material-detail-table td:nth-child(3) { width: 220px; }

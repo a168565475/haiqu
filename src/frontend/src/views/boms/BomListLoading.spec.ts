@@ -1,5 +1,5 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import ElementPlus, { ElInput } from 'element-plus'
+import ElementPlus, { ElInput, ElSelect } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/boms'
 import BomListView from './BomListView.vue'
@@ -16,6 +16,30 @@ describe('BOM 列表分区读取', () => {
     vi.mocked(api.fetchBoms).mockResolvedValue({ data: [], meta: { total: 4, total_pages: 1 } } as never)
     vi.mocked(api.fetchBomOptions).mockResolvedValue(options as never)
     vi.mocked(api.fetchBomFilterOptions).mockResolvedValue(options)
+  })
+  it('新产品类别与旧产品类别分别传参，切换和重置不残留另一来源', async () => {
+    vi.mocked(api.fetchBomFilterOptions).mockResolvedValue({
+      product_categories: [{ id: 'same-id', category_name: '椅子' }],
+      product_catalog_categories: [{ id: 'same-id', category_name: '椅子' }],
+    })
+    const wrapper = mount(); await flushPromises()
+    const category = wrapper.findAllComponents(ElSelect)[1]!
+    category.vm.$emit('update:modelValue', 'catalog:same-id')
+    category.vm.$emit('change'); await flushPromises()
+    expect(api.fetchBoms).toHaveBeenLastCalledWith(expect.objectContaining({
+      product_catalog_category_id: 'same-id', product_category_id: undefined,
+    }))
+    category.vm.$emit('update:modelValue', 'same-id')
+    category.vm.$emit('change'); await flushPromises()
+    expect(api.fetchBoms).toHaveBeenLastCalledWith(expect.objectContaining({
+      product_catalog_category_id: undefined, product_category_id: 'same-id',
+    }))
+    const vm = wrapper.vm as unknown as { resetFilters: () => void }
+    vm.resetFilters(); await flushPromises()
+    expect(api.fetchBoms).toHaveBeenLastCalledWith(expect.objectContaining({
+      product_catalog_category_id: undefined, product_category_id: undefined,
+    }))
+    wrapper.unmount()
   })
   it('慢筛选选项不拖住列表，搜索不重新读取选项', async () => {
     vi.mocked(api.fetchBomOptions).mockReturnValue(new Promise(() => {}))

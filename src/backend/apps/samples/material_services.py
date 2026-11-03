@@ -18,7 +18,7 @@ from .procurement_status import sample_status_display
 
 
 def material_actions(sample, request):
-    active = bool(request and getattr(request, 'employee', None) and sample.application_payload_hash and sample.archived_at is None and sample.customer_account.archived_at is None)
+    active = bool(request and getattr(request, 'employee', None) and sample.application_payload_hash and sample.archived_at is None and (not sample.customer_account_id or sample.customer_account.archived_at is None))
     return {
         # 产品资料和材料需求允许在申请生命周期内持续修订；状态推进仍由提交动作负责。
         'can_edit_materials': bool(active and can_sample(request, sample, 'samples.edit_sample_materials')),
@@ -100,8 +100,21 @@ def save_materials(*, sample_id, data, request):
         raise ValidationError('材料行标识重复，请重新加载。')
     if submit and not keys:
         raise ValidationError('请至少填写一项材料需求。')
+    existing_record = _record(sample)
+    previous_draft = existing_record.draft.get('currentDraft', existing_record.draft) if existing_record else {}
+    previous_rows = {str(row['key']): row for row in previous_draft.get('lines', [])}
+    catalog_versions = {}
     for line in draft['lines']:
         line['key'] = str(line['key'])
+        previous = previous_rows.get(line['key'])
+        if line.get('material_catalog_id') or line.get('material_selection') or (previous and previous.get('material_catalog_id')):
+            from .catalog_materials import freeze_sample_selection
+            quantity_value(line['quantity'], allow_blank=not submit, positive=True)
+            # 回读不接收客户端伪造的快照；已保存内容只能由同一行的服务器记录继承。
+            if previous and not line.get('material_catalog_id'):
+                line['material_catalog_id'] = previous['material_catalog_id']
+            freeze_sample_selection(line, previous=previous, request=request, versions=catalog_versions)
+            continue
         if line['category'] == 'tube':
             from .pipe_materials import normalize_sample_pipe
             normalize_sample_pipe(line, submit=submit)
@@ -160,7 +173,7 @@ def save_warehouse(*, sample_id, data, request):
     for line in draft['lines']:
         line['key'] = str(line['key'])
         supply = quantity_value(line['supplyQuantity'], allow_blank=not submit)
-        if required[line['key']]['category'] == 'tube' and supply is not None:
+        if required[line['key']]['category'] == 'tube' and not required[line['key']].get('material_catalog_id') and supply is not None:
             # 新口径管材需求、仓库可供和缺料均按总米数；旧快照仍按整支校验。
             from .pipe_materials import is_total_meter_pipe
             if not is_total_meter_pipe(required[line['key']]) and supply != supply.to_integral_value():
@@ -168,6 +181,8 @@ def save_warehouse(*, sample_id, data, request):
         need = Decimal(required[line['key']]['quantity'])
         if supply is not None and supply > need:
             raise ValidationError('本次可供数量不能超过需求数量。')
+        if required[line['key']].get('material_catalog_id') and supply and 'inventoryAllocations' not in line:
+            raise ValidationError('新原料供料须关联实际库存库区，不能仅手填可供数量。')
         if 'inventoryAllocations' in line:
             from .warehouse_stock import validate_allocations
             line['inventoryAllocations'] = validate_allocations(

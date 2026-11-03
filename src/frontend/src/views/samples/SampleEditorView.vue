@@ -1,23 +1,26 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import { fetchSample, fetchSampleFormOptions } from '@/api/samples'
-import { completeSampleApplicationProducts, fetchSampleApplicationProductOptions } from '@/api/sampleApplication'
+import { completeSampleApplicationProducts } from '@/api/sampleApplication'
 import { confirmSampleNoMaterials, fetchSampleMaterials, fetchSampleMaterialUnits, saveSampleMaterials } from '@/api/sampleMaterials'
 import SampleMaterialEditor from '@/components/samples/SampleMaterialEditor.vue'
 import SampleApplicationBasics from '@/components/samples/SampleApplicationBasics.vue'
-import SampleProductImage from '@/components/samples/SampleProductImage.vue'
+import SampleProductFields from '@/components/samples/SampleProductFields.vue'
+import type { ProductEntryDraft } from '@/types/productCatalog'
 import SampleSection from '@/components/samples/SampleSection.vue'
 import SampleFullscreenHeader from '@/components/samples/SampleFullscreenHeader.vue'
 import { useSampleFullscreen } from '@/composables/useSampleFullscreen'
 import { useSampleUnsavedChanges } from '@/composables/useSampleUnsavedChanges'
 import uploadIcon from '@/assets/samples/upload-reference.svg'
-import { validateSampleReferenceImage } from '@/utils/sampleApplication'
+import { sampleProductSelection, validateSampleNumber, validateSampleReferenceImage } from '@/utils/sampleApplication'
 import { sampleMaterialError, validateSampleMaterials } from '@/utils/sampleMaterial'
 import type { SampleDetail, SampleFormOptions } from '@/types/sample'
 import type { SampleApplicationBasicInput } from '@/types/sampleApplication'
-import type { SampleProductEdit, SampleProductCandidate } from '@/types/sampleEditor'
+import type { SampleProductEdit } from '@/types/sampleEditor'
 import type { SampleMaterialDraft, SampleMaterialLoadResult, SampleMaterialUnit } from '@/types/sampleMaterial'
 
 const route = useRoute(), router = useRouter()
@@ -25,13 +28,16 @@ const root = ref<HTMLElement>()
 const { fullscreen, toggleFullscreen } = useSampleFullscreen(root)
 const activeTab = ref<'product' | 'materials'>(route.query.tab === 'materials' ? 'materials' : 'product')
 const sample = ref<SampleDetail | null>(null), etag = ref('')
-const loading = ref(true), saving = ref(false), productsLoading = ref(false)
+const loading = ref(true), saving = ref(false)
 const errorMessage = ref(''), actionError = ref(''), materialError = ref(''), successMessage = ref('')
-const options = ref<SampleFormOptions | null>(null), productOptions = ref<SampleProductCandidate[]>([])
+const options = ref<SampleFormOptions | null>(null)
+const productFields = new Map<string, InstanceType<typeof SampleProductFields>>()
+function setProductFields(id: string, value: unknown) {
+  if (value) productFields.set(id, value as InstanceType<typeof SampleProductFields>)
+  else productFields.delete(id)
+}
 const referenceImage = ref<File | null>(null), localImagePreview = ref(''), uploadKey = ref(0)
 const imagePreview = computed(() => localImagePreview.value || (sample.value?.reference_image ? `/api/v1/sample-requests/${sample.value.id}/business-files/${sample.value.reference_image}/` : ''))
-const linkedProducts = new Map<string, { name: string; specification: string }>()
-const colorSpecificationBaselines = new Map<string, string>()
 const products = ref<SampleProductEdit[]>([]), purpose = ref(''), initialProducts = ref('')
 const basic = ref<SampleApplicationBasicInput>({ source_type: null, source_id: null, customer_account_id: '', customer_contact_id: null, owner_employee_id: '', sample_type: '', shipping_method: '', delivery_batch: '', is_repeat_order: null, order_date: null, sample_due_date: null })
 const materials = ref<SampleMaterialLoadResult | null>(null), units = ref<SampleMaterialUnit[]>([])
@@ -39,12 +45,12 @@ const draft = reactive<SampleMaterialDraft>({ lines: [], notes: '' }), initialMa
 const editorOpen = ref(false), editorDirty = ref(false)
 const productCapabilitiesFresh = ref(false), productRefreshing = ref(false), productRefreshError = ref('')
 const materialsLoading = ref(false)
-let productRequest = 0
 const dimensions = [
   { key: 'length_cm', label: '长（cm）' }, { key: 'armrest_width_cm', label: '扶手宽（cm）' },
   { key: 'seat_width_cm', label: '坐宽（cm）' }, { key: 'back_height_cm', label: '背高（cm）' }, { key: 'seat_height_cm', label: '坐高（cm）' },
 ] as const
 const canEditProducts = computed(() => productCapabilitiesFresh.value && Boolean(sample.value?.application_actions?.is_application && sample.value.application_actions.can_edit_products))
+const productInputsDisabled = computed(() => loading.value || saving.value || materialsLoading.value || productRefreshing.value || !canEditProducts.value)
 const canEditMaterials = computed(() => Boolean(materials.value?.available && materials.value.canEdit))
 const canSubmitMaterials = computed(() => canEditMaterials.value && Boolean(materials.value?.available && materials.value.canSubmit))
 const productState = () => JSON.stringify({ products: products.value, purpose: purpose.value, basic: basic.value })
@@ -69,6 +75,7 @@ function applySample(result: { data: SampleDetail; etag: string }, preserveDraft
   productCapabilitiesFresh.value = true; productRefreshError.value = ''
   if (keepDraft) return
   basic.value = {
+    manual_request_number: result.data.manual_request_number || '', is_salesperson: options.value?.is_salesperson === true,
     source_type: result.data.source_quotation_version ? 'quotation' : result.data.source_inquiry ? 'inquiry' : null,
     source_id: result.data.source_quotation_version || result.data.source_inquiry || null,
     customer_account_id: result.data.customer_account, customer_contact_id: result.data.customer_contact || null,
@@ -77,10 +84,15 @@ function applySample(result: { data: SampleDetail; etag: string }, preserveDraft
     is_repeat_order: result.data.is_repeat_order ?? null, order_date: result.data.order_date || null,
     sample_due_date: result.data.sample_due_date || result.data.requested_due_at?.slice(0, 10) || null,
   }
-  colorSpecificationBaselines.clear()
   products.value = (result.data.products || []).map(product => ({
     id: product.id, product_id: product.product_id || '', category_id: product.category_id || '',
-    product_name: product.product_name, specification: product.specification_display ?? product.specification,
+    product_catalog_id: product.product_catalog_id || null,
+    product_selection: { draft: { ...sampleProductSelection(product.product_name, product.specification, product.product_selection_snapshot,
+      product.product_selection_snapshot?.entry_draft?.color_name || product.details[0]?.color_name || product.product_selection_snapshot?.color_name || '').draft!,
+      ...(!product.product_selection_snapshot?.name ? { category_name: product.category_name || '', material: product.material_snapshot || '' } : {}),
+    } },
+    product_selection_snapshot: product.product_selection_snapshot || null,
+    product_name: product.product_name, specification: product.specification,
     length_cm: product.length_cm, armrest_width_cm: product.armrest_width_cm, seat_width_cm: product.seat_width_cm,
     back_height_cm: product.back_height_cm, seat_height_cm: product.seat_height_cm,
     details: product.details.map(detail => ({ id: detail.id, product_color_id: detail.product_color_id || '', color_code: detail.color_code,
@@ -88,7 +100,6 @@ function applySample(result: { data: SampleDetail; etag: string }, preserveDraft
   }))
   purpose.value = result.data.purpose
   clearImageDraft()
-  syncProductLinks()
   initialProducts.value = productState()
 }
 function applyMaterials(result: SampleMaterialLoadResult, preserveDraft = false, expectedEtag = '') {
@@ -127,7 +138,6 @@ async function refreshProductCapabilities(duringSave = false) {
   const expectedEtag = etag.value
   productCapabilitiesFresh.value = false; productRefreshError.value = ''; productRefreshing.value = true
   // 材料动作已更新版本，不能在详情读取失败时继续使用旧产品能力。
-  productRequest++; productsLoading.value = false
   try { applySample(await fetchSample(sample.value.id), true, expectedEtag) }
   catch (error) { productRefreshError.value = `产品能力读取失败：${sampleMaterialError(error)} 产品输入仍保留，请重新核对后继续保存产品。` }
   finally { productRefreshing.value = false }
@@ -139,49 +149,13 @@ async function loadPage() {
     applySample(await fetchSample(route.params.sampleId))
     // 只读申请仍跳过产品检索；产品选项和材料互不依赖，可同时读取。
     const productOptionsRequest = canEditProducts.value
-      ? fetchSampleFormOptions().then(result => { options.value = result; void searchProducts('') })
+      ? fetchSampleFormOptions().then(result => { options.value = result; basic.value.is_salesperson = result.is_salesperson === true; initialProducts.value = productState() })
       : Promise.resolve()
     // 两路都结束后再解除加载锁，避免失败重试与尚未结束的材料读取交错。
     const results = await Promise.allSettled([productOptionsRequest, loadMaterials()])
     for (const result of results) if (result.status === 'rejected') throw result.reason
   } catch (error) { errorMessage.value = sampleMaterialError(error) }
   finally { loading.value = false }
-}
-async function searchProducts(query: string) {
-  const request = ++productRequest
-  productsLoading.value = true
-  try {
-    if (!sample.value) return
-    const result = await fetchSampleApplicationProductOptions(sample.value.id, query)
-    if (request === productRequest) productOptions.value = result
-  } catch (error) { if (request === productRequest) actionError.value = `产品选项加载失败：${sampleMaterialError(error)}` }
-  finally { if (request === productRequest) productsLoading.value = false }
-}
-function chooseProduct(product: SampleProductEdit, id: string) {
-  colorSpecificationBaselines.delete(product.id)
-  const selected = productOptions.value.find(item => item.id === id)
-  if (!selected) {
-    // 与创建页共用手输交互，但编辑既有记录不能清空已填写的规格。
-    product.product_id = ''; product.product_name = id; linkedProducts.delete(product.id)
-    return
-  }
-  product.product_id = id; product.product_name = selected.product_name; product.specification = selected.specification
-  product.category_id = selected.category_id
-  linkedProducts.set(product.id, { name: selected.product_name, specification: selected.specification })
-}
-function clearProductLinkIfEdited(product: SampleProductEdit) {
-  const linked = linkedProducts.get(product.id)
-  if (linked && (product.product_name !== linked.name || product.specification !== linked.specification)) {
-    product.product_id = ''; linkedProducts.delete(product.id)
-  }
-}
-function editProductSpecification(product: SampleProductEdit) {
-  colorSpecificationBaselines.delete(product.id)
-  clearProductLinkIfEdited(product)
-}
-function syncProductLinks() {
-  linkedProducts.clear()
-  for (const product of products.value) if (product.product_id) linkedProducts.set(product.id, { name: product.product_name, specification: product.specification })
 }
 async function cancelProductEdit() {
   if (saving.value || materialsLoading.value || productRefreshing.value) return
@@ -191,10 +165,12 @@ async function cancelProductEdit() {
     const baseline = JSON.parse(initialProducts.value) as { products: SampleProductEdit[]; purpose: string; basic: SampleApplicationBasicInput }
     products.value = baseline.products; purpose.value = baseline.purpose
     basic.value = baseline.basic
-    colorSpecificationBaselines.clear()
-    syncProductLinks()
     clearImageDraft()
   }
+}
+function updateProduct(product: SampleProductEdit, draft: ProductEntryDraft) {
+  if (productInputsDisabled.value) return
+  product.product_selection = { draft }; product.product_name = draft.name; product.specification = draft.specification
 }
 function clearImageDraft() {
   if (localImagePreview.value) URL.revokeObjectURL(localImagePreview.value)
@@ -212,26 +188,10 @@ function selectImage(upload: UploadFile) {
 function savedDetail(productId: string, detailId: string) {
   return sample.value?.products?.find(product => product.id === productId)?.details.find(detail => detail.id === detailId)
 }
-function colorLabel(id: string) {
-  const color = options.value?.colors.find(item => item.id === id)
-  return color ? `${color.color_card} / ${color.color_name} / ${color.color_code}` : ''
-}
-function replaceColorSegment(specification: string, colorName: string) {
-  if (!colorName) return specification
-  const segment = /(^|[；;])(\s*颜色\s*[:：])([^；;]*)/
-  if (segment.test(specification)) return specification.replace(segment, (_match, prefix, label) => `${prefix}${label}${colorName}`)
-  const separator = specification && !/[；;]\s*$/.test(specification) ? '；' : ''
-  return `${specification}${separator}颜色：${colorName}`
-}
-function selectColor(product: SampleProductEdit, detail: SampleProductEdit['details'][number]) {
-  const color = options.value?.colors.find(item => item.id === detail.product_color_id)
-  detail.color_code = color?.color_code || ''
-  // 规格是产品级字段，多颜色明细无法安全映射到单个颜色；此时只保存明细色号。
-  if (product.details.length !== 1) return
-  if (!colorSpecificationBaselines.has(product.id)) colorSpecificationBaselines.set(product.id, product.specification || '')
-  const baseline = colorSpecificationBaselines.get(product.id) || ''
-  const colorName = color?.color_name?.trim() || color?.color_code?.trim() || ''
-  product.specification = replaceColorSegment(baseline, colorName)
+function historicalColorName(product: SampleProductEdit, detailId: string) {
+  const detail = savedDetail(product.id, detailId)
+  if (detail?.product_color_id) return ''
+  return detail?.color_name || product.product_selection_snapshot?.entry_draft?.color_name || product.product_selection_snapshot?.color_name || ''
 }
 function selectTab(tab: 'product' | 'materials') {
   if (editorOpen.value) { ElMessage.warning('请先完成或关闭当前材料行编辑。'); return }
@@ -246,17 +206,31 @@ function tabKeydown(event: KeyboardEvent) {
 async function saveProducts() {
   if (!sample.value || !canEditProducts.value || loading.value || saving.value || materialsLoading.value || productRefreshing.value) return
   actionError.value = ''; successMessage.value = ''
-  if (!products.value.length || products.value.some(product => !product.product_name.trim() || !product.category_id || !product.details.length || product.details.some(detail => !detail.product_color_id || !Number.isSafeInteger(detail.sample_quantity) || (detail.sample_quantity || 0) <= 0))) {
-    actionError.value = '请填写产品名称、选择产品类别和颜色，并填写大于 0 的整数打样数量。'; return
+  for (const field of productFields.values()) field.commit()
+  const keepHistoricalNumber = !sample.value.manual_request_number && !basic.value.manual_request_number?.trim()
+  const numberError = keepHistoricalNumber ? '' : validateSampleNumber(basic.value.manual_request_number || '')
+  if (numberError) { actionError.value = numberError; return }
+  if (!products.value.length || products.value.some(product => !product.product_name.trim() || !product.details.length || product.details.some(detail => !Number.isSafeInteger(detail.sample_quantity) || (detail.sample_quantity || 0) <= 0))) {
+    actionError.value = '请填写产品名称，并填写大于 0 的整数打样数量。'; return
   }
+  if (products.value.some(product => !product.specification.trim())) { actionError.value = '请填写规格。'; return }
+  if (products.value.some(product => !product.product_selection?.draft?.category_name.trim())) { actionError.value = '请选择或填写类别。'; return }
+  if (products.value.some(product => product.details.some(detail => !detail.product_color_id && !historicalColorName(product, detail.id).trim()))) { actionError.value = '请选择色卡 / 色号 / 颜色。'; return }
   saving.value = true
   try {
     const payload = products.value.map(product => {
-      const value = { ...product }
+      const color = options.value?.colors.find(item => item.id === product.details[0]?.product_color_id)
+      const value = { ...product, product_id: '', product_catalog_id: null,
+        product_selection: { draft: { ...product.product_selection!.draft!, color_id: null, color_name: color?.color_name || product.product_selection!.draft!.color_name,
+          sources: { ...product.product_selection!.draft!.sources, color_name: 'typed' as const },
+        } },
+      }
       for (const field of dimensions) value[field.key] = value[field.key] || null
       return value
     })
-    applySample(await completeSampleApplicationProducts(sample.value.id, etag.value, payload, purpose.value, referenceImage.value || undefined, basic.value))
+    const basicInput = { ...basic.value }
+    if (keepHistoricalNumber) delete basicInput.manual_request_number
+    applySample(await completeSampleApplicationProducts(sample.value.id, etag.value, payload, purpose.value, referenceImage.value || undefined, basicInput))
     successMessage.value = '产品需求已保存。材料填写内容仍保留，提交结果以材料页为准。'
     // 产品与材料分次保存；第二步读取失败不覆盖第一步的成功，也不清除输入。
     await loadMaterials({ preserveDraft: true, duringSave: true })
@@ -328,7 +302,6 @@ onBeforeUnmount(clearImageDraft)
         <ElAlert v-if="actionError" :title="actionError" type="error" :closable="false" show-icon role="alert" />
         <ElAlert v-if="successMessage" :title="successMessage" type="success" :closable="false" show-icon role="status" />
         <ElAlert v-if="productRefreshError" :title="productRefreshError" type="error" :closable="false" role="alert"><ElButton :disabled="saving || productRefreshing || materialsLoading" @click="refreshProductCapabilities()">重新核对产品能力</ElButton></ElAlert>
-        <ElAlert v-if="productsDirty" :title="canEditProducts ? '产品草稿尚未保存，材料操作不会代为保存产品。' : '产品草稿尚未保存，内容已保留；当前产品能力不可用，请核对后再处理。'" type="warning" :closable="false" />
         <div class="editor-toolbar"><nav class="editor-tabs" role="tablist" aria-label="打样编辑内容" @keydown="tabKeydown">
           <button id="sample-product-tab" type="button" role="tab" aria-controls="sample-product-panel" :aria-selected="activeTab === 'product'" :tabindex="activeTab === 'product' ? 0 : -1" @click="selectTab('product')">申请与产品</button>
           <button id="sample-materials-tab" type="button" role="tab" aria-controls="sample-materials-panel" :aria-selected="activeTab === 'materials'" :tabindex="activeTab === 'materials' ? 0 : -1" @click="selectTab('materials')">材料需求</button>
@@ -341,34 +314,25 @@ onBeforeUnmount(clearImageDraft)
         </div>
         <section v-show="activeTab === 'product'" id="sample-product-panel" class="product-form-panel" role="tabpanel" aria-labelledby="sample-product-tab">
           <div class="sample-create-page">
-            <ElForm label-position="top" :disabled="saving || materialsLoading || productRefreshing || !canEditProducts" class="application-form erp-flat-form" @submit.prevent>
+            <ElForm label-position="top" :disabled="productInputsDisabled" class="application-form erp-flat-form" @submit.prevent>
               <SampleSection title="基础信息" class="basic-section">
                 <SampleApplicationBasics v-model="basic" :options="options" :sample="sample" />
               </SampleSection>
               <div class="application-columns">
                 <SampleSection title="样品信息" class="product-section">
                   <div class="product-body">
-                    <SampleProductImage class="product-image" :src="imagePreview" />
                     <div class="product-records">
                       <section v-for="(product, index) in products" :key="product.id" class="product-fields product-record" :data-product-id="product.id">
                         <h3 v-if="products.length > 1">产品 {{ index + 1 }}</h3>
-                        <ElFormItem label="产品名称">
-                          <ElSelect :model-value="product.product_id || product.product_name" aria-label="产品名称" filterable remote allow-create default-first-option :remote-method="searchProducts" :loading="productsLoading" placeholder="选择成品或输入产品名称" @change="chooseProduct(product, $event)">
-                            <ElOption v-if="(product.product_id || product.product_name) && !productOptions.some(item => item.id === product.product_id)" :value="product.product_id || product.product_name" :label="product.product_name"><span class="product-option"><span class="product-option-name">{{ product.product_name }}</span><span class="product-option-spec">{{ product.specification || '暂无规格' }}</span></span></ElOption>
-                            <ElOption v-for="item in productOptions" :key="item.id" :value="item.id" :label="item.product_name"><span class="product-option"><span class="product-option-name" :title="item.product_name">{{ item.product_name }}</span><span class="product-option-spec" :title="item.specification || '暂无规格'">{{ item.specification || '暂无规格' }}</span></span></ElOption>
-                          </ElSelect>
-                        </ElFormItem>
-                        <ElFormItem label="规格"><ElInput v-model="product.specification" aria-label="产品规格" placeholder="请输入规格" maxlength="2000" @input="editProductSpecification(product)" /></ElFormItem>
-                        <ElFormItem label="产品类别 *"><ElSelect v-model="product.category_id" aria-label="产品类别" placeholder="选择产品类别"><ElOption v-if="product.category_id && !options?.categories.some(item => item.id === product.category_id)" :value="product.category_id" :label="sample.products?.[index]?.category_name || product.category_id" /><ElOption v-for="category in options?.categories" :key="category.id" :value="category.id" :label="category.category_name" /></ElSelect></ElFormItem>
-                        <div class="dimensions-grid"><ElFormItem v-for="field in dimensions" :key="field.key" :label="field.label"><ElInput v-model="product[field.key]" :aria-label="field.label" inputmode="decimal" placeholder="选填" maxlength="11" /></ElFormItem></div>
+                        <SampleProductFields :ref="value => setProductFields(product.id, value)" :model-value="product.product_selection!.draft!" :disabled="productInputsDisabled" @update:model-value="updateProduct(product, $event)" />
                         <section v-for="(detail, detailIndex) in product.details" :key="detail.id" class="detail-fields" :data-detail-id="detail.id">
                           <h3 v-if="product.details.length > 1">颜色明细 {{ detailIndex + 1 }}</h3>
-                          <ElFormItem label="颜色（色卡 / 颜色 / 色号） *"><ElSelect v-model="detail.product_color_id" filterable aria-label="产品颜色" placeholder="选择真实颜色" @change="selectColor(product, detail)"><ElOption v-if="detail.product_color_id && !options?.colors.some(item => item.id === detail.product_color_id)" :value="detail.product_color_id" :label="[savedDetail(product.id, detail.id)?.color_card, savedDetail(product.id, detail.id)?.color_name, detail.color_code].filter(Boolean).join(' / ') || '当前颜色'" /><ElOption v-for="color in options?.colors" :key="color.id" :value="color.id" :label="colorLabel(color.id)" /></ElSelect></ElFormItem>
-                          <ElFormItem label="色号"><ElInput v-model="detail.color_code" aria-label="色号" maxlength="100" /></ElFormItem>
+                          <ElFormItem label="色卡 / 色号 / 颜色 *"><ElSelect v-model="detail.product_color_id" aria-label="色卡 / 色号 / 颜色" filterable :empty-values="[null, undefined]" placeholder="请选择颜色" @change="detail.color_code = options?.colors.find(color => color.id === detail.product_color_id)?.color_code || ''"><ElOption v-if="!detail.product_color_id && historicalColorName(product, detail.id)" value="" :label="historicalColorName(product, detail.id)" disabled /><ElOption v-if="detail.product_color_id && !options?.colors.some(color => color.id === detail.product_color_id)" :value="detail.product_color_id" :label="[savedDetail(product.id, detail.id)?.color_card || '—', detail.color_code || '—', savedDetail(product.id, detail.id)?.color_name || '—'].join(' / ')" /><ElOption v-for="color in options?.colors" :key="color.id" :value="color.id" :label="[color.color_card || '—', color.color_code || '—', color.color_name].join(' / ')" /></ElSelect></ElFormItem>
+                          <ElFormItem label="打样数量 *" class="quantity-field" :data-quantity-detail-id="detail.id"><div class="quantity-input"><ElInputNumber v-model="detail.sample_quantity" aria-label="打样数量" :controls="false" :min="1" :max="2147483647" :precision="0" placeholder="请输入数量" /><span class="quantity-unit">{{ productEntryUnitName(product) || 'PCS' }}</span></div></ElFormItem>
                           <ElFormItem label="公差"><ElSelect v-model="detail.tolerance" aria-label="公差"><ElOption v-if="!options?.tolerances.some(item => item.value === detail.tolerance)" :value="detail.tolerance" :label="savedDetail(product.id, detail.id)?.tolerance_display || detail.tolerance" /><ElOption v-for="item in options?.tolerances" :key="item.value" :value="item.value" :label="item.label" /></ElSelect></ElFormItem>
-                          <ElFormItem label="产品备注"><ElInput v-model="detail.notes" aria-label="产品备注" maxlength="2000" /></ElFormItem>
                         </section>
-                        <ElFormItem v-if="index === products.length - 1" label="特殊要求（选填）" class="requirements-field"><ElInput id="sample-purpose" v-model="purpose" aria-label="特殊要求" type="textarea" :rows="4" resize="none" maxlength="2000" show-word-limit placeholder="请输入颜色、包装或工艺要求" /></ElFormItem>
+                        <div class="dimensions-grid"><ElFormItem v-for="field in dimensions" :key="field.key" :label="field.label"><ElInput v-model="product[field.key]" :aria-label="field.label" inputmode="decimal" placeholder="选填" maxlength="11" /></ElFormItem></div>
+                        <ElFormItem v-if="index === products.length - 1" label="备注（选填）" class="requirements-field"><ElInput id="sample-purpose" v-model="purpose" aria-label="备注" type="textarea" :rows="4" resize="none" maxlength="2000" show-word-limit placeholder="请输入备注" /></ElFormItem>
                       </section>
                     </div>
                   </div>
@@ -376,18 +340,9 @@ onBeforeUnmount(clearImageDraft)
                 <div class="application-aside">
                   <SampleSection title="参考图片" class="upload-section">
                     <p class="field-label">参考图片（选填）</p>
-                    <div v-if="imagePreview" class="reference-preview"><img :src="imagePreview" alt="已选择的参考图片" /><div v-if="canEditProducts" class="reference-image-actions"><ElUpload :key="uploadKey" :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :on-change="selectImage" :disabled="saving || materialsLoading || productRefreshing"><ElButton :disabled="saving || materialsLoading || productRefreshing">替换图片</ElButton></ElUpload></div></div>
+                    <div v-if="imagePreview" class="reference-preview"><ProtectedImage :src="imagePreview" alt="已选择的参考图片" /><div v-if="canEditProducts" class="reference-image-actions"><ElUpload :key="uploadKey" :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :on-change="selectImage" :disabled="saving || materialsLoading || productRefreshing"><ElButton :disabled="saving || materialsLoading || productRefreshing">替换图片</ElButton></ElUpload></div></div>
                     <ElUpload v-else-if="canEditProducts" :key="uploadKey" drag :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :limit="1" :on-change="selectImage" :on-exceed="() => ElMessage.warning('最多选择一张参考图片。')" :disabled="saving || materialsLoading || productRefreshing"><img :src="uploadIcon" class="upload-icon" alt="" /><strong>上传参考图片</strong><span>支持 JPG、PNG，最多 1 张，单张不超过 5MB</span></ElUpload>
                     <div v-else class="reference-preview"><span class="field-hint">暂无参考图片</span></div>
-                  </SampleSection>
-                  <SampleSection title="打样数量" class="quantity-section">
-                    <template v-for="(product, index) in products" :key="product.id">
-                      <div v-for="(detail, detailIndex) in product.details" :key="detail.id" class="quantity-detail" :data-quantity-detail-id="detail.id">
-                        <h3 v-if="products.length > 1 || product.details.length > 1">产品 {{ index + 1 }} · {{ product.product_name }} / 明细 {{ detailIndex + 1 }}{{ detail.color_code ? ` · ${detail.color_code}` : '' }}</h3>
-                        <ElFormItem label="打样数量 *"><ElInputNumber v-model="detail.sample_quantity" aria-label="打样数量" :controls="false" :min="1" :max="2147483647" :precision="0" placeholder="请输入数量" /><span class="quantity-unit">PCS</span></ElFormItem>
-                      </div>
-                    </template>
-                    <p class="field-hint">请输入大于 0 的整数。</p>
                   </SampleSection>
                 </div>
               </div>
@@ -400,7 +355,6 @@ onBeforeUnmount(clearImageDraft)
           <p v-if="materials?.available && materials.isRevision" class="field-hint">保存修改仅更新当前材料资料，已提交的仓库、采购和领料记录保留原快照。</p>
           <p v-if="materials?.available && materials.noMaterials" class="field-hint">此申请已确认无需用料，新增材料只保存资料，不会重新启动供料流程。</p>
           <SampleMaterialEditor class="erp-table-editor" layout="sidebar" v-model="draft.lines" :units="units" :fullscreen="fullscreen" :unavailable-message="!canEditMaterials ? materialUnavailable : ''" :disabled="loading || saving || materialsLoading || productRefreshing || !canEditMaterials || Boolean(materialError)" @toggle-fullscreen="toggleFullscreen" @editing-change="editorOpen = $event" @dirty-change="editorDirty = $event" />
-          <div class="card requirements erp-flat-form"><label for="sample-material-notes">需求备注（选填）</label><ElInput id="sample-material-notes" v-model="draft.notes" maxlength="2000" :disabled="saving || materialsLoading || productRefreshing || !canEditMaterials" /></div>
           <footer class="panel-actions"><template v-if="canEditMaterials"><ElButton v-if="canSubmitMaterials" :disabled="saving || materialsLoading || productRefreshing || editorOpen || Boolean(materialError)" @click="noMaterials">无需用料</ElButton><ElButton :type="canSubmitMaterials ? 'default' : 'primary'" :loading="saving" :disabled="saving || materialsLoading || productRefreshing || editorOpen || Boolean(materialError)" @click="submitMaterials(false)">保存材料</ElButton><ElButton v-if="canSubmitMaterials" type="primary" :loading="saving" :disabled="saving || materialsLoading || productRefreshing || editorOpen || Boolean(materialError)" @click="submitMaterials(true)">提交仓库</ElButton></template><ElButton v-else :disabled="saving" @click="router.push({ name: 'sample-detail', params: { sampleId: sample.id } })">查看流程进度</ElButton></footer>
         </section>
       </template>
@@ -438,11 +392,10 @@ onBeforeUnmount(clearImageDraft)
 .product-form-actions .submit-button { width: 140px; }
 .product-records { min-width: 0; }
 .product-record + .product-record { margin-top: 20px; padding-top: 20px; border-top: 1px solid token.$crm-border-subtle; }
-.product-record h3, .quantity-detail h3 { margin: 0; font-size: 13px; line-height: 22px; overflow-wrap: anywhere; }
-.detail-fields { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.product-record h3 { grid-column: 1 / -1; margin: 0; font-size: 13px; line-height: 22px; overflow-wrap: anywhere; }
+.product-fields > .detail-fields { display: contents; }
 .detail-fields h3 { grid-column: 1 / -1; }
-@media (max-width: 700px) { .detail-fields { grid-template-columns: 1fr; } .editor-toolbar { flex-wrap: wrap; } }
-.quantity-detail + .quantity-detail { margin-top: 16px; }
+@media (max-width: 700px) { .editor-toolbar { flex-wrap: wrap; } }
 .requirements label { display: block; margin-bottom: 12px; font-size: 13px; }
 .requirements h2 { margin: 0 0 12px; font-size: 17px; line-height: 26px; }
 .requirements p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

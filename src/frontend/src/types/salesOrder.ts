@@ -1,3 +1,4 @@
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
 import type { PageMeta } from './customer'
 
 export type SalesOrderSource = 'QUOTATION' | 'DIRECT' | 'REPEAT'
@@ -73,6 +74,9 @@ export interface QuotationOrderLineOption {
   specification_display?: string
   color: string
   product_id: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_category_id: string | null
   product_unit_id: string | null
   product_color_id: string | null
@@ -129,6 +133,9 @@ export interface SalesOrderLine {
   line_number: number
   source_quotation_line_id: string | null
   product_id: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_category_id?: string | null
   product_unit_id?: string | null
   product_color_id?: string | null
@@ -296,6 +303,9 @@ export interface SalesOrderLineInput {
   client_key: string
   source_quotation_line_id: string | null
   product_id: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   /** 规格下拉的内部选择值，不提交给后端。 */
   product_selection_id?: string | null
   customer_product_name_snapshot: string
@@ -303,6 +313,7 @@ export interface SalesOrderLineInput {
   specification_display?: string
   customer_color_snapshot: string
   product_category_id?: string | null
+  product_category_name?: string
   product_unit_id?: string | null
   product_color_id?: string | null
   product_image_id?: string | null

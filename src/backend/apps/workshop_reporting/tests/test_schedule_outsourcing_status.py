@@ -113,7 +113,9 @@ class ScheduleOutsourcingStatusTests(SimpleTestCase):
             patch(f"{module}._tube_records", return_value=records),
             patch(f"{module}._p4_records", return_value=[]),
             patch(f"{module}._projected_records", return_value=[]),
+            patch(f"{module}.TubeOutsourcingOrder.objects.filter") as hidden,
         ):
+            hidden.return_value.exclude.return_value.exclude.return_value.values_list.return_value.distinct.return_value = []
             sources.return_value = (sources, sources, sources, request)
             result = schedule_outsourcing_statuses([schedule], request=request, as_of_date=self.today)["s1"]
         for stage in ("METAL", "SEWING"):
@@ -122,9 +124,79 @@ class ScheduleOutsourcingStatusTests(SimpleTestCase):
 
     def test_without_permission_does_not_query_external_sources(self):
         request = SimpleNamespace(user=SimpleNamespace(has_perm=lambda permission: False))
-        schedule = SimpleNamespace(pk="s1", production_task_id="t1", active_products=[], stage_product_count=0)
-        with patch("apps.workshop_reporting.schedule_outsourcing_status._sources_for_tasks") as sources:
+        product = SimpleNamespace(product_line_id="p1", schedule_id="s1")
+        schedule = SimpleNamespace(pk="s1", production_task_id="t1", active_products=[product], stage_product_count=1)
+        with (
+            patch("apps.workshop_reporting.schedule_outsourcing_status._sources_for_tasks") as sources,
+            patch("apps.workshop_reporting.schedule_outsourcing_status.TubeOutsourcingOrder.objects.filter") as hidden,
+        ):
             result = schedule_outsourcing_statuses([schedule], request=request, as_of_date=self.today)
         sources.assert_not_called()
+        hidden.assert_not_called()
         self.assertEqual(result["s1"]["METAL"]["state"], "UNKNOWN")
         self.assertEqual(result["s1"]["SEWING"]["state"], "UNKNOWN")
+
+    def test_hidden_plan_craft_makes_only_its_stage_unknown_despite_visible_product(self):
+        module = "apps.workshop_reporting.schedule_outsourcing_status"
+        product = SimpleNamespace(product_line_id="p1", schedule_id="s1")
+        schedule = SimpleNamespace(pk="s1", production_task_id="t1", active_products=[product], stage_product_count=1)
+        request = SimpleNamespace(user=SimpleNamespace(has_perm=lambda permission: True))
+        records = [("p1", self.record(is_plan=True, bom_quantity="100", returned="100", order_kind="TUBE",
+            order_id=craft, craft_code=craft)) for craft in ("EMBROIDERY", "POWDER_COATING")]
+        with (
+            patch(f"{module}._sources_for_tasks") as sources,
+            patch(f"{module}._regular_records", return_value=[]),
+            patch(f"{module}._tube_records", return_value=records),
+            patch(f"{module}._p4_records", return_value=[]),
+            patch(f"{module}._projected_records", return_value=[]),
+            patch(f"{module}.TubeOutsourcingOrder.objects.filter") as hidden,
+        ):
+            sources.return_value = (sources, sources, sources, request)
+            hidden.return_value.exclude.return_value.exclude.return_value.values_list.return_value.distinct.return_value = [
+                ("p1", "SCREEN_PRINTING")]
+            result = schedule_outsourcing_statuses([schedule], request=request, as_of_date=self.today)["s1"]
+        self.assertEqual(result["SEWING"]["state"], "UNKNOWN")
+        self.assertNotIn("progress_percent", result["SEWING"])
+        self.assertEqual(len(result["SEWING"]["records"]), 1)
+        self.assertEqual(result["METAL"]["progress_percent"], 100)
+
+    def test_plan_uses_bom_not_manual_plan_or_dispatch_for_progress(self):
+        row = self.order_line(is_plan=True, bom_quantity="1000", planned_quantity="1200",
+                              dispatched_quantity="1200", returned="800")
+        order = outsourcing_order_statuses([row])[0]
+        stage = outsourcing_stage_status([order])
+        self.assertEqual(order["remaining_quantity"], "200")
+        self.assertEqual(stage["progress_percent"], 80)
+        self.assertEqual(stage["bom_quantity"], "1000")
+        self.assertEqual(stage["received_quantity"], "800")
+
+    def test_plan_over_receipt_does_not_cover_other_component(self):
+        rows = [self.order_line(is_plan=True, bom_quantity="100", returned="200"),
+                self.order_line(is_plan=True, bom_quantity="100", returned="0")]
+        order = outsourcing_order_statuses(rows)[0]
+        self.assertEqual(order["progress_percent"], 50)
+        self.assertEqual(order["received_quantity"], "200")
+        self.assertEqual(order["covered_quantity"], "100")
+        self.assertEqual(order["remaining_quantity"], "100")
+
+    def test_new_plan_progress_is_not_combined_with_legacy_order_quantities(self):
+        rows = [self.order_line(is_plan=True, bom_quantity="100", returned="50"),
+                self.order_line(order_id="legacy", planned_quantity="5000", returned="0")]
+        stage = outsourcing_stage_status(outsourcing_order_statuses(rows))
+        self.assertEqual(stage["progress_percent"], 50)
+        self.assertNotIn("progress_percent", outsourcing_stage_status([rows[1]]))
+
+    def test_plan_progress_never_leaks_when_scope_is_incomplete(self):
+        records = outsourcing_order_statuses([self.order_line(is_plan=True, bom_quantity="100", returned="50")])
+        for options in ({"allowed": False}, {"complete_scope": False}):
+            stage = outsourcing_stage_status(records, **options)
+            self.assertEqual(stage["state"], "UNKNOWN")
+            self.assertNotIn("progress_percent", stage)
+
+    def test_plan_reaching_bom_is_not_forced_closed_or_loss(self):
+        row = self.order_line(is_plan=True, bom_quantity="100", planned_quantity="120", returned="110")
+        self.assertEqual(row["state"], "RETURNED")
+        self.assertIn("入库达标", row["description"])
+        order = outsourcing_order_statuses([row])[0]
+        self.assertEqual(order["progress_percent"], 100)
+        self.assertEqual(order["received_quantity"], "110")

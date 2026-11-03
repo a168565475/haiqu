@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { AxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -199,7 +200,7 @@ onMounted(async () => {
             <td><span class="entry-sequence">{{ index + 1 }}</span></td>
             <td>
               <div class="entry-product" :title="`${item.product.item_number || '—'}｜${item.product.product_name || '—'}｜${(item.product.specification_display ?? item.product.specification) || '—'}｜${item.product.color_name || '—'}`">
-                <img
+                <ProtectedImage
                   :src="item.product.image_file_id ? scheduleProductImageUrl(item.production_task_id, item.product.image_file_id) : productImagePlaceholder"
                   :class="{ 'is-placeholder': !item.product.image_file_id }"
                   :alt="`${item.product.product_name || '产品'}图片`"

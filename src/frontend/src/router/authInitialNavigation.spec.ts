@@ -11,7 +11,7 @@ it('首次受保护导航无法验证已有身份时落到登录页，不留空�
   setActivePinia(createPinia())
   const auth = useAuthStore()
   auth.applyAuthResponse({ authenticated: true, user: { id: 1, username: 'initial', display_name: '', is_superuser: false, employee: null, permissions: [], data_scope: 'ALL' } })
-  auth.invalidateAuthenticationCheck()
+  auth.invalidateAuthenticationVerification()
   vi.mocked(fetchCurrentUser).mockRejectedValue(new Error('Network Error'))
   expect(router.currentRoute.value.matched).toHaveLength(0)
   await router.push('/complaints?q=initial')

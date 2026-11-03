@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AxiosError } from 'axios'
+import { AxiosError, isCancel } from 'axios'
+import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Document, Refresh } from '@element-plus/icons-vue'
 import MetalReceiptTable from '@/components/inventory/MetalReceiptTable.vue'
@@ -15,8 +17,25 @@ const previewReady = ref(false)
 const zoneId = ref(''), receiptDate = ref(''), remark = ref('')
 const quantities = ref<Record<string,string | number>>({}), selected = ref<Record<string,boolean>>({})
 const pending = ref<{payload:ReceiptPayload; etag:string} | null>(null)
-const pendingKey = `internal-receipt-pending:${String(route.query.schedule_product_id)}:${String(route.query.plan_category)}`
-const isSewing = computed(() => (preview.value?.plan_category || route.query.plan_category) === 'SEWING')
+const sourceId = String(route.query.schedule_product_id), sourceCategory = String(route.query.plan_category)
+const pendingKey = `internal-receipt-pending:${sourceId}:${sourceCategory}`
+const owned = useIdentityOwnedStorage({ storage: 'session', key: pendingKey, legacyKeys: [pendingKey] })
+const storageBlocked = ref(false)
+let pendingRaw: string | null = null
+function checkStorage(): boolean {
+  if (!owned.isCurrent()) { storageBlocked.value = true; error.value = '身份尚未核验或已变化，请核验身份后重新打开本页。'; return false }
+  try {
+    if (owned.legacyExists()) { storageBlocked.value = true; error.value = '发现历史无主待核对记录，已原样隔离保留并暂停新提交。请联系管理员人工核对，不能认领或删除后重试。'; return false }
+    return !storageBlocked.value
+  } catch { storageBlocked.value = true; error.value = '浏览器无法读取待核对记录，请联系管理员人工核对，暂勿提交。'; return false }
+}
+function consumePending(): boolean {
+  try {
+    if (pendingRaw === null || !owned.removeIfUnchanged(pendingRaw)) throw Error('pending changed')
+    pending.value = null; pendingRaw = null; return true
+  } catch { storageBlocked.value = true; error.value = '待核对记录已变化或无法更新，已保留记录并暂停提交，请联系管理员人工核对。'; return false }
+}
+const isSewing = computed(() => (preview.value?.plan_category || sourceCategory) === 'SEWING')
 const selection = computed(() => (preview.value?.lines || []).filter(line => isSewing.value
   ? Number(quantities.value[line.bom_line_id]) > 0
   : selected.value[line.bom_line_id]))
@@ -50,19 +69,23 @@ function errorText(cause:unknown) {
   return '页面加载失败，请重试。'
 }
 async function load() {
+  if (!checkStorage()) return
   loading.value = true; previewReady.value = false; error.value = ''
   try {
-    preview.value = await fetchReceiptPreview(String(route.query.schedule_product_id || ''),String(route.query.plan_category || ''))
+    owned.assertCurrent()
+    const data = await fetchReceiptPreview(sourceId === 'undefined' ? '' : sourceId, sourceCategory === 'undefined' ? '' : sourceCategory)
+    owned.assertCurrent()
+    preview.value = data
     receiptDate.value ||= preview.value.receipt_date
     warehouse.value ||= preview.value.zones.find(zone => zone.id === zoneId.value)?.warehouse || warehouses.value[0] || ''
     zoneId.value ||= zones.value[0]?.id || ''
     if (!pending.value) { quantities.value = {}; selected.value = {} }
     previewReady.value = true
-  } catch (cause) { error.value = errorText(cause) }
-  finally { loading.value = false }
+  } catch (cause) { if (isCancel(cause) || !owned.isCurrent()) return; error.value = errorText(cause) }
+  finally { if (owned.isCurrent()) loading.value = false }
 }
 async function submit() {
-  if (loading.value || saving.value) return
+  if (!checkStorage() || loading.value || saving.value) return
   if (!pending.value) {
     if (!preview.value || !previewReady.value) return
     error.value = ''
@@ -84,43 +107,55 @@ async function submit() {
         error.value = `${line.attributes.part_name}：本次入库须为正整数，且不能超过剩余可入数量。`; return
       }
     }
-    pending.value = { etag: preview.value.etag, payload: { request_id: crypto.randomUUID(),
+    const original = { etag: preview.value.etag, payload: { request_id: crypto.randomUUID(),
       schedule_product_id: preview.value.schedule_product_id, plan_category: preview.value.plan_category,
       zone_id: zoneId.value, receipt_date: receiptDate.value, remark: remark.value.trim(),
       lines: selection.value.map(line => ({bom_line_id:line.bom_line_id,quantity:String(quantities.value[line.bom_line_id])})),
     } }
-    sessionStorage.setItem(pendingKey,JSON.stringify(pending.value))
+    try {
+      if (owned.read() !== null) throw Error('existing pending')
+      const raw = JSON.stringify(original); owned.write(raw); pendingRaw = raw; pending.value = original
+    } catch { storageBlocked.value = true; error.value = '无法保存提交编号或已有待核对记录，请重新打开本页核对，暂勿提交。'; return }
   }
   error.value = ''
   saving.value = true
   try {
-    const result = await confirmInternalReceipt(pending.value.payload,pending.value.etag)
-    pending.value = null; sessionStorage.removeItem(pendingKey)
+    owned.assertCurrent()
+    if (owned.read() !== pendingRaw) { storageBlocked.value = true; error.value = '待核对记录已变化，请重新打开本页并联系管理员人工核对。'; return }
+    const result = await confirmInternalReceipt(pending.value!.payload,pending.value!.etag)
+    owned.assertCurrent()
+    if (!consumePending()) return
     ElMessage.success(`已提交待入库：${result.receipt_number}`)
     await load()
   } catch (cause) {
+    if (isCancel(cause) || !owned.isCurrent()) return
     const status = cause instanceof AxiosError ? cause.response?.status : undefined
     const code = cause instanceof AxiosError ? cause.response?.data?.error?.code : undefined
     if (status && ([400, 412, 428].includes(status) || (status === 409 && code === 'RECEIPT_REQUEST_DELETED'))) {
-      pending.value = null; sessionStorage.removeItem(pendingKey)
+      if (!consumePending()) return
       error.value = errorText(cause)
       if (status === 412) error.value += ' 请刷新后重新填写。'
     } else error.value = '提交结果尚未确认。请点击“核对本次提交”，使用原请求核对，避免重复入库。'
-  } finally { saving.value = false }
+  } finally { if (owned.isCurrent()) saving.value = false }
 }
 onMounted(() => {
+  if (!checkStorage()) return
   try {
-    const saved = sessionStorage.getItem(pendingKey)
-    if (saved) {
+    const saved = owned.read()
+    if (saved !== null) {
+      pendingRaw = saved
       pending.value = JSON.parse(saved)
-      if (!pending.value?.payload?.request_id || !Array.isArray(pending.value.payload.lines)) throw new Error('未确认请求格式不完整')
+      if (!pending.value?.payload?.request_id || !pending.value.etag
+        || pending.value.payload.schedule_product_id !== sourceId
+        || pending.value.payload.plan_category !== sourceCategory
+        || !Array.isArray(pending.value.payload.lines)) throw new Error('未确认请求格式不完整')
       const payload = pending.value.payload
       zoneId.value = payload.zone_id; receiptDate.value = payload.receipt_date; remark.value = payload.remark
       quantities.value = Object.fromEntries(payload.lines.map(line => [line.bom_line_id,line.quantity]))
       selected.value = Object.fromEntries(payload.lines.map(line => [line.bom_line_id,true]))
     }
   }
-  catch { pending.value = null; sessionStorage.removeItem(pendingKey) }
+  catch { storageBlocked.value = true; error.value = '本地待核对请求记录无法读取，已保留并暂停新提交，请联系管理员人工核对。'; return }
   void load()
 })
 </script>
@@ -132,16 +167,16 @@ onMounted(() => {
     <template v-if="preview">
       <section class="panel d1-context"><div class="info-grid"><div v-for="[label, value] in info" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div></section>
       <section class="panel d1-workspace">
-        <div class="section-heading"><div><h2>本次入库</h2><span class="muted">{{ isSewing ? '按订单与 BOM 套数净需求，扣除累计入库、车缝直发及待发预留' : '按订单净需求和实际已领投入共同控制上限' }}</span></div><ElButton :icon="Refresh" :disabled="saving || !!pending" @click="load">刷新</ElButton></div>
+        <div class="section-heading"><div><h2>本次入库</h2><span class="muted">{{ isSewing ? '按订单与 BOM 套数净需求，扣除累计入库、车缝直发及待发预留' : '按订单净需求和实际已领投入共同控制上限' }}</span></div><ElButton :icon="Refresh" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" @click="load">刷新</ElButton></div>
         <div class="field-grid d1-fields erp-flat-form">
-          <label class="form-field required"><span>收货日期</span><ElDatePicker v-model="receiptDate" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" popper-class="schedule-date-popper" aria-label="收货日期" :disabled="saving || !!pending" /></label>
-          <label class="form-field required"><span>材料仓</span><ElSelect v-model="warehouse" aria-label="材料仓" :disabled="saving || !!pending" @change="zoneId = zones[0]?.id || ''"><ElOption v-for="name in warehouses" :key="name" :label="name" :value="name" /></ElSelect></label>
-          <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" :disabled="saving || !!pending"><ElOption v-for="zone in zones" :key="zone.id" :label="zone.name" :value="zone.id" /></ElSelect></label>
+          <label class="form-field required"><span>收货日期</span><ElDatePicker v-model="receiptDate" type="date" value-format="YYYY-MM-DD" format="YYYY-MM-DD" popper-class="schedule-date-popper" aria-label="收货日期" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" /></label>
+          <label class="form-field required"><span>材料仓</span><ElSelect v-model="warehouse" aria-label="材料仓" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" @change="zoneId = zones[0]?.id || ''"><ElOption v-for="name in warehouses" :key="name" :label="name" :value="name" /></ElSelect></label>
+          <label class="form-field required"><span>库区</span><ElSelect v-model="zoneId" aria-label="库区" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending"><ElOption v-for="zone in zones" :key="zone.id" :label="zone.name" :value="zone.id" /></ElSelect></label>
           <label class="form-field"><span>入库人</span><ElInput :model-value="preview.actor" disabled aria-label="入库人" /></label>
         </div>
         <MetalReceiptTable :columns="columns" :rows="preview.lines" row-key="bom_line_id" class="erp-table-editor d1-lines" :empty="preview.excluded.length ? '本计划管材需外发喷塑，请在原外发单登记回库。' : '暂无可入库部位'">
-          <template #cell-selected="{ row }"><input v-model="selected[row.bom_line_id]" type="checkbox" :aria-label="`选择${row.attributes.part_name}`" :disabled="Number(row.can_receive) <= 0 || saving || !!pending"></template>
-          <template #cell-part="{ row }"><strong class="cell-text" :title="row.attributes.part_name">{{ row.attributes.part_name }}</strong></template>
+          <template #cell-selected="{ row }"><input v-model="selected[row.bom_line_id]" type="checkbox" :aria-label="`选择${row.attributes.part_name}`" :disabled="storageBlocked || !owned.isCurrent() || Number(row.can_receive) <= 0 || saving || !!pending"></template>
+          <template #cell-part="{ row }"><ProcessingMaterialDetails :materials="row"><strong class="cell-text" :title="row.attributes.part_name">{{ row.attributes.part_name }}</strong></ProcessingMaterialDetails></template>
           <template #cell-material="{ row }"><span class="cell-text" :title="row.attributes.material">{{ row.attributes.material || '—' }}</span></template>
           <template #cell-specification="{ row }"><span class="cell-text" :title="row.attributes.specification">{{ row.attributes.specification || (row.attributes.tube_diameter ? `${row.attributes.tube_diameter}×${row.attributes.tube_thickness}×${row.attributes.cutting_length_mm}mm` : '—') }}</span></template>
           <template #cell-color="{ row }"><span class="cell-text" :title="row.attributes.color">{{ row.attributes.color || '—' }}</span></template>
@@ -150,12 +185,12 @@ onMounted(() => {
           <template #cell-required="{ row }">{{ number(row.required) }}</template>
           <template #cell-received="{ row }">{{ number(row.received) }}</template>
           <template #cell-can_receive="{ row }"><strong :class="Number(row.can_receive) > 0 ? 'brand' : 'muted'" :title="isSewing ? `应入库 ${row.required} 套，厂内及外发累计已入库 ${row.received} 套；剩余可入已扣车缝直发及待发预留` : `已领投入剩余 ${row.input_remaining}，支持产出 ${row.input_supported}`">{{ number(row.can_receive) }}</strong></template>
-          <template #cell-quantity="{ row }"><ElInput v-model="quantities[row.bom_line_id]" type="number" :min="isSewing ? 0 : 1" step="1" :max="row.can_receive" :aria-label="`${row.attributes.part_name}本次入库`" :placeholder="Number(row.can_receive) ? '填写数量' : '暂无可入数量'" :disabled="Number(row.can_receive) <= 0 || (!isSewing && !selected[row.bom_line_id]) || saving || !!pending"><template #suffix><span class="d1-unit">{{ row.attributes.unit_name }}</span></template></ElInput></template>
+          <template #cell-quantity="{ row }"><ElInput v-model="quantities[row.bom_line_id]" type="number" :min="isSewing ? 0 : 1" step="1" :max="row.can_receive" :aria-label="`${row.attributes.part_name}本次入库`" :placeholder="Number(row.can_receive) ? '填写数量' : '暂无可入数量'" :disabled="storageBlocked || !owned.isCurrent() || Number(row.can_receive) <= 0 || (!isSewing && !selected[row.bom_line_id]) || saving || !!pending"><template #suffix><span class="d1-unit">{{ row.attributes.unit_name }}</span></template></ElInput></template>
         </MetalReceiptTable>
-        <label class="form-field d1-remark erp-flat-form"><span>入库备注 <small class="muted">{{ isSewing ? '选填 · 车缝按套入库' : '选填' }}</small></span><ElInput v-model="remark" type="textarea" :rows="3" maxlength="2000" placeholder="填写本次收货说明" aria-label="入库备注" :disabled="saving || !!pending" /></label>
+        <label class="form-field d1-remark erp-flat-form"><span>入库备注 <small class="muted">{{ isSewing ? '选填 · 车缝按套入库' : '选填' }}</small></span><ElInput v-model="remark" type="textarea" :rows="3" maxlength="2000" placeholder="填写本次收货说明" aria-label="入库备注" :disabled="storageBlocked || !owned.isCurrent() || saving || !!pending" /></label>
       </section>
     </template>
     <section v-else class="panel d1-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="error || '入库资料读取失败，请重试'" /><ElButton :icon="Refresh" @click="load">重新加载</ElButton></template></section>
-    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="!preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="loading || saving || (!pending && (!preview || !previewReady || !selection.length))" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本次入库 <strong>{{ quantityTotal.toLocaleString('zh-CN') }}</strong> {{ isSewing ? '套' : '支' }} <span class="muted"> · {{ selection.length }} 个部位</span><small>提交后由仓库确认，确认后增加公共半成品库存</small></div><ElButton :icon="ArrowLeft" :disabled="saving" @click="router.back()">返回</ElButton><ElButton :icon="Refresh" :disabled="storageBlocked || !owned.isCurrent() || !preview || loading || saving || !!pending" @click="resetQuantities">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageBlocked || !owned.isCurrent() || loading || saving || (!pending && (!preview || !previewReady || !selection.length))" @click="submit">{{ pending ? '核对本次提交' : '提交待入库' }}</ElButton></footer>
   </section>
 </template>

@@ -44,14 +44,16 @@ def _sewing_schemes(product_line_id):
 def sewing_output_usage(product_line_id, *, exclude_tube_order_id=None):
     """累计首次产出，不读取剩余库存；新裁片外发回货不重复占用，直发或首次入库已占。"""
     from apps.outsourcing.models import TubeOutsourcingLine
-    usage = defaultdict(lambda: dict(received=0, dispatched=0, reserved=0))
+    usage = defaultdict(lambda: dict(received=0, dispatched=0, reserved=0, plan_dispatched=0))
     direct = TubeOutsourcingLine.objects.filter(
-        order__product_line_id=product_line_id, order__source_kind='SEWING')
+        order__product_line_id=product_line_id, order__source_kind='SEWING', order__is_plan=False)
     if exclude_tube_order_id:
         direct = direct.exclude(order_id=exclude_tube_order_id)
     for statuses, field in [(['PENDING_DISPATCH'], 'reserved'), (['PROCESSING', 'COMPLETED'], 'dispatched')]:
         for row in direct.filter(order__status__in=statuses).values('component_identity').annotate(total=Sum('quantity')):
             usage[str(row['component_identity'])][field] += row['total']
+    for row in direct.filter(order__plan__isnull=False, order__status__in=['PROCESSING', 'COMPLETED']).values('component_identity').annotate(total=Sum('quantity')):
+        usage[str(row['component_identity'])]['plan_dispatched'] += row['total']
     for row in InternalSemiFinishedReceiptLine.objects.filter(
         receipt__schedule_product__product_line_id=product_line_id, receipt__plan_category='SEWING',
     ).values('component_identity').annotate(total=Sum('quantity')):
@@ -164,14 +166,16 @@ def sewing_component_limits(product_line, *, as_of=None, exclude_tube_order_id=N
         values, allowance = usage[key], None
         try:
             values = {name: _whole(value, name) for name, value in values.items()}
-            used, reported = sum(values.values()), min(totals) if totals else 0
-            if used > required:
+            used = values['received'] + values['dispatched'] + values['reserved']
+            protected = used - values['plan_dispatched']
+            reported = min(totals) if totals else 0
+            if protected > required:
                 blockers.append('累计首次入库、已直发和待发预留超过订单需求，请核对历史占用。')
-            if used > reported:
+            if protected > reported:
                 blockers.append('累计首次入库、已直发和待发预留超过有效报工完成套数，请核对报工及历史占用。')
             if not blockers:
                 allowance = dict(required=required, reported_minimum=reported, **values, used=used,
-                    remaining=max(0, min(required, reported) - used), report_protected_usage=used)
+                    remaining=max(0, min(required, reported) - used), report_protected_usage=protected)
         except ValueError as exc:
             blockers.append(str(exc))
         result[key] = dict(component_identity=key, part_name=part, required=required,
@@ -194,8 +198,9 @@ def _basis_dates(product_line_id):
 
 def assert_sewing_reports_cover_usage(product_line_id):
     """仅已有直发或预留时保护总占用，不给旧车缝入库新增报工前置条件。"""
-    protected = {key: sum(row.values()) for key, row in sewing_output_usage(product_line_id).items()
-                 if row['dispatched'] or row['reserved']}
+    protected = {key: row['received'] + row['dispatched'] + row['reserved'] - row['plan_dispatched']
+                 for key, row in sewing_output_usage(product_line_id).items()
+                 if row['dispatched'] > row['plan_dispatched'] or row['reserved']}
     for as_of in _basis_dates(product_line_id) if protected else []:
         context = sewing_component_limits(product_line_id, as_of=as_of)
         for key, used in protected.items():

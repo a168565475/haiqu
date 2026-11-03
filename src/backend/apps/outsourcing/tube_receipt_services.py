@@ -18,6 +18,7 @@ from apps.reference_data.models import ProductionUnit
 
 from .material_flow import lock_request
 from .models import TubeOutsourcingOrder, TubeOutsourcingReceipt, TubeOutsourcingReceiptLine
+from .processing_materials import require_saved_processing_materials
 from .services import _json_hash
 from .tube_receipt_selectors import dispatch_evidence_blockers
 from .tube_selectors import RETURN_PERMISSION, require_saved_order_access, require_tube_feature
@@ -72,6 +73,8 @@ def confirm_tube_final_receipt(*, order_id, data, request):
         return existing, False
     initial = get_object_or_404(TubeOutsourcingOrder.objects.select_related('schedule_product'), pk=order_id)
     require_saved_order_access(request, initial, RETURN_PERMISSION)
+    if initial.is_plan or initial.plan_id:
+        raise Conflict('委外总单及实际外发记录须使用总单独立入库，不能登记旧式最终回货。')
     lock_source_product(initial.product_line_id, initial.source_kind)
     order = TubeOutsourcingOrder.objects.select_for_update(of=('self',)).select_related(
         'schedule_product__schedule__production_task').get(pk=order_id)
@@ -102,6 +105,7 @@ def confirm_tube_final_receipt(*, order_id, data, request):
             received_quantity=quantity, shortage_quantity=line.quantity - quantity,
             shortage_reason=reason, snapshot=_json({**line.snapshot,
                 'unit_price': str(line.unit_price) if line.unit_price is not None else None}))
+        require_saved_processing_materials(line)
         identity = validate_public_identity(line.snapshot['public_output_identity'])
         if (identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id)
                 or identity['identity_snapshot'].get('semi_kind') != ('CUTTING' if order.source_kind in CUTTING_SOURCES else 'PIPE')):
@@ -140,6 +144,8 @@ def confirm_tube_final_receipt(*, order_id, data, request):
                 production_task=order.schedule_product.schedule.production_task_id,
                 product_line=order.product_line_id, bom_line=row.order_line.bom_line_id,
                 snapshot=_json({'source': '外发入库', 'source_kind': order.source_kind,
+                    'input_material_selection_snapshot': row.order_line.input_material_selection_snapshot,
+                    'output_material_selection_snapshot': row.order_line.output_material_selection_snapshot,
                     'order_id': str(order.pk), 'order_number': order.order_number,
                     'order_line_id': str(row.order_line_id), 'receipt_number': header.receipt_number,
                     'receipt_date': str(header.receipt_date), 'actor_name': request.employee.display_name,

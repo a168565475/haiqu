@@ -23,6 +23,7 @@ from apps.reference_data.models import (AccessoryColor, AccessoryMaterial, Acces
 from .fabric_material_sync import fabric_parameter_values, synchronize_fabric_material, _specification
 from .duplicate_lines import validate_duplicate_material_lines
 from .models import BomLine, BomSection
+from .catalog_selection import apply_catalog_selection, uses_catalog
 from .pipe_material_sync import pipe_parameter_values, synchronize_pipe_material
 
 
@@ -68,6 +69,9 @@ def lock_material_references(sections, *, bom):
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended('bom-pipe-material-sync-v1', 0))")
     rows = [line for section in sections for line in section["lines"]]
     rows.extend(BomLine.objects.filter(section__bom=bom).values_list("raw_values", flat=True))
+    from apps.material_catalog.models import MaterialCatalog
+    catalog_ids = {line.get("material_catalog_id") for section in sections for line in section["lines"] if line.get("material_catalog_id")}
+    list(MaterialCatalog.objects.filter(pk__in=catalog_ids).order_by("pk").select_for_update())
     for field, model in REFERENCE_MODELS:
         ids = {line.get(field) for line in rows if line.get(field)}
         list(model.objects.filter(pk__in=ids).order_by("pk").select_for_update())
@@ -203,6 +207,7 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
             if data.get("client_key"):
                 lines_by_client_key[data["client_key"]] = line
     lines_by_id = {line.pk: line for line in planned_lines.values()}
+    catalog_versions = {}
     # 先规划面料，再按同次保存的来源属性规划裁片，不能用裁片自填属性判重或建档。
     for line in sorted(planned_lines.values(), key=lambda row: row.section.title.strip() == "裁剪明细"):
         data, old = inputs[line.pk]
@@ -224,7 +229,11 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                 pending.color_id = (fabric.raw_values or {}).get("source_product_color_id") if fabric else None
                 pending.color_snapshot = line.raw_values["cutting_color"]
         source = None
-        if pending is not None:
+        if uses_catalog(data, old):
+            apply_catalog_selection(line, data, old=old, request=request, persist=for_update,
+                                    versions=catalog_versions, allow_public_creation=False, require_tube_length=False,
+                                    require_fabric_meter=True, inherit_fabric_source=True)
+        elif pending is not None:
             source = _generic_source(pending, sources, request=request,
                                      label=f"{section.title}第 {line_number} 行")
         elif section.section_type == "PROFILE":
@@ -253,7 +262,12 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                     line.raw_values["hardware_flow_unit"] = source.flow_unit or ""
                     if source.flow_unit.strip().upper() == "KG" and Decimal(data.get("unit_material_weight_kg") or "0") <= 0:
                         raise ValidationError({"sections": f"五金件第 {line_number} 行按公斤流转，须填写大于 0 的单个材料重量。"})
-        apply_line_quantities(line, bom.order_quantity)
+        from .tube_metrics import tube_metric_inputs
+        restore_automatic_metrics = old is not None and (old.raw_values or {}).get("tube_metrics_manual") is True and data.get("manual_tube_metrics") is False
+        recalculate_metrics = old is None or restore_automatic_metrics or data.get("recalculate_tube_metrics", False) or tube_metric_inputs(old) != tube_metric_inputs(line)
+        apply_line_quantities(line, bom.order_quantity, recalculate_tube_metrics=recalculate_metrics,
+                              expected_tube_formula_version=data.get("expected_tube_formula_version")
+                              if data.get("recalculate_tube_metrics") else None)
         source_id = line.raw_values.get("source_inventory_material_id")
         if source_id:
             locations.setdefault(str(source_id), []).append({"section_title": section.title, "line_number": line_number})

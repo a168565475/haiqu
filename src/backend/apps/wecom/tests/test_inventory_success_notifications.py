@@ -3,14 +3,14 @@ from datetime import timedelta
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.db import transaction
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.access_control.models import RoleActionGrant
-from apps.organizations.models import EmployeeRoleAssignment
+from apps.organizations.models import EmployeeOrganizationAssignment, EmployeeRoleAssignment, OrganizationUnit, RoleProfile
 from apps.core.api.exceptions import Conflict
 from apps.inventory.models import AssemblyReceiptSource, FinishedGoodsOutbound, FinishedGoodsReceipt, InternalSemiFinishedReceipt
 from apps.inventory.notification_events import current_inventory_object, inventory_event_version
@@ -29,6 +29,40 @@ OUTBOUND = "FINISHED_GOODS_OUTBOUND_CONFIRMED"
 
 
 class InventoryNotificationAssertions:
+    def prepare_warehouse_responsible(self):
+        department, _ = OrganizationUnit.objects.get_or_create(unit_code="DEPT_WAREHOUSE",
+            defaults={"unit_name": "仓库"})
+        EmployeeOrganizationAssignment.objects.create(employee=self.f.employee, organization_unit=department,
+            effective_from=timezone.now() - timedelta(minutes=1))
+
+    def confirm_inventory_receipt(self, receipt):
+        # 申请与实际入库已拆开；用独立仓管通过真实确认接口验证成功通知。
+        if not hasattr(self, "confirmer"):
+            self.confirmer = employee("IO_RECEIPT_CONFIRMER")
+            role, _ = RoleProfile.objects.get_or_create(role_code="WAREHOUSE_KEEPER", defaults={
+                "display_name": "仓管", "auth_group": Group.objects.get_or_create(name="IO_WAREHOUSE_KEEPER")[0],
+            })
+            EmployeeRoleAssignment.objects.create(employee=self.confirmer, role_profile=role,
+                effective_from=timezone.now() - timedelta(minutes=1))
+            permissions = Permission.objects.filter(content_type__app_label="inventory", codename__in=[
+                "view_internalsemifinishedreceipt", "confirm_internalsemifinishedreceipt",
+                "view_finishedgoodsreceipt", "confirm_finishedgoodsreceipt",
+            ])
+            for permission in permissions:
+                RoleActionGrant.objects.get_or_create(role=role, permission=permission, defaults={"scope": "MODULE"})
+            role.auth_group.permissions.add(*permissions)
+            self.confirmer.user.groups.add(role.auth_group)
+            self.confirmer_client = APIClient()
+            self.confirmer_client.force_authenticate(get_user_model().objects.get(pk=self.confirmer.user_id))
+        semi = isinstance(receipt, InternalSemiFinishedReceipt)
+        path = "semi-finished-receipts" if semi else "assembly-finished-receipts"
+        headers = {"HTTP_IF_MATCH": f'"{receipt.source_revision_hash}"'} if semi else {}
+        response = self.confirmer_client.post(f"/api/v1/{path}/{receipt.pk}/confirm/", {}, format="json", **headers)
+        self.assertEqual(response.status_code, 200, response.data)
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, "CONFIRMED")
+        return response
+
     def prepare_operator_plan_read(self):
         self.f.user.user_permissions.add(*Permission.objects.filter(content_type__app_label="production_scheduling"))
         self.f.user = get_user_model().objects.get(pk=self.f.user.pk)
@@ -41,7 +75,8 @@ class InventoryNotificationAssertions:
         self.member.user.groups.add(self.role.auth_group)
         self.reader = APIClient()
         self.reader.force_authenticate(get_user_model().objects.get(pk=self.member.user_id))
-        create_rule(self.event_code, self.f.employee, [self.role.role_code])
+        # 本组验证按岗位发给只读接收者；原提交人范围由下面的专项用例单独验证。
+        create_rule(self.event_code, self.f.employee, [self.role.role_code], recipient_scope="ROLE_MEMBERS")
 
     def event(self, obj):
         event = NotificationEvent.objects.get(event_code=self.event_code)
@@ -95,6 +130,8 @@ class SemiReceiptSuccessNotificationTests(InventoryNotificationAssertions, TestC
         first = self.f.client.post(self.f.url, payload, format="json", HTTP_IF_MATCH=etag)
         self.assertEqual(first.status_code, 201, first.data)
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.assertFalse(NotificationEvent.objects.filter(event_code=SEMI).exists())
+        self.confirm_inventory_receipt(receipt)
         event = self.event(receipt)
         self.assertNotIn("quantity", event.context)
         self.assertEqual(event.target, target_for(SEMI, receipt.pk))
@@ -119,6 +156,7 @@ class SemiReceiptSuccessNotificationTests(InventoryNotificationAssertions, TestC
         with self.assertRaisesRegex(RuntimeError, "rollback"):
             with transaction.atomic():
                 self.assertEqual(self.f.receive(7).status_code, 201)
+                self.confirm_inventory_receipt(InternalSemiFinishedReceipt.objects.get())
                 self.assertEqual(NotificationDelivery.objects.count(), 2)
                 raise RuntimeError("rollback")
         self.assertFalse(InternalSemiFinishedReceipt.objects.exists())
@@ -136,10 +174,11 @@ class SemiReceiptSuccessNotificationTests(InventoryNotificationAssertions, TestC
 
         self.assertEqual(self.f.receive(7).status_code, 201)
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.confirm_inventory_receipt(receipt)
         event = NotificationEvent.objects.get(event_code=SEMI)
         self.assertEqual(event.context["submitter_id"], str(self.f.employee.pk))
-        self.assertEqual(event.context["confirmed_by"], self.f.employee.display_name)
-        self.assertEqual(event.context["confirmed_at"], receipt.created_at.isoformat())
+        self.assertEqual(event.context["confirmed_by"], self.confirmer.display_name)
+        self.assertEqual(event.context["confirmed_at"], receipt.confirmed_at.isoformat())
         self.assertEqual(list(event.recipients.values_list("employee_id", flat=True)), [self.f.employee.pk])
 
         with self.assertRaises(Conflict):
@@ -153,6 +192,7 @@ class SemiReceiptSuccessNotificationTests(InventoryNotificationAssertions, TestC
     def test_changed_success_proof_masks_old_content_and_rejects_forged_registration(self):
         self.assertEqual(self.f.receive(7).status_code, 201)
         receipt = InternalSemiFinishedReceipt.objects.get()
+        self.confirm_inventory_receipt(receipt)
         event = self.event(receipt)
         with self.assertRaises(Conflict):
             register_business_event(event_code=SEMI, idempotency_key="forged-movement", object_type=receipt._meta.label,
@@ -207,7 +247,9 @@ class MetalReceiptSuccessNotificationTests(InventoryNotificationAssertions, Test
         self.prepare_receiver("IO_OLD_METAL", "inventory.view_internalsemifinishedreceipt")
         data, etag = self.f.payload(), self.f.preview()["etag"]
         self.assertEqual(self.f.receive(payload=data, etag=etag).status_code, 201)
-        self.event(InternalSemiFinishedReceipt.objects.get())
+        receipt = InternalSemiFinishedReceipt.objects.get()
+        self.confirm_inventory_receipt(receipt)
+        self.event(receipt)
         self.assertEqual(self.f.receive(payload=data, etag=etag).status_code, 200)
         self.assertEqual(NotificationEvent.objects.filter(event_code=SEMI).count(), 1)
 
@@ -223,7 +265,9 @@ class MetalReceiptSuccessNotificationTests(InventoryNotificationAssertions, Test
             with transaction.atomic():
                 data, etag = self.f.d1_payload(), self.f.d1_preview()["etag"]
                 self.f.d1_post(data, etag=etag)
-                self.event(InternalSemiFinishedReceipt.objects.get())
+                receipt = InternalSemiFinishedReceipt.objects.get()
+                self.confirm_inventory_receipt(receipt)
+                self.event(receipt)
                 self.f.d1_post(data, etag=etag, expected=200)
                 self.assertEqual(NotificationEvent.objects.filter(event_code=SEMI).count(), 1)
                 raise RuntimeError("rollback")
@@ -239,6 +283,7 @@ class AssemblyReceiptSuccessNotificationTests(InventoryNotificationAssertions, T
         from apps.inventory.tests.test_assembly_receipts import AssemblyReceiptTests
         self.f = AssemblyReceiptTests()
         self.f.setUp()
+        self.prepare_warehouse_responsible()
         self.prepare_receiver("IO_ASSEMBLY_WAREHOUSE", "inventory.view_finishedgoodsreceipt")
 
     def test_success_replay_readonly_page_apis_and_revoke(self):
@@ -246,6 +291,8 @@ class AssemblyReceiptSuccessNotificationTests(InventoryNotificationAssertions, T
         self.assertFalse(NotificationEvent.objects.exists())
         self.assertEqual(self.f.post(data, etag).status_code, 201)
         receipt = FinishedGoodsReceipt.objects.get()
+        self.assertFalse(NotificationEvent.objects.filter(event_code=ASSEMBLY).exists())
+        self.confirm_inventory_receipt(receipt)
         event = self.event(receipt)
         self.assertTrue(AssemblyReceiptSource.objects.filter(receipt=receipt).exists())
         self.assertEqual(event.target["route_name"], "finished-goods-inventory")
@@ -254,7 +301,7 @@ class AssemblyReceiptSuccessNotificationTests(InventoryNotificationAssertions, T
         self.assertEqual(self.f.post(data, etag).status_code, 200)
         data["received_quantity"] = 1
         self.assertEqual(self.f.post(data, etag).status_code, 409)
-        self.assertEqual(NotificationEvent.objects.count(), 1)
+        self.assertEqual(NotificationEvent.objects.filter(event_code=ASSEMBLY).count(), 1)
         for url in ["/api/v1/finished-goods-inventory/", "/api/v1/finished-goods-records/",
                     "/api/v1/finished-goods-inventory/options/?scope=filters",
                     f"/api/v1/finished-goods-records/{receipt.pk}/"]:
@@ -266,13 +313,15 @@ class AssemblyReceiptSuccessNotificationTests(InventoryNotificationAssertions, T
         self.assertEqual(self.reader.get("/api/v1/finished-goods-records/").status_code, 403)
 
     def test_failure_and_outer_rollback_leave_no_receipt_source_event_or_delivery(self):
-        response = self.f.post(self.f.payload(quantity_per_box=1))
+        response = self.f.post(self.f.payload(quantity_per_box=0))
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(NotificationEvent.objects.exists())
         with self.assertRaisesRegex(RuntimeError, "rollback"):
             with transaction.atomic():
                 self.assertEqual(self.f.post().status_code, 201)
-                self.event(FinishedGoodsReceipt.objects.get())
+                receipt = FinishedGoodsReceipt.objects.get()
+                self.confirm_inventory_receipt(receipt)
+                self.event(receipt)
                 raise RuntimeError("rollback")
         for model in (FinishedGoodsReceipt, AssemblyReceiptSource, NotificationEvent, NotificationDelivery):
             self.assertFalse(model.objects.exists())
@@ -281,21 +330,20 @@ class AssemblyReceiptSuccessNotificationTests(InventoryNotificationAssertions, T
         RoleActionGrant.objects.filter(role=self.role).delete()
         self.role.auth_group.permissions.clear()
         self.assertEqual(self.f.post().status_code, 201)
+        self.confirm_inventory_receipt(FinishedGoodsReceipt.objects.get())
         event = NotificationEvent.objects.get(event_code=ASSEMBLY)
         self.assertEqual(event.status, "NO_RECIPIENT")
         self.assertFalse(event.recipients.exists())
-        from apps.inventory.tests.test_inventory_api import FinishedGoodsInventoryApiTests
-        payload = FinishedGoodsInventoryApiTests.receipt_payload(self.f, received_quantity=1, expected_received_total=10,
-            quantity_per_box=None)
-        response = self.f.client.post("/api/v1/finished-goods-inventory/receipts/", payload, format="json")
-        self.assertEqual(response.status_code, 201, response.data)
-        generic = FinishedGoodsReceipt.objects.exclude(pk=event.object_id).get()
+        from apps.inventory.tests.finished_receipt_fixture import historical_finished_receipt
+        generic = historical_finished_receipt(product_line=self.f.line, actor=self.f.employee,
+            location_id=self.f.location_id, quantity=1, quantity_per_box=None)
         self.assertIsNone(current_inventory_object(ASSEMBLY, generic.pk))
-        self.assertEqual(NotificationEvent.objects.count(), 1)
+        self.assertEqual(NotificationEvent.objects.filter(event_code=ASSEMBLY).count(), 1)
 
     def test_stock_consumption_does_not_expire_successful_inbound_fact(self):
         self.assertEqual(self.f.post().status_code, 201)
         receipt = FinishedGoodsReceipt.objects.get()
+        self.confirm_inventory_receipt(receipt)
         event = self.event(receipt)
         data = dict(responsible_employee_id=str(self.f.employee.pk), shipment_date=str(timezone.localdate()),
             items=[dict(receipt_id=str(receipt.pk), expected_remaining_quantity=10, outbound_quantity=2, quantity_per_box=3)])
@@ -313,8 +361,10 @@ class OutboundSuccessNotificationTests(InventoryNotificationAssertions, TestCase
 
     def setUp(self):
         from apps.inventory.tests.test_finished_outbound import FinishedOutboundTests
+        from apps.inventory.tests.test_inventory_api import FinishedGoodsInventoryApiTests
         self.f = FinishedOutboundTests()
-        self.f.setUp()
+        FinishedGoodsInventoryApiTests.setUp(self.f)
+        self.prepare_warehouse_responsible()
         self.prepare_receiver("IO_FACTORY", "inventory.view_finishedgoodsoutbound")
 
     def test_actual_debit_stale_resubmit_fixed_detail_and_revoked_reader(self):

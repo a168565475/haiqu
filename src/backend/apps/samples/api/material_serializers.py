@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.boms.api.serializers import BomCatalogSelectionSerializer
 
 
 class MaterialResponseSerializer(serializers.Serializer):
@@ -38,6 +39,8 @@ class MaterialCandidateQuerySerializer(serializers.Serializer):
 
 
 class MaterialLineSerializer(serializers.Serializer):
+    material_catalog_id = serializers.UUIDField(required=False)
+    material_selection = BomCatalogSelectionSerializer(required=False)
     key = serializers.UUIDField()
     category = serializers.ChoiceField(choices=['tube', 'hardware', 'plastic', 'accessory', 'fabric', 'packaging'])
     name = serializers.CharField(max_length=300, allow_blank=True)

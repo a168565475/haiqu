@@ -30,6 +30,7 @@ from apps.reference_data.models import (
     ReferenceDictionary,
     ReferenceStatus,
     SystemParameterDefinition,
+    TubeCalculationFormula,
     TubeCoatingColor,
     TubeDiameter,
     TubeMaterial,
@@ -44,6 +45,7 @@ from apps.reference_data.services import (
     dictionary_type_reference_count,
     validate_parameter_value,
 )
+from apps.reference_data.tube_formulas import TUBE_FORMULA_GROUPS, validate_tube_expression
 
 
 class DictionaryTypeSerializer(serializers.ModelSerializer):
@@ -339,6 +341,8 @@ class ProductionUnitSerializer(serializers.ModelSerializer):
 
 
 class ProductColorSerializer(serializers.ModelSerializer):
+    color_card = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    color_code = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     image_url = serializers.SerializerMethodField()
     has_image = serializers.SerializerMethodField()
 
@@ -513,6 +517,32 @@ class TubeShapeSerializer(serializers.ModelSerializer):
             "created_at", "updated_at", "archived_at",
         ]
         read_only_fields = ["id", "pinyin_search", "created_at", "updated_at", "archived_at"]
+
+
+class TubeCalculationFormulaSerializer(serializers.ModelSerializer):
+    group_label = serializers.CharField(source="get_group_key_display", read_only=True)
+    shape_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TubeCalculationFormula
+        fields = ["id", "group_key", "group_label", "shape_names", "area_expression", "weight_expression", "updated_at"]
+        read_only_fields = ["id", "group_key", "group_label", "shape_names", "updated_at"]
+
+    def get_shape_names(self, obj) -> list[str]:
+        return list(TUBE_FORMULA_GROUPS[obj.group_key]["shapes"])
+
+    def validate(self, attrs):
+        writable = {"area_expression", "weight_expression"}
+        if set(self.initial_data) - writable:
+            raise serializers.ValidationError("只能修改喷塑面积公式和重量公式。")
+        if not attrs:
+            raise serializers.ValidationError("请提交需要修改的公式。")
+        for field in writable & attrs.keys():
+            try:
+                attrs[field] = validate_tube_expression(attrs[field], group_key=self.instance.group_key)
+            except serializers.ValidationError as error:
+                raise serializers.ValidationError({field: error.detail}) from error
+        return attrs
 
 
 class TubeCoatingColorSerializer(serializers.ModelSerializer):

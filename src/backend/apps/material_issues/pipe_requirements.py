@@ -42,7 +42,7 @@ def pipe_source_snapshot(line, raw_material):
 
 
 @transaction.atomic
-def sync_pipe_requirement(bom_line_id):
+def sync_pipe_requirement(bom_line_id, *, allow_excess_issue=False):
     """每产品每部位一份额度。锁父对象后建账，版本变更不重置历史已发量。"""
     hint = BomLine.objects.select_related("section__bom").get(pk=bom_line_id)
     task = ProductionTask.objects.select_for_update().get(pk=hint.section.bom.production_task_id)
@@ -85,7 +85,16 @@ def sync_pipe_requirement(bom_line_id):
                    or (old_snapshot and old_snapshot.get("cutting_length_mm") != snapshot["cutting_length_mm"]))
         if used and changed:
             raise pipe_error("SOURCE_REVISION_CHANGED", "已有领用后不能更换原料或切割参数。")
-        if used > snapshot["allowance_pieces"]:
+        plan_issued = 0
+        if used > snapshot['allowance_pieces']:
+            from django.db.models import Sum
+            from apps.outsourcing.models import TubeOutsourcingLine
+            plan_issued = TubeOutsourcingLine.objects.filter(order__product_line=product,
+                component_identity=line.component_identity, order__source_kind='RAW_PIPE', order__is_plan=False,
+                order__plan__is_plan=True, order__status__in=['PROCESSING', 'COMPLETED'],
+                order__actions__kind='DISPATCH').aggregate(quantity=Sum('quantity'))['quantity'] or 0
+        protected_issued = requirement.internal_issued_quantity + max(requirement.outsourcing_issued_quantity - plan_issued, 0)
+        if not allow_excess_issue and protected_issued > snapshot["allowance_pieces"]:
             raise pipe_error("REQUIREMENT_BELOW_ISSUED", "新额度低于已确认领用数量。")
     else:
         requirement = OrderMaterialRequirement(id=requirement_id, production_task=task)

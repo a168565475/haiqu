@@ -2,16 +2,22 @@
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.core.api.concurrency import PreconditionRequired, require_matching_etag
 from apps.core.api.exceptions import Conflict
-from apps.procurement.models import PurchaseOrder
+from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus, PurchaseReturn, PurchaseReturnLine, PurchaseReturnStatus
+from apps.core.numbering import next_business_number
+from apps.core.audit import write_audit_log
+from apps.reference_data.pinyin_search import build_pinyin_search
 from apps.procurement.source_access import purchase_order_access
 from apps.production_tasks.selectors import accessible_production_tasks
 from apps.samples.models import SampleMaterialPurchaseSource, SampleRequest
 
-from .models import MaterialInbound, MaterialInboundStatus
+from .models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus, WarehouseLocation
+from .public_stock_services import lock_public_stock_locations
+from .catalog_receipts import catalog_receipt_values, validate_catalog_inbound
 from .public_stock_cutover import stock_write_transaction
 from .selectors import material_received_totals
 from .services import create_material_inbound
@@ -28,6 +34,47 @@ def _matches_receipt(inbound, *, purchase_order_id, inbound_date, remark, items)
             and inbound.quality_confirmed_at is None
             and inbound.inbound_date == inbound_date and inbound.remark == remark
             and expected == actual)
+
+
+def _append_catalog_lines(*, inbound, order, inbound_date, remark, items, line_map, client_request_id, actor_employee, request):
+    """样品专用一次收货，沿采购冻结内容；旧行仍由原公共入口处理，同一外层事务。"""
+    if inbound_date > timezone.localdate():
+        raise ValidationError({'inbound_date': '入库日期不能晚于今天。'})
+    if PurchaseReturn.objects.filter(purchase_order=order).exclude(status=PurchaseReturnStatus.COMPLETED).exists():
+        raise Conflict('原采购退货尚未完成，暂不能再次入库。')
+    zones = lock_public_stock_locations([item['zone_id'] for item in items])
+    locations = {row.pk: row for row in WarehouseLocation.objects.select_for_update().filter(
+        pk__in=[item['location_id'] for item in items if item.get('location_id')]).order_by('id')}
+    if inbound is None:
+        inbound = MaterialInbound.objects.create(stock_mode='PUBLIC_V2',
+            inbound_number=next_business_number('MATERIAL_INBOUND', business_date=inbound_date),
+            purchase_order=order, client_request_id=client_request_id, inbound_date=inbound_date,
+            status=MaterialInboundStatus.CONFIRMED, remark=remark, received_by_employee=actor_employee)
+    for item in items:
+        purchase = line_map[item['purchase_order_line_id']]
+        replenishment = order.status == PurchaseOrderStatus.COMPLETED and PurchaseReturnLine.objects.filter(
+            inbound_line__purchase_order_line=purchase, return_order__status=PurchaseReturnStatus.COMPLETED).exists()
+        if order.status != PurchaseOrderStatus.PURCHASING and not replenishment:
+            raise Conflict('样品采购必须处于采购中；已完成单仅允许补收已完成退货的数量。')
+        location = locations.get(item.get('location_id'))
+        if item.get('location_id') and (location is None or location.status != 'ACTIVE' or location.zone_id != item['zone_id']):
+            raise ValidationError({'location_id': '入库库位必须是所选库区下的正常库位。'})
+        saved = catalog_receipt_values(purchase_line=purchase, item=item)
+        fields = {key + '_snapshot': getattr(purchase, key + '_snapshot') for key in (
+            'supplier_number', 'supplier_name', 'bom_number', 'product_name', 'section_type', 'section_title',
+            'category', 'material', 'part_name', 'specification', 'raw_material')}
+        line = MaterialInboundLine.objects.create(inbound=inbound, purchase_order_line=purchase,
+            **saved, **fields, zone=zones[item['zone_id']], location=location,
+            received_quantity=item['received_quantity'], accepted_quantity=item['received_quantity'], return_quantity=Decimal('0'),
+            remark=item.get('remark', ''), purchase_order_number_snapshot=order.order_number,
+            production_task_number_snapshot=order.production_task_number_snapshot, sales_order_number_snapshot=order.sales_order_number_snapshot,
+            material_attributes_snapshot=purchase.material_attributes_snapshot, source_unit_text_snapshot=purchase.source_unit_text,
+            purchased_quantity_snapshot=purchase.actual_purchase_quantity,
+            material_pinyin_search=build_pinyin_search(purchase.material_selection_snapshot['display_name']))
+        validate_catalog_inbound(line)
+    write_audit_log(object_type='MATERIAL_INBOUND', object_id=inbound.pk, action='SAMPLE_CATALOG_CONFIRMED',
+        actor_employee=actor_employee, after_data={'inbound_number': inbound.inbound_number, 'line_count': len(items)}, request=request)
+    return inbound
 
 
 @stock_write_transaction
@@ -53,6 +100,8 @@ def receive_sample_purchase(*, purchase_order_id, client_request_id, inbound_dat
         raise PreconditionRequired()
     existing = MaterialInbound.objects.filter(client_request_id=client_request_id).first()
     if existing:
+        if existing.received_by_employee_id != actor_employee.pk:
+            raise Conflict('该样品入库请求属于其他员工，不能认领重试。')
         if not _matches_receipt(existing, purchase_order_id=order.pk, inbound_date=inbound_date,
                                 remark=remark, items=items):
             raise Conflict('同一提交标识不能用于不同的样品入库内容。')
@@ -88,9 +137,14 @@ def receive_sample_purchase(*, purchase_order_id, client_request_id, inbound_dat
         prepared.append(row)
     try:
         with transaction.atomic():
-            inbound = create_material_inbound(inbound_date=inbound_date, remark=remark, items=prepared,
+            old_items = [row for row in prepared if not line_map[row['purchase_order_line_id']].material_catalog_id]
+            catalog_items = [row for row in prepared if line_map[row['purchase_order_line_id']].material_catalog_id]
+            inbound = create_material_inbound(inbound_date=inbound_date, remark=remark, items=old_items,
                 actor_employee=actor_employee, request=request, sample_direct=True,
-                client_request_id=client_request_id)
+                client_request_id=client_request_id) if old_items else None
+            if catalog_items:
+                inbound = _append_catalog_lines(inbound=inbound, order=order, inbound_date=inbound_date, remark=remark,
+                    items=catalog_items, line_map=line_map, client_request_id=client_request_id, actor_employee=actor_employee, request=request)
     except IntegrityError as error:
         if MaterialInbound.objects.filter(client_request_id=client_request_id).exists():
             raise Conflict('该提交标识已被其他入库使用，请刷新后重试。') from error

@@ -4,6 +4,7 @@ from apps.organizations.models import RoleProfile
 from .models import NotificationDelivery, NotificationRecipient, NotificationRule
 from .notification_access import EVENT_OBJECT_PERMISSIONS, UNAVAILABLE_EVENT_OBJECTS, event_object_accessible
 from .notification_catalog import RECIPIENT_SCOPES, all_events, current_body_template, get_event
+from .notification_display import saved_notification_body
 
 
 def rule_etag(rule):
@@ -22,16 +23,20 @@ def _role_payload(role):
     return {"role_code": role.role_code, "display_name": role.display_name, "archived": role.archived_at is not None}
 
 
-def rule_warnings(event_code, role_codes):
+def rule_warnings(event_code, role_codes, *, scope=None):
     if event_code in UNAVAILABLE_EVENT_OBJECTS:
         return [UNAVAILABLE_EVENT_OBJECTS[event_code]]
     required = set(EVENT_OBJECT_PERMISSIONS[event_code])
     warnings = (["旧单BOM事件保留用于兼容；生产确认链请配置“任务BOM全部确认”，不会自动复制旧规则。"]
-                if event_code == "BOM_CONFIRMED" else [])
+                if event_code == "BOM_CONFIRMED" and scope != 'ROLE_POLICY' else [])
     for code in role_codes:
+        role_required = required
+        if scope == 'ROLE_POLICY':
+            from .notification_role_policy import ROLE_POLICIES
+            role_required = set(ROLE_POLICIES.get(event_code, {}).get(code, {}).get('permissions', ()))
         grants = RoleActionGrant.objects.filter(role__role_code=code).select_related("permission__content_type")
         actual = {f"{row.permission.content_type.app_label}.{row.permission.codename}" for row in grants}
-        if not required & actual:
+        if not role_required & actual:
             warnings.append(f"角色 {code} 没有该事件所需动作授权，角色配置不会自动授予权限。")
     return warnings
 
@@ -60,7 +65,7 @@ def rule_payload(rule):
         "updated_by": rule.updated_by_employee.display_name if rule.updated_by_employee_id else "",
         "etag": rule_etag(rule),
         "target_key": event["target_key"],
-        "warnings": rule_warnings(rule.event_code, rule.recipient_role_codes),
+        "warnings": rule_warnings(rule.event_code, rule.recipient_role_codes, scope=rule.recipient_scope),
     }
 
 
@@ -76,7 +81,7 @@ def default_rule_payload(event):
         "recipient_roles": [], "recipient_scope": event["supported_scopes"][0],
         "enabled": event["enabled_by_default"], "version": 0, "updated_at": None,
         "updated_by": "", "etag": '"notification-rule-unsaved"', "target_key": event["target_key"],
-        "warnings": ["尚未保存配置；新事件将记录为配置缺失，保存后才生效。", *rule_warnings(event["event_code"], event["default_role_codes"])],
+        "warnings": ["尚未保存配置；新事件将记录为配置缺失，保存后才生效。", *rule_warnings(event["event_code"], event["default_role_codes"], scope=event['supported_scopes'][0])],
     }
 
 
@@ -98,6 +103,8 @@ def delivery_statuses(recipient):
 def content_accessible(recipient, user, *, permission_snapshots=None):
     if recipient.event.status == "STALE":
         return False
+    if recipient.scope == 'ROLE_POLICY':
+        return bool(current_policy_recipient(recipient, user))
     return event_object_accessible(recipient.event.event_code, recipient.event.object_id, user,
                                    role_codes=recipient.role_codes, object_version=recipient.event.object_version,
                                    submitter_id=(recipient.event.context.get("submitter_id")
@@ -105,8 +112,26 @@ def content_accessible(recipient, user, *, permission_snapshots=None):
                                    permission_snapshots=permission_snapshots)
 
 
+def current_policy_recipient(recipient, user):
+    from types import SimpleNamespace
+    from .notification_services import _eligible_employees
+    if recipient.employee.user_id != user.pk or recipient.event.status == 'STALE':
+        return None
+    rule = SimpleNamespace(recipient_scope=recipient.scope, recipient_role_codes=recipient.role_codes)
+    eligible = _eligible_employees(get_event(recipient.event.event_code), rule,
+        recipient.event.context, recipient.event.object_id, employee_id=recipient.employee_id)
+    return eligible[0] if eligible else None
+
+
+def recipient_target(recipient, user):
+    if recipient.scope == 'ROLE_POLICY':
+        current = current_policy_recipient(recipient, user)
+        return current['target'] if current else None
+    return recipient.event.target if content_accessible(recipient, user) else None
+
+
 def target_accessible(recipient, user):
-    return recipient.event.target is not None and content_accessible(recipient, user)
+    return recipient_target(recipient, user) is not None
 
 
 def recipient_payload(recipient, user, *, permission_snapshots=None):
@@ -114,6 +139,9 @@ def recipient_payload(recipient, user, *, permission_snapshots=None):
     event = get_event(recipient.event.event_code)
     if accessible:
         title, body, target = recipient.event.rendered_title, recipient.event.rendered_body, recipient.event.target
+        if recipient.scope == 'ROLE_POLICY':
+            target = recipient_target(recipient, user)
+        body = saved_notification_body(body, event, recipient.event.context)
     else:
         title, body, target = "通知内容不可访问", "该业务内容当前不可访问。", None
         from apps.inventory.notification_events import INVENTORY_EVENTS, current_inventory_object

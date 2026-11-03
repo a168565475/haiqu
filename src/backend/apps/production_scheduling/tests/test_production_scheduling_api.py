@@ -394,7 +394,7 @@ class ProductionSchedulingApiTests(APITestCase):
         self.assertIn("BOM 必须已确认", response.data["error"]["message"])
         self.assertFalse(ProductionSchedule.objects.filter(production_task=self.task).exists())
 
-    def test_create_requires_completed_purchase_order(self):
+    def test_create_allows_uncompleted_purchase_order(self):
         self.purchase_order.status = PurchaseOrderStatus.PURCHASING
         self.purchase_order.completed_at = None
         self.purchase_order.completed_by_employee = None
@@ -403,15 +403,13 @@ class ProductionSchedulingApiTests(APITestCase):
         ])
 
         source = self.detail()
-        self.assertFalse(source["scheduling_ready"])
-        self.assertFalse(source["selectable"])
-        self.assertIn("已完成采购", source["unselectable_reason"])
-        self.assertIn("所有产品的采购订单必须为“已完成采购”", source["scheduling_blockers"])
+        self.assertTrue(source["scheduling_ready"])
+        self.assertTrue(source["selectable"])
+        self.assertEqual(source["scheduling_blockers"], [])
         response = self.client.post("/api/v1/production-schedules/", self.payload(), format="json")
 
-        self.assertEqual(response.status_code, 409, response.data)
-        self.assertIn("已完成采购", response.data["error"]["message"])
-        self.assertFalse(ProductionSchedule.objects.filter(production_task=self.task).exists())
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(ProductionSchedule.objects.filter(production_task=self.task).exists())
 
     def test_create_is_idempotent_and_blocks_second_active_schedule(self):
         payload = self.payload()

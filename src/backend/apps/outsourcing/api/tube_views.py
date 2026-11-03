@@ -29,6 +29,7 @@ from .tube_serializers import (TubeCancelWriteSerializer, TubeDispatchWriteSeria
     TubeOrderWriteSerializer, TubeSourceQuerySerializer, TubeReceiptCandidatesQuerySerializer,
     TubeReceiptWriteSerializer, TubeReceiptResponseSerializer, TubeReceiptPreviewResponseSerializer,
     TubeReceiptCandidatesResponseSerializer)
+from .tube_serializers import TubePlanDispatchSerializer, TubePlanRecordCorrectionSerializer, TubePlanQuantityWriteSerializer
 
 
 class TubeActionPermission(BasePermission):
@@ -47,13 +48,17 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
     permission_classes = [HasActiveEmployee, TubeActionPermission]
     warehouse_read_actions = {'retrieve', 'action_by_request', 'receipt_preview', 'receipt'}
     warehouse_read_permissions = (DISPATCH_PERMISSION, RETURN_PERMISSION)
-    action_permission_map = {'options': VIEW_PERMISSION, 'source_context': VIEW_PERMISSION, 'product_image': VIEW_PERMISSION,
+    action_permission_map = {'options': VIEW_PERMISSION, 'source_context': (VIEW_PERMISSION, DISPATCH_PERMISSION), 'product_image': VIEW_PERMISSION,
                              'create': CREATE_PERMISSION, 'by_request': VIEW_PERMISSION,
                              'retrieve': VIEW_PERMISSION, 'confirm_dispatch': DISPATCH_PERMISSION,
                              'cancel': CANCEL_PERMISSION, 'action_by_request': VIEW_PERMISSION,
                              'receipt_candidates': RETURN_PERMISSION, 'receipt_preview': (VIEW_PERMISSION, RETURN_PERMISSION),
                              'confirm_receipt': RETURN_PERMISSION, 'receipt_by_request': RETURN_PERMISSION,
-                             'receipt': (VIEW_PERMISSION, RETURN_PERMISSION)}
+                             'receipt': (VIEW_PERMISSION, RETURN_PERMISSION),
+                             'plan_dispatch': DISPATCH_PERMISSION, 'plan_receipt': RETURN_PERMISSION,
+                             'plan_quantity': 'outsourcing.change_outsourcingorder',
+                             'plan_record_correction': (DISPATCH_PERMISSION, RETURN_PERMISSION),
+                             'plan_record_correction_by_request': (DISPATCH_PERMISSION, RETURN_PERMISSION)}
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -98,27 +103,40 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         serializer = TubeSourceQuerySerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        product, craft = source_product(request, data['schedule_product_id'],
+        permission = DISPATCH_PERMISSION if data.get('plan_id') else VIEW_PERMISSION
+        product, craft = source_product(request, data['schedule_product_id'], permission,
             source_kind=data['source_kind'], craft_id=data.get('craft_id'))
+        if data.get('plan_id'):
+            plan = get_object_or_404(TubeOutsourcingOrder, pk=data['plan_id'], is_plan=True,
+                schedule_product=product, craft=craft)
+            require_saved_order_access(request, plan, permission)
         zone = source_zone(data['source_kind'], data.get('zone_id'))
         from apps.inventory.tube_outsourcing_limits import tube_source_context
         from ..tube_materials import tube_material_context
-        if data['source_kind'] in CUTTING_SOURCES:
+        if data.get('is_plan') or data.get('plan_id'):
+            from ..plan_services import plan_source_context
+            context = plan_source_context(schedule_product=product, source_kind=data['source_kind'],
+                zone=zone, craft=craft, for_plan=bool(data.get('is_plan')))
+        elif data['source_kind'] in CUTTING_SOURCES:
             from ..cutting_sources import cutting_source_context
             context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)
         else:
             context = tube_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone)
-        options = tube_options(request, category=source_category(data['source_kind']))
+        options = tube_options(request, category=source_category(data['source_kind'])) if not data.get('plan_id') else {}
         context = {**context, **product_summary(product), **product_display(product),
-                   **tube_material_context(product, source_kind=data['source_kind']),
+                   **tube_material_context(product, source_kind=data['source_kind'],
+                       plan_mode=bool(data.get('is_plan') or data.get('plan_id')), for_plan=bool(data.get('is_plan'))),
                    **options, 'craft_name': craft.name, 'craft_id': str(craft.pk),
                    'output_unit': output_unit(data['source_kind']),
                    'material_category': '辅料' if data['source_kind'] in CUTTING_SOURCES else '五金',
                    'source_kind': data['source_kind'], 'zone_id': str(zone.pk) if zone else None,
-                   'factories': [{'id': str(factory.pk), 'name': factory.name} for factory in source_factories(request, craft)]}
+                   'factories': [{'id': str(factory.pk), 'name': factory.name} for factory in source_factories(request, craft, permission)]}
         # 库存身份和冻结凭证仅供保存服务使用，页面按可显示字段读取。
         context['rows'] = [{key: value for key, value in row.items() if key not in {'input_identity', 'snapshot'}}
                            for row in context.get('rows', [])]
+        if data.get('is_plan'):
+            from ..plan_purchase_reference import add_plan_purchase_reference
+            add_plan_purchase_reference(context, product)
         return Response({'data': context})
 
     @extend_schema(request=TubeOrderWriteSerializer, responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT})
@@ -163,6 +181,18 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         response = Response({'data': data})
         response['ETag'] = data['etag']
         return response
+
+    @extend_schema(request=TubePlanQuantityWriteSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True),
+        OpenApiParameter('id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
+    @action(detail=True, methods=['patch'], url_path='plan-quantity')
+    def plan_quantity(self, request, pk=None):
+        from ..plan_services import update_plan_quantity
+        pk = serializers.UUIDField().run_validation(pk)
+        serializer = TubePlanQuantityWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = update_plan_quantity(order_id=pk, data=serializer.validated_data, request=request)
+        return self._detail_response(tube_order_queryset().get(pk=order.pk), request)
 
     @extend_schema(request=TubeDispatchWriteSerializer, responses=OpenApiTypes.OBJECT, parameters=[
         OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True),
@@ -255,3 +285,53 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
         record = get_object_or_404(receipt_queryset(), order_id=pk)
         require_receipt_read_access(request, record.order)
         return self._receipt_response(record)
+
+    @extend_schema(request=TubePlanDispatchSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=['post'], url_path='plan-dispatch')
+    def plan_dispatch(self, request, pk=None):
+        from ..plan_services import dispatch_plan
+        return self._plan_write(request, pk, TubePlanDispatchSerializer, dispatch_plan)
+
+    @extend_schema(request=TubeReceiptWriteSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=['post'], url_path='plan-receipt')
+    def plan_receipt(self, request, pk=None):
+        from ..plan_services import receive_plan
+        return self._plan_write(request, pk, TubeReceiptWriteSerializer, receive_plan)
+
+    @extend_schema(request=TubePlanRecordCorrectionSerializer, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('If-Match', str, location=OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=['post'], url_path='plan-record-correction')
+    def plan_record_correction(self, request, pk=None):
+        from ..plan_correction_services import correct_plan_record
+        pk = serializers.UUIDField().run_validation(pk)
+        serializer = TubePlanRecordCorrectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order, correction, _ = correct_plan_record(order_id=pk, data=serializer.validated_data, request=request)
+        return self._correction_response(order.pk, correction, request)
+
+    @extend_schema(request=None, responses=OpenApiTypes.OBJECT, parameters=[
+        OpenApiParameter('request_id', OpenApiTypes.UUID, location=OpenApiParameter.PATH)])
+    @action(detail=True, methods=['get'], url_path=r'plan-record-correction-by-request/(?P<request_id>[^/.]+)')
+    def plan_record_correction_by_request(self, request, pk=None, request_id=None):
+        from ..plan_correction_services import find_record_correction
+        pk = serializers.UUIDField().run_validation(pk)
+        request_id = serializers.UUIDField().run_validation(request_id)
+        correction = find_record_correction(order_id=pk, request_id=request_id, request=request)
+        return self._correction_response(pk, correction, request)
+
+    def _correction_response(self, order_id, correction, request):
+        from ..plan_correction_services import correction_data
+        data = saved_order_data(tube_order_queryset().get(pk=order_id), request=request)
+        data['record_correction'] = correction_data(correction)
+        response = Response({'data': data})
+        response['ETag'] = data['etag']
+        return response
+
+    def _plan_write(self, request, pk, serializer_class, service):
+        pk = serializers.UUIDField().run_validation(pk)
+        serializer = serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order, created = service(order_id=pk, data=serializer.validated_data, request=request)
+        return self._detail_response(tube_order_queryset().get(pk=order.pk), request, created=created)

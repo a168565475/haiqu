@@ -1,17 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import type { SampleApplicationDraft } from '@/types/sampleApplication'
-import { validateSampleApplication, validateSampleReferenceImage } from './sampleApplication'
+import { sampleProductSelection, validateSampleApplication, validateSampleReferenceImage } from './sampleApplication'
 
 const validDraft = (): SampleApplicationDraft => ({
+  manualRequestNumber: '123', productColorId: 'color', isSalesperson: true, productSelection: { draft: { ...sampleProductSelection('椅子', '50cm').draft!, category_name: '椅子' } },
   sourceType: null, sourceId: '', sourceProductId: '', productId: '', customerId: 'customer', contactId: '', ownerId: 'owner',
   sampleType: 'PRE_SALES', shippingMethod: 'EXPRESS', deliveryBatch: 'ONCE', repeatOrder: false, orderDate: '', dueDate: '',
-  productName: '椅子', specification: '', lengthCm: '', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
+  productName: '椅子', specification: '50cm', lengthCm: '', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
   requirements: '', quantity: 2, referenceImage: null,
 })
 
 describe('V3 创建页校验与接口门禁', () => {
-  it('允许原型中的可选日期、尺寸和图片为空，不再强求色卡与打样明细', () => {
+  it('日期尺寸图片可空，编号规格与公共颜色需要明确填写', () => {
     expect(validateSampleApplication(validDraft())).toBe('')
+  })
+  it('非业务员可不填客户，业务员仍需客户，编号前缀不能重复', () => {
+    expect(validateSampleApplication({ ...validDraft(), customerId: '', isSalesperson: false })).toBe('')
+    expect(validateSampleApplication({ ...validDraft(), customerId: '' })).toContain('客户')
+    expect(validateSampleApplication({ ...validDraft(), manualRequestNumber: 'HTS123' })).toContain('不要重复')
+    expect(validateSampleApplication({ ...validDraft(), productColorId: '' })).toContain('色卡')
   })
   it.each([0, -1, 1.2, NaN, Infinity, null])('拒绝非法数量 %s', quantity => {
     expect(validateSampleApplication({ ...validDraft(), quantity })).toContain('大于 0 的整数')

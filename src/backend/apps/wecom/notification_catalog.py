@@ -14,6 +14,7 @@ RECIPIENT_SCOPES = {
     "ROLE_MEMBERS": "所选角色的合法成员",
     "WORKSHOP": "对应车间的合法成员",
     "SUBMITTER": "仅本单申请人/提交人",
+    "ROLE_POLICY": "按确认岗位规则及当前业务关系",
 }
 
 VARIABLE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
@@ -300,6 +301,11 @@ EVENTS = {
 }
 
 
+from .notification_plan_catalog import definitions as plan_definitions
+EVENTS.update(plan_definitions())
+MULTILINE_DEFAULT_BODIES.update({code: event['default_body'] for code, event in plan_definitions().items()})
+
+
 def get_event(event_code):
     try:
         event = deepcopy(EVENTS[event_code])
@@ -308,6 +314,9 @@ def get_event(event_code):
     event["required_permissions"] = list(EVENT_OBJECT_PERMISSIONS[event_code])
     event["required_permission"] = next(iter(event["required_permissions"]), "")
     event["variable_definitions"] = variable_definitions(event)
+    from .notification_role_policy import ROLE_POLICIES
+    if event_code in ROLE_POLICIES and 'ROLE_POLICY' not in event['supported_scopes']:
+        event['supported_scopes'].append('ROLE_POLICY')
     return event
 
 
@@ -318,7 +327,9 @@ def current_body_template(event_code, body):
 
 
 def all_events():
-    return [get_event(code) for code in EVENTS]
+    from .notification_plan_catalog import PLAN_EVENTS
+    from .notification_role_policy import enabled
+    return [get_event(code) for code in EVENTS if enabled() or code not in PLAN_EVENTS]
 
 
 def target_for(event_code, object_id):
@@ -361,6 +372,8 @@ def target_for(event_code, object_id):
         "SAMPLE_COMPLETED": ("sample-detail", "sampleId"),
         "SAMPLE_INVENTORY_RECEIVED": ("sample-inventory-receipt-detail", "receiptId"),
     }
+    if event_code not in routes:
+        return None
     name, parameter = routes[event_code]
     value = object_id
     if event_code == "TUBE_OUTSOURCING_ORDER_CREATED":

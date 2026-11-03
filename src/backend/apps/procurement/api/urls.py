@@ -8,11 +8,13 @@ from .views import (
 )
 from .purchase_request_views import PurchaseRequestViewSet
 from .return_views import PurchaseReturnViewSet
+from .group_views import PurchaseGroupViewSet
 
 
 router = DefaultRouter()
 router.register("suppliers", SupplierViewSet, basename="supplier")
 router.register("purchase-orders", PurchaseOrderViewSet, basename="purchase-order")
+router.register("purchase-groups", PurchaseGroupViewSet, basename="purchase-group")
 router.register("purchase-returns", PurchaseReturnViewSet, basename="purchase-return")
 router.register("purchase-requests", PurchaseRequestViewSet, basename="purchase-request")
 router.register(

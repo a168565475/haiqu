@@ -6,7 +6,7 @@ from rest_framework import serializers
 from apps.production_tasks.selectors import production_task_product_image
 from apps.sales_orders.presentation import specification_display
 
-from ..material_flow import line_stock, line_flow_data
+from ..material_flow import line_stock, line_flow_data, legacy_pending_stock, legacy_line_stock_quantities
 from ..models import MaterialIssue, MaterialIssueAction, MaterialIssueStatus
 
 
@@ -35,7 +35,7 @@ def material_issue_product_data(product):
         "material": product.material_snapshot,
         "color": product.color_name_snapshot,
         "quantity": str(product.quantity),
-        "unit": product.unit.unit_name,
+        "unit": product.unit_name,
         "image_file_id": str(image.pk) if image else None,
     }
 
@@ -112,6 +112,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                     if item.get("line_id")
                 }
         if include_detail:
+            legacy_pending = None
             # 在已预加载的结果上排序，避免重新查询后丢失各明细的关联缓存。
             for line in sorted(issue.lines.all(), key=lambda item: (item.line_number, item.pk)):
                 issued_snapshot = issued_snapshots.get(str(line.pk), {})
@@ -124,7 +125,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                         if public_quantity_context is None:
                             public_quantity_context = public_issue_quantity_context(issue, exclude_issue_id=issue.pk,
                                                                                     lines=list(issue.lines.all()))
-                        quantities = public_line_quantities(line, context=public_quantity_context)
+                        quantities = public_line_quantities(line, context=public_quantity_context, limit_to_order=False)
                     semi_requirement = line.semi_requirement if line.semi_requirement_id else None
                     flow = public_line_flow_data(line)
                     lines.append({
@@ -134,6 +135,8 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                         "requirement_id": str(line.semi_requirement_id or line.requirement_id),
                         "line_type": line.line_type, "section_code": line.section_code_snapshot,
                         "raw_material_id": str(line.raw_material_id) if line.raw_material_id else None,
+                        "material_catalog_id": str(line.material_catalog_id) if line.material_catalog_id else None,
+                        "material_selection_snapshot": line.material_selection_snapshot,
                         "material_number": line.material_number_snapshot,
                         "material_name": line.material_name_snapshot,
                         "material": _semi_material(line, semi_requirement) if line.line_type == "SEMI" else "",
@@ -150,6 +153,10 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                 if line.line_type == "SEMI":
                     balance = line.semi_finished_balance
                     stock = balance.quantity
+                    if "max_issue_quantity" not in issued_snapshot and legacy_pending is None:
+                        legacy_pending = legacy_pending_stock(list(issue.lines.all()), exclude_issue_id=issue.pk)
+                    maximum = (issued_snapshot["max_issue_quantity"] if "max_issue_quantity" in issued_snapshot
+                               else legacy_line_stock_quantities(line, pending=legacy_pending)["max_issue_quantity"])
                     lines.append(
                         {
                             **line_flow_data(line),
@@ -172,7 +179,7 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                             "outsourcing_issued_quantity": issued_snapshot.get("outsourcing_issued_quantity", "0"),
                             "order_remaining": issued_snapshot.get("order_remaining", str(stock)),
                             "available_stock": issued_snapshot.get("available_stock", str(stock)),
-                            "max_issue_quantity": issued_snapshot.get("max_issue_quantity", str(stock)),
+                            "max_issue_quantity": maximum,
                             "requested_quantity": str(line.requested_quantity),
                             "issued_quantity": str(line.issued_quantity) if line.issued_quantity is not None else None,
                             "completed_craft": line.conversion_snapshot.get("completed_craft", balance.completed_craft.name),
@@ -192,13 +199,16 @@ class MaterialIssueReadSerializer(serializers.Serializer):
                         - requirement.outsourcing_issued_quantity
                     )
                     stock = line_stock(line)
+                    if legacy_pending is None:
+                        legacy_pending = legacy_pending_stock(list(issue.lines.all()), exclude_issue_id=issue.pk)
                     quantities = {
                         "required_quantity": issued_snapshot.get("required_quantity", str(requirement.required_quantity)),
                         "internal_issued_quantity": issued_snapshot.get("internal_issued_quantity", str(requirement.internal_issued_quantity)),
                         "outsourcing_issued_quantity": issued_snapshot.get("outsourcing_issued_quantity", str(requirement.outsourcing_issued_quantity)),
                         "order_remaining": issued_snapshot.get("order_remaining", str(max(remaining, Decimal("0")))),
                         "available_stock": issued_snapshot.get("available_stock", str(stock)),
-                        "max_issue_quantity": issued_snapshot.get("max_issue_quantity", str(max(min(remaining, stock), Decimal("0")))),
+                        "max_issue_quantity": issued_snapshot.get("max_issue_quantity",
+                            legacy_line_stock_quantities(line, pending=legacy_pending)["max_issue_quantity"]),
                     }
                 lines.append(
                     {

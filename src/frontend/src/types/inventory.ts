@@ -20,6 +20,7 @@ export interface WarehouseLocation {
 }
 export interface FinishedGoodsInventoryRow {
   inventory_key: string; product_id: string | null
+  product_catalog_id?: string | null; product_selection_key?: string
   task_number: string; category: string; product_number: string; product_code: string; product_name: string; item_number: string
   specification: string; actual_color: string; inventory_quantity: number; unit_id: string; unit_code: string
   unit_name: string; warehouse_id: string; warehouse_number: string; warehouse_name: string; zone_id: string
@@ -65,6 +66,8 @@ export interface FinishedGoodsOutbound {
 export type FinishedGoodsOutboundDetail = FinishedGoodsOutbound
 
 export interface MaterialInventoryRow {
+  material_catalog_id?: string | null; material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot
+  balance_id?: string; identity_key?: string
   stock_mode?: 'LEGACY' | 'PUBLIC_V2'; completed_craft?: string; completed_craft_code?: string
   processing_status?: string; processing_status_label?: string; tube_thickness?: string | null; cutting_length_mm?: number | null
   stock_kind?: 'RAW' | 'SEMI'; measurement_kind?: string; raw_bar_length_m?: string | null; meter_quantity?: string | null
@@ -76,6 +79,7 @@ export interface MaterialInventoryRow {
 }
 export interface EligibleMaterialPurchaseOrder {
   id: string; order_number: string; production_task_id: string | null; production_task_number: string | null
+  batch_number: number | null
   source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string
   sales_order_number: string; supplier_names: string[]; remaining_line_count: number
 }
@@ -84,6 +88,7 @@ export interface ProcurementInboundProductSummary {
 }
 export interface ProcurementInboundOrder {
   id: string; order_number: string; source_type: 'PRODUCTION' | 'SAMPLE'; source_number: string; sales_order_number: string
+  batch_number: number | null
   supplier_names: string[]; line_count: number; remaining_line_count: number
   supplier_summary: { supplier_id: string | null; supplier_name: string; total_amount: string | null }[]
   currency_code: string
@@ -103,6 +108,8 @@ export interface ManualMaterialOptions {
   materials: ManualMaterialOption[]
 }
 export interface EligibleMaterialLine {
+  suggested_warehouse_id?: string | null
+  material_catalog_id?: string | null; material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   material_attributes_snapshot?: import('./purchaseOrder').MaterialAttributeSnapshot
   raw_bar_length_m?: string | null; actual_bar_count?: number | null; remaining_bar_count?: number | null
   id: string; line_number: number; section_type: string; section_title: string; category: string
@@ -110,7 +117,7 @@ export interface EligibleMaterialLine {
   supplier_name: string; purchased_quantity: string; remaining_quantity: string; pinyin_search: string
 }
 export interface MaterialReceivingOptions {
-  warehouses: Pick<Warehouse, 'id' | 'warehouse_number' | 'warehouse_name'>[]
+  warehouses: (Pick<Warehouse, 'id' | 'warehouse_number' | 'warehouse_name'> & { warehouse_type?: WarehouseType })[]
   zones: Pick<WarehouseZone, 'id' | 'warehouse' | 'zone_name'>[]
 }
 export interface SampleMaterialReceivingPayload {
@@ -132,6 +139,9 @@ export interface MaterialInventoryOptions {
   production_orders: { id: string; task_number: string; order_number: string }[]
 }
 export interface MaterialInboundLine {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
+  calculation_snapshot?: Record<string, unknown>
   measurement_kind?: string; raw_bar_length_m?: string | null; received_bar_count?: number | null; accepted_bar_count?: number | null; return_bar_count?: number | null
   id: string; purchase_order_line_id: string | null; raw_material_information_id: string | null; zone_id: string; location_id: string | null
   received_quantity: string; return_quantity: string; accepted_quantity: string; remark: string; quality_remark: string

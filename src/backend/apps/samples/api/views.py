@@ -601,6 +601,7 @@ class SampleRequestViewSet(
 
     @action(detail=False, methods=["get"], url_path="form-options")
     def form_options(self, request):
+        from ..application_fields import is_sample_salesperson
         actor = self.actor_employee()
         if actor is None:
             raise PermissionDenied("样品表单需要绑定有效员工档案。")
@@ -626,6 +627,7 @@ class SampleRequestViewSet(
         return Response(
             {
                 "data": {
+                    "is_salesperson": is_sample_salesperson(request),
                     "current_maker": {
                         "id": str(actor.pk),
                         "employee_code": actor.employee_code,

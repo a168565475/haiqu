@@ -94,6 +94,24 @@ describe('材料交接页面的真实保存与并发边界', () => {
     expect(w.find('input[aria-label="面料本次可供数量"]').exists()).toBe(true)
     expect(api.saveWarehouse).not.toHaveBeenCalled()
   })
+  it('仓库无库存自动回填零后清除待核对提示，可直接确认采购', async () => {
+    const pendingLine = { ...line, supplyQuantity: '', inventoryAllocations: [] }
+    api.warehouse.mockResolvedValue({ ...state(), draft: { lines: [pendingLine], notes: '' } })
+    const w = await render(WarehousePage)
+    await w.find('.submit-action').trigger('click')
+    expect(w.get('.warehouse-inline-message').text()).toContain('请先点击“查询库存”')
+    const reviewedLine = { ...pendingLine, supplyQuantity: '0' }
+    w.findComponent({ name: 'SampleInventoryLookup' }).vm.$emit('apply', [reviewedLine])
+    await flushPromises()
+    expect(w.find('.warehouse-inline-message').exists()).toBe(false)
+    expect((w.get('input[aria-label="圆管本次可供数量"]').element as HTMLInputElement).value).toBe('0')
+    api.saveWarehouse.mockResolvedValue({ ...state(), canEdit: false, status: 'PROCUREMENT_PENDING', draft: { lines: [reviewedLine], notes: '' } })
+    await w.find('.submit-action').trigger('click')
+    await flushPromises()
+    expect(api.saveWarehouse).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      etag: 'v1', submit: true, draft: { lines: [reviewedLine], notes: '' },
+    }))
+  })
   it('仓库加载失败时保持不可操作，已提交记录只读', async () => {
     api.warehouse.mockRejectedValueOnce(new Error('failure'))
     const failed = await render(WarehousePage)

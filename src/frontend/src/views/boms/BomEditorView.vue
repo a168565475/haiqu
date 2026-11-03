@@ -28,6 +28,9 @@ import {
   verifyBom,
 } from '@/api/boms'
 import { fetchAllProductionDataRecords } from '@/api/productionData'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import ProductionDataView from '@/views/settings/ProductionDataView.vue'
+import { bomCatalogCategories } from '@/components/products/materialSelection'
 import BomLineEditorDialog from '@/components/BomLineEditorDialog.vue'
 import BomPrintDocument from '@/components/boms/BomPrintDocument.vue'
 import BomLineImageManager from './BomLineImageManager.vue'
@@ -40,7 +43,6 @@ import BomProductConfirmationDialogs from './BomProductConfirmationDialogs.vue'
 import BomMaterialCreateDialogs from './BomMaterialCreateDialogs.vue'
 import BomQuantityCompareCard from './BomQuantityCompareCard.vue'
 import BomSectionSidebar from './BomSectionSidebar.vue'
-import { fetchProductOptions } from '@/api/products'
 import type { InquiryItem } from '@/types/inquiry'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -59,13 +61,11 @@ import type {
   BomSemiFinishedMaterial,
   BomSectionInput,
 } from '@/types/bom'
-import type { ProductInformation, ProductInformationInput, ProductOptions } from '@/types/product'
-import type { ProductColor } from '@/types/productionData'
-import { createProductionDataRecord } from '@/api/productionData'
 import { pipePlan } from '@/utils/materialFlow'
 import { cuttingCalculation, cuttingCompatibilityValues, legacyPipeCuttingValues } from '@/utils/bomCuttingQuantities'
 import { cuttingSpecificationError } from '@/utils/cuttingSpecification'
 import { useBomMaterialCandidates } from './useBomMaterialCandidates'
+import { useTubeFormulaPreview } from './useTubeFormulaPreview'
 import {
   blankLine as createBlankLine,
   createDraftKey,
@@ -73,6 +73,7 @@ import {
   decimalFraction,
   decimalValuesEqual,
   editableLine as normalizeEditableLine,
+  manualTubeMetricError,
   number,
   tubeCalculations as calculateTubeCalculations,
   withFixedSections,
@@ -141,21 +142,47 @@ const tubeCoatingColors = ref<TubeCoatingColor[]>([])
 const tableFullscreen = ref(false)
 const automaticallyPromptedBomId = ref('')
 const productConfirmVisible = ref(false)
-const productConfirmCreateVisible = ref(false)
-const productConfirmColorCreateVisible = ref(false)
 const productConfirmLoading = ref(false)
-const productConfirmOptions = ref<ProductOptions>({ categories: [], units: [], items: [] })
-const productConfirmColors = ref<ProductColor[]>([])
-const productConfirmCatalogError = ref('')
-const productConfirmCatalogLoading = ref(false)
 const productConfirmError = ref('')
-const productConfirmDialog = ref<InstanceType<typeof BomProductConfirmationDialogs>>()
-const productCreateInitial = ref<Partial<ProductInformationInput>>({})
-const productCreateReviewDraft = ref<InquiryItem | null>(null)
-const productCreateUnitCode = ref('')
-const productCreateItemNumber = ref('')
 const productInfoVisible = ref(false)
-const productColorDraft = ref({ color_card: '', color_code: '', color_name: '' })
+const editingCatalogMode = ref(false)
+const materialMaintenanceVisible = ref(false)
+const materialMaintenanceView = ref<InstanceType<typeof ProductionDataView>>()
+const materialMaintenanceCategory = ref('')
+const catalogRefreshKey = ref(0)
+async function beforeMaterialMaintenanceClose(done: () => void) {
+  const view = materialMaintenanceView.value
+  if (!view || await view.canClose()) done()
+}
+function openMaterialMaintenance() {
+  materialMaintenanceCategory.value = bomCatalogCategories[editingSection.value?.title || activeSection.value?.title || ''] || ''
+  materialMaintenanceVisible.value = true
+}
+async function refreshAfterMaterialMaintenance() {
+  catalogRefreshKey.value++
+  if (editingCatalogMode.value || !editingLineDraft.value) return
+  const section = editingSection.value
+  if (section?.section_type === 'PROFILE' || section?.title === '五金件') await loadTubeOptions()
+  if (section?.title === '辅料类' || section?.title === '面料类') {
+    if (editorReferenceOptionsPromise) await editorReferenceOptionsPromise
+    editorReferenceOptions.value = null
+    await ensureEditorReferenceOptions()
+  }
+}
+function addCatalogLine() {
+  if (!canEdit.value || !activeSection.value) return
+  const emptyIndex = activeSection.value.lines.findIndex(line => !line.id && !line.part_name && !line.material_catalog_id)
+  if (emptyIndex >= 0) selectedLineIndex.value = emptyIndex
+  else {
+    activeSection.value.lines.push(blankLine(activeSection.value.title === '面料类' ? '米' : ''))
+    selectedLineIndex.value = activeSection.value.lines.length - 1
+  }
+  if (activeSection.value.title === '面料类' && !activeSection.value.lines[selectedLineIndex.value]!.unit) {
+    activeSection.value.lines[selectedLineIndex.value]!.unit = '米'
+  }
+  openLineDrawer(selectedLineIndex.value)
+  editingCatalogMode.value = true
+}
 const lineDrawerVisible = ref(false)
 const editingSectionIndex = ref(-1)
 const fabricSourceLines = computed(() => sections.value.filter((section) => section.title === '面料类')
@@ -179,8 +206,24 @@ function syncCuttingSourceAttributes(line: BomLineInput) {
   const source = fabricSourceLines.value.find((item) => line.fabric_source_line_id
     ? item.id === line.fabric_source_line_id
     : Boolean(line.fabric_source_client_key && !item.id && item.client_key === line.fabric_source_client_key))
-  line.material = source?.material || ''
-  line.cutting_color = source?.fabric_color_name || source?.fabric_color_code || ''
+  const selected = source?.material_selection ?? source?.material_selection_snapshot
+  line.material = selected?.attributes.material || source?.material || ''
+  line.fabric_width = selected?.attributes.width || source?.fabric_width || ''
+  line.cutting_color = selected?.attributes.color || source?.fabric_color_name || source?.fabric_color_code || ''
+  line.specification = source?.specification || ''
+  if (line.material_selection) {
+    const attrs = line.material_selection.attributes
+    for (const key of ['fabric_spec', 'size', 'model', 'process']) delete attrs[key]
+    const specification = selected?.attributes.fabric_spec || source?.specification
+    if (specification) attrs.specification = specification
+    else delete attrs.specification
+    if (line.cutting_color) attrs.color = line.cutting_color
+    else delete attrs.color
+    if (line.material) attrs.material = line.material
+    else delete attrs.material
+    if (line.fabric_width) attrs.width = line.fabric_width
+    else delete attrs.width
+  }
 }
 
 const editingLineIndex = ref(-1)
@@ -198,7 +241,6 @@ const editorReferenceOptionsLoading = ref(false)
 const editorReferenceOptionsError = ref('')
 let editorReferenceOptionsPromise: Promise<BomEditorReferenceOptions | null> | null = null
 const auxiliaryPickerVisible = ref(false)
-const auxiliaryCreateVisible = ref(false)
 const auxiliaryPickerProductName = ref('')
 const auxiliaryPickerKeyword = ref('')
 const auxiliaryPickerPage = ref(1)
@@ -324,14 +366,6 @@ const imageManagerZIndex = ref(0)
 const { nextZIndex } = useZIndex()
 
 const canEdit = computed(() => authStore.hasPermission('boms.change_bom'))
-const canCreateProduct = computed(() => Boolean(
-  authStore.user?.is_superuser
-  || (
-    authStore.hasPermission('products.view_productinformation')
-    && authStore.hasPermission('products.add_productinformation')
-  )
-))
-const canCreateProductColor = computed(() => authStore.user?.is_superuser || authStore.hasPermission('reference_data.add_productcolor'))
 const canSync = computed(() => authStore.moduleCan('access_control.sync_bomquantity', 'boms.change_bom'))
 const canVerify = computed(() => authStore.hasPermission('boms.verify_bom') && bom.value?.status !== 'VERIFIED')
 const canCreateHardwareRawMaterial = computed(() => (
@@ -342,11 +376,6 @@ const canCreateHardwareRawMaterial = computed(() => (
   )
 ))
 const canCreateRawMaterial = canCreateHardwareRawMaterial
-const canCreateAuxiliaryReference = computed(() => (
-  authStore.user?.is_superuser === true
-  || ['accessoryproductname', 'accessoryspecification', 'accessorycolor', 'accessorymaterial']
-    .every((name) => authStore.hasPermission(`reference_data.add_${name}`))
-))
 const activeSection = computed(() => sections.value[activeSectionIndex.value] || null)
 const editorStatusLabel = computed(() => bom.value?.status === 'VERIFIED' ? '已确认' : '草稿')
 const sectionNavigationGroups = computed(() => {
@@ -381,15 +410,8 @@ const activePersistedSection = computed(() => {
   if (!activeSection.value?.id) return null
   return bom.value?.sections.find((section) => section.id === activeSection.value?.id) || null
 })
-const activeSectionCanAddLine = computed(() => activeSection.value?.section_type === 'PROFILE')
-const activeSectionCanChooseData = computed(() => (
-  isHardwareSection.value
-  || isPlasticSection.value
-  || isAuxiliarySection.value
-  || isFabricSection.value
-  || isPackagingSection.value
-  || isCuttingSection.value
-))
+
+
 const quantityMismatch = computed(() => bom.value?.quantity_requires_confirmation ?? false)
 const quantityMismatchDetails = computed(() => {
   const currentBom = bom.value
@@ -417,21 +439,9 @@ const quantityMismatchMessage = computed(() => {
     .join('；')
   return `本 BOM 保存的订单数量为 ${number(currentBom.order_quantity)}；${details}。请填写确认原因。`
 })
-const materialReferenceHint = computed(() => (
-  isHardwareSection.value
-    ? '品名、材质、颜色、规格和单位引用“原料信息 / 五金”，喷塑颜色引用“生产维护”'
-    : isPlasticSection.value
-      ? '品名、材质、颜色、规格和单位引用“原料信息 / 塑料件”'
-      : isAuxiliarySection.value
-        ? '品名、规格、颜色、材质和单位引用“系统设置 / 生产维护 / 辅料维护”'
-        : isFabricSection.value
-          ? '材质、规格以来源原材料为准；门幅和色卡引用“生产维护”'
-          : isPackagingSection.value
-            ? '品号、品名、材质、颜色、规格和单位引用“原料信息 / 包材”'
-            : isCuttingSection.value
-              ? '规格必填，不能使用“/”等占位符；填写每套裁片数和每成品套数，自动计算订单套数与片数'
-              : '材质、规格以来源原材料为准；切割长度、单耗和每根切割支数填写整数'
-))
+const materialReferenceHint = computed(() => isCuttingSection.value
+  ? '选择裁片品名、属性、单位及已有完成工艺；保留来源面料与片/套用量'
+  : '选择当前品名的属性和数量单位；新品名请在维护配置中新增')
 
 const auxiliaryFilteredCandidates = computed(() => {
   const keyword = auxiliaryPickerKeyword.value.trim().toLocaleLowerCase('zh-CN')
@@ -467,6 +477,23 @@ const auxiliaryPageSelectionIndeterminate = computed(() => (
   auxiliaryPageSelectedCount.value > 0 && !auxiliaryPageAllSelected.value
 ))
 const editingSection = computed(() => sections.value[editingSectionIndex.value] || null)
+watch([() => lineDrawerVisible.value, () => editingSection.value?.title, () => editingFabricSourceKey.value,
+  () => editingLineDraft.value?.material_selection, () => fabricSourceLines.value], () => {
+  if (lineDrawerVisible.value && editingSection.value?.title === '裁剪明细' && editingLineDraft.value) syncCuttingSourceAttributes(editingLineDraft.value)
+}, { deep: true })
+watch([() => lineDrawerVisible.value, () => editingSection.value?.title, () => editingLineDraft.value, () => fabricSourceLines.value], () => {
+  const draft = editingLineDraft.value
+  if (!lineDrawerVisible.value || editingSection.value?.title !== '裁剪明细' || !draft || isPipeCuttingLine(draft)
+    || draft.fabric_source_line_id || draft.fabric_source_client_key || fabricSourceLines.value.length !== 1) return
+  const source = fabricSourceLines.value[0]
+  const key = source?.id || source?.client_key
+  if (key) editingFabricSourceKey.value = key
+})
+const tubeFormulaPreview = useTubeFormulaPreview(
+  editingLineDraft,
+  computed(() => lineDrawerVisible.value && editingSection.value?.section_type === 'PROFILE'),
+  apiError,
+)
 function pipeMaterialAttributeKey(line: BomLineInput) {
   return JSON.stringify([line.material.trim(), line.tube_diameter.trim(), line.tube_thickness.trim(), line.tube_shape.trim()])
 }
@@ -495,9 +522,14 @@ const lineDrawerTitle = computed(() => {
   const sectionTitle = editingSection.value?.title || '用料明细'
   return `${sectionTitle} · 第 ${editingLineIndex.value + 1} 行`
 })
-const editingLineCalculations = computed(() => (
-  editingLineDraft.value ? tubeCalculations(editingLineDraft.value) : null
-))
+const editingLineCalculations = computed(() => {
+  if (!editingLineDraft.value) return null
+  const values = tubeCalculations(editingLineDraft.value)
+  if (tubeFormulaPreview.supported.value && tubeFormulaPreview.loading.value) {
+    return { ...values, tube_unit_weight_kg: '—', long_material_unit_weight_kg: '—', long_material_total_weight_kg: '—' }
+  }
+  return values
+})
 const editingCuttingCalculation = computed(() => editingLineDraft.value ? cuttingQuantities(editingLineDraft.value) : null)
 
 function cuttingQuantities(line: BomLineInput) {
@@ -510,12 +542,14 @@ function isPipeCuttingLine(line: BomLineInput | null | undefined) {
 }
 
 function syncCuttingValues(line: BomLineInput) {
+  const selectedUnit = line.material_catalog_id ? line.unit : undefined
   const values = cuttingCompatibilityValues(line, bom.value?.order_quantity)
   if (values) Object.assign(line, values)
   else if (cuttingQuantities(line).mode === 'legacy') {
     line.cutting_pieces_per_set = null
     line.cutting_sets_per_product = null
   }
+  if (selectedUnit) line.unit = selectedUnit
 }
 
 function applyVersioned(result: { data: BomDetail; etag: string }) {
@@ -531,7 +565,10 @@ function applyVersioned(result: { data: BomDetail; etag: string }) {
 
 const productConfirmItem = computed<InquiryItem>(() => ({
   product_id: bom.value?.product_master_id || null,
+  product_catalog_id: bom.value?.product_catalog_id || null,
+  product_selection_snapshot: bom.value?.product_selection_snapshot || null,
   product_category_id: bom.value?.product_category_id || null,
+  product_category_name: bom.value?.product_category_snapshot || '',
   product_unit_id: bom.value?.product_unit_id || null,
   product_color_id: bom.value?.product_color_id || null,
   product_description: bom.value?.product_name_snapshot || '',
@@ -541,136 +578,32 @@ const productConfirmItem = computed<InquiryItem>(() => ({
   unit_code: bom.value?.product_unit_code_snapshot || bom.value?.product_unit_name || '',
   quantity: bom.value?.order_quantity || '0',
   target_unit_price: null, target_currency_code: '', expected_date: null,
-  product_match_status: bom.value?.product_master_id ? 'MATCHED' : 'PENDING', notes: '',
+  product_match_status: (bom.value?.product_catalog_id || bom.value?.product_master_id) ? 'MATCHED' : 'PENDING', notes: '',
   product_number_snapshot: bom.value?.product_number_snapshot || '',
   product_code_snapshot: bom.value?.product_code_snapshot || '',
   item_number_snapshot: bom.value?.item_number_snapshot || '',
 }))
-
-async function loadProductConfirmCatalog() {
-  if (productConfirmCatalogLoading.value) return
-  productConfirmCatalogLoading.value = true
-  productConfirmCatalogError.value = ''
-  const results = await Promise.allSettled([
-    fetchProductOptions(),
-    fetchAllProductionDataRecords<ProductColor>('product-colors'),
-  ])
-  const messages: string[] = []
-  if (results[0].status === 'fulfilled') productConfirmOptions.value = results[0].value
-  else messages.push(apiError(results[0].reason, '产品类别和单位加载失败，请点击重试基础资料。'))
-  if (results[1].status === 'fulfilled') productConfirmColors.value = results[1].value
-  else messages.push(apiError(results[1].reason, '颜色维护加载失败，请点击重试基础资料。'))
-  productConfirmCatalogError.value = messages.join(' ')
-  productConfirmCatalogLoading.value = false
-}
 
 function openProductConfirmDialog() {
   if (!bom.value) return
   if (!canEdit.value) { productInfoVisible.value = true; return }
   productConfirmError.value = ''
   productConfirmVisible.value = true
-  void loadProductConfirmCatalog()
-}
 
-function prepareConfirmedProductCreate(item: InquiryItem) {
-  productCreateReviewDraft.value = { ...item }
-  productCreateInitial.value = {
-    category: item.product_category_id || '', product_name: item.product_description,
-    specification: item.specification, unit: item.product_unit_id || '',
-    product_number: item.product_number_snapshot || '', product_code: item.product_code_snapshot || '',
-  }
-  productCreateUnitCode.value = item.unit_code
-  productCreateItemNumber.value = item.item_number_snapshot || ''
-  productConfirmCreateVisible.value = true
-}
-
-async function createProductForBom(input: ProductInformationInput): Promise<ProductInformation> {
-  const item = productCreateReviewDraft.value
-  if (!bom.value || !item?.product_color_id) throw new Error('请先选择系统维护中的颜色，再确认产品建档。')
-  productConfirmLoading.value = true
-  try {
-    const result = await confirmBomProduct(bom.value.id, {
-      new_product: input, product_color_id: item.product_color_id,
-      color_code: productConfirmColors.value.find(color => color.id === item.product_color_id)?.color_code || '',
-      material: item.material,
-    }, etag.value)
-    if (!result.data.product_information_confirmed) throw new Error('服务器尚未确认产品信息，请重试。')
-    // 与已有产品核对保持一致，不重置物料草稿和待删除图片/行。
-    bom.value = result.data
-    etag.value = result.etag
-    if (!result.data.product_information) throw new Error('产品核对已保存，但返回的产品资料不完整，请重新打开当前 BOM 核实。')
-    return result.data.product_information
-  } finally {
-    productConfirmLoading.value = false
-  }
-}
-
-function handleConfirmedProductCreated() {
-  productConfirmCreateVisible.value = false
-  productConfirmVisible.value = false
-  productConfirmError.value = ''
-  selectEditorTab('materials')
-}
-
-function openConfirmedColorCreate(name: string) {
-  productColorDraft.value = { color_card: '', color_code: '', color_name: name }
-  productConfirmColorCreateVisible.value = true
-}
-
-async function createConfirmedColor() {
-  const draft = productColorDraft.value
-  if (!draft.color_card.trim() || !draft.color_code.trim() || !draft.color_name.trim()) {
-    ElMessage.warning('请填写色卡、色号和颜色名称。')
-    return
-  }
-  if (productConfirmLoading.value) return
-  productConfirmLoading.value = true
-  try {
-    const values = {
-      color_card: draft.color_card.trim(), color_code: draft.color_code.trim(), color_name: draft.color_name.trim(),
-    }
-    const findExisting = (colors: ProductColor[]) => colors.find(color => color.status === 'ACTIVE' && !color.archived_at
-      && color.color_card === values.color_card && color.color_code === values.color_code && color.color_name === values.color_name)
-    // 新增基础颜色与确认 BOM 产品是两次保存；刷新后应复用已经建档的颜色。
-    productConfirmColors.value = await fetchAllProductionDataRecords<ProductColor>('product-colors')
-    let color = findExisting(productConfirmColors.value)
-    let reused = Boolean(color)
-    if (!color) {
-      try {
-        color = (await createProductionDataRecord<ProductColor>('product-colors', {
-          ...values, status: 'ACTIVE', sort_order: 0, description: '',
-        })).data
-      } catch (error) {
-        if (!(error instanceof AxiosError) || error.response?.status !== 400) throw error
-        // 其他人可能在查询与提交之间新增了同一颜色，再读取一次再决定是否报错。
-        productConfirmColors.value = await fetchAllProductionDataRecords<ProductColor>('product-colors')
-        color = findExisting(productConfirmColors.value)
-        if (!color) throw error
-        reused = true
-      }
-    }
-    productConfirmColors.value = [...productConfirmColors.value.filter(item => item.id !== color.id), color]
-    productConfirmDialog.value?.applyCreatedColor(color)
-    productConfirmColorCreateVisible.value = false
-    productColorDraft.value = { color_card: '', color_code: '', color_name: '' }
-    ElMessage.success(reused ? '已选用已有颜色，请继续确认产品信息。' : '颜色已新增并选入，请继续确认产品信息。')
-  } catch (error) {
-    ElMessage.error(apiError(error, '颜色新增失败，请检查权限和重复数据。'))
-  } finally {
-    productConfirmLoading.value = false
-  }
 }
 
 async function confirmProductInformation({ item }: { item: InquiryItem }) {
-  if (!bom.value || !item.product_id || !item.product_color_id || productConfirmLoading.value) return
+  if (!bom.value || !(item.product_selection?.draft || item.product_catalog_id || (item.product_id && item.product_color_id)) || productConfirmLoading.value) return
   productConfirmLoading.value = true
   productConfirmError.value = ''
   try {
     const result = await confirmBomProduct(
       bom.value.id,
       {
-        product_id: item.product_id, product_color_id: item.product_color_id,
-        color_code: productConfirmColors.value.find(color => color.id === item.product_color_id)?.color_code || bom.value.product_color_code_snapshot || '',
+        ...(item.product_catalog_id || item.product_selection?.draft
+          ? { product_catalog_id: item.product_catalog_id || null, product_selection: item.product_selection || null }
+          : { product_id: item.product_id!, product_color_id: item.product_color_id! }),
+        color_code: bom.value.product_color_code_snapshot || '',
         material: item.material,
       },
       etag.value,
@@ -718,10 +651,7 @@ function formatHardwareColor(value: string) {
   return value
 }
 
-function openHardwarePicker() {
-  if (!canEdit.value || !isHardwareSection.value) return
-  void hardwarePicker.open()
-}
+
 
 function hardwareLine(item: BomHardwareMaterial): BomLineInput {
   return {
@@ -821,10 +751,7 @@ function confirmHardwareSelection() {
   ElMessage.success(`已添加 ${newLines.length} 条五金数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}。`)
 }
 
-function openPlasticPicker() {
-  if (!canEdit.value || !isPlasticSection.value) return
-  void plasticPicker.open()
-}
+
 
 function plasticLine(item: BomPlasticMaterial): BomLineInput {
   return {
@@ -854,10 +781,7 @@ function confirmPlasticSelection() {
   ElMessage.success(`已添加 ${newLines.length} 条塑料件数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}。`)
 }
 
-function openPackagingPicker() {
-  if (!canEdit.value || !isPackagingSection.value) return
-  void packagingPicker.open()
-}
+
 
 function packagingLine(item: BomPackagingMaterial): BomLineInput {
   return {
@@ -885,13 +809,10 @@ function confirmPackagingSelection() {
   if (!selection) return
   const { newLines, skippedCount } = selection
 
-  ElMessage.success(`已添加 ${newLines.length} 条包材数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}，请填写箱数和单个用量。`)
+  ElMessage.success(`已添加 ${newLines.length} 条包材数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}，请填写每箱数量，需求数量自动计算。`)
 }
 
-function openCuttingPicker() {
-  if (!canEdit.value || !isCuttingSection.value) return
-  void cuttingPicker.open()
-}
+
 
 function cuttingLine(item: BomSemiFinishedMaterial): BomLineInput {
   return {
@@ -975,34 +896,7 @@ function auxiliaryColorSummary(item: BomAuxiliaryProductOption) {
   return item.colors.map((option) => option.color_name).join('、') || '待维护'
 }
 
-function openAuxiliaryPicker() {
-  if (!canEdit.value || !isAuxiliarySection.value) return
-  auxiliaryPickerKeyword.value = ''
-  auxiliaryPickerProductName.value = ''
-  auxiliaryPickerPage.value = 1
-  selectedAuxiliaryProducts.value = {}
-  auxiliaryPickerVisible.value = true
-  void ensureEditorReferenceOptions()
-}
 
-function openAuxiliaryCreate() {
-  if (!canCreateAuxiliaryReference.value) {
-    ElMessage.warning('需要辅料品名、规格、颜色和材质的新增权限。')
-    return
-  }
-  auxiliaryCreateVisible.value = true
-}
-
-async function handleAuxiliaryCreated(item: BomAuxiliaryProductOption) {
-  editorReferenceOptions.value = null
-  const options = await ensureEditorReferenceOptions()
-  const created = options?.auxiliary_products.find((option) => option.id === item.id) || item
-  if (created) {
-    selectedAuxiliaryProducts.value = { ...selectedAuxiliaryProducts.value, [created.id]: created }
-    auxiliaryPickerProductName.value = created.id
-  }
-  ElMessage.success('辅料资料已新增并选中。')
-}
 
 function searchAuxiliaryCandidates() {
   auxiliaryPickerPage.value = 1
@@ -1160,16 +1054,7 @@ function setAuxiliaryMaterial(line: BomLineInput, value: string | null | undefin
   line.material = option?.material_name || ''
 }
 
-async function addFabricLine() {
-  if (!canEdit.value || !isFabricSection.value) return
-  if (!(await ensureEditorReferenceOptions())) return
-  const targetSection = activeSection.value
-  if (!targetSection || targetSection.title !== '面料类') {
-    ElMessage.error('当前面料分区已变化，请重新点击“添加面料”。')
-    return
-  }
-  targetSection.lines.push({ ...blankLine('米'), category: '面料', unit: '米' })
-}
+
 
 function fabricSpecificationOptions(line: BomLineInput) {
   return optionsWithDisabledSnapshot(
@@ -1244,11 +1129,16 @@ function setFabricColor(line: BomLineInput, value: string | null | undefined) {
 function apiError(error: unknown, fallback = 'BOM 请求失败，请稍后重试。') {
   if (!(error instanceof AxiosError)) return error instanceof Error ? error.message : '请求失败，请稍后重试。'
   if (!error.response) return '网络连接异常，请检查后端服务。'
-  if (error.response.status === 412) return '该 BOM 已被其他人修改，请刷新后再编辑。'
-  if (error.response.status === 428) return '当前页面缺少版本信息，请刷新后重试。'
-  if (error.response.status === 403) return '当前账号没有执行此操作的权限。'
   const data = error.response.data as { error?: { message?: string }; detail?: string }
-  return data.error?.message || data.detail || fallback
+  const message = data.error?.message || data.detail
+  if (error.response.status === 412) return message && message !== '数据已被其他人修改，请刷新后重试。'
+    ? message
+    : '该 BOM 已被其他人修改，请刷新后再编辑。'
+  if (error.response.status === 428) return message && message !== '修改请求必须携带 If-Match。'
+    ? `${message} 请重新读取对应资料后重试；当前草稿仍保留。`
+    : '当前 BOM 页面缺少版本信息，请重新打开 BOM 后重试；当前草稿仍保留。'
+  if (error.response.status === 403) return '当前账号没有执行此操作的权限。'
+  return message || fallback
 }
 
 function isTemporaryBomLoadError(error: unknown) {
@@ -1375,19 +1265,14 @@ async function requestOrderQuantitySync(automatic = false) {
   }
 }
 
-function addLine() {
-  if (!canEdit.value || !activeSection.value || !activeSectionCanAddLine.value) return
-  activeSection.value?.lines.push(blankLine(activeSection.value?.section_type === 'PROFILE' ? '根' : ''))
-  selectedLineIndex.value = Math.max(0, (activeSection.value?.lines.length || 1) - 1)
-  openLineDrawer(selectedLineIndex.value)
-}
+
 
 function selectSection(index: number) {
   tableFullscreen.value = false
   activeSectionIndex.value = index
   selectedLineIndex.value = 0
   const selectedTitle = sections.value[index]?.title
-  if (selectedTitle === '辅料类' || selectedTitle === '面料类') void ensureEditorReferenceOptions()
+  if ((selectedTitle === '辅料类' || selectedTitle === '面料类') && sections.value[index]?.lines.some(line => line.id && !line.material_catalog_id)) void ensureEditorReferenceOptions()
 }
 
 function selectNavigationGroup(indexes: number[]) {
@@ -1607,12 +1492,14 @@ function openLineDrawer(index: number) {
   if (!canEdit.value || !activeSection.value) return
   if (!prepareEditingLine(index) || !editingLineDraft.value) return
   const line = activeSection.value.lines[index]
+  editingCatalogMode.value = Boolean(!line.id || line.material_catalog_id)
   initialDrawerDraftImageIds.value = (line.draft_images || []).map((image) => image.id)
   preserveDrawerDraftImagesOnClose.value = false
   if (activeSection.value.section_type === 'PROFILE') normalizeTubeCutPieceCount(editingLineDraft.value)
   if (activeSection.value.title === '辅料类' || activeSection.value.title === '面料类') {
-    void ensureEditorReferenceOptions()
+    if (!editingCatalogMode.value) void ensureEditorReferenceOptions()
   }
+  if (!editingCatalogMode.value && activeSection.value.section_type === 'PROFILE') void loadTubeOptions()
   editingLineIsNew.value = false
   lineDrawerVisible.value = true
 }
@@ -1662,6 +1549,10 @@ function resetLineDrawer() {
 }
 
 function configuredLineError(section: BomSectionInput, line: BomLineInput, lineIndex: number) {
+  if (line.material_catalog_id) {
+    if (line.material_selection && (!Object.keys(line.material_selection.attributes).length || !line.unit)) return '请选择具体属性和本次数量单位。'
+    return ''
+  }
   const prefix = `“${section.title}”第 ${lineIndex + 1} 行`
   if (section.title === '塑料件类' && !line.id && !line.source_raw_material_id && !line.pending_raw_material) {
     return `${prefix}请先通过“选择数据”添加塑料件资料。`
@@ -1687,14 +1578,15 @@ function lineFieldError(section: BomSectionInput, line: BomLineInput, lineIndex:
   if (section.section_type === 'PROFILE' && !pipePlan(line.length_value, line.unit_consumption, line.tube_cut_piece_count, String(bom.value?.order_quantity || ''))) {
     return `${prefix}的切割长度、单耗和每根切割支数必须为正整数，且计算结果不能超出范围。`
   }
+  if (section.section_type === 'PROFILE' && manualTubeMetricError(line)) return manualTubeMetricError(line)
   if (section.title === '裁剪明细') {
-    const specificationError = cuttingSpecificationError(line.specification)
-    if (specificationError) return `${prefix}${specificationError}`
     const isPipeLine = isPipeCuttingLine(line)
     const hasFabricSource = fabricSourceLines.value.some((item) => line.fabric_source_line_id
       ? item.id === line.fabric_source_line_id
       : Boolean(line.fabric_source_client_key && !item.id && item.client_key === line.fabric_source_client_key))
     if (!isPipeLine && !hasFabricSource) return `${prefix}请选择当前 BOM 中的来源面料。`
+    const specificationError = cuttingSpecificationError(line.specification)
+    if (specificationError) return `${prefix}${specificationError}`
     const calculation = cuttingQuantities(line)
     if (calculation.error) return `${prefix}${calculation.error}`
     if (calculation.mode === 'legacy') {
@@ -1725,8 +1617,6 @@ function lineFieldError(section: BomSectionInput, line: BomLineInput, lineIndex:
     if (!unitsPerBox || unitsPerBox.numerator <= 0n || unitsPerBox.numerator % unitsPerBox.denominator !== 0n) {
       return `${prefix}的箱数（多少一箱）必须是正整数。`
     }
-    const unitConsumption = decimalFraction(line.unit_consumption)
-    if (!unitConsumption || unitConsumption.numerator <= 0n) return `${prefix}的单个用量必须是大于 0 的数字。`
   }
   if (section.title === '裁剪明细' && cuttingQuantities(line).mode === 'legacy') {
     const quantityText = String(line.cut_piece_quantity || '').trim()
@@ -1749,12 +1639,24 @@ async function commitLineDrawer() {
     ElMessage.warning(`“${targetSection.title}”第 ${editingLineIndex.value + 1} 行的品名不能为空。`)
     return null
   }
+  if (targetSection.title === '裁剪明细') syncCuttingSourceAttributes(editingLineDraft.value)
   const fieldError = lineFieldError(targetSection, editingLineDraft.value, editingLineIndex.value)
   if (fieldError) {
     ElMessage.warning(fieldError)
     return null
   }
   if (targetSection.section_type === 'PROFILE' || targetSection.title === '面料类') {
+    if (targetSection.section_type === 'PROFILE' && !await tubeFormulaPreview.calculate()) {
+      ElMessage.warning('管材参数已变化，请重新应用修改。')
+      return null
+    }
+    if (targetSection.section_type === 'PROFILE') {
+      const manualError = manualTubeMetricError(editingLineDraft.value)
+      if (manualError) {
+        ElMessage.warning(manualError)
+        return null
+      }
+    }
     const draftSnapshot = JSON.stringify(editingLineDraft.value)
     calculatingLine.value = true
     try {
@@ -1773,7 +1675,7 @@ async function commitLineDrawer() {
       calculatingLine.value = false
     }
   }
-  if (targetSection.title === '面料类') editingLineDraft.value.unit = '米'
+  if (targetSection.title === '面料类' && !editingLineDraft.value.material_catalog_id) editingLineDraft.value.unit = '米'
   if (targetSection.title === '裁剪明细') {
     syncCuttingValues(editingLineDraft.value)
     syncCuttingSourceAttributes(editingLineDraft.value)
@@ -1806,14 +1708,23 @@ async function applyLineDrawer() {
 
 function followingLineDraft(section: BomSectionInput, current: BomLineInput): BomLineInput {
   if (section.section_type === 'PROFILE') {
+    const selected = current.material_selection ?? current.material_selection_snapshot
+    const attributes: Record<string, string> = {}
+    for (const key of ['material', 'color', 'shape', 'section_size', 'thickness']) {
+      const value = selected?.attributes[key]
+      if (value) attributes[key] = value
+    }
     return {
       ...blankLine('根'),
-      tube_shape: current.tube_shape,
-      material: current.material,
-      tube_diameter: current.tube_diameter,
-      tube_thickness: current.tube_thickness,
+      material_selection: selected ? {
+        catalog_version: selected.catalog_version, scope: 'BASE', processing_state: 'RAW', attributes, unit_name: '根',
+        product_color_id: selected.product_color_id, color_card: selected.color_card, color_code: selected.color_code, color_name: selected.color_name,
+      } : undefined,
+      tube_shape: attributes.shape ?? current.tube_shape,
+      material: attributes.material ?? current.material,
+      tube_diameter: attributes.section_size ?? current.tube_diameter,
+      tube_thickness: attributes.thickness ?? current.tube_thickness,
       tube_coating_color: current.tube_coating_color,
-      unit: current.unit || 'PCS',
     }
   }
 
@@ -1844,7 +1755,10 @@ function followingLineDraft(section: BomSectionInput, current: BomLineInput): Bo
     draft_key: '',
     draft_images: [],
   }
-  if (section.title === '面料类') next.part_name = ''
+  if (section.title === '面料类') {
+    next.part_name = ''
+    next.unit = '米'
+  }
   if (section.title === '裁剪明细') {
     next.unit = '套'
     next.cutting_pieces_per_set = null
@@ -1881,7 +1795,7 @@ async function saveAndEditNextLine() {
           draft_images: [...(nextLine.draft_images || [])],
         }
       : followingLineDraft(committed.section, draft)
-    if (nextLine && inheritedValues) {
+    if (nextLine && inheritedValues && !nextDraft.material_catalog_id) {
       if (!nextDraft.tube_shape) nextDraft.tube_shape = inheritedValues.tube_shape
       if (!nextDraft.material) nextDraft.material = inheritedValues.material
       if (!nextDraft.tube_diameter) nextDraft.tube_diameter = inheritedValues.tube_diameter
@@ -1894,7 +1808,8 @@ async function saveAndEditNextLine() {
     initialDrawerDraftImageIds.value = (nextDraft.draft_images || []).map((image) => image.id)
     editingLineIsNew.value = !nextLine
     editingLineIndex.value = nextLineIndex
-    if (committed.section.title === '辅料类' || committed.section.title === '面料类') void ensureEditorReferenceOptions()
+    editingCatalogMode.value = Boolean(!nextDraft.id || nextDraft.material_catalog_id)
+    if (!editingCatalogMode.value && (committed.section.title === '辅料类' || committed.section.title === '面料类')) void ensureEditorReferenceOptions()
     ElMessage.success(nextLine
       ? '当前行已应用，已进入下一条；完成后请点击顶部“保存草稿”。'
       : '当前行已应用，已新增下一条；完成后请点击顶部“保存草稿”。')
@@ -1947,13 +1862,14 @@ function validateLines() {
       return false
     }
     for (const [index, line] of section.lines.entries()) {
+      if (section.title === '裁剪明细') syncCuttingSourceAttributes(line)
       const fieldError = lineFieldError(section, line, index)
       if (fieldError) {
         activeSectionIndex.value = sections.value.indexOf(section)
         ElMessage.warning(fieldError)
         return false
       }
-      if (section.title === '面料类') line.unit = '米'
+      if (section.title === '面料类' && !line.material_catalog_id) line.unit = '米'
       if (section.title === '裁剪明细') {
         syncCuttingValues(line)
         syncCuttingSourceAttributes(line)
@@ -2085,7 +2001,6 @@ watch(() => route.params.bomId, () => { void loadBom() })
 onMounted(() => {
   window.addEventListener('keydown', closeTableFullscreen)
   void loadBom()
-  void loadTubeOptions()
 })
 
 onBeforeUnmount(() => {
@@ -2123,32 +2038,13 @@ onBeforeUnmount(() => {
     </ElResult>
     <template v-else-if="bom">
       <BomProductConfirmationDialogs
-        ref="productConfirmDialog"
         v-model="productConfirmVisible"
-        v-model:create-product-visible="productConfirmCreateVisible"
-        v-model:create-color-visible="productConfirmColorCreateVisible"
         :bom="bom"
         :product-confirm-item="productConfirmItem"
-        :product-confirm-options="productConfirmOptions"
-        :product-confirm-colors="productConfirmColors"
-        :can-create-product="canCreateProduct"
-        :can-create-product-color="canCreateProductColor"
         :product-confirm-loading="productConfirmLoading"
-        :product-confirm-catalog-error="productConfirmCatalogError"
-        :product-confirm-catalog-loading="productConfirmCatalogLoading"
         :product-confirm-error="productConfirmError"
-        :product-create-initial="productCreateInitial"
-        :product-create-unit-code="productCreateUnitCode"
-        :product-create-item-number="productCreateItemNumber"
-        :product-color-draft="productColorDraft"
         :format-number="number"
-        :submit-product="createProductForBom"
         @confirm="confirmProductInformation"
-        @retry-catalog="loadProductConfirmCatalog"
-        @create-product="prepareConfirmedProductCreate"
-        @create-color="openConfirmedColorCreate"
-        @created="handleConfirmedProductCreated"
-        @save-color="createConfirmedColor"
       />
       <header class="editor-heading">
         <div>
@@ -2186,14 +2082,9 @@ onBeforeUnmount(() => {
         <main class="card material-card">
           <header class="material-heading">
             <div><h2>{{ activeSection?.title || '用料明细' }}</h2><span>{{ activeSection?.lines.length || 0 }} 行 · {{ materialReferenceHint }}</span></div>
-            <div v-if="canEdit && (activeSectionCanAddLine || activeSectionCanChooseData)" class="material-actions">
-              <ElButton v-if="activeSectionCanAddLine" type="primary" @click="addLine">添加材料</ElButton>
-              <ElButton v-if="isHardwareSection" type="primary" @click="openHardwarePicker">选择数据</ElButton>
-              <ElButton v-if="isPlasticSection" type="primary" @click="openPlasticPicker">选择数据</ElButton>
-              <ElButton v-if="isAuxiliarySection" type="primary" @click="openAuxiliaryPicker">选择辅料</ElButton>
-              <ElButton v-if="isFabricSection" type="primary" :loading="editorReferenceOptionsLoading" @click="addFabricLine">添加面料</ElButton>
-              <ElButton v-if="isPackagingSection" type="primary" @click="openPackagingPicker">选择包材</ElButton>
-              <ElButton v-if="isCuttingSection" type="primary" @click="openCuttingPicker">选择裁剪</ElButton>
+            <div v-if="canEdit && activeSection" class="material-actions">
+              <ElButton type="primary" @click="addCatalogLine">添加材料</ElButton>
+              <ElButton @click="openMaterialMaintenance">维护配置</ElButton>
             </div>
           </header>
 
@@ -2205,11 +2096,13 @@ onBeforeUnmount(() => {
               v-if="activeSection.section_type === 'PROFILE' || isHardwareSection || isPlasticSection || isAuxiliarySection || isFabricSection || isPackagingSection || isCuttingSection || activeSection.lines.length"
               :active-section="activeSection"
               :is-hardware-section="isHardwareSection"
+              :catalog-refresh-key="catalogRefreshKey"
               :is-plastic-section="isPlasticSection"
               :is-auxiliary-section="isAuxiliarySection"
               :is-fabric-section="isFabricSection"
               :is-packaging-section="isPackagingSection"
               :is-cutting-section="isCuttingSection"
+              :order-quantity="bom?.order_quantity || '0'"
               :can-edit="canEdit"
               :table-fullscreen="tableFullscreen"
               :tube-options-loading="tubeOptionsLoading"
@@ -2244,14 +2137,9 @@ onBeforeUnmount(() => {
               <strong>{{ activeSection.title }}</strong>
               <span>该固定分区的填写字段待后续完善，本轮不套用其他分区的字段。</span>
             </div>
-            <div v-if="tableFullscreen && canEdit && (activeSectionCanAddLine || activeSectionCanChooseData)" class="fullscreen-table-actions">
-              <ElButton v-if="activeSectionCanAddLine" type="primary" :icon="Plus" @click="addLine">添加材料</ElButton>
-              <ElButton v-if="isHardwareSection" type="primary" :icon="Plus" @click="openHardwarePicker">选择数据</ElButton>
-              <ElButton v-if="isPlasticSection" type="primary" :icon="Plus" @click="openPlasticPicker">选择数据</ElButton>
-              <ElButton v-if="isAuxiliarySection" type="primary" :icon="Plus" @click="openAuxiliaryPicker">选择辅料</ElButton>
-              <ElButton v-if="isFabricSection" type="primary" :icon="Plus" :loading="editorReferenceOptionsLoading" @click="addFabricLine">添加面料</ElButton>
-              <ElButton v-if="isPackagingSection" type="primary" :icon="Plus" @click="openPackagingPicker">选择包材</ElButton>
-              <ElButton v-if="isCuttingSection" type="primary" :icon="Plus" @click="openCuttingPicker">选择裁剪</ElButton>
+            <div v-if="tableFullscreen && canEdit && activeSection" class="fullscreen-table-actions">
+              <ElButton type="primary" :icon="Plus" @click="addCatalogLine">添加材料</ElButton>
+              <ElButton @click="openMaterialMaintenance">维护配置</ElButton>
             </div>
           </div>
           <ElEmpty v-else description="固定用料分区加载失败，请刷新页面" :image-size="72" />
@@ -2287,6 +2175,10 @@ onBeforeUnmount(() => {
         @closed="resetLineDrawer"
       >
         <BomLineEditorForm
+          :catalog-mode="editingCatalogMode"
+          :catalog-refresh-key="catalogRefreshKey"
+          @maintain="openMaterialMaintenance"
+          @use-catalog="editingCatalogMode = true"
           v-model:editing-fabric-source-key="editingFabricSourceKey"
           :editing-section="editingSection"
           :editing-line-draft="editingLineDraft"
@@ -2300,6 +2192,8 @@ onBeforeUnmount(() => {
           :tube-coating-colors="tubeCoatingColors"
           :tube-options-loading="tubeOptionsLoading"
           :editing-line-calculations="editingLineCalculations"
+          :tube-calculation-loading="tubeFormulaPreview.loading.value"
+          :tube-calculation-readonly="tubeFormulaPreview.readonly.value"
           :normalize-tube-cut-piece-count="normalizeTubeCutPieceCount"
           :display-line-images="displayLineImages"
           :open-line-image-manager="openLineImageManager"
@@ -2334,6 +2228,10 @@ onBeforeUnmount(() => {
           </div>
         </template>
       </BomLineEditorDialog>
+
+      <AppWindowDialog v-model="materialMaintenanceVisible" title="生产维护" class="material-catalog-maintenance-dialog" :width="1100" height="80vh" fullscreen edge-to-edge destroy-on-close :close-on-click-modal="false" :before-close="beforeMaterialMaintenanceClose" @closed="refreshAfterMaterialMaintenance">
+        <ProductionDataView v-if="materialMaintenanceVisible" ref="materialMaintenanceView" :initial-category="materialMaintenanceCategory" embedded />
+      </AppWindowDialog>
 
       <BomLineImageManager
         v-model="imageManagerVisible"
@@ -2472,7 +2370,6 @@ onBeforeUnmount(() => {
         :toggle-auxiliary-page="toggleAuxiliaryPage"
         :toggle-auxiliary-candidate="toggleAuxiliaryCandidate"
         :change-auxiliary-page="changeAuxiliaryPage"
-        :open-auxiliary-create="openAuxiliaryCreate"
         :confirm-auxiliary-selection="confirmAuxiliarySelection"
         :auxiliary-product-maintenance-tip="auxiliaryProductMaintenanceTip"
         :auxiliary-product-is-selectable="auxiliaryProductIsSelectable"
@@ -2507,9 +2404,7 @@ onBeforeUnmount(() => {
         v-model:plastic-create-visible="plasticCreateVisible"
         v-model:packaging-create-visible="packagingCreateVisible"
         v-model:cutting-create-visible="cuttingCreateVisible"
-        v-model:auxiliary-create-visible="auxiliaryCreateVisible"
         :stage-raw-material="stageRawMaterial"
-        :handle-auxiliary-created="handleAuxiliaryCreated"
       />
     </template>
   </section>
@@ -2667,6 +2562,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="scss">
+.material-catalog-maintenance-dialog.app-window-dialog .material-catalog-page .catalog-search input { padding-left: 34px !important; }
 .bom-line-editor-dialog .el-dialog__body { overflow-y: auto; }
 .bom-line-editor-dialog .line-drawer-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px 16px; }
 .bom-line-editor-dialog .drawer-field--wide, .bom-line-editor-dialog .drawer-calculations { grid-column: 1 / -1; }

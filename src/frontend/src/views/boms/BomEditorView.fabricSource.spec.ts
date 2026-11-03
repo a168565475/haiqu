@@ -63,6 +63,85 @@ beforeEach(() => {
 })
 
 describe('BOM 面料保存时自动关联原料', () => {
+  it('新目录裁片继承来源材质门幅颜色规格，切换或修改面料后同步，不保留独立加工属性', async () => {
+    const { wrapper, vm, fabric } = await open()
+    try {
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'fabric-a', part_name: '面料A', material: '材质A', fabric_width: '1.5', specification: '600D / 1.5', fabric_color_name: '蓝色' })
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'fabric-b', part_name: '面料B', material: '材质B', fabric_width: '1.8', specification: '400D', fabric_color_name: '红色' })
+      vm.editingLineDraft = { ...vm.blankLine('套'), material_catalog_id: 'cutting-a', material: '裁片材质',
+        material_selection: { catalog_version: 'v1', scope: 'BASE', processing_state: 'PROCESSED',
+          attributes: { color: '独立颜色', fabric_spec: '独立规格', size: '旧尺寸', model: '旧款号', process: '旧做法' } } }
+      vm.editingFabricSourceKey = 'fabric-a'
+      expect(vm.editingLineDraft).toMatchObject({ material: '材质A', fabric_width: '1.5', cutting_color: '蓝色', specification: '600D / 1.5' })
+      expect(vm.editingLineDraft.material_selection!.attributes).toEqual({ material: '材质A', width: '1.5', color: '蓝色', specification: '600D / 1.5' })
+      vm.editingFabricSourceKey = 'fabric-b'
+      expect(vm.editingLineDraft.material_selection!.attributes).toEqual({ material: '材质B', width: '1.8', color: '红色', specification: '400D' })
+      fabric.lines[1]!.specification = '500D'
+      fabric.lines[1]!.fabric_color_name = '黑色'
+      fabric.lines[1]!.material = '材质C'
+      fabric.lines[1]!.fabric_width = '2'
+      vm.syncCuttingSourceAttributes(vm.editingLineDraft)
+      expect(vm.editingLineDraft).toMatchObject({ material: '材质C', fabric_width: '2', cutting_color: '黑色', specification: '500D' })
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+  it.each(['saved', 'draft'])('裁片未选来源时默认关联唯一%s面料，仅修改行编辑草稿', async kind => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      const source = { ...vm.blankLine('米'), part_name: '唯一面料', material: '涤纶', fabric_color_name: '蓝色',
+        ...(kind === 'saved' ? { id: 'saved-fabric' } : { client_key: 'draft-fabric' }) }
+      fabric.lines.push(source)
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20' })
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      expect(vm.editingFabricSourceKey).toBe(kind === 'saved' ? 'saved-fabric' : 'draft-fabric')
+      expect(vm.editingLineDraft.material).toBe('涤纶')
+      expect(vm.editingLineDraft.cutting_color).toBe('蓝色')
+      expect(cutting.lines[0]!.fabric_source_line_id).toBeFalsy()
+      expect(cutting.lines[0]!.fabric_source_client_key).toBeFalsy()
+      expect(api.saveBomDraft).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([0, 2])('来源有%s项时不猜默认面料', async count => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      for (let index = 0; index < count; index++) fabric.lines.push({ ...vm.blankLine('米'), id: `fabric-${index}`, part_name: '面料' })
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20' })
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      expect(vm.editingFabricSourceKey).toBe('')
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([false, true])('已有来源或管材裁剪不自动重选来源：管材=%s', async pipe => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'only-fabric', part_name: '唯一面料' })
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20',
+        ...(pipe ? { category: '管材' } : { fabric_source_line_id: 'previous-fabric' }) })
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      expect(vm.editingFabricSourceKey).toBe(pipe ? '' : 'previous-fabric')
+    } finally { wrapper.unmount() }
+  })
+
+  it('弹窗打开后仅有一个可选面料到达时自动关联', async () => {
+    const { wrapper, vm, fabric, cutting } = await open()
+    try {
+      cutting.lines.push({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20' })
+      vm.activeSectionIndex = vm.sections.indexOf(cutting)
+      vm.openLineDrawer(0)
+      await flushPromises()
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'late-fabric', part_name: '唯一面料' })
+      await flushPromises()
+      expect(vm.editingFabricSourceKey).toBe('late-fabric')
+    } finally { wrapper.unmount() }
+  })
+
   it('无需查询或手选库存原料即可应用面料，保留生产维护参数并核算用量', async () => {
     const { wrapper, vm, fabric } = await openFabricDrawer()
     try {
@@ -126,7 +205,7 @@ describe('BOM 面料保存时自动关联原料', () => {
   })
 
   it('缺少门幅快照时不会把库存原料编码显示为门幅', async () => {
-    const { wrapper } = await openFabricDrawer({ source_inventory_material_id: 'old-source', raw_material: 'ML-OLD', source_fabric_width_id: 'inactive-width', fabric_width: '' })
+    const { wrapper } = await openFabricDrawer({ id: 'saved-fabric', source_inventory_material_id: 'old-source', raw_material: 'ML-OLD', source_fabric_width_id: 'inactive-width', fabric_width: '' })
     try {
       const width = wrapper.findAllComponents(ElSelect).find(item => item.attributes('aria-label') === '面料门幅')!
       expect(width.props('placeholder')).toBe('选择门幅')
@@ -148,7 +227,8 @@ describe('BOM 面料保存时自动关联原料', () => {
   })
 })
 
-describe('BOM 未保存面料来源', () => {
+describe('BOM 历史与未保存面料行的来源关联', () => {
+  // 新入口已切换到目录选料；此组直接构造来源行，仅验证仍需保留的草稿关联机制。 
   it('分类把裁剪明细紧接在面料下面', async () => {
     const { wrapper } = await open()
     try { expect(wrapper.findAll('.section-tabs button span').map(item => item.text())).toEqual(['型材', '五金', '塑料', '面料', '裁剪明细', '辅料', '包材']) }
@@ -158,7 +238,7 @@ describe('BOM 未保存面料来源', () => {
   it('面料录入品名后立即可选，空白行不进入候选，也不提前保存', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       expect(vm.fabricSourceLines).toHaveLength(0)
       fabric.lines[0]!.part_name = '牛津布'
       expect(vm.fabricSourceLines).toHaveLength(1)
@@ -171,7 +251,7 @@ describe('BOM 未保存面料来源', () => {
   it('只选择面料材质或规格而未填写裁片名称，也能成为来源', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       const source = fabric.lines[0]!
       source.source_fabric_material_id = 'fabric-material'
       source.material = '牛津布'
@@ -186,9 +266,10 @@ describe('BOM 未保存面料来源', () => {
   it('选择草稿面料后可校验并一起保存；移除来源后会提示重选', async () => {
     const { wrapper, vm, fabric, cutting } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       const source = fabric.lines[0]!
       source.part_name = '牛津布'
+      source.specification = '600D'
       const line = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 }
       vm.editingLineDraft = line
       vm.editingFabricSourceKey = source.client_key!
@@ -209,7 +290,7 @@ describe('BOM 未保存面料来源', () => {
   it('切换到已保存面料清掉草稿引用，连续新增不会复用行标识', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       const source = fabric.lines[0]!
       source.part_name = '牛津布'
       fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布' })
@@ -227,8 +308,9 @@ describe('BOM 未保存面料来源', () => {
   it('保存成功后采用服务端正式行 ID，重新打开时不再依赖临时标识', async () => {
     const { wrapper, vm, fabric, cutting } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       fabric.lines[0]!.part_name = '牛津布'
+      fabric.lines[0]!.specification = '600D'
       vm.editingLineDraft = { ...vm.blankLine('套'), part_name: '床面', specification: '120×60cm', source_cutting_material_id: 'cutting-material', cutting_pieces_per_set: 2, cutting_sets_per_product: 1 }
       vm.editingFabricSourceKey = fabric.lines[0]!.client_key!
       cutting.lines.push(vm.editingLineDraft)
@@ -252,7 +334,7 @@ describe('BOM 未保存面料来源', () => {
   it('选择来源和再次同步时，裁剪材质与颜色始终采用面料值', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      await vm.addFabricLine()
+      fabric.lines.push(vm.blankLine('米'))
       const source = fabric.lines[0]!
       Object.assign(source, { material: '涤纶', fabric_color_name: '黑色', source_fabric_material_id: 'polyester' })
       vm.editingLineDraft = { ...vm.blankLine('套'), material: '210D', cutting_color: '白色' }
@@ -275,7 +357,7 @@ describe('BOM 未保存面料来源', () => {
   it('重新打开裁剪行不再恢复旧材质，保存前采用最新来源属性', async () => {
     const { wrapper, vm, fabric } = await open()
     try {
-      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', material: '涤纶', fabric_color_name: '黑色' })
+      fabric.lines.push({ ...vm.blankLine('米'), id: 'saved-fabric', part_name: '网布', specification: '600D', material: '涤纶', fabric_color_name: '黑色' })
       const reopened = vm.editableLine({ ...vm.blankLine('套'), id: 'saved-cutting', part_name: '外袋', specification: '20', material: '涤纶', cutting_material_original: '210D', fabric_source_line_id: 'saved-fabric', fabric_meters_per_set: '0.5' } as never)
       expect(reopened.material).toBe('涤纶')
       vm.sections.find(section => section.title === '裁剪明细')!.lines.push(reopened)

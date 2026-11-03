@@ -57,6 +57,14 @@ qa/*
 !qa/bom_material_save_preview_readonly.cjs
 !qa/boards_preview_readonly.cjs
 !qa/workbench_navigation_readonly.cjs
+!qa/wecom_login_readonly.cjs
+!qa/wecom_employee_login_unit4.cjs
+!qa/workshop_employee_identity_unit5.cjs
+!qa/wecom_attendance_readonly.cjs
+!qa/wecom_attendance_20261020_ui_review.md
+!qa/wecom_attendance_20261020_session.md
+!qa/production_dashboard_readonly_20261017.cjs
+!qa/schedule_detail_readonly.cjs
 !qa/product_catalog_source_preflight.py
 !qa/product_catalog_baseline.cjs
 !qa/product_catalog_legacy_snapshot.py
@@ -64,4 +72,16 @@ qa/*
 !qa/product_catalog_readonly.cjs
 !qa/product_catalog_qa_resources.py
 !qa/product_catalog_write.cjs
+!qa/popup_input_styles_20261018.cjs
+!qa/bom_preview_readonly_20261018.cjs
+!qa/bom_print_readonly_20261018.cjs
+!qa/outsourcing_print_readonly_20261026.cjs
+!qa/mobile_workshop_anonymous_20261031.cjs
+!qa/mobile_wecom_readonly_20261102.cjs
+
+# 手机端独占测试媒体；清理受阻时也不能混入源码提交。
+/src/backend/_tmp/mobile_workshop_20261031_backend_media/
 tmp_bom_serializer_excerpt.txt
+
+# 单元六隔离浏览器凭据与缓存
+.tmp/employee-menu-u6-a15c89/

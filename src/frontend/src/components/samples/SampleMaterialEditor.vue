@@ -16,7 +16,8 @@ const emit = defineEmits<{ 'update:modelValue': [lines: SampleMaterialLine[]]; '
 const category = ref<SampleMaterialCategory>('tube')
 const table = ref<HTMLElement>()
 const references = ref<SampleMaterialReferences | null>(null)
-const referenceError = ref(''), referenceLoading = ref(false), pickerOpen = ref(false), drawerOpen = ref(false)
+const referenceError = ref(''), referenceLoading = ref(false)
+const pickerOpen = ref(false), drawerOpen = ref(false)
 const editingLine = ref<SampleMaterialLine>()
 const fields = [{ key: 'name', label: '材料名称', max: 300 }, { key: 'specification', label: '规格', max: 500 }, { key: 'material', label: '材质', max: 500 }, { key: 'color', label: '颜色', max: 500 }] as const
 const pickerLabel = computed(() => ({ tube: '选择管材', fabric: '选择面料', hardware: '选择数据', plastic: '选择数据', accessory: '选择辅料', packaging: '选择包材' })[category.value as 'tube' | 'fabric' | 'hardware' | 'plastic' | 'accessory' | 'packaging'] || '')
@@ -39,9 +40,7 @@ async function loadReferences() {
 function emptyLine(): SampleMaterialLine {
   return {
     key: createClientUuid(), category: category.value, name: '', specification: '', material: '', color: '', quantity: '',
-    // 管材需求按总米数填写；单位仍从系统单位配置中带出，避免手工改成“根”。
-    unitId: category.value === 'tube' ? (props.units.find(unit => unit.label === '米')?.id || '') : '',
-    ...(category.value === 'tube' ? { unitLabel: '米', pipeInputMode: 'TOTAL_METERS' as const } : {}), notes: '',
+    unitId: '', unitLabel: category.value === 'tube' ? '米' : '', ...(category.value === 'tube' ? { pipeInputMode: 'TOTAL_METERS' as const } : {}), notes: '',
   }
 }
 function updateLine(key: string, field: keyof SampleMaterialLine, value: string) {
@@ -91,22 +90,23 @@ async function applyLine(line: SampleMaterialLine, next: boolean) {
   const nextLine = section[section.findIndex(item => item.key === line.key) + 1]
   // 新一条先留在抽屉内，应用时才写入表格；取消不会生成空行。
   if (!nextLine && pickerLabel.value && line.category !== 'tube') { drawerOpen.value = false; return }
-  editingLine.value = nextLine ? { ...nextLine } : { ...emptyLine(), category: line.category, name: line.name, specification: line.specification, material: line.material, color: line.color, unitId: line.unitId, rawMaterialId: line.rawMaterialId }
+  editingLine.value = nextLine ? { ...nextLine } : { ...emptyLine(), category: line.category, name: line.name, specification: line.specification, material: line.material, color: line.color, unitId: line.unitId, unitLabel: line.unitLabel, rawMaterialId: line.rawMaterialId,
+    material_catalog_id: line.material_catalog_id,
+    material_selection: line.material_selection ? JSON.parse(JSON.stringify(line.material_selection)) : undefined,
+    material_selection_snapshot: line.material_selection_snapshot ? JSON.parse(JSON.stringify(line.material_selection_snapshot)) : undefined }
 }
 function chooseMaterials(items: SampleMaterialCandidate[]) {
   if (props.disabled) return
   const lines = [...props.modelValue]
   let added = 0
-  const selectedIds = new Set<string>()
   for (const item of items) {
-    if (selectedIds.has(item.id)) continue
-    selectedIds.add(item.id)
-    if (category.value !== 'tube' && lines.some(line => line.category === category.value && line.name === item.name && line.specification === item.specification && line.material === item.material && line.color === item.color && line.unitId === item.unitId)) continue
+    if (!item.material_catalog_id || !item.material_selection) continue
+    if (lines.some(line => line.category === category.value && line.material_catalog_id === item.material_catalog_id && JSON.stringify(line.material_selection) === JSON.stringify(item.material_selection))) continue
     if (lines.length >= 500) { ElMessage.warning('材料需求最多 500 项。'); break }
     lines.push({
       ...emptyLine(), name: item.name, specification: item.specification, material: item.material, color: item.color,
-      unitId: category.value === 'tube' ? (props.units.find(unit => unit.label === '米')?.id || '') : item.unitId,
-      rawMaterialId: item.id,
+      unitId: item.unitId, unitLabel: item.unitLabel, material_catalog_id: item.material_catalog_id,
+      material_selection: JSON.parse(JSON.stringify(item.material_selection)),
     }); added++
   }
   emit('update:modelValue', lines)
@@ -120,7 +120,7 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
       <h2>物料分类</h2><nav class="section-tabs" aria-label="材料分区"><button v-for="item in sampleMaterialCategories" :key="item.key" type="button" :aria-pressed="category === item.key" :class="{ active: category === item.key }" :disabled="pickerOpen || drawerOpen" @click="category = item.key"><span>{{ item.label }}</span><b>{{ counts[item.key] || 0 }}</b></button></nav>
     </aside>
     <div class="material-main">
-    <header class="material-toolbar"><h2>{{ layout === 'sidebar' ? categoryLabel : '材料需求' }}</h2><p>按材料分类填写，本次打样需要多少就填多少。</p><ElButton v-if="pickerLabel" :disabled="disabled || (category === 'accessory' && !references)" @click="pickerOpen = true">{{ pickerLabel }}</ElButton><ElButton v-if="!pickerLabel" :disabled="disabled" @click="addLine">＋ 添加材料</ElButton><ElButton class="fullscreen-toggle" @click="emit('toggle-fullscreen')">{{ fullscreen ? '退出全屏' : '全屏填写' }}</ElButton></header>
+    <header class="material-toolbar"><h2>{{ layout === 'sidebar' ? categoryLabel : '材料需求' }}</h2><p>按材料分类填写，本次打样需要多少就填多少。</p><ElButton v-if="pickerLabel" :disabled="disabled" @click="pickerOpen = true">{{ pickerLabel }}</ElButton><ElButton v-if="!pickerLabel" :disabled="disabled" @click="addLine">＋ 添加材料</ElButton><ElButton class="fullscreen-toggle" @click="emit('toggle-fullscreen')">{{ fullscreen ? '退出全屏' : '全屏填写' }}</ElButton></header>
     <div v-if="referenceError" role="alert" class="reference-error">{{ referenceError }} <ElButton link :loading="referenceLoading" @click="loadReferences">重试</ElButton></div>
     <SampleMaterialTabs v-if="layout !== 'sidebar'" v-model="category" :counts="counts" />
     <div ref="table" class="material-table">
@@ -129,9 +129,9 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
           <thead><tr><th>序号</th><th>材料名称 *</th><th>规格 *</th><th>材质</th><th>颜色 / 色号</th><th>需求数量 *</th><th>单位 *</th><th>备注</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="(line, index) in visibleLines" :key="line.key" :data-line-key="line.key"><td><div class="row-tools"><span>{{ index + 1 }}</span><ElButton class="row-expand" link :icon="ZoomIn" :disabled="disabled" aria-label="放大编辑当前行" @click="openLine(line)" /></div></td>
-              <td v-for="field in fields" :key="field.key"><SampleMaterialFieldInput :model-value="line[field.key]" :options="materialFieldOptions(references, line, field.key)" :selection-only="materialFieldSelectionOnly(line, field.key)" :tube-specification="line.category === 'tube' && field.key === 'specification'" :references="references" :disabled="disabled || (!!line.rawMaterialId && field.key !== 'color')" :label="`第${index + 1}项${field.label}`" :placeholder="field.label" :maxlength="field.max" @update:model-value="updateLine(line.key, field.key, $event)" /></td>
+              <template v-for="field in fields" :key="field.key"><td><span v-if="line.material_catalog_id">{{ line[field.key] || '—' }}</span><SampleMaterialFieldInput v-else :model-value="line[field.key]" :options="materialFieldOptions(references, line, field.key)" :selection-only="materialFieldSelectionOnly(line, field.key)" :tube-specification="line.category === 'tube' && field.key === 'specification'" :references="references" :disabled="disabled || (!!line.rawMaterialId && field.key !== 'color')" :label="`第${index + 1}项${field.label}`" :placeholder="field.label" :maxlength="field.max" @update:model-value="updateLine(line.key, field.key, $event)" /></td></template>
               <td><ElInput :model-value="line.quantity" :disabled="disabled" :aria-label="`第${index + 1}项需求数量`" inputmode="decimal" placeholder="数量" @update:model-value="updateLine(line.key, 'quantity', $event)" /></td>
-              <td><span v-if="line.category === 'tube'">米</span><ElSelect v-else :model-value="line.unitId" :disabled="disabled" :aria-label="`第${index + 1}项单位`" filterable placeholder="单位" @update:model-value="updateLine(line.key, 'unitId', $event)"><ElOption v-for="unit in units" :key="unit.id" :label="unit.label" :value="unit.id" /></ElSelect></td>
+              <td><span v-if="line.category === 'tube' || line.material_catalog_id">{{ line.category === 'tube' && line.pipeInputMode === 'TOTAL_METERS' ? '米' : line.unitLabel || units.find(item => item.id === line.unitId)?.label || '—' }}</span><ElSelect v-else :model-value="line.unitId" :disabled="disabled" :aria-label="`第${index + 1}项单位`" filterable placeholder="单位" @update:model-value="updateLine(line.key, 'unitId', $event)"><ElOption v-for="unit in units" :key="unit.id" :label="unit.label" :value="unit.id" /></ElSelect></td>
               <td><ElInput :model-value="line.notes" :disabled="disabled" :aria-label="`第${index + 1}项备注`" maxlength="2000" placeholder="填写备注" @update:model-value="updateLine(line.key, 'notes', $event)" /></td>
               <td class="action-cell"><ElButton class="row-delete" link :icon="Delete" :disabled="disabled" aria-label="删除当前行" @click="removeLine(line)" /></td>
             </tr>
@@ -143,7 +143,7 @@ function chooseMaterials(items: SampleMaterialCandidate[]) {
     </div>
     <div class="material-count"><span>当前分区 {{ visibleLines.length }} 项 · 全部分区 {{ modelValue.length }} 项{{ unavailableMessage ? '（本页未保存）' : '' }}</span><span>* 为必填</span></div>
     </div>
-    <SampleMaterialPicker v-model="pickerOpen" :category="category" :references="references" :units="units" :disabled="disabled" @choose="chooseMaterials" />
+    <SampleMaterialPicker v-model="pickerOpen" :category="category" :disabled="disabled" @choose="chooseMaterials" />
     <SampleMaterialLineDrawer v-if="editingLine" v-model="drawerOpen" :line="editingLine" :references="references" :units="units" :has-next="hasNext" :can-add-next="!pickerLabel || category === 'tube'" :disabled="disabled" @apply="applyLine" @dirty-change="emit('dirty-change', $event)" />
   </section>
 </template>
@@ -159,21 +159,23 @@ h2 { width: 140px; flex: none; margin: 0; font-family: token.$crm-font-display; 
 .material-editor .material-toolbar :deep(.el-button) { width: auto; min-width: 96px; height: 32px !important; min-height: 32px !important; padding: 0 12px; flex: none; border-radius: 5px; background: var(--erp-color-surface); font-size: 13px; }
 .material-editor .material-toolbar :deep(.fullscreen-toggle) { min-width: 96px; }
 .material-table { display: flex; min-width: 0; flex-direction: column; }
-.table-scroll { min-width: 0; overflow: visible; }
-table { width: 100%; min-width: 0; border-spacing: 0; table-layout: fixed; }
+.table-scroll { min-width: 0; overflow: auto; border: 1px solid var(--erp-table-frame-border); border-radius: 5px; background: var(--erp-table-background); }
+table { width: 100%; min-width: 0; border-collapse: separate; border-spacing: 0; table-layout: fixed; background: var(--erp-table-background); color: var(--erp-table-text); }
 .col-number { width: 7%; } .col-name { width: 15%; } .col-spec { width: 17%; } .col-material { width: 13%; } .col-color { width: 14%; } .col-quantity { width: 10%; } .col-unit { width: 8%; } .col-notes { width: 11%; } .col-actions { width: 56px; }
 .row-tools { display: flex; align-items: center; gap: 6px; }
 .material-editor td :deep(.row-expand) { width: 28px; height: 28px; font-size: 16px; }
 .reference-error { color: token.$crm-danger; font-size: 12px; }
-th { height: 44px; padding: 0 16px !important; color: var(--erp-table-header-text); background: var(--erp-table-header-background); text-align: left; vertical-align: middle; font-size: 11px !important; font-weight: 500; line-height: 16px !important; white-space: nowrap; }
-td { height: auto !important; min-height: 40px; padding: 4px 16px !important; border-bottom: 1px solid token.$crm-border-subtle; font-size: 12px !important; line-height: 18px !important; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { height: 44px; box-sizing: border-box; padding: 0 16px !important; border-bottom: 1px solid var(--erp-table-border); color: var(--erp-table-header-text); background: var(--erp-table-header-background); text-align: left; vertical-align: middle; font-size: 12px !important; font-weight: 500; line-height: 18px !important; white-space: nowrap; }
+td { height: auto !important; min-height: 40px; padding: 4px 16px !important; border-bottom: 1px solid var(--erp-table-border); background: var(--erp-table-background); color: var(--erp-table-text); font-size: 12px !important; line-height: 18px !important; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:not(.empty-row):hover td { background: var(--erp-table-hover); }
 td :deep(.el-input), td :deep(.el-select), td :deep(.el-cascader) { width: 100%; }
 td :deep(.el-input__wrapper), td :deep(.el-select__wrapper), td :deep(.el-cascader .el-input__wrapper) { box-sizing: border-box; height: 32px !important; min-height: 32px !important; padding: 0 8px; border-radius: var(--erp-radius-control); background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; font-size: 12px; }
 td :deep(.el-input__wrapper:hover), td :deep(.el-input__wrapper.is-focus), td :deep(.el-select__wrapper:hover), td :deep(.el-select__wrapper.is-focused), td :deep(.el-cascader .el-input__wrapper:hover), td :deep(.el-cascader .el-input__wrapper.is-focus) { background: var(--erp-input-surface); box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-focus-border) inset; }
 td :deep(.el-input__inner::placeholder), td :deep(.el-select__placeholder) { color: var(--erp-table-text); }
 .action-cell { overflow: visible; padding: 4px 8px !important; text-align: center; text-overflow: clip; }
 td.action-cell :deep(.row-delete) { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 0; flex: none; }
-.empty-row td { height: auto !important; min-height: 0; padding: 48px 16px !important; color: token.$crm-text-secondary; text-align: center; }
+.empty-row td { height: auto !important; min-height: 0; padding: 48px 16px !important; text-align: center; }
 .material-editor .material-table :deep(.add-row) { width: 100%; height: 32px; min-height: 32px; flex: none; border-color: token.$crm-border-subtle; background: var(--erp-table-background); font-size: 13px; }
 .material-count { display: flex; height: 22px; flex: none; justify-content: space-between; color: token.$crm-text-secondary; font-size: 12px; line-height: 22px; }
 .material-count span:last-child { color: token.$crm-primary; }
@@ -194,7 +196,6 @@ td.action-cell :deep(.row-delete) { width: 28px; min-width: 28px; height: 28px; 
 .editor-grid .material-toolbar { height: auto; min-height: 44px; flex-wrap: wrap; gap: 8px 16px; }
 .editor-grid .material-toolbar h2 { width: auto; font-family: inherit; font-size: 17px; line-height: 26px; }
 .editor-grid .material-toolbar p { font-size: 12px; }
-.editor-grid .table-scroll { overflow: auto; }
 .editor-grid table { min-width: 960px; }
 @media (max-width: 900px) { .material-editor.editor-grid { grid-template-columns: 152px minmax(0, 1fr); } }
 </style>

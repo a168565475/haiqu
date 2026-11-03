@@ -81,7 +81,7 @@ onBeforeUnmount(() => { loadRequest++ })
       <p v-else-if="closed" class="readonly-hint">当前申请流程已结束，仅供查看。</p>
       <div v-if="errorMessage" class="director-error" role="alert"><p>{{ errorMessage }}</p><ElButton :disabled="loading" @click="loadPage">重新加载</ElButton></div>
       <template v-else-if="sample">
-        <SampleApplicationSummary :sample="sample" />
+        <SampleApplicationSummary :sample="sample" :show-customer="false" />
         <SampleSection title="厂长处理" class="director-decision">
           <p>核对产品是否可做；确认后交打样部，需补充信息时退回业务员。</p>
           <label for="director-opinion">处理意见（退回时必填）</label>

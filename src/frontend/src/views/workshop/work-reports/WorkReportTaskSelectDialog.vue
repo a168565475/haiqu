@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { Check, Picture, Search } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -184,7 +185,7 @@ onBeforeUnmount(() => { requestSequence += 1 })
           <button v-for="card in taskCards" :key="card.task.id" type="button" class="wr-task-card" :class="{ 'is-selected': selectedTask?.id === card.task.id }" data-testid="work-report-task-card" :data-task-id="card.task.id" :aria-pressed="selectedTask?.id === card.task.id" :aria-label="`选择生产任务单 ${card.task.task_number}`" :disabled="loading || submitting" @click="selectTask(card.task)">
             <span class="wr-task-card__main">
               <span class="wr-task-card__image">
-                <img v-if="card.task.product?.image_url && !failedImageUrls.has(card.task.product.image_url)" :src="card.task.product.image_url" :alt="card.task.product.name" loading="lazy" @error="failedImageUrls.add(card.task.product.image_url)" />
+                <ProtectedImage v-if="card.task.product?.image_url && !failedImageUrls.has(card.task.product.image_url)" :src="card.task.product.image_url" :alt="card.task.product.name" loading="lazy" @error="failedImageUrls.add(card.task.product.image_url)" />
                 <span v-else data-testid="task-image-placeholder" :aria-label="card.task.product?.image_url ? '图片暂不可用' : '暂无产品图片'" role="img"><ElIcon><Picture /></ElIcon></span>
               </span>
               <span class="wr-task-card__info">

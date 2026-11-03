@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { complaintPreviewUrl } from '@/api/complaints'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
+import ProtectedAttachmentLink from '@/components/common/ProtectedAttachmentLink.vue'
 import type { ComplaintAttachment } from '@/types/complaint'
 
 const props = defineProps<{ modelValue: boolean; attachment: ComplaintAttachment | null }>()
@@ -13,10 +15,10 @@ function close() { emit('update:modelValue', false) }
 <template>
   <AppWindowDialog class="complaint-operation-dialog complaint-preview-dialog" :model-value="modelValue" :title="attachment?.original_name || '图片预览'" :width="1400" :height="792" destroy-on-close @update:model-value="value => { if (!value) close() }">
     <div class="preview-body">
-      <div class="image-stage"><img v-if="attachment" :src="imageUrl" :alt="attachment.original_name" /></div>
+      <div class="image-stage"><ProtectedImage v-if="modelValue && attachment" :src="imageUrl" :alt="attachment.original_name" /></div>
       <aside v-if="attachment"><h3>图片信息</h3><dl><div><dt>文件名</dt><dd>{{ attachment.original_name }}</dd></div><div><dt>说明</dt><dd>{{ attachment.caption || '未填写' }}</dd></div><div><dt>大小</dt><dd>{{ Math.ceil(attachment.size_bytes / 1024) }} KB</dd></div><div><dt>上传时间</dt><dd>{{ new Date(attachment.created_at).toLocaleString('zh-CN', { hour12: false }) }}</dd></div></dl></aside>
     </div>
-    <template #footer><el-button @click="close">关闭</el-button><a v-if="attachment" class="download-link" :href="imageUrl" download>下载原图</a></template>
+    <template #footer><el-button @click="close">关闭</el-button><ProtectedAttachmentLink v-if="modelValue && attachment" class="download-link" :src="imageUrl" :filename="attachment.original_name" download>下载原图</ProtectedAttachmentLink></template>
   </AppWindowDialog>
 </template>
 

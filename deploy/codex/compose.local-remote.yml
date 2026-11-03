@@ -1,0 +1,204 @@
+# 本机 Docker Desktop ERP + 服务器 Codex；从项目根与 compose.yml 合并。
+# 不与 compose.codex.yml / compose.import.yml 同时合并，不执行迁移。
+services:
+  codex-local-storage-init:
+    image: haiqu-erp-backend:latest
+    pull_policy: never
+    container_name: haiqu-codex-local-storage-init
+    user: "0:0"
+    group_add: ["10001"]
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    command:
+      - python
+      - -I
+      - -B
+      - -c
+      - |
+        import json
+        import os
+        from pathlib import Path
+        import stat
+
+        def check(condition):
+            if not condition:
+                raise SystemExit('LOCAL_CODEX_STORAGE_OWNERSHIP_MISMATCH')
+
+        # 2026-11-03 实查本机 backend 为 0:0；只初始化两个明确挂载的卷根。
+        targets = [
+            (Path('/run/haiqu-codex'), 'codex-bridge-socket', 10001, 10001, 0o750),
+            (Path('/state/production-imports'), 'production-imports', 0, 0, 0o700),
+        ]
+        for path, purpose, uid, gid, mode in targets:
+            check(path.resolve() == path and not path.is_symlink() and path.is_dir())
+            marker = path / '.haiqu-local-remote-owner.json'
+            expected = {'schema_version': 1, 'project': 'haiqu-erp', 'purpose': purpose,
+                        'uid': uid, 'gid': gid, 'mode': mode}
+            if marker.exists() or marker.is_symlink():
+                info = marker.lstat()
+                check(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 512)
+                check((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)) == (0, 0, 0o600))
+                check(json.loads(marker.read_text(encoding='utf-8')) == expected)
+                root = path.lstat()
+                check((root.st_uid, root.st_gid, stat.S_IMODE(root.st_mode)) == (uid, gid, mode))
+                continue
+            check(not any(path.iterdir()))
+            descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as output:
+                json.dump(expected, output, sort_keys=True)
+                output.write('\n')
+                output.flush()
+                os.fsync(output.fileno())
+                os.fchown(output.fileno(), 0, 0)
+                os.fchmod(output.fileno(), 0o600)
+            os.chown(path, uid, gid)
+            os.chmod(path, mode)
+        print('LOCAL_CODEX_STORAGE_READY')
+    volumes:
+      - type: volume
+        source: codex_bridge_socket
+        target: /run/haiqu-codex
+        volume: {nocopy: true}
+      - type: volume
+        source: production_imports
+        target: /state/production-imports
+        volume: {nocopy: true}
+
+  backend:
+    image: haiqu-erp-backend:latest
+    pull_policy: never
+    user: "0:0"
+    group_add: ["10001"]
+    environment:
+      CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+      FILE_VIRUS_SCAN_ENABLED: "true"
+    depends_on:
+      codex-local-storage-init:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+    volumes:
+      - type: volume
+        source: codex_bridge_socket
+        target: /run/haiqu-codex
+        read_only: true
+        volume: {nocopy: true}
+      - type: volume
+        source: production_imports
+        target: /state/production-imports
+        volume: {nocopy: true}
+
+  codex-worker:
+    image: haiqu-erp-backend:latest
+    pull_policy: never
+    container_name: haiqu-codex-worker
+    user: "0:0"
+    group_add: ["10001"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    env_file: [./.env]
+    environment:
+      CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+      FILE_VIRUS_SCAN_ENABLED: "true"
+      TUBE_OUTSOURCING_ENABLED: "True"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    command: [python, manage.py, process_codex_operations, --watch]
+    depends_on:
+      backend:
+        condition: service_healthy
+      codex-local-storage-init:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    pids_limit: 64
+    stop_grace_period: 120s
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777"]
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./deploy/codex/bridge
+        target: /opt/haiqu-codex-bridge
+        read_only: true
+        bind: {create_host_path: false}
+      - type: volume
+        source: codex_bridge_socket
+        target: /run/haiqu-codex
+        volume: {nocopy: true}
+      - type: volume
+        source: production_imports
+        target: /state/production-imports
+        read_only: true
+        volume: {nocopy: true}
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}
+
+  production-import-worker:
+    image: haiqu-erp-backend:latest
+    pull_policy: never
+    container_name: haiqu-production-import-worker
+    user: "0:0"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    env_file: [./.env]
+    environment:
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+      FILE_VIRUS_SCAN_ENABLED: "true"
+      TUBE_OUTSOURCING_ENABLED: "True"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    command: [python, manage.py, process_production_task_imports, --watch]
+    depends_on:
+      backend:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+      codex-local-storage-init:
+        condition: service_completed_successfully
+    mem_limit: 1024m
+    pids_limit: 64
+    stop_grace_period: 120s
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"]
+    volumes:
+      - type: bind
+        source: ./src/backend
+        target: /app
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./data/media
+        target: /app/media
+        bind: {create_host_path: false}
+      - type: volume
+        source: production_imports
+        target: /state/production-imports
+        volume: {nocopy: true}
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  codex_bridge_socket:
+    name: haiqu-erp-codex-bridge-socket
+    labels:
+      haiqu.purpose: local-remote-codex-socket
+  production_imports:
+    name: haiqu-erp-production-imports
+    labels:
+      haiqu.purpose: production-task-import-private-data

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ScheduleProduct } from '@/types/productionScheduling'
 import type { ScheduleProductStageProgress } from '@/types/workshopReporting'
-import { scheduleProductSummary, scheduleStageRisk } from './scheduleListDisplay'
+import { scheduleOutsourcingIndicator, scheduleProductSummary, scheduleStageRisk } from './scheduleListDisplay'
 
 function product(overrides: Partial<ScheduleProduct> = {}): ScheduleProduct {
   return { id: 'p1', product_line_id: 'line-1', line_number: 1, planned_quantity: 100, source_quantity: 100,
@@ -14,6 +14,18 @@ function stage(overrides: Partial<ScheduleProductStageProgress> = {}): ScheduleP
 }
 
 afterEach(() => { vi.useRealTimers() })
+
+describe('委外总单排产进度', () => {
+  it('有总单显示服务端入库BOM百分比，不采用报工数量', () => {
+    expect(scheduleOutsourcingIndicator({ state: 'IN_PROGRESS', risk: 'normal', description: '入库进度 40%', records: [], is_plan: true, progress_percent: 40 })).toMatchObject({ symbol: '40%', percentage: 40 })
+    expect(scheduleOutsourcingIndicator({ state: 'IN_PROGRESS', risk: 'normal', description: '', records: [], is_plan: true, progress_percent: 33.333333 })).toMatchObject({ symbol: '33%', percentage: 33.333333 })
+  })
+  it('无总单保持原符号和无状态，范围未知不显示部分百分比', () => {
+    expect(scheduleOutsourcingIndicator({ state: 'NONE', risk: 'none', description: '无外发', records: [] })).toMatchObject({ symbol: '', percentage: null })
+    expect(scheduleOutsourcingIndicator({ state: 'IN_PROGRESS', risk: 'normal', description: '', records: [] })).toMatchObject({ symbol: '外', percentage: null })
+    expect(scheduleOutsourcingIndicator({ state: 'UNKNOWN', risk: 'unknown', description: '', records: [], is_plan: true, progress_percent: 40 })).toMatchObject({ symbol: '?', percentage: null })
+  })
+})
 
 describe('排产产品汇总', () => {
   it('空产品不虚构数量，单产品保留真实单位', () => {

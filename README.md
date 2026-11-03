@@ -38,6 +38,10 @@ HAIQU ERP 面向户外用品外贸及工厂业务，按模块逐步建设。当�
 
 Project Brain 入口：[HAIQU ERP Project Brain](docs/project_brain/README.md)。入口页只负责项目导航、事实来源和当前状态，不复制详细业务规则、设计参数或接口契约。
 
+业务规则：[生产采购库存业务单据编号规范](docs/standards/business_document_numbering.md)，说明 BOM 起的编号格式、共用日流水、版本与历史号码保留边界。
+
+管材规则：[管材数量与采购单位](docs/standards/tube_quantity_and_purchase_units.md)，说明取消新计算的 1% 余量、历史数量保留，以及根数显示与米单价的边界。
+
 ## 技术与交付形式
 
 项目同时包含正式产品需求文档与可运行的基础开发环境。开发环境技术栈已经固定：
@@ -98,7 +102,7 @@ PRD V1.0 已结合订单流程、报价单、PI/采购合同和样品发票资�
 启动 haiqu ERP.cmd
 ```
 
-入口会自动启动并等待 Docker Desktop，检查端口冲突，启动 PostgreSQL、Redis、Backend、Frontend，验证健康接口和主机数据挂载，成功后自动打开前端页面。启动日志保存在 `logs/startup_*.log`。
+入口会自动启动并等待 Docker Desktop，检查端口冲突，启动 PostgreSQL、Redis、Backend、Frontend，验证健康接口和主机数据挂载，完成迁移后启动通知发送进程，成功后自动打开前端页面。启动日志保存在 `logs/startup_*.log`。
 
 如果启动失败，窗口不会闪退，也不会自动结束占用端口的其他程序。请按窗口提示查看首个错误和对应启动日志。
 
@@ -128,13 +132,21 @@ docker compose ps
 - `docs/haiqu_ERP_开发环境部署与运维说明.md`
 - `docs/haiqu_ERP_Docker常用命令速查.md`
 
+业务通知通过独立的 `notification-worker` 服务每 5 秒检查待发送记录，复用后端镜像；ERP 站内消息在业务提交时生成。缺少企业微信应用配置时自动等待，配置完成后继续发送。有角色权限的接收人才能收到对应节点消息；没有接收人的旧事件不补发，失败或结果不明的消息不自动重发。查看状态和操作方法见 [本机通知自动发送](docs/deployment/notification_auto_delivery_20261022.md)。
+
 ### 前端开发性能与热更新
 
-Windows 挂载目录的 Vite 文件监听保留轮询：源码每 1 秒检查一次，二进制资源每 2 秒检查一次；`.tmp`、`qa`、`outputs`、`logs` 下的产物不参与热更新监听。这些目录不要存放运行中的应用源码。过密的全目录轮询会挤占 Node 文件检查与 DNS 解析共享的工作线程，使接口代理出现额外等待。
+Windows 挂载目录的 Vite 文件监听保留轮询：源码每 1 秒检查一次，二进制资源每 2 秒检查一次；`.tmp`、`qa`、`outputs`、`logs`、`dist-*` 下的产物不参与热更新监听。这些目录不要存放运行中的应用源码。过密的全目录轮询会挤占 Node 文件检查与 DNS 解析共享的工作线程，使接口代理出现额外等待。
 
 受保护页面导航可复用最近 30 秒内验证过的前端登录状态；窗口聚焦或可见性改变会使其失效，下次导航重新检查。退出后的公开登录页保持原行为，业务接口仍逐次执行后端 Session、权限和 CSRF 校验。客户列表的业务数据每次进入都重新读取，筛选配置保持发布版本与兼容回退规则。
 
 客户列表加载优化的测量、回归与边界记录见 `qa/customer_list_loading_fix_20260915/report.md`。
+
+### 独立车间手机端
+
+手机端位于 `src/frontend-mobile`，基于 `vue3-vant-mobile`，与电脑端分别安装和构建，共用现有后端、账号及业务权限。提供生产计划、领料申请、班组长多人报工、金工/车缝半成品入库和装配成品入库提交，仓库确认仍在电脑端 ERP。
+
+本机入口为 `http://localhost:8082/m/`；通过 `compose.mobile.yml` 单独启动手机服务，默认只监听本机。安装、启动、验证及局域网配置见 [手机端说明](src/frontend-mobile/README.md)。这属于开发环境，尚未发布正式站点。
 
 ## 看板样式演示
 
@@ -149,6 +161,8 @@ Windows 挂载目录的 Vite 文件监听保留轮询：源码每 1 秒检查一
 四页进一步按参考站实测补齐标题纹理与数字字体、指标比较区、整月图表与图例翻页、人员/商品排行，以及进度表列宽、行高和节点位置。看板内纵向、横向滚动条均隐藏，仍能自动和手动滚动。最新逐页对照、截图、只读验收与清理记录见 `docs/qa/boards_refinement_20261016.md`。参考站的呆滞库存区域当时为空，其非空图表样式为 UNKNOWN，当前库龄环图为自建演示样式。
 
 ## 注意事项
+
+生产权限定向只读验收入口为 `python qa/run.py permissions --read-only`，需要通过进程环境提供 `UNIT03_QA_USERNAME` / `UNIT03_QA_PASSWORD` 或 `UNIT03_QA_IDENTITIES`；仅允许本机正常登录及业务读取，普通角色和真实写流程的未覆盖项会单列。角色配置使用 `python manage.py configure_production_roles` 预览，实际应用需要目标库名、最新差异摘要、有效管理操作者以及已确认启用的模块/资源开关，详见 `docs/plans/production_access_notifications_20261020/reports/unit03_result.md`。
 
 当前仍缺少完整且现行的公司销售 SOP、客户分级规则、信用政策、汇率与毛利核算口径。PRD 将用可配置规则和待确认项处理，不能将假设误写为既定制度。
 

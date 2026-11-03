@@ -4,11 +4,54 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/productionTasks'
 import ProductionTaskListView from './ProductionTaskListView.vue'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
-vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), deleteProductionTask: vi.fn(), fetchProductionTasks: vi.fn(), fetchProductionTaskOptions: vi.fn(), fetchProductionTaskFilterOptions: vi.fn() }))
+const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true, moduleCan: () => true }) }))
+vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), deleteProductionTask: vi.fn(), fetchProductionTasks: vi.fn(), fetchProductionTaskOptions: vi.fn(), fetchProductionTaskFilterOptions: vi.fn(), cancelProductionTask: vi.fn(), finishProductionTask: vi.fn() }))
 const options = { employees: [], salespeople: [], products: [], customers: [], order_sources: [], delivery_methods: [], statuses: [] }
 const mount = () => shallowMount(ProductionTaskListView, { global: { plugins: [ElementPlus] } })
+beforeEach(() => { route.query = {} })
+
+describe('任务列表按对象动作授权', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.fetchProductionTasks).mockResolvedValue({ data: [], meta: { total: 0, total_pages: 0 } } as never)
+    vi.mocked(api.fetchProductionTaskFilterOptions).mockResolvedValue(options)
+  })
+  it('PMC 可编辑计划和完结，但编辑权限不能代替取消或删除权限', async () => {
+    const wrapper = mount(); await flushPromises()
+    const page = wrapper.vm as unknown as { canEditTask: (row: unknown) => boolean; canChangeLifecycle: (row: unknown, action: string) => boolean; handleRowAction: (command: string, row: unknown) => void }
+    const row = { id: 'one', status: 'IN_PRODUCTION', allowed_permissions: ['access_control.edit_productionplan', 'access_control.finish_productiontask'] }
+    expect(page.canEditTask(row)).toBe(true)
+    expect(page.canChangeLifecycle(row, 'finish')).toBe(true)
+    expect(page.canChangeLifecycle(row, 'cancel')).toBe(false)
+    page.handleRowAction('edit', row)
+    expect(router.push).toHaveBeenCalledWith({ name: 'production-task-edit', params: { taskId: 'one' } })
+    expect(page.canChangeLifecycle({ ...row, allowed_permissions: ['production_tasks.change_productiontask'] }, 'finish')).toBe(false)
+    router.push.mockClear()
+    page.handleRowAction('edit', { ...row, allowed_permissions: [] })
+    page.handleRowAction('delete', { ...row, status: 'CANCELLED', allowed_permissions: [] })
+    expect(router.push).not.toHaveBeenCalled()
+    expect(api.fetchProductionTask).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it('详情完结入口复用数量窗口并提交数量和批次，权限回收后不能提交', async () => {
+    route.query = { finish: 'one' }
+    const row = { id: 'one', status: 'IN_PRODUCTION', sales_order_id: 'sales', total_quantity: '10', run_batches: [], allowed_permissions: ['access_control.finish_productiontask'] }
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: row, etag: 'v2' } as never)
+    const wrapper = mount(); await flushPromises()
+    const page = wrapper.vm as unknown as { lifecycleDialogVisible: boolean; confirmLifecycleAction: () => Promise<void> }
+    expect(page.lifecycleDialogVisible).toBe(true)
+    expect(router.replace).toHaveBeenCalledWith({ query: { finish: undefined } })
+    vi.mocked(api.fetchProductionTask).mockResolvedValueOnce({ data: { ...row, allowed_permissions: [] }, etag: 'v3' } as never)
+    await page.confirmLifecycleAction()
+    expect(api.finishProductionTask).not.toHaveBeenCalled()
+    await page.confirmLifecycleAction()
+    expect(api.finishProductionTask).toHaveBeenCalledWith('one', '', 'v2', { actual_quantity: '10', actual_good_quantity: '10', run_batches: [] })
+    wrapper.unmount()
+  })
+})
 
 describe('生产任务列表分区加载', () => {
   beforeEach(() => {

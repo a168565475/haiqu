@@ -15,7 +15,7 @@ vi.mock('@/router', async () => {
     { path: '/purchase-inbound/order/:purchaseOrderId', name: 'material-purchase-inbound', component: { template: '<div />' } },
   ] }) }
 })
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }) }))
 vi.mock('@/api/inventory', () => ({
   fetchProcurementInboundOrders: vi.fn().mockResolvedValue([]),
   fetchMaterialReceivingOptions: vi.fn().mockResolvedValue({ warehouses: [], zones: [] }),

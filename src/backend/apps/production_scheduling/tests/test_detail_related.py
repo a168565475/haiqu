@@ -186,6 +186,40 @@ class RelatedTubeSummaryTests(TubeReceiptFixture, APITestCase):
         product = self.schedule_product
         return related_summary(request_for(self.user, self.employee), product.schedule, [product])[str(product.pk)]["outsourcing"]
 
+    def test_plan_summary_keeps_bom_separate_and_counts_child_dispatch_once(self):
+        from copy import copy
+        from apps.outsourcing.models import TubeOutsourcingAction
+        from django.utils import timezone
+
+        saved = self.post_order(self.order_payload()).data['data']
+        plan = TubeOutsourcingOrder.objects.get(pk=saved['id'])
+        plan.is_plan = True
+        plan.save(update_fields=['is_plan'])
+        line = plan.lines.get()
+        line.quantity = 9000
+        line.unit_price = Decimal('1.25')
+        line.snapshot['order_required'] = '8000'
+        line.save(update_fields=['quantity', 'unit_price', 'snapshot'])
+        child = copy(plan)
+        child.pk, child.order_number, child.client_request_id = uuid.uuid4(), 'WF-DETAIL-BATCH', uuid.uuid4()
+        child.is_plan, child.plan, child.status = False, plan, 'PROCESSING'
+        child.save(force_insert=True)
+        child_line = copy(line)
+        child_line.pk, child_line.order, child_line.quantity = uuid.uuid4(), child, 200
+        child_line.save(force_insert=True)
+        TubeOutsourcingAction.objects.create(order=child, kind='DISPATCH', client_request_id=uuid.uuid4(),
+            request_payload_hash='d' * 64, actual_dispatch_date=timezone.localdate(),
+            actor_employee=self.employee, snapshot={'quantity': 200})
+        records = self.summary()['records']
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertTrue(record['is_plan'])
+        self.assertEqual(record['planned_quantity'], '9000')
+        self.assertEqual(record['bom_quantity'], '8000')
+        self.assertEqual(record['dispatched_quantity'], '200')
+        self.assertEqual(record['received_quantity'], '0')
+        self.assertIsNone(record['shortage_quantity'])
+
     def test_tube_amount_uses_planned_quantity_and_valid_receipt_keeps_shortage(self):
         payload = self.order_payload()
         payload["lines"][0]["unit_price"] = "2.50"

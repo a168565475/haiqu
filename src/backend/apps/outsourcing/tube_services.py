@@ -15,6 +15,7 @@ from apps.inventory.public_stock_cutover import stock_write_transaction
 from .material_flow import lock_request
 from .models import OutsourcingFactory, TubeOutsourcingLine, TubeOutsourcingOrder
 from .services import _json_hash
+from .processing_materials import processing_line_fields
 from .tube_kinds import CUTTING_SOURCES, DIRECT_SOURCES, CUTTING_FIELDS
 from .tube_selectors import (CREATE_PERMISSION, require_saved_order_access, require_tube_feature,
                              source_factories, source_product, source_zone)
@@ -43,20 +44,25 @@ def _stock_amount(source_kind, quantity, row):
 
 
 @stock_write_transaction
-def create_tube_order(*, data, request):
+def create_tube_order(*, data, request, plan=None):
+    if data.get('is_plan'):
+        from .plan_services import create_plan
+        return create_plan(data=data, request=request)
     require_tube_feature()
+    from .tube_selectors import DISPATCH_PERMISSION
+    permission = DISPATCH_PERMISSION if plan is not None else CREATE_PERMISSION
     lock_request('tube-create', data['client_request_id'])
     payload_hash = _json_hash(data)
     # 已成功请求先回查，不因保存后额度降低或来源版本变化而重复预留。
     existing = TubeOutsourcingOrder.objects.select_related('schedule_product').filter(
         client_request_id=data['client_request_id']).first()
     if existing:
-        require_saved_order_access(request, existing, CREATE_PERMISSION)
+        require_saved_order_access(request, existing, permission)
         if existing.request_payload_hash != payload_hash:
             raise Conflict('相同提交标识已用于不同的外发单内容。')
         return existing, False
 
-    product, craft = source_product(request, data['schedule_product_id'], CREATE_PERMISSION,
+    product, craft = source_product(request, data['schedule_product_id'], permission,
         source_kind=data['source_kind'], craft_id=data.get('craft_id'))
     zone = source_zone(data['source_kind'], data.get('zone_id'))
     requested = {str(row['component_identity']): row['quantity'] for row in data['lines']}
@@ -71,24 +77,25 @@ def create_tube_order(*, data, request):
         prepare, craft_args = prepare_cutting_source, {'craft': craft}
     context = prepare(schedule_product=product, source_kind=data['source_kind'], zone=zone,
                                   requested=requested, expected_revision=data['source_revision'],
-                                  additional_stock_lines=material_stock_lines, **craft_args)
+                                  additional_stock_lines=material_stock_lines, require_revision=plan is None,
+                                  plan_mode=plan is not None, **craft_args)
     prepared_materials = prepare_materials(product, entered_materials,
-        expected_revision=data.get('material_source_revision'), source_kind=data['source_kind'])
+        expected_revision=data.get('material_source_revision'), source_kind=data['source_kind'], plan_mode=plan is not None)
     if entered_materials:
         context = {**context, 'material_source_revision': data['material_source_revision']}
     # prepare已先取得S2统一锁，再检查当前可见范围和有效计划，避免等待期间来源变更。
-    product, craft = source_product(request, product.pk, CREATE_PERMISSION,
+    product, craft = source_product(request, product.pk, permission,
         source_kind=data['source_kind'], craft_id=data.get('craft_id'))
     zone = source_zone(data['source_kind'], data.get('zone_id'))
     requested_factories = {row['factory_id'] for row in [*data['lines'], *entered_materials]}
-    visible_ids = set(source_factories(request, craft, CREATE_PERMISSION).filter(pk__in=requested_factories)
+    visible_ids = set(source_factories(request, craft, permission).filter(pk__in=requested_factories)
                       .values_list('pk', flat=True))
     if visible_ids != requested_factories:
         raise ValidationError({'lines': '加工厂不存在、已停用或未获授权办理当前加工工艺。'})
     # 资料仍不能并发修改；允许其他 WF 单据的外键检查先完成。
     factories = {row.pk: row for row in OutsourcingFactory.objects.select_for_update(of=('self',), no_key=True)
                  .filter(pk__in=visible_ids, status='ACTIVE').order_by('pk')}
-    if set(factories) != requested_factories or set(source_factories(request, craft, CREATE_PERMISSION)
+    if set(factories) != requested_factories or set(source_factories(request, craft, permission)
             .filter(pk__in=requested_factories).values_list('pk', flat=True)) != requested_factories:
         raise Conflict('加工厂资料已变化，请刷新后重新核对。')
     bom = Bom.objects.filter(product_line=product.product_line, archived_at__isnull=True)
@@ -126,9 +133,11 @@ def create_tube_order(*, data, request):
             **{key: row.get(key) for key in CUTTING_FIELDS},
             'factory_name': factories[entered['factory_id']].name, 'meters': meters}
         lines.append(TubeOutsourcingLine(bom_line=bom_line, component_identity=entered['component_identity'],
+            **processing_line_fields(bom_line=bom_line, row=row, craft=craft),
             factory=factories[entered['factory_id']], quantity=entered['quantity'], stock_quantity=stock_quantity,
             unit_price=entered.get('unit_price'), input_identity=_json(input_identity), snapshot=_json(snapshot)))
     order = TubeOutsourcingOrder.objects.create(
+        plan=plan,
         order_number=next_business_number('OUTSOURCING_ORDER'),
         schedule_product=product, product_line=product.product_line, bom=bom, craft=craft,
         source_kind=data['source_kind'], zone=zone, planned_dispatch_date=data['planned_dispatch_date'],
@@ -151,5 +160,6 @@ def create_tube_order(*, data, request):
             'materials': [material_data(value) for value in materials]},
         context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
     from apps.wecom.workshop_notifications import outsourcing_created
-    outsourcing_created(order, request.employee, tube=True)
+    if plan is None:
+        outsourcing_created(order, request.employee, tube=True)
     return order, True

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import { fetchSampleInventoryCandidates } from '@/api/sampleWarehouse'
 import { sampleAllocationTotal, sampleSupplyResult } from '@/utils/sampleWarehouse'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 import type { SampleInventoryAllocation, SampleInventoryCandidate, SampleWarehouseInventory, SampleWarehouseLine } from '@/types/sampleWarehouse'
 
 const props = defineProps<{ sampleId: string; lines: SampleWarehouseLine[]; activeLineKey: string; modelValue: boolean }>()
@@ -11,6 +13,7 @@ const selected = ref<Record<string, SampleInventoryAllocation[]>>({})
 const changedKeys = new Set<string>()
 const candidates = ref<SampleWarehouseInventory['lines']>([])
 const filterKey = ref('all'), loading = ref(false), errorMessage = ref(''), validation = ref('')
+const hoveredRowKey = ref('')
 let requestNumber = 0
 const visibleLines = computed(() => props.lines.filter(line => filterKey.value === 'all' || line.key === filterKey.value))
 const rowsFor = (key: string) => candidates.value.find(line => line.lineKey === key)?.candidates || []
@@ -25,6 +28,12 @@ const tableRows = computed(() => visibleLines.value.flatMap(line => {
   }))
 }))
 const hasTube = computed(() => visibleLines.value.some(line => line.category === 'tube'))
+function handleCellMouseEnter(row: { rowKey: string }) { hoveredRowKey.value = row.rowKey }
+function attributes(line: SampleWarehouseLine) {
+  const fields = materialAttributeFields({ ...line, part_name: line.name })
+  return line.color && !fields.some(field => field.key === 'color')
+    ? [...fields, { key: 'color', label: '颜色', value: line.color }] : fields
+}
 const missingLines = computed(() => visibleLines.value.filter(line =>
   (selected.value[line.key] || []).some(item => !rowsFor(line.key).some(row => row.balanceId === item.balanceId)),
 ))
@@ -45,7 +54,19 @@ async function load() {
   loading.value = true; errorMessage.value = ''; validation.value = ''
   try {
     const result = await fetchSampleInventoryCandidates(props.sampleId)
-    if (request === requestNumber) candidates.value = result.lines
+    if (request !== requestNumber) return
+    candidates.value = result.lines
+    const noStockKeys = new Set(result.lines.filter(line => line.candidates.length === 0
+      && visibleLines.value.some(visible => visible.key === line.lineKey)).map(line => line.lineKey))
+    if (noStockKeys.size) {
+      for (const key of noStockKeys) { selected.value[key] = []; changedKeys.delete(key) }
+      emit('apply', props.lines.map(line => noStockKeys.has(line.key)
+        ? { ...line, supplyQuantity: '0', inventoryAllocations: [] } : line))
+      if (noStockKeys.size === visibleLines.value.length) {
+        emit('update:modelValue', false)
+        ElMessage.info('当前查询的材料均未匹配到可用库存，已自动回填 0。')
+      }
+    }
   } catch { if (request === requestNumber) errorMessage.value = '需求库存查询失败或没有核对权限，请重试。' }
   finally { if (request === requestNumber) loading.value = false }
 }
@@ -79,7 +100,7 @@ watch(() => [props.modelValue, props.sampleId], () => {
     filterKey.value = props.activeLineKey || 'all'
     selected.value = Object.fromEntries(props.lines.map(line => [line.key, (line.inventoryAllocations || []).map(row => ({ ...row }))]))
     candidates.value = []; void load()
-  } else { requestNumber++; loading.value = false }
+  } else { requestNumber++; loading.value = false; hoveredRowKey.value = '' }
 }, { immediate: true })
 onBeforeUnmount(() => { requestNumber++ })
 </script>
@@ -92,12 +113,12 @@ onBeforeUnmount(() => { requestNumber++ })
     </div>
     <ElAlert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" show-icon />
     <div v-else v-loading="loading">
-      <ElTable class="lookup-table" :data="tableRows" row-key="rowKey" :max-height="480" empty-text="暂无用料需求">
+      <ElTable class="lookup-table" :data="tableRows" row-key="rowKey" :max-height="480" empty-text="暂无用料需求" @cell-mouse-enter="handleCellMouseEnter" @mouseleave="hoveredRowKey = ''">
         <ElTableColumn label="选择" width="52" align="center" fixed="left">
           <template #default="{ row }"><ElCheckbox :model-value="!!row.stock && !!selection(row.line.key, row.stock.balanceId)" :disabled="!row.stock" :aria-label="`选择 ${row.line.specification} ${row.stock?.zoneName || '暂无库存'}`" @change="row.stock && choose(row.line.key, row.stock, !!$event)" /></template>
         </ElTableColumn>
         <ElTableColumn prop="line.name" label="材料名称" min-width="96" show-overflow-tooltip />
-        <ElTableColumn prop="line.specification" label="规格" min-width="170" show-overflow-tooltip />
+        <ElTableColumn prop="line.specification" label="规格" min-width="170"><template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredRowKey === row.rowKey" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in attributes(row.line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ row.line.specification || '—' }}</span></ElTooltip></template></ElTableColumn>
         <ElTableColumn prop="line.material" label="材质" min-width="76" show-overflow-tooltip />
         <ElTableColumn prop="line.color" label="颜色" min-width="110" show-overflow-tooltip />
         <ElTableColumn label="需求数量" width="96" align="right"><template #default="{ row }">{{ display(row.line.quantity) }} {{ row.line.unitLabel }}</template></ElTableColumn>
@@ -118,7 +139,7 @@ onBeforeUnmount(() => { requestNumber++ })
       <div v-for="line in missingLines" :key="line.key" class="missing-stock">{{ line.name }} {{ line.specification }}：原关联库存已不可用。<ElButton link type="primary" @click="selected[line.key] = []; changedKeys.add(line.key)">清除该项关联</ElButton></div>
     </div>
     <p v-if="validation" role="alert" class="lookup-error">{{ validation }}</p>
-    <template #footer><div class="lookup-footer"><span>应用后回填供料数量，随核对提交保存；领料时复核库存。</span><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="loading || !!errorMessage" @click="apply">应用关联</ElButton></div></template>
+    <template #footer><div class="lookup-footer"><span>查询后无库存自动回填 0；有库存请勾选来源、填写供料数量，再应用关联。</span><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="loading || !!errorMessage" @click="apply">应用关联</ElButton></div></template>
   </AppWindowDialog>
 </template>
 
@@ -137,4 +158,8 @@ onBeforeUnmount(() => { requestNumber++ })
 .lookup-footer > span { flex: 1; color: var(--erp-color-text-secondary); font-size: 12px; text-align: left; }
 .lookup-footer .el-button { margin-left: 0; }
 .lookup-error, .missing-stock { color: var(--el-color-danger); font-size: 13px; margin: 10px 0 0; }
+.material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
+.material-attribute-tooltip > div { display: flex; gap: 8px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 </style>
+

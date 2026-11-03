@@ -171,6 +171,16 @@ class SalesProductionCorrectionTests(APITestCase):
 
     def make_source_task(self):
         sales_follower = Employee.objects.create(employee_code="SALES_FOLLOWER", display_name="销售跟单")
+        from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
+        business, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
+        EmployeeOrganizationAssignment.objects.create(employee=sales_follower, organization_unit=business,
+                                                       effective_from=timezone.now())
+        role = RoleProfile.objects.filter(role_code='MERCHANDISER').first()
+        if role is None:
+            role = RoleProfile.objects.create(role_code='MERCHANDISER', display_name='生产跟单',
+                auth_group=Group.objects.create(name='sales-source-production-follower'))
+        EmployeeRoleAssignment.objects.get_or_create(employee=self.employee, role_profile=role,
+                                                     defaults={'effective_from': timezone.now()})
         created = self.create_direct(merchandiser_id=str(sales_follower.pk))
         confirmed = self.client.post(
             f"/api/v1/sales-orders/{created.data['data']['id']}/confirm/", {},

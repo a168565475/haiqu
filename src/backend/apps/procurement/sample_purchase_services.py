@@ -78,7 +78,7 @@ def sample_source(procurement):
     payload = {
         "id": str(procurement.pk), "sample_request_id": str(sample.pk),
         "source_type": "SAMPLE", "source_type_display": "打样单",
-        "source_number": sample.request_number, "customer_name": sample.customer_account.account_name,
+        "source_number": sample.request_number, "customer_name": (sample.customer_account.account_name if sample.customer_account_id else ''),
         "delivery_date": sample.sample_due_date, "product_count": sample.items.count(),
         "demand_count": len(procurement.lines), "status": sample.status,
         "status_display": "采购中" if existing else "待采购", "can_create": not blockers,
@@ -107,6 +107,10 @@ def sample_source(procurement):
         })
         if row['key'] in pipe_snapshots:
             snapshot = pipe_snapshots[row['key']]
+            if row.get('material_catalog_id'):
+                lines[-1].update(material_catalog_id=str(row['material_catalog_id']),
+                    material_selection_snapshot=snapshot['material_selection_snapshot'], calculation_snapshot=snapshot)
+                continue
             if row['category'] != 'tube':
                 lines[-1]['calculation_snapshot'] = snapshot
                 continue
@@ -137,7 +141,7 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
     if procurement is None:
         raise NotFound("打样单状态已变化，请重新选择采购来源。")
     from apps.products.material_identity import lock_bom_line_material_identities
-    lock_bom_line_material_identities([], extra_raw_material_ids=[row.get('rawMaterialId') for row in procurement.lines])
+    lock_bom_line_material_identities([], extra_raw_material_ids=[row['rawMaterialId'] for row in procurement.lines if row.get('rawMaterialId')])
     source = sample_source(procurement)
     if not source["can_create"]:
         raise PurchaseSourceUnavailable(source["blockers"])
@@ -163,7 +167,7 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
     order = PurchaseOrder.objects.create(
         order_number=next_purchase_order_number(), source_type=PurchaseOrderSourceType.SAMPLE,
         sample_procurement_request=procurement, sample_number_snapshot=sample.request_number,
-        customer_name_snapshot=sample.customer_account.account_name, source_revision=source["source_revision"],
+        customer_name_snapshot=(sample.customer_account.account_name if sample.customer_account_id else ''), source_revision=source["source_revision"],
         currency=currency, currency_code_snapshot=currency.code if currency else "",
         currency_name_snapshot=currency.chinese_name if currency else "", currency_symbol_snapshot=currency.symbol if currency else "",
         is_mailed=validated_data.get("is_mailed"), created_by_employee=actor_employee,
@@ -176,13 +180,19 @@ def create_sample_purchase_order(*, validated_data, actor_employee, request):
         pipe_values = {}
         if row.get('section_type') == 'PROFILE':
             from .pipe_purchase import purchase_pipe_values
+            # 新ID/属性快照不改变原样品采购：填根数和实际单根长，采购数量及计价仍为米。
             pipe_values = purchase_pipe_values(row['calculation_snapshot'], entry)
             quantity = pipe_values['actual_purchase_meters']
         else:
             pipe_values = {'calculation_snapshot': row['calculation_snapshot']}
-        amount = _money(quantity * price) if quantity is not None and price is not None else None
+        from .catalog_materials import priced_quantity
+        priced = priced_quantity(section_type=row['section_type'], material_catalog_id=row.get('material_catalog_id'),
+            physical_quantity=quantity, pipe_values=pipe_values)
+        amount = _money(priced * price) if priced is not None and price is not None else None
         amounts.append(amount)
         line = PurchaseOrderLine.objects.create(
+            material_catalog_id=row.get('material_catalog_id'),
+            material_selection_snapshot=row.get('material_selection_snapshot', {}),
             purchase_order=order, line_number=row["line_number"], product_name_snapshot="样品采购需求",
             section_type_snapshot=row["section_type"], section_title_snapshot=row["section_title"], category_snapshot=row["category"],
             part_name_snapshot=row["part_name"], specification_snapshot=row["specification"], raw_material_snapshot=row["raw_material"],

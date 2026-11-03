@@ -1,5 +1,7 @@
 from django.db.models import Count, Prefetch, Q
 
+from apps.reference_data.models import ProductionUnit
+
 from .models import ProductCatalog, ProductCatalogCategory, ProductCatalogColor, ProductCatalogName
 
 
@@ -49,6 +51,7 @@ def product_summary(product):
         "category_id": str(product.name.category_id), "category_name": product.name.category.name,
         "product_code": product.product_code, "item_number": product.item_number,
         "specification": product.specification, "unit": product.unit, "scale": product.scale,
+        "materials": product.materials, "thicknesses": product.thicknesses,
         "colors": [{"id": str(color.pk), "value": color.value} for color in colors],
         "updated_at": product.updated_at.isoformat(),
     }
@@ -69,6 +72,25 @@ def catalog_options():
     ).order_by("sort_order", "name", "id")
     return {
         "categories": [{"id": str(row.pk), "name": row.name, "name_count": row.name_count} for row in categories],
-        "units": list(products.exclude(unit="").order_by("unit").values_list("unit", flat=True).distinct()),
+        "units": list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).values_list("unit_name", flat=True)),
         "scales": list(products.exclude(scale="").order_by("scale").values_list("scale", flat=True).distinct()),
+    }
+
+
+def editor_detail(name):
+    return {"name": name_detail(name), "products": [product_summary(row) for row in product_list(name_id=name.pk)]}
+
+
+def selection_options():
+    units = {row.unit_name: row for row in ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True)}
+    products = []
+    for product in product_list():
+        unit = units.get(product.unit)
+        products.append({**product_summary(product), "catalog_version": product.updated_at.isoformat(),
+                         "unit_id": str(unit.pk) if unit else None, "unit_code": unit.unit_code if unit else ""})
+    return {
+        "categories": [{"id": str(row.pk), "name": row.name} for row in ProductCatalogCategory.objects.filter(archived_at__isnull=True)],
+        "names": [{"id": str(row.pk), "category_id": str(row.category_id), "name": row.name} for row in name_list()],
+        "products": products,
+        "units": [{"id": str(unit.pk), "unit_name": unit.unit_name, "unit_code": unit.unit_code} for unit in units.values()],
     }

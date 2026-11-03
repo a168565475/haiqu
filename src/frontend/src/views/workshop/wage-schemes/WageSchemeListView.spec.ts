@@ -45,7 +45,7 @@ describe('工价方案列表原型列结构', () => {
 
     expect(labels).toEqual([
       '方案编号', '生产任务单', '产品信息', '所属车间', '所属工艺',
-      '类型', '工价合计', '审批状态', '更新日期', '操作',
+      '类型', '工价合计', '金额合计', '审批状态', '更新日期', '操作',
     ])
     expect(source).not.toContain('wr-two-line')
     expect(source).not.toContain('label="版本"')
@@ -80,7 +80,7 @@ describe('工价方案列表原型列结构', () => {
   it('金额最多显示三位小数并去掉末尾零', async () => {
     api.list.mockResolvedValueOnce({
       data: [{
-        id: 'scheme-1', scheme_number: 'GJ-1', declared_total: '0.6000', status: 'APPROVED',
+        id: 'scheme-1', scheme_number: 'GJ-1', declared_total: '0.6000', estimated_total: '120.0600', status: 'APPROVED',
         status_display: '已批准', parent_scheme: null, can_create_change: true,
         production_task: { task_number: 'SC-1' }, product: { number: 'P-1', name: '产品', specification: '' },
         workshop: { name: '金工车间' }, crafts: [{ name: '管材加工' }], updated_at: '2026-09-28T07:20:00+08:00',
@@ -90,7 +90,28 @@ describe('工价方案列表原型列结构', () => {
     const wrapper = mount(WageSchemeListView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
 
-    expect(wrapper.find('td.wr-money').text()).toBe('¥0.6')
+    expect(wrapper.findAll('td.wr-money').map(cell => cell.text())).toEqual(['¥0.6', '¥120.06'])
+    wrapper.unmount()
+  })
+
+  it('金额依据缺失显示横线，真实零金额显示零', async () => {
+    const row = {
+      scheme_number: 'GJ-1', declared_total: '0', status: 'DRAFT',
+      status_display: '草稿', parent_scheme: null, can_create_change: false,
+      production_task: { task_number: 'SC-1' }, product: { number: 'P-1', name: '产品', specification: '' },
+      workshop: { name: '金工车间' }, crafts: [], updated_at: '',
+    }
+    api.list.mockResolvedValueOnce({
+      data: [
+        { ...row, id: 'scheme-unknown', estimated_total: null },
+        { ...row, id: 'scheme-zero', estimated_total: '0.0000' },
+      ],
+      meta: { page: 1, page_size: 20, total: 2, total_pages: 1 },
+    })
+    const wrapper = mount(WageSchemeListView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.findAll('td.wr-money').map(cell => cell.text())).toEqual(['¥0', '—', '¥0', '¥0'])
     wrapper.unmount()
   })
 

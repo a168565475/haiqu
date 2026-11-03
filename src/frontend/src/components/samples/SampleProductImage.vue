@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useProtectedResourceUrl } from '@/composables/useProtectedResourceUrl'
 const props = defineProps<{ src?: string }>()
-const failed = ref(false)
-watch(() => props.src, () => { failed.value = false })
+const { url, error } = useProtectedResourceUrl(() => props.src)
+const imageFailed = ref(false)
+const failed = computed(() => imageFailed.value || error.value)
+watch(() => props.src, () => { imageFailed.value = false }, { flush: 'sync' })
 </script>
 <template>
-  <div class="sample-product-image"><img v-if="src && !failed" :src="src" alt="打样产品图片" @error="failed = true" /><span v-else>{{ failed ? '图片暂无法加载' : '暂无产品图片' }}</span></div>
+  <div class="sample-product-image"><img v-if="url && !failed" :key="url" :src="url" alt="打样产品图片" @error="imageFailed = true" /><span v-else>{{ failed ? '图片暂无法加载' : '暂无产品图片' }}</span></div>
 </template>
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;

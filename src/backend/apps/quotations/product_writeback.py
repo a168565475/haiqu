@@ -5,6 +5,7 @@ from django.db import connection, transaction
 
 BOM_PRODUCT_FIELDS = [
     "product", "product_category", "product_unit", "product_color",
+    "product_catalog", "product_selection_snapshot",
     "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
     "product_description_snapshot", "specification_snapshot", "color_snapshot",
     "material_snapshot", "unit_code", "updated_at",

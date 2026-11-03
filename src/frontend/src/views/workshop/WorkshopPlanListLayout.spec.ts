@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   fetchPlanWageStatuses: vi.fn(),
 }))
 vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: state.push, replace: state.replace }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: true }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }) }))
 vi.mock('@/api/productionScheduling', () => ({ fetchScheduleItems: state.fetchScheduleItems }))
 vi.mock('@/api/workshopReporting', () => ({ fetchPlanWageStatuses: state.fetchPlanWageStatuses }))
 vi.mock('@/views/workshop/wage-schemes/WageSchemeDetailDialog.vue', () => ({ default: { template: '<div />' } }))

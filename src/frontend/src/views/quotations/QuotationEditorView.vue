@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { Box, Check, EditPen, Plus, Warning } from '@element-plus/icons-vue'
@@ -18,6 +19,7 @@ import type { QuotationDetail, QuotationLine, QuotationPriceBasisPayload, Quotat
 import type { Currency, Incoterm } from '@/types/referenceData'
 import type { ProductCategory, ProductColor, ProductionUnit } from '@/types/productionData'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import BuyerMasterDataDialog from '@/components/business/BuyerMasterDataDialog.vue'
 import SellerProfileDialog from '@/components/business/SellerProfileDialog.vue'
 import SellerSubjectCard from '@/components/business/SellerSubjectCard.vue'
@@ -58,6 +60,10 @@ const form = reactive({
 const lineDialogVisible = ref(false)
 const lineSaving = ref(false)
 const editingLine = ref<QuotationLine | null>(null)
+const imageResources = useProtectedResourceUrls(() => [
+  ...(version.value?.lines.filter(line => line.product_image).map(line => quotationLineProductImageUrl(line.id)) || []),
+  ...(editingLine.value?.product_image ? [quotationLineProductImageUrl(editingLine.value.id)] : []),
+])
 const productDialogItem = ref<(InquiryItem & { discount_rate?: string | number }) | null>(null)
 const priceDialogVisible = ref(false)
 const priceSaving = ref(false)
@@ -284,12 +290,18 @@ function resetLineForm(line?: QuotationLine) {
     id: line.id,
     line_number: line.line_number,
     product_id: line.product_id || null,
+    product_catalog_id: line.product_catalog_id || null,
+    product_selection: null,
+    product_selection_snapshot: line.product_selection_snapshot || null,
     product_category_id: line.product_category_id || null,
     product_unit_id: line.product_unit_id || null,
     product_color_id: line.product_color_id || null,
     product_image_id: line.product_image?.id || null,
     product_image: line.product_image ? { id: line.product_image.id, original_name: line.product_image.original_name, content_type: 'image/*', size_bytes: 0, scan_status: line.product_image.scan_status } : null,
     product_description: line.product_description_snapshot,
+    item_number_snapshot: line.item_number_snapshot,
+    product_code_snapshot: line.product_code_snapshot,
+    product_number_snapshot: line.product_number_snapshot,
     specification: line.specification_snapshot || line.product_specification || '',
     color: line.color_snapshot || '',
     material: line.material_snapshot || '',
@@ -298,7 +310,7 @@ function resetLineForm(line?: QuotationLine) {
     target_unit_price: line.unit_price,
     target_currency_code: version.value?.currency_code || '',
     expected_date: null,
-    product_match_status: line.product_id ? 'MATCHED' : 'NOT_REQUIRED',
+    product_match_status: line.product_id || line.product_catalog_id ? 'MATCHED' : 'NOT_REQUIRED',
     notes: line.notes,
     discount_rate: line.discount_rate,
   } : {
@@ -351,7 +363,7 @@ function packagingSummary(line: QuotationLine): string {
 
 function identityOfLine(line: QuotationLine | null) {
   if (!line) return ''
-  return JSON.stringify([line.product_id || null, line.product_category_id || null, line.product_unit_id || null, line.product_color_id || null, line.product_description_snapshot, line.specification_snapshot || line.product_specification || '', line.color_snapshot || '', line.material_snapshot || '', line.unit_code])
+  return JSON.stringify([line.product_id || null, line.product_catalog_id || null, line.product_selection_snapshot || null, line.product_category_id || null, line.product_unit_id || null, line.product_color_id || null, line.product_description_snapshot, line.specification_snapshot || line.product_specification || '', line.color_snapshot || '', line.material_snapshot || '', line.unit_code])
 }
 
 async function saveLine(result: { item: InquiryItem & { discount_rate?: string | number }; imageFile: File | null; imageChanged: boolean; removeImage: boolean }) {
@@ -375,6 +387,8 @@ async function saveLine(result: { item: InquiryItem & { discount_rate?: string |
       color_snapshot: draft.color?.trim(),
       material_snapshot: draft.material?.trim(),
       product_id: draft.product_id || null,
+      product_catalog_id: draft.product_catalog_id || null,
+      ...(draft.product_selection ? { product_selection: draft.product_selection } : {}),
       product_category_id: draft.product_category_id || null,
       product_unit_id: draft.product_unit_id || null,
       product_color_id: draft.product_color_id || null,
@@ -672,10 +686,10 @@ onBeforeUnmount(() => {
           <ElCard class="editor-card product-card" shadow="never">
             <template #header><div class="card-heading"><b>产品明细</b><small>{{ version.lines.length }} 项</small><button class="price-basis-link" type="button" :disabled="!editable" @click="openPriceMatrix">管理价格方案</button><ElButton v-if="editable" size="small" :icon="Plus" @click="resetLineForm()">添加产品</ElButton></div></template>
             <ElTable :data="version.lines" empty-text="暂无报价产品，请先添加产品。">
-              <ElTableColumn label="产品 / 图片" min-width="190"><template #default="{ row }"><div class="product-with-image"><ElUpload v-if="editable" class="product-thumb-upload" :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/webp" @change="handleProductImageChange(row, $event)"><div class="product-thumb"><ElImage v-if="row.product_image" :src="quotationLineProductImageUrl(row.id)" :preview-src-list="[quotationLineProductImageUrl(row.id)]" preview-teleported fit="cover" @click.stop/><ElIcon v-else><Box /></ElIcon><span class="product-thumb-action">{{ row.product_image ? '替换' : '上传' }}</span></div></ElUpload><div v-else class="product-thumb"><ElImage v-if="row.product_image" :src="quotationLineProductImageUrl(row.id)" :preview-src-list="[quotationLineProductImageUrl(row.id)]" preview-teleported fit="cover"/><ElIcon v-else><Box /></ElIcon></div><div class="product-cell"><b>{{ row.product_description_snapshot }}</b><small>{{ row.source_inquiry_item ? '来源询盘产品' : `行 ${row.line_number}` }}</small></div></div></template></ElTableColumn>
+              <ElTableColumn label="产品 / 图片" min-width="190"><template #default="{ row }"><div class="product-with-image"><ElUpload v-if="editable" class="product-thumb-upload" :auto-upload="false" :show-file-list="false" accept="image/png,image/jpeg,image/webp" @change="handleProductImageChange(row, $event)"><div class="product-thumb"><ElImage v-if="row.product_image && imageResources.active.value" :src="imageResources.urlFor(quotationLineProductImageUrl(row.id))" :preview-src-list="imageResources.urlsFor([quotationLineProductImageUrl(row.id)])" preview-teleported fit="cover" @click.stop/><ElIcon v-else><Box /></ElIcon><span class="product-thumb-action">{{ row.product_image ? '替换' : '上传' }}</span></div></ElUpload><div v-else class="product-thumb"><ElImage v-if="row.product_image && imageResources.active.value" :src="imageResources.urlFor(quotationLineProductImageUrl(row.id))" :preview-src-list="imageResources.urlsFor([quotationLineProductImageUrl(row.id)])" preview-teleported fit="cover"/><ElIcon v-else><Box /></ElIcon></div><div class="product-cell"><b>{{ row.product_description_snapshot }}</b><small>{{ row.source_inquiry_item ? '来源询盘产品' : `行 ${row.line_number}` }}</small></div></div></template></ElTableColumn>
               <ElTableColumn label="规格" min-width="150"><template #default="{ row }">{{ row.specification_snapshot || '未维护' }}</template></ElTableColumn>
               <ElTableColumn prop="quantity" label="数量" width="82" />
-              <ElTableColumn prop="unit_code" label="单位" width="66" />
+              <ElTableColumn label="单位" width="66"><template #default="{ row }">{{ productEntryUnitName(row) }}</template></ElTableColumn>
               <ElTableColumn label="单价" width="112"><template #default="{ row }">{{ version.currency_code }} {{ formatMoney(row.unit_price) }}</template></ElTableColumn>
               <ElTableColumn label="金额" width="120"><template #default="{ row }"><b>{{ version.currency_code }} {{ formatMoney(row.line_total) }}</b></template></ElTableColumn>
               <ElTableColumn label="包装摘要" min-width="150"><template #default="{ row }"><span>{{ packagingSummary(row) }}</span><small v-if="row.packaging" class="packaging-ready">包装已配置</small></template></ElTableColumn>
@@ -719,6 +733,7 @@ onBeforeUnmount(() => {
         :colors="productColors"
         :currencies="currencies"
         :can-upload="editable"
+        :identity-disabled="!editable"
         :catalog-error="catalogError"
         :close-on-confirm="false"
         :busy="lineSaving"

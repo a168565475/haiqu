@@ -41,6 +41,10 @@ LEGACY_ALIASES.update({
 })
 
 ACTION_OVERRIDES = {
+    'SampleMaterialSourceViewSet': {
+        action: 'samples.edit_sample_materials'
+        for action in ('list', 'retrieve', 'options_list', 'public_options', 'crafts', 'metadata')
+    },
     'ReceiptViewSet': {
         'list': 'finance.view_receipt', 'retrieve': 'finance.view_receipt',
         'create': 'finance.add_receipt', 'void': 'finance.void_receipt', 'attachment': 'finance.view_receipt',
@@ -77,6 +81,10 @@ ACTION_OVERRIDES = {
     },
     'PurchaseOrderViewSet': {'update': 'procurement.change_purchaseorder', 'partial_update': 'procurement.change_purchaseorder',
         'complete': 'access_control.complete_purchaseorder', 'generate_sheets': 'access_control.generate_purchasesheets'},
+    'PurchaseGroupViewSet': {'list': 'procurement.view_purchaseorder', 'retrieve': 'procurement.view_purchaseorder',
+        'filter_options': 'procurement.view_purchaseorder',
+        'create': 'procurement.add_purchaseorder', 'batches': 'procurement.add_purchaseorder',
+        'complete': 'access_control.complete_purchaseorder'},
     'PurchaseReturnViewSet': {
         'confirm': 'access_control.confirm_purchasereturn',
         'complete': 'access_control.complete_purchasereturn',

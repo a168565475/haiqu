@@ -3,6 +3,7 @@ import type { SupplierCategory } from './supplier'
 
 export type PurchaseOrderStatus = 'DRAFT' | 'SUBMITTED' | 'PURCHASING' | 'COMPLETED'
 export type PurchaseOrderSourceType = 'PRODUCTION' | 'SAMPLE'
+export type PurchaseBatchType = 'NORMAL' | 'SUPPLEMENT'
 export type PurchaseReturnStatus = 'NONE' | 'MISSING' | 'QUALITY_GENERATED' | 'PROCUREMENT_CONFIRMED' | 'COMPLETED'
 export type PurchaseInboundWorkflowStatus =
   | 'NOT_STARTED'
@@ -94,6 +95,8 @@ export interface PurchaseOrderProductSource {
 }
 
 export interface PurchaseOrderSourceLine {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   material_attributes_snapshot?: MaterialAttributeSnapshot
   raw_bar_length_m?: string | null
   suggested_bar_count?: number | null
@@ -164,6 +167,10 @@ export interface PurchaseOrderSourceBlocker {
   product_line_id?: string
   product_line_number?: number
   product_color?: string
+  existing_purchase_group_id?: string
+  existing_purchase_group_number?: string
+  existing_purchase_order_id?: string
+  existing_purchase_order_number?: string
 }
 
 export interface PurchaseOrderBomOption {
@@ -249,6 +256,10 @@ export interface PurchaseOrderProductSummary {
 }
 
 export interface PurchaseOrderListItem {
+  /** 兼容尚未启用总单字段的旧响应；样品采购的归属为null。 */
+  purchase_group_id?: string | null
+  batch_number?: number | null
+  batch_type?: PurchaseBatchType | ''
   source_type?: PurchaseOrderSourceType
   source_type_display?: string
   source_number?: string
@@ -297,6 +308,7 @@ export interface PurchaseOrderListItem {
 export interface PurchaseOrderDetail extends PurchaseOrderListItem {
   lines: Array<PurchaseOrderSourceLine & PurchaseOrderLineInput & {
     id: string
+    purchase_group_line_id?: string | null
     source_bom_line_id_snapshot: string
     amount: string | null
     supplier_number: string

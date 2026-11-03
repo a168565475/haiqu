@@ -2,7 +2,6 @@ import { apiClient } from './request'
 import type { DataResponse } from '@/types/referenceData'
 import type {
   BomCreationMethod,
-  BomAuxiliaryProductOption,
   BomDetail,
   BomDraftLineImage,
   BomEditorReferenceOptions,
@@ -26,11 +25,18 @@ import type {
   PaginatedBomPlasticMaterials,
   PaginatedBomSemiFinishedMaterials,
   VersionedBom,
+  TubeCalculationInput,
+  TubeCalculationPreview,
 } from '@/types/bom'
 import type { ProductionTaskProductInput } from '@/types/productionTask'
 
 const basePath = '/api/v1/boms/'
 const workbookRequestTimeout = 180_000
+
+export async function previewBomTubeCalculation(payload: TubeCalculationInput): Promise<TubeCalculationPreview> {
+  const { data } = await apiClient.post<DataResponse<TubeCalculationPreview>>(`${basePath}tube-calculation-preview/`, payload)
+  return data.data
+}
 
 export async function fetchBomPipeMaterialMatches(query: BomPipeMaterialMatchQuery): Promise<BomPipeMaterialMatches> {
   const { data } = await apiClient.get<DataResponse<BomPipeMaterialMatches>>(`${basePath}pipe-material-matches/`, { params: query })
@@ -105,18 +111,8 @@ export async function fetchBomEditorReferenceOptions(): Promise<BomEditorReferen
   return data.data
 }
 
-export async function createBomAuxiliaryReference(payload: {
-  product_name: string
-  unit_name: string
-  specification: string
-  color: string
-  material: string
-}): Promise<BomAuxiliaryProductOption> {
-  const { data } = await apiClient.post<DataResponse<BomAuxiliaryProductOption>>(
-    `${basePath}create-auxiliary-reference/`,
-    payload,
-  )
-  return data.data
+export async function fetchBomCatalogSelectionOptions(): Promise<{ crafts: Array<{ id: string; name: string; craft_type: string; code: string }> }> {
+  return (await apiClient.get<DataResponse<{ crafts: Array<{ id: string; name: string; craft_type: string; code: string }> }>>(basePath + 'material-selection-options/')).data.data
 }
 
 export async function fetchBom(id: string): Promise<BomDetail> {
@@ -147,7 +143,8 @@ function writableBomSections(sections: BomSectionInput[]) {
   return sections.map((section) => ({
     ...section,
     lines: section.lines.map((line) => {
-      const { images, draft_images: draftImages, draft_key: draftKey, ...writableLine } = line
+      const { images, draft_images: draftImages, draft_key: draftKey, tube_calculation_preview: tubePreview, ...writableLine } = line
+      void tubePreview
       void images
       void draftKey
       if (section.title === '裁剪明细') {
@@ -200,7 +197,7 @@ export async function verifyBom(id: string, quantityConfirmationReason: string, 
 
 export async function confirmBomProduct(
   id: string,
-  payload: ({ product_id: string; new_product?: never } | { new_product: import('@/types/product').ProductInformationInput; product_id?: never }) & { product_color_id: string; color_code?: string; material?: string },
+  payload: ({ product_catalog_id: string | null; product_selection?: import('@/types/productCatalog').ProductSelectionInput | null; product_id?: never } | { product_id: string; new_product?: never }) & { product_color_id?: string; color_code?: string; material?: string },
   etag: string,
 ): Promise<VersionedBom> {
   return versionedBom(await apiClient.post<DataResponse<BomDetail>>(

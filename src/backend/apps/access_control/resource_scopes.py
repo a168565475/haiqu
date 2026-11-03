@@ -16,10 +16,13 @@ def enforcing(request, code):
         return True
     from .sales_policy import access_for
     # 回退开关不能把已配置的资源角色升级成全模块；关闭资源开关时不读取资源表。
-    return bool(set(access_for(request)['actions'].get(code, {}).get('scopes', [])) & {'MODULE', 'ALL', 'WORKSHOP', 'CRAFT', 'STOCK'})
+    return bool(set(access_for(request)['actions'].get(code, {}).get('scopes', [])) & {'MODULE', 'ALL', 'WORKSHOP', 'CRAFT', 'STOCK', 'FOLLOWED'})
 
 
 def scope_kind(code):
+    if code in {f'inventory.{action}_{kind}' for action in ('view', 'add', 'delete')
+                for kind in ('internalsemifinishedreceipt', 'finishedgoodsreceipt')}:
+        return 'WORKSHOP'
     if code.startswith('production_scheduling.') and '.view_all_' not in code:
         return 'WORKSHOP'
     if code.startswith('material_issues.') and code.endswith('materialissue') and '.view_all_' not in code:

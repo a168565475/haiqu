@@ -69,6 +69,11 @@ export interface ScheduleProgressStatus {
 export type ScheduleOutsourcingState = 'NONE' | 'WAITING' | 'IN_PROGRESS' | 'RETURNED' | 'SHORTAGE' | 'UNKNOWN'
 export type ScheduleOutsourcingRisk = 'none' | 'normal' | 'attention' | 'slow' | 'urgent' | 'unknown'
 export interface ScheduleOutsourcingRecord {
+  is_plan?: boolean
+  progress_percent?: number | null
+  bom_quantity?: string | null
+  received_quantity?: string | null
+  covered_quantity?: string | null
   id: string
   order_number: string
   craft_name: string
@@ -82,6 +87,11 @@ export interface ScheduleOutsourcingRecord {
   description: string
 }
 export interface ScheduleOutsourcingStatus {
+  is_plan?: boolean
+  progress_percent?: number | null
+  bom_quantity?: string | null
+  received_quantity?: string | null
+  covered_quantity?: string | null
   state: ScheduleOutsourcingState
   risk: ScheduleOutsourcingRisk
   description: string
@@ -156,6 +166,7 @@ export interface WageScheme {
   remark: string
   line_count: number
   declared_total: string
+  estimated_total?: string | null
   lines: WageSchemeLine[]
   events: Array<{ id: string; action: string; action_display: string; scheme_revision: number; actor: string; comment: string; created_at: string }>
   approved_by: string | null

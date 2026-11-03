@@ -29,6 +29,7 @@ from .public_semi_requirements import (
     public_semi_identity, sync_public_semi_requirements,
 )
 from .requirements import build_requirement_specs, sync_order_requirements
+from .catalog_requirements import catalog_issue_line_values, sync_catalog_requirements
 from .scopes import filter_blockers_for_scope, material_section_codes_for_issue
 
 
@@ -90,7 +91,9 @@ def _public_filter(identities):
     result = Q(pk__in=[])
     for identity in identities.values():
         current = Q(stock_kind=identity["stock_kind"], identity_key=identity["identity_key"],
-                    unit_id=identity["unit_id"], unit__unit_name=identity["identity_snapshot"]["unit_name"])
+                    unit_id=identity["unit_id"])
+        if identity["stock_kind"] not in {"CATALOG_RAW", "CATALOG_SEMI"}:
+            current &= Q(unit__unit_name=identity["identity_snapshot"]["unit_name"])
         if identity["stock_kind"] == "RAW_PIPE":
             current &= Q(raw_material_id=identity["raw_material_id"],
                          raw_bar_length_m=identity["raw_bar_length_m"],
@@ -98,6 +101,8 @@ def _public_filter(identities):
                          raw_material__item_type="MATERIAL", raw_material__category__category_name="管材",
                          raw_material__category__status="ACTIVE", raw_material__category__archived_at__isnull=True,
                          zone__warehouse__warehouse_type="MATERIAL")
+        elif identity["stock_kind"] == "CATALOG_RAW":
+            current &= Q(zone__warehouse__warehouse_type="MATERIAL")
         else:
             current &= Q(zone__warehouse__warehouse_type="SEMI_FINISHED")
         result |= current
@@ -239,7 +244,7 @@ def _semi_component_allowances(requirements, pending_by_requirement):
     return result
 
 
-def public_line_quantities(line, *, exclude_issue_id=None, context=None):
+def public_line_quantities(line, *, exclude_issue_id=None, context=None, limit_to_order=True):
     if context is None:
         issue = line.issue
         cache_key = str(exclude_issue_id or "")
@@ -276,7 +281,7 @@ def public_line_quantities(line, *, exclude_issue_id=None, context=None):
         "outsourcing_issued_quantity": str(external), "pending_issue_quantity": str(pending_quantity),
         "public_pending_quantity": str(public_pending),
         "order_remaining": str(remaining), "available_stock": str(available),
-        "max_issue_quantity": str(max(min(remaining, free), Decimal(0))),
+        "max_issue_quantity": str(max(min(remaining, free) if limit_to_order else free, Decimal(0))),
     }
 
 
@@ -311,7 +316,7 @@ def public_pipe_requirement_rows(task_id, product_id, *, exclude_issue_id=None):
             "specification": raw.specification, "part_names": [spec["line"].part_name] if spec["line"].part_name else [],
              "bom_attributes": bom_attribute_fields(spec["line"]),
             "color": raw.color.color_name if raw.color_id else raw.color_snapshot, "unit": "支",
-            **public_line_quantities(line, context=context),
+            **public_line_quantities(line, context=context, limit_to_order=False),
             "warehouse_zones": list(dict.fromkeys(balance.zone.zone_name for balance in context["balances"][_pool(line)])),
             "bom_version": spec["line"].section.bom.version_number, "validation_errors": [],
             "conversion_snapshot": line.conversion_snapshot, "batch_candidates": []})
@@ -333,8 +338,9 @@ def replace_public_issue_lines(issue, inputs):
     semi_map = sync_public_semi_requirements(issue, ids)
     raw_map, revision = {}, ""
     if ids - semi_map.keys():
-        _, requirements, _, revision = sync_order_requirements(issue.production_task_id)
+        _, requirements, _, revision = sync_order_requirements(issue.production_task_id, allow_excess_issue=True)
         requirements += sync_selected_pipes(issue, ids)
+        requirements += sync_catalog_requirements(issue, ids)
         raw_map = {item.pk: item for item in requirements}
     created, seen = [], set()
     for index, item in enumerate(inputs, 1):
@@ -375,6 +381,15 @@ def replace_public_issue_lines(issue, inputs):
         else:
             if not raw.contributions.filter(is_current=True, product_line_id=issue.product_line_id).exists():
                 _fail("LINE_SCOPE_INVALID", f"第 {index} 行需求不属于所选产品。")
+            if raw.material_catalog_id:
+                values = catalog_issue_line_values(raw)
+                if values["conversion_snapshot"]["kind"] == "PIPE":
+                    allocation_plan(quantity, values["conversion_snapshot"])
+                elif raw.material_selection_snapshot["unit_name"] in {"根", "支", "套"} and quantity != quantity.to_integral_value():
+                    _fail("INTEGER_REQUIRED", "根、支、套数量必须为整数。")
+                created.append(MaterialIssueLine(issue=issue, line_number=index, requested_quantity=quantity,
+                    section_code_snapshot=section, **values))
+                continue
             material = raw.raw_material
             bom_attributes = merge_bom_attribute_fields(
                 bom_attribute_fields(contribution.bom_line)
@@ -399,6 +414,7 @@ def replace_public_issue_lines(issue, inputs):
     MaterialIssueLine.objects.bulk_create(created)
     issue.source_revision_hash = revision
     issue.save(update_fields=["source_revision_hash", "updated_at"])
+    validate_public_issue(issue)
 
 
 def sync_public_issue_sources(issue):
@@ -409,9 +425,15 @@ def sync_public_issue_sources(issue):
     blockers, revision = [], issue.source_revision_hash
     raw_lines = [line for line in lines if line.requirement_id]
     if raw_lines:
-        _, _, blockers, revision = sync_order_requirements(issue.production_task_id)
+        _, _, blockers, revision = sync_order_requirements(issue.production_task_id, allow_excess_issue=True)
         pipes = {item.pk: item for item in sync_selected_pipes(issue, {line.requirement_id for line in raw_lines})}
+        catalogs = {item.pk: item for item in sync_catalog_requirements(issue, {line.requirement_id for line in raw_lines if line.material_catalog_id})}
         for line in raw_lines:
+            if line.material_catalog_id:
+                current = catalogs.get(line.requirement_id)
+                if current is None or current.source_revision_hash != line.conversion_snapshot.get("source_revision_hash"):
+                    raise MaterialIssueConflict("新材料来源、单位或制造参数已变化，请刷新明细。", code="SOURCE_CHANGED")
+                continue
             if line.conversion_snapshot.get("kind") == "PIPE":
                 current = pipes.get(line.requirement_id)
                 if current is None or current.source_revision_hash != line.conversion_snapshot.get("source_revision_hash"):
@@ -492,8 +514,6 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
         )
     allowed = material_section_codes_for_issue(issue) or set()
     required_stock, errors = defaultdict(Decimal), []
-    semi_requested = defaultdict(Decimal)
-    semi_lines_by_component = defaultdict(list)
     for line in lines:
         requirement = line.semi_requirement if line.semi_requirement_id else line.requirement
         if line.section_code_snapshot not in allowed:
@@ -505,7 +525,8 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
             errors.append({"line_id": str(line.pk), "code": "LINE_SCOPE_INVALID", "detail": "订单需求与当前领料订单不一致。"})
             continue
         if (not line.requested_quantity.is_finite() or line.requested_quantity <= 0
-                or (_identity(line) and line.requested_quantity != line.requested_quantity.to_integral_value())):
+                or (_identity(line) and line.conversion_snapshot.get("kind") != "CATALOG"
+                    and line.requested_quantity != line.requested_quantity.to_integral_value())):
             errors.append({"line_id": str(line.pk), "code": "INTEGER_REQUIRED", "detail": "公共管材或半成品数量必须是正整数。"})
             continue
         try:
@@ -513,29 +534,6 @@ def validate_public_issue(issue, *, include_pending=True, lock=False):
         except ValidationError:
             errors.append({"line_id": str(line.pk), "code": "PIPE_WHOLE_BAR_REQUIRED", "detail": "管材支数必须符合整根切割数量。"})
             continue
-        values = public_line_quantities(line, context=context)
-        if line.semi_requirement_id:
-            component_key = _semi_component_key(requirement)
-            semi_requested[component_key] += line.requested_quantity
-            semi_lines_by_component[component_key].append(line)
-        elif line.requested_quantity > Decimal(values["order_remaining"]):
-            code = "PENDING_ISSUE_CONFLICT" if Decimal(values["pending_issue_quantity"]) else "ORDER_ALLOWANCE_EXCEEDED"
-            errors.append({"line_id": str(line.pk), "code": code, "detail": "申请数量超过订单扣除已领、外发及待审后的剩余额度。", **values})
-    for component_key, requested in semi_requested.items():
-        allowance = context.get("semi_component_allowances", {}).get(component_key)
-        if allowance is None:
-            continue
-        remaining = max(allowance["required"] - allowance["issued"] - allowance["pending"], Decimal(0))
-        if requested > remaining:
-            code = "PENDING_ISSUE_CONFLICT" if allowance["pending"] else "ORDER_ALLOWANCE_EXCEEDED"
-            line = semi_lines_by_component[component_key][0]
-            errors.append({"line_id": str(line.pk), "code": code,
-                           "detail": "同一 BOM 部位的半成品合计申请数量超过订单扣除已领和待审后的剩余额度。",
-                           "required_quantity": str(allowance["required"]),
-                           "internal_issued_quantity": str(allowance["issued"]),
-                           "pending_issue_quantity": str(allowance["pending"]),
-                           "order_remaining": str(remaining),
-                           "requested_quantity": str(requested)})
     for pool, needed in required_stock.items():
         pending = context["pending_stock"][pool]
         if needed > max(context["stock"][pool] - pending, Decimal(0)):
@@ -561,9 +559,10 @@ def confirm_public_issue(issue, actor_employee):
                 if taken <= 0:
                     continue
                 input_quantity = _issue_quantity(line, taken)
-                meters = taken * balance.raw_bar_length_m if balance.stock_kind == "RAW_PIPE" else None
+                meters = taken * balance.raw_bar_length_m if balance.raw_bar_length_m is not None else None
                 allocation = MaterialIssuePublicStockAllocation.objects.create(
                     id=_allocation_id(line.pk, balance.pk), line=line, balance=balance,
+                    stock_kind_snapshot=balance.stock_kind,
                     requested_quantity=input_quantity, stock_quantity=taken, meter_quantity=meters,
                     snapshot={"warehouse_zone": f"{balance.zone.warehouse.warehouse_name} / {balance.zone.zone_name}",
                               "stock_unit": balance.unit.unit_name, "identity_key": identity["identity_key"]},
@@ -599,6 +598,11 @@ def confirm_public_issue(issue, actor_employee):
             _debit_ordinary_line(issue, line, actor_employee)
             context["stock"][pool] -= line.requested_quantity
         line.issued_quantity = line.requested_quantity
+        if line.material_catalog_id:
+            line.conversion_snapshot["physical_issued_quantity"] = str(_stock_quantity(line))
+            # 只有根制整根切割有已验证的支数依据；公斤等单位不得借计划支数冒充实际发料支数。
+            if line.conversion_snapshot.get("kind") == "PIPE":
+                line.conversion_snapshot["manufacturing_issued_pieces"] = str(line.requested_quantity)
         if line.semi_requirement_id:
             line.conversion_snapshot.update({"issued_pieces" if line.unit_snapshot == "支" else "issued_sets": str(line.requested_quantity)})
         line.save(update_fields=["issued_quantity", "conversion_snapshot", "updated_at"])
@@ -607,7 +611,7 @@ def confirm_public_issue(issue, actor_employee):
             **public_line_flow_data(line)})
     # 同部位多工艺混领时，各行均冻结本单全部扣减后的共享剩余额度。
     for line, snapshot in zip(context["lines"], issued_snapshots):
-        snapshot.update(public_line_quantities(line, context=context))
+        snapshot.update(public_line_quantities(line, context=context, limit_to_order=False))
     return issued_snapshots
 
 
@@ -650,11 +654,21 @@ def preview_public_issue(issue):
         specs, _ = pipe_specs(issue.production_task_id, issue.product_line_id)
         current = {row["id"]: row for row in specs}
         for line in context["lines"]:
-            if line.conversion_snapshot.get("kind") == "PIPE" and (
+            if not line.material_catalog_id and line.conversion_snapshot.get("kind") == "PIPE" and (
                 line.requirement_id not in current or current[line.requirement_id]["revision"] != line.conversion_snapshot.get("source_revision_hash")):
                 errors.append({"code": "SOURCE_CHANGED", "detail": "管材切割来源已变化。"})
+        if any(line.material_catalog_id for line in context["lines"]):
+            from .catalog_requirements import catalog_requirement_specs
+            specs, blockers = catalog_requirement_specs(issue.production_task_id, issue.product_line_id)
+            current = {row["id"]: row for row in specs}
+            errors.extend(filter_blockers_for_scope(blockers, product_line_id=issue.product_line_id,
+                section_codes=material_section_codes_for_issue(issue) or ()))
+            for line in context["lines"]:
+                if line.material_catalog_id and (line.requirement_id not in current or
+                        current[line.requirement_id]["revision"] != line.conversion_snapshot.get("source_revision_hash")):
+                    errors.append({"code": "SOURCE_CHANGED", "detail": "保存材料需求来源已变化。"})
     if any(line.semi_requirement_id for line in context["lines"]):
-        specs, blockers = build_public_semi_specs(issue.production_task_id, issue.product_line_id)
+        specs, blockers = build_public_semi_specs(issue.production_task_id, issue.product_line_id, allow_excess_issue=True)
         selected_ids = {str(line.semi_requirement_id) for line in context["lines"] if line.semi_requirement_id}
         errors.extend(row for row in blockers if not row.get("requirement_id") or str(row["requirement_id"]) in selected_ids)
         current = {row["id"]: row for row in specs}
@@ -673,6 +687,6 @@ def preview_public_issue(issue):
                 craft_type_snapshot="INTERNAL", plan_category=source.get("plan_category")).exists():
             errors.append({"code": "SOURCE_CHANGED", "detail": "作业计划来源已失效。"})
     rows = [{"line_id": str(line.pk), "requirement_id": str(line.semi_requirement_id or line.requirement_id),
-             **public_line_quantities(line, context=context), **public_line_flow_data(line),
+             **public_line_quantities(line, context=context, limit_to_order=False), **public_line_flow_data(line),
              "validation_errors": [error["code"] for error in errors]} for line in context["lines"]]
     return {"can_confirm": bool(rows) and not errors, "lines": rows, "errors": errors}

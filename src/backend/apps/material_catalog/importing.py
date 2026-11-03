@@ -34,6 +34,11 @@ class ImportSourceSerializer(StrictSerializer):
 
 
 class ImportValueSerializer(AttributeValueCreateSerializer):
+    # 授权旧数据导入仍使用原文字格式，不能接收后静默丢弃新颜色身份。
+    product_color_id = None
+    color_card = None
+    color_code = None
+    color_name = None
     parent_id = None
     parent_value = serializers.CharField(max_length=300, required=False)
 

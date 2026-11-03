@@ -256,7 +256,7 @@
 .erp-list-catalog-nav button.active, .erp-list-catalog-nav button.is-active, .erp-list-catalog-nav button.selected { background: var(--erp-table-selected); color: var(--erp-color-brand); }
 .erp-list-tag {
   display: inline-flex; box-sizing: border-box; align-items: center; justify-content: center; min-width: 56px; height: 24px; padding: 0 8px;
-  border: 1px solid var(--erp-tag-info-border); border-radius: var(--erp-radius-pill); background: var(--erp-tag-info-background); color: var(--erp-tag-info-text); font-size: 12px; line-height: 18px;
+  border: 1px solid var(--erp-tag-info-border); border-radius: var(--erp-radius-pill); background: var(--erp-tag-info-background); color: var(--erp-tag-info-text); font-size: 12px; line-height: 18px; white-space: nowrap;
   @each $tone in info, brand, success, warning, danger, neutral {
     &--#{$tone} { background: var(--erp-tag-#{$tone}-background); border-color: var(--erp-tag-#{$tone}-border); color: var(--erp-tag-#{$tone}-text); }
   }

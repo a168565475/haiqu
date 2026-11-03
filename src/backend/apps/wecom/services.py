@@ -3,7 +3,7 @@ import re
 import secrets
 import uuid
 from datetime import timedelta
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlsplit
 
 from django.contrib.auth import SESSION_KEY, get_user_model, login as django_login
 from django.contrib.sessions.models import Session
@@ -23,6 +23,7 @@ from .credentials import CredentialError, decrypt_secret, encrypt_secret
 from .directory_selectors import normalized_name
 from .models import OAuthState, WeComBinding, WeComConfig
 from .selectors import config_etag, config_snapshot, configuration_complete, get_config, waiting_for_role
+from .serializers import QRStartSerializer
 
 
 class OAuthFailure(Exception):
@@ -248,6 +249,25 @@ def _remember_oauth_return_path(request, state, next_path):
 
 
 @sensitive_variables()
+def oauth_return_path(request, state):
+    # 这里只恢复页面去向；过期状态仍须由 consume_oauth_state 拒绝，不能据此登录。
+    if not isinstance(state, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", state) or not request.session.session_key:
+        return "/"
+    saved = request.session.get("wecom_qr_redirects", {}).get(_digest(state), {})
+    serializer = QRStartSerializer(data={"next": saved.get("path", "/")})
+    return serializer.validated_data["next"] if serializer.is_valid() else "/"
+
+
+def oauth_page_url(page, next_path="/", **parameters):
+    path = urlsplit(unquote(next_path)).path.lower()
+    is_mobile = path == "/m" or path.startswith("/m/")
+    if is_mobile:
+        parameters["next"] = next_path
+    destination = ("/m" if is_mobile else "") + "/auth/" + page
+    return destination + ("?" + urlencode(parameters) if parameters else "")
+
+
+@sensitive_variables()
 def cancel_oauth_state(request, state):
     if not request.session.session_key:
         return
@@ -291,7 +311,7 @@ def oauth_url(request, config, next_path="/"):
 def oauth_login(request, state, code):
     challenge = consume_oauth_state(request, state)
     redirects = request.session.get("wecom_qr_redirects", {})
-    return_path = redirects.get(challenge.state_digest, {}).get("path", "/")
+    return_path = oauth_return_path(request, state)
     if not isinstance(code, str) or not code or len(code) > 512:
         raise OAuthFailure("INVALID_REQUEST")
     config = get_config()
@@ -349,7 +369,7 @@ def oauth_login(request, state, code):
         from apps.core.login_records import record_successful_login
         record_successful_login(request, user, "WECOM")
         audit(request, binding, "OAUTH_LOGIN", user_id=binding.user_id, employee_name=employee.display_name, message="企业微信身份登录成功。")
-        return "/auth/waiting-role" if waiting_for_role(user) else return_path
+        return oauth_page_url("waiting-role", return_path) if waiting_for_role(user) else return_path
 
 
 def audit_login_failure(request, code):

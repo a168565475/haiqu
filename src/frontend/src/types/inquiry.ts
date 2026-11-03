@@ -1,3 +1,5 @@
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
+
 export type InquiryView = 'list' | 'board'
 export interface InquiryDeletionPreview {
   inquiry_number: string
@@ -63,6 +65,9 @@ export interface InquiryItem {
   id?: string
   line_number?: number
   product_id?: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_category_id?: string | null
   product_category_name?: string
   product_unit_id?: string | null

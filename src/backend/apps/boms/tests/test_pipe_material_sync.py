@@ -69,7 +69,7 @@ class PipeMaterialSyncApiTests(TestCase):
     def payload(self, **changes):
         return {
             "part_name": "前支撑管", "material": self.pipe.material,
-            "tube_shape": "圆管", "tube_diameter": "25*15", "tube_thickness": "1.5",
+            "tube_shape": "矩形管", "tube_diameter": "25*15", "tube_thickness": "1.5",
             "length_value": "500", "unit_consumption": "2", "tube_cut_piece_count": "6",
             "tube_coating_color": "黑色磨砂", "purchase_unit_weight_kg": "0.2", **changes,
         }
@@ -94,7 +94,7 @@ class PipeMaterialSyncApiTests(TestCase):
         self.assertEqual((source.unit.unit_name, source.category.category_name, source.warehouse_number),
                          ("根", "管材", "CK003"))
         self.assertEqual((line.material, line.specification, line.part_name, line.length_value),
-                         (self.pipe.material, "Φ25*15 × 0.8 mm", "前支撑管", "500"))
+                         (self.pipe.material, "矩形管 25*15 × 0.8 mm", "前支撑管", "500"))
         self.assertEqual(line.raw_values["tube_coating_color"], "黑色磨砂")
         self.assertIsNone(source.color_id)
         self.assertEqual(source.color_snapshot, "")
@@ -139,7 +139,7 @@ class PipeMaterialSyncApiTests(TestCase):
         source = self.source()
         self.assertNotEqual(source.pk, self.pipe.pk)
         self.assertEqual((source.material, source.thickness, source.length), ("PIPE_AUTO_SYNC新材质", "0.8", "3650"))
-        self.assertEqual((self.line().material, self.line().specification), ("PIPE_AUTO_SYNC新材质", "Φ25*15 × 0.8 mm"))
+        self.assertEqual((self.line().material, self.line().specification), ("PIPE_AUTO_SYNC新材质", "矩形管 25*15 × 0.8 mm"))
         self.assertEqual(RawMaterialInformation.objects.filter(pk=self.pipe.pk).values().get(), before)
 
     def test_existing_matching_source_preferred_over_equivalent_lower_code(self):
@@ -155,7 +155,7 @@ class PipeMaterialSyncApiTests(TestCase):
         self.assertEqual(self.source().pk, other.pk)
 
     def test_length_shape_and_archived_sources_are_not_reused(self):
-        for changes in ({"length_value": "600"}, {"tube_shape": "方管"}):
+        for changes in ({"length_value": "600", "tube_shape": "圆管"}, {"tube_shape": "方管"}):
             self.pipe.specification = "圆管 25*15*1.5*3050"
             self.pipe.source_unique_check = ""
             # 单维圆管提供明确形状证据，双维历史规格仍按既有兼容规则处理。
@@ -167,7 +167,7 @@ class PipeMaterialSyncApiTests(TestCase):
             self.assertNotEqual(self.source().pk, self.pipe.pk)
         self.pipe.archived_at = timezone.now()
         self.pipe.save()
-        response = self.save_pipe(self.payload(tube_diameter="25"))
+        response = self.save_pipe(self.payload(tube_shape="圆管", tube_diameter="25"))
         self.assertEqual(response.status_code, 200, response.data)
         self.assertNotEqual(self.source().pk, self.pipe.pk)
 
@@ -175,7 +175,7 @@ class PipeMaterialSyncApiTests(TestCase):
         response = self.save_pipe(self.payload(tube_thickness="0.8"))
         self.assertEqual(response.status_code, 200, response.data)
         first = self.source()
-        response = self.save_pipe(self.payload(tube_thickness="0.8", tube_shape="矩形管"))
+        response = self.save_pipe(self.payload(tube_thickness="0.8", tube_shape="椭圆管"))
         self.assertEqual(response.status_code, 200, response.data)
         self.assertNotEqual(self.source().pk, first.pk)
 
@@ -220,14 +220,14 @@ class PipeMaterialSyncApiTests(TestCase):
                                    "source_inventory_material_id": str(self.pipe.pk), "tube_thickness": "0.8"})
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self.source().thickness, "0.8")
-        self.assertEqual(self.line().specification, "Φ25*15 × 0.8 mm")
+        self.assertEqual(self.line().specification, "矩形管 25*15 × 0.8 mm")
 
     def test_clearing_all_legacy_import_dimensions_stays_empty_and_cannot_confirm(self):
         self.assertEqual(self.save_pipe(self.payload()).status_code, 200)
         line = self.line()
         line.raw_values = {key: value for key, value in line.raw_values.items()
                            if key not in {"tube_shape", "tube_diameter", "tube_thickness"}}
-        line.raw_values.update(E="圆管", F="25*15", G="1.5")
+        line.raw_values.update(E="矩形管", F="25*15", G="1.5")
         line.save()
         sections = self.get().data["data"]["sections"]
         sections[0]["lines"][0].update(tube_shape="", tube_diameter="", tube_thickness="")

@@ -15,3 +15,4 @@
   .el-dialog__header { margin-bottom: 0; padding: 20px; border-bottom: 1px solid token.$crm-border-subtle; color: token.$crm-text-primary; font-weight: 600; }
   .el-dialog__footer { padding: 16px 20px; border-top: 1px solid token.$crm-border-subtle; }
 }
+.sample-material-picker-dialog > .app-window-dialog__body { display: flex; flex-direction: column; overflow: hidden; }

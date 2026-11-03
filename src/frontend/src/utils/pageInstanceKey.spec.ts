@@ -8,6 +8,14 @@ it('行政员工页消费定位参数时保留实例，切换账号时重新创�
 })
 
 describe('页面实例隔离', () => {
+  it('同用户版本边界也重建页面，普通/me及原有路由复用语义不变', () => {
+    const route = { name: 'employee-list', params: {}, path: '/employees', fullPath: '/employees?q=a' }
+    expect(pageInstanceKey(route, 1, 1)).not.toBe(pageInstanceKey(route, 1, 2))
+    expect(pageInstanceKey(route, 1, 2)).toBe(pageInstanceKey({ ...route, fullPath: '/employees?q=b' }, 1, 2))
+    const customer = { name: 'customer-detail', params: { customerId: 'a' }, path: '/customers/a', fullPath: '/customers/a' }
+    expect(pageInstanceKey(customer, 1, 2)).toBe(pageInstanceKey({ ...customer, name: 'customer-contacts' }, 1, 2))
+    expect(pageInstanceKey(customer, 1, 2)).not.toBe(pageInstanceKey(customer, 1, 3))
+  })
   it('客诉筛选和分页复用实例，切换身份仍重新创建', () => {
     const route = { name: 'complaints', params: {}, path: '/complaints', fullPath: '/complaints?q=first' }
     expect(pageInstanceKey(route, 1)).toBe(pageInstanceKey({ ...route, fullPath: '/complaints?q=second&page=2' }, 1))

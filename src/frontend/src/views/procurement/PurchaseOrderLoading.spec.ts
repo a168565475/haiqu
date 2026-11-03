@@ -5,7 +5,7 @@ import * as api from '@/api/purchaseOrders'
 import PurchaseOrderListView from './PurchaseOrderListView.vue'
 import PurchaseOrderConfirmView from './PurchaseOrderConfirmView.vue'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ params: { id: 'order-1' } }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ params: { id: 'order-1' }, query: { view: 'orders' } }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true, moduleCan: () => true }) }))
 vi.mock('@/api/purchaseOrders', async original => ({ ...await original<typeof import('@/api/purchaseOrders')>(),
   fetchPurchaseOrders: vi.fn(), fetchPurchaseOrderFilterOptions: vi.fn(),

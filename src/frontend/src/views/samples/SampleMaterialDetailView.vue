@@ -12,6 +12,7 @@ import type { SampleDetail } from '@/types/sample'
 import type { SampleMaterialCategory, SampleMaterialLoadResult, SampleMaterialProgress, SampleProcurementMaterialContext } from '@/types/sampleMaterial'
 import { sampleMaterialCategories } from '@/types/sampleMaterial'
 import { sampleProductFieldLabel, sampleProductsLabel, sampleQuantityLabel } from '@/utils/samplePresentation'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const materialResult = ref<Extract<SampleMaterialLoadResult, { available: true }
 const loading = ref(true)
 const errorMessage = ref('')
 const categoryFilter = ref<'all' | SampleMaterialCategory>('all')
+const hoveredLineKey = ref('')
 
 const sampleId = computed(() => String(route.params.sampleId || ''))
 const canCreatePurchase = computed(() => Boolean(
@@ -157,9 +159,9 @@ onMounted(loadPage)
           <table class="material-detail-table">
             <thead><tr><th>材料分类</th><th>材料名称</th><th>规格</th><th>材质</th><th>颜色 / 色卡 / 色号</th><th>需求数量</th><th>仓库可供</th><th>需采购</th><th>已到货</th><th>实际领料</th><th>未领缺口</th><th>单位</th><th>状态</th></tr></thead>
             <tbody>
-              <tr v-for="line in visibleLines" :key="line.key">
+              <tr v-for="line in visibleLines" :key="line.key" @mouseenter="hoveredLineKey = line.key" @mouseleave="hoveredLineKey = ''">
                 <td>{{ sampleMaterialCategories.find((category) => category.key === line.category)?.label || line.category || '—' }}</td>
-                <td class="primary-text">{{ line.name || '—' }}</td><td class="specification">{{ line.specification || '—' }}</td><td>{{ line.material || '—' }}</td><td>{{ line.color || '—' }}</td>
+                <td class="primary-text">{{ line.name || '—' }}</td><td class="specification"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === line.key" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields({ ...line, part_name: line.name })" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ line.specification || '—' }}</span></ElTooltip></td><td>{{ line.material || '—' }}</td><td>{{ line.color || '—' }}</td>
                 <td>{{ line.quantity }}</td><td>{{ line.supplyQuantity }}</td><td>{{ line.procurementQuantity ?? '—' }}</td><td>{{ line.arrivedQuantity }}</td><td>{{ line.issuedQuantity ?? '—' }}</td><td>{{ line.shortageQuantity ?? '—' }}</td><td>{{ line.unitLabel || '—' }}</td>
                 <td><SampleStatusTag :status="tagStatus" :label="progress?.label || '—'" /></td>
               </tr>

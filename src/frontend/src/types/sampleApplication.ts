@@ -1,5 +1,13 @@
 // V3 前端录入模型，与旧版 SampleRequestFormInput 分开，避免隐式补造后端必填明细。
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
+
 export interface SampleApplicationDraft {
+  manualRequestNumber: string
+  productColorId: string
+  isSalesperson?: boolean
+  productCatalogId?: string
+  productSelection?: ProductSelectionInput | null
+  productSelectionSnapshot?: ProductSelectionSnapshot | null
   sourceType: 'inquiry' | 'quotation' | null
   sourceId: string
   sourceProductId: string
@@ -28,6 +36,8 @@ export interface SampleApplicationDraft {
 }
 
 export interface SampleApplicationBasicInput {
+  manual_request_number?: string
+  is_salesperson?: boolean
   source_type: 'inquiry' | 'quotation' | null
   source_id: string | null
   customer_account_id: string

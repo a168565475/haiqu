@@ -24,7 +24,10 @@ def scoped_records(queryset, request, permission, craft_field='craft_id', source
         queryset = queryset.filter(**{order_field + '__in': accessible_outsourcing_orders(request, permission=permission)})
     legacy = queryset.filter(**{source_field + '__in': processing_lines(request, scoped=False, permission=permission)})
     candidates = queryset.filter(**{source_field + '__in': processing_lines(request, permission=permission)})
-    return craft_access_union(candidates, legacy, request, permission, craft_field)
+    from apps.access_control.role_policy import filter_task_scope
+    selected = craft_access_union(candidates, legacy, request, permission, craft_field)
+    followed = filter_task_scope(request, queryset, permission, source_field + '__issue__production_task')
+    return selected.distinct() | followed.distinct()
 
 
 def require_external_destination(request, rework_id, craft_id):

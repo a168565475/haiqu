@@ -40,9 +40,10 @@ def _matching_frozen_line(line, current, source_kind):
     if not output or _json_hash(output) != _json_hash(latest.get('public_output_identity')):
         raise Conflict('当前BOM的加工部位实物属性或加工颜色与原单不一致，请取消后重新创建。')
     # 已加工来源以实物身份为准，不新增原料长度/每根切割支数的限制。
-    for field in ('raw_material_id', 'cutting_length_mm', 'pieces_per_bar', 'raw_bar_length_m') if source_kind == 'RAW_PIPE' else ():
+    material_field = 'material_catalog_id' if line.input_material_catalog_id else 'raw_material_id'
+    for field in (material_field, 'cutting_length_mm', 'pieces_per_bar', 'raw_bar_length_m') if source_kind == 'RAW_PIPE' else ():
         try:
-            if field == 'raw_material_id':
+            if field == material_field:
                 equal = str(snapshot.get(field)) == str(latest.get(field)) and bool(snapshot.get(field))
             else:
                 a, b = Decimal(str(snapshot[field])), Decimal(str(latest[field]))
@@ -64,7 +65,7 @@ def _matching_frozen_line(line, current, source_kind):
 
 
 @stock_write_transaction
-def confirm_tube_action(*, order_id, kind, data, request):
+def confirm_tube_action(*, order_id, kind, data, request, plan_dispatch=False):
     require_tube_feature()
     if kind not in {'DISPATCH', 'CANCEL'}:
         _fail('不支持该外发单操作。')
@@ -88,7 +89,14 @@ def confirm_tube_action(*, order_id, kind, data, request):
     order = TubeOutsourcingOrder.objects.select_for_update(of=('self',)).select_related(
         'schedule_product', 'product_line', 'zone__warehouse', 'craft').get(pk=order_id)
     require_saved_order_access(request, order, permission)
-    require_matching_etag(request, order)
+    if order.is_plan and kind == 'DISPATCH':
+        raise Conflict('委外总单请使用分次实际外发。')
+    if order.plan_id and not plan_dispatch:
+        raise Conflict('实际外发记录由委外总单统一办理。')
+    if order.is_plan and order.dispatch_batches.exists():
+        raise Conflict('总单已经发生外发，不能取消历史记录。')
+    if not plan_dispatch:
+        require_matching_etag(request, order)
     if order.status != 'PENDING_DISPATCH':
         raise Conflict('只有待外发原单可以发出或取消，请刷新查看当前状态。')
     lines = list(order.lines.select_for_update(of=('self',)).order_by('pk'))
@@ -117,10 +125,11 @@ def confirm_tube_action(*, order_id, kind, data, request):
             prepare, craft_args = prepare_cutting_source, {'craft': craft}
         context = prepare(schedule_product=product, source_kind=order.source_kind, zone=zone,
             requested={str(line.component_identity): line.quantity for line in lines}, expected_revision=None,
-            exclude_order_id=order.pk, require_revision=False, additional_stock_lines=material_stock_lines, **craft_args)
+            exclude_order_id=order.pk, require_revision=False, additional_stock_lines=material_stock_lines,
+            plan_mode=bool(order.plan_id), **craft_args)
         frozen = {str(value.pk): value for value in materials}
         prepared_materials = prepare_materials(product, material_inputs, exclude_order_id=order.pk,
-                                               frozen=frozen, source_kind=order.source_kind)
+                                               frozen=frozen, source_kind=order.source_kind, plan_mode=bool(order.plan_id))
         # 在可能的锁等待后重新检查当前计划、工艺权限和库区。
         product, craft = source_product(request, order.schedule_product_id, permission,
             source_kind=order.source_kind, craft_id=order.craft_id)
@@ -177,9 +186,9 @@ def confirm_tube_action(*, order_id, kind, data, request):
                     component_identity=line.component_identity)
                 requirement.outsourcing_issued_quantity += line.quantity
                 requirement.save(update_fields=['outsourcing_issued_quantity', 'updated_at'])
-        if order.source_kind == 'METAL':
+        if order.source_kind == 'METAL' and not order.plan_id:
             assert_tube_reports_cover_usage(order.product_line_id)
-        elif order.source_kind == 'SEWING':
+        elif order.source_kind == 'SEWING' and not order.plan_id:
             from apps.inventory.sewing_processing_services import assert_sewing_reports_cover_usage
             assert_sewing_reports_cover_usage(order.product_line_id)
         material_movements = dispatch_materials(order, materials, prepared_materials, request)

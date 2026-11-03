@@ -1,5 +1,6 @@
 import type { InquiryItem, InquiryProductCandidate, InquiryRow } from '@/types/inquiry'
 import { formatInquiryNumber } from './inquiryDetailState'
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 
 export function newInquiryKey(): string {
   if (globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID()
@@ -61,8 +62,9 @@ export function quantitySummary(items: InquiryItem[]) {
   const totals = new Map<string, bigint>()
   for (const item of items) {
     const quantity = decimalUnits(item.quantity)
-    if (quantity === null || quantity <= 0n || !item.unit_code.trim()) return '待补齐'
-    totals.set(item.unit_code, (totals.get(item.unit_code) ?? 0n) + quantity)
+    const unitName = productEntryUnitName(item).trim()
+    if (quantity === null || quantity <= 0n || !unitName) return '待补齐'
+    totals.set(unitName, (totals.get(unitName) ?? 0n) + quantity)
   }
   return [...totals].map(([unit, total]) => `${formatInquiryNumber(decimalString(total, 4))} ${unit}`).join(' / ') || '—'
 }
@@ -76,7 +78,9 @@ export function validateProducts(items: InquiryItem[]) {
     if (!item.product_description.trim()) return `${prefix}产品名称不能为空。`
     const quantity = decimalUnits(item.quantity)
     if (quantity === null || quantity <= 0n) return `${prefix}数量须大于零，最多 14 位整数和 4 位小数。`
-    if (!item.unit_code.trim() || item.unit_code.length > 30) return `${prefix}单位不能为空，最多 30 个字符。`
+    const unitName = productEntryUnitName(item).trim()
+    const maxUnitLength = item.product_selection?.draft || item.product_selection_snapshot ? 80 : 30
+    if (!unitName || unitName.length > maxUnitLength) return `${prefix}单位不能为空，最多 ${maxUnitLength} 个字符。`
     if (item.target_unit_price !== null && item.target_unit_price !== '') {
       if (decimalUnits(item.target_unit_price) === null) return `${prefix}目标价须为非负数，最多 14 位整数和 4 位小数。`
       if (!item.target_currency_code) return `${prefix}填写目标价后请选择币种。`

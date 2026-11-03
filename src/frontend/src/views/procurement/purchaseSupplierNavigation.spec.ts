@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('vue-router', async (importOriginal) => ({
   ...await importOriginal<typeof import('vue-router')>(),
   useRouter: () => ({ push: mocks.push }),
-  useRoute: () => ({ meta: { activeMenu: 'purchase-orders' } }),
+  useRoute: () => ({ meta: { activeMenu: 'purchase-orders' }, query: { view: 'orders' } }),
 }))
 
 vi.mock('@/api/purchaseOrders', () => ({

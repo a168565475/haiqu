@@ -1,3 +1,6 @@
+from .catalog_receipts import catalog_receipt_values, validate_catalog_inbound
+from .catalog_manual_receipts import lock_manual_request, manual_request_snapshot, resolve_manual_catalog
+from apps.procurement.catalog_materials import purchase_catalog_selection
 from apps.inventory.public_stock_cutover import stock_write_transaction
 from .pipe_receipts import receipt_pipe_values, quality_pipe_quantities
 from apps.organizations.selectors import active_department_employees
@@ -283,7 +286,8 @@ def create_finished_goods_receipt(*, validated_data, actor_employee, request):
     )
     _validate_finished_goods_location(location)
     product = line.product
-    category_name = getattr(product.category, "category_name", "")
+    category_name = (line.product_selection_snapshot.get("category_name", "") if line.product_catalog_id
+                     else getattr(getattr(product, "category", None), "category_name", ""))
     receipt = FinishedGoodsReceipt.objects.create(
         receipt_number=next_business_number("FINISHED_GOODS_RECEIPT"),
         production_task_product=line,
@@ -498,6 +502,10 @@ def _lock_purchase_receipt_materials(purchase_lines, existing_identity_rows):
 
     material_ids = {}
     resolve_line_ids = set()
+    catalog_lines = [line for line in purchase_lines if line.material_catalog_id]
+    for line in catalog_lines:
+        purchase_catalog_selection(line)
+    purchase_lines = [line for line in purchase_lines if not line.material_catalog_id]
     for line in purchase_lines:
         saved_id = get_purchase_material_id(line)
         frozen_id = next(iter(frozen_ids[line.pk]), None)
@@ -523,7 +531,7 @@ def _lock_purchase_receipt_materials(purchase_lines, existing_identity_rows):
             raise PurchaseMaterialIdentityError("采购收货材料不存在、已归档或不是原材料，请先核对。")
         if line.pk in resolve_line_ids and resolve_purchase_material(line).pk != material_id:
             raise PurchaseMaterialIdentityError("采购材料对应关系已变化，请刷新后重试。")
-    return {line_id: materials[material_id] for line_id, material_id in material_ids.items()}
+    return {**{line.pk: None for line in catalog_lines}, **{line_id: materials[material_id] for line_id, material_id in material_ids.items()}}
 
 
 @stock_write_transaction
@@ -646,7 +654,8 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         if line_id in expected_values and expected_values[line_id] != expected:
             raise ValidationError({"items": f"采购单第 {line.line_number} 行预期剩余数量不一致。"})
         expected_values[line_id] = expected
-        item['_pipe_values'] = _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode)
+        item['_pipe_values'] = (catalog_receipt_values(purchase_line=line, item=item) if line.material_catalog_id
+                                else _freeze_public_pipe_values(receipt_pipe_values(item, purchase_line=line), stock_mode))
         pipe_material = item['_pipe_values'].get('raw_material_information')
         if pipe_material is not None and pipe_material.pk != purchase_materials[line.pk].pk:
             raise PurchaseMaterialIdentityError("采购保存的材料与收货材料不一致，请先核对原始单据。")
@@ -658,9 +667,10 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         if (
             zone.status != RecordStatus.ACTIVE
             or zone.warehouse.status != RecordStatus.ACTIVE
-            or zone.warehouse.warehouse_type != WarehouseType.MATERIAL
+            or zone.warehouse.warehouse_type != (WarehouseType.SEMI_FINISHED if line.material_catalog_id
+                and line.material_selection_snapshot["processing_state"] == "PROCESSED" else WarehouseType.MATERIAL)
         ):
-            raise Conflict("入库库区必须属于正常的材料仓和正常库区。")
+            raise Conflict("入库库区须有效且匹配原料/半成品状态。")
         location_id = item.get("location_id")
         if location_id:
             location = location_map[location_id]
@@ -737,6 +747,7 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
         from apps.wecom.notification_services import register_business_event
         register_business_event(
             event_code="MATERIAL_RECEIPT_RECORDED", idempotency_key=f"MATERIAL_RECEIPT_RECORDED:{inbound.pk}:1",
+            actor_employee=actor_employee,
             object_type="inventory.MaterialInbound", object_id=inbound.pk, object_version=1,
             context={"document_no": inbound.inbound_number, "operator": actor_employee.display_name,
                      "occurred_at": inbound.created_at.isoformat(), "status": inbound.get_status_display()},
@@ -744,7 +755,13 @@ def create_material_inbound(*, inbound_date, remark, items, actor_employee, requ
     return inbound
 
 
-def _manual_inbound_payload_matches(inbound, *, inbound_date, remark, items):
+def _manual_inbound_payload_matches(inbound, *, inbound_date, remark, items, actor_employee, original_request):
+    if inbound.received_by_employee_id != actor_employee.pk:
+        return False
+    if inbound.manual_request_snapshot:
+        return inbound.purchase_order_id is None and inbound.manual_request_snapshot == original_request
+    if any(item.get("material_catalog_id") for item in items):
+        return False
     expected_lines = sorted(
         (
             str(item["raw_material_id"]),
@@ -780,7 +797,13 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
     """登记无采购单来源的额外材料，并直接作为已确认库存入账。"""
     stock_mode = new_stock_mode()
     items = [dict(item) for item in items]
+    original_request = manual_request_snapshot(inbound_date=inbound_date, remark=remark, items=items)
+    lock_manual_request(client_request_id)
     for item in items:
+        if bool(item.get("raw_material_id")) == bool(item.get("material_catalog_id")):
+            raise ValidationError({"items": "旧原料与新目录选料必须二选一。"})
+        if item.get("material_catalog_id"):
+            continue
         if item.get('received_bar_count') is not None:
             _, item['received_quantity'] = pipe_meters(item['received_bar_count'], item.get('raw_bar_length_m'), field='received_bar_count')
         if item.get('received_quantity') is None:
@@ -791,6 +814,7 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
     if existing is not None:
         if not _manual_inbound_payload_matches(
             existing, inbound_date=inbound_date, remark=remark, items=items,
+            actor_employee=actor_employee, original_request=original_request,
         ):
             raise Conflict("同一提交标识不能用于不同的额外入库内容。")
         return existing
@@ -799,7 +823,11 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
     if not remark.strip():
         raise ValidationError({"remark": "额外材料入库必须填写备注。"})
 
-    material_ids = sorted({item["raw_material_id"] for item in items}, key=str)
+    versions = {}
+    for item in sorted(items, key=lambda item: str(item.get("material_catalog_id", ""))):
+        if item.get("material_catalog_id"):
+            resolve_manual_catalog(item, request=request, versions=versions)
+    material_ids = sorted({item["raw_material_id"] for item in items if item.get("raw_material_id")}, key=str)
     materials = list(
         RawMaterialInformation.objects.select_for_update(of=("self",))
         .select_related("category", "unit", "color")
@@ -860,6 +888,7 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
                 stock_mode=stock_mode,
                 inbound_number=next_business_number("MATERIAL_INBOUND", business_date=inbound_date),
                 client_request_id=client_request_id,
+                manual_request_snapshot=original_request,
                 purchase_order=None,
                 inbound_date=inbound_date,
                 status=MaterialInboundStatus.CONFIRMED,
@@ -874,11 +903,32 @@ def create_manual_material_inbound(*, client_request_id, inbound_date, remark, i
             raise
         if not _manual_inbound_payload_matches(
             existing, inbound_date=inbound_date, remark=remark, items=items,
+            actor_employee=actor_employee, original_request=original_request,
         ):
             raise Conflict("同一提交标识不能用于不同的额外入库内容。")
         return existing
     created = []
     for item in items:
+        if item.get("material_catalog_id"):
+            selected = item["material_selection_snapshot"]
+            attrs = selected["attributes"]
+            created.append(MaterialInboundLine.objects.create(
+                inbound=inbound, material_catalog_id=item["material_catalog_id"],
+                material_selection_snapshot=selected, calculation_snapshot=item["calculation_snapshot"],
+                **({"measurement_kind": "PIPE", "raw_bar_length_m": item["raw_bar_length_m"],
+                    "received_bar_count": item["received_bar_count"], "accepted_bar_count": item["received_bar_count"],
+                    "return_bar_count": 0} if selected["category_key"] == "TUBE" else {}),
+                zone=zone_map[item["zone_id"]], location=location_map.get(item.get("location_id")),
+                received_quantity=item["received_quantity"], accepted_quantity=item["received_quantity"],
+                return_quantity=Decimal("0"), remark=item.get("remark", ""),
+                section_type_snapshot="PROFILE" if selected["category_key"] == "TUBE" else "GENERAL",
+                section_title_snapshot=item["section_title"], category_snapshot=item["section_title"],
+                material_snapshot=attrs.get("material", ""), part_name_snapshot=selected["name"],
+                specification_snapshot=item["specification"][:500], source_unit_text_snapshot="米" if selected["category_key"] == "TUBE" else selected["unit_name"],
+                purchased_quantity_snapshot=item["received_quantity"],
+                material_pinyin_search=build_pinyin_search(selected["display_name"]),
+            ))
+            continue
         material = material_map[item["raw_material_id"]]
         pipe_values = _freeze_public_pipe_values(receipt_pipe_values(item, material=material), stock_mode)
         quantity = item["received_quantity"]
@@ -1057,13 +1107,15 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
             raise ValidationError({"items": f"退货数量不能超过到货数量 {line.received_quantity}。"})
         accepted_quantity = line.received_quantity - return_quantity
         raw_material = purchase_materials[line.purchase_order_line_id]
-        if line.raw_material_information_id and line.raw_material_information_id != raw_material.pk:
+        if line.raw_material_information_id and (raw_material is None or line.raw_material_information_id != raw_material.pk):
             raise PurchaseMaterialIdentityError("待检批次材料与采购收货材料不一致，请刷新后核对。")
         line.raw_material_information = raw_material
         line.return_quantity = return_quantity
         line.accepted_quantity = accepted_quantity
         line.quality_remark = item.get("quality_remark", "")
-        if accepted_quantity > 0 and line.measurement_kind != 'PIPE':
+        if line.material_catalog_id:
+            validate_catalog_inbound(line)
+        elif accepted_quantity > 0 and line.measurement_kind != 'PIPE':
             validate_inbound_stock_identity(line)
         prepared.append(line)
 
@@ -1120,6 +1172,7 @@ def confirm_material_quality(*, inbound_id, items, actor_employee, request):
     accepted, returned = _inspection_quantities(locked_lines)
     register_business_event(
         event_code="MATERIAL_INSPECTION_CONFIRMED", idempotency_key=f"MATERIAL_INSPECTION_CONFIRMED:{inbound.pk}:1",
+        actor_employee=actor_employee,
         object_type="inventory.MaterialInbound", object_id=inbound.pk, object_version=1,
         context={"document_no": inbound.inbound_number, "purchase_order_no": inbound.purchase_order.order_number,
                  "accepted_quantity": accepted, "return_quantity": returned,

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { pipeRootError } from '@/utils/pipeQuantities'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { isCancel } from 'axios'
+import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { Calendar, Refresh, Tickets, WarningFilled } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createMaterialReceiving, createSampleMaterialReceiving, fetchEligibleMaterialLinesWithVersion, fetchEligibleMaterialPurchaseOrders, fetchMaterialReceivingOptions } from '@/api/inventory'
@@ -9,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { EligibleMaterialLine, EligibleMaterialPurchaseOrder, MaterialReceivingOptions, SampleMaterialReceivingPayload } from '@/types/inventory'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 import { createClientUuid } from '@/utils/clientUuid'
+import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 
 interface ReceivingRow {
   line: EligibleMaterialLine
@@ -28,7 +31,8 @@ const linesLoading = ref(false)
 const loading = computed(() => baseLoading.value || linesLoading.value)
 const submitting = ref(false)
 const receiptCreated = ref(false)
-const locked = computed(() => loading.value || submitting.value || receiptCreated.value)
+const historyRefreshKey = ref(0)
+const locked = computed(() => !owned.isCurrent() || loading.value || submitting.value || receiptCreated.value)
 const loadError = ref('')
 const purchaseOrders = ref<EligibleMaterialPurchaseOrder[]>([])
 const selectedPurchaseOrderId = ref('')
@@ -42,6 +46,8 @@ function localToday() {
 }
 const form = reactive({ inboundDate: localToday(), remark: '' })
 const receivingDraftKey = computed(() => `material-receiving-draft:v2:${selectedPurchaseOrderId.value}`)
+const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `${receivingDraftKey.value}:user:${uid}`, legacyKeys: () => [receivingDraftKey.value] })
+let draftRaw: string | null = null
 let linesRequest = 0
 let disposed = false
 const selectedOrder = computed(() => purchaseOrders.value.find((item) => item.id === selectedPurchaseOrderId.value))
@@ -53,13 +59,31 @@ const bulkCategories = computed(() => [...new Set(rows.value.map((row) => row.li
 const bulkSelectedRows = computed(() => selectedRows.value.filter((row) => !bulk.category || (row.line.category?.trim() || '未分类') === bulk.category))
 const bulkApplyLabel = computed(() => isSample.value ? (bulk.category ? '应用到当前分类' : '应用到全部') : '应用到已勾选')
 const warehouseZones = (warehouseId: string) => options.value.zones.filter((zone) => zone.warehouse === warehouseId)
+const rowWarehouses = (line: EligibleMaterialLine) => options.value.warehouses.filter(warehouse =>
+  !warehouse.warehouse_type || warehouse.warehouse_type === (line.material_selection_snapshot?.processing_state === 'PROCESSED' ? 'SEMI_FINISHED' : 'MATERIAL'))
+const validRowZone = (row: ReceivingRow) => hasZone(row) && rowWarehouses(row.line).some(warehouse => warehouse.id === row.warehouseId)
+const bulkWarehouses = computed(() => bulkSelectedRows.value.length ? options.value.warehouses.filter(warehouse =>
+  bulkSelectedRows.value.every(row => rowWarehouses(row.line).some(allowed => allowed.id === warehouse.id))) : [])
+const bulkWarehouseHint = computed(() => bulkSelectedRows.value.length && !bulkWarehouses.value.length
+  ? '勾选物料没有共同可用仓库，请逐行分配仓库和库区。' : '')
+const bulkReadyToApply = computed(() => !locked.value && canReceive.value && hasZone(bulk)
+  && bulkWarehouses.value.some(warehouse => warehouse.id === bulk.warehouseId))
 const bulkZones = computed(() => warehouseZones(bulk.warehouseId))
+watch(bulkWarehouses, warehouses => {
+  if (bulk.warehouseId && !warehouses.some(warehouse => warehouse.id === bulk.warehouseId)) {
+    bulk.warehouseId = ''; bulk.zoneId = ''
+  }
+})
 function hasZone(row: Pick<ReceivingRow, 'warehouseId' | 'zoneId'>) {
   return options.value.warehouses.some((warehouse) => warehouse.id === row.warehouseId)
     && warehouseZones(row.warehouseId).some((zone) => zone.id === row.zoneId)
 }
+function isPipe(line: EligibleMaterialLine): line is EligibleMaterialLine & { raw_bar_length_m: string } {
+  return !!line.raw_bar_length_m
+}
 function validQuantity(row: ReceivingRow) {
-  if (row.line.raw_bar_length_m) return !pipeRootError(row.receivedQuantity) && Number(row.receivedQuantity) <= (row.line.remaining_bar_count ?? 0)
+  if (row.line.material_catalog_id && ['根', '支', '套'].includes(row.line.unit) && pipeRootError(row.receivedQuantity)) return false
+  if (isPipe(row.line)) return !pipeRootError(row.receivedQuantity) && Number(row.receivedQuantity) <= (row.line.remaining_bar_count ?? 0)
   return /^\d{1,14}(\.\d{1,4})?$/.test(row.receivedQuantity)
     && Number(row.receivedQuantity) > 0 && Number(row.receivedQuantity) <= Number(row.line.remaining_quantity)
 }
@@ -68,11 +92,11 @@ function validDate(value: unknown): value is string {
   const date = new Date(value + 'T00:00:00Z')
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value && value <= localToday()
 }
-const zoneReadyCount = computed(() => selectedRows.value.filter(hasZone).length)
+const zoneReadyCount = computed(() => selectedRows.value.filter(validRowZone).length)
 const readyToSubmit = computed(() => canReceive.value && !locked.value && !loadError.value && !!selectedOrder.value && validDate(form.inboundDate)
   && (!isSample.value || !!receivingVersion.value)
   && selectedRows.value.length > 0 && selectedRows.value.length <= 100
-  && selectedRows.value.every((row) => hasZone(row) && validQuantity(row)))
+  && selectedRows.value.every((row) => validRowZone(row) && validQuantity(row)))
 const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
   set: (value: boolean) => { if (!locked.value && !isSample.value) rows.value.forEach((row) => { row.included = value }) },
@@ -87,27 +111,32 @@ function formatQuantity(value: string | number): string {
   return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
 function purchaseQuantityText(line: EligibleMaterialLine): string {
-  if (line.raw_bar_length_m) return line.actual_bar_count == null ? '根数未记录' : `${formatQuantity(line.actual_bar_count)} 根`
+  if (isPipe(line)) return line.actual_bar_count == null ? '根数未记录' : `${formatQuantity(line.actual_bar_count)} 根`
   return `${formatQuantity(line.purchased_quantity)} ${line.unit}`
 }
 function receivedQuantityText(line: EligibleMaterialLine): string {
-  if (line.raw_bar_length_m) return line.actual_bar_count == null || line.remaining_bar_count == null
+  if (isPipe(line)) return line.actual_bar_count == null || line.remaining_bar_count == null
     ? '根数未记录' : `${formatQuantity(line.actual_bar_count - line.remaining_bar_count)} 根`
   return `${formatQuantity(Number(line.purchased_quantity) - Number(line.remaining_quantity))} ${line.unit}`
 }
 function sampleReceiptQuantityText(line: EligibleMaterialLine): string {
-  return line.raw_bar_length_m
+  return isPipe(line)
     ? `${line.remaining_bar_count ?? '—'} 根 × ${formatQuantity(line.raw_bar_length_m)} 米/根 = ${formatQuantity(line.remaining_quantity)} 米`
     : `${formatQuantity(line.remaining_quantity)} ${line.unit}`
 }
 function initialQuantity(value: string): string {
   const number = Number(value)
-  return Number.isFinite(number) ? number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4, useGrouping: false }) : ''
+  return Number.isFinite(number) ? number.toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }) : ''
 }
 function materialTitle(line: EligibleMaterialLine): string { return line.part_name || line.material || '未命名物料' }
 function rowWarehouseChanged(row: ReceivingRow) {
   const zones = warehouseZones(row.warehouseId)
   row.zoneId = zones.length === 1 ? zones[0].id : ''
+}
+function rowWarehouseHint(row: ReceivingRow): string {
+  if (!row.warehouseId) return '未找到匹配的默认仓库，请手动选择。'
+  return rowWarehouses(row.line).some(warehouse => warehouse.id === row.warehouseId)
+    ? '' : '已选仓库与物料状态不匹配，请重新选择。'
 }
 function bulkWarehouseChanged() { bulk.zoneId = bulkZones.value.length === 1 ? bulkZones.value[0].id : '' }
 function applyBulkZone() {
@@ -115,9 +144,11 @@ function applyBulkZone() {
   if (!hasZone(bulk)) return ElMessage.warning('请先完整选择材料仓和库区。')
   if (!selectedRows.value.length) return ElMessage.warning('请先勾选物料。')
   if (!bulkSelectedRows.value.length) return ElMessage.warning('当前分类没有已勾选物料。')
+  if (bulkSelectedRows.value.some(row => !rowWarehouses(row.line).some(warehouse => warehouse.id === bulk.warehouseId))) return ElMessage.warning('所选仓库与勾选材料的原料或半成品状态不匹配。')
   bulkSelectedRows.value.forEach((row) => { row.warehouseId = bulk.warehouseId; row.zoneId = bulk.zoneId })
 }
 async function loadBase() {
+  if (!owned.isCurrent()) { loadError.value = '身份尚未核验或已变化，请核验身份后重新打开本页。'; return }
   if (locked.value || !canReceive.value) return
   baseLoading.value = true
   loadError.value = ''
@@ -125,11 +156,14 @@ async function loadBase() {
     const orderId = typeof route.params.purchaseOrderId === 'string' ? route.params.purchaseOrderId : ''
     if (!orderId) throw new Error('采购单编号缺失。')
     selectedPurchaseOrderId.value = orderId
+    historyRefreshKey.value += 1
+    owned.assertCurrent()
     const [optionData, orderData, lineData] = await Promise.all([
       fetchMaterialReceivingOptions(),
       fetchEligibleMaterialPurchaseOrders({ purchase_order_id: orderId }),
       fetchEligibleMaterialLinesWithVersion(orderId),
     ])
+    owned.assertCurrent()
     if (disposed) return
     options.value = optionData
     purchaseOrders.value = orderData
@@ -138,13 +172,14 @@ async function loadBase() {
     // 三项同时读取，全部就绪后再恢复草稿，避免有效库区被尚未到达的选项误清空。
     await selectOrder(true, lineData)
   } catch (error) {
-    if (!disposed) loadError.value = apiMessage(error, '采购入库数据加载失败，请刷新重试。')
-  } finally { baseLoading.value = false }
+    if (!isCancel(error) && owned.isCurrent() && !disposed) loadError.value = apiMessage(error, '采购入库数据加载失败，请刷新重试。')
+  } finally { if (owned.isCurrent()) baseLoading.value = false }
 }
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<ReturnType<typeof fetchEligibleMaterialLinesWithVersion>>) {
+  if (!owned.isCurrent()) return
   const request = ++linesRequest
   const orderId = selectedPurchaseOrderId.value
   const currentDraft = preserveCurrent && orderId && rows.value.length ? {
@@ -162,13 +197,17 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
   if (!orderId) return
   linesLoading.value = true
   try {
+    owned.assertCurrent()
     const response = preloadedLines ?? await fetchEligibleMaterialLinesWithVersion(orderId)
+    owned.assertCurrent()
     // 切换采购单后，迟到的旧响应不能覆盖新单据。
     if (disposed || request !== linesRequest || selectedPurchaseOrderId.value !== orderId) return
     receivingVersion.value = response.etag
     let draft: Record<string, unknown> = currentDraft || {}
     if (!currentDraft) {
-      try { draft = record(JSON.parse(localStorage.getItem(receivingDraftKey.value) || '{}')) } catch { /* 草稿不可用时仍可正常收货。 */ }
+      // 历史无主草稿从不读取、迁移或删除，只恢复当前已核验 UID 的草稿。
+      draftRaw = owned.read()
+      try { draft = record(JSON.parse(draftRaw || '{}')) } catch { /* 当前用户普通草稿损坏时不恢复内容，原文保留。 */ }
     }
     if (draft.purchaseOrderId !== orderId) draft = {}
     if (validDate(draft.inboundDate)) form.inboundDate = draft.inboundDate
@@ -178,7 +217,7 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
       const saved = record(savedRows[line.id])
       const row: ReceivingRow = {
         line, included: isSample.value || (typeof saved.included === 'boolean' ? saved.included : true),
-        receivedQuantity: isSample.value || saved.receivedQuantity === undefined ? line.raw_bar_length_m ? String(line.remaining_bar_count ?? '') : initialQuantity(line.remaining_quantity)
+        receivedQuantity: isSample.value || saved.receivedQuantity === undefined ? isPipe(line) ? String(line.remaining_bar_count ?? '') : initialQuantity(line.remaining_quantity)
           : typeof saved.receivedQuantity === 'string' || typeof saved.receivedQuantity === 'number' ? String(saved.receivedQuantity) : '',
         warehouseId: typeof saved.warehouseId === 'string' ? saved.warehouseId : '',
         zoneId: typeof saved.zoneId === 'string' ? saved.zoneId : '',
@@ -186,21 +225,26 @@ async function selectOrder(preserveCurrent = false, preloadedLines?: Awaited<Ret
       }
       if (!options.value.warehouses.some((warehouse) => warehouse.id === row.warehouseId)) row.warehouseId = ''
       if (!hasZone(row)) row.zoneId = ''
+      if (!row.warehouseId && line.suggested_warehouse_id
+        && rowWarehouses(line).some(warehouse => warehouse.id === line.suggested_warehouse_id)
+        && warehouseZones(line.suggested_warehouse_id).length) row.warehouseId = line.suggested_warehouse_id
+      if (!row.zoneId && rowWarehouses(line).some(warehouse => warehouse.id === row.warehouseId)) rowWarehouseChanged(row)
       return row
     })
     if (!bulkCategories.value.includes(bulk.category)) { bulk.category = '' }
   } catch (error) {
-    if (!disposed && request === linesRequest) loadError.value = apiMessage(error, '采购明细加载失败，请刷新重试。')
-  } finally { if (request === linesRequest) linesLoading.value = false }
+    if (!isCancel(error) && owned.isCurrent() && !disposed && request === linesRequest) loadError.value = apiMessage(error, '采购明细或当前用户草稿无法读取，请刷新重试。')
+  } finally { if (owned.isCurrent() && request === linesRequest) linesLoading.value = false }
 }
 function saveDraft() {
   if (locked.value || !canReceive.value) return
   if (!selectedPurchaseOrderId.value || !rows.value.length) return ElMessage.warning('请先选择有待收货明细的采购单。')
   try {
-    localStorage.setItem(receivingDraftKey.value, JSON.stringify({
+    const raw = JSON.stringify({
       purchaseOrderId: selectedPurchaseOrderId.value, inboundDate: form.inboundDate, remark: form.remark,
       rows: Object.fromEntries(rows.value.map((row) => [row.line.id, { included: row.included, receivedQuantity: row.receivedQuantity, warehouseId: row.warehouseId, zoneId: row.zoneId, remark: row.remark }])),
-    }))
+    })
+    owned.write(raw); draftRaw = raw
     ElMessage.success('收货草稿已保存在当前浏览器。')
   } catch { ElMessage.error('浏览器无法保存草稿，请检查存储空间或浏览器设置。当前填写内容仍保留。') }
 }
@@ -209,8 +253,10 @@ async function submitReceiving() {
   if (!readyToSubmit.value) return ElMessage.warning(isSample.value
     ? '请核对入库日期和全部明细的库区；每批最多提交 100 项。'
     : '请核对到货日期、数量和库区；每批最多提交 100 项。')
+  const consumedDraftRaw = draftRaw, submittedOrderId = selectedPurchaseOrderId.value
   submitting.value = true
   try {
+    owned.assertCurrent()
     if (isSample.value) {
       const content = {
         purchase_order_id: selectedPurchaseOrderId.value, inbound_date: form.inboundDate, remark: form.remark,
@@ -225,21 +271,25 @@ async function submitReceiving() {
       inbound_date: form.inboundDate, remark: form.remark,
       items: selectedRows.value.map((row) => ({
         purchase_order_line_id: row.line.id, zone_id: row.zoneId, expected_remaining_quantity: row.line.remaining_quantity,
-        ...(row.line.raw_bar_length_m ? { received_bar_count: row.receivedQuantity, raw_bar_length_m: row.line.raw_bar_length_m } : { received_quantity: row.receivedQuantity }), remark: row.remark,
+        ...(isPipe(row.line) ? { received_bar_count: row.receivedQuantity, raw_bar_length_m: row.line.raw_bar_length_m } : { received_quantity: row.receivedQuantity }), remark: row.remark,
       })),
     })
+    owned.assertCurrent()
+    if (selectedPurchaseOrderId.value !== submittedOrderId) return
     receiptCreated.value = true
+    historyRefreshKey.value += 1
   } catch (error) {
+    if (isCancel(error) || !owned.isCurrent()) return
     ElMessage.error(apiMessage(error, isSample.value ? '全部入库失败，请核对入库记录后重试。' : '提交品质确认失败，请核对收货记录后重试。'))
     submitting.value = false
     return
   }
   // 收货成功后，草稿清理或跳转失败都不能再次提交同一批次。
-  try { localStorage.removeItem(receivingDraftKey.value) } catch { ElMessage.warning('收货已登记，但浏览器中的旧草稿未能清理。') }
+  try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('收货已登记，但当前用户草稿已变化，已保留后写入的内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('收货已登记，但当前用户草稿未能清理。') }
   ElMessage.success(isSample.value ? '样品采购材料已全部入库。' : '仓库收货已登记，已转入品质确认。')
   try { await router.push({ name: !isSample.value && canQuality.value ? 'material-quality-confirmation' : 'purchase-inbounds' }) }
-  catch { ElMessage.warning('收货已登记，请从采购入库列表继续处理。') }
-  finally { submitting.value = false }
+  catch { if (owned.isCurrent()) ElMessage.warning('收货已登记，请从采购入库列表继续处理。') }
+  finally { if (owned.isCurrent()) submitting.value = false }
 }
 onMounted(() => { if (canReceive.value) void loadBase() })
 onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
@@ -260,15 +310,16 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
           <div class="date-field"><label>到货日期</label><ElDatePicker v-model="form.inboundDate" aria-label="到货日期" type="date" value-format="YYYY-MM-DD" :prefix-icon="Calendar" :disabled="locked" :disabled-date="(date: Date) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date) > localToday()" /></div>
           <div class="bulk-controls">
             <ElSelect v-model="bulk.category" aria-label="批量分类" placeholder="选择分类" clearable :disabled="locked || !rows.length"><ElOption v-for="category in bulkCategories" :key="category" :label="category" :value="category" /></ElSelect>
-            <ElSelect v-model="bulk.warehouseId" aria-label="批量材料仓" placeholder="选择材料仓" :disabled="locked" @change="bulkWarehouseChanged"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect>
+            <ElSelect v-model="bulk.warehouseId" aria-label="批量材料仓" placeholder="选择材料仓" :disabled="locked || !bulkWarehouses.length" @change="bulkWarehouseChanged"><ElOption v-for="item in bulkWarehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect>
             <ElSelect v-model="bulk.zoneId" aria-label="批量库区" placeholder="选择库区" :disabled="locked || !bulk.warehouseId"><ElOption v-for="item in bulkZones" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect>
-            <ElButton :disabled="locked || !bulkSelectedRows.length" @click="applyBulkZone">{{ bulkApplyLabel }}</ElButton>
+            <ElButton :disabled="!bulkReadyToApply" @click="applyBulkZone">{{ bulkApplyLabel }}</ElButton>
           </div>
         </div>
+        <p v-if="bulkWarehouseHint" class="bulk-warehouse-hint" role="status">{{ bulkWarehouseHint }}</p>
       </section>
       <section class="surface table-card">
         <div class="table-head">
-          <div><h2>采购明细</h2><div v-if="selectedOrder" class="table-order-meta"><span>采购单号 <strong>{{ selectedOrder.order_number }}</strong></span><span>生产单号 <strong>{{ selectedOrder.production_task_number || '—' }}</strong></span><span>状态 <ElTag type="warning" round>{{ receiptCreated ? isSample ? '已入库' : '已收货，待质检' : '待收货' }}</ElTag></span></div></div>
+          <div><h2>采购明细</h2><div v-if="selectedOrder" class="table-order-meta"><span>采购单号 <strong>{{ selectedOrder.order_number }}</strong></span><span v-if="selectedOrder.batch_number" data-testid="receiving-purchase-batch">采购批次 <strong>第 {{ selectedOrder.batch_number }} 批</strong></span><span>生产单号 <strong>{{ selectedOrder.production_task_number || '—' }}</strong></span><span>状态 <ElTag type="warning" round>{{ receiptCreated ? isSample ? '已入库' : '已收货，待质检' : '待收货' }}</ElTag></span></div></div>
           <strong>共 {{ rows.length }} 项</strong>
         </div>
         <div v-loading="loading" class="receiving-table-scroll">
@@ -285,12 +336,12 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
               <ElTooltip :content="row.line.supplier_name" placement="top" :show-after="150" :disabled="!row.line.supplier_name" :teleported="true">
                 <td class="supplier-cell" @mouseenter="hoveredSupplierRowId = row.line.id" @mouseleave="hoveredSupplierRowId = ''">{{ row.line.supplier_name || '—' }}</td>
               </ElTooltip>
-              <td class="purchase-quantity-cell" :title="row.line.raw_bar_length_m ? `${formatQuantity(row.line.purchased_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
-              <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (row.line.raw_bar_length_m ? ' 项到货根数' : ' 项到货数量')" :inputmode="row.line.raw_bar_length_m ? 'numeric' : 'decimal'" :maxlength="row.line.raw_bar_length_m ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (row.line.raw_bar_length_m ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ row.line.raw_bar_length_m ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
-              <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择材料仓" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in options.warehouses" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect></td>
+              <td class="purchase-quantity-cell" :title="isPipe(row.line) ? `${formatQuantity(row.line.purchased_quantity)} 米 · ${row.line.raw_bar_length_m} 米/根` : purchaseQuantityText(row.line)">{{ purchaseQuantityText(row.line) }}</td><td class="muted">{{ receivedQuantityText(row.line) }}</td>
+              <td><span v-if="isSample" data-testid="sample-receiving-quantity">{{ sampleReceiptQuantityText(row.line) }}</span><ElInput v-else v-model="row.receivedQuantity" class="quantity-input" :aria-label="'第 ' + (index + 1) + (isPipe(row.line) ? ' 项到货根数' : ' 项到货数量')" :inputmode="isPipe(row.line) ? 'numeric' : 'decimal'" :maxlength="isPipe(row.line) ? 14 : 19" :disabled="locked" :class="{ 'invalid-field': !validQuantity(row) }" :aria-invalid="!validQuantity(row)" :title="'大于 0，不超过剩余 ' + (isPipe(row.line) ? `${row.line.remaining_bar_count ?? 0} 根` : `${row.line.remaining_quantity}，最多 4 位小数`)"><template #append>{{ isPipe(row.line) ? '根' : row.line.unit || '单位未识别' }}</template></ElInput></td>
+              <td><ElSelect v-model="row.warehouseId" :aria-label="'第 ' + (index + 1) + ' 项材料仓'" placeholder="选择仓库" :disabled="locked" @change="rowWarehouseChanged(row)"><ElOption v-for="item in rowWarehouses(row.line)" :key="item.id" :label="item.warehouse_name" :value="item.id" /></ElSelect><small v-if="rowWarehouseHint(row)" class="warehouse-hint">{{ rowWarehouseHint(row) }}</small></td>
               <td><ElSelect v-model="row.zoneId" :aria-label="'第 ' + (index + 1) + ' 项库区'" placeholder="选择库区" :disabled="locked || !row.warehouseId"><ElOption v-for="item in warehouseZones(row.warehouseId)" :key="item.id" :label="item.zone_name" :value="item.id" /></ElSelect></td>
               <td class="remark-cell"><ElInput v-model="row.remark" :aria-label="'第 ' + (index + 1) + ' 项差异说明'" :maxlength="3000" :disabled="locked" /></td>
-              <td><ElTag :type="hasZone(row) && validQuantity(row) ? 'success' : 'warning'" round>{{ hasZone(row) && validQuantity(row) ? '已完善' : '待完善' }}</ElTag></td>
+              <td><ElTag :type="validRowZone(row) && validQuantity(row) ? 'success' : 'warning'" round>{{ validRowZone(row) && validQuantity(row) ? '已完善' : '待完善' }}</ElTag></td>
             </tr><tr v-if="!rows.length"><td colspan="12" class="table-empty">{{ loadError || (selectedOrder ? '该采购单暂无待收货明细。' : '请先选择采购单') }}</td></tr></tbody>
           </table>
         </div>
@@ -302,6 +353,7 @@ onBeforeUnmount(() => { disposed = true; linesRequest += 1 })
         <ElButton :disabled="locked || !rows.length" @click="saveDraft">保存草稿</ElButton>
         <ElButton type="primary" :loading="submitting" :disabled="!readyToSubmit" @click="submitReceiving">{{ isSample ? '全部入库' : '提交品质确认' }}</ElButton>
       </section>
+      <PurchaseInboundHistory v-if="selectedPurchaseOrderId && owned.isCurrent()" :purchase-order-id="selectedPurchaseOrderId" :refresh-key="historyRefreshKey" />
     </template>
   </section>
 </template>
@@ -323,7 +375,9 @@ h1 { font: 700 34px/44px token.$crm-font-display; letter-spacing: -1px; }
 .surface { @include detail.surface; }
 .head-actions { gap: 10px; } .head-actions > .el-button { height: 32px; margin: 0; }
 .load-error { box-sizing: border-box; min-height: 40px; padding: 9px 16px; margin-bottom: 12px; border: 1px solid token.$crm-danger; border-radius: 5px; background: token.$crm-danger-soft; color: token.$crm-danger; }
-.bulk-card { box-sizing: border-box; height: 60px; padding: 13px 21px; margin-bottom: 14px; }
+.bulk-card { box-sizing: border-box; min-height: 60px; padding: 13px 21px; margin-bottom: 14px; }
+.bulk-warehouse-hint { margin-top: 8px; color: token.$crm-warning; font-size: 12px; line-height: 18px; }
+.warehouse-hint { display: block; margin-top: 4px; text-align: left; color: token.$crm-warning; font-size: 12px; line-height: 16px; }
 .bulk-row { height: 32px; gap: 20px; }
 .date-field { gap: 10px; } .date-field label { white-space: nowrap; color: token.$crm-text-secondary; }
 .date-field :deep(.el-date-editor) { width: 190px; height: 32px; }

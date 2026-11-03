@@ -60,6 +60,34 @@ async function mountPage(interactive = false) {
 }
 
 describe('生产任务编辑页精确保存', () => {
+  it('计划编辑只提交后端允许的四项，产品或财务改动不会夹带提交', async () => {
+    const task = { ...legacyTask(), allowed_update_fields: ['planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids'] }
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: 'plan-v1' })
+    const { wrapper, page } = await mountPage()
+    page.form.planned_start_date = '2026-09-03'
+    page.form.planned_end_date = '2026-09-10'
+    page.form.production_priority = 'HIGH'
+    page.form.follower_ids = ['follower-new']
+    page.form.delivery_date = '2026-09-30'
+    page.products[0]!.quantity = '999'
+    await page.save()
+    expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', {
+      planned_start_date: '2026-09-03', planned_end_date: '2026-09-10', production_priority: 'HIGH', follower_ids: ['follower-new'],
+    }, {}, {}, 'plan-v1')
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith('仅更新计划资料，保存后保留当前生产状态。', '确认保存修改', expect.any(Object))
+    expect(wrapper.find('[aria-label="预计交期"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[aria-label="计划开工"]').attributes('disabled')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('当前对象没有可编辑字段时不提交', async () => {
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: { ...legacyTask(), allowed_update_fields: [] }, etag: 'none' })
+    const { wrapper, page } = await mountPage()
+    page.form.delivery_date = '2026-09-30'
+    await page.save()
+    expect(api.updateProductionTask).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.clearAllMocks()
@@ -208,6 +236,18 @@ describe('生产任务编辑页精确保存', () => {
     wrapper.unmount()
   })
 
+  it('新目录产品无旧颜色外键时仍可修改数量，保留关联且不重新选择属性', async () => {
+    const task = legacyTask()
+    Object.assign(task.products[0], { product_id: null, product_catalog_id: 'catalog-1', product_color_id: null })
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: task, etag: '"task-v1"' })
+    const { wrapper, page } = await mountPage()
+    page.products[0].quantity = '101'
+    await page.save()
+    expect(ElMessage.warning).not.toHaveBeenCalled()
+    expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', { products: [expect.objectContaining({ product_id: null, product_catalog_id: 'catalog-1', product_selection: null, quantity: '101', unit_id: 'unit-1' })] }, {}, {}, '"task-v1"')
+    wrapper.unmount()
+  })
+
   it('合法空颜色文本不会被旧主档颜色覆盖，销售来源数量受可分配上限约束', async () => {
     const task = legacyTask()
     Object.assign(task.products[0], { customer_color: '', color_name: '旧色名', source_delivery_batch_line_id: 'source-1', max_production_quantity: 100 })
@@ -229,7 +269,8 @@ describe('生产任务编辑页精确保存', () => {
     const { wrapper, page } = await mountPage()
     expect(wrapper.text()).not.toContain('USD')
     expect(wrapper.text()).not.toContain('7.12345678')
-    expect(wrapper.text()).toContain('1670.8780')
+    expect(wrapper.find('.summary-money').text()).toBe('￥1670.878')
+    expect((wrapper.vm as unknown as { totalAmountCny: string }).totalAmountCny).toBe('1670.8780')
     page.products[0].quantity = '101'
     await flushPromises()
     expect(wrapper.text()).toContain('1687.5888')
@@ -438,7 +479,8 @@ describe('生产任务编辑页精确保存', () => {
     const { wrapper, page } = await mountPage()
     expect(page.dirty).toBe(false)
     expect((page.products[0] as unknown as { unitPriceCny: string }).unitPriceCny).toBe('15.0000')
-    expect(wrapper.text()).toContain('40.0000')
+    expect(wrapper.find('.summary-money').text()).toBe('￥40')
+    expect((wrapper.vm as unknown as { totalAmountCny: string }).totalAmountCny).toBe('40.0000')
     expect(wrapper.find('.page-heading').text()).not.toContain('保存修改')
     expect(wrapper.find('.edit-footer').exists()).toBe(true)
     await page.save()
@@ -455,7 +497,8 @@ describe('生产任务编辑页精确保存', () => {
     expect(page.dirty).toBe(false)
     page.products[0].quantity = '104'
     await flushPromises()
-    expect(wrapper.find('.edit-summary').text()).toContain('2040.0000')
+    expect(wrapper.find('.summary-money').text()).toBe('￥2040')
+    expect((wrapper.vm as unknown as { totalAmountCny: string }).totalAmountCny).toBe('2040.0000')
     await page.save()
     expect(ElMessage.warning).not.toHaveBeenCalled()
     expect(api.updateProductionTask).toHaveBeenCalledWith('task-1', { products: [expect.objectContaining({ client_key: 'product-line-1', quantity: '104', unit_price: '15.0000' }), expect.objectContaining({ client_key: 'line-2', quantity: '12', unit_price: '40.0000' })] }, {}, {}, '"task-v1"')

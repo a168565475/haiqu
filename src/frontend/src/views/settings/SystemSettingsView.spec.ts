@@ -30,6 +30,7 @@ vi.mock('./NotificationDeliveryRecordsView.vue', () => ({ default: pages.compone
 vi.mock('./ThemeSettingsView.vue', () => ({ default: pages.component('theme') }))
 vi.mock('./ReferenceDataSettingsView.vue', () => ({ default: pages.component('referenceData') }))
 vi.mock('./WeComSettingsView.vue', () => ({ default: pages.component('wecom') }))
+vi.mock('./CodexConnectionSettingsView.vue', () => ({ default: pages.component('codex') }))
 vi.mock('./AccessManagementView.vue', () => ({ default: pages.component('access') }))
 
 const dialogStub = defineComponent({
@@ -57,7 +58,7 @@ beforeEach(() => {
   const auth = useAuthStore()
   auth.applyAuthResponse({ authenticated: true, user: { id: 1, username: 'admin', display_name: '管理员', is_superuser: true,
     employee: { id: 'admin', employee_code: 'ADMIN', display_name: '管理员', status: 'ACTIVE' }, permissions: ['workflow.view_slapolicy'], data_scope: 'ALL' } })
-  vi.spyOn(auth, 'ensureFreshAuthentication').mockResolvedValue()
+  vi.spyOn(auth, 'ensureAuthentication').mockResolvedValue()
   pages.canClose.mockResolvedValue(true)
   vi.spyOn(ElMessage, 'warning').mockImplementation(() => ({ close: vi.fn() }))
   vi.spyOn(ElMessage, 'info').mockImplementation(() => ({ close: vi.fn() }))
@@ -66,9 +67,9 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('系统配置卡片与页面窗口', () => {
-  it('首页展示12个入口，未点击时不实例化任何业务页面', () => {
+  it('首页展示13个入口，未点击时不实例化任何业务页面', () => {
     const wrapper = render()
-    expect(keys(wrapper)).toHaveLength(12)
+    expect(keys(wrapper)).toHaveLength(13)
     expect(keys(wrapper).indexOf('sendRecords')).toBe(keys(wrapper).indexOf('notifications') + 1)
     expect(pages.created).not.toHaveBeenCalled()
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
@@ -90,18 +91,19 @@ describe('系统配置卡片与页面窗口', () => {
     ['production', 'production'], ['email', 'email'], ['inquiry', 'inquiry'], ['masterData', 'masterData'],
     ['numberRules', 'numberRules'], ['notifications', 'notifications'], ['sendRecords', 'sendRecords'], ['theme', 'theme'],
     ['parameters', 'referenceData'], ['wecom', 'wecom'], ['access', 'access'], ['dictionary', 'referenceData'],
+    ['codex', 'codex'],
   ] as const)('%s 加载原来的 %s 页面并保持当前路由', async (key, target) => {
     const wrapper = render()
     await open(wrapper, key)
     expect(wrapper.get('[data-loaded-page]').attributes('data-loaded-page')).toBe(target)
     expect(pages.created).toHaveBeenCalledExactlyOnceWith(target)
-    expect(useAuthStore().ensureFreshAuthentication).toHaveBeenCalledTimes(1)
+    expect(useAuthStore().ensureAuthentication).toHaveBeenCalledTimes(1)
     expect(navigation.push).not.toHaveBeenCalled()
     expect(navigation.replace).not.toHaveBeenCalled()
     const dialog = wrapper.findComponent(AppWindowDialog)
     expect(dialog.props()).toMatchObject({ fullscreen: true, edgeToEdge: true, destroyOnClose: true, closeOnClickModal: false, width: 1120, height: 740 })
     if (key === 'parameters' || key === 'dictionary') expect(wrapper.get('[data-loaded-page]').attributes('data-section')).toBe(key)
-    if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'wecom', 'access'].includes(key)) expect(wrapper.get('[data-loaded-page]').attributes('data-embedded')).toBe('true')
+    if (['production', 'email', 'inquiry', 'masterData', 'numberRules', 'notifications', 'sendRecords', 'wecom', 'access', 'codex'].includes(key)) expect(wrapper.get('[data-loaded-page]').attributes('data-embedded')).toBe('true')
   })
   it('子页面拒绝关闭时保留窗口和路由，通过后销毁且可再次打开', async () => {
     const wrapper = render()
@@ -142,7 +144,7 @@ describe('系统配置卡片与页面窗口', () => {
   })
   it('身份确认失败不打开配置，也不误报已登录', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    vi.mocked(useAuthStore().ensureFreshAuthentication).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(useAuthStore().ensureAuthentication).mockRejectedValueOnce(new Error('offline'))
     const wrapper = render()
     await open(wrapper, 'dictionary')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
@@ -152,21 +154,21 @@ describe('系统配置卡片与页面窗口', () => {
     expect(errorLog).toHaveBeenCalledWith('配置入口身份检查失败', expect.any(Error))
   })
   it('身份刷新发现会话失效时转到登录页并保留配置返回地址', async () => {
-    vi.mocked(useAuthStore().ensureFreshAuthentication).mockImplementationOnce(async () => { useAuthStore().clearAuthentication() })
+    vi.mocked(useAuthStore().ensureAuthentication).mockImplementationOnce(async () => { useAuthStore().clearAuthentication() })
     const wrapper = render()
     await open(wrapper, 'dictionary')
     expect(navigation.replace).toHaveBeenCalledWith({ name: 'login', query: { redirect: '/settings' } })
     expect(pages.created).not.toHaveBeenCalled()
   })
   it('身份刷新进入待授权状态时转到待授权页', async () => {
-    vi.mocked(useAuthStore().ensureFreshAuthentication).mockImplementationOnce(async () => { useAuthStore().user!.waiting_for_role = true })
+    vi.mocked(useAuthStore().ensureAuthentication).mockImplementationOnce(async () => { useAuthStore().user!.waiting_for_role = true })
     const wrapper = render()
     await open(wrapper, 'dictionary')
     expect(navigation.replace).toHaveBeenCalledWith({ name: 'waiting-role' })
     expect(pages.created).not.toHaveBeenCalled()
   })
   it('身份刷新撤销目标权限时再次判断，不能按旧卡片打开', async () => {
-    vi.mocked(useAuthStore().ensureFreshAuthentication).mockImplementationOnce(async () => { useAuthStore().user!.is_superuser = false })
+    vi.mocked(useAuthStore().ensureAuthentication).mockImplementationOnce(async () => { useAuthStore().user!.is_superuser = false })
     const wrapper = render()
     await open(wrapper, 'wecom')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
@@ -175,7 +177,7 @@ describe('系统配置卡片与页面窗口', () => {
   })
   it('身份确认期间卸载后，迟到的失效响应不能导航或加载页面', async () => {
     let finish!: () => void
-    vi.mocked(useAuthStore().ensureFreshAuthentication).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    vi.mocked(useAuthStore().ensureAuthentication).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     const wrapper = render()
     await wrapper.get('[data-settings-key="dictionary"]').trigger('click')
     wrapper.unmount(); wrappers.splice(wrappers.indexOf(wrapper), 1)

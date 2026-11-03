@@ -21,6 +21,7 @@ from apps.production_scheduling.models import ProductionSchedule, ProductionSche
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct
 from apps.workshop_reporting.models import WageScheme, WageSchemeLine, WorkReportLine
 from .models import InternalSemiFinishedReceiptLine
+from .processing_material_snapshots import tube_processing_not_enabled
 from .tube_processing_quantities import TubeQuantityError, calculate_tube_allowance, whole_pieces
 
 
@@ -73,7 +74,7 @@ def _usage(product_line_id, *, exclude_tube_order_id=None, exclude_receipt_id=No
     usage = defaultdict(lambda: dict(received=0, dispatched=0, reserved=0, legacy_dispatched=0))
     from apps.outsourcing.models import TubeOutsourcingLine
     tube_rows = TubeOutsourcingLine.objects.filter(
-        order__product_line_id=product_line_id, order__source_kind='METAL',
+        order__product_line_id=product_line_id, order__source_kind='METAL', order__is_plan=False,
     )
     if exclude_tube_order_id:
         tube_rows = tube_rows.exclude(order_id=exclude_tube_order_id)
@@ -81,6 +82,9 @@ def _usage(product_line_id, *, exclude_tube_order_id=None, exclude_receipt_id=No
         usage[str(row['component_identity'])]['reserved'] += row['quantity']
     for row in tube_rows.filter(order__status__in=['PROCESSING', 'COMPLETED']).values('component_identity').annotate(quantity=Sum('quantity')):
         usage[str(row['component_identity'])]['dispatched'] += row['quantity']
+    # 总单直发与历史实交都不以报工数量为前置，但实发仍占首次产出，避免重复入库。
+    for row in tube_rows.filter(order__plan__isnull=False, order__status__in=['PROCESSING', 'COMPLETED']).values('component_identity').annotate(quantity=Sum('quantity')):
+        usage[str(row['component_identity'])]['legacy_dispatched'] += row['quantity']
     receipt_rows = InternalSemiFinishedReceiptLine.objects.filter(
         receipt__schedule_product__product_line_id=product_line_id, receipt__plan_category='METAL',
     )
@@ -103,7 +107,7 @@ def _usage(product_line_id, *, exclude_tube_order_id=None, exclude_receipt_id=No
         quantity=Sum('original_handoff__handoff_pieces'),
     ):
         key = str(row['original_handoff__source__issue_line__requirement__component_identity'])
-        usage[key]['legacy_dispatched'] = row['quantity']
+        usage[key]['legacy_dispatched'] += row['quantity']
     return usage
 
 
@@ -154,8 +158,9 @@ def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=No
         issue_id=OuterRef('issue_id'), action='CREATED', snapshot__plan_source__plan_category='METAL')
     issued_rows = list(MaterialIssueLine.objects.filter(
         issue__product_line=product_line, issue__status='ISSUED', issue__stock_mode='PUBLIC_V2',
-        line_type='RAW', requirement__measurement_kind='PIPE', requirement__product_line=product_line,
-    ).annotate(metal_origin=Exists(metal_origin)).filter(metal_origin=True)
+        line_type='RAW', requirement__measurement_kind__in=['PIPE', 'CATALOG'], requirement__product_line=product_line,
+        conversion_snapshot__kind='PIPE',
+    ).annotate(metal_origin=Exists(metal_origin)).filter(metal_origin=True).order_by('issue__issued_at', 'pk')
         .select_related('requirement', 'unit', 'issue__product_line')
         .prefetch_related(
             Prefetch('issue__audit_events', queryset=MaterialIssueAuditEvent.objects.filter(action='CREATED')),
@@ -163,6 +168,7 @@ def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=No
                      .select_related('movement', 'balance'))))
     issued = defaultdict(Decimal)
     invalid_inputs = defaultdict(list)
+    catalog_inputs = defaultdict(list)
     material_cache = {}
     for row in issued_rows:
         key = str(row.requirement.component_identity)
@@ -172,10 +178,17 @@ def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=No
             if len(lines) != 1 or row.unit.unit_name != '支' or frozen.get('kind') != 'PIPE':
                 raise ValueError()
             line = lines[0]
-            material, _ = resolve_bom_line_raw_material(line, cache=material_cache)
-            if material is None or row.raw_material_id != material.pk or row.requirement.raw_material_id != material.pk:
-                raise ValueError()
-            frozen_source(row)
+            if line.material_catalog_id:
+                from .catalog_processing_sources import freeze_catalog_pipe_source
+                proof = freeze_catalog_pipe_source(row)
+                if str(line.material_catalog_id) != proof['material_catalog_id']:
+                    raise ValueError()
+                catalog_inputs[key].append(proof)
+            else:
+                material, _ = resolve_bom_line_raw_material(line, cache=material_cache)
+                if material is None or row.raw_material_id != material.pk or row.requirement.raw_material_id != material.pk:
+                    raise ValueError()
+                frozen_source(row)
             if (str(frozen.get('component_identity')) != key
                     or str(frozen.get('product_line_id')) != str(product_line.pk)
                     or Decimal(str(frozen.get('cutting_length_mm', 0))) != line.cutting_length_mm
@@ -189,6 +202,10 @@ def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=No
     for key in sorted(set(components) | set(usage)):
         lines = components.get(key, [])
         blockers = []
+        if len(lines) == 1:
+            unavailable = tube_processing_not_enabled(lines[0])
+            if unavailable:
+                blockers.append(unavailable)
         if not bom_ready or len(lines) != 1:
             blockers.append('请先确认与订单数量一致、部位唯一的最新BOM。')
         part = lines[0].part_name if len(lines) == 1 else key
@@ -228,6 +245,7 @@ def metal_component_limits(product_line, *, as_of=None, exclude_tube_order_id=No
             blockers.append(str(exc))
         result[key] = dict(component_identity=key, part_name=part, basis_ready=not blockers,
                            blockers=list(dict.fromkeys(blockers)), operations=evidence,
+                           catalog_inputs=catalog_inputs[key],
                            required=required, issued=whole_pieces(issued[key], '实际领用投入'),
                            usage={name: str(value) for name, value in values.items()},
                            allowance=asdict(allowance) if allowance else None)

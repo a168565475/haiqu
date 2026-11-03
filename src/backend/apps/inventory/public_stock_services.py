@@ -25,6 +25,7 @@ from .models import (
     WarehouseZone,
 )
 from .public_stock_identity import validate_public_identity
+from .catalog_stock_identity import CATALOG_STOCK_KINDS
 from .stock_services import InventoryStockValidationError
 
 
@@ -66,7 +67,7 @@ def _database_identity(identity):
     # 冻结快照和哈希保留 JSON 字符串；仅数据库外围外键转为 UUID，避免重放误判。
     identity["unit_id"] = _uuid(identity["unit_id"], "库存单位")
     identity["raw_material_id"] = _uuid(identity["raw_material_id"], "管材原料", optional=True)
-    if identity["stock_kind"] == "RAW_PIPE" and identity["raw_bar_length_m"] > MAX_RAW_BAR_LENGTH:
+    if identity["raw_bar_length_m"] is not None and identity["raw_bar_length_m"] > MAX_RAW_BAR_LENGTH:
         _invalid("原料长度超出可保存范围，最多为 16 位整数和 2 位小数。", "PIPE_LENGTH_INVALID")
     return identity
 
@@ -198,7 +199,7 @@ def _validate_location(*, zone_id, stock_kind, quality):
     zone = lock_public_stock_locations([zone_id])[zone_id]
     if zone.status != RecordStatus.ACTIVE or zone.warehouse.status != RecordStatus.ACTIVE:
         _invalid("库区或仓库不存在或已停用。", "ZONE_UNAVAILABLE")
-    expected = WarehouseType.MATERIAL if stock_kind == "RAW_PIPE" else WarehouseType.SEMI_FINISHED
+    expected = WarehouseType.MATERIAL if stock_kind in ("RAW_PIPE", "CATALOG_RAW") else WarehouseType.SEMI_FINISHED
     if zone.warehouse.warehouse_type != expected:
         _invalid("原材料管材须存放材料仓，半成品须存放半成品仓。", "WAREHOUSE_SCOPE_INVALID")
     return zone
@@ -209,12 +210,12 @@ def _validate_unit_and_quantity(*, unit_id, stock_kind, quantity, expected_unit_
     if unit is None:
         _invalid("库存单位不存在或已停用。", "UNIT_UNAVAILABLE")
     name = unit.unit_name.strip()
-    if name != expected_unit_name:
+    if stock_kind not in CATALOG_STOCK_KINDS and name != expected_unit_name:
         _invalid("现有单位名称与冻结库存身份不一致，不能改变原库存的计量含义。", "UNIT_MISMATCH")
     if stock_kind == "RAW_PIPE" and name != "根":
         _invalid("原料管材公共余额必须按根计量。", "UNIT_MISMATCH")
     # 本期公共管材和半成品均为离散实物，和数据库整数约束保持一致。
-    if quantity != quantity.to_integral_value():
+    if (stock_kind not in CATALOG_STOCK_KINDS or expected_unit_name in {"根", "支", "套"}) and quantity != quantity.to_integral_value():
         _invalid("公共库存按根、支、套等实物数量计量，必须为整数。", "WHOLE_QUANTITY_REQUIRED")
 
 
@@ -234,14 +235,16 @@ def _locked_balance(identity, zone_id, quality):
             with transaction.atomic():
                 balance = PublicStockBalance.objects.create(
                     **lookup, identity_snapshot=identity["identity_snapshot"],
+                    material_catalog_id=(identity["identity_snapshot"]["material_selection_snapshot"]["catalog_id"]
+                                         if identity["stock_kind"] in CATALOG_STOCK_KINDS else None),
                     raw_material_id=identity["raw_material_id"], raw_bar_length_m=identity["raw_bar_length_m"],
-                    quantity=0, meter_quantity=Decimal("0.00") if identity["stock_kind"] == "RAW_PIPE" else None,
+                    quantity=0, meter_quantity=Decimal("0.00") if identity["raw_bar_length_m"] is not None else None,
                     version=1,
                 )
         except IntegrityError:
             balance = PublicStockBalance.objects.select_for_update(of=("self",)).order_by("id").get(**lookup)
     if any((
-        balance.identity_snapshot != identity["identity_snapshot"],
+        (balance.identity_snapshot != identity["identity_snapshot"] and identity["stock_kind"] not in CATALOG_STOCK_KINDS),
         balance.raw_material_id != identity["raw_material_id"],
         balance.raw_bar_length_m != identity["raw_bar_length_m"],
     )):
@@ -259,7 +262,7 @@ def _record(*, balance, quantity, direction, source):
     before_meters = balance.meter_quantity
     movement_meters = None
     after_meters = None
-    if balance.stock_kind == "RAW_PIPE":
+    if balance.raw_bar_length_m is not None:
         if before_meters != before * balance.raw_bar_length_m:
             _invalid("管材根数和米数不一致，不能继续记账。", "PIPE_BALANCE_INVALID")
         movement_meters = quantity * balance.raw_bar_length_m
@@ -271,7 +274,7 @@ def _record(*, balance, quantity, direction, source):
     balance.version += 1
     balance.save(update_fields=["quantity", "meter_quantity", "version", "updated_at"])
     return PublicStockMovement.objects.create(
-        balance=balance, direction=direction, quantity=quantity,
+        balance=balance, stock_kind_snapshot=balance.stock_kind, direction=direction, quantity=quantity,
         before_quantity=before, after_quantity=after,
         meter_quantity=movement_meters, before_meter_quantity=before_meters, after_meter_quantity=after_meters,
         **source,
@@ -354,7 +357,7 @@ def available_public_stock(*, identity, zone_id=None, quality=MaterialStockQuali
         "unit_id": identity["unit_id"], "quality": quality,
         "zone__status": RecordStatus.ACTIVE, "zone__warehouse__status": RecordStatus.ACTIVE,
         "zone__warehouse__warehouse_type": (
-            WarehouseType.MATERIAL if identity["stock_kind"] == "RAW_PIPE" else WarehouseType.SEMI_FINISHED
+            WarehouseType.MATERIAL if identity["stock_kind"] in ("RAW_PIPE", "CATALOG_RAW") else WarehouseType.SEMI_FINISHED
         ),
         "unit__status": "ACTIVE", "unit__archived_at__isnull": True,
         "unit__unit_name": identity["identity_snapshot"]["unit_name"],
@@ -366,6 +369,8 @@ def available_public_stock(*, identity, zone_id=None, quality=MaterialStockQuali
             "raw_material__category__category_name": "管材", "raw_material__category__item_type": "MATERIAL",
             "raw_material__category__status": "ACTIVE", "raw_material__category__archived_at__isnull": True,
         })
+    if identity["stock_kind"] in CATALOG_STOCK_KINDS:
+        filters.pop("unit__unit_name", None)
     if zone_id is not None:
         filters["zone_id"] = _uuid(zone_id, "库区")
     return PublicStockBalance.objects.filter(**filters).aggregate(total=Sum("quantity"))["total"] or Decimal("0")

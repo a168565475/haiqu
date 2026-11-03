@@ -6,7 +6,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
+from django.contrib.auth.models import Group, Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -17,10 +17,17 @@ from apps.audit.models import AuditLog
 from apps.boms.api.serializers import BomListSerializer
 from apps.boms.models import Bom, BomCreationMethod, BomLine, BomSection, BomStatus
 from apps.boms.selectors import boms_with_context
+from apps.boms.tube_metrics import apply_tube_metrics
 from apps.customers.models import CustomerAccount, CustomerAssignment
 from apps.files.models import BusinessFile, FileScanStatus
-from apps.organizations.models import Employee
-from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus
+from apps.organizations.models import (
+    Employee,
+    EmployeeOrganizationAssignment,
+    EmployeeRoleAssignment,
+    OrganizationUnit,
+    RoleProfile,
+)
+from apps.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus, PurchaseRequest, PurchaseRequestStatus
 from apps.products.models import ProductInformation
 from apps.reference_data.models import Currency, ProductColor, ProductionUnit
 
@@ -39,6 +46,21 @@ class ProductionTaskApiTests(APITestCase):
         self.follower = Employee.objects.create(
             employee_code="PRODUCTION_TASK_FOLLOWER",
             display_name="测试跟单员",
+        )
+        business, _ = OrganizationUnit.objects.get_or_create(
+            unit_code="DEPT_BUSINESS", defaults={"unit_name": "业务部"}
+        )
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=business, effective_from=timezone.now()
+        )
+        merchandiser = RoleProfile.objects.filter(role_code="MERCHANDISER").first()
+        if merchandiser is None:
+            group, _ = Group.objects.get_or_create(name="PRODUCTION_TASK_MERCHANDISER_TEST")
+            merchandiser = RoleProfile.objects.create(
+                role_code="MERCHANDISER", display_name="跟单", auth_group=group
+            )
+        EmployeeRoleAssignment.objects.create(
+            employee=self.follower, role_profile=merchandiser, effective_from=timezone.now()
         )
         self.user.user_permissions.set(
             Permission.objects.filter(content_type__app_label="production_tasks")
@@ -235,8 +257,9 @@ class ProductionTaskApiTests(APITestCase):
 
         self.assertEqual(listed.status_code, 200, listed.data)
         self.assertEqual(listed.data["meta"]["total"], 1)
-        self.assertEqual(listed.data["data"][0]["currency_code"], self.currency.code)
-        self.assertEqual(Decimal(listed.data["data"][0]["total_amount"]), Decimal("155"))
+        self.assertEqual(Decimal(listed.data["data"][0]["products"][0]["local_total_amount"]), Decimal("125"))
+        self.assertNotIn("currency_code", listed.data["data"][0])
+        self.assertNotIn("total_amount", listed.data["data"][0])
         self.assertEqual(stats.data["data"]["draft"], 1)
         self.assertEqual(stats.data["data"]["ready"], 0)
         self.assertEqual(stats.data["data"]["in_production"], 0)
@@ -316,6 +339,11 @@ class ProductionTaskApiTests(APITestCase):
             source_revision="production-list-status-test",
             status=PurchaseOrderStatus.PURCHASING,
             created_by_employee=self.employee,
+        )
+
+        PurchaseOrderLine.objects.create(
+            purchase_order=purchase_order, line_number=1, bom=first_bom,
+            product_line_id_snapshot=product_line.pk, quantity_parse_status="READY",
         )
 
         pending = self.client.get("/api/v1/production-tasks/", {"search": task.task_number})
@@ -531,6 +559,12 @@ class ProductionTaskApiTests(APITestCase):
             self.payload(delivery_date=yesterday.isoformat()),
             format="json",
         )
+        # 同人可以兼任，但该正向用例必须具有当前有效的跟单任职。
+        EmployeeRoleAssignment.objects.create(
+            employee=self.employee,
+            role_profile=RoleProfile.objects.get(role_code="MERCHANDISER"),
+            effective_from=timezone.now() - timedelta(days=1),
+        )
         duplicate_follower = self.client.post(
             "/api/v1/production-tasks/",
             self.payload(follower_ids=[str(self.employee.pk)]),
@@ -538,6 +572,9 @@ class ProductionTaskApiTests(APITestCase):
         )
         self.assertEqual(bad_date.status_code, 400, bad_date.data)
         self.assertEqual(duplicate_follower.status_code, 201, duplicate_follower.data)
+        task = ProductionTask.objects.get(pk=duplicate_follower.data["data"]["id"])
+        self.assertEqual(task.salesperson_id, self.employee.pk)
+        self.assertEqual(list(task.followers.values_list("pk", flat=True)), [self.employee.pk])
 
     def test_allows_multiple_products_with_details_on_each_color_line(self):
         another_product = ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(
@@ -1125,9 +1162,22 @@ class ProductionTaskApiTests(APITestCase):
             length_value="1000",
             unit_consumption="2",
             total_consumption="20",
-            branch_count="5.05",
-            raw_values={"tube_cut_piece_count": "4", "long_material_total_weight_kg": "9.49"},
+            branch_count="6",
+            cutting_length_mm=1000,
+            pieces_per_product=2,
+            pieces_per_bar=4,
+            raw_bar_length_m=Decimal("4.05"),
+            suggested_bar_count=6,
+            suggested_purchase_meters=Decimal("24.30"),
+            raw_values={
+                "tube_cut_piece_count": "4", "pipe_plan_version": 2,
+                "tube_shape": "圆管", "tube_diameter": "25", "tube_thickness": "1",
+            },
         )
+        # 沿用公式专测的完整几何，通过正式公式流程保存快照，再验证数量同步。
+        apply_tube_metrics(line, recalculate=True)
+        line.save(update_fields=["raw_values"])
+        saved_formula = deepcopy(line.raw_values["tube_formula_snapshot"])
         unresolved_line = BomLine.objects.create(
             section=section,
             line_number=2,
@@ -1135,7 +1185,11 @@ class ProductionTaskApiTests(APITestCase):
             unit_consumption="",
             total_consumption="人工值",
             branch_count="人工支数",
-            raw_values={"long_material_total_weight_kg": "人工重量"},
+            raw_values={
+                "tube_metrics_manual": True,
+                "coating_unit_area_sqm": "0.12", "purchase_unit_weight_kg": "0.34",
+                "long_material_total_weight_kg": "人工重量",
+            },
         )
         self.user.user_permissions.add(
             Permission.objects.get(content_type__app_label="boms", codename="change_bom")
@@ -1181,13 +1235,22 @@ class ProductionTaskApiTests(APITestCase):
         self.assertEqual(bom.order_quantity, 12)
         self.assertEqual(bom.status, BomStatus.PENDING_CONFIRMATION)
         self.assertEqual(line.total_consumption, "24")
-        # 当前管材规则按整根向上取整：24 × 1.01 / 4 得到 7 根。
-        self.assertEqual(line.branch_count, "7")
-        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "13.1544")
+        # 数量变化使用版本3净需求：24 / 4 = 6根，原长4.05m，共24.30m。
+        self.assertEqual(line.raw_values["pipe_plan_version"], 3)
+        self.assertEqual(line.branch_count, "6")
+        self.assertEqual(line.suggested_bar_count, 6)
+        self.assertEqual(line.raw_bar_length_m, Decimal("4.05"))
+        self.assertEqual(line.suggested_purchase_meters, Decimal("24.30"))
+        self.assertEqual(line.raw_values["tube_formula_snapshot"], saved_formula)
+        # (25-1)*1*3.14*7.854*4050/1000000，单根四舍五入到4位后乘6。
+        self.assertEqual(line.raw_values["long_material_unit_weight_kg"], "2.3971")
+        self.assertEqual(line.raw_values["long_material_total_weight_kg"], "14.3826")
         # 当前缺参草稿规则清空无法重新计算的值，待补齐依据后再确认。
         self.assertEqual(unresolved_line.total_consumption, "")
         self.assertEqual(unresolved_line.branch_count, "")
         self.assertEqual(unresolved_line.raw_values["long_material_total_weight_kg"], "")
+        self.assertEqual(unresolved_line.raw_values["purchase_unit_weight_kg"], "0.3400")
+        self.assertNotIn("tube_formula_snapshot", unresolved_line.raw_values)
         self.assertTrue(
             AuditLog.objects.filter(
                 object_type="BOM",

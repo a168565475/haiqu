@@ -50,7 +50,7 @@ def source_revision(task, products):
     payload = {"id": task.pk, "task_number": task.task_number, "status": task.status, "archived_at": task.archived_at,
                "salesperson": salesperson_data(task), "order_date": task.order_date,
                "products": [{"id": product.pk, "updated_at": product.updated_at, "quantity": str(product.quantity),
-                             "unit_id": product.unit_id, "unit_code": product.unit.unit_code, "unit_name": product.unit.unit_name,
+                             "unit_id": product.unit_id, "unit_code": product.unit_code, "unit_name": product.unit_name,
                              "currency": product.currency.code, "unit_price": str(product.unit_price),
                              "exchange_rate": str(product.exchange_rate), "exchange_rate_snapshot": product.exchange_rate_snapshot,
                              **{field: getattr(product, field) for field in PRODUCT_SNAPSHOT_FIELDS}}
@@ -105,7 +105,7 @@ def product_option(product, occupied=None, editing_statement_id=None):
     if occupied and str(occupied.statement_id) != str(editing_statement_id):
         reason, code = f"已被对账单 {occupied.statement.number} 占用。", "SOURCE_LINE_OCCUPIED"
     return {"id": str(product.pk), **{field: getattr(product, field) for field in PRODUCT_SNAPSHOT_FIELDS},
-            "quantity": str(product.quantity), "unit_code": product.unit.unit_code, "unit_name": product.unit.unit_name,
+            "quantity": str(product.quantity), "unit_code": product.unit_code, "unit_name": product.unit_name,
             "reference_unit_price_cny": str(price) if price is not None else None,
             "selectable": reason is None, "reason": reason, "error_code": code,
             "occupied_statement_number": occupied.statement.number if occupied else None}

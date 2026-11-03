@@ -14,7 +14,8 @@ class QRStartSerializer(serializers.Serializer):
             raise serializers.ValidationError("回跳地址必须是本站业务页面。")
         path = urlsplit(decoded).path.lower()
         if (any(part in {".", ".."} for part in path.split("/"))
-                or any(path == prefix or path.startswith(prefix + "/") for prefix in ("/login", "/auth", "/api", "/admin"))):
+                or any(path == prefix or path.startswith(prefix + "/")
+                       for prefix in ("/login", "/auth", "/api", "/admin", "/m/login", "/m/auth"))):
             raise serializers.ValidationError("不能回跳到登录、认证或接口地址。")
         return value
 

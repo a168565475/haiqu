@@ -1,5 +1,5 @@
 from apps.organizations.models import Employee
-from ..selectors import reporting_source_products
+from ..selectors import reporting_source_products, reporting_source_crafts, reporting_source_workshop_ids
 from apps.access_control.resource_scopes import has_resource_grant
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -8,13 +8,13 @@ from uuid import UUID
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, Exists, Max, OuterRef, Sum
 from django.db.models.functions import Coalesce
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -116,13 +116,13 @@ class ReportingContextView(generics.GenericAPIView):
         ).filter(
             removed_at__isnull=True,
         ).order_by("-schedule__created_at", "line_number")[:200]
-        workshop_ids = allowed_workshop_ids(request, for_work_reports=purpose == "work_report")
+        workshop_ids = reporting_source_workshop_ids(request, required_permission)
         workshops = Workshop.objects.filter(status=RecordStatus.ACTIVE)
         if workshop_ids is not None:
             workshops = workshops.filter(pk__in=workshop_ids)
         crafts = Craft.objects.filter(status=RecordStatus.ACTIVE, craft_type="INTERNAL", workshop__in=workshops).select_related("workshop")
         if schedule_product:
-            craft_ids = schedule_product.crafts.filter(removed_at__isnull=True).values("craft_id")
+            craft_ids = reporting_source_crafts(request, required_permission).filter(schedule_product=schedule_product).values("craft_id")
             crafts = crafts.filter(pk__in=craft_ids)
         operations = Operation.objects.filter(status=RecordStatus.ACTIVE, craft__in=crafts).select_related("craft", "reporting_unit")
         employees = active_employees(Employee.objects.filter(
@@ -223,14 +223,20 @@ class PlanWageStatusView(generics.GenericAPIView):
         links = ProductionScheduleProductCraft.objects.select_related("craft").filter(
             schedule_product_id__in=products, removed_at__isnull=True, plan_category=plan_category
         )
+        if has_reporting_access:
+            links = (reporting_source_crafts(request, 'workshop_reporting.view_wagescheme', links)
+                     | reporting_source_crafts(request, 'workshop_reporting.view_workreport', links))
+        report_scope_keys = set(reporting_source_crafts(
+            request, 'workshop_reporting.view_workreport', links,
+        ).values_list('schedule_product_id', 'craft__workshop_id', 'craft_id')) if has_reporting_access else set()
         scopes_by_product = {}
         for link in links:
             scopes_by_product.setdefault(link.schedule_product_id, set()).add(
                 (link.craft.workshop_id, link.craft_id)
             )
         if has_reporting_access:
-            wage_allowed_ids = allowed_workshop_ids(request)
-            report_allowed_ids = allowed_workshop_ids(request, for_work_reports=True)
+            wage_allowed_ids = reporting_source_workshop_ids(request, 'workshop_reporting.view_wagescheme')
+            report_allowed_ids = reporting_source_workshop_ids(request)
             report_add_ids = allowed_workshop_ids(
                 request, for_work_reports=True, permission="workshop_reporting.add_workreport",
             )
@@ -312,7 +318,7 @@ class PlanWageStatusView(generics.GenericAPIView):
                     "plan_status_display": "进行中",
                 })
                 continue
-            report_allowed = report_allowed_set is None or workshop_id in report_allowed_set
+            report_allowed = (product_id, workshop_id, craft_id) in report_scope_keys
             can_create_report = request.user.is_superuser or (
                 request.user.has_perm("workshop_reporting.add_workreport")
                 and request.user.has_perm("workshop_reporting.view_workreport")
@@ -573,7 +579,8 @@ class WorkReportViewSet(viewsets.GenericViewSet):
             return WorkReport.objects.none()
         return work_reports_with_context(accessible_work_reports(self.request))
 
-    @extend_schema(operation_id="workshop_reporting_work_report_list", responses=OpenApiTypes.OBJECT)
+    @extend_schema(operation_id="workshop_reporting_work_report_list", responses=OpenApiTypes.OBJECT,
+                   parameters=[OpenApiParameter("plan_category", OpenApiTypes.STR, enum=PlanCategory.values)])
     def list(self, request):
         queryset = self.get_queryset()
         production_task_id = _uuid(request.query_params.get("production_task_id"), "production_task_id")
@@ -584,6 +591,17 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         if schedule_product_id: queryset = queryset.filter(schedule_product_id=schedule_product_id)
         if workshop_id: queryset = queryset.filter(workshop_id=workshop_id)
         if craft_id: queryset = queryset.filter(scheme__scope_craft_id=craft_id)
+        plan_category = request.query_params.get("plan_category", "").strip().upper()
+        if plan_category:
+            if plan_category not in PlanCategory.values:
+                raise ValidationError({"plan_category": "计划分类参数不正确。"})
+            # 历史报工按排产工艺快照归类，不随当前工艺配置修改或移除而变化。
+            category_link = ProductionScheduleProductCraft.objects.filter(
+                schedule_product_id=OuterRef("schedule_product_id"),
+                craft_id=OuterRef("scheme__scope_craft_id"),
+                craft_type_snapshot="INTERNAL", plan_category=plan_category,
+            )
+            queryset = queryset.filter(Exists(category_link))
         page = list(self.paginate_queryset(queryset.order_by("-production_date", "-created_at", "-id")))
         cumulative = work_report_cumulative_quantities(queryset)
         payload = []
@@ -645,7 +663,13 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         production_date = _date(request.query_params.get("production_date"), "production_date")
         if not all((product_line_id, workshop_id, craft_id, production_date)):
             raise ValidationError("product_line_id、workshop_id、craft_id、production_date 均为必填项。")
-        _ensure_workshop_scope(request, workshop_id, for_work_reports=True)
+        sources = reporting_source_crafts(request, 'workshop_reporting.view_workreport').filter(
+            schedule_product__product_line_id=product_line_id, craft_id=craft_id, craft__workshop_id=workshop_id,
+        )
+        if schedule_product_id:
+            sources = sources.filter(schedule_product_id=schedule_product_id)
+        if not sources.exists():
+            raise PermissionDenied('当前账号没有该任务与工序的报工读取权限。')
         scheme = price_scheme_for(
             product_line_id=product_line_id, workshop_id=workshop_id,
             craft_id=craft_id, production_date=production_date,
@@ -654,6 +678,12 @@ class WorkReportViewSet(viewsets.GenericViewSet):
         visible_reports = accessible_work_reports(request).filter(
             product_line_id=product_line_id, workshop_id=workshop_id
         )
+        if schedule_product_id:
+            get_object_or_404(
+                reporting_source_products(request, "workshop_reporting.view_workreport"),
+                pk=schedule_product_id, product_line_id=product_line_id,
+            )
+            visible_reports = visible_reports.filter(schedule_product_id=schedule_product_id)
         line_queryset = WorkReportLine.objects.filter(report__in=visible_reports)
         cumulative = {
             row["work_item_id"]: row["quantity"]

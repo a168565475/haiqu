@@ -1,4 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { apiClient } from '@/api/request'
 import ElementPlus, { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SalesOrderEditorView from './SalesOrderEditorView.vue'
@@ -9,7 +11,7 @@ const api = vi.hoisted(() => ({
   route: { params: {} as Record<string, string>, query: {} as Record<string, string> },
 }))
 vi.mock('vue-router', () => ({ useRoute: () => api.route, useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), onBeforeRouteLeave: vi.fn() }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { employee: { id: 'employee' } }, hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, employee: { id: 'employee' } }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: () => true }) }))
 vi.mock('@/api/salesOrders', async (original) => ({
   ...await original<typeof import('@/api/salesOrders')>(), fetchSalesOrderOptions: api.options, fetchSalesOrderExchangeRate: api.rate,
   fetchQuotationOrderContext: api.context, fetchSalesOrder: api.order, updateSalesOrder: api.update,
@@ -51,6 +53,8 @@ function tableImage(wrapper: VueWrapper) { return wrapper.find('.product-table .
 
 beforeEach(() => {
   vi.clearAllMocks()
+  setActivePinia(createPinia())
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new File(['png'], 'server-image.png', { type: 'image/png' }), headers: {} })
   api.route.params = {}; api.route.query = {}
   api.options.mockResolvedValue({ customers: [], transaction_entities: [], buyer_addresses: [], products: [], employees: [], currencies: [], accepted_quotation_versions: [] })
   api.catalog.mockResolvedValue([])
@@ -104,7 +108,8 @@ describe('销售订单产品图片显示', () => {
     })
     const wrapper = await render()
     expect(tableImage(wrapper).exists()).toBe(true)
-    expect(tableImage(wrapper).attributes('src')).toMatch(/\/api\/v1\/quotation-lines\/quote-line\/product-image\/\?v=quote-image$/)
+    expect(tableImage(wrapper).attributes('src')).toBe('blob:server-image.png')
+    expect(apiClient.get).toHaveBeenCalledWith(expect.stringMatching(/\/api\/v1\/quotation-lines\/quote-line\/product-image\/\?v=quote-image$/), expect.objectContaining({ responseType: 'blob' }))
     await click(wrapper, '编辑产品')
     expect(wrapper.findComponent({ name: 'InquiryProductDialog' }).props('imageUrl')).toMatch(/\/api\/v1\/quotation-lines\/quote-line\/product-image\/$/)
   })
@@ -124,7 +129,8 @@ describe('销售订单产品图片显示', () => {
     api.update.mockResolvedValue({ data: order, etag: 'saved' })
     api.upload.mockRejectedValue(new Error('图片上传失败'))
     const wrapper = await render(), file = png('retry.png')
-    expect(tableImage(wrapper).attributes('src')).toMatch(/\/sales-orders\/order\/lines\/line\/product-image\/\?v=old-image$/)
+    expect(tableImage(wrapper).attributes('src')).toBe('blob:server-image.png')
+    expect(apiClient.get).toHaveBeenCalledWith(expect.stringMatching(/\/sales-orders\/order\/lines\/line\/product-image\/\?v=old-image$/), expect.objectContaining({ responseType: 'blob' }))
     await click(wrapper, '编辑产品'); await confirmImage(wrapper, file)
     await click(wrapper, '保存草稿')
     expect(ElMessage.warning).toHaveBeenCalledWith(expect.stringContaining('图片上传失败'))

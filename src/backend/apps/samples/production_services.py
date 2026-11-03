@@ -33,7 +33,7 @@ def can_report_production(sample, request):
     return bool(request and getattr(request, 'employee', None)
                 and module_policy.can_report_sample(request, sample)
                 and sample.application_payload_hash and sample.archived_at is None
-                and sample.customer_account.archived_at is None
+                and (not sample.customer_account_id or sample.customer_account.archived_at is None)
                 and sample.status in REPORT_STATUSES and production_ready(sample))
 
 

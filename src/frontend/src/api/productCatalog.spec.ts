@@ -3,6 +3,7 @@ import {
   addProductCatalogColor, createProductCatalog, createProductCatalogName, deleteProductCatalogColor,
   fetchProductCatalog, fetchProductCatalogNames, fetchProductCatalogOptions, fetchProductCatalogs,
   fetchProductCatalogName, productCatalogError, updateProductCatalog, updateProductCatalogName,
+  fetchProductCatalogEditor, createProductCatalogEditor, saveProductCatalogEditor, deleteProductCatalogName,
 } from './productCatalog'
 
 const client = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }))
@@ -13,6 +14,22 @@ const response = { data: { data: record }, headers: { etag: '"v2"' } }
 beforeEach(() => { vi.resetAllMocks(); Object.values(client).forEach(method => method.mockResolvedValue(response)) })
 
 describe('独立产品目录 API 契约', () => {
+  it('整组编辑使用独立ETag，新增与批量更新不拆成字段写入', async () => {
+    const data = { name: { id: 'n1' }, products: [record] }
+    client.get.mockResolvedValueOnce({ data: { data }, headers: { etag: '"editor1"' } })
+    expect(await fetchProductCatalogEditor('n/1')).toEqual({ data, etag: '"editor1"' })
+    expect(client.get).toHaveBeenLastCalledWith(`${base}names/n%2F1/editor/`)
+    const row = { product_code: '', item_number: '货号', specification: '', unit: '套', scale: '', colors: ['白'], materials: ['铝'], thicknesses: ['1.2'] }
+    const create = { category_id: 'cat1', name: '桌子', products: [row] }
+    await createProductCatalogEditor(create)
+    expect(client.post).toHaveBeenLastCalledWith(`${base}names/editor/`, create)
+    const input = { name: '新桌子', products: [{ id: 'p1', ...row }], delete_product_ids: ['p2'] }
+    await saveProductCatalogEditor('n1', input, '"editor1"')
+    expect(client.patch).toHaveBeenLastCalledWith(`${base}names/n1/editor/`, input, { headers: { 'If-Match': '"editor1"' } })
+    client.delete.mockResolvedValueOnce({ status: 204 })
+    await deleteProductCatalogName('n/1', '"editor1"')
+    expect(client.delete).toHaveBeenLastCalledWith(`${base}names/n%2F1/`, { headers: { 'If-Match': '"editor1"' } })
+  })
   it('名称列表没有分页截断，产品列表保留分页元数据', async () => {
     client.get.mockResolvedValueOnce({ data: { data: { categories: [], units: [], scales: [] } } })
     expect(await fetchProductCatalogOptions()).toEqual({ categories: [], units: [], scales: [] })

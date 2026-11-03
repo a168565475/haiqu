@@ -3,15 +3,22 @@ import { computed, ref } from 'vue'
 import { sampleMaterialCategories, type SampleMaterialCategory } from '@/types/sampleMaterial'
 import type { SampleWarehouseLine } from '@/types/sampleWarehouse'
 import { sampleSupplyResult } from '@/utils/sampleWarehouse'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 const props = defineProps<{ modelValue: SampleWarehouseLine[]; available: boolean; fullscreen: boolean; errorMessage: string; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [lines: SampleWarehouseLine[]]; retry: []; lookup: [lineKey: string] }>()
 const category = ref<'all' | SampleMaterialCategory>('all')
 const onlyShortage = ref(false)
+const hoveredLineKey = ref('')
 const counts = computed(() => props.available ? Object.fromEntries(sampleMaterialCategories.map(item => [item.key, props.modelValue.filter(line => line.category === item.key).length])) : {})
 const categoryLines = computed(() => category.value === 'all' ? props.modelValue : props.modelValue.filter(line => line.category === category.value))
 const visibleLines = computed(() => categoryLines.value.map(line => ({ ...line, supplyResult: sampleSupplyResult(line.quantity, line.supplyQuantity) })).filter(line => !onlyShortage.value || (line.supplyResult.valid && line.supplyResult.gap !== '0')))
 const categoryLabel = (value: SampleMaterialCategory) => sampleMaterialCategories.find(item => item.key === value)?.label || '—'
 const labels = { full: '已满足', partial: '部分缺料', none: '无库存', pending: '待核对', invalid: '数量有误' }
+function attributeFields(line: SampleWarehouseLine) {
+  const fields = materialAttributeFields({ ...line, part_name: line.name })
+  if (line.color && !fields.some(field => field.key === 'color')) fields.push({ key: 'color', label: '颜色', value: line.color })
+  return fields
+}
 
 </script>
 <template>
@@ -25,7 +32,7 @@ const labels = { full: '已满足', partial: '部分缺料', none: '无库存', 
     <div class="comparison-table" tabindex="0" aria-label="仓库材料对照表，可横向滚动">
       <table class="erp-table-editor"><colgroup><col class="col-category"><col class="col-name"><col class="col-spec"><col class="col-material"><col class="col-color"><col class="col-need"><col class="col-supply"><col class="col-gap"><col class="col-unit"><col class="col-result"></colgroup>
         <thead><tr><th>材料分类</th><th>材料名称</th><th>规格</th><th>材质</th><th>颜色 / 色号</th><th>需求数量</th><th>本次可供数量 *</th><th>采购缺口</th><th>单位</th><th>核对结果</th></tr></thead>
-        <tbody><tr v-for="line in visibleLines" :key="line.key"><td>{{ categoryLabel(line.category) }}</td><td><button type="button" class="material-inventory-link" :aria-label="`${line.name} ${line.specification} 查看库存`" :title="`${line.name}：查看库存`" @click="emit('lookup', line.key)">{{ line.name }}</button></td><td :title="line.specification">{{ line.specification || '—' }}</td><td :title="line.material">{{ line.material || '—' }}</td><td :title="line.color">{{ line.color || '—' }}</td><td>{{ line.quantity }}</td><td><div class="supply-field"><ElInput :model-value="line.supplyQuantity" disabled :aria-label="`${line.name}本次可供数量`" inputmode="decimal" placeholder="查询库存后回填" /><span>{{ line.unitLabel }}</span></div></td><td class="shortage-cell" :class="{ 'has-shortage': line.supplyResult.valid && line.supplyResult.gap !== '0' }">{{ line.supplyResult.gap == null ? '—' : line.supplyResult.gap }}</td><td>{{ line.unitLabel || '—' }}</td><td><span class="supply-result" :class="line.supplyResult.result">{{ line.inventoryAllocations?.length ? '已关联 ' + line.inventoryAllocations.length + ' 处' : labels[line.supplyResult.result] }}</span></td></tr>
+        <tbody><tr v-for="line in visibleLines" :key="line.key" @mouseenter="hoveredLineKey = line.key" @mouseleave="hoveredLineKey = ''"><td>{{ categoryLabel(line.category) }}</td><td><button type="button" class="material-inventory-link" :aria-label="`${line.name} ${line.specification} 查看库存`" :title="`${line.name}：查看库存`" @click="emit('lookup', line.key)">{{ line.name }}</button></td><td><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === line.key" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in attributeFields(line)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span>{{ line.specification || '—' }}</span></ElTooltip></td><td :title="line.material">{{ line.material || '—' }}</td><td :title="line.color">{{ line.color || '—' }}</td><td>{{ line.quantity }}</td><td><div class="supply-field"><ElInput :model-value="line.supplyQuantity" disabled :aria-label="`${line.name}本次可供数量`" inputmode="decimal" placeholder="查询库存后回填" /><span>{{ line.unitLabel }}</span></div></td><td class="shortage-cell" :class="{ 'has-shortage': line.supplyResult.valid && line.supplyResult.gap !== '0' }">{{ line.supplyResult.gap == null ? '—' : line.supplyResult.gap }}</td><td>{{ line.unitLabel || '—' }}</td><td><span class="supply-result" :class="line.supplyResult.result">{{ line.inventoryAllocations?.length ? '已关联 ' + line.inventoryAllocations.length + ' 处' : labels[line.supplyResult.result] }}</span></td></tr>
           <tr v-if="!visibleLines.length" class="empty-row"><td colspan="10"><p>{{ errorMessage || (onlyShortage ? '当前分区暂无缺料项。' : '当前分区暂无材料需求。') }}</p><ElButton v-if="errorMessage" @click="emit('retry')">重新加载材料需求</ElButton></td></tr>
         </tbody>
       </table>
@@ -74,6 +81,9 @@ thead { position: sticky; z-index: 1; top: 0; background: var(--erp-table-header
 .comparison-summary { display: flex; flex: none; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin: 14px 0 10px; color: token.$crm-text-secondary; font-size: 13px; line-height: 20px; }
 .comparison-fullscreen { height: 100%; min-height: 0; }
 .comparison-fullscreen .comparison-table { height: auto; flex: 1; }
+.material-attribute-tooltip { min-width: 180px; line-height: 24px; font-size: 14px; }
+.material-attribute-tooltip > div { display: flex; gap: 8px; }
+.material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 @media (max-width: 800px) {
   .comparison-toolbar { flex-wrap: wrap; }
   .warehouse-tabs { height: auto; flex-wrap: wrap; gap: 0 22px; }

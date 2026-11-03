@@ -1,10 +1,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import ElementPlus, { ElMessage, ElMessageBox, ElSelect, ElOption, ElUpload } from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
+import { apiClient } from '@/api/request'
+import ElementPlus, { ElMessage, ElMessageBox, ElSelect, ElUpload } from 'element-plus'
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SampleEditorView from './SampleEditorView.vue'
+import { emptyProductEntry } from '@/utils/productEntryDraft'
 
 const api = vi.hoisted(() => ({ fetch: vi.fn(), options: vi.fn(), products: vi.fn(), complete: vi.fn(), materials: vi.fn(), units: vi.fn(), save: vi.fn(), noMaterials: vi.fn(), push: vi.fn(), leave: vi.fn() }))
+const catalogOptions = vi.hoisted(() => vi.fn())
+vi.mock('@/api/productCatalog', () => ({ fetchProductCatalogSelectionOptions: catalogOptions, productCatalogError: (error: unknown) => String(error) }))
 let testRoute = { params: { sampleId: 'sample-1' }, query: {} as Record<string, string> }
 vi.mock('vue-router', () => ({ useRoute: () => testRoute, useRouter: () => ({ push: api.push }), onBeforeRouteLeave: api.leave, onBeforeRouteUpdate: vi.fn() }))
 vi.mock('@/api/samples', () => ({ fetchSample: api.fetch, fetchSampleFormOptions: api.options }))
@@ -13,7 +19,7 @@ vi.mock('@/api/sampleMaterials', () => ({ fetchSampleMaterials: api.materials, f
 
 function sample(canComplete = true) {
   return { etag: '"p1"', data: {
-    id: 'sample-1', request_number: 'SRQ-001', status: canComplete ? 'PENDING_COMPLETION' : 'MATERIALS_PENDING', status_display: '待完善',
+    manual_request_number: '123', id: 'sample-1', request_number: 'SRQ-001', status: canComplete ? 'PENDING_COMPLETION' : 'MATERIALS_PENDING', status_display: '待完善',
     customer_name: '真实接口由实页检查', purpose: '初始要求', edit_capabilities: { mode: canComplete ? 'COMPLETE' : 'READ_ONLY', can_complete: canComplete }, application_actions: { is_application: true, can_edit_products: true },
     products: [{ id: 'sp1', product_id: 'product-1', product_name: '折叠椅', specification: '椅子规格', category_id: 'cat1', category_name: '椅子',
       length_cm: '50', armrest_width_cm: null, seat_width_cm: null, back_height_cm: null, seat_height_cm: null,
@@ -25,9 +31,9 @@ function materials(canEdit = true, version = '"p1"') {
     draft: { lines: [{ key: 'm1', category: 'fabric', name: '面料', specification: '规格', material: '', color: '', quantity: '2', unitId: 'u1', rawMaterialId: 'raw1', notes: '' }], notes: '' } }
 }
 const wrappers: ReturnType<typeof mount>[] = []
-async function render() {
+async function render(stubBasics = true) {
   const wrapper = mount(SampleEditorView, { global: { plugins: [ElementPlus], stubs: {
-    SampleApplicationBasics: { name: 'SampleApplicationBasics', props: ['modelValue', 'options', 'sample'], emits: ['update:modelValue'], template: '<div class="basic-fields-stub" />' },
+    ...(stubBasics ? { SampleApplicationBasics: { name: 'SampleApplicationBasics', props: ['modelValue', 'options', 'sample'], emits: ['update:modelValue'], template: '<div class="basic-fields-stub" />' } } : {}),
     SampleMaterialEditor: { name: 'SampleMaterialEditor', props: ['modelValue', 'disabled', 'layout'], emits: ['update:modelValue', 'editing-change'], template: '<div class="material-stub" :data-disabled="disabled" :data-layout="layout"><button :disabled="disabled" @click="$emit(\'update:modelValue\', [...modelValue, {...modelValue[0], key: \'m2\'}])">添加测试材料</button></div>' },
   } } })
   wrappers.push(wrapper); await flushPromises(); return wrapper
@@ -35,6 +41,10 @@ async function render() {
 function button(wrapper: ReturnType<typeof mount>, label: string) { return wrapper.findAll('button').find(item => item.text() === label)! }
 beforeEach(() => {
   vi.resetAllMocks()
+  catalogOptions.mockResolvedValue({ categories: [], names: [], products: [], units: [] })
+  setActivePinia(createPinia())
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new File(['png'], 'server-image.png', { type: 'image/png' }), headers: {} })
+  useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'test', display_name: '单测', is_superuser: true, employee: null, permissions: [], data_scope: 'ALL' } })
   vi.stubGlobal('URL', class extends URL {
     static createObjectURL = vi.fn((file: File) => `blob:${file.name}`)
     static revokeObjectURL = vi.fn()
@@ -48,25 +58,24 @@ beforeEach(() => {
 })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-function productSelect(wrapper: ReturnType<typeof mount>, index = 0) {
-  return wrapper.findAllComponents(ElSelect).filter(item => item.props('ariaLabel') === '产品名称')[index]!
-}
-function colorSelect(wrapper: ReturnType<typeof mount>, index = 0) {
-  return wrapper.findAllComponents(ElSelect).filter(item => item.props('ariaLabel') === '产品颜色')[index]!
+function productNameInput(wrapper: ReturnType<typeof mount>, index = 0) {
+  return wrapper.findAll<HTMLInputElement>('input[aria-label="品名"]')[index]!
 }
 async function chooseName(wrapper: ReturnType<typeof mount>, name: string, index = 0) {
-  productSelect(wrapper, index).vm.$emit('change', name)
-  await flushPromises()
-}
-async function chooseColor(wrapper: ReturnType<typeof mount>, id: string, index = 0) {
-  colorSelect(wrapper, index).vm.$emit('update:modelValue', id)
-  await flushPromises()
-  colorSelect(wrapper, index).vm.$emit('change', id)
+  await productNameInput(wrapper, index).setValue(name)
   await flushPromises()
 }
 async function editProductDraft(wrapper: ReturnType<typeof mount>) {
   await wrapper.get('#sample-purpose').setValue('未保存产品要求')
 
+}
+async function editMaterialQuantity(wrapper: ReturnType<typeof mount>) {
+  const editor = wrapper.findComponent({ name: 'SampleMaterialEditor' })
+  editor.vm.$emit('update:modelValue', editor.props('modelValue').map((line: { quantity: string }, index: number) => index === 0 ? { ...line, quantity: '7' } : line))
+  await flushPromises()
+}
+function materialQuantity(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findComponent({ name: 'SampleMaterialEditor' }).props('modelValue')[0].quantity
 }
 
 describe('打样编辑：组件契约测试（Mock 不代表真实验收）', () => {
@@ -84,10 +93,14 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(api.products).not.toHaveBeenCalled()
     expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('true')
     expect(button(wrapper, '保存').attributes('disabled')).toBeDefined()
+    expect(productNameInput(wrapper).attributes('disabled')).toBeDefined()
+    expect(productNameInput(wrapper).element.value).toBe('折叠椅')
+    expect(wrapper.get('input[aria-label="规格"]').attributes('disabled')).toBeDefined()
     finishOptions(formOptions); await flushPromises()
-    expect(api.products).toHaveBeenCalledWith('sample-1', '')
+    expect(api.products).not.toHaveBeenCalled()
     expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
     expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
+    expect(productNameInput(wrapper).attributes('disabled')).toBeUndefined()
     expect(api.fetch).toHaveBeenCalledTimes(1); expect(api.materials).toHaveBeenCalledTimes(1)
   })
   it('产品选项失败时等待材料支路完成才显示重试，避免旧材料读取与重试交错', async () => {
@@ -188,13 +201,14 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(api.materials).toHaveBeenCalledTimes(2); expect(api.units).toHaveBeenCalledTimes(2)
     expect(button(wrapper, '保存材料').attributes('disabled')).toBeUndefined()
   })
-  it('重开产品使用合并展示文本，保留独立材质和颜色的可见信息', async () => {
+  it('重开旧产品分开带入规格和材质，避免合并展示污染规格', async () => {
     const current = sample(false)
     const product = current.data.products![0]!
-    Object.assign(product, { specification: '60×80', specification_display: '60×80；颜色：蓝；材质：铝', material_snapshot: '铝' })
+    Object.assign(product, { specification: '60×80', specification_display: '60×80；颜色：蓝；材质：铝', material_snapshot: '铝', product_selection_snapshot: {} })
     api.fetch.mockResolvedValue(current)
     const wrapper = await render()
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('60×80；颜色：蓝；材质：铝')
+    expect((wrapper.get('input[aria-label="规格"]').element as HTMLInputElement).value).toBe('60×80')
+    expect((wrapper.get('input[aria-label="材质"]').element as HTMLInputElement).value).toBe('铝')
   })
   it('基础字段参与保存、冲突保留与取消恢复，后续阶段仍可编辑', async () => {
     const current = sample(false)
@@ -224,7 +238,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
     expect(await api.leave.mock.calls[0]![0]()).toBe(false)
     await button(wrapper, '材料需求').trigger('click')
-    await wrapper.get('#sample-material-notes').setValue('保留材料')
+    await editMaterialQuantity(wrapper)
     expect(wrapper.find('.product-form-actions').exists()).toBe(false)
     await button(wrapper, '提交仓库').trigger('click'); await flushPromises()
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('产品草稿尚未保存'), '产品草稿尚未保存', expect.any(Object))
@@ -233,9 +247,10 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:one.png')
     confirm.mockResolvedValueOnce('confirm' as never)
     await button(wrapper, '取消修改').trigger('click'); await flushPromises()
-    expect(wrapper.get('.reference-preview img').attributes('src')).toContain('/business-files/old-image/')
+    expect(wrapper.get('.reference-preview img').attributes('src')).toBe('blob:server-image.png')
+    expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/business-files/old-image/'), expect.objectContaining({ responseType: 'blob' }))
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:two.png')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('保留材料')
+    expect(materialQuantity(wrapper)).toBe('7')
     expect(api.fetch).toHaveBeenCalledTimes(1); expect(api.materials).toHaveBeenCalledTimes(1)
     expect(api.complete).not.toHaveBeenCalled(); expect(api.save).not.toHaveBeenCalled()
   })
@@ -257,7 +272,8 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     api.materials.mockRejectedValue(new Error('材料读取失败'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('产品需求已保存'); expect(wrapper.text()).toContain('材料读取失败')
-    expect(wrapper.get('.reference-preview img').attributes('src')).toContain('/business-files/saved-image/')
+    expect(wrapper.get('.reference-preview img').attributes('src')).toBe('blob:server-image.png')
+    expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/business-files/saved-image/'), expect.objectContaining({ responseType: 'blob' }))
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:new.png')
     expect(wrapper.findComponent(ElUpload).exists()).toBe(true)
   })
@@ -267,7 +283,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     const wrapper = await render()
     expect(wrapper.get(tab === 'materials' ? '#sample-materials-tab' : '#sample-product-tab').attributes('aria-selected')).toBe('true')
     await wrapper.get('#sample-materials-tab').trigger('click')
-    await wrapper.get('#sample-material-notes').setValue('材料草稿')
+    await editMaterialQuantity(wrapper)
     await wrapper.get('#sample-product-tab').trigger('click')
     await editProductDraft(wrapper)
     await wrapper.get('#sample-materials-tab').trigger('click')
@@ -279,7 +295,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     await wrapper.get('#sample-product-tab').trigger('click')
     expect(wrapper.get('#sample-product-tab').attributes('aria-selected')).toBe('true')
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('未保存产品要求')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('材料草稿')
+    expect(materialQuantity(wrapper)).toBe('7')
     expect(api.fetch).toHaveBeenCalledTimes(1); expect(api.materials).toHaveBeenCalledTimes(1)
     expect(testRoute.query.tab).toBe(tab)
     expect(api.push).not.toHaveBeenCalled()
@@ -290,11 +306,12 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(wrapper.findComponent({ name: 'SampleApplicationBasics' }).exists()).toBe(true)
     expect(form.classes()).toContain('erp-flat-form')
     expect(wrapper.findAll('.application-columns > .product-section')).toHaveLength(1)
-    expect(wrapper.findAll('.application-aside > .sample-section')).toHaveLength(2)
+    expect(wrapper.findAll('.application-aside > .sample-section')).toHaveLength(1)
+    expect(wrapper.find('#sample-material-notes').exists()).toBe(false)
     expect(wrapper.findAll('.product-record')).toHaveLength(1)
     expect(wrapper.findAll('.detail-fields')).toHaveLength(1)
     expect(wrapper.findAll('.dimensions-grid input')).toHaveLength(5)
-    expect(productSelect(wrapper).props()).toMatchObject({ filterable: true, remote: true, allowCreate: true, defaultFirstOption: true })
+    expect(wrapper.find('input[aria-label="品名"]').exists()).toBe(true)
     expect(form.find('#sample-purpose').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.product-information-card, .material-application-info, .product-window, [role="dialog"]').exists()).toBe(false)
     expect(wrapper.findAll('button').some(item => /^(编辑|展开|收起|移除)/.test(item.text()))).toBe(false)
@@ -311,7 +328,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
   it('取消确认恢复产品与关联缓存，保留材料草稿和ETag，保存更新当前表单', async () => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render()
-    await wrapper.get('#sample-material-notes').setValue('保留材料')
+    await editMaterialQuantity(wrapper)
     await chooseName(wrapper, '临时改名')
     await wrapper.get('#sample-purpose').setValue('临时要求')
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValueOnce('cancel')
@@ -320,13 +337,12 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     confirm.mockResolvedValueOnce('confirm' as never)
     await button(wrapper, '取消修改').trigger('click'); await flushPromises()
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('初始要求')
-    expect(productSelect(wrapper).props('modelValue')).toBe('product-1')
-    expect(wrapper.get('.product-record').text()).toContain('折叠椅')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('保留材料')
+    expect(productNameInput(wrapper).element.value).toBe('折叠椅')
+    expect(materialQuantity(wrapper)).toBe('7')
     expect(api.fetch).toHaveBeenCalledTimes(1); expect(api.materials).toHaveBeenCalledTimes(1)
     // 取消恢复关联缓存后，改规格仍须解除旧档案身份。
-    await wrapper.get('input[aria-label="产品规格"]').setValue('再次改规格')
-    expect(productSelect(wrapper).props('modelValue')).toBe('折叠椅')
+    await wrapper.get('input[aria-label="规格"]').setValue('再次改规格')
+    expect(productNameInput(wrapper).element.value).toBe('折叠椅')
     const latest = sample(); latest.data.purpose = '服务端已保存要求'; latest.data.products[0]!.product_name = '服务端名称'; latest.etag = '"p2"'
     api.complete.mockResolvedValue(latest); api.materials.mockResolvedValue(materials(true, '"p2"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
@@ -334,10 +350,9 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_id: '', product_name: '折叠椅', specification: '再次改规格' })
     expect(wrapper.get('#sample-product-tab').attributes('aria-selected')).toBe('true')
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('服务端已保存要求')
-    expect(productSelect(wrapper).props('modelValue')).toBe('product-1')
-    expect(wrapper.get('.product-record').text()).toContain('服务端名称')
+    expect(productNameInput(wrapper).element.value).toBe('服务端名称')
   })
-  it('多产品多颜色逐项编辑，数量在右侧对应明细，保存保留全部ID', async () => {
+  it('多产品多颜色逐项编辑，数量在左侧对应明细，保存保留全部ID', async () => {
     const current = sample()
     current.data.products[0]!.details.push({ ...current.data.products[0]!.details[0]!, id: 'd2', notes: '第二颜色' })
     current.data.products.push({ ...current.data.products[0]!, id: 'sp2', product_name: '第二产品', details: [{ ...current.data.products[0]!.details[0]!, id: 'd3' }] })
@@ -345,46 +360,95 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     const wrapper = await render()
     expect(wrapper.findAll('.product-record')).toHaveLength(2)
     expect(wrapper.findAll('.detail-fields')).toHaveLength(3)
-    expect(wrapper.findAll('.quantity-section input[aria-label="打样数量"]')).toHaveLength(3)
-    expect(wrapper.findAll('.product-section input[aria-label="打样数量"]')).toHaveLength(0)
-    await wrapper.get('[data-detail-id="d2"] input[aria-label="产品备注"]').setValue('第二颜色修改')
+    expect(wrapper.findAll('.application-aside input[aria-label="打样数量"]')).toHaveLength(0)
+    expect(wrapper.findAll('.product-section input[aria-label="打样数量"]')).toHaveLength(3)
+    expect(wrapper.find('input[aria-label="产品备注"]').exists()).toBe(false)
+    expect(wrapper.get('#sample-purpose').attributes('aria-label')).toBe('备注')
     await wrapper.get('[data-quantity-detail-id="d2"] input').setValue('7'); await flushPromises()
     await chooseName(wrapper, '第二产品新名', 1)
-    await wrapper.get('[data-product-id="sp2"] input[aria-label="产品规格"]').setValue('第二产品规格')
+    await wrapper.get('[data-product-id="sp2"] input[aria-label="规格"]').setValue('第二产品规格')
     api.complete.mockResolvedValue({ ...current, etag: '"p2"' }); api.materials.mockResolvedValue(materials(false, '"p2"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(api.complete.mock.calls[0]![2]).toEqual([
-      expect.objectContaining({ id: 'sp1', product_name: '折叠椅', details: [expect.objectContaining({ id: 'd1' }), expect.objectContaining({ id: 'd2', notes: '第二颜色修改', sample_quantity: 7 })] }),
+      expect.objectContaining({ id: 'sp1', product_name: '折叠椅', details: [expect.objectContaining({ id: 'd1' }), expect.objectContaining({ id: 'd2', notes: '第二颜色', sample_quantity: 7 })] }),
       expect.objectContaining({ id: 'sp2', product_id: '', product_name: '第二产品新名', specification: '第二产品规格', details: [expect.objectContaining({ id: 'd3' })] }),
     ])
     expect(wrapper.find('.application-form').exists()).toBe(true)
     expect(wrapper.get('#sample-product-tab').attributes('aria-selected')).toBe('true')
   })
-  it.each([
-    ['尺寸；材质:木；颜色：旧色', '尺寸；材质:木；颜色：蓝'],
-    ['尺寸;材质：木;颜色:旧色', '尺寸;材质：木;颜色:蓝'],
-    ['尺寸;材质：木', '尺寸;材质：木；颜色：蓝'],
-  ])('单颜色明细只替换规格中的颜色段：%s', async (specification, expected) => {
-    const current = sample(); current.data.products[0]!.specification = specification
-    api.fetch.mockResolvedValue(current)
+  it('颜色选择保存公共身份，不改规格和已有明细数量', async () => {
+    const values = await api.options()
+    api.options.mockResolvedValue({ ...values, colors: [...values.colors, { id: 'wine', color_card: 'PANTONE', color_code: 'W1', color_name: '酒红' }] })
     const wrapper = await render()
-    await chooseColor(wrapper, 'color1')
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe(expected)
-    await chooseColor(wrapper, '')
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe(specification)
+    const color = wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '色卡 / 色号 / 颜色')!
+    color.vm.$emit('update:modelValue', 'wine')
+    color.vm.$emit('change', 'wine')
+    await flushPromises()
+    expect((wrapper.get('input[aria-label="规格"]').element as HTMLInputElement).value).toBe('椅子规格')
+    api.complete.mockResolvedValue(sample(false)); api.materials.mockResolvedValue(materials(true))
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_catalog_id: null, specification: '椅子规格', product_selection: { draft: { color_name: '酒红' } }, details: [expect.objectContaining({ id: 'd1', product_color_id: 'wine', color_code: 'W1', sample_quantity: 3 })] })
   })
-  it('颜色名称为空时使用色号，多个颜色明细不自动改共享规格', async () => {
-    const current = sample(); current.data.products[0]!.specification = '尺寸；材质：木；颜色：旧色'
-    current.data.products[0]!.details.push({ ...current.data.products[0]!.details[0]!, id: 'd2' })
+  it('历史无手填单号及颜色ID时回显原编号颜色，保存不改号、不匹配公共颜色', async () => {
+    const current = sample()
+    Object.assign(current.data, { manual_request_number: null })
+    Object.assign(current.data.products[0]!.details[0]!, { product_color_id: null, color_name: '蓝色', color_code: '' })
+    Object.assign(current.data.products[0]!, { product_selection_snapshot: { name: '折叠椅', entry_state: 'draft', entry_draft: {
+      ...emptyProductEntry(), name: '折叠椅', category_name: '椅子', specification: '椅子规格', color_name: '蓝色',
+    } } })
     api.fetch.mockResolvedValue(current)
-    api.options.mockResolvedValue({ categories: [{ id: 'cat1', category_name: '椅子' }], colors: [
-      { id: 'color1', color_name: '蓝', color_card: '色卡', color_code: '蓝色号' },
-      { id: 'color2', color_name: '', color_card: '色卡2', color_code: 'R-02' },
-    ], tolerances: [{ value: 'NONE', label: '无' }] })
+    const values = await api.options()
+    api.options.mockResolvedValue({ ...values, colors: [{ id: 'known-blue', color_card: '色卡', color_code: 'B1', color_name: '蓝色' }] })
+    const wrapper = await render(false)
+    expect((wrapper.get('input[aria-label="完整打样单号"]').element as HTMLInputElement).value).toBe('SRQ-001')
+    const color = wrapper.findAllComponents(ElSelect).find(item => item.props('ariaLabel') === '色卡 / 色号 / 颜色')!
+    expect(color.props('modelValue')).toBe('')
+    expect(color.get('.el-select__selection').text()).toBe('蓝色')
+    api.complete.mockResolvedValue({ ...current, etag: '"p2"' })
+    api.materials.mockResolvedValue(materials(true, '"p2"'))
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.complete).toHaveBeenCalledOnce()
+    expect(api.complete.mock.calls[0]![5]).not.toHaveProperty('manual_request_number')
+    expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_selection: { draft: { color_id: null, color_name: '蓝色' } }, details: [expect.objectContaining({ product_color_id: '', color_code: '' })] })
+  })
+  it('只有历史明细颜色文本时仍保留到产品草稿', async () => {
+    const current = sample()
+    Object.assign(current.data.products[0]!.details[0]!, { product_color_id: null, color_name: '旧蓝色' })
+    api.fetch.mockResolvedValue(current)
     const wrapper = await render()
-    await chooseColor(wrapper, 'color2', 0)
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('尺寸；材质：木；颜色：旧色')
-    expect((wrapper.get('[data-detail-id="d1"] input[aria-label="色号"]').element as HTMLInputElement).value).toBe('R-02')
+    api.complete.mockResolvedValue(current)
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_selection: { draft: { color_id: null, color_name: '旧蓝色' } } })
+  })
+  it('没有颜色ID和历史颜色文本时仍阻止保存', async () => {
+    const current = sample()
+    Object.assign(current.data.products[0]!.details[0]!, { product_color_id: null, color_name: '' })
+    api.fetch.mockResolvedValue(current)
+    const wrapper = await render()
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.complete).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请选择色卡 / 色号 / 颜色。')
+  })
+  it.each([
+    { original: '123', value: '', message: '请填写打样单号后缀。' },
+    { original: null, value: 'HTS456', message: '只需填写打样单号后缀，不要重复填写 HTS。' },
+    { original: null, value: '456', message: '' },
+  ])('手填单号原值$original修改为$value时继续校验', async ({ original, value, message }) => {
+    const current = sample()
+    Object.assign(current.data, { manual_request_number: original })
+    api.fetch.mockResolvedValue(current)
+    const wrapper = await render()
+    const basics = wrapper.findComponent({ name: 'SampleApplicationBasics' })
+    basics.vm.$emit('update:modelValue', { ...basics.props('modelValue'), manual_request_number: value })
+    await flushPromises()
+    api.complete.mockResolvedValue(current)
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    if (message) {
+      expect(api.complete).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain(message)
+    } else {
+      expect(api.complete.mock.calls[0]![5]).toMatchObject({ manual_request_number: '456' })
+    }
   })
   it('材料持续可编辑，切换页签不丢失产品输入', async () => {
     const wrapper = await render()
@@ -414,27 +478,14 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(wrapper.text()).toContain('当前账号没有材料需求编辑权限')
     expect(wrapper.text()).not.toContain('当前样品阶段为')
   })
-  it('产品选择复用可创建名称交互，候选含名称规格，手输名称保留规格和类别且不提交', async () => {
-    api.products.mockResolvedValue([{ id: 'candidate-2', product_name: '成品名称', specification: '成品规格', category_id: 'cat1' }])
+  it('品名规格手填后作为样品草稿保存，不建立正式产品', async () => {
     const wrapper = await render()
-    // 已关联档案不在候选中时仍展示真实名称，不能显示UUID。
-    expect(wrapper.get('.product-record .el-select__placeholder').text()).toBe('折叠椅')
-    const candidate = productSelect(wrapper).findAllComponents(ElOption).find(item => item.props('value') === 'candidate-2')!
-    expect(candidate.props('label')).toBe('成品名称')
-    expect(candidate.get('.product-option-name').text()).toBe('成品名称')
-    expect(candidate.get('.product-option-spec').text()).toBe('成品规格')
-    await chooseName(wrapper, 'candidate-2')
-    expect(productSelect(wrapper).props('modelValue')).toBe('candidate-2')
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('成品规格')
-    await chooseName(wrapper, '手输新品')
-    expect(productSelect(wrapper).props('modelValue')).toBe('手输新品')
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('成品规格')
-    expect(api.complete).not.toHaveBeenCalled()
-    await wrapper.get('.application-form').trigger('submit')
-    expect(api.complete).not.toHaveBeenCalled()
+    await wrapper.get('input[aria-label="品名"]').setValue('成品名称')
+    await wrapper.get('input[aria-label="规格"]').setValue('成品规格')
+    expect(wrapper.findAllComponents(ElSelect).some(item => ['品名', '规格'].includes(item.props('ariaLabel') || ''))).toBe(false)
     api.complete.mockResolvedValue(sample(false)); api.materials.mockResolvedValue(materials(true, '"p1"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
-    expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_id: '', product_name: '手输新品', specification: '成品规格', category_id: 'cat1' })
+    expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_id: '', product_catalog_id: null, product_name: '成品名称', specification: '成品规格', product_selection: { draft: { name: '成品名称', specification: '成品规格', material: '' } } })
   })
   it('产品保存后采用新版本提交材料，并分别提示结果', async () => {
     const wrapper = await render()
@@ -467,13 +518,13 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     api.fetch.mockResolvedValue(sample(false)); api.materials.mockResolvedValue(materials(true))
     const wrapper = await render()
     await button(wrapper, '材料需求').trigger('click')
-    await wrapper.get('#sample-material-notes').setValue('未提交备注')
+    await editMaterialQuantity(wrapper)
     api.save.mockRejectedValue(new Error('网络故障'))
     await button(wrapper, '提交仓库').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('网络故障')
     await button(wrapper, '申请与产品').trigger('click'); await button(wrapper, '材料需求').trigger('click')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('未提交备注')
-    expect(api.save.mock.calls[0]![0].draft.notes).toBe('未提交备注')
+    expect(materialQuantity(wrapper)).toBe('7')
+    expect(api.save.mock.calls[0]![0].draft.lines[0].quantity).toBe('7')
   })
   it('非新版申请不出现保存操作，加载403显示错误', async () => {
     const readonly = sample(); readonly.data.edit_capabilities.can_complete = false
@@ -482,6 +533,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     const wrapper = await render()
     expect(wrapper.findAll('button').some(item => item.text() === '保存')).toBe(false)
     expect(api.options).not.toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'ProductCatalogSelection' }).exists()).toBe(false)
 
     expect(wrapper.get('#sample-purpose').attributes('disabled')).toBeDefined()
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('初始要求')
@@ -495,7 +547,8 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     const wrapper = await render()
     expect(button(wrapper, '保存')).toBeUndefined()
     expect(api.options).not.toHaveBeenCalled(); expect(api.products).not.toHaveBeenCalled()
-    expect(wrapper.get('input[aria-label="产品规格"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.findComponent({ name: 'ProductCatalogSelection' }).exists()).toBe(false)
+    expect(wrapper.get('input[aria-label="规格"]').attributes('disabled')).toBeDefined()
     expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
   })
   it.each(['DIRECTOR_REVIEW', 'WAREHOUSE_PENDING', 'PROCUREMENT_PENDING', 'MATERIAL_ISSUE_REVIEW', 'FINISHED'])('%s仍可保存产品和材料资料，不出现推进流程按钮', async status => {
@@ -504,16 +557,16 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     api.fetch.mockResolvedValue(current); api.materials.mockResolvedValue(state)
     const wrapper = await render()
     expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('input[aria-label="产品规格"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('input[aria-label="规格"]').attributes('disabled')).toBeUndefined()
     await button(wrapper, '材料需求').trigger('click')
     expect(button(wrapper, '提交仓库')).toBeUndefined(); expect(button(wrapper, '无需用料')).toBeUndefined()
     expect(wrapper.get('.material-stub').attributes('data-disabled')).toBe('false')
-    await wrapper.get('#sample-material-notes').setValue('当前资料修订')
-    const saved = { ...state, etag: '"m2"', draft: { ...state.draft, notes: '当前资料修订' } }
+    await editMaterialQuantity(wrapper)
+    const saved = { ...state, etag: '"m2"', draft: { ...state.draft, lines: [{ ...state.draft.lines[0]!, quantity: '7' }] } }
     api.save.mockResolvedValue(saved); api.fetch.mockResolvedValue({ ...current, etag: '"m2"' })
     const confirm = vi.spyOn(ElMessageBox, 'confirm')
     await button(wrapper, '保存材料').trigger('click'); await flushPromises()
-    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ submit: false, etag: '"p1"', draft: expect.objectContaining({ notes: '当前资料修订' }) }))
+    expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ submit: false, etag: '"p1"', draft: expect.objectContaining({ lines: [expect.objectContaining({ quantity: '7' })] }) }))
     expect(api.noMaterials).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('材料资料已保存。')
     if (state.isRevision) expect(wrapper.text()).toContain('已提交的仓库、采购和领料记录保留原快照')
@@ -528,12 +581,12 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
   })
   it('候选读取绑定当前申请；名称规格可手填，修改后解除旧关联', async () => {
     const wrapper = await render()
-    expect(api.products).toHaveBeenCalledWith('sample-1', '')
+    expect(api.products).not.toHaveBeenCalled()
     await chooseName(wrapper, '自定义新品')
-    await wrapper.get('input[aria-label="产品规格"]').setValue('手工规格')
+    await wrapper.get('input[aria-label="规格"]').setValue('手工规格')
 
-    expect(productSelect(wrapper).props('modelValue')).toBe('自定义新品')
-    expect((wrapper.get('input[aria-label="产品规格"]').element as HTMLInputElement).value).toBe('手工规格')
+    expect(productNameInput(wrapper).element.value).toBe('自定义新品')
+    expect((wrapper.get('input[aria-label="规格"]').element as HTMLInputElement).value).toBe('手工规格')
     api.complete.mockResolvedValue(sample(false)); api.materials.mockResolvedValue(materials(true, '"p2"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(api.complete.mock.calls[0]![2][0]).toMatchObject({ product_id: '', product_name: '自定义新品', specification: '手工规格' })
@@ -553,37 +606,37 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(confirm).not.toHaveBeenCalled(); expect(api.complete).not.toHaveBeenCalled()
   })
 
-  it('先填材料再保存产品保留材料行、备注及dirty基线，随后提交使用新ETag', async () => {
+  it('先填材料再保存产品保留材料行、数量及dirty基线，随后提交使用新ETag', async () => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render()
     await button(wrapper, '材料需求').trigger('click')
     await button(wrapper, '添加测试材料').trigger('click')
-    await wrapper.get('#sample-material-notes').setValue('未提交材料备注')
+    await editMaterialQuantity(wrapper)
     await button(wrapper, '申请与产品').trigger('click')
     api.complete.mockResolvedValue({ ...sample(false), etag: '"p2"' })
     api.materials.mockResolvedValue(materials(true, '"p2"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('未提交材料备注')
+    expect(materialQuantity(wrapper)).toBe('7')
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
     expect(await api.leave.mock.calls[0]![0]()).toBe(false)
     expect(confirm).toHaveBeenCalled()
     api.save.mockImplementation(async input => ({ ...materials(false, '"p3"'), draft: input.draft, status: 'WAREHOUSE_PENDING' }))
     api.fetch.mockResolvedValue({ ...sample(false), etag: '"p3"' })
     await button(wrapper, '提交仓库').trigger('click'); await flushPromises()
-    expect(api.save.mock.calls[0]![0]).toMatchObject({ etag: '"p2"', draft: { notes: '未提交材料备注', lines: [expect.objectContaining({ key: 'm1' }), expect.objectContaining({ key: 'm2' })] } })
+    expect(api.save.mock.calls[0]![0]).toMatchObject({ etag: '"p2"', draft: { notes: '', lines: [expect.objectContaining({ key: 'm1', quantity: '7' }), expect.objectContaining({ key: 'm2' })] } })
   })
 
   it('产品已保存但材料读取失败仍保留草稿，重读成功也不误清dirty', async () => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render()
-    await wrapper.get('#sample-material-notes').setValue('失败仍保留的材料')
+    await editMaterialQuantity(wrapper)
     api.complete.mockResolvedValue({ ...sample(false), etag: '"p2"' }); api.materials.mockRejectedValue(new Error('材料重读失败'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('产品需求已保存'); expect(wrapper.text()).toContain('材料重读失败')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('失败仍保留的材料')
+    expect(materialQuantity(wrapper)).toBe('7')
     api.materials.mockResolvedValue(materials(true, '"p2"'))
     await button(wrapper, '重新加载材料').trigger('click'); await flushPromises()
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('失败仍保留的材料')
+    expect(materialQuantity(wrapper)).toBe('7')
     vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
     expect(await api.leave.mock.calls[0]![0]()).toBe(false)
   })
@@ -591,13 +644,13 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
   it('保留材料草稿回读遇第三方版本时不静默升版本，重读仍冲突并禁止材料写入', async () => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render()
-    await wrapper.get('#sample-material-notes').setValue('旧版本上的材料草稿')
+    await editMaterialQuantity(wrapper)
     api.complete.mockResolvedValue({ ...sample(false), etag: '"p2"' })
     api.materials.mockResolvedValue(materials(true, '"p3"'))
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('产品需求已保存')
     expect(wrapper.text()).toContain('材料版本已被其他操作更新')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('旧版本上的材料草稿')
+    expect(materialQuantity(wrapper)).toBe('7')
     expect(button(wrapper, '提交仓库').attributes('disabled')).toBeDefined()
     await button(wrapper, '重新加载材料').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('材料版本已被其他操作更新')
@@ -664,7 +717,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     action.mockResolvedValue(committed); api.fetch.mockRejectedValue(new Error('详情重读故障'))
     await button(wrapper, label).trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain(label === '提交仓库' ? '材料需求已提交仓库。' : '已确认无需用料')
-    expect(wrapper.text()).toContain('产品能力读取失败'); expect(wrapper.text()).toContain('产品草稿尚未保存')
+    expect(wrapper.text()).toContain('产品能力读取失败')
     expect(wrapper.findAll('button').some(item => item.text() === '保存')).toBe(false)
 
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('未保存产品要求')
@@ -691,8 +744,7 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
     expect(api.fetch).toHaveBeenCalledTimes(2)
     await button(wrapper, '申请与产品').trigger('click')
     expect(button(wrapper, '保存').attributes('disabled')).toBeUndefined()
-    expect(wrapper.get('input[aria-label="产品规格"]').attributes('disabled')).toBeUndefined()
-    expect(wrapper.text()).toContain('产品草稿尚未保存')
+    expect(wrapper.get('input[aria-label="规格"]').attributes('disabled')).toBeUndefined()
 
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('未保存产品要求')
     expect(api.complete).not.toHaveBeenCalled()
@@ -702,27 +754,27 @@ describe('打样编辑：组件契约测试（Mock 不代表真实验收）', ()
   it.each(['提交仓库', '无需用料'])('产品dirty时取消%s返回产品，两个草稿均不丢失', async label => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render(); await editProductDraft(wrapper)
-    await button(wrapper, '材料需求').trigger('click'); await wrapper.get('#sample-material-notes').setValue('保留的材料草稿')
+    await button(wrapper, '材料需求').trigger('click'); await editMaterialQuantity(wrapper)
     const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
     await button(wrapper, label).trigger('click'); await flushPromises()
     expect(confirm.mock.calls[0]![0]).toContain('本次操作不会保存产品')
     expect(api.save).not.toHaveBeenCalled(); expect(api.noMaterials).not.toHaveBeenCalled(); expect(api.complete).not.toHaveBeenCalled()
     expect(wrapper.get('#sample-product-tab').attributes('aria-selected')).toBe('true')
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('未保存产品要求')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('保留的材料草稿')
+    expect(materialQuantity(wrapper)).toBe('7')
   })
 
   it.each(['提交仓库', '无需用料'])('确认继续%s但写入失败时仍保留产品与材料草稿', async label => {
     api.materials.mockResolvedValue(materials(true))
     const wrapper = await render(); await editProductDraft(wrapper)
     await button(wrapper, '材料需求').trigger('click')
-    await wrapper.get('#sample-material-notes').setValue('失败保留材料')
+    await editMaterialQuantity(wrapper)
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     const action = label === '提交仓库' ? api.save : api.noMaterials
     action.mockRejectedValue(new Error('写入故障'))
     await button(wrapper, label).trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('写入故障'); expect(api.fetch).toHaveBeenCalledTimes(1)
     expect((wrapper.get('#sample-purpose').element as HTMLTextAreaElement).value).toBe('未保存产品要求')
-    expect((wrapper.get('#sample-material-notes').element as HTMLInputElement).value).toBe('失败保留材料')
+    expect(materialQuantity(wrapper)).toBe('7')
   })
 })

@@ -301,8 +301,7 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
             invalid['lines'][0]['requested_quantity'] = quantity
             self.create_issue(invalid, expected=400)
         payload['lines'][0]['requested_quantity'] = '13'
-        key = self.create_issue(payload).data['data']['id']
-        self.action(key, 'submit', expected=400)
+        self.create_issue(payload, expected=400)
         balance.refresh_from_db()
         self.assertEqual(balance.quantity, 12)
         self.assertFalse(SemiFinishedStockMovement.objects.filter(direction='OUT').exists())
@@ -358,8 +357,7 @@ class MaterialIssueFlowTests(MaterialFlowFixture, APITestCase):
         excessive = copy.deepcopy(payload)
         excessive['client_request_id'] = str(uuid.uuid4())
         excessive['lines'][0]['requested_quantity'] = '13'
-        key = self.create_issue(excessive).data['data']['id']
-        self.action(key, 'submit', expected=400)
+        self.create_issue(excessive, expected=400)
         key = self.pending(payload)
         self.action(key, 'confirm-issue', {'request_id': str(uuid.uuid4())})
         balance.refresh_from_db(); other.refresh_from_db()

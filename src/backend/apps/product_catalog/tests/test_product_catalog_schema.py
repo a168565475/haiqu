@@ -43,16 +43,17 @@ class ProductCatalogSchemaTests(SimpleTestCase):
             for method, operation in operations.items():
                 if method not in {"post", "patch", "delete"}:
                     continue
-                success = "201" if method == "post" and url in {ROOT, f"{ROOT}names/"} else "200"
-                self.assertIn("ETag", operation["responses"][success].get("headers", {}))
-                if success == "200":
+                success = "204" if method == "delete" and url == f"{ROOT}names/{{id}}/" else "201" if method == "post" and url in {ROOT, f"{ROOT}names/", f"{ROOT}names/editor/"} else "200"
+                if success != "204":
+                    self.assertIn("ETag", operation["responses"][success].get("headers", {}))
+                if success in {"200", "204"}:
                     header = next(parameter for parameter in operation["parameters"] if parameter["name"] == "If-Match")
                     self.assertTrue(header["required"])
                     self.assertIn("412", operation["responses"])
                     self.assertIn("428", operation["responses"])
         patch = paths[f"{ROOT}{{id}}/"]["patch"]
         fields = resolve(patch["requestBody"]["content"]["application/json"]["schema"])["properties"]
-        self.assertEqual(set(fields), {"product_code", "item_number", "specification", "unit", "scale"})
+        self.assertEqual(set(fields), {"product_code", "item_number", "specification", "unit", "scale", "materials", "thicknesses"})
         for code in ("400", "401", "403", "404", "412", "428"):
             error = resolve(patch["responses"][code]["content"]["application/json"]["schema"])
             self.assertIn("error", error["properties"])

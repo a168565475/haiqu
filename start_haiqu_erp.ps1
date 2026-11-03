@@ -13,6 +13,9 @@ $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = $PSScriptRoot
 $ComposeFile = Join-Path $ProjectRoot 'compose.yml'
+$CodexBridgeEnabledFile = 'E:\CodexData\.codex\private\haiqu-erp-local-codex\enabled.json'
+$CodexComposeFile = Join-Path $ProjectRoot 'deploy\codex\compose.local-remote.yml'
+$CodexBridgeEnabled = Test-Path -LiteralPath $CodexBridgeEnabledFile -PathType Leaf
 $LogDirectory = Join-Path $ProjectRoot 'logs'
 $FrontendUrl = 'http://localhost:8080'
 $HealthUrl = 'http://localhost:8000/api/health/'
@@ -129,6 +132,10 @@ function Invoke-Docker {
         [switch]$AllowFailure
     )
 
+    if ($CodexBridgeEnabled -and $Arguments.Count -ge 4 -and $Arguments[0] -eq 'compose' -and
+        $Arguments[1] -eq '-f' -and $Arguments[2] -eq $ComposeFile) {
+        $Arguments = @('compose', '-f', $ComposeFile, '-f', $CodexComposeFile) + $Arguments[3..($Arguments.Count - 1)]
+    }
     $commandText = 'docker ' + ($Arguments -join ' ')
     if (-not $Quiet) {
         Write-StartupLog "执行：$commandText"
@@ -984,6 +991,19 @@ try {
         throw "通知发送进程未运行：$notificationWorkerState"
     }
     Write-StartupLog '通知发送进程已运行；缺少企业微信配置时自动等待配置。' 'OK'
+
+    if ($CodexBridgeEnabled) {
+        Write-StartupLog '启动已启用的生产任务导入与 Codex 后台处理。'
+        Invoke-Docker -Arguments @('compose', '-f', $ComposeFile, 'up', '-d', '--no-deps',
+            'codex-worker', 'production-import-worker') | Out-Null
+        foreach ($CodexWorker in @('haiqu-codex-worker', 'haiqu-production-import-worker')) {
+            if ((Get-ContainerHealth -ContainerName $CodexWorker) -notin @('running', 'healthy')) {
+                throw "Codex/导入后台处理进程未运行：$CodexWorker"
+            }
+        }
+        & (Join-Path $ProjectRoot 'deploy\codex\local_codex_bridge.ps1') -Action Start
+        Write-StartupLog '加密连接桥已请求启动；账号与模型状态请在 Codex 连接设置中核对。' 'OK'
+    }
 
     Assert-DataMount -ContainerName 'haiqu-postgres' -Destination '/var/lib/postgresql/data' -ExpectedHostPath (Join-Path $ProjectRoot 'data\postgres')
     Assert-DataMount -ContainerName 'haiqu-redis' -Destination '/data' -ExpectedHostPath (Join-Path $ProjectRoot 'data\redis')

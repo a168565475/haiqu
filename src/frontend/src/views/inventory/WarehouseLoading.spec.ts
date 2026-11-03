@@ -14,7 +14,7 @@ import FinishedGoodsInventoryView from './FinishedGoodsInventoryView.vue'
 const routeState = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
 vi.mock('@/router', () => ({ router: { push: vi.fn(), replace: vi.fn() } }))
 vi.mock('vue-router', () => ({ useRoute: () => routeState, useRouter: () => router }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }) }))
 vi.mock('@/api/inventory', async importOriginal => {
   const original = await importOriginal<typeof api>()
   return Object.fromEntries(Object.keys(original).map(key => [key, vi.fn()]))

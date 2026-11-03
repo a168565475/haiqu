@@ -1,7 +1,7 @@
 import { isAxiosError } from 'axios'
 
 import { apiClient } from './request'
-import type { AuthResponse, LoginCredentials, WeComQrSession } from '@/types/auth'
+import type { AuthResponse, LoginCredentials, SwitchTargetsResponse, SwitchTargetFilters, WeComQrSession } from '@/types/auth'
 
 export async function fetchCurrentUser(): Promise<AuthResponse> {
   const { data } = await apiClient.get<AuthResponse>('/api/auth/me/')
@@ -20,6 +20,24 @@ export async function requestDevelopmentAutoLogin(): Promise<AuthResponse> {
 
 export async function logout(): Promise<AuthResponse> {
   const { data } = await apiClient.post<AuthResponse>('/api/auth/logout/')
+  return data
+}
+
+export async function fetchSwitchTargets(q?: string, signal?: AbortSignal, filters?: SwitchTargetFilters): Promise<SwitchTargetsResponse> {
+  const { data } = await apiClient.get<SwitchTargetsResponse>('/api/auth/switch-targets/', {
+    params: { q, ...filters },
+    signal,
+  })
+  return data
+}
+
+export async function switchAccount(employeeId: string): Promise<AuthResponse> {
+  const { data } = await apiClient.post<AuthResponse>('/api/auth/switch/', { employee_id: employeeId })
+  return data
+}
+
+export async function returnAdmin(): Promise<AuthResponse> {
+  const { data } = await apiClient.post<AuthResponse>('/api/auth/return-admin/', {})
   return data
 }
 

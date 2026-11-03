@@ -1,5 +1,5 @@
 import { flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessage } from 'element-plus'
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/boms'
@@ -20,6 +20,9 @@ interface Editor {
   sections: BomSectionInput[]
   quantityReason: string
   activeSectionIndex: number
+  editingLineDraft: BomLineInput
+  addCatalogLine: () => void
+  followingLineDraft: (section: BomSectionInput, line: BomLineInput) => BomLineInput
   blankLine: (unit?: string) => BomLineInput
   persistDraft: () => Promise<boolean>
   submitVerification: () => Promise<void>
@@ -50,6 +53,57 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('整份 BOM 原料自动保存', () => {
+  it('新建面料与复用空白行默认米，连续新增面料也使用米且不改原行', async () => {
+    const { vm, auxiliary } = await open()
+    vm.activeSectionIndex = vm.sections.findIndex(section => section.title === '面料类')
+    const fabric = vm.sections[vm.activeSectionIndex]!
+    vm.addCatalogLine()
+    expect(vm.editingLineDraft.unit).toBe('米')
+    expect(fabric.lines[0]!.unit).toBe('米')
+    fabric.lines[0]!.unit = ''
+    vm.addCatalogLine()
+    expect(fabric.lines).toHaveLength(1)
+    expect(vm.editingLineDraft.unit).toBe('米')
+    const current = { ...vm.blankLine('码'), part_name: '旧面料', unit_consumption: '2.5' }
+    const next = vm.followingLineDraft(fabric, current)
+    expect(next).toMatchObject({ unit: '米', part_name: '', unit_consumption: '' })
+    expect(current).toMatchObject({ unit: '码', part_name: '旧面料', unit_consumption: '2.5' })
+    expect(vm.followingLineDraft(auxiliary, current).unit).toBe('码')
+    expect(api.saveBomDraft).not.toHaveBeenCalled()
+  })
+
+  it('未重选的历史目录面料保存保留原单位和单耗，不改快照', async () => {
+    const { vm } = await open()
+    const fabric = vm.sections.find(section => section.title === '面料类')!
+    const snapshot = { schema_version: 1 as const, catalog_id: 'fabric-a', catalog_version: 'old', category_key: 'FABRIC', template_key: 'FABRIC',
+      name: '旧面料', scope: 'BASE' as const, processing_state: 'RAW' as const, processing_stage: 'RAW', display_name: '旧面料 / 码',
+      attributes: { material: '涤纶' }, unit_id: 'yard', unit_name: '码' }
+    fabric.lines.push({ ...vm.blankLine('码'), id: 'saved-fabric', material_catalog_id: 'fabric-a', material_selection_snapshot: snapshot,
+      part_name: '旧面料', unit_consumption: '2.5' })
+    expect(await vm.persistDraft()).toBe(true)
+    const submitted = vi.mocked(api.saveBomDraft).mock.calls[0]![1].find(section => section.title === '面料类')!.lines[0]!
+    expect(submitted).toMatchObject({ unit: '码', unit_consumption: '2.5', material_selection_snapshot: snapshot })
+    expect(snapshot.unit_name).toBe('码')
+  })
+
+  it.each([
+    [412, '原料品名选项已变化，请刷新该品名后重选；BOM草稿仍保留。', '原料品名选项已变化'],
+    [412, '数据已被其他人修改，请刷新后重试。', '该 BOM 已被其他人修改'],
+    [428, '请选择带内容版本的原料品名。', '请选择带内容版本的原料品名'],
+    [428, '修改请求必须携带 If-Match。', '版本信息'],
+  ])('版本错误%s按真实服务端原因显示且保留草稿：%s', async (status, message, expected) => {
+    const notify = vi.spyOn(ElMessage, 'error')
+    vi.mocked(api.previewBomMaterialSave).mockRejectedValueOnce(Object.assign(new AxiosError(message), {
+      response: { status, data: { error: { code: status === 412 ? 'PRECONDITION_FAILED' : 'PRECONDITION_REQUIRED', message, field_errors: {} } } },
+    }))
+    const { vm, auxiliary } = await open()
+    expect(await vm.persistDraft()).toBe(false)
+    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining(expected))
+    expect(auxiliary.lines[0]!.part_name).toBe('织带')
+    expect(api.saveBomDraft).not.toHaveBeenCalled()
+    expect(api.previewBomMaterialSave).toHaveBeenCalledTimes(1)
+    notify.mockRestore()
+  })
   it('全部匹配时先预检，再直接保存，不调用旧确认接口', async () => {
     const { vm } = await open()
     expect(await vm.persistDraft()).toBe(true)

@@ -1,5 +1,6 @@
 from django.db.models import Q, Sum, Count
 from django.db.models.functions import Coalesce, TruncDate
+from ..product_identity import finished_product_selection_key
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework import serializers, viewsets
@@ -19,7 +20,7 @@ from ..assembly_receipts import (
 )
 from ..receipt_permissions import can_delete_pending_receipt
 from ..models import FinishedGoodsReceipt
-from ..selectors import receipt_batches
+from ..selectors import receipt_batches, scoped_finished_receipts
 from .serializers import FinishedGoodsReceiptSerializer, FinishedGoodsInventoryScopeSerializer
 
 
@@ -56,8 +57,8 @@ def read_data(serializer_class, data):
     return serializer.validated_data
 
 
-def record_queryset():
-    return receipt_batches().select_related('assembly_source').annotate(
+def record_queryset(request):
+    return scoped_finished_receipts(receipt_batches(), request).select_related('assembly_source').annotate(
         business_date=Coalesce('assembly_source__receipt_date', TruncDate('received_at')))
 
 
@@ -134,7 +135,7 @@ class FinishedRecordViewSet(viewsets.ViewSet):
 
     @extend_schema(parameters=[Filters])
     def list(self,request):
-        data=read_data(Filters,request.query_params); rows=record_queryset()
+        data=read_data(Filters,request.query_params); rows=record_queryset(request)
         if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
         if data['q']:
             rows=rows.filter(Q(receipt_number__icontains=data['q'])|Q(task_number_snapshot__icontains=data['q'])|
@@ -155,13 +156,15 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         class Input(serializers.Serializer):
             id=serializers.UUIDField()
         data=read_data(Input,{'id':pk})
-        return Response({'data':record_payload(get_object_or_404(record_queryset(),pk=data['id']), request)})
+        return Response({'data':record_payload(get_object_or_404(record_queryset(request),pk=data['id']), request)})
 
     @extend_schema(parameters=[FinishedGoodsInventoryScopeSerializer])
     @action(detail=False,methods=['get'])
     def locations(self,request):
         class Input(FinishedGoodsInventoryScopeSerializer):
             product_id=serializers.UUIDField(required=False,allow_null=True)
+            product_catalog_id=serializers.UUIDField(required=False,allow_null=True)
+            product_selection_key=serializers.RegexField(r"^[a-f0-9]{32}$", required=False)
             unit_id=serializers.UUIDField()
             zone_id=serializers.UUIDField()
             product_number=serializers.CharField(allow_blank=True,max_length=100)
@@ -175,9 +178,15 @@ class FinishedRecordViewSet(viewsets.ViewSet):
         data=read_data(Input,request.query_params)
         filters={f'{key}_snapshot':data[key] for key in ['product_number','product_code','product_name','item_number','specification','category']}
         rows=FinishedGoodsReceipt.objects.filter(**filters,production_task_product__product_id=data.get('product_id'),
+            production_task_product__product_catalog_id=data.get('product_catalog_id'),
             unit_id=data['unit_id'],actual_color=data['actual_color'],location__zone_id=data['zone_id'],
             status='CONFIRMED', remaining_quantity__gt=0)
+        rows=scoped_finished_receipts(rows, request)
         if data['exclude_sample']:rows=rows.exclude(source_type='SAMPLE_INVENTORY')
+        if data.get('product_catalog_id'):
+            if not data.get('product_selection_key'):
+                raise serializers.ValidationError({'product_selection_key': '请从库存列表选择产品。'})
+            rows=rows.annotate(product_selection_key=finished_product_selection_key()).filter(product_selection_key=data['product_selection_key'])
         if 'task_number' in data:rows=rows.filter(task_number_snapshot=data['task_number'])
         locations=rows.values('location_id','location__location_number').annotate(quantity=Sum('remaining_quantity'),slots=Sum('remaining_box_slots'),
             unknown_packaging=Count('pk',filter=Q(remaining_box_slots__isnull=True))).order_by('location__location_number','location_id')

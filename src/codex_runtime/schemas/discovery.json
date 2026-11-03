@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Haiqu production task discovery v1 - proposal, not model-validated",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "1"
+      ]
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidate_key": {
+            "type": "string"
+          },
+          "task_number_original": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "product_summary": {
+            "type": "string"
+          },
+          "version_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "auxiliary_source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grouping_uncertain": {
+            "type": "boolean"
+          },
+          "uncertainty_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "candidate_key",
+          "task_number_original",
+          "product_summary",
+          "version_description",
+          "task_source_ids",
+          "auxiliary_source_ids",
+          "grouping_uncertain",
+          "uncertainty_reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "auxiliary_sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "section_key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "BOM",
+              "REFERENCE",
+              "UNCLASSIFIED"
+            ]
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "candidate_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "section_key",
+          "kind",
+          "source_ids",
+          "candidate_keys",
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issue_key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "AMBIGUOUS_GROUPING",
+              "TASK_ID_MISSING",
+              "VERSION_AMBIGUOUS",
+              "UNCLASSIFIED_CONTENT",
+              "EXTERNAL_REFERENCE"
+            ]
+          },
+          "source_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issue_key",
+          "kind",
+          "source_ids",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "candidates",
+    "auxiliary_sections",
+    "issues"
+  ],
+  "additionalProperties": false
+}

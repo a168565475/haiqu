@@ -184,13 +184,13 @@ class AuditsView(ManagementView):
         return paginated_response(selectors.audits_queryset(), query.validated_data, selectors.audit_payload, AuditListSerializer)
 
 
-def oauth_error(reason):
+def oauth_error(reason, next_path="/"):
     # reason 仅来自内部枚举，不拼接第三方错误、code、凭据或用户输入。
     public_codes = {"INVALID_STATE": "STATE_INVALID", "CONFIG_UNAVAILABLE": "CONFIGURATION_ERROR",
                     "CONFIGURATION_ERROR": "CONFIGURATION_ERROR", "ACCOUNT_MISMATCH": "IDENTITY_MISMATCH",
                     "BINDING_REQUIRED": "BINDING_REQUIRED", "ACCOUNT_INACTIVE": "ACCOUNT_INACTIVE",
                     "MEMBER_REJECTED": "MEMBER_REJECTED", "UPSTREAM_UNAVAILABLE": "UPSTREAM_UNAVAILABLE"}
-    return HttpResponseRedirect("/auth/wecom-error?reason=" + public_codes.get(reason, "LOGIN_FAILED"))
+    return HttpResponseRedirect(services.oauth_page_url("wecom-error", next_path, reason=public_codes.get(reason, "LOGIN_FAILED")))
 
 
 @never_cache
@@ -198,17 +198,17 @@ def oauth_error(reason):
 @sensitive_variables()
 def oauth_start(request):
     request.exception_reporter_filter = WeComExceptionReporterFilter()
-    if not selectors.schema_is_ready():
-        return oauth_error("CONFIG_UNAVAILABLE")
-    if any(len(values) != 1 for _, values in request.GET.lists()):
-        return oauth_error("INVALID_REQUEST")
     serializer = QRStartSerializer(data=request.GET)
-    if not serializer.is_valid():
+    valid_request = not any(len(values) != 1 for _, values in request.GET.lists()) and serializer.is_valid()
+    next_path = serializer.validated_data["next"] if valid_request else "/"
+    if not selectors.schema_is_ready():
+        return oauth_error("CONFIG_UNAVAILABLE", next_path)
+    if not valid_request:
         return oauth_error("INVALID_REQUEST")
     config = selectors.get_config()
     if config._state.adding or not config.enabled or not selectors.configuration_complete(config):
-        return oauth_error("CONFIG_UNAVAILABLE")
-    return HttpResponseRedirect(services.oauth_url(request, config, serializer.validated_data["next"]))
+        return oauth_error("CONFIG_UNAVAILABLE", next_path)
+    return HttpResponseRedirect(services.oauth_url(request, config, next_path))
 
 
 @never_cache
@@ -216,18 +216,19 @@ def oauth_start(request):
 @sensitive_variables()
 def oauth_callback(request):
     state, code = take_callback_parameters(request)
+    next_path = services.oauth_return_path(request, state)
     if not selectors.schema_is_ready():
-        return oauth_error("CONFIG_UNAVAILABLE")
+        return oauth_error("CONFIG_UNAVAILABLE", next_path)
     try:
         destination = services.oauth_login(request, state, code)
     except services.OAuthFailure as exc:
         services.audit_login_failure(request, exc.code)
-        return oauth_error(exc.code)
+        return oauth_error(exc.code, next_path)
     except CredentialError:
         services.audit_login_failure(request, "CONFIG_UNAVAILABLE")
-        return oauth_error("CONFIG_UNAVAILABLE")
+        return oauth_error("CONFIG_UNAVAILABLE", next_path)
     except WeComError as exc:
         reason = exc.code if exc.code in {"MEMBER_REJECTED", "CONFIGURATION_ERROR"} else "UPSTREAM_UNAVAILABLE"
         services.audit_login_failure(request, reason)
-        return oauth_error(reason)
+        return oauth_error(reason, next_path)
     return HttpResponseRedirect(destination)

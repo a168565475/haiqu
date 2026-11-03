@@ -15,11 +15,11 @@ function productName(line: SalesOrderLine): string {
   return line.customer_product_name_snapshot || line.product_name_snapshot || '—'
 }
 function categoryName(line: SalesOrderLine): string {
-  return props.categories.find(category => category.id === line.product_category_id)?.category_name || '—'
+  return line.product_selection_snapshot?.category_name || props.categories.find(category => category.id === line.product_category_id)?.category_name || '—'
 }
 function unitName(line: SalesOrderLine): string {
   const unit = props.units.find(item => item.id === line.product_unit_id && item.unit_code === line.unit_code_snapshot)
-  return unit?.unit_name || line.unit_code_snapshot || '—'
+  return line.product_selection_snapshot?.unit_name || unit?.unit_name || line.unit_code_snapshot || '—'
 }
 function expectedDate(line: SalesOrderLine): string {
   const activeBatches = props.order.delivery_batches.filter(batch => batch.status === 'ACTIVE')

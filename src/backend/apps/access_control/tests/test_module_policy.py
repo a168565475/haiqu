@@ -121,11 +121,10 @@ class ModulePolicyTests(TestCase):
         response = self.client.get(f'/api/v1/customers/{sample.customer_account_id}/')
         self.assertEqual(response.status_code, 403, response.data)
 
-    def test_superuser_cannot_self_approve(self):
+    def test_active_superuser_can_self_approve(self):
         self.user.is_superuser = True
         self.user.save()
-        with self.assertRaises(PermissionDenied):
-            module_policy.prohibit_self_approval(self.actor, self.actor.pk)
+        module_policy.prohibit_self_approval(self.actor, self.actor.pk)
         module_policy.prohibit_self_approval(self.actor, self.member.pk)
 
     def test_unknown_submitter_is_not_inferred(self):

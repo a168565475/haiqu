@@ -391,6 +391,12 @@ class PurchaseOrderViewSet(
             # 仓库入口沿用原有范围，不因新增详情暴露尚未进入采购执行的草稿。
             if not can_read_purchase:
                 queryset = queryset.filter(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED])
+            elif module_policy.enabled():
+                read_tasks = accessible_production_tasks(self.request, permission='procurement.view_purchaseorder').values('id')
+                read_orders = active_purchase_orders().filter(purchase_order_access(
+                    read_tasks, self.request, permission='procurement.view_purchaseorder')).values('id')
+                # 当前单据没有采购读取范围时，兼任仓库只能读取已进入执行的采购。
+                queryset = queryset.filter(Q(pk__in=read_orders) | Q(status__in=[PurchaseOrderStatus.PURCHASING, PurchaseOrderStatus.COMPLETED]))
             queryset = with_read_detail_records(queryset)
         return queryset
 
@@ -458,8 +464,8 @@ class PurchaseOrderViewSet(
                 "color_name": product.color_name_snapshot,
                 "color_code": product.color_code_snapshot,
                 "order_quantity": str(product.quantity),
-                "unit_code": product.unit.unit_code,
-                "unit_name": product.unit.unit_name,
+                "unit_code": product.unit_code,
+                "unit_name": product.unit_name,
             }
             for product in products
         ]
@@ -845,7 +851,7 @@ class PurchaseOrderViewSet(
                     "id": str(procurement.pk),
                     "source_type": "SAMPLE",
                     "source_number": sample.request_number,
-                    "customer_name": sample.customer_account.account_name,
+                    "customer_name": (sample.customer_account.account_name if sample.customer_account_id else ''),
                     "delivery_date": sample.sample_due_date,
                     "product_count": sample.items.count(),
                     "demand_count": len(lines),

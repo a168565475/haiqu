@@ -1,3 +1,4 @@
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
 import type { CustomerEmployeeSummary, PageMeta } from './customer'
 
 export interface QuotationCurrentVersion {
@@ -80,6 +81,9 @@ export interface QuotationLine {
   unit_code: string
   source_inquiry_item?: string | null
   product_id?: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_category_id?: string | null
   product_unit_id?: string | null
   product_color_id?: string | null
@@ -174,6 +178,9 @@ export interface QuotationLinePayload {
   color_snapshot?: string
   material_snapshot?: string
   product_id?: string | null
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_category_id?: string | null
   product_unit_id?: string | null
   product_color_id?: string | null
@@ -380,6 +387,7 @@ export interface InquiryQuotationCreatePayload {
 }
 
 export interface QuotationPriceHistoryRecord {
+  unit_name?: string
   quotation_id: string
   version_id: string
   date: string
@@ -398,6 +406,7 @@ export interface QuotationPriceHistoryRecord {
 }
 
 export interface QuotationPriceHistory {
+  unit_names?: string[]
   source_label: string
   calculation_warning: string
   unit_codes: string[]

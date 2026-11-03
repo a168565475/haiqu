@@ -17,7 +17,8 @@ FULL_DATA_CODES = (
 
 PERMISSION_CODES = tuple(sorted(set(BASE_PERMISSION_CODES) | set(FULL_DATA_CODES) | {'organizations.manage_organization', 'workshop_reporting.delete_workreport', 'procurement.add_supplierpurchasesheet', 'procurement.change_supplierpurchasesheet',
     'preferences.view_savedview', 'preferences.add_savedview', 'preferences.change_savedview',
-    'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
+    'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense',
+    'production_task_imports.import_production_task'} | {f"access_control.{code}" for code, _, _ in EXTRA_OPERATIONS}))
 
 SALES_APPS = {"customers", "inquiries", "quotations", "sales_orders", "crm"}
 MODULE_NAMES = {
@@ -35,6 +36,7 @@ MODULE_NAMES = {
     "preferences": "个人保存视图", "material_catalog": "原料管理", "product_catalog": "产品管理",
 }
 EXTRA_MODULES = {f"access_control.{code}": module for code, _label, module in EXTRA_OPERATIONS}
+EXTRA_MODULES['production_task_imports.import_production_task'] = 'production_tasks'
 # Existing import/export implementations use dedicated codes. Their grants follow
 # create/view respectively; overwrites still need change + object scope at use sites.
 IMPLIED = {
@@ -49,10 +51,14 @@ def module_for(code):
 
 def scopes_for(code):
     from .resource_scopes import configured, scope_kind
+    from .role_policy import FOLLOWED_PERMISSIONS, STATEMENT_OWN_PERMISSIONS
+    if code in STATEMENT_OWN_PERMISSIONS:
+        return ('MODULE', 'OWN')
+    followed = ('FOLLOWED',) if code in FOLLOWED_PERMISSIONS else ()
     if configured() and scope_kind(code):
         if code.startswith('outsourcing.') and 'outsourcingorder' in code:
-            return ('MODULE', 'CRAFT', 'WORKSHOP', 'STOCK')
-        return ('MODULE', scope_kind(code))
+            return ('MODULE', 'CRAFT', 'WORKSHOP', 'STOCK') + followed
+        return ('MODULE', scope_kind(code)) + followed
     if module_for(code) == 'preferences':
         return ('OWN',)
     if 'businesstask' in code and module_for(code) == 'workflow':
@@ -62,7 +68,7 @@ def scopes_for(code):
     # Templates/tags are shared configuration even when owned by a sales app.
     if module_for(code) in SALES_APPS and not any(x in code for x in ("template", "customertag", "containerconfig")):
         return ("OWN", "TEAM", "ALL")
-    return ("MODULE",)
+    return ("MODULE",) + followed
 
 
 def permission_code(permission):

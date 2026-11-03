@@ -1,68 +1,64 @@
 <script setup lang="ts">
-import ElDialog from '@/components/common/AppWindowDialog.vue'
-import { computed, ref, watch } from 'vue'
-import { fetchSampleMaterialCandidates } from '@/api/sampleMaterials'
-import { sampleMaterialError } from '@/utils/sampleMaterial'
-import type { SampleMaterialCandidate, SampleMaterialCategory, SampleMaterialReferences, SampleMaterialUnit } from '@/types/sampleMaterial'
-const props = defineProps<{ modelValue: boolean; category: SampleMaterialCategory; references: SampleMaterialReferences | null; units: SampleMaterialUnit[]; disabled?: boolean }>()
+import { ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import SampleCatalogSelection from './SampleCatalogSelection.vue'
+import type { SampleMaterialCandidate, SampleMaterialCategory, SampleMaterialLine } from '@/types/sampleMaterial'
+const props = defineProps<{ modelValue: boolean; category: SampleMaterialCategory; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; choose: [items: SampleMaterialCandidate[]] }>()
-const keyword = ref(''), productName = ref(''), page = ref(1), total = ref(0), loading = ref(false), error = ref('')
-const productNames = computed(() => props.references?.catalogNames?.[props.category] || [])
-const candidates = ref<SampleMaterialCandidate[]>([])
-const selected = ref<Record<string, SampleMaterialCandidate>>({})
-let requestId = 0
-const selectedCount = computed(() => Object.keys(selected.value).length)
-async function load() {
-  const request = ++requestId
-  loading.value = true
-  error.value = ''
-  try {
-    const result = await fetchSampleMaterialCandidates(props.category, keyword.value.trim(), page.value, productName.value)
-    if (request !== requestId) return
-    candidates.value = result.data
-    total.value = result.meta.total
-  } catch (reason) { if (request === requestId) { candidates.value = []; error.value = sampleMaterialError(reason) } }
-  finally { if (request === requestId) loading.value = false }
+function emptyDraft(): SampleMaterialLine {
+  return { key: 'selection', category: props.category, name: '', specification: '', material: '', color: '', quantity: '', unitId: '', unitLabel: '', notes: '',
+    ...(props.category === 'tube' ? { pipeInputMode: 'TOTAL_METERS' as const } : {}) }
 }
-function toggle(row: SampleMaterialCandidate) {
+const draft = ref<SampleMaterialLine>(emptyDraft())
+function selectionError() {
+  const row = draft.value, selection = row.material_selection
+  if (!row.material_catalog_id || !selection?.catalog_version || !row.name.trim()) return '请先选择品名'
+  const required: [string, string][] = row.category === 'tube' ? [['shape', '管材类型'], ['section_size', '规格'], ['thickness', '厚度'], ['material', '材质']]
+    : row.category === 'fabric' ? [['material', '材质'], ['fabric_spec', '面料规格'], ['width', '门幅'], ['color', '颜色']] : []
+  const missing = required.filter(([key]) => !selection.attributes[key]?.trim()).map(([, label]) => label)
+  if (missing.length) return `请选择${missing.join('、')}`
+  if (!row.specification.trim()) return '请选择规格'
+  if (!row.unitLabel) return '请选择本次数量单位'
+  if (row.category === 'tube' && row.unitLabel !== '根') return '管材来源单位须为根，请重新选择品名'
+  return ''
+}
+watch(() => [props.modelValue, props.category] as const, ([visible]) => { if (visible) draft.value = emptyDraft() })
+function confirm() {
   if (props.disabled) return
-  if (selected.value[row.id]) delete selected.value[row.id]
-  else selected.value[row.id] = row
+  const error = selectionError()
+  if (error) { ElMessage.warning(error); return }
+  const row = draft.value
+  emit('choose', [{ id: row.material_catalog_id!, number: '', name: row.name, specification: row.specification, material: row.material, color: row.color,
+    unitId: row.unitId, unitLabel: row.unitLabel!, material_catalog_id: row.material_catalog_id,
+    material_selection: JSON.parse(JSON.stringify(row.material_selection)) }])
+  emit('update:modelValue', false)
 }
-function search() { page.value = 1; void load() }
-function confirm() { if (props.disabled || loading.value || !selectedCount.value) return; emit('choose', Object.values(selected.value)); emit('update:modelValue', false) }
-watch(() => props.modelValue, visible => {
-  if (visible) { selected.value = {}; keyword.value = ''; productName.value = ''; page.value = 1; void load() }
-  else requestId++
-})
 </script>
 <template>
-  <ElDialog :model-value="modelValue" class="sample-material-picker-dialog" title="选择材料数据" width="1100px" append-to-body :close-on-click-modal="false" @update:model-value="emit('update:modelValue', $event)">
+  <AppWindowDialog :model-value="modelValue" class="sample-material-picker-dialog" title="选择材料" width="1100px" height="700px" append-to-body destroy-on-close :close-on-click-modal="false" @update:model-value="emit('update:modelValue', $event)">
     <div class="material-picker">
-      <form class="picker-search" @submit.prevent="search"><ElSelect v-model="productName" aria-label="按品名分组" filterable clearable placeholder="全部品名" @change="search"><ElOption v-for="name in productNames" :key="name" :label="name" :value="name" /></ElSelect><ElInput v-model="keyword" aria-label="搜索材料" maxlength="100" clearable placeholder="搜索品号、规格、材质或颜色" /><ElButton native-type="submit" :loading="loading">查询</ElButton><span>已选 {{ selectedCount }} 项</span></form>
-      <div v-if="error" role="alert" class="picker-error">{{ error }} <ElButton link @click="load">重试</ElButton></div>
-      <ElTable v-loading="loading" :data="candidates" height="440" row-key="id" @row-click="toggle">
-        <ElTableColumn width="48"><template #default="{ row }"><span @click.stop><ElCheckbox :model-value="Boolean(selected[row.id])" :aria-label="`选择${row.name} ${row.specification}`" :disabled="disabled" @change="toggle(row)" /></span></template></ElTableColumn>
-        <ElTableColumn prop="number" label="品号" width="140" show-overflow-tooltip />
-        <ElTableColumn prop="name" label="材料名称" min-width="160" show-overflow-tooltip />
-        <ElTableColumn prop="specification" label="规格" min-width="240" show-overflow-tooltip />
-        <ElTableColumn prop="material" label="材质" width="150" show-overflow-tooltip />
-        <ElTableColumn prop="color" label="颜色" width="130" show-overflow-tooltip />
-        <ElTableColumn prop="unitLabel" label="单位" width="80" />
-      </ElTable>
-      <div class="picker-pagination"><span>选入后填写本次打样需求数量</span><ElPagination v-model:current-page="page" :page-size="50" :total="total" layout="total, prev, pager, next" @current-change="load" /></div>
+      <SampleCatalogSelection v-if="modelValue" :key="category" v-model="draft" source="sample" :disabled="disabled" />
     </div>
-    <template #footer><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="disabled || loading || !selectedCount" @click="confirm">添加所选（{{ selectedCount }}）</ElButton></template>
-  </ElDialog>
+    <template #footer><ElButton @click="emit('update:modelValue', false)">取消</ElButton><ElButton type="primary" :disabled="disabled" @click="confirm">添加材料</ElButton></template>
+  </AppWindowDialog>
 </template>
 <style scoped lang="scss">
-@use '@/styles/crm/tokens' as token;
-.material-picker :deep(.el-table) { --el-table-header-bg-color: #{token.$crm-color-page}; --el-table-tr-bg-color: #{token.$crm-color-surface}; --el-table-border-color: #{token.$crm-border-subtle}; --el-table-row-hover-bg-color: #{token.$crm-color-row-hover}; }
-.material-picker { display: grid; gap: 16px; }
-.picker-search, .picker-pagination { display: flex; align-items: center; gap: 12px; }
-.picker-search .el-select { width: 260px; }
-.picker-search .el-input { width: 380px; }
-.picker-search > span, .picker-pagination > span { color: token.$crm-text-secondary; font-size: 12px; }
-.picker-pagination { justify-content: space-between; }
-.picker-error { color: token.$crm-danger; }
+.material-picker { display: grid; flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.material-picker :deep(.sample-catalog-selection) { min-height: 0; }
+.material-picker :deep(.material-selection-field) { height: 100%; min-height: 0; }
+.material-picker :deep(.material-selection-field > div) { height: 100%; min-height: 0; }
+.material-picker :deep(.material-selection) { box-sizing: border-box; height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 0; }
+.material-picker :deep(.selection-error) { grid-column: 1 / -1; grid-row: 1; }
+.material-picker :deep(.catalog-names) { display: flex; flex-direction: column; grid-column: 1; grid-row: 2; min-height: 0; overflow: hidden; }
+.material-picker :deep(.catalog-names > header), .material-picker :deep(.catalog-pages) { flex-shrink: 0; }
+.material-picker :deep(.catalog-name-list) { flex: 1; min-height: 0; overflow-y: auto; }
+.material-picker :deep(.attribute-groups) { grid-column: 2; grid-row: 2; grid-template-rows: repeat(var(--material-attribute-rows, 2), minmax(0, 1fr)); min-height: 0; overflow: hidden; align-content: stretch; padding: 12px; }
+.material-picker :deep(.attribute-groups--four-columns) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.material-picker :deep(.attribute-groups--seven:not(.attribute-groups--fabric-colors) > .attribute-group:last-of-type) { grid-column: span 2; }
+.material-picker :deep(.attribute-group) { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.material-picker :deep(.group-values) { flex: 1; min-height: 0; }
+.material-picker :deep(.attribute-value) { flex-shrink: 0; }
+.material-picker :deep(.color-table-scroll) { flex: 1; max-height: none; }
+.material-picker :deep(.selection-empty) { grid-column: 2; grid-row: 2; }
 </style>

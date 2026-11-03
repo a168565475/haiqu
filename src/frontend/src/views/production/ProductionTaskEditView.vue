@@ -9,10 +9,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import InquiryProductDialog from '@/components/inquiries/InquiryProductDialog.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import ProductImage from '@/components/products/ProductImage.vue'
-import type { InquiryItem, InquiryProductSelectionOptions } from '@/types/inquiry'
+import type { InquiryItem } from '@/types/inquiry'
 import InquiryWangEditor from '@/components/InquiryWangEditor.vue'
 import { multiplyAmount4, sumAmounts4 } from '@/utils/salesCny'
-import { buildProductionProductCandidates } from './productionProductCandidates'
 import {
   productionTaskBusinessFileUrl,
   fetchProductionTask,
@@ -77,6 +76,15 @@ const form = reactive({
 })
 
 const isTerminal = computed(() => ['COMPLETED', 'CANCELLED'].includes(task.value?.status || ''))
+function canEditField(field: string) {
+  return !!task.value && !isTerminal.value
+    && (task.value.allowed_update_fields === undefined || task.value.allowed_update_fields.includes(field))
+}
+const planOnly = computed(() => {
+  const fields = task.value?.allowed_update_fields
+  return !!fields?.length && fields.every(field => ['planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids'].includes(field))
+})
+const canSave = computed(() => !isTerminal.value && task.value?.allowed_update_fields?.length !== 0)
 const followerOptions = computed(() => {
   const available = options.value?.employees || []
   return [...available, ...(task.value?.followers || []).filter(employee =>
@@ -85,7 +93,7 @@ const followerOptions = computed(() => {
 const employeeName = (id: string) => options.value?.employees.find(item => item.id === id)?.display_name || task.value?.followers.find(item => item.id === id)?.display_name || id
 const followerSummary = (ids: string[]) => ids.map(employeeName).join('、') || '未设置'
 const sourceLocked = computed(() => Boolean(task.value?.sales_order_id || task.value?.products.some(row => row.source_delivery_batch_line_id)))
-const returnsToDraft = computed(() => ['PENDING_VALIDATION', 'READY'].includes(task.value?.status || ''))
+const returnsToDraft = computed(() => !planOnly.value && ['PENDING_VALIDATION', 'READY'].includes(task.value?.status || ''))
 const originalForm = ref<Record<string, unknown>>({})
 const fieldLabels: Record<string, string> = { salesperson_id: '业务员', order_date: '下单日期', includes_tax: '含税', tax_rate: '税率', order_tolerance_percent: '订单误差', is_repeat_order: '返单', preproduction_sample_required: '产前样', delivery_method: '交货方式', planned_start_date: '计划开工', planned_end_date: '计划完工', production_priority: '优先级', production_batch_number: '生产批号' }
 const productFiles = ref<Record<string, File[]>>({})
@@ -113,18 +121,13 @@ const quantitySummary = computed(() => {
 })
 function hasDetailFiles(row: EditableProduct) { return row.payload.details.some(detail => Boolean(detailFiles.value[detail.client_key])) }
 function changedProduct(row: EditableProduct) { return hasDetailFiles(row) || row.quantity !== row.originalQuantity || JSON.stringify(row.payload) !== row.originalPayload || Boolean(productFiles.value[row.id]?.length) || row.unitPriceCny !== task.value?.products.find(item => item.id === row.id)?.local_unit_price }
-async function loadProductionCandidates(categoryId: string): Promise<InquiryProductSelectionOptions> {
-  return buildProductionProductCandidates(categoryId, {
-    categories: options.value?.categories, products: options.value?.products || [], units: options.value?.units || [],
-  })
-}
 function editProduct(row?: EditableProduct) {
-  if (isTerminal.value || sourceLocked.value) return
+  if (!canEditField('products') || sourceLocked.value) return
   if (row && !row.isCny) { ElMessage.warning('历史外币产品保留冻结价格，仅支持在产品档案调整数量和要求。'); return }
   editingId.value = row?.id || ''
   editorDetails.value = row ? JSON.parse(JSON.stringify(row.payload.details)) : (options.value?.detail_template || []).map(detail => ({ client_key: crypto.randomUUID(), template_key: detail.key, detail_type: detail.type, category_label: detail.category, is_selected: false, description: '' }))
   editorDetailFiles.value = { ...detailFiles.value }
-  editorItem.value = row ? { ...emptyItem(), id: row.id, product_id: row.payload.product_id, product_category_id: row.payload.product_category_id, product_unit_id: row.payload.unit_id, product_color_id: row.payload.product_color_id, product_image_id: row.payload.retained_image_ids[0] || null, product_description: row.productName, specification: row.specification, color: row.payload.customer_color || '', material: row.payload.material || '', quantity: row.quantity, unit_code: options.value?.units.find(unit => unit.id === row.payload.unit_id)?.unit_code || '', target_unit_price: row.unitPriceCny, notes: row.payload.special_requirements } : emptyItem()
+  editorItem.value = row ? { ...emptyItem(), id: row.id, product_id: row.payload.product_id, product_catalog_id: row.payload.product_catalog_id || null, product_selection: row.payload.product_selection || null, product_selection_snapshot: task.value?.products.find(product => product.id === row.id)?.product_selection_snapshot || null, product_category_id: row.payload.product_category_id, product_unit_id: row.payload.unit_id, product_color_id: row.payload.product_color_id, product_image_id: row.payload.retained_image_ids[0] || null, product_description: row.productName, item_number_snapshot: row.productCode, specification: row.specification, color: row.payload.customer_color || '', material: row.payload.material || '', quantity: row.quantity, unit_code: row.payload.product_selection?.draft?.unit_name || task.value?.products.find(product => product.id === row.id)?.unit_code || options.value?.units.find(unit => unit.id === row.payload.unit_id)?.unit_code || row.unitName, target_unit_price: row.unitPriceCny, notes: row.payload.special_requirements } : emptyItem()
   if (row) editorItem.value.product_number_snapshot = options.value?.products.find(product => product.id === row.payload.product_id)?.product_number || task.value?.products.find(product => product.id === row.id)?.product_number || ''
   editorVisible.value = true
 }
@@ -132,7 +135,8 @@ function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; image
   const item = value.item
   const unit = options.value?.units.find(row => item.product_unit_id ? row.id === item.product_unit_id : row.unit_code === item.unit_code)
   const currency = options.value?.currencies.find(row => row.code === 'CNY')
-  if (!unit || !currency) { ElMessage.warning('请选择已维护的真实单位，并检查人民币币种。'); return }
+  const draftUnit = item.product_selection?.draft?.unit_name.trim()
+  if ((!unit && !draftUnit) || !currency) { ElMessage.warning('请选择或填写单位，并检查人民币币种。'); return }
   if (!/^[1-9]\d*$/.test(String(item.quantity))) { ElMessage.warning('生产数量必须是大于0的整数。'); return }
   if (item.target_unit_price == null || String(item.target_unit_price).trim() === '' || !Number.isFinite(Number(item.target_unit_price)) || Number(item.target_unit_price) < 0) { ElMessage.warning('请填写正确的人民币单价。'); return }
   const old = editingProduct.value
@@ -140,9 +144,9 @@ function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; image
   const retainedImages = old?.payload.retained_image_ids || []
   // 已有待上传主图时，只替换待上传文件，不能再次移除保留的附图。
   const retainedImageIds = value.imageChanged && !productFiles.value[id]?.length ? retainedImages.slice(1) : retainedImages
-  const payload: ProductionTaskProductInput = { ...(old?.payload || {}), ...(value.imageChanged ? { replace_primary_image: Boolean(old && value.imageFile) } : {}), client_key: id, product_id: item.product_id || null, product_category_id: item.product_category_id || null, product_color_id: item.product_color_id || null, color_code: options.value?.colors.find(row => row.id === item.product_color_id)?.color_code || '', customer_product_name: item.product_description, customer_specification: item.specification, customer_color: item.color, material: item.material, quantity: String(item.quantity), unit_id: unit.id, currency_id: currency.id, unit_price: String(item.target_unit_price), exchange_rate: '1.00000000', special_requirements: item.notes, packaging_method: old?.payload.packaging_method || '', retained_image_ids: [...retainedImageIds], details: JSON.parse(JSON.stringify(editorDetails.value)) }
+  const payload: ProductionTaskProductInput = { ...(old?.payload || {}), ...(value.imageChanged ? { replace_primary_image: Boolean(old && value.imageFile) } : {}), client_key: id, product_id: item.product_id || null, product_catalog_id: item.product_catalog_id || null, product_selection: item.product_selection || null, product_category_id: item.product_category_id || null, product_color_id: item.product_color_id || null, color_code: options.value?.colors.find(row => row.id === item.product_color_id)?.color_code || '', customer_product_name: item.product_description, customer_specification: item.specification, customer_color: item.color, material: item.material, quantity: String(item.quantity), unit_id: item.product_selection?.draft ? item.product_selection.draft.unit_id : unit?.id || null, currency_id: currency.id, unit_price: String(item.target_unit_price), exchange_rate: '1.00000000', special_requirements: item.notes, packaging_method: old?.payload.packaging_method || '', retained_image_ids: [...retainedImageIds], details: JSON.parse(JSON.stringify(editorDetails.value)) }
   const product = options.value?.products.find(row => row.id === item.product_id)
-  const row: EditableProduct = { id, productName: item.product_description, productCode: product?.item_number || '', specification: item.specification, colorLabel: item.color, quantity: String(item.quantity), originalQuantity: old?.originalQuantity || '', unitName: unit.unit_name, sourceLocked: false, unitPriceCny: String(item.target_unit_price), lineAmountCny: old?.lineAmountCny || '', isCny: true, payload, originalPayload: old?.originalPayload || '', deletionReason: old?.deletionReason || '' }
+  const row: EditableProduct = { id, productName: item.product_description, productCode: item.item_number_snapshot || product?.item_number || '', specification: item.specification, colorLabel: item.color, quantity: String(item.quantity), originalQuantity: old?.originalQuantity || '', unitName: draftUnit || unit?.unit_name || '', sourceLocked: false, unitPriceCny: String(item.target_unit_price), lineAmountCny: old?.lineAmountCny || '', isCny: true, payload, originalPayload: old?.originalPayload || '', deletionReason: old?.deletionReason || '' }
   if (old) products.value.splice(products.value.indexOf(old), 1, row)
   else products.value.push(row)
   if (!expandedProductIds.value.includes(id)) expandedProductIds.value.push(id)
@@ -156,7 +160,7 @@ function confirmProduct(value: { item: InquiryItem; imageChanged: boolean; image
   editorVisible.value = false
 }
 function removeProduct(row: EditableProduct) {
-  if (sourceLocked.value || isTerminal.value || row.deletionReason) return
+  if (sourceLocked.value || !canEditField('products') || row.deletionReason) return
   products.value = products.value.filter(item => item.id !== row.id)
   expandedProductIds.value = expandedProductIds.value.filter(id => id !== row.id)
   row.payload.details.forEach(detail => delete detailFiles.value[detail.client_key])
@@ -259,6 +263,8 @@ function productPayload(row: ProductionTaskProduct, quantity: string): Productio
   return {
     client_key: row.id,
     product_id: row.product_id,
+    product_catalog_id: row.product_catalog_id || null,
+    product_selection: null,
     product_color_id: row.product_color_id ?? null,
     product_category_id: row.product_category_id ?? null,
     color_code: row.color_code,
@@ -303,12 +309,18 @@ function buildPatch(): ProductionTaskPatchInput {
     if (value !== originalForm.value[key]) Object.assign(patch, { [key]: ['planned_start_date', 'planned_end_date'].includes(key) ? value || null : value })
   }
   if (products.value.some(changedProduct) || products.value.length !== task.value.products.length) patch.products = products.value.map(row => row.sourceLocked ? productPayload(task.value!.products.find(item => item.id === row.id)!, row.quantity) : { ...row.payload, quantity: row.quantity, unit_price: row.isCny ? row.unitPriceCny : row.payload.unit_price })
-  return patch
+  return Object.fromEntries(Object.entries(patch).filter(([field]) => canEditField(field))) as ProductionTaskPatchInput
 }
 
 function validate() {
   if (isTerminal.value) return '已完成或已取消的任务不能编辑。'
+  if (!canSave.value) return '当前任务不可编辑。'
   if (!form.follower_ids.length) return '请选择至少一名跟单员。'
+  if (planOnly.value) {
+    if (Boolean(form.planned_start_date) !== Boolean(form.planned_end_date)) return '请同时填写计划开工和计划完工。'
+    if (form.planned_start_date && form.planned_end_date < form.planned_start_date) return '计划完工不能早于计划开工。'
+    return ''
+  }
   if (!form.salesperson_id || !form.order_date) return '请选择业务员和下单日期。'
   if (form.includes_tax && ![3, 5, 7].includes(Number(form.tax_rate))) return '含税时请选择税率。'
   if (!form.order_tolerance_percent.trim() || !Number.isFinite(Number(form.order_tolerance_percent)) || Number(form.order_tolerance_percent) < 0 || Number(form.order_tolerance_percent) > 100) return '订单误差必须是0到100的百分比。'
@@ -323,7 +335,7 @@ function validate() {
     if (row.sourceLocked && row.maxQuantity != null && Number(row.quantity) > row.maxQuantity) return `${row.productName} 的本次生产量不能超过 ${row.maxQuantity}。`
     if (!row.sourceLocked && (!row.unitPriceCny.trim() || !Number.isFinite(Number(row.unitPriceCny)) || Number(row.unitPriceCny) < 0)) return '请填写正确的人民币单价。'
   }
-  if (!sourceLocked.value && products.value.some((row) => row.quantity !== row.originalQuantity) && task.value?.products.some((row) => !row.product_color_id && !(row.customer_product_name?.trim() && row.customer_specification?.trim() && row.unit_id && row.details.length && row.details.every((detail) => detail.detail_type.trim())))) {
+  if (!sourceLocked.value && products.value.some((row) => row.quantity !== row.originalQuantity) && task.value?.products.some((row) => !row.product_catalog_id && !row.product_selection_snapshot?.entry_draft && !row.product_color_id && !(row.customer_product_name?.trim() && row.customer_specification?.trim() && row.unit_id && row.details.length && row.details.every((detail) => detail.detail_type.trim())))) {
     return '存在缺少有效颜色的历史产品行，暂不能批量修改数量。'
   }
   return ''
@@ -344,7 +356,7 @@ async function save() {
   if (!Object.keys(basePatch).length) { ElMessage.info('没有检测到需要保存的修改。'); return }
   try {
     await ElMessageBox.confirm(
-      bomAffectedChanges.value.length
+      planOnly.value ? '仅更新计划资料，保存后保留当前生产状态。' : bomAffectedChanges.value.length
         ? `本次有 ${bomAffectedChanges.value.length} 项数量变更会影响关联 BOM。${returnsToDraft.value ? '保存后任务将回到草稿并重新走 PMC；' : '保存后保留当前生产状态；'}请选择的 BOM 处理方式为“${bomSyncMode.value === 'SYNC' ? '同步并生成必要的新版本' : '保留当前 BOM'}”。`
         : returnsToDraft.value ? '保存后，待确认或已确认的任务将回到草稿，需要重新提交 PMC。' : '确认保存本次修改？保存后保留当前生产状态。',
       '确认保存修改',
@@ -360,7 +372,7 @@ async function save() {
       result = await updateProductionTask(taskId.value, patch, productFiles.value, detailFiles.value, etag.value)
     } catch (error) {
       const token = confirmationToken(error)
-      if (!token) throw error
+      if (!token || planOnly.value) throw error
       patch = { ...basePatch, bom_sync_mode: bomSyncMode.value, bom_sync_token: token }
       result = await updateProductionTask(taskId.value, patch, productFiles.value, detailFiles.value, etag.value)
     }
@@ -401,12 +413,12 @@ async function load() {
     products.value = result.data.products.map((row) => ({
       id: row.id,
       productName: row.customer_product_name || row.product_name,
-      productCode: row.product_id ? row.item_number : '',
+      productCode: row.item_number || '',
       specification: row.specification_display || row.customer_specification || row.specification,
       colorLabel: [row.customer_color || row.color_name, row.color_code].filter(Boolean).join(' / ') || '未设置颜色',
       quantity: String(row.quantity),
       originalQuantity: String(row.quantity),
-      unitName: row.unit_name,
+      unitName: row.product_selection_snapshot?.unit_name || row.unit_name || row.unit_code,
       sourceLocked: Boolean(row.source_delivery_batch_line_id || result.data.sales_order_id),
       unitPriceCny: row.local_unit_price,
       lineAmountCny: row.local_total_amount,
@@ -459,36 +471,36 @@ onMounted(() => { void load() })
             <div class="info-grid">
               <label class="info-wide readonly-field"><span>生产任务单号</span><ElInput :model-value="task.task_number" readonly aria-label="生产任务单号" /></label>
               <label class="info-wide readonly-field"><span>来源订单</span><ElInput :model-value="task.source_sales_order_number || '手动创建（未关联销售订单）'" readonly aria-label="来源订单" /></label>
-              <label><span>业务员 <i>*</i></span><ElSelect v-model="form.salesperson_id" aria-label="业务员" filterable :disabled="sourceLocked || isTerminal"><ElOption v-for="employee in options?.salespeople || []" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
-              <label><span>跟单员 <i>*</i></span><ElSelect v-model="form.follower_ids" aria-label="跟单员" multiple filterable collapse-tags collapse-tags-tooltip :disabled="isTerminal"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
-              <label><span>下单日期 <i>*</i></span><ElDatePicker v-model="form.order_date" aria-label="下单日期" type="date" value-format="YYYY-MM-DD" :disabled="sourceLocked || isTerminal" /></label>
-              <label><span>预计交期 <i>*</i></span><ElDatePicker v-model="form.delivery_date" aria-label="预计交期" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>
-              <label><span>含税</span><ElSelect v-model="form.includes_tax" aria-label="含税" :disabled="isTerminal"><ElOption label="含税" :value="true"/><ElOption label="不含税" :value="false"/></ElSelect></label>
-              <label v-if="form.includes_tax"><span>税率 <i>*</i></span><ElSelect v-model="form.tax_rate" aria-label="税率" :disabled="isTerminal" placeholder="请选择税率"><ElOption v-for="rate in [3,5,7]" :key="rate" :value="rate" :label="rate + '%'"/></ElSelect></label>
-              <label><span>订单误差 <i>*</i></span><ElInput v-model="form.order_tolerance_percent" aria-label="订单误差" :disabled="isTerminal"><template #append>%</template></ElInput></label>
-              <label><span>返单</span><ElSelect v-model="form.is_repeat_order" aria-label="返单" :disabled="isTerminal"><ElOption label="是" :value="true"/><ElOption label="否" :value="false"/></ElSelect></label>
-              <label><span>交货方式</span><ElSelect v-model="form.delivery_method" aria-label="交货方式" :disabled="isTerminal"><ElOption label="一次交付" value="SINGLE"/><ElOption label="分批交付" value="SPLIT"/></ElSelect></label>
-              <label v-if="!sourceLocked"><span>产前样</span><ElSelect v-model="form.preproduction_sample_required" aria-label="产前样" :disabled="isTerminal"><ElOption label="需要" :value="true"/><ElOption label="不需要" :value="false"/></ElSelect></label>
+              <label><span>业务员 <i>*</i></span><ElSelect v-model="form.salesperson_id" aria-label="业务员" filterable :disabled="(sourceLocked || isTerminal) || !canEditField('salesperson_id')"><ElOption v-for="employee in options?.salespeople || []" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
+              <label><span>跟单员 <i>*</i></span><ElSelect v-model="form.follower_ids" aria-label="跟单员" multiple filterable collapse-tags collapse-tags-tooltip :disabled="(isTerminal) || !canEditField('follower_ids')"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
+              <label><span>下单日期 <i>*</i></span><ElDatePicker v-model="form.order_date" aria-label="下单日期" type="date" value-format="YYYY-MM-DD" :disabled="(sourceLocked || isTerminal) || !canEditField('order_date')" /></label>
+              <label><span>预计交期 <i>*</i></span><ElDatePicker v-model="form.delivery_date" aria-label="预计交期" type="date" value-format="YYYY-MM-DD" :disabled="(isTerminal) || !canEditField('delivery_date')" /></label>
+              <label><span>含税</span><ElSelect v-model="form.includes_tax" aria-label="含税" :disabled="(isTerminal) || !canEditField('includes_tax')"><ElOption label="含税" :value="true"/><ElOption label="不含税" :value="false"/></ElSelect></label>
+              <label v-if="form.includes_tax"><span>税率 <i>*</i></span><ElSelect v-model="form.tax_rate" aria-label="税率" :disabled="(isTerminal) || !canEditField('tax_rate')" placeholder="请选择税率"><ElOption v-for="rate in [3,5,7]" :key="rate" :value="rate" :label="rate + '%'"/></ElSelect></label>
+              <label><span>订单误差 <i>*</i></span><ElInput v-model="form.order_tolerance_percent" aria-label="订单误差" :disabled="(isTerminal) || !canEditField('order_tolerance_percent')"><template #append>%</template></ElInput></label>
+              <label><span>返单</span><ElSelect v-model="form.is_repeat_order" aria-label="返单" :disabled="(isTerminal) || !canEditField('is_repeat_order')"><ElOption label="是" :value="true"/><ElOption label="否" :value="false"/></ElSelect></label>
+              <label><span>交货方式</span><ElSelect v-model="form.delivery_method" aria-label="交货方式" :disabled="(isTerminal) || !canEditField('delivery_method')"><ElOption label="一次交付" value="SINGLE"/><ElOption label="分批交付" value="SPLIT"/></ElSelect></label>
+              <label v-if="!sourceLocked"><span>产前样</span><ElSelect v-model="form.preproduction_sample_required" aria-label="产前样" :disabled="(isTerminal) || !canEditField('preproduction_sample_required')"><ElOption label="需要" :value="true"/><ElOption label="不需要" :value="false"/></ElSelect></label>
             </div>
           </section>
           <section class="task-schedule">
             <h2>生产安排</h2>
             <div class="info-grid">
-              <label><span>生产优先级</span><ElSelect v-model="form.production_priority" aria-label="生产优先级" :disabled="isTerminal"><ElOption v-for="(label, value) in {URGENT:'紧急',HIGH:'高',NORMAL:'普通',LOW:'低'}" :key="value" :value="value" :label="label"/></ElSelect></label>
-              <label><span>计划开工</span><ElDatePicker v-model="form.planned_start_date" aria-label="计划开工" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>
-              <label><span>计划完工</span><ElDatePicker v-model="form.planned_end_date" aria-label="计划完工" type="date" value-format="YYYY-MM-DD" :disabled="isTerminal" /></label>
-              <label class="info-wide"><span>生产批号</span><ElInput v-model="form.production_batch_number" aria-label="生产批号" maxlength="100" :disabled="isTerminal" /></label>
+              <label><span>生产优先级</span><ElSelect v-model="form.production_priority" aria-label="生产优先级" :disabled="(isTerminal) || !canEditField('production_priority')"><ElOption v-for="(label, value) in {URGENT:'紧急',HIGH:'高',NORMAL:'普通',LOW:'低'}" :key="value" :value="value" :label="label"/></ElSelect></label>
+              <label><span>计划开工</span><ElDatePicker v-model="form.planned_start_date" aria-label="计划开工" type="date" value-format="YYYY-MM-DD" :disabled="(isTerminal) || !canEditField('planned_start_date')" /></label>
+              <label><span>计划完工</span><ElDatePicker v-model="form.planned_end_date" aria-label="计划完工" type="date" value-format="YYYY-MM-DD" :disabled="(isTerminal) || !canEditField('planned_end_date')" /></label>
+              <label class="info-wide"><span>生产批号</span><ElInput v-model="form.production_batch_number" aria-label="生产批号" maxlength="100" :disabled="(isTerminal) || !canEditField('production_batch_number')" /></label>
             </div>
           </section>
           <p class="required-legend"><i>*</i> 为必填</p>
         </aside>
         <div class="editor-main">
           <section class="edit-section products-section">
-            <div class="section-title-row"><h2>生产产品档案</h2><ElButton v-if="!sourceLocked" :disabled="isTerminal" @click="editProduct()">添加产品</ElButton></div>
+            <div class="section-title-row"><h2>生产产品档案</h2><ElButton v-if="!sourceLocked" :disabled="!canEditField('products')" @click="editProduct()">添加产品</ElButton></div>
             <p v-if="sourceLocked" class="source-note"><ElIcon><Lock /></ElIcon> 来源产品和价格锁定，可调整本次生产量</p>
             <div class="product-files">
               <details v-for="row in products" :key="row.id" class="product-file" :data-product-id="row.id" :open="expandedProductIds.includes(row.id)" @toggle="syncProductExpansion(row.id, $event)">
-                <summary class="product-summary"><ArrowRight class="file-arrow" aria-hidden="true"/><span class="file-name">{{ row.productName }}</span><span class="file-code">{{ row.productCode || '—' }}</span></summary>
+                <summary class="product-summary"><ArrowRight class="file-arrow" aria-hidden="true"/><span class="file-name">{{ row.productName }}</span></summary>
                 <div class="file-content">
                   <div class="product-media">
                     <div class="product-photo"><ProductImage :src="imageUrl(row)" :name="row.productName" large/></div>
@@ -498,7 +510,6 @@ onMounted(() => { void load() })
                   <div class="product-editor-body">
                     <dl class="product-fields">
                       <div><dt>产品</dt><dd>{{ row.productName }}</dd></div>
-                      <div><dt>货号</dt><dd>{{ row.productCode || '—' }}</dd></div>
                       <div><dt>颜色</dt><dd>{{ row.colorLabel || '—' }}</dd></div>
                       <div><dt>规格</dt><dd>{{ row.specification || '—' }}</dd></div>
                       <div><dt>材质</dt><dd>{{ row.payload.material || '—' }}</dd></div>
@@ -507,16 +518,16 @@ onMounted(() => { void load() })
                       <div><dt>计划完工</dt><dd>{{ form.planned_end_date || '待安排' }}</dd></div>
                     </dl>
                     <div class="price-fields">
-                      <label><span>本次生产量 <i>*</i></span><ElInput v-model="row.quantity" inputmode="numeric" :aria-label="row.productName + '本次生产量'" :disabled="isTerminal"><template #append>{{ row.unitName }}</template></ElInput><small v-if="row.sourceLocked && row.maxQuantity != null">上限 {{ row.maxQuantity }} {{ row.unitName }}</small></label>
-                      <label><span>人民币单价 <i v-if="!row.sourceLocked && row.isCny">*</i></span><ElInput v-if="!row.sourceLocked && row.isCny" v-model="row.unitPriceCny" inputmode="decimal" aria-label="人民币单价" :disabled="isTerminal"/><span v-else class="readonly-value">￥{{ row.unitPriceCny }}</span></label>
+                      <label><span>本次生产量 <i>*</i></span><ElInput v-model="row.quantity" inputmode="numeric" :aria-label="row.productName + '本次生产量'" :disabled="(isTerminal) || !canEditField('products')"><template #append>{{ row.unitName }}</template></ElInput><small v-if="row.sourceLocked && row.maxQuantity != null">上限 {{ row.maxQuantity }} {{ row.unitName }}</small></label>
+                      <label><span>人民币单价 <i v-if="!row.sourceLocked && row.isCny">*</i></span><ElInput v-if="!row.sourceLocked && row.isCny" v-model="row.unitPriceCny" inputmode="decimal" aria-label="人民币单价" :disabled="(isTerminal) || !canEditField('products')"/><span v-else class="readonly-value">￥{{ row.unitPriceCny }}</span></label>
                       <div class="amount-field"><span>人民币金额</span><strong>￥{{ compactDecimal(productAmountCny(row)) }}</strong></div>
                     </div>
                     <div class="pack-fields">
-                      <label><span>包装要求</span><ElInput v-model="row.payload.packaging_method" type="textarea" :rows="3" :disabled="sourceLocked || isTerminal" maxlength="3000" aria-label="包装要求"/></label>
-                      <label><span>生产要求</span><ElInput v-model="row.payload.special_requirements" type="textarea" :rows="3" :disabled="sourceLocked || isTerminal" maxlength="3000" aria-label="产品生产要求"/></label>
+                      <label><span>包装要求</span><ElInput v-model="row.payload.packaging_method" type="textarea" :rows="3" :disabled="(sourceLocked || isTerminal) || !canEditField('products')" maxlength="3000" aria-label="包装要求"/></label>
+                      <label><span>生产要求</span><ElInput v-model="row.payload.special_requirements" type="textarea" :rows="3" :disabled="(sourceLocked || isTerminal) || !canEditField('products')" maxlength="3000" aria-label="产品生产要求"/></label>
                     </div>
                     <div class="product-actions">
-                      <template v-if="!sourceLocked"><ElButton link type="primary" :disabled="isTerminal || !row.isCny" @click="editProduct(row)">编辑产品</ElButton><ElButton link type="danger" :disabled="isTerminal || !!row.deletionReason" @click="removeProduct(row)">删除</ElButton></template>
+                      <template v-if="!sourceLocked"><ElButton link type="primary" :disabled="!canEditField('products') || !row.isCny" @click="editProduct(row)">编辑产品</ElButton><ElButton link type="danger" :disabled="!canEditField('products') || !!row.deletionReason" @click="removeProduct(row)">删除</ElButton></template>
                       <span v-else>来源锁定</span><small v-if="row.deletionReason" class="action-reason">{{ row.deletionReason }}</small><small v-if="!row.sourceLocked && !row.isCny" class="action-reason">历史外币产品保留冻结价格，单价不可修改。</small>
                     </div>
                   </div>
@@ -527,10 +538,10 @@ onMounted(() => { void load() })
           </section>
           <section class="edit-section requirements-section">
             <h2>生产要求</h2>
-            <InquiryWangEditor v-model="form.special_requirements_html" class="requirements-field" upload-url="" upload-etag="" :toolbar-keys="['bold', 'italic', 'bulletedList']" :show-upload-notice="false" :maxlength="4000" :inert="isTerminal" placeholder="填写生产要求、质量要求和注意事项" />
+            <InquiryWangEditor v-model="form.special_requirements_html" class="requirements-field" upload-url="" upload-etag="" :toolbar-keys="['bold', 'italic', 'bulletedList']" :show-upload-notice="false" :maxlength="4000" :inert="!canEditField('special_requirements_html')" placeholder="填写生产要求、质量要求和注意事项" />
           </section>
           <section class="edit-section review-section">
-            <div class="bom-section"><h2>BOM 同步设置</h2><ElRadioGroup v-model="bomSyncMode" :disabled="isTerminal"><ElRadio value="SYNC">修改任务并同步 BOM（已确认 BOM 会生成新版本）</ElRadio><ElRadio value="KEEP">仅保存任务，保留当前 BOM</ElRadio></ElRadioGroup></div>
+            <div v-if="canEditField('products')" class="bom-section"><h2>BOM 同步设置</h2><ElRadioGroup v-model="bomSyncMode"><ElRadio value="SYNC">修改任务并同步 BOM（已确认 BOM 会生成新版本）</ElRadio><ElRadio value="KEEP">仅保存任务，保留当前 BOM</ElRadio></ElRadioGroup></div>
             <div class="comparison-card">
               <div class="section-title-row"><h2>变更对照</h2><span>仅显示本次修改的字段</span></div>
               <p v-if="!changes.length" class="no-changes">尚未修改任何字段</p>
@@ -540,9 +551,9 @@ onMounted(() => { void load() })
           </section>
         </div>
       </div>
-      <footer class="edit-footer save-bar"><span aria-live="polite">{{ dirty ? '有未保存修改' : '尚未修改' }}</span><div><ElButton @click="back">取消</ElButton><ElButton type="primary" :loading="saving" :disabled="isTerminal || !dirty" @click="save">保存修改</ElButton></div></footer>
+      <footer class="edit-footer save-bar"><span aria-live="polite">{{ dirty ? '有未保存修改' : '尚未修改' }}</span><div><ElButton @click="back">取消</ElButton><ElButton type="primary" :loading="saving" :disabled="!canSave || !dirty" @click="save">保存修改</ElButton></div></footer>
       <AppWindowDialog v-model="editorVisible" class="production-product-editor" :title="editingId ? '编辑生产产品' : '添加生产产品'" :width="1180" :height="780" :min-width="320" :close-on-click-modal="false" destroy-on-close>
-        <InquiryProductDialog ref="productEditor" v-model="editorVisible" embedded hide-embedded-footer hide-summary business-title="本次生产内容" scene="sales-order" :candidate-loader="loadProductionCandidates" :item="editorItem" :categories="options?.categories || []" :units="options?.units || []" :colors="options?.colors || []" :currencies="[{code:'CNY'}]" quotation-currency="CNY" :can-upload="true" :close-on-confirm="false" :image-url="editingProduct ? imageUrl(editingProduct) : ''" :pending-image="editingId ? productFiles[editingId]?.[0] : null" @confirm="confirmProduct">
+        <InquiryProductDialog ref="productEditor" v-model="editorVisible" embedded hide-embedded-footer hide-summary business-title="本次生产内容" scene="sales-order" :item="editorItem" :categories="options?.categories || []" :units="options?.units || []" :colors="options?.colors || []" :currencies="[{code:'CNY'}]" quotation-currency="CNY" :can-upload="true" :close-on-confirm="false" :image-url="editingProduct ? imageUrl(editingProduct) : ''" :pending-image="editingId ? productFiles[editingId]?.[0] : null" @confirm="confirmProduct">
           <template #before-actions>
             <section class="product-detail-editor">
               <h3>生产明细</h3>
@@ -606,7 +617,6 @@ label i, .required-legend i { color: token.$crm-danger; font-style: normal; }
 .file-arrow { width: 16px; height: 16px; flex: 0 0 16px; color: token.$crm-text-secondary; }
 .product-file[open] .file-arrow { transform: rotate(90deg); color: token.$crm-primary; }
 .file-name { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
-.file-code { margin-left: auto; color: token.$crm-text-secondary; overflow-wrap: anywhere; text-align: right; }
 .file-content { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 20px; padding: 12px 16px; }
 .product-media, .product-editor-body { min-width: 0; }
 .product-photo { width: 118px; height: 98px; }

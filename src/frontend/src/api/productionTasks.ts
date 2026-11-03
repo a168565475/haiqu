@@ -5,10 +5,12 @@ import type { DataResponse } from '@/types/referenceData'
 import type {
   PaginatedProductionTasks,
   ProductionTask,
+  ProductionTaskHoldAction,
   ProductionTaskInput,
   ProductionTaskPatchInput,
   ProductionTaskOptions,
   ProductionTaskFilterOptions,
+  ProductionTaskAdvancedFilterOptions,
   ProductionTaskPmcDecisionInput,
   ProductionTaskQuery,
   ReservedContractNumber,
@@ -58,6 +60,11 @@ export async function fetchProductionTaskFilterOptions(): Promise<ProductionTask
   return data.data
 }
 
+export async function fetchProductionTaskAdvancedFilterOptions(): Promise<ProductionTaskAdvancedFilterOptions> {
+  const { data } = await apiClient.get<DataResponse<ProductionTaskAdvancedFilterOptions>>(`${basePath}options/`, { params: { scope: 'advanced_filters' } })
+  return data.data
+}
+
 export async function exportProductionTasks(query: ProductionTaskQuery, ids: string[] = []): Promise<{ blob: Blob; count: number | null }> {
   const config = {
     params: { ...query, page: undefined, page_size: undefined },
@@ -100,8 +107,9 @@ export async function createProductionTask(
   payload: ProductionTaskInput,
   productImages: Record<string, File[]>,
   detailImages: Record<string, File | null>,
+  etag?: string,
 ): Promise<VersionedProductionTask> {
-  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages))
+  const response = await apiClient.post<DataResponse<ProductionTask>>(basePath, multipartPayload(payload, productImages, detailImages), etag ? { headers: { 'If-Match': etag } } : undefined)
   return versioned(response)
 }
 
@@ -157,6 +165,12 @@ async function closeProductionTask(id: string, action: 'cancel' | 'finish', reas
     `${basePath}${encodeURIComponent(id)}/${action}/`, { reason }, { headers: { 'If-Match': etag } },
   )
   return versioned(response)
+}
+
+export async function holdProductionTask(id: string, action: ProductionTaskHoldAction, reason: string, etag: string): Promise<VersionedProductionTask> {
+  return versioned(await apiClient.post<DataResponse<ProductionTask>>(
+    `${basePath}${encodeURIComponent(id)}/${action}/`, { reason }, { headers: { 'If-Match': etag } },
+  ))
 }
 
 export function cancelProductionTask(id: string, reason: string, etag: string): Promise<VersionedProductionTask> {

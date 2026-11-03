@@ -66,7 +66,7 @@ def _register(code, obj, actor, document_no, version, **facts):
     }
     return register_business_event(
         event_code=code, idempotency_key=f"{code}:{obj.pk}:{version}",
-        object_type=obj._meta.label, object_id=obj.pk, object_version=version, context=context,
+        object_type=obj._meta.label, object_id=obj.pk, object_version=version, context=context, actor_employee=actor,
     )
 
 

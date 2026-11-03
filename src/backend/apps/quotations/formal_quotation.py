@@ -222,7 +222,7 @@ def build_formal_quotation_pdf(version):
             _product_image_cell(line, table_style),
             Paragraph(_text(line.product_description_snapshot), table_style),
             Paragraph(_text(line.specification_snapshot), table_style),
-            Paragraph(f"{_money(line.quantity)} {_text(line.unit_code)}", table_right_style),
+            Paragraph(f"{_money(line.quantity)} {_text(line.product_selection_snapshot.get('unit_name') or line.unit_code)}", table_right_style),
         ]
         for basis in price_bases:
             price = price_maps[basis.id].get(line.id)
@@ -265,7 +265,7 @@ def build_formal_quotation_pdf(version):
                 [
                     Paragraph(_text(line.product_description_snapshot), table_style),
                     Paragraph(_text(tier.container_type_code), table_style),
-                    Paragraph(f"{_money(tier.final_quantity)} {_text(line.unit_code)}", table_right_style),
+                    Paragraph(f"{_money(tier.final_quantity)} {_text(line.product_selection_snapshot.get('unit_name') or line.unit_code)}", table_right_style),
                     Paragraph(f"{_text(version.currency_code)} {_money(tier.unit_price)}", table_right_style),
                     Paragraph(f"{_money(Decimal(tier.load_factor) * 100)}%", table_right_style),
                     Paragraph(_text(tier.override_reason or "System calculated"), table_style),

@@ -5,12 +5,27 @@ from apps.samples.models import SampleRequest
 from apps.samples.selectors import accessible_sample_requests
 
 
-def accessible_purchase_samples(request):
+def current_operations(request, default):
+    from apps.access_control import module_policy
+    view = (getattr(request, 'parser_context', None) or {}).get('view')
+    permission = module_policy.action_permission(request, view) if view is not None else None
+    permissions = permission if isinstance(permission, (tuple, list)) else (permission or default,)
+    return tuple(code for code in permissions if module_policy.has_permission(request, code))
+
+
+def accessible_purchase_samples(request, permission=None):
     if not request or not getattr(request, "employee", None):
         return SampleRequest.objects.none()
     from apps.access_control import module_policy
-    if module_policy.enabled() and module_policy.has_module_grant(request, 'procurement', 'inventory'):
-        return SampleRequest.objects.filter(archived_at__isnull=True, customer_account__archived_at__isnull=True)
+    from apps.access_control.role_policy import role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+    operations = (permission,) if permission else current_operations(request, 'procurement.view_purchaseorder')
+    if module_policy.enabled():
+        if request.user.is_superuser or any(role_scopes(request, code) & {'MODULE', 'ALL'} for code in operations):
+            return SampleRequest.objects.filter(archived_at__isnull=True, customer_account__archived_at__isnull=True)
+        if not any(has_legacy_permission(request, code) for code in operations):
+            # FOLLOWED只有生产任务关系，不能由其它岗位的模块授权附赠样品范围。
+            return SampleRequest.objects.none()
     user = request.user
     if user.is_superuser or user.has_perm("samples.view_sample_procurement"):
         permission = "view_sample_procurement"
@@ -26,7 +41,7 @@ def accessible_purchase_samples(request):
     )
 
 
-def purchase_order_access(allowed_task_ids, request, prefix=""):
+def purchase_order_access(allowed_task_ids, request, prefix="", *, permission=None):
     return Q(**{prefix + "production_task_id__in": allowed_task_ids}) | Q(**{
-        prefix + "sample_procurement_request__material_request__sample_request__in": accessible_purchase_samples(request),
+        prefix + "sample_procurement_request__material_request__sample_request__in": accessible_purchase_samples(request, permission),
     })

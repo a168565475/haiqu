@@ -542,3 +542,4 @@ class OutsourcingReconciliationEntry(TimeStampedModel):
 
 from .tube_models import (TubeOutsourcingAction, TubeOutsourcingLine, TubeOutsourcingMaterial, TubeOutsourcingOrder,
                          TubeOutsourcingReceipt, TubeOutsourcingReceiptLine, TubeSourceKind)  # noqa: E402,F401
+from .plan_models import TubePlanReceipt, TubePlanReceiptLine, TubePlanRecordCorrection  # noqa: E402,F401

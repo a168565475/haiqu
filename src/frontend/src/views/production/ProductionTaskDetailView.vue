@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { isTaskReadyForScheduling } from './productionTaskDisplay'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
@@ -10,16 +11,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, ArrowRight, Picture } from '@element-plus/icons-vue'
 
 import {
+  cancelProductionTask,
   decideProductionTaskByPmc,
   fetchProductionTask,
   fetchProductionTaskOptions,
   finishProductionTask,
+  holdProductionTask,
   submitProductionTask,
+  transitionProductionTask,
   productionTaskBusinessFileUrl,
 } from '@/api/productionTasks'
 import ProductionTaskScheduleDialog from '@/components/productionScheduling/ProductionTaskScheduleDialog.vue'
 import { useAuthStore } from '@/stores/auth'
-import type { ProductionTask, ProductionTaskOptions, ProductionDeliveryMethod, ProductionTaskStatus } from '@/types/productionTask'
+import type { ProductionTask, ProductionTaskOptions, ProductionDeliveryMethod, ProductionTaskStatus, ProductionTaskHoldAction } from '@/types/productionTask'
 
 import { quantityWithUnits, localAmountTotal } from './productionTaskDisplay'
 
@@ -64,15 +68,22 @@ const pmcForm = reactive({
 watch(() => pmcForm.includes_tax, (includesTax) => { if (!includesTax) pmcForm.tax_rate = null })
 
 const taskId = computed(() => String(route.params.taskId || ''))
+function canTask(permission: string, legacy = permission) {
+  if (task.value?.allowed_permissions !== undefined) return task.value.allowed_permissions.includes(permission)
+  return authStore.moduleCan(permission, legacy)
+}
+function canEditField(field: string) {
+  return task.value?.allowed_update_fields === undefined || task.value.allowed_update_fields.includes(field)
+}
 const canEdit = computed(() => (
-  authStore.hasPermission('production_tasks.change_productiontask')
+  (canTask('production_tasks.change_productiontask') || canTask('access_control.edit_productionplan'))
   && ['DRAFT', 'PENDING_VALIDATION', 'READY', 'IN_PRODUCTION', 'PAUSED'].includes(task.value?.status || '')
 ))
 const canSubmit = computed(() => (
-  authStore.hasPermission('production_tasks.submit_productiontask') && task.value?.status === 'DRAFT'
+  canTask('production_tasks.submit_productiontask') && task.value?.status === 'DRAFT'
 ))
 const canConfirm = computed(() => (
-  authStore.hasPermission('production_tasks.confirm_productiontask') && task.value?.status === 'PENDING_VALIDATION'
+  canTask('production_tasks.confirm_productiontask') && task.value?.status === 'PENDING_VALIDATION'
 ))
 const canSchedule = computed(() => (
   authStore.hasPermission('production_scheduling.view_productionschedule')
@@ -80,8 +91,13 @@ const canSchedule = computed(() => (
   && isTaskReadyForScheduling(task.value)
 ))
 const canFinish = computed(() => (
-  authStore.moduleCan('access_control.finish_productiontask', 'production_tasks.change_productiontask') && task.value?.status === 'IN_PRODUCTION'
+  canTask('access_control.finish_productiontask', 'production_tasks.change_productiontask') && task.value?.status === 'IN_PRODUCTION'
 ))
+const canStart = computed(() => canTask('production_tasks.start_productiontask') && task.value?.status === 'READY')
+const canCancel = computed(() => canTask('access_control.cancel_productiontask', 'production_tasks.change_productiontask')
+  && ['DRAFT', 'PENDING_VALIDATION', 'READY', 'IN_PRODUCTION', 'PAUSED'].includes(task.value?.status || ''))
+const canPause = computed(() => canTask('access_control.pause_productiontask') && ['READY', 'IN_PRODUCTION'].includes(task.value?.status || ''))
+const canResume = computed(() => canTask('access_control.resume_productiontask') && task.value?.status === 'PAUSED')
 
 const standardStatusSteps: Array<{ status: ProductionTaskStatus; label: string }> = [
   { status: 'DRAFT', label: '草稿' },
@@ -198,7 +214,7 @@ async function loadPmcOptions() {
 }
 
 function openPmcDialog(mode: 'CONFIRM' | 'RETURN') {
-  if (!task.value) return
+  if (!task.value || !canConfirm.value) return
   pmcMode.value = mode
   pmcForm.planned_start_date = task.value.planned_start_date || ''
   pmcForm.planned_end_date = task.value.planned_end_date || ''
@@ -217,7 +233,7 @@ function openPmcDialog(mode: 'CONFIRM' | 'RETURN') {
 }
 
 async function decideByPmc() {
-  if (!task.value) return
+  if (!task.value || !canConfirm.value) return
   if (pmcMode.value === 'CONFIRM' && (optionsLoading.value || !options.value)) return
   if (pmcMode.value === 'RETURN' && !pmcForm.reason.trim()) {
     ElMessage.warning('请填写退回原因。')
@@ -225,10 +241,10 @@ async function decideByPmc() {
   }
   if (pmcMode.value === 'CONFIRM') {
     if (!pmcForm.follower_ids.length) { ElMessage.warning('请选择生产跟单员。'); return }
-    if (!pmcForm.delivery_date || pmcForm.delivery_date < task.value.order_date) { ElMessage.warning('请选择不早于下单日期的交期。'); return }
-    if (pmcForm.includes_tax && ![3, 5, 7].includes(Number(pmcForm.tax_rate))) { ElMessage.warning('含税时请选择税率。'); return }
+    if (canEditField('delivery_date') && (!pmcForm.delivery_date || pmcForm.delivery_date < task.value.order_date)) { ElMessage.warning('请选择不早于下单日期的交期。'); return }
+    if (canEditField('tax_rate') && pmcForm.includes_tax && ![3, 5, 7].includes(Number(pmcForm.tax_rate))) { ElMessage.warning('含税时请选择税率。'); return }
     const tolerance = Number(pmcForm.order_tolerance_percent)
-    if (pmcForm.order_tolerance_percent.trim() === '' || !Number.isFinite(tolerance) || tolerance < 0 || tolerance > 100) { ElMessage.warning('订单误差必须是 0 到 100 之间的百分比。'); return }
+    if (canEditField('order_tolerance_percent') && (pmcForm.order_tolerance_percent.trim() === '' || !Number.isFinite(tolerance) || tolerance < 0 || tolerance > 100)) { ElMessage.warning('订单误差必须是 0 到 100 之间的百分比。'); return }
     if (!pmcForm.planned_start_date || !pmcForm.planned_end_date) {
       ElMessage.warning('请填写计划开始和计划完工日期。')
       return
@@ -256,7 +272,9 @@ async function decideByPmc() {
           production_priority: pmcForm.production_priority,
           production_batch_number: pmcForm.production_batch_number.trim(),
         }
-    const result = await decideProductionTaskByPmc(task.value.id, payload, etag.value)
+    const allowedPayload = Object.fromEntries(Object.entries(payload)
+      .filter(([field]) => field === 'decision' || field === 'reason' || canEditField(field))) as typeof payload
+    const result = await decideProductionTaskByPmc(task.value.id, allowedPayload, etag.value)
     task.value = result.data
     etag.value = result.etag
     pmcDialogVisible.value = false
@@ -269,7 +287,11 @@ async function decideByPmc() {
 }
 
 async function finishTask() {
-  if (!task.value || !canFinish.value) return
+  if (!task.value || actionLoading.value || !canFinish.value) return
+  if (task.value.sales_order_id) {
+    await router.push({ name: 'production-tasks', query: { finish: task.value.id } })
+    return
+  }
   try {
     const result = await ElMessageBox.prompt('请输入完工说明。', '完成生产', {
       type: 'warning', inputType: 'textarea', confirmButtonText: '确认完成', cancelButtonText: '取消',
@@ -288,8 +310,65 @@ async function finishTask() {
   }
 }
 
+async function startTask() {
+  if (!task.value || actionLoading.value || !canStart.value) return
+  try {
+    const result = await ElMessageBox.prompt('请先完成计划排产。订金未到账而允许先生产时，填写允许先生产原因。', '开始生产', {
+      inputType: 'textarea', confirmButtonText: '确认开始', cancelButtonText: '取消',
+      inputValidator: value => String(value || '').trim().length <= 1000 || '原因最多 1000 字。',
+    })
+    actionLoading.value = true
+    const updated = await transitionProductionTask(task.value.id, 'start', etag.value, { start_waiver_reason: result.value.trim() })
+    task.value = updated.data
+    etag.value = updated.etag
+    ElMessage.success('生产任务已开始。')
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(apiError(error))
+  } finally { actionLoading.value = false }
+}
+
+async function cancelTask() {
+  if (!task.value || actionLoading.value || !canCancel.value) return
+  try {
+    const result = await ElMessageBox.prompt('请填写取消原因。', '取消生产任务', {
+      type: 'warning', inputType: 'textarea', confirmButtonText: '确认取消任务', cancelButtonText: '暂不取消',
+      inputValidator: value => Boolean(String(value || '').trim()) || '请填写取消原因。',
+    })
+    actionLoading.value = true
+    const updated = await cancelProductionTask(task.value.id, result.value.trim(), etag.value)
+    task.value = updated.data
+    etag.value = updated.etag
+    ElMessage.success('生产任务已取消。')
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(apiError(error))
+  } finally { actionLoading.value = false }
+}
+
 async function handleScheduleSaved() {
   await loadTask()
+}
+
+async function changeHoldState(action: ProductionTaskHoldAction) {
+  if (!task.value || actionLoading.value || !(action === 'pause' ? canPause.value : canResume.value)) return
+  const label = action === 'pause' ? '暂停' : '恢复'
+  try {
+    const result = await ElMessageBox.prompt(`请填写${label}原因。`, `${label}生产任务`, {
+      inputType: 'textarea', confirmButtonText: `确认${label}`, cancelButtonText: '取消',
+      inputValidator: value => Boolean(String(value || '').trim()) || `请填写${label}原因。`,
+    })
+    actionLoading.value = true
+    const updated = await holdProductionTask(task.value.id, action, result.value.trim(), etag.value)
+    task.value = updated.data
+    etag.value = updated.etag
+    ElMessage.success(`生产任务已${label}。`)
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(apiError(error))
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 function goBack() {
@@ -314,7 +393,11 @@ onMounted(async () => {
           <ElButton v-if="canSubmit" type="primary" :loading="actionLoading" @click="submitTask">提交 PMC 确认</ElButton>
           <template v-if="canConfirm"><ElButton :loading="actionLoading" @click="openPmcDialog('RETURN')">退回修改</ElButton><ElButton type="primary" :loading="actionLoading" @click="openPmcDialog('CONFIRM')">PMC 确认通过</ElButton></template>
           <ElButton v-if="canSchedule" type="primary" @click="scheduleDialogVisible = true">计划排产</ElButton>
+          <ElButton v-if="canStart" type="primary" :loading="actionLoading" @click="startTask">开始生产</ElButton>
           <ElButton v-if="canFinish" type="primary" :loading="actionLoading" @click="finishTask">完成生产</ElButton>
+          <ElButton v-if="canPause" :loading="actionLoading" @click="changeHoldState('pause')">暂停任务</ElButton>
+          <ElButton v-if="canResume" :loading="actionLoading" @click="changeHoldState('resume')">恢复任务</ElButton>
+          <ElButton v-if="canCancel" type="danger" plain :loading="actionLoading" @click="cancelTask">取消任务</ElButton>
         </div>
       </header>
 
@@ -366,7 +449,7 @@ onMounted(async () => {
                 <div class="file-content">
                   <div class="product-figure">
                     <div class="product-photo">
-                      <img v-if="product.images?.[0] && !failedImageIds.includes(product.images[0].id)" :src="productionTaskBusinessFileUrl(task.id, product.images[0].id)" :alt="product.images[0].name" @error="failedImageIds.push(product.images[0].id)" />
+                      <ProtectedImage v-if="product.images?.[0] && !failedImageIds.includes(product.images[0].id)" :src="productionTaskBusinessFileUrl(task.id, product.images[0].id)" :alt="product.images[0].name" @error="failedImageIds.push(product.images[0].id)" />
                       <template v-else><Picture aria-hidden="true"/><span>{{ product.images?.length ? '图片加载失败' : '暂无产品图片' }}</span></template>
                     </div>
                     <div class="product-images" aria-label="产品图片预览"><ProductImage v-for="image in product.images || []" :key="image.id" :src="productionTaskBusinessFileUrl(task.id, image.id)" :name="image.name"/></div>
@@ -404,13 +487,13 @@ onMounted(async () => {
       <ElAlert v-if="pmcMode === 'CONFIRM' && optionsError" :title="optionsError" type="error" :closable="false"><ElButton link @click="loadPmcOptions">重新加载员工选项</ElButton></ElAlert>
       <div v-if="pmcMode === 'CONFIRM'" class="pmc-form">
         <label><span>生产任务单号</span><ElInput :model-value="task?.task_number" readonly /></label>
-        <label><span>跟单员 *</span><ElSelect v-model="pmcForm.follower_ids" multiple filterable :loading="optionsLoading" :disabled="optionsLoading || !!optionsError" placeholder="请选择生产跟单员"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
-        <label><span>交期日期 *</span><ElDatePicker v-model="pmcForm.delivery_date" type="date" value-format="YYYY-MM-DD" /></label>
-        <label><span>是否含税 *</span><ElSelect v-model="pmcForm.includes_tax"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></label>
-        <label v-if="pmcForm.includes_tax"><span>税率 *</span><ElSelect v-model="pmcForm.tax_rate" placeholder="请选择税率"><ElOption v-for="rate in [3, 5, 7]" :key="rate" :label="`${rate}%`" :value="rate" /></ElSelect></label>
-        <label><span>订单误差 *</span><ElInput v-model="pmcForm.order_tolerance_percent"><template #append>%</template></ElInput></label>
-        <label><span>是否返单 *</span><ElSelect v-model="pmcForm.is_repeat_order"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></label>
-        <label><span>交货方式 *</span><ElSelect v-model="pmcForm.delivery_method"><ElOption label="一次交货" value="SINGLE" /><ElOption label="分批交货" value="SPLIT" /></ElSelect></label><label><span>计划开始日期 *</span><ElDatePicker v-model="pmcForm.planned_start_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>计划完工日期 *</span><ElDatePicker v-model="pmcForm.planned_end_date" type="date" value-format="YYYY-MM-DD" /></label><label><span>优先级</span><ElSelect v-model="pmcForm.production_priority"><ElOption label="紧急" value="URGENT" /><ElOption label="高" value="HIGH" /><ElOption label="普通" value="NORMAL" /><ElOption label="低" value="LOW" /></ElSelect></label><label><span>生产批号</span><ElInput v-model="pmcForm.production_batch_number" maxlength="50" /></label></div>
+        <label><span>跟单员 *</span><ElSelect v-model="pmcForm.follower_ids" multiple filterable :loading="optionsLoading" :disabled="(optionsLoading || !!optionsError) || !canEditField('follower_ids')" placeholder="请选择生产跟单员"><ElOption v-for="employee in followerOptions" :key="employee.id" :label="employee.display_name" :value="employee.id" /></ElSelect></label>
+        <label><span>交期日期 *</span><ElDatePicker v-model="pmcForm.delivery_date" type="date" value-format="YYYY-MM-DD" :disabled="!canEditField('delivery_date')" /></label>
+        <label><span>是否含税 *</span><ElSelect v-model="pmcForm.includes_tax" :disabled="!canEditField('includes_tax')"><ElOption label="含税" :value="true" /><ElOption label="不含税" :value="false" /></ElSelect></label>
+        <label v-if="pmcForm.includes_tax"><span>税率 *</span><ElSelect v-model="pmcForm.tax_rate" placeholder="请选择税率" :disabled="!canEditField('tax_rate')"><ElOption v-for="rate in [3, 5, 7]" :key="rate" :label="`${rate}%`" :value="rate" /></ElSelect></label>
+        <label><span>订单误差 *</span><ElInput v-model="pmcForm.order_tolerance_percent" :disabled="!canEditField('order_tolerance_percent')"><template #append>%</template></ElInput></label>
+        <label><span>是否返单 *</span><ElSelect v-model="pmcForm.is_repeat_order" :disabled="!canEditField('is_repeat_order')"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></label>
+        <label><span>交货方式 *</span><ElSelect v-model="pmcForm.delivery_method" :disabled="!canEditField('delivery_method')"><ElOption label="一次交货" value="SINGLE" /><ElOption label="分批交货" value="SPLIT" /></ElSelect></label><label><span>计划开始日期 *</span><ElDatePicker v-model="pmcForm.planned_start_date" type="date" value-format="YYYY-MM-DD" :disabled="!canEditField('planned_start_date')" /></label><label><span>计划完工日期 *</span><ElDatePicker v-model="pmcForm.planned_end_date" type="date" value-format="YYYY-MM-DD" :disabled="!canEditField('planned_end_date')" /></label><label><span>优先级</span><ElSelect v-model="pmcForm.production_priority" :disabled="!canEditField('production_priority')"><ElOption label="紧急" value="URGENT" /><ElOption label="高" value="HIGH" /><ElOption label="普通" value="NORMAL" /><ElOption label="低" value="LOW" /></ElSelect></label><label><span>生产批号</span><ElInput v-model="pmcForm.production_batch_number" maxlength="50" :disabled="!canEditField('production_batch_number')" /></label></div>
       <ElInput v-else v-model="pmcForm.reason" type="textarea" :rows="5" maxlength="500" show-word-limit placeholder="请填写需要修改的内容" />
       <template #footer><ElButton @click="pmcDialogVisible = false">取消</ElButton><ElButton type="primary" :loading="actionLoading" :disabled="pmcMode === 'CONFIRM' && (optionsLoading || !options)" @click="decideByPmc">{{ pmcMode === 'CONFIRM' ? '确认通过' : '确认退回' }}</ElButton></template>
     </ElDialog>

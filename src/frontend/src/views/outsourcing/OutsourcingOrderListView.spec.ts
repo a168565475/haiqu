@@ -14,6 +14,7 @@ vi.mock('@/api/outsourcing', () => ({
 vi.mock('@/api/unifiedOutsourcing', async (original) => ({ ...await original<object>(), fetchUnifiedOutsourcingOrders: api.list, fetchUnifiedOutsourcingOptions: api.options }))
 vi.mock('./MetalProcessingP4View.vue', () => ({ default: { name: 'MetalProcessingP4View', props: ['mode', 'embedded'], emits: ['updated'], template: '<div data-testid="sources-workspace">来源工作区</div>' } }))
 vi.mock('@/components/outsourcing/OutsourcingPrintDialog.vue', () => ({ default: { props: ['record', 'kind'], emits: ['close'], template: '<div data-testid="print-dialog" />' } }))
+vi.mock('@/components/outsourcing/WarehouseOutsourcingActionDialog.vue', () => ({ default: { name: 'WarehouseOutsourcingActionDialog', props: ['record', 'action'], emits: ['closed', 'updated'], template: `<div data-testid="warehouse-action-dialog"><button @click="$emit('closed')">关闭</button></div>` } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { get is_superuser() { return permissions.superuser } }, hasPermission: (name: string) => permissions.values.includes(name) }) }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
 
@@ -85,6 +86,32 @@ describe('普通外发单列表删除入口', () => {
 })
 
 describe('统一外发列表及来源入口', () => {
+  it('列表办理成功刷新当前列表，关闭后可办理另一项且不跳转', async () => {
+    route.meta = { outsourcingWorkspace: 'warehouse' }
+    const wrapper = await createView()
+    const vm = wrapper.vm as any
+    vm.openWarehouseAction({ ...row, warehouse_actions: ['dispatch', 'return'] }, 'dispatch')
+    await flushPromises()
+    const dialog = wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' })
+    vm.openWarehouseAction({ ...row, id: 'other-order', warehouse_actions: ['return'] }, 'return')
+    await flushPromises()
+    expect(dialog.props('record').id).toBe('order-1')
+    dialog.vm.$emit('updated'); await flushPromises()
+    expect(api.list).toHaveBeenCalledTimes(2)
+    dialog.vm.$emit('closed'); await flushPromises()
+    expect(wrapper.find('[data-testid="warehouse-action-dialog"]').exists()).toBe(false)
+    vm.openWarehouseAction({ ...row, warehouse_actions: ['return'] }, 'return')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props('action')).toBe('return')
+    expect(api.push).not.toHaveBeenCalled()
+  })
+  it('总单回货直接打开列表内独立入库弹窗，不跳转页面', async () => {
+    route.meta = { outsourcingWorkspace: 'warehouse' }
+    const wrapper = await createView({ ...row, record_type: 'TUBE', detail_access: 'TUBE', is_plan: true, warehouse_actions: ['return'] } as typeof row)
+    await (wrapper.vm as any).openWarehouseAction({ ...row, record_type: 'TUBE', detail_access: 'TUBE', is_plan: true, warehouse_actions: ['return'] }, 'return')
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props()).toMatchObject({ record: { id: 'order-1', is_plan: true }, action: 'return' })
+    expect(api.push).not.toHaveBeenCalled()
+  })
   it('仓库一个状态列表按服务端动作显示办理入口，隐藏页签和创建入口', async () => {
     route.meta = { outsourcingWorkspace: 'warehouse' }
     permissions.superuser = false
@@ -99,15 +126,16 @@ describe('统一外发列表及来源入口', () => {
     const buttons = wrapper.findAll('.el-table__body-wrapper button')
     expect(buttons.some(button => ['发料', '入库', '详情'].includes(button.text()))).toBe(false)
     await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
-    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '回货入库')).toBe(true))
+    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '外发入库')).toBe(true))
     const menuItems = [...document.querySelectorAll('.el-dropdown-menu__item')]
     expect(menuItems.filter(item => item.textContent?.trim() === '查看详情')).toHaveLength(1)
-    expect(menuItems.some(item => item.textContent?.trim() === '确认外发')).toBe(false)
-    menuItems.find(item => item.textContent?.trim() === '回货入库')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(menuItems.some(item => item.textContent?.trim() === '材料发出')).toBe(false)
+    menuItems.find(item => item.textContent?.trim() === '外发入库')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flushPromises()
-    expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/tube/order-1/return')
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props()).toMatchObject({ record: { record_type: 'TUBE' }, action: 'return' })
     await (wrapper.vm as any).openWarehouseAction({ ...row, warehouse_actions: [] }, 'dispatch')
-    expect(api.push).toHaveBeenCalledTimes(1)
+    expect(api.push).not.toHaveBeenCalled()
+    expect(wrapper.find('.outsourcing-planned-amount').exists()).toBe(false)
   })
 
   it.each(['material_issues.create_metalprocessingoriginalhandoff', 'material_issues.confirm_metalprocessingexternalhandoff'])('仅%s权限也能从仓库更多菜单办理外发', async permission => {
@@ -117,12 +145,13 @@ describe('统一外发列表及来源入口', () => {
     const wrapper = await createView({ ...row, record_type: 'REWORK', detail_access: 'METAL', warehouse_actions: ['dispatch'], can_revoke_dispatched: false } as typeof row)
     expect(api.list).toHaveBeenCalledOnce()
     await wrapper.get('[aria-label="WW-001 更多操作"]').trigger('click')
-    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '确认外发')).toBe(true))
+    await vi.waitFor(() => expect([...document.querySelectorAll('.el-dropdown-menu__item')].some(item => item.textContent?.trim() === '材料发出')).toBe(true))
     document.querySelectorAll('.el-dropdown-menu__item').forEach(item => {
-      if (item.textContent?.trim() === '确认外发') item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      if (item.textContent?.trim() === '材料发出') item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     await flushPromises()
-    expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/rework/order-1?action=dispatch')
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props()).toMatchObject({ record: { record_type: 'REWORK' }, action: 'dispatch' })
+    expect(api.push).not.toHaveBeenCalled()
   })
 
   it('仓库发料及普通回货按钮进入相应办理表单，原车间列表隐藏退料', async () => {
@@ -130,15 +159,18 @@ describe('统一外发列表及来源入口', () => {
     const wrapper = await createView()
     const vm = wrapper.vm as any
     vm.openWarehouseAction({ ...row, warehouse_actions: ['dispatch'] }, 'dispatch')
-    expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/order-1?action=dispatch')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props('action')).toBe('dispatch')
+    wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).vm.$emit('closed'); await flushPromises()
     vm.openWarehouseAction({ ...row, detail_access: 'METAL', warehouse_actions: ['return'] }, 'return')
-    expect(api.push).toHaveBeenLastCalledWith('/warehouse/outsourcing/order-1?view=metal&action=return')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'WarehouseOutsourcingActionDialog' }).props()).toMatchObject({ record: { detail_access: 'METAL' }, action: 'return' })
     route.meta = {}
     await flushPromises()
     expect(vm.canRemoveRow(row)).toBe(false)
     expect(vm.canRemoveRow({ ...row, can_delete: true })).toBe(true)
     vm.openWarehouseAction({ ...row, warehouse_actions: ['dispatch'] }, 'dispatch')
-    expect(api.push).toHaveBeenCalledTimes(2)
+    expect(api.push).not.toHaveBeenCalled()
   })
   it('外发单页只保留管材和裁片新建，并跳转对应专用表单', async () => {
     const wrapper = await createView()

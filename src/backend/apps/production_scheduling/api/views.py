@@ -18,7 +18,6 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.customers.selectors import accessible_customers
 from apps.boms.models import Bom, BomStatus
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
-from apps.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
 from apps.procurement.selectors import purchase_orders_by_product
 from apps.production_tasks.models import ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_tasks_with_context
@@ -262,27 +261,17 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             production_task_id=OuterRef("pk"),
         ).annotate(
             latest_bom_status=Subquery(latest_bom_status),
-            purchase_completed=Exists(PurchaseOrderLine.objects.filter(
-                product_line_id_snapshot=OuterRef("pk"),
-                purchase_order__production_task_id=OuterRef("production_task_id"),
-                purchase_order__archived_at__isnull=True,
-                purchase_order__status=PurchaseOrderStatus.COMPLETED,
-            )),
-        ).exclude(latest_bom_status=BomStatus.VERIFIED, purchase_completed=True)
+        ).filter(Q(latest_bom_status__isnull=True) | ~Q(latest_bom_status=BomStatus.VERIFIED))
         queryset = production_tasks_with_context(
             accessible_production_tasks(request).filter(status=ProductionTaskStatus.READY, archived_at__isnull=True)
         ).prefetch_related("products__sales_order_delivery_batch_line__sales_order_line__product_image").exclude(
             production_schedules__record_status=ScheduleStatus.ACTIVE
         ).annotate(
             has_unready_product=Exists(unready_product_lines),
-            has_pending_purchase=Exists(PurchaseOrder.objects.filter(
-                production_task_id=OuterRef("pk"), archived_at__isnull=True,
-            ).exclude(status=PurchaseOrderStatus.COMPLETED)),
+            has_products=Exists(ProductionTaskProduct.objects.filter(production_task_id=OuterRef("pk"))),
         ).filter(
             has_unready_product=False,
-            has_pending_purchase=False,
-            purchase_orders__status=PurchaseOrderStatus.COMPLETED,
-            purchase_orders__archived_at__isnull=True,
+            has_products=True,
         ).distinct().order_by("-created_at", "-id")
         keyword = request.query_params.get("search", "").strip()
         if len(keyword) > 200:
@@ -395,16 +384,9 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             and latest_bom_by_product[line.pk].status == "VERIFIED"
             for line in products
         )
-        purchase_completed = (
-            bool(purchase_orders)
-            and all(line.pk in purchase_by_product for line in products)
-            and all(order.status == PurchaseOrderStatus.COMPLETED for order in purchase_orders)
-        )
         scheduling_blockers = []
         if include_products and not all_boms_verified:
             scheduling_blockers.append("生产任务单内所有产品的 BOM 必须已确认")
-        if include_products and not purchase_completed:
-            scheduling_blockers.append("所有产品的采购订单必须为“已完成采购”")
         selectable = existing_schedule_id is None and (not include_products or not scheduling_blockers)
         unselectable_reason = ""
         if existing_schedule_id:
@@ -479,7 +461,9 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             payload["scheduling_blockers"] = scheduling_blockers
             payload["products"] = [
                 {
-                    "id": str(line.pk), "product_id": str(line.product_id), "line_number": line.line_number,
+                    "id": str(line.pk), "product_id": str(line.product_id) if line.product_id else None, "line_number": line.line_number,
+                    "product_catalog_id": str(line.product_catalog_id) if line.product_catalog_id else None,
+                    "product_selection_snapshot": line.product_selection_snapshot,
                     "product_number": line.product_number_snapshot, "product_code": line.product_code_snapshot,
                     "item_number": line.item_number_snapshot, "product_name": line.product_name_snapshot,
                     "specification": line.specification_snapshot, "color_name": line.color_name_snapshot,

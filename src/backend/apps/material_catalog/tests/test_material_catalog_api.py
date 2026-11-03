@@ -64,8 +64,7 @@ class MaterialCatalogApiTests(APITestCase):
         self.assertTrue(categories["TUBE"]["templates"][0]["supports_spray"])
         self.assertFalse(categories["FABRIC"]["templates"][0]["supports_spray"])
         self.assertEqual({row["key"] for row in response.data["data"]["spray_fields"]}, {"color", "length", "unit"})
-        self.assertEqual({row["id"] for row in response.data["data"]["units"]},
-                         {str(pk) for pk in ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).values_list("pk", flat=True)})
+        self.assertEqual(response.data["data"]["units"], [])
 
     def test_creation_trims_name_adds_no_color_and_preserves_legacy_materials(self):
         before = list(RawMaterialInformation.objects.order_by("id").values_list("id", "updated_at"))
@@ -218,6 +217,149 @@ class MaterialCatalogApiTests(APITestCase):
             with self.subTest(field=field, scope=scope):
                 self.assertEqual(self.add_value(catalog, field=field, scope=scope).status_code, 400)
         self.assertEqual(self.add_value(catalog, field="color", value="黑色", scope="SPRAY").status_code, 400)
+
+    def test_edit_attribute_preserves_identity_and_records_old_and_new_value(self):
+        current = self.assert_write(self.add_value(self.create_catalog(), value="Q235"))
+        option = next(row for row in current.data["data"]["values"] if row["field_key"] == "material")
+        legacy = list(RawMaterialInformation.objects.order_by("id").values_list("id", "updated_at"))
+        changed = self.assert_write(self.write(current, "patch", f"values/{option['id']}/", {"value": " Q345 "}))
+        edited = next(row for row in changed.data["data"]["values"] if row["id"] == option["id"])
+        self.assertEqual(edited, {**option, "value": "Q345"})
+        self.assertEqual(len(changed.data["data"]["values"]), len(current.data["data"]["values"]))
+        self.assertNotEqual(changed["ETag"], current["ETag"])
+        detail = self.client.get(f"{ROOT}{current.data['data']['id']}/")
+        self.assertEqual(detail.data, changed.data)
+        self.assertEqual(legacy, list(RawMaterialInformation.objects.order_by("id").values_list("id", "updated_at")))
+        audit = AuditLog.objects.get(object_type="MATERIAL_CATALOG", object_id=current.data["data"]["id"], action="VALUE_CHANGED")
+        self.assertIn(option, audit.before_data["values"])
+        self.assertIn(edited, audit.after_data["values"])
+
+    def test_edit_shape_and_dimension_preserve_parent_links_and_other_values(self):
+        current = self.assert_write(self.add_value(self.create_catalog(), field="shape", value="方管"))
+        shape = next(row for row in current.data["data"]["values"] if row["field_key"] == "shape")
+        current = self.assert_write(self.add_value(current, field="section_size", value="20×30", parent_id=shape["id"]))
+        dimension = next(row for row in current.data["data"]["values"] if row["field_key"] == "section_size")
+        changed = self.assert_write(self.write(current, "patch", f"values/{shape['id']}/", {"value": "矩形管"}))
+        self.assertIn(dimension, changed.data["data"]["values"])
+        changed = self.assert_write(self.write(changed, "patch", f"values/{dimension['id']}/", {"value": "30×40"}))
+        self.assertIn({**dimension, "value": "30×40"}, changed.data["data"]["values"])
+        self.assertIn({**shape, "value": "矩形管"}, changed.data["data"]["values"])
+        self.assertEqual(self.write(changed, "delete", f"values/{shape['id']}/").status_code, 400)
+
+    def test_edit_value_rejects_active_and_archived_duplicates_without_merging(self):
+        current = self.assert_write(self.add_value(self.create_catalog(), value="Q235"))
+        original = next(row for row in current.data["data"]["values"] if row["field_key"] == "material")
+        current = self.assert_write(self.add_value(current, value="Q345"))
+        duplicate = next(row for row in current.data["data"]["values"] if row["value"] == "Q345")
+        suffix = f"values/{original['id']}/"
+        self.assertEqual(self.write(current, "patch", suffix, {"value": "Q345"}).status_code, 400)
+        current = self.assert_write(self.write(current, "delete", f"values/{duplicate['id']}/"))
+        self.assertEqual(self.write(current, "patch", suffix, {"value": "Q345"}).status_code, 400)
+        detail = self.client.get(f"{ROOT}{current.data['data']['id']}/")
+        self.assertEqual((detail.data, detail["ETag"]), (current.data, current["ETag"]))
+
+    def test_edit_value_rejects_missing_blank_oversized_and_relationship_payloads(self):
+        current = self.create_catalog()
+        option_id = current.data["data"]["values"][0]["id"]
+        for payload in ({}, {"value": " "}, {"value": "x" * 301}, {"value": "蓝色", "scope": "SPRAY"},
+                        {"value": "蓝色", "field_key": "material"}, {"value": "蓝色", "parent_id": str(uuid4())}):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.write(current, "patch", f"values/{option_id}/", payload).status_code, 400)
+        self.assertEqual(self.client.get(f"{ROOT}{current.data['data']['id']}/").data, current.data)
+
+    def test_edit_values_and_units_reject_other_catalog_archived_and_unknown_options(self):
+        current = self.create_catalog()
+        value_id = current.data["data"]["values"][0]["id"]
+        unit = ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
+        current = self.assert_write(self.write(current, "post", "units/", {"scope": "BASE", "unit_id": str(unit.pk)}))
+        unit_id = current.data["data"]["units"][0]["id"]
+        other = self.create_catalog()
+        for suffix, payload in ((f"values/{value_id}/", {"value": "蓝色"}),
+                                (f"units/{unit_id}/", {"unit_id": str(unit.pk)})):
+            self.assertEqual(self.write(other, "patch", suffix, payload).status_code, 404)
+            current = self.assert_write(self.write(current, "delete", suffix))
+            self.assertEqual(self.write(current, "patch", suffix, payload).status_code, 404)
+        for resource, payload in (("values", {"value": "蓝色"}), ("units", {"unit_id": str(unit.pk)})):
+            self.assertEqual(self.write(current, "patch", f"{resource}/{uuid4()}/", payload).status_code, 404)
+
+    def test_edit_rejects_disabled_spray_group_without_changing_hidden_options(self):
+        current = self.assert_write(self.write(self.create_catalog(), "patch", payload={"spray_enabled": True}))
+        value = next(row for row in current.data["data"]["values"] if row["scope"] == "SPRAY")
+        unit = ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
+        current = self.assert_write(self.write(current, "post", "units/", {"scope": "SPRAY", "unit_id": str(unit.pk)}))
+        option = current.data["data"]["units"][0]
+        current = self.assert_write(self.write(current, "patch", payload={"spray_enabled": False}))
+        for suffix, payload in ((f"values/{value['id']}/", {"value": "蓝色"}),
+                                (f"units/{option['id']}/", {"unit_id": str(unit.pk)})):
+            self.assertEqual(self.write(current, "patch", suffix, payload).status_code, 400)
+        self.assertEqual(self.client.get(f"{ROOT}{current.data['data']['id']}/").data, current.data)
+
+    def test_edit_unit_preserves_option_identity_and_does_not_rename_unit_dictionary(self):
+        first, second = list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True)[:2])
+        current = self.assert_write(self.write(self.create_catalog(), "post", "units/", {"scope": "BASE", "unit_id": str(first.pk)}))
+        option = current.data["data"]["units"][0]
+        dictionary = list(ProductionUnit.objects.order_by("id").values_list("id", "unit_name", "updated_at"))
+        changed = self.assert_write(self.write(current, "patch", f"units/{option['id']}/", {"unit_id": str(second.pk)}))
+        edited = {**option, "unit_id": str(second.pk), "unit_name": second.unit_name}
+        self.assertEqual(changed.data["data"]["units"], [edited])
+        self.assertEqual(changed.data["data"]["values"], current.data["data"]["values"])
+        self.assertNotEqual(changed["ETag"], current["ETag"])
+        self.assertEqual(dictionary, list(ProductionUnit.objects.order_by("id").values_list("id", "unit_name", "updated_at")))
+        audit = AuditLog.objects.get(object_type="MATERIAL_CATALOG", object_id=current.data["data"]["id"], action="UNIT_CHANGED")
+        self.assertEqual(audit.before_data["units"], [option])
+        self.assertEqual(audit.after_data["units"], [edited])
+
+    def test_edit_unit_rejects_duplicates_invalid_and_inactive_units(self):
+        first, second = list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True)[:2])
+        current = self.create_catalog()
+        for unit in (first, second):
+            current = self.assert_write(self.write(current, "post", "units/", {"scope": "BASE", "unit_id": str(unit.pk)}))
+        option, duplicate = current.data["data"]["units"]
+        suffix = f"units/{option['id']}/"
+        self.assertEqual(self.write(current, "patch", suffix, {"unit_id": str(second.pk)}).status_code, 400)
+        current = self.assert_write(self.write(current, "delete", f"units/{duplicate['id']}/"))
+        self.assertEqual(self.write(current, "patch", suffix, {"unit_id": str(second.pk)}).status_code, 400)
+        for payload in ({}, {"unit_id": "bad"}, {"unit_id": str(uuid4())},
+                        {"unit_id": str(first.pk), "scope": "SPRAY"}):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.write(current, "patch", suffix, payload).status_code, 400)
+        second.status = "INACTIVE"
+        second.save(update_fields=["status", "updated_at"])
+        self.assertEqual(self.write(current, "patch", suffix, {"unit_id": str(second.pk)}).status_code, 400)
+        self.assertEqual(self.client.get(f"{ROOT}{current.data['data']['id']}/").data, current.data)
+
+    def test_edit_options_require_fresh_etag_and_roll_back_on_audit_failure(self):
+        current = self.create_catalog()
+        first, second = list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True)[:2])
+        current = self.assert_write(self.write(current, "post", "units/", {"scope": "BASE", "unit_id": str(first.pk)}))
+        value_id = current.data["data"]["values"][0]["id"]
+        option_id = current.data["data"]["units"][0]["id"]
+        stale = current
+        current = self.assert_write(self.add_value(current))
+        for suffix, payload in ((f"values/{value_id}/", {"value": "蓝色"}),
+                                (f"units/{option_id}/", {"unit_id": str(second.pk)})):
+            with self.subTest(suffix=suffix):
+                url = f"{ROOT}{current.data['data']['id']}/{suffix}"
+                self.assertEqual(self.client.patch(url, payload, format="json").status_code, 428)
+                self.assertEqual(self.write(stale, "patch", suffix, payload).status_code, 412)
+                with patch("apps.material_catalog.services.write_audit_log", side_effect=RuntimeError("audit unavailable")):
+                    with self.assertRaisesRegex(RuntimeError, "audit unavailable"):
+                        self.write(current, "patch", suffix, payload)
+                detail = self.client.get(f"{ROOT}{current.data['data']['id']}/")
+                self.assertEqual((detail.data, detail["ETag"]), (current.data, current["ETag"]))
+
+    def test_edit_same_value_and_unit_is_a_noop(self):
+        current = self.create_catalog()
+        value = current.data["data"]["values"][0]
+        unit = ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).first()
+        current = self.assert_write(self.write(current, "post", "units/", {"scope": "BASE", "unit_id": str(unit.pk)}))
+        option = current.data["data"]["units"][0]
+        audits_before = AuditLog.objects.filter(object_type="MATERIAL_CATALOG", object_id=current.data["data"]["id"]).count()
+        for suffix, payload in ((f"values/{value['id']}/", {"value": f" {value['value']} "}),
+                                (f"units/{option['id']}/", {"unit_id": str(unit.pk)})):
+            unchanged = self.assert_write(self.write(current, "patch", suffix, payload))
+            self.assertEqual((unchanged.data, unchanged["ETag"]), (current.data, current["ETag"]))
+        self.assertEqual(AuditLog.objects.filter(object_type="MATERIAL_CATALOG", object_id=current.data["data"]["id"]).count(), audits_before)
 
     def test_section_sizes_require_live_shape_in_same_catalog(self):
         first = self.create_catalog()
@@ -444,6 +586,8 @@ class MaterialCatalogApiTests(APITestCase):
         for method, suffix, payload in (
             ("patch", "", {"spray_enabled": True}),
             ("post", "units/", {"scope": "BASE", "unit_id": str(unit.pk)}),
+            ("patch", f"values/{value_id}/", {"value": "蓝色"}),
+            ("patch", f"units/{option_id}/", {"unit_id": str(unit.pk)}),
             ("delete", f"values/{value_id}/", {}),
             ("delete", f"units/{option_id}/", {}),
         ):
@@ -487,6 +631,8 @@ class MaterialCatalogApiTests(APITestCase):
         self.assertEqual(self.client.post(ROOT, {"name": "A", "category_key": "TUBE", "template_key": "TUBE"}, format="json").status_code, 403)
         self.assertEqual(self.add_value(catalog).status_code, 403)
         self.assertEqual(self.write(catalog, "patch", payload={"spray_enabled": True}).status_code, 403)
+        self.assertEqual(self.write(catalog, "patch", f"values/{catalog.data['data']['values'][0]['id']}/", {"value": "蓝色"}).status_code, 403)
+        self.assertEqual(self.write(catalog, "patch", f"units/{uuid4()}/", {"unit_id": str(uuid4())}).status_code, 403)
         self.assertEqual(self.write(catalog, "delete", f"values/{catalog.data['data']['values'][0]['id']}/").status_code, 403)
 
     def test_anonymous_and_inactive_employee_cannot_access_catalog(self):
@@ -494,10 +640,14 @@ class MaterialCatalogApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.client.force_authenticate(None)
         self.assertEqual(self.client.get(ROOT).status_code, 401)
+        for resource, payload in (("values", {"value": "蓝色"}), ("units", {"unit_id": str(uuid4())})):
+            self.assertEqual(self.client.patch(f"{ROOT}{uuid4()}/{resource}/{uuid4()}/", payload, format="json").status_code, 401)
         user = get_user_model().objects.create_user(username="catalog_inactive")
         Employee.objects.create(user=user, employee_code="CATALOG_INACTIVE", display_name="停用员工", status="INACTIVE")
         self.client.force_authenticate(user)
         self.assertEqual(self.client.get(ROOT).status_code, 403)
+        for resource, payload in (("values", {"value": "蓝色"}), ("units", {"unit_id": str(uuid4())})):
+            self.assertEqual(self.client.patch(f"{ROOT}{uuid4()}/{resource}/{uuid4()}/", payload, format="json").status_code, 403)
 
     def test_session_writes_require_csrf(self):
         self.assertEqual(self.client.get(ROOT).status_code, 200)
@@ -509,3 +659,16 @@ class MaterialCatalogApiTests(APITestCase):
         token = client.cookies["csrftoken"].value
         response = client.post(ROOT, payload, format="json", HTTP_X_CSRFTOKEN=token)
         self.assertEqual(response.status_code, 201, response.data)
+        catalog_url = f"{ROOT}{response.data['data']['id']}/"
+        first, second = list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True)[:2])
+        response = client.post(f"{catalog_url}units/", {"scope": "BASE", "unit_id": str(first.pk)},
+                               format="json", HTTP_X_CSRFTOKEN=token, HTTP_IF_MATCH=response["ETag"])
+        self.assertEqual(response.status_code, 200, response.data)
+        value_id = response.data["data"]["values"][0]["id"]
+        option_id = response.data["data"]["units"][0]["id"]
+        for suffix, payload in ((f"values/{value_id}/", {"value": "蓝色"}),
+                                (f"units/{option_id}/", {"unit_id": str(second.pk)})):
+            self.assertEqual(client.patch(f"{catalog_url}{suffix}", payload, format="json", HTTP_IF_MATCH=response["ETag"]).status_code, 403)
+            response = client.patch(f"{catalog_url}{suffix}", payload, format="json",
+                                    HTTP_X_CSRFTOKEN=token, HTTP_IF_MATCH=response["ETag"])
+            self.assertEqual(response.status_code, 200, response.data)

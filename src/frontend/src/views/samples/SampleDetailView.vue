@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AxiosError } from 'axios'
+import { AxiosError, isCancel } from 'axios'
 import { Document, Download, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -10,10 +11,11 @@ import {
   approveSamplePmc,
   confirmSampleFinance,
   fetchSample,
-  fetchSampleBusinessFile,
+  sampleBusinessFileUrl,
   transitionSample,
 } from '@/api/samples'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceActions, useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import type { SampleDetail, SampleWorkflowRecord } from '@/types/sample'
 import SampleStatusTag from '@/components/samples/SampleStatusTag.vue'
 import SampleMaterialProgress from '@/components/samples/SampleMaterialProgress.vue'
@@ -39,11 +41,24 @@ const errorMessage = ref('')
 const workflowDialog = ref<WorkflowDialog | null>(null)
 const workflowNote = ref('')
 const workflowFile = ref<File | null>(null)
-const taskImageUrls = reactive<Record<string, string>>({})
-let imageRequest = 0
+const fileActions = useProtectedResourceActions()
+const filePreviewVisible = ref(false)
+const previewFile = ref<{ id: string; name: string } | null>(null)
+const filePreviewError = ref('')
+const imageFiles = computed(() => (sample.value?.products || []).flatMap(product => [
+  ...(product.task_sheet_file_id && product.task_sheet_content_type.startsWith('image/') ? [product.task_sheet_file_id] : []),
+  ...(product.sampling_details || []).filter(detail => detail.image_file_id && detail.image_content_type.startsWith('image/')).map(detail => detail.image_file_id!),
+]))
+const imageResources = useProtectedResourceUrls(() => sample.value
+  ? imageFiles.value.map(id => sampleBusinessFileUrl(sample.value!.id, id)) : [], { timeout: 120_000 })
+const taskImageUrls = computed(() => Object.fromEntries(imageFiles.value.map(id => [id,
+  imageResources.urlFor(sampleBusinessFileUrl(sample.value!.id, id))])))
+watch(fileActions.active, active => { if (!active) filePreviewVisible.value = false }, { flush: 'sync' })
+watch(filePreviewVisible, value => { if (!value) { fileActions.reset(); previewFile.value = null; filePreviewError.value = '' } }, { flush: 'sync' })
 let loadRequest = 0
 
 const sampleId = computed(() => String(route.params.sampleId || ''))
+watch(sampleId, () => { filePreviewVisible.value = false; fileActions.reset() }, { flush: 'sync' })
 const canInitiateMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.edit_sample_materials', undefined, sample.value)))
 const canConfirmMaterialIssue = computed(() => Boolean(sample.value && authStore.moduleCan('samples.review_sample_materials', undefined, sample.value)))
 
@@ -192,47 +207,9 @@ function repeatOrderLabel(value?: boolean | null) {
   return value == null ? '—' : value ? '是' : '否'
 }
 
-function clearTaskImageUrls() {
-  imageRequest++
-  for (const url of Object.values(taskImageUrls)) URL.revokeObjectURL(url)
-  for (const key of Object.keys(taskImageUrls)) delete taskImageUrls[key]
-}
-
-async function hydrateTaskImages() {
-  clearTaskImageUrls()
-  if (!sample.value) return
-  const request = imageRequest
-  const currentId = sample.value.id
-  const products = (sample.value.products || []).filter((item) => item.task_sheet_file_id)
-  const samplingDetails = (sample.value.products || [])
-    .flatMap((product) => product.sampling_details || [])
-    .filter((item) => item.image_file_id && item.image_content_type.startsWith('image/'))
-  await Promise.all([
-    ...products.map(async (product) => {
-    if (!product.task_sheet_file_id || !product.task_sheet_content_type.startsWith('image/')) return
-    try {
-      const blob = await fetchSampleBusinessFile(currentId, product.task_sheet_file_id)
-      if (request === imageRequest) taskImageUrls[product.task_sheet_file_id] = URL.createObjectURL(blob)
-    } catch {
-      // 单张预览失败不阻断详情页，其错误会在用户主动下载时提示。
-    }
-    }),
-    ...samplingDetails.map(async (detail) => {
-      if (!detail.image_file_id) return
-      try {
-        const blob = await fetchSampleBusinessFile(currentId, detail.image_file_id)
-        if (request === imageRequest) taskImageUrls[detail.image_file_id] = URL.createObjectURL(blob)
-      } catch {
-        // 单张预览失败不阻断详情页。
-      }
-    }),
-  ])
-}
-
 function applySample(value: SampleDetail, version: string) {
   sample.value = value
   etag.value = version || value.etag
-  void hydrateTaskImages()
 }
 
 async function loadSample() {
@@ -341,23 +318,25 @@ async function cancelIntake() {
 
 async function openBusinessFile(fileId: string, fileName: string, forceDownload = false) {
   if (!sample.value) return
+  const url = sampleBusinessFileUrl(sample.value.id, fileId)
   try {
-    const blob = await fetchSampleBusinessFile(sample.value.id, fileId)
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.target = forceDownload ? '_self' : '_blank'
-    anchor.rel = 'noopener'
-    if (forceDownload) anchor.download = fileName
-    anchor.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
+    if (forceDownload) await fileActions.download(url, fileName, { timeout: 120_000 })
+    else {
+      previewFile.value = { id: fileId, name: fileName }
+      filePreviewError.value = ''
+      filePreviewVisible.value = true
+      await fileActions.preview(url, fileName, { timeout: 120_000 })
+    }
   } catch (error) {
-    ElMessage.error(getErrorMessage(error))
+    if (!isCancel(error) && fileActions.active.value) {
+      if (!forceDownload) filePreviewError.value = getErrorMessage(error)
+      ElMessage.error(getErrorMessage(error))
+    }
   }
 }
 
 onMounted(() => { void loadSample() })
-onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
+onBeforeUnmount(() => { loadRequest++ })
 </script>
 
 <template>
@@ -392,13 +371,13 @@ onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
 
           <SampleSection v-if="!isApplication && sample.products?.length" class="detail-card product-card" title="样品信息"><template #actions><small>{{ sample.products.length }} 个产品 · {{ sample.products.reduce((total, product) => total + product.details.length, 0) }} 条明细</small></template>
             <article v-for="product in sample.products" :key="product.id" class="product-information">
-            <div class="product-heading"><b>产品 {{ product.line_number }}</b><small>总打样数量：{{ product.total_sample_quantity }} PCS</small></div>
-            <div class="product-grid"><div><label>产品类别</label><b>{{ product.category_name || '—' }}</b></div><div><label>产品名称</label><b>{{ product.product_name || '—' }}</b></div><div><label>规格</label><b>{{ (product.specification_display ?? product.specification) || '—' }}</b></div><div><label>任务单</label><b>{{ product.task_sheet_file_name || '—' }}</b></div><div><label>总打样数量</label><b>{{ product.total_sample_quantity }} PCS</b></div><div><label>长（cm）</label><b>{{ product.length_cm ?? '—' }}</b></div><div><label>扶手宽（cm）</label><b>{{ product.armrest_width_cm ?? '—' }}</b></div><div><label>坐宽（cm）</label><b>{{ product.seat_width_cm ?? '—' }}</b></div><div><label>背高（cm）</label><b>{{ product.back_height_cm ?? '—' }}</b></div><div><label>坐高（cm）</label><b>{{ product.seat_height_cm ?? '—' }}</b></div></div>
+            <div class="product-heading"><b>产品 {{ product.line_number }}</b><small>总打样数量：{{ product.total_sample_quantity }} {{ productEntryUnitName(product) || 'PCS' }}</small></div>
+            <div class="product-grid"><div><label>产品类别</label><b>{{ product.category_name || '—' }}</b></div><div><label>产品名称</label><b>{{ product.product_name || '—' }}</b></div><div><label>规格</label><b>{{ (product.specification_display ?? product.specification) || '—' }}</b></div><div><label>任务单</label><b>{{ product.task_sheet_file_name || '—' }}</b></div><div><label>总打样数量</label><b>{{ product.total_sample_quantity }} {{ productEntryUnitName(product) || 'PCS' }}</b></div><div><label>长（cm）</label><b>{{ product.length_cm ?? '—' }}</b></div><div><label>扶手宽（cm）</label><b>{{ product.armrest_width_cm ?? '—' }}</b></div><div><label>坐宽（cm）</label><b>{{ product.seat_width_cm ?? '—' }}</b></div><div><label>背高（cm）</label><b>{{ product.back_height_cm ?? '—' }}</b></div><div><label>坐高（cm）</label><b>{{ product.seat_height_cm ?? '—' }}</b></div></div>
             <div class="detail-section-title">样品明细 <span>共 {{ product.details.length }} 项</span></div>
             <div v-if="product.details.length" class="product-detail-list">
               <dl v-for="(detail, index) in product.details" :key="detail.id" class="product-detail-grid" :aria-label="`产品${product.line_number}第${index + 1}项明细`">
                 <div><dt>产品类别</dt><dd>{{ product.category_name || '—' }}</dd></div><div><dt>产品名称</dt><dd>{{ product.product_name || '—' }}</dd></div><div><dt>规格</dt><dd>{{ product.specification || '—' }}</dd></div><div><dt>色卡</dt><dd>{{ detail.color_card || '—' }}</dd></div><div><dt>颜色</dt><dd>{{ detail.color_name || '—' }}</dd></div><div><dt>色号</dt><dd>{{ detail.color_code || '—' }}</dd></div>
-                <div><dt>打样数量</dt><dd>{{ detail.sample_quantity == null ? '—' : `${detail.sample_quantity} PCS` }}</dd></div><div><dt>公差值</dt><dd>{{ detail.tolerance_display || '—' }}</dd></div><div><dt>备注</dt><dd>{{ detail.notes || '—' }}</dd></div><div><dt>裁剪报工</dt><dd>{{ detail.cutting_reported_quantity ?? '—' }}</dd></div><div><dt>金工报工</dt><dd>{{ detail.metalwork_reported_quantity ?? '—' }}</dd></div><div><dt>完成状态</dt><dd>裁剪{{ detail.cutting_completed ? '是' : '否' }} / 金工{{ detail.metalwork_completed ? '是' : '否' }}</dd></div>
+                <div><dt>打样数量</dt><dd>{{ detail.sample_quantity == null ? '—' : `${detail.sample_quantity} ${productEntryUnitName(product) || 'PCS'}` }}</dd></div><div><dt>公差值</dt><dd>{{ detail.tolerance_display || '—' }}</dd></div><div><dt>备注</dt><dd>{{ detail.notes || '—' }}</dd></div><div><dt>裁剪报工</dt><dd>{{ detail.cutting_reported_quantity ?? '—' }}</dd></div><div><dt>金工报工</dt><dd>{{ detail.metalwork_reported_quantity ?? '—' }}</dd></div><div><dt>完成状态</dt><dd>裁剪{{ detail.cutting_completed ? '是' : '否' }} / 金工{{ detail.metalwork_completed ? '是' : '否' }}</dd></div>
               </dl>
             </div>
             <ElEmpty v-else :image-size="44" description="暂无样品明细" />
@@ -451,6 +430,14 @@ onBeforeUnmount(() => { loadRequest++; clearTaskImageUrls() })
     <SampleProductionReportDialog v-if="sample" v-model="reportVisible" :sample="sample" :etag="etag" @saved="applySample" />
     <ElDialog v-model="workflowDialogVisible" title="财务确认" width="560px" class="sample-workflow-dialog" :close-on-click-modal="false" :close-on-press-escape="!saving" :show-close="!saving"><ElAlert title="财务凭证和人工备注至少填写一项。" type="info" :closable="false" show-icon /><ElForm label-position="top" class="workflow-form" :disabled="saving"><ElFormItem label="财务凭证（选填）"><label class="file-picker"><input type="file" :disabled="saving" accept=".pdf,.jpg,.jpeg,.png" @change="handleFileChange"><ElIcon><UploadFilled /></ElIcon><span>{{ workflowFile?.name || '选择文件' }}</span></label></ElFormItem><ElFormItem label="人工确认备注（选填）"><ElInput v-model="workflowNote" type="textarea" :rows="4" maxlength="1000" show-word-limit placeholder="请输入说明" /></ElFormItem></ElForm><template #footer><ElButton :disabled="saving" @click="workflowDialogVisible = false">取消</ElButton><ElButton type="primary" class="primary-button" :loading="saving" @click="submitWorkflowDialog">确认提交</ElButton></template></ElDialog>
   </section>
+  <ElDialog v-model="filePreviewVisible" :title="fileActions.previewName.value || previewFile?.name || '附件预览'" :width="1000" :height="680" destroy-on-close>
+    <div class="sample-file-preview"><p v-if="fileActions.previewLoading.value" role="status">正在读取文件…</p><p v-else-if="filePreviewError" role="alert">{{ filePreviewError }}</p><img v-else-if="fileActions.previewUrl.value" :src="fileActions.previewUrl.value" :alt="fileActions.previewName.value" /></div>
+    <template #footer><ElButton @click="filePreviewVisible = false">关闭</ElButton><ElButton :disabled="!previewFile || fileActions.previewLoading.value || !fileActions.active.value" @click="previewFile && openBusinessFile(previewFile.id, previewFile.name, true)">下载原文件</ElButton></template>
+  </ElDialog>
 </template>
 
 <style scoped lang="scss" src="./sampleDetail.scss"></style>
+<style scoped>
+.sample-file-preview { height: 100%; display: grid; place-items: center; min-height: 0; }
+.sample-file-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+</style>

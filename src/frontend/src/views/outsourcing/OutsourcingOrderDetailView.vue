@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { computed, onMounted, ref, watch } from 'vue'
 import { AxiosError } from 'axios'
@@ -15,6 +16,7 @@ import OutsourcingFlowActions from '@/components/outsourcing/OutsourcingFlowActi
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import MetalProcessingP4View from './MetalProcessingP4View.vue'
 import { useAuthStore } from '@/stores/auth'
+import { canOpenPage } from '@/router/pageAccess'
 import productImagePlaceholder from '@/assets/productionScheduling/product-image-placeholder.png'
 import type { OutsourcingOrderDetail, VersionedOutsourcingOrder } from '@/types/outsourcing'
 import { createClientUuid } from '@/utils/clientUuid'
@@ -26,6 +28,12 @@ const auth = useAuthStore()
 const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
 const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
 const listPath = computed(() => warehouseWorkspace.value ? '/warehouse/outsourcing' : '/workshop/outsourcing')
+const canOpenList = computed(() => canOpenPage(warehouseWorkspace.value ? 'warehouse-outsourcing' : 'workshop-outsourcing', auth))
+function back() {
+  void router.push(canOpenList.value ? listPath.value
+    : detail.value?.production_task_id ? { name: 'production-task-detail', params: { taskId: detail.value.production_task_id } }
+      : { name: 'workshop-scheduling' })
+}
 const canRemoveOrder = computed(() => Boolean(detail.value && !detail.value.direct_handoff
   && (warehouseWorkspace.value ? !detail.value.can_delete && detail.value.can_revoke_dispatched : detail.value.can_delete)))
 const canViewRegular = computed(() => Boolean(auth.user?.is_superuser || auth.hasPermission('outsourcing.view_outsourcingorder')))
@@ -294,7 +302,7 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
     <header class="outsourcing-heading detail-heading">
       <div class="detail-title"><h1>外发单详情</h1></div>
       <div class="heading-actions">
-        <ElButton @click="router.push(listPath)">返回</ElButton>
+        <ElButton @click="back">{{ canOpenList ? '返回' : detail?.production_task_id ? '返回生产任务' : '返回排产' }}</ElButton>
         <ElButton v-if="metalProjectionOnly && canViewRegular" @click="router.replace({ path: route.path, query: { ...route.query, view: undefined, source_issue_line_id: undefined } })">查看基础详情</ElButton>
         <ElButton v-if="canRemoveOrder && detail" class="delete-order-button" type="danger" plain :loading="deleting" @click="deleteOrder">{{ detail.can_delete ? '永久删除外发单' : '撤销并退料' }}</ElButton>
         <ElButton v-if="!warehouseWorkspace && detail?.status === 'PENDING_DISPATCH' && !detail.dispatch && !detail.direct_handoff && canViewMetal && !showMetalOperations" @click="router.replace({ path: route.path, query: { ...route.query, view: 'metal' } })">选择金工加工件</ElButton>
@@ -341,7 +349,7 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
           <div class="detail-card-heading"><h2>产品信息</h2></div>
           <div class="detail-product-list">
             <article v-for="product in detail.products" :key="product.id">
-              <div class="detail-product-image"><img :src="productImage(product.image_file_id)" :class="{ 'is-placeholder': !product.image_file_id }" :alt="String(product.product.product_name || '产品图片')" @error="useProductImageFallback"></div>
+              <div class="detail-product-image"><ProtectedImage :src="productImage(product.image_file_id)" :class="{ 'is-placeholder': !product.image_file_id }" :alt="String(product.product.product_name || '产品图片')" @error="useProductImageFallback" /></div>
               <dl>
                 <div><dt>产品</dt><dd>{{ product.product.product_number || product.product.item_number || '—' }} {{ product.product.product_name || '—' }}</dd></div>
                 <div><dt>颜色</dt><dd>{{ product.product.color_name || '—' }}</dd></div>
@@ -356,14 +364,14 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
 
       <MetalProcessingP4View v-if="showMetalOperations" mode="original" embedded :original-order-id="detail.id" @updated="load" />
 
-      <section class="detail-card order-price-card">
+      <section v-if="!warehouseWorkspace" class="detail-card order-price-card">
         <div class="detail-card-heading"><h2>加工价格</h2><span>计划加工金额合计：{{ formatOutsourcingMoney(detail.planned_amount) }} 元</span></div>
         <ElTable :data="allocationRows" border row-key="id" empty-text="暂无加工价格明细">
           <ElTableColumn prop="product_name" label="产品" min-width="150" />
           <ElTableColumn prop="part_name" label="部位" min-width="130" />
           <ElTableColumn prop="factory_name" label="加工厂" min-width="150" />
-          <ElTableColumn label="计划加工量" width="130" align="right"><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }} {{ row.unit }}</template></ElTableColumn>
-          <ElTableColumn label="加工单价" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="row.unit_price != null"> 元/{{ row.unit }}</template></template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" label="计划加工量" width="130"><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }} {{ row.unit }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" label="加工单价" width="145"><template #default="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="row.unit_price != null"> 元/{{ row.unit }}</template></template></ElTableColumn>
           <ElTableColumn label="计划金额（元）" width="145" align="right"><template #default="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
         </ElTable>
       </section>
@@ -373,13 +381,13 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
         <ElTable :data="factoryProgressRows" border :show-summary="detail.status !== 'CANCELLED'" sum-text="合计" empty-text="暂无加工分配">
           <ElTableColumn prop="factory_name" label="加工厂" min-width="210" />
           <ElTableColumn prop="unit" label="单位" width="90" />
-          <ElTableColumn prop="allocated_quantity" label="分配数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }}</template></ElTableColumn>
-          <ElTableColumn v-if="detail.direct_handoff" prop="handoff_quantity" label="实际交接" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.handoff_quantity) }}</template></ElTableColumn>
-          <ElTableColumn prop="returned_quantity" label="累计收货数量" min-width="160" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
-          <ElTableColumn prop="good_quantity" label="合格数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
-          <ElTableColumn v-if="detail.direct_handoff" prop="unsprayed_quantity" label="未喷塑退回" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.unsprayed_quantity) }}</template></ElTableColumn>
-          <ElTableColumn v-else prop="defective_quantity" label="不良数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
-          <ElTableColumn prop="remaining_quantity" label="待回数量" min-width="140"><template #default="{ row }">{{ detail.status === 'CANCELLED' ? '—' : compactDecimal(row.remaining_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" prop="allocated_quantity" label="分配数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.allocated_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" v-if="detail.direct_handoff" prop="handoff_quantity" label="实际交接" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.handoff_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" prop="returned_quantity" label="累计收货数量" min-width="160" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" prop="good_quantity" label="合格数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" v-if="detail.direct_handoff" prop="unsprayed_quantity" label="未喷塑退回" min-width="120" ><template #default="{ row }">{{ compactDecimal(row.unsprayed_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" v-else prop="defective_quantity" label="不良数量" min-width="140" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
+          <ElTableColumn align="center" header-align="center" prop="remaining_quantity" label="待回数量" min-width="140"><template #default="{ row }">{{ detail.status === 'CANCELLED' ? '—' : compactDecimal(row.remaining_quantity) }}</template></ElTableColumn>
           <ElTableColumn label="加工状态" min-width="130"><template #default="{ row }"><span class="status-tag progress-status" :class="`status-${allocationStageTone(row)}`">{{ allocationStage(row) }}</span></template></ElTableColumn>
         </ElTable>
         <div v-if="hasDefectiveReturns" class="order-progress-alert">异常情况：存在不良品待处理，数量按各加工明细的 BOM 单位记录。</div>
@@ -391,9 +399,10 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
           <ElTable :data="dispatchRecordRows" border :empty-text="detail.direct_handoff ? '已由金工直接交接，不重复执行仓库原料发料' : detail.status === 'CANCELLED' ? '外发单已作废，未执行仓库发料' : '尚未执行仓库发料'">
             <ElTableColumn prop="dispatch_date" label="发料日期" width="118" />
             <ElTableColumn label="物料名称" min-width="150"><template #default="{ row }"><div class="two-line-cell"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys"><span>{{ row.material_name }}</span></BomAttributesTooltip><small>{{ row.color }}</small></div></template></ElTableColumn>
+            <ElTableColumn label="材质" min-width="105"><template #default="{ row }">{{ returnMaterialValue(row) }}</template></ElTableColumn>
             <ElTableColumn prop="specification" label="规格" min-width="90" />
             <ElTableColumn prop="unit" label="单位" width="64" />
-            <ElTableColumn label="实际发料 / 扣库" min-width="190"><template #default="{ row }"><div class="two-line-cell"><span v-if="row.pieces !== null">{{ row.pieces }} 支</span><span>{{ compactDecimal(row.quantity) }} {{ row.unit }}<template v-if="row.meters"> / {{ compactDecimal(row.meters) }} 米</template></span></div></template></ElTableColumn>
+            <ElTableColumn align="center" header-align="center" label="实际发料 / 扣库" min-width="190"><template #default="{ row }"><div class="two-line-cell"><span v-if="row.pieces !== null">{{ row.pieces }} 支</span><span>{{ compactDecimal(row.quantity) }} {{ row.unit }}<template v-if="row.meters"> / {{ compactDecimal(row.meters) }} 米</template></span></div></template></ElTableColumn>
             <ElTableColumn prop="remark" label="备注" width="80" />
           </ElTable>
         </section>
@@ -408,9 +417,9 @@ watch(() => [route.params.orderId, route.query?.view, warehouseWorkspace.value],
             <ElTableColumn prop="specification" label="规格" min-width="135" />
             <ElTableColumn prop="color" label="颜色" min-width="105" />
             <ElTableColumn prop="unit" label="单位" width="72" />
-            <ElTableColumn prop="returned_quantity" label="回货数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
-            <ElTableColumn prop="good_quantity" label="合格数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
-            <ElTableColumn prop="defective_quantity" label="不良数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
+            <ElTableColumn align="center" header-align="center" prop="returned_quantity" label="回货数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.returned_quantity) }}</template></ElTableColumn>
+            <ElTableColumn align="center" header-align="center" prop="good_quantity" label="合格数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.good_quantity) }}</template></ElTableColumn>
+            <ElTableColumn align="center" header-align="center" prop="defective_quantity" label="不良数量" width="120" ><template #default="{ row }">{{ compactDecimal(row.defective_quantity) }}</template></ElTableColumn>
           </ElTable>
         </section>
       </div>

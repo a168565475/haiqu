@@ -1,31 +1,32 @@
 <script setup lang="ts">
 import ElDialog from '@/components/common/AppWindowDialog.vue'
-import SampleProductImage from '@/components/samples/SampleProductImage.vue'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { useSampleUnsavedChanges } from '@/composables/useSampleUnsavedChanges'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import SampleSection from '@/components/samples/SampleSection.vue'
+import SampleProductFields from '@/components/samples/SampleProductFields.vue'
+import type { ProductEntryDraft } from '@/types/productCatalog'
 import uploadIcon from '@/assets/samples/upload-reference.svg'
 import { fetchSample, fetchSampleFormContext, fetchSampleFormOptions } from '@/api/samples'
 import { createClientUuid } from '@/utils/clientUuid'
 import { fetchCustomerContacts } from '@/api/contacts'
 import { fetchCustomer, fetchCustomers } from '@/api/customers'
-import { fetchProducts } from '@/api/products'
 import { submitSampleApplication } from '@/api/sampleApplication'
 import { useAuthStore } from '@/stores/auth'
 import { sampleDimensionFields, type SampleApplicationDraft } from '@/types/sampleApplication'
 import type { SampleCustomerOption, SampleFormContext, SampleFormOptions } from '@/types/sample'
-import type { ProductInformation } from '@/types/product'
 import type { ContactListItem } from '@/types/contact'
-import { validateSampleApplication, validateSampleReferenceImage } from '@/utils/sampleApplication'
+import { sampleProductSelection, validateSampleApplication, validateSampleReferenceImage } from '@/utils/sampleApplication'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(true)
 const submitting = ref(false)
+const productFields = ref<InstanceType<typeof SampleProductFields>>()
 const errorMessage = ref('')
 const submitError = ref('')
 const options = ref<SampleFormOptions | null>(null)
@@ -37,30 +38,31 @@ const customersLoading = ref(false)
 const customerOptions = computed(() => [...new Map([
   ...(selectedCustomer.value ? [selectedCustomer.value] : []), ...customerMatches.value,
 ].map(customer => [customer.id, customer])).values()])
-const products = ref<ProductInformation[]>([])
 const contactsLoading = ref(false)
-const productsLoading = ref(false)
 const imagePreview = ref('')
 const sourceImageVisible = ref(false)
 const uploadKey = ref(0)
-const selectedProduct = ref('')
-const linkedProductSnapshot = ref<{ name: string; specification: string } | null>(null)
 const initialValue = ref('')
 const submissionKey = createClientUuid()
 const editingId = computed(() => typeof route.query.editApplication === 'string' ? route.query.editApplication : '')
 const editingEtag = ref('')
 const returnedNote = ref('')
+const savedNumber = ref({ suffix: '', number: '' })
 let contactsRequest = 0
 let customersRequest = 0
-let productsRequest = 0
 let submitted = false
 const form = reactive<SampleApplicationDraft>({
+  manualRequestNumber: '', productColorId: '', isSalesperson: false,
+  productSelection: sampleProductSelection('', ''),
   sourceType: null, sourceId: '', sourceProductId: '', productId: '', customerId: '', contactId: '', ownerId: '',
   sampleType: '', shippingMethod: '', deliveryBatch: '', repeatOrder: null, orderDate: '', dueDate: '',
   productName: '', specification: '', lengthCm: '', armrestWidthCm: '', seatWidthCm: '', backHeightCm: '', seatHeightCm: '',
   requirements: '', quantity: null, referenceImage: null,
 })
 const sourceLocked = computed(() => Boolean(context.value))
+const productDraft = computed(() => form.productSelection?.draft || sampleProductSelection(form.productName, form.specification, form.productSelectionSnapshot).draft!)
+const showCustomer = computed(() => options.value?.is_salesperson === true)
+const numberPreview = computed(() => savedNumber.value.number && form.manualRequestNumber === savedNumber.value.suffix ? savedNumber.value.number : `HTS${form.manualRequestNumber.trim().toUpperCase()}`)
 const canCreate = computed(() => auth.hasPermission('samples.add_samplerequest'))
 const sourceLabel = computed(() => context.value?.source_type === 'quotation' ? '来源报价' : '来源询盘')
 const selectedSourceProduct = computed(() => context.value?.products.find(item => item.id === form.sourceProductId))
@@ -69,6 +71,9 @@ const selectableSourceImages = computed(() => {
   if (context.value?.source_type === 'quotation') return productImages
   return productImages.length ? productImages : context.value?.reference_images || []
 })
+const sourcePreviewUrls = computed(() => selectableSourceImages.value.map(image => image.url))
+const imageResources = useProtectedResourceUrls(() => [imagePreview.value, ...(sourceImageVisible.value ? sourcePreviewUrls.value : [])])
+watch(imageResources.active, active => { if (!active) sourceImageVisible.value = false }, { flush: 'sync' })
 const sourceImageLabel = computed(() => context.value?.source_type === 'quotation' ? '报价产品图片' : '询盘图片')
 const dirty = computed(() => Boolean(initialValue.value) && (JSON.stringify({ ...form, referenceImage: null }) !== initialValue.value || Boolean(form.referenceImage)))
 
@@ -87,6 +92,7 @@ async function loadPage() {
   try {
     if (!canCreate.value) throw new Error('当前账号没有创建打样申请的权限。')
     options.value = await fetchSampleFormOptions()
+    form.isSalesperson = options.value.is_salesperson === true
     customerMatches.value = options.value.customers
     form.ownerId = options.value.salespeople.some(person => person.id === options.value!.current_maker.id)
       ? options.value.current_maker.id : ''
@@ -112,18 +118,22 @@ async function loadPage() {
       if (!product || !sample.owner) throw new Error('申请缺少产品或业务员信息，请联系管理员。')
       editingEtag.value = existing.etag
       returnedNote.value = sample.director_note || ''
+      savedNumber.value = { suffix: sample.manual_request_number || '', number: sample.request_number }
       Object.assign(form, {
-        customerId: sample.customer_account, contactId: sample.customer_contact || '', ownerId: sample.owner.id,
+        manualRequestNumber: sample.manual_request_number || '', productColorId: product.details[0]?.product_color_id || '',
+        customerId: sample.customer_account || '', contactId: sample.customer_contact || '', ownerId: sample.owner.id,
         sampleType: sample.sample_type, shippingMethod: sample.shipping_method, deliveryBatch: sample.delivery_batch,
         repeatOrder: sample.is_repeat_order, orderDate: sample.order_date || '', dueDate: sample.sample_due_date || '',
         sourceProductId: product.source_quotation_line_id || product.source_inquiry_item_id || '',
-        productId: product.product_id || '',
-        productName: product.product_name, specification: product.specification_display ?? product.specification, requirements: sample.purpose,
+        productId: product.product_id || '', productCatalogId: product.product_catalog_id || '',
+        productSelection: sampleProductSelection(product.product_name, product.specification, product.product_selection_snapshot), productSelectionSnapshot: product.product_selection_snapshot || null,
+        productName: product.product_name, specification: product.specification, requirements: sample.purpose,
         lengthCm: product.length_cm || '', armrestWidthCm: product.armrest_width_cm || '', seatWidthCm: product.seat_width_cm || '',
         backHeightCm: product.back_height_cm || '', seatHeightCm: product.seat_height_cm || '', quantity: product.total_sample_quantity,
       })
-      selectedCustomer.value = { id: sample.customer_account, account_name: sample.customer_name, account_code: '' }
-      if (sourceType && sourceId) {
+      if (form.productSelection?.draft && !product.product_selection_snapshot?.name) Object.assign(form.productSelection.draft, { category_name: product.category_name || '', material: product.material_snapshot || '' })
+      selectedCustomer.value = sample.customer_account ? { id: sample.customer_account, account_name: sample.customer_name, account_code: '' } : null
+      if (sourceType && sourceId && selectedCustomer.value) {
         form.sourceType = sourceType as 'inquiry' | 'quotation'
         form.sourceId = String(sourceId)
         context.value = {
@@ -134,15 +144,14 @@ async function loadPage() {
           basic_info: { order_date: sample.order_date || null, sample_due_date: sample.sample_due_date || null }, suggested_due_date: sample.sample_due_date || null,
           sample_types: options.value.sample_types, unfinished_samples: [],
           products: [{ id: form.sourceProductId, source_inquiry_item_id: product.source_inquiry_item_id, source_quotation_line_id: product.source_quotation_line_id,
-            product_name: product.product_name, specification: product.specification_display ?? product.specification, source_quantity: String(product.total_sample_quantity), source_unit_code: 'PCS' }],
+            product_catalog_id: product.product_catalog_id || null, product_selection_snapshot: product.product_selection_snapshot,
+            product_name: product.product_name, specification: product.specification_display ?? product.specification, source_quantity: String(product.total_sample_quantity), source_unit_code: product.product_selection_snapshot?.unit_code || 'PCS' }],
         }
       }
-      selectedProduct.value = product.product_name
-      linkedProductSnapshot.value = product.product_id ? { name: product.product_name, specification: form.specification } : null
-      if (!sourceLocked.value) await loadContacts()
+      if (showCustomer.value && !sourceLocked.value) await loadContacts()
       if (sample.reference_image) imagePreview.value = `/api/v1/sample-requests/${sample.id}/business-files/${sample.reference_image}/`
     }
-    if (!existing && !sourceLocked.value && route.query.customer_id) {
+    if (!existing && showCustomer.value && !sourceLocked.value && route.query.customer_id) {
       if (typeof route.query.customer_id !== 'string') throw new Error('客户信息不完整，请从客户详情重新进入。')
       const { data: customer } = await fetchCustomer(route.query.customer_id)
       if (customer.archived_at) throw new Error('该客户已归档，不能创建新的打样申请。')
@@ -150,7 +159,6 @@ async function loadPage() {
       form.customerId = customer.id
       await loadContacts()
     }
-    if (!sourceLocked.value) void searchProducts('')
     initialValue.value = JSON.stringify({ ...form, referenceImage: null })
   } catch (error) { errorMessage.value = apiError(error) }
   finally { loading.value = false }
@@ -190,35 +198,9 @@ function changeCustomer() {
   void loadContacts()
 }
 
-async function searchProducts(query: string) {
-  if (sourceLocked.value) return
-  const request = ++productsRequest
-  productsLoading.value = true
-  try {
-    const result = await fetchProducts({ page: 1, page_size: 50, q: query.trim(), status: 'ACTIVE' })
-    if (request === productsRequest) products.value = result.data
-  } catch (error) { if (request === productsRequest) ElMessage.error(apiError(error)) }
-  finally { if (request === productsRequest) productsLoading.value = false }
-}
-
-function openProductOptions(visible: boolean) {
-  if (visible && !productsLoading.value && !products.value.length) void searchProducts('')
-}
-
-function chooseProduct(value: string) {
-  const product = products.value.find(item => item.id === value)
-  form.productId = product?.id || ''
-  form.productName = product?.product_name || value
-  form.specification = product?.specification || ''
-  linkedProductSnapshot.value = product ? { name: product.product_name, specification: product.specification } : null
-}
-
-function clearProductLinkIfEdited() {
-  if (!form.productId || !linkedProductSnapshot.value) return
-  if (form.productName !== linkedProductSnapshot.value.name || form.specification !== linkedProductSnapshot.value.specification) {
-    form.productId = ''
-    linkedProductSnapshot.value = null
-  }
+function updateProduct(draft: ProductEntryDraft) {
+  form.productId = ''; form.productCatalogId = ''; form.productSelection = { draft }
+  form.productName = draft.name; form.specification = draft.specification
 }
 
 function chooseSourceProduct(id: string) {
@@ -226,9 +208,12 @@ function chooseSourceProduct(id: string) {
   const productChanged = form.sourceProductId !== (product?.id || '')
   form.sourceProductId = product?.id || ''
   form.productId = product?.product_id || ''
+  form.productCatalogId = product?.product_catalog_id || ''
+  form.productSelection = null
+  form.productSelectionSnapshot = product?.product_selection_snapshot || null
   form.productName = product?.product_name || ''
   form.specification = product?.specification || ''
-  linkedProductSnapshot.value = product?.product_id ? { name: form.productName, specification: form.specification } : null
+  form.productSelection = sampleProductSelection(form.productName, form.specification, form.productSelectionSnapshot)
   if (!productChanged) return
   const images = context.value?.source_type === 'quotation'
     ? product?.reference_images || []
@@ -271,11 +256,15 @@ function removeImage() { releaseImage(); form.referenceImage = null; form.source
 async function submit() {
   if (loading.value || submitting.value || !canCreate.value) return
   submitError.value = ''
+  productFields.value?.commit()
   const message = validateSampleApplication(form)
   if (message) { submitError.value = message; return }
   submitting.value = true
   try {
-    const result = await submitSampleApplication({ ...form }, { key: submissionKey, sampleId: editingId.value || undefined, etag: editingEtag.value })
+    const color = options.value?.colors.find(item => item.id === form.productColorId)
+    const result = await submitSampleApplication({ ...form, productId: '', productCatalogId: '',
+      productSelection: { draft: { ...productDraft.value, color_id: null, color_name: color?.color_name || '', sources: { ...productDraft.value.sources, color_name: 'typed' } } },
+    }, { key: submissionKey, sampleId: editingId.value || undefined, etag: editingEtag.value })
     submitted = true
     const effective = result.status === 'PENDING_COMPLETION'
     ElMessage.success(effective ? '打样申请已直接生效，待工厂完善需求。' : '打样申请已提交厂长确认。')
@@ -286,7 +275,7 @@ async function submit() {
 
 useSampleUnsavedChanges(() => dirty.value && !submitted, '离开创建页')
 onMounted(loadPage)
-onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++; releaseImage() })
+onBeforeUnmount(() => { customersRequest++; contactsRequest++; releaseImage() })
 </script>
 
 <template>
@@ -305,12 +294,13 @@ onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++
       <ElForm v-else :disabled="submitting" label-position="top" class="application-form erp-flat-form" @submit.prevent="submit">
         <SampleSection title="基础信息" class="basic-section">
           <div class="basic-grid">
+            <ElFormItem label="打样单号 *" class="sample-number-field"><div class="sample-number-input"><ElInput v-model="form.manualRequestNumber" aria-label="打样单号后缀" maxlength="46" placeholder="请输入单号后缀"><template #prepend>HTS</template></ElInput><ElInput :model-value="numberPreview" class="number-preview" aria-label="完整打样单号" readonly /></div></ElFormItem>
             <ElFormItem :label="sourceLabel"><ElInput class="readonly-field" :model-value="context?.source_number || '无来源询盘'" disabled /></ElFormItem>
-            <ElFormItem label="客户">
+            <ElFormItem v-if="showCustomer" label="客户">
               <ElInput v-if="sourceLocked" :model-value="context?.customer.account_name" disabled />
               <ElSelect v-else v-model="form.customerId" aria-label="客户" filterable remote :remote-method="searchCustomers" :loading="customersLoading" placeholder="请选择客户" @change="changeCustomer"><ElOption v-for="customer in customerOptions" :key="customer.id" :value="customer.id" :label="customer.account_name" /></ElSelect>
             </ElFormItem>
-            <ElFormItem label="联系人">
+            <ElFormItem v-if="showCustomer" label="联系人">
               <ElInput v-if="sourceLocked" class="readonly-field" :model-value="context?.contact?.display_name || '—'" disabled />
               <ElSelect v-else v-model="form.contactId" aria-label="联系人" filterable clearable remote :remote-method="loadContacts" :loading="contactsLoading" :disabled="!form.customerId" placeholder="请选择联系人"><ElOption v-for="contact in contacts" :key="contact.id" :value="contact.id" :label="contact.display_name" /></ElSelect>
             </ElFormItem>
@@ -330,15 +320,13 @@ onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++
         <div class="application-columns">
           <SampleSection title="样品信息" class="product-section">
             <div class="product-body">
-              <SampleProductImage class="product-image" :src="imagePreview" />
               <div class="product-fields">
-                <ElFormItem label="产品名称">
-                  <ElSelect v-if="sourceLocked" :model-value="form.sourceProductId" aria-label="产品名称" placeholder="请选择来源样品" @change="chooseSourceProduct"><ElOption v-for="product in context?.products" :key="product.id" :value="product.id" :label="product.product_name"><span class="product-option"><span class="product-option-name" :title="product.product_name">{{ product.product_name }}</span><span class="product-option-spec" :title="product.specification || '暂无规格'">{{ product.specification || '暂无规格' }}</span></span></ElOption></ElSelect>
-                  <ElSelect v-else v-model="selectedProduct" aria-label="产品名称" filterable remote allow-create default-first-option :remote-method="searchProducts" :loading="productsLoading" placeholder="选择成品或输入产品名称" @visible-change="openProductOptions" @change="chooseProduct"><ElOption v-for="product in products" :key="product.id" :value="product.id" :label="product.product_name"><span class="product-option"><span class="product-option-name" :title="product.product_name">{{ product.product_name }}</span><span class="product-option-spec" :title="product.specification || '暂无规格'">{{ product.specification || '暂无规格' }}</span></span></ElOption></ElSelect>
-                </ElFormItem>
-                <ElFormItem label="规格"><ElInput v-model="form.specification" aria-label="规格" :disabled="sourceLocked" placeholder="请输入规格" maxlength="2000" @input="clearProductLinkIfEdited" /></ElFormItem>
+                <ElFormItem v-if="sourceLocked && (context?.products.length || 0) > 1" label="来源明细"><ElSelect :model-value="form.sourceProductId" aria-label="来源明细" placeholder="请选择来源明细" @change="chooseSourceProduct"><ElOption v-for="product in context?.products" :key="product.id" :value="product.id" :label="`${product.product_name} / ${product.specification}`" /></ElSelect></ElFormItem>
+                <SampleProductFields ref="productFields" :model-value="productDraft" :disabled="submitting" @update:model-value="updateProduct" />
+                <ElFormItem label="色卡 / 色号 / 颜色 *"><ElSelect v-model="form.productColorId" aria-label="色卡 / 色号 / 颜色" filterable placeholder="请选择颜色"><ElOption v-for="color in options?.colors" :key="color.id" :value="color.id" :label="[color.color_card || '—', color.color_code || '—', color.color_name].join(' / ')" /></ElSelect></ElFormItem>
+                <ElFormItem label="打样数量 *" class="quantity-field"><div class="quantity-input"><ElInputNumber v-model="form.quantity" aria-label="打样数量" :controls="false" :min="1" :max="2147483647" placeholder="请输入数量" /><span class="quantity-unit">{{ form.productSelection?.draft?.unit_name || form.productSelectionSnapshot?.unit_name || 'PCS' }}</span></div></ElFormItem>
                 <div class="dimensions-grid"><ElFormItem v-for="field in sampleDimensionFields" :key="field.key" :label="field.label"><ElInput v-model="form[field.key]" :aria-label="field.label" inputmode="decimal" placeholder="选填" maxlength="11" /></ElFormItem></div>
-                <ElFormItem label="特殊要求（选填）" class="requirements-field"><ElInput v-model="form.requirements" aria-label="特殊要求" type="textarea" :rows="4" resize="none" maxlength="2000" show-word-limit placeholder="请输入颜色、包装或工艺要求" /></ElFormItem>
+                <ElFormItem label="备注（选填）" class="requirements-field"><ElInput v-model="form.requirements" aria-label="备注" type="textarea" :rows="4" resize="none" maxlength="2000" show-word-limit placeholder="请输入备注" /></ElFormItem>
               </div>
             </div>
           </SampleSection>
@@ -346,25 +334,21 @@ onBeforeUnmount(() => { customersRequest++; contactsRequest++; productsRequest++
             <SampleSection title="图片上传" class="upload-section">
               <p class="field-label">参考图片（选填）</p>
               <ElButton v-if="selectableSourceImages.length" class="source-image-select" :disabled="submitting" @click="sourceImageVisible = true">选择{{ sourceImageLabel }}（{{ selectableSourceImages.length }} 张）</ElButton>
-              <div v-if="imagePreview" class="reference-preview"><img :src="imagePreview" alt="已选择的参考图片" /><div class="reference-image-actions"><ElUpload :key="uploadKey" :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :on-change="selectImage" :disabled="submitting"><ElButton :disabled="submitting">替换图片</ElButton></ElUpload><ElButton :disabled="submitting" @click="removeImage">移除图片</ElButton></div></div>
+              <div v-if="imagePreview" class="reference-preview"><img v-if="imageResources.active.value" :src="imageResources.urlFor(imagePreview)" alt="已选择的参考图片" /><div class="reference-image-actions"><ElUpload :key="uploadKey" :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :on-change="selectImage" :disabled="submitting"><ElButton :disabled="submitting">替换图片</ElButton></ElUpload><ElButton :disabled="submitting" @click="removeImage">移除图片</ElButton></div></div>
               <ElUpload v-else :key="uploadKey" drag :auto-upload="false" :show-file-list="false" accept="image/jpeg,image/png" :limit="1" :on-change="selectImage" :on-exceed="() => ElMessage.warning('最多选择一张参考图片。')">
                 <img :src="uploadIcon" class="upload-icon" alt="" /><strong>上传参考图片</strong><span>支持 JPG、PNG，最多 1 张，单张不超过 5MB</span>
               </ElUpload>
               <p class="field-hint">可上传产品外观或客户参考图。</p>
             </SampleSection>
-            <SampleSection title="打样数量" class="quantity-section">
-              <ElFormItem label="打样数量 *"><ElInputNumber v-model="form.quantity" aria-label="打样数量" :controls="false" :min="1" :max="2147483647" placeholder="请输入数量" /><span class="quantity-unit">PCS</span></ElFormItem>
-              <p class="field-hint">请输入大于 0 的整数。</p>
-            </SampleSection>
           </div>
         </div>
       </ElForm>
     </div>
-    <ElDialog v-model="sourceImageVisible" :title="`选择${sourceImageLabel}`" width="780px">
+    <ElDialog :model-value="sourceImageVisible && imageResources.active.value" @update:model-value="sourceImageVisible = $event" :title="`选择${sourceImageLabel}`" width="780px">
       <p>点击缩略图可放大查看，确认后点击“选用此图”。</p>
       <div class="sample-source-images">
         <article v-for="(image, index) in selectableSourceImages" :key="image.id" :class="{ 'is-selected': form.sourceReferenceImageId === image.id }">
-          <ElImage :src="image.url" :alt="`${sourceImageLabel} ${index + 1}`" fit="contain" :preview-src-list="selectableSourceImages.map(item => item.url)" :initial-index="index" preview-teleported>
+          <ElImage v-if="imageResources.active.value" :src="imageResources.urlFor(image.url)" :alt="`${sourceImageLabel} ${index + 1}`" fit="contain" :preview-src-list="imageResources.urlsFor(sourcePreviewUrls)" :initial-index="index" preview-teleported>
             <template #error><span>图片加载失败</span></template>
           </ElImage>
           <div><span>图片 {{ index + 1 }}</span><ElButton :type="form.sourceReferenceImageId === image.id ? 'primary' : 'default'" :disabled="submitting" @click="chooseSourceImage(image.id)">{{ form.sourceReferenceImageId === image.id ? '已选用' : '选用此图' }}</ElButton></div>

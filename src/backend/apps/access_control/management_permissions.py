@@ -7,13 +7,14 @@ MANAGEMENT_OPERATIONS = (
     ('manage_accounts', '管理员工账号', 'access_control'),
     ('manage_wecom', '管理企业微信', 'access_control'),
     ('manage_notifications', '管理业务通知规则', 'access_control'),
+    ('manage_codex_connection', '管理 Codex 连接', 'access_control'),
 )
 
 
 def can_manage(user, code):
     if active_employee_for(user) is None:
         return False
-    if user.is_superuser and user.get_username() == 'admin':
+    if user.is_superuser:
         return True
     from .selectors import effective_access
     sources = effective_access(user)['actions'].get(code, {}).get('sources', [])

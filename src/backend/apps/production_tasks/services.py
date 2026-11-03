@@ -19,6 +19,7 @@ from apps.products.models import ProductStatus
 from apps.organizations.models import Employee
 from apps.organizations.selectors import active_role_employees
 from apps.reference_data.models import Currency, ProductionUnit, ReferenceStatus
+from apps.product_catalog.selection import is_product_entry_snapshot
 from apps.sales_orders.pricing import cny_line_amounts
 from apps.sales_orders.models import (
     CollaborationEventStatus,
@@ -57,6 +58,38 @@ def _production_cny_rate_snapshot():
     }
 
 
+def _prepare_catalog_products(products, task=None):
+    from apps.product_catalog.selection import resolve_product_selection
+
+    existing = {str(line.pk): line for line in task.products.all()} if task else {}
+    for data in products:
+        line = existing.get(str(data["client_key"]))
+        catalog_id = data.pop("product_catalog_id", getattr(line, "product_catalog_id", None))
+        selection = data.pop("product_selection", None)
+        if not catalog_id and selection is None and not is_product_entry_snapshot(getattr(line, "product_selection_snapshot", None)):
+            data["product_catalog"] = None
+            data["product_selection_snapshot"] = {}
+            continue
+        if data.get("product") is not None:
+            raise ValidationError({"product_catalog_id": "新产品与旧产品不能同时关联。"})
+        catalog, snapshot = resolve_product_selection(
+            catalog_id, selection, existing_catalog_id=getattr(line, "product_catalog_id", None),
+            existing_snapshot=getattr(line, "product_selection_snapshot", None),
+        )
+        submitted_unit_id = getattr(data.get("unit"), "pk", None)
+        if (str(submitted_unit_id) if submitted_unit_id else None) != snapshot.get("unit_id"):
+            raise ValidationError({"unit_id": "单位必须使用所选产品的单位。"})
+        data.update(product_catalog=catalog, product_selection_snapshot=snapshot, unit=data.get("unit"))
+
+
+def _product_identity_changed(line, data):
+    return (
+        line.product_id != getattr(data.get("product"), "pk", None)
+        or line.product_catalog_id != getattr(data.get("product_catalog"), "pk", None)
+        or line.product_selection_snapshot != data.get("product_selection_snapshot", {})
+    )
+
+
 def _product_line_snapshot_values(*, product, color, data):
     """整理产品行的正式显示快照与客户原始输入。
 
@@ -69,6 +102,25 @@ def _product_line_snapshot_values(*, product, color, data):
     color_code = str(data.pop("color_code", "") or "").strip()
     material = str(data.pop("material", "") or "").strip()
     category_input = data.pop("product_category", None)
+    catalog = data.pop("product_catalog", None)
+    selection_snapshot = data.pop("product_selection_snapshot", {})
+
+    if catalog is not None or is_product_entry_snapshot(selection_snapshot):
+        return {
+            "product": None, "product_catalog": catalog,
+            "product_selection_snapshot": selection_snapshot,
+            "product_category": None, "product_color": None,
+            "product_number_snapshot": "", "product_code_snapshot": selection_snapshot["product_code"],
+            "item_number_snapshot": selection_snapshot["item_number"],
+            "product_name_snapshot": selection_snapshot["name"],
+            "specification_snapshot": selection_snapshot["specification"],
+            "customer_product_name_snapshot": customer_product_name or selection_snapshot["name"],
+            "customer_specification_snapshot": customer_specification or selection_snapshot["specification"],
+            "customer_color_snapshot": selection_snapshot["color_name"],
+            "material_snapshot": selection_snapshot["material"],
+            "color_card_snapshot": "", "color_code_snapshot": "",
+            "color_name_snapshot": selection_snapshot["color_name"],
+        }
 
     if product is not None:
         product_number = product.product_number
@@ -98,6 +150,8 @@ def _product_line_snapshot_values(*, product, color, data):
 
     return {
         "product": product,
+        "product_catalog": None,
+        "product_selection_snapshot": {},
         "product_category": product_category,
         "product_number_snapshot": product_number,
         "product_code_snapshot": product_code,
@@ -124,6 +178,8 @@ def _bom_sync_token_payload(task, actor_employee, affected_lines):
                 {
                     "product_line_id": item["product_line_id"],
                     "new_product_id": item["new_product_id"],
+                    "new_product_catalog_id": item.get("new_product_catalog_id"),
+                    "new_product_selection_snapshot": item.get("new_product_selection_snapshot", {}),
                     "new_product_color_id": item["new_product_color_id"],
                     "new_color_code": item["new_color_code"],
                     "new_quantity": item["new_quantity"],
@@ -215,6 +271,8 @@ def _snapshot(task):
                 "color_name": product.color_name_snapshot,
                 "quantity": str(product.quantity),
                 "product_id": str(product.product_id) if product.product_id else None,
+                "product_catalog_id": str(product.product_catalog_id) if product.product_catalog_id else None,
+                "product_selection_snapshot": product.product_selection_snapshot,
                 "product_category_id": str(product.product_category_id) if product.product_category_id else None,
                 "specification": product.specification_snapshot,
                 "customer_product_name": product.customer_product_name_snapshot,
@@ -222,7 +280,7 @@ def _snapshot(task):
                 "customer_color": product.customer_color_snapshot,
                 "material": product.material_snapshot,
                 "color_code": product.color_code_snapshot,
-                "unit_id": str(product.unit_id),
+                "unit_id": str(product.unit_id) if product.unit_id else None,
                 "currency_id": str(product.currency_id),
                 "unit_price": str(product.unit_price),
                 "total_amount": str(product.total_amount),
@@ -276,10 +334,14 @@ def _bom_relevant_changes(task, products):
         )
         incoming_product_code = getattr(incoming_product, "product_code", "")
         incoming_product_number = getattr(incoming_product, "product_number", "")
+        selection_snapshot = product_data.get("product_selection_snapshot", {})
+        if product_data.get("product_catalog") or is_product_entry_snapshot(selection_snapshot):
+            incoming_product_name = selection_snapshot["name"]
+            incoming_product_code = selection_snapshot["product_code"]
         incoming_quantity = Decimal(product_data["quantity"])
         order_quantity_changed = Decimal(line.quantity) != incoming_quantity
         bom_quantity_outdated = Decimal(latest_bom.order_quantity) != incoming_quantity
-        product_changed = line.product_id != getattr(incoming_product, "pk", None)
+        product_changed = _product_identity_changed(line, product_data)
         color_changed = (
             line.product_color_id != getattr(incoming_color, "pk", None)
             or line.color_code_snapshot != incoming_color_code
@@ -314,6 +376,8 @@ def _bom_relevant_changes(task, products):
                 "product_name": line.product_name_snapshot,
                 "old_product_name": line.product_name_snapshot,
                 "new_product_id": str(incoming_product.pk) if incoming_product is not None else None,
+                "new_product_catalog_id": str(product_data["product_catalog"].pk) if product_data.get("product_catalog") else None,
+                "new_product_selection_snapshot": selection_snapshot,
                 "new_product_name": incoming_product_name,
                 "color_name": line.color_name_snapshot,
                 "old_color_name": line.color_name_snapshot,
@@ -349,6 +413,7 @@ def _image_for(files, field_name, actor_employee, saved_files):
         actor_employee,
         storage_folder="production_tasks",
         field_label="生产任务单图片",
+        pending_file=getattr(saved_files, 'prepare', None),
     )
     saved_files.append(image)
     return image
@@ -366,6 +431,7 @@ def _images_for(files, field_name, actor_employee, saved_files):
             storage_folder="production_tasks",
             field_label="生产任务单明细图片",
             max_bytes=MAX_PRODUCT_IMAGE_BYTES,
+            pending_file=getattr(saved_files, 'prepare', None),
         )
         saved_files.append(image)
         images.append(image)
@@ -412,10 +478,11 @@ def _create_children(
     *,
     existing_product_images=None,
     existing_detail_images=None,
+    created_files=None,
 ):
     existing_product_images = existing_product_images or {}
     existing_detail_images = existing_detail_images or {}
-    saved_files = []
+    saved_files = created_files if created_files is not None else []
     try:
         for product_index, product_data in enumerate(products, start=1):
             data = dict(product_data)
@@ -514,7 +581,7 @@ def _validate_sales_products(task, products, files):
         if line is None:
             raise ValidationError({"products": "销售订单来源产品不可新增或改为无来源产品。"})
         incoming_product = product_data.get("product")
-        if line.product_id != getattr(incoming_product, "pk", None):
+        if _product_identity_changed(line, product_data):
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”由销售订单锁定，不能替换。"})
         incoming_color = product_data.get("product_color")
         if (
@@ -537,7 +604,7 @@ def _validate_sales_products(task, products, files):
             maximum_by_source[source.pk] = maximum
         if maximum is not None and int(product_data["quantity"]) > maximum:
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”本次生产数量最多为 {maximum}。"})
-        if line.unit_id != product_data["unit"].pk or line.currency_id != product_data["currency"].pk:
+        if line.unit_id != getattr(product_data.get("unit"), "pk", None) or line.currency_id != product_data["currency"].pk:
             raise ValidationError({"products": f"产品“{line.product_name_snapshot}”的单位和币种由销售订单锁定。"})
         if Decimal(line.exchange_rate) != Decimal(product_data["exchange_rate"]):
             raise ValidationError({"products": "销售来源汇率快照不可修改。"})
@@ -647,7 +714,7 @@ def _sync_children(
                 active_planned = line.schedule_products.filter(
                     schedule__record_status="ACTIVE", removed_at__isnull=True
                 ).order_by("-planned_quantity").first()
-                if line.product_id != getattr(product, "pk", None) or line.unit_id != data["unit"].pk:
+                if _product_identity_changed(line, product_data) or line.unit_id != getattr(data.get("unit"), "pk", None):
                     raise Conflict(f"产品“{line.product_name_snapshot}”已有排产历史，不能更换产品或单位。")
                 if active_planned is not None and int(data["quantity"]) < int(active_planned.planned_quantity):
                     raise Conflict(
@@ -657,7 +724,7 @@ def _sync_children(
 
             if (
                 line is not None
-                and line.product_id != getattr(product, "pk", None)
+                and _product_identity_changed(line, product_data)
                 and line.boms.exists()
                 and not allow_bom_product_change
             ):
@@ -802,6 +869,7 @@ def _sync_children(
 
 
 def replace_unbound_product_line(*, task, product_line, product_data, files, actor_employee, request):
+    _prepare_catalog_products([product_data], task)
     """为尚未生成 BOM 的颜色行更换产品，并复用生产任务单的明细校验结果。"""
     if product_line.sales_order_delivery_batch_line_id:
         raise Conflict("该颜色明细来源于销售订单，产品、颜色和数量必须保持锁定。")
@@ -943,10 +1011,11 @@ def _sync_sales_delivery_date(*, task, actor_employee, request):
 
 
 @transaction.atomic
-def create_production_task(*, validated_data, files, actor_employee, request):
+def create_production_task(*, validated_data, files, actor_employee, request, created_files=None):
     validated_data.pop("bom_sync_mode", None)
     validated_data.pop("bom_sync_token", None)
     products = validated_data.pop("products")
+    _prepare_catalog_products(products)
     batches = validated_data.pop("delivery_batches", [])
     followers = validated_data.pop("followers", [])
     _validate_followers(followers)
@@ -968,7 +1037,7 @@ def create_production_task(*, validated_data, files, actor_employee, request):
         **validated_data,
     )
     task.followers.set(followers)
-    _create_children(task, products, batches, files, actor_employee)
+    _create_children(task, products, batches, files, actor_employee, created_files=created_files)
     write_audit_log(
         object_type="PRODUCTION_TASK",
         object_id=task.pk,
@@ -983,6 +1052,9 @@ def create_production_task(*, validated_data, files, actor_employee, request):
 
 @transaction.atomic
 def update_production_task(*, task, validated_data, files, actor_employee, request):
+    from apps.access_control.role_policy import allowed_task_update_fields, require_task_edit_fields
+    require_task_edit_fields(request, validated_data)
+    plan_only = allowed_task_update_fields(request) is not None
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
     require_matching_etag(request, task)
     original_status = task.status
@@ -1025,6 +1097,8 @@ def update_production_task(*, task, validated_data, files, actor_employee, reque
     bom_sync_mode = validated_data.pop("bom_sync_mode", None)
     bom_sync_token = validated_data.pop("bom_sync_token", None)
     products = validated_data.pop("products", None)
+    if products is not None:
+        _prepare_catalog_products(products, task)
     batches = validated_data.pop("delivery_batches", None)
     followers = validated_data.pop("followers", None)
     if batches is not None and products is None:
@@ -1056,7 +1130,7 @@ def update_production_task(*, task, validated_data, files, actor_employee, reque
         setattr(task, field_name, value)
     if "is_repeat_order" in validated_data:
         task.order_source = "REPEAT" if task.is_repeat_order else "NEW"
-    if original_status in {
+    if not plan_only and original_status in {
         ProductionTaskStatus.PENDING_VALIDATION,
         ProductionTaskStatus.READY,
     }:
@@ -1238,11 +1312,48 @@ def _register_task_confirmed(task, actor_employee):
             product_name = f"{product_name}等{len(names)}项产品"
     register_business_event(
         event_code="PRODUCTION_TASK_CONFIRMED",
+        actor_employee=actor_employee,
         idempotency_key=f"PRODUCTION_TASK_CONFIRMED:{task.pk}:{version}",
         object_type="production_tasks.ProductionTask", object_id=task.pk, object_version=version,
         context={"document_no": task.task_number, "product_name": product_name, "operator": actor_employee.display_name,
                  "occurred_at": version, "status": task.get_status_display()},
     )
+
+
+@transaction.atomic
+def set_production_task_paused(*, task, paused, reason, actor_employee, request):
+    from apps.access_control import module_policy
+    from apps.audit.models import AuditLog
+
+    permission = 'access_control.pause_productiontask' if paused else 'access_control.resume_productiontask'
+    if not module_policy.has_permission(request, permission):
+        raise PermissionDenied('当前账号没有暂停或恢复生产任务的权限。')
+    normalized_reason = str(reason or '').strip()
+    if not normalized_reason:
+        raise ValidationError({'reason': '请填写操作原因。'})
+    task = ProductionTask.objects.select_for_update().get(pk=task.pk)
+    require_matching_etag(request, task)
+    resumable = {ProductionTaskStatus.READY, ProductionTaskStatus.IN_PRODUCTION}
+    if paused:
+        if task.status not in resumable:
+            raise Conflict('只有已接单或生产中的任务可以暂停。')
+        target_status = ProductionTaskStatus.PAUSED
+    else:
+        if task.status != ProductionTaskStatus.PAUSED:
+            raise Conflict('只有已暂停的任务可以恢复。')
+        pause_log = AuditLog.objects.filter(object_type='PRODUCTION_TASK', object_id=task.pk,
+            action='PAUSED', after_data__status=ProductionTaskStatus.PAUSED).order_by('-occurred_at', '-id').first()
+        target_status = pause_log.before_data.get('status') if pause_log else None
+        if target_status not in resumable:
+            raise Conflict('未找到可核实的暂停前状态，请核查该任务的历史记录。')
+    before = _snapshot(task)
+    task.status = target_status
+    task.status_reason = normalized_reason
+    task.save(update_fields=['status', 'status_reason', 'updated_at'])
+    write_audit_log(object_type='PRODUCTION_TASK', object_id=task.pk, **_audit_context(task),
+        action='PAUSED' if paused else 'RESUMED', actor_employee=actor_employee,
+        before_data=before, after_data=_snapshot(task), request=request)
+    return task
 
 
 @transaction.atomic
@@ -1455,7 +1566,15 @@ def create_production_order_from_sales_order(*, validated_data, actor_employee, 
             archived_at__isnull=True,
         )
     }
-    missing_unit_codes = unit_codes - set(unit_by_code)
+    missing_unit_codes = {
+        item["delivery_batch_line"].sales_order_line.unit_code_snapshot
+        for item in normalized_items
+        if item["delivery_batch_line"].sales_order_line.unit_code_snapshot not in unit_by_code
+        and not (
+            is_product_entry_snapshot(item["delivery_batch_line"].sales_order_line.product_selection_snapshot)
+            and item["delivery_batch_line"].sales_order_line.product_selection_snapshot.get("unit_id") is None
+        )
+    }
     if missing_unit_codes:
         raise ValidationError({"lines": f"销售订单单位 {sorted(missing_unit_codes)[0]} 已停用、归档或不存在。"})
     source_sales_lines = {item["delivery_batch_line"].sales_order_line_id for item in normalized_items}
@@ -1523,12 +1642,14 @@ def create_production_order_from_sales_order(*, validated_data, actor_employee, 
             image_file=sales_order_line.product_image,
             line_number=line_number,
             product=product,
+            product_catalog_id=sales_order_line.product_catalog_id,
+            product_selection_snapshot=sales_order_line.product_selection_snapshot,
             sales_order_delivery_batch_line=source_line,
             product_category=getattr(sales_order_line, "product_category", None)
             or (product.category if product else None),
-            product_number_snapshot=getattr(sales_order_line, "product_number_snapshot", "") if product else "",
-            product_code_snapshot=getattr(sales_order_line, "product_code_snapshot", "") if product else "",
-            item_number_snapshot=product.product_item.item_number if product else "",
+            product_number_snapshot=sales_order_line.product_number_snapshot,
+            product_code_snapshot=sales_order_line.product_code_snapshot,
+            item_number_snapshot=sales_order_line.item_number_snapshot,
             product_name_snapshot=sales_order_line.product_name_snapshot,
             specification_snapshot=sales_order_line.specification_snapshot,
             customer_product_name_snapshot=customer_product_name,
@@ -1540,7 +1661,7 @@ def create_production_order_from_sales_order(*, validated_data, actor_employee, 
             color_name_snapshot=product_color.color_name if product_color else customer_color,
             color_code_snapshot=product_color.color_code if product_color else "",
             quantity=int(item["quantity"]),
-            unit=unit_by_code[sales_order_line.unit_code_snapshot],
+            unit=unit_by_code.get(sales_order_line.unit_code_snapshot),
             currency=currency,
             unit_price=sales_order_line.unit_price_cny,
             total_amount=cny_line_amounts(sales_order_line.unit_price_cny, item["quantity"], Decimal("1"))[1],
@@ -1587,6 +1708,11 @@ def create_production_order_from_sales_order(*, validated_data, actor_employee, 
 
 @transaction.atomic
 def decide_production_order_by_pmc(*, task, validated_data, actor_employee, request=None):
+    from apps.access_control import module_policy
+    from apps.access_control.role_policy import require_task_edit_fields
+    edit_fields = set(validated_data) - {'decision', 'reason'}
+    if request is not None and module_policy.enabled() and edit_fields:
+        require_task_edit_fields(request, edit_fields)
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
     from apps.access_control.production_approval import check_production_approval
     check_production_approval(actor_employee, task)

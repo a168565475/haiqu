@@ -355,10 +355,14 @@ export async function deleteSampleParameterImage(
   return { data: unwrap(response), etag: String(response.headers.etag || '') }
 }
 
-export async function fetchSampleBusinessFile(sampleId: string, fileId: string): Promise<Blob> {
+export function sampleBusinessFileUrl(sampleId: string, fileId: string): string {
+  return `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/business-files/${encodeURIComponent(fileId)}/`
+}
+
+export async function fetchSampleBusinessFile(sampleId: string, fileId: string, signal?: AbortSignal): Promise<Blob> {
   const response = await apiClient.get(
-    `/api/v1/sample-requests/${encodeURIComponent(sampleId)}/business-files/${encodeURIComponent(fileId)}/`,
-    { responseType: 'blob', timeout: 120_000 },
+    sampleBusinessFileUrl(sampleId, fileId),
+    { responseType: 'blob', timeout: 120_000, signal },
   )
   return response.data as Blob
 }

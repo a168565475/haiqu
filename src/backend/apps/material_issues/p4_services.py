@@ -51,6 +51,7 @@ from .models import (
 )
 from .processing_selectors import digest, frozen_source, processing_lines, source_etag, source_data
 from .legacy_public_transition import require_original_handoff_mode, trusted_handoff_transition
+from .notification_events import coating_event
 
 
 def p4_schema_ready():
@@ -380,13 +381,16 @@ def original_direct_handoff_summary(order):
     return result
 
 
-def _bump_original_order(order, actor, request, action, before):
+def _bump_original_order(order, actor, request, action, before, *, notification_quantity=None):
     from apps.outsourcing.services import order_audit_snapshot
     order.version += 1
     order.updated_by_employee = actor
     order.save(update_fields=["version", "status", "completed_at", "updated_by_employee", "updated_at"])
+    after = order_audit_snapshot(order)
+    if notification_quantity is not None:
+        after['quantity'] = str(notification_quantity)
     write_audit_log(object_type="OUTSOURCING_ORDER", object_id=order.pk, action=action,
-        actor_employee=actor, before_data=before, after_data=order_audit_snapshot(order),
+        actor_employee=actor, before_data=before, after_data=after,
         context_type="PRODUCTION_SCHEDULE", context_id=order.schedule_id, request=request)
 
 
@@ -496,7 +500,7 @@ def confirm_original_good_return(*, request, handoff_id, request_id, good_pieces
         snapshot=movement.snapshot)
     from .original_order_services import update_original_return_status
     update_original_return_status(order)
-    _bump_original_order(order, actor, request, "DIRECT_GOOD_RETURN_CONFIRMED", before)
+    _bump_original_order(order, actor, request, "DIRECT_GOOD_RETURN_CONFIRMED", before, notification_quantity=good_pieces)
     return original_good_return_context(handoff, request)
 
 
@@ -656,6 +660,16 @@ def create_original_handoff(*, request, issue_line_id, request_id, original_orde
     lock_tube_product_scope(product_id)
     line, source, snapshot = _source_for_request(request, issue_line_id)
     _require_source_etag(request, line, source, snapshot)
+    from apps.access_control.role_policy import role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+    permission = 'material_issues.create_metalprocessingoriginalhandoff'
+    scopes = role_scopes(request, permission)
+    # 喷塑收发的工艺授权只允许接续已关联来源；车间授权仍可建立首次关联。
+    if (getattr(settings, 'CONFIRMED_ROLE_POLICY_ENABLED', False)
+            and 'CRAFT' in scopes and not scopes & {'MODULE', 'ALL', 'WORKSHOP'}
+            and not request.user.is_superuser and not has_legacy_permission(request, permission)
+            and not source.original_handoffs.filter(original_order_id=original_order_id).exists()):
+        raise PermissionDenied('当前岗位只能接续已关联来源的原外发单，首次关联须由车间处理。')
     if source.original_handoffs.filter(public_transition__isnull=False).exists():
         raise Conflict("该旧来源已按既有交接接续，不能继续新增旧交接；请先核对剩余在制件。")
     if source.status == "CLOSED":
@@ -674,7 +688,7 @@ def create_original_handoff(*, request, issue_line_id, request_id, original_orde
             source_snapshot__quantity_basis='WORK_REPORT_MINIMUM',
         ).exists()
         or TubeOutsourcingOrder.objects.filter(
-            product_line_id=product_id, source_kind='METAL', status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED'],
+            product_line_id=product_id, source_kind='METAL', is_plan=False, status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED'],
         ).exists()
     )
     if new_quantity_flow:
@@ -720,7 +734,7 @@ def create_original_handoff(*, request, issue_line_id, request_id, original_orde
     source.save(update_fields=["dispatched_pieces", "version", "updated_at"])
     if original_order.status == OutsourcingOrderStatus.PENDING_DISPATCH:
         original_order.status = OutsourcingOrderStatus.PROCESSING
-    _bump_original_order(original_order, actor, request, "DIRECT_HANDOFF_CONFIRMED", before)
+    _bump_original_order(original_order, actor, request, "DIRECT_HANDOFF_CONFIRMED", before, notification_quantity=handoff_pieces)
     source.refresh_from_db()
     return _source_result(source, line, request) | {"operation_id": str(record.pk)}
 
@@ -795,7 +809,7 @@ def create_unsprayed_return(*, request, handoff_id, request_id, returned_pieces,
     )
     from .original_order_services import update_original_return_status
     update_original_return_status(original_order)
-    _bump_original_order(original_order, actor, request, "DIRECT_UNSPRAYED_RETURN_CONFIRMED", before)
+    _bump_original_order(original_order, actor, request, "DIRECT_UNSPRAYED_RETURN_CONFIRMED", before, notification_quantity=returned_pieces)
     return unsprayed_return_result(record)
 
 
@@ -917,6 +931,7 @@ def create_external_order(*, request, rework_id, request_id, factory_id, craft_i
         allocated_pieces=allocated_pieces, unit_price=unit_price, client_request_id=request_id,
         request_payload_hash=request_hash, created_by_employee=actor, updated_by_employee=actor,
     )
+    coating_event('COATING_REWORK_READY', order, actor)
     return _order_result(order, request)
 
 
@@ -993,6 +1008,7 @@ def confirm_external_handoff(*, request, order_id, request_id, handoff_date, han
     order.version += 1
     order.updated_by_employee = actor
     order.save(update_fields=["handoff_pieces", "status", "version", "updated_by_employee", "updated_at"])
+    coating_event('COATING_REWORK_DISPATCHED', handoff, actor)
     return _order_result(order, request) | {"operation_id": str(handoff.pk)}
 
 
@@ -1095,6 +1111,7 @@ def confirm_external_good_return(*, request, order_id, request_id, good_pieces, 
     order.version += 1
     order.updated_by_employee = actor
     order.save(update_fields=["returned_good_pieces", "status", "completed_at", "version", "updated_by_employee", "updated_at"])
+    coating_event('COATING_REWORK_RECEIVED', record, actor)
     return _order_result(order, request) | {"operation_id": str(record.pk)}
 
 

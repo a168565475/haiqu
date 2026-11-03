@@ -114,7 +114,6 @@ onMounted(loadPage)
           <SampleMaterialApplicationInfo v-show="!fullscreen" :sample="sample" />
           <SampleMaterialProgress v-if="!canEdit && !loading" :sample-id="sample.id" :version="etag" />
           <SampleMaterialEditor v-else v-model="draft.lines" :units="units" :fullscreen="fullscreen" :unavailable-message="unavailableMessage" :disabled="loading || saving || !canEdit" @toggle-fullscreen="toggleFullscreen" @editing-change="editorOpen = $event" @dirty-change="editorDirty = $event" />
-          <div v-show="!fullscreen" class="material-notes"><label for="material-notes">需求备注（选填）</label><ElInput id="material-notes" v-model="draft.notes" maxlength="2000" :disabled="saving || !canEdit" placeholder="需要补充说明的材料要求" /></div>
         </template>
       </div>
     </section>

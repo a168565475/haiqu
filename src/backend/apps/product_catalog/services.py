@@ -7,6 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.core.api.concurrency import etag_for_instance, require_matching_etag
 from apps.core.audit import write_audit_log
+from apps.reference_data.models import ProductionUnit
 
 from .api.serializers import ProductCreateSerializer
 from .models import ProductCatalog, ProductCatalogCategory, ProductCatalogColor, ProductCatalogImport, ProductCatalogName
@@ -22,6 +23,20 @@ def _name_conflict(exc):
     if getattr(getattr(exc.__cause__, "diag", None), "constraint_name", None) == "prod_cat_category_name_uniq":
         raise ValidationError({"name": "该类别下已存在相同完整品名，不能自动合并。"}) from exc
     raise exc
+
+
+def validate_unit(value, *, previous=None):
+    if not value or value == previous:
+        return
+    if not ProductionUnit.objects.filter(unit_name=value, status="ACTIVE", archived_at__isnull=True).exists():
+        raise ValidationError({"unit": "请选择生产维护中已启用的单位。"})
+
+
+def locked_name(name_id):
+    return get_object_or_404(
+        ProductCatalogName.objects.select_for_update(of=("self",)).select_related("category"),
+        pk=name_id, archived_at__isnull=True, category__archived_at__isnull=True,
+    )
 
 
 def create_name(*, data, request):
@@ -80,6 +95,8 @@ def create_product_record(*, data, source=None, request=None):
     ).first()
     if name is None:
         raise ValidationError({"name_id": "完整品名不存在或已归档。"})
+    if source is None:
+        validate_unit(values.get("unit", ""))
     product = ProductCatalog.objects.create(name=name, **values, **_source_fields(source))
     ProductCatalogColor.objects.create(product=product, value="无颜色")
     # 名称详情含产品数量，创建产品也刷新该详情的版本。
@@ -95,14 +112,19 @@ def create_product(*, data, request):
 
 
 def _locked_product(product_id, request):
+    name_id = get_object_or_404(ProductCatalog, pk=product_id, archived_at__isnull=True).name_id
+    # 与整品名保存使用同一锁序，避免单行编辑与改名/整组删除互相等待。
+    name = locked_name(name_id)
     product = get_object_or_404(ProductCatalog.objects.select_for_update(of=("self",)),
                                pk=product_id, archived_at__isnull=True, name__archived_at__isnull=True, name__category__archived_at__isnull=True)
+    product.name = name
     require_matching_etag(request, product)
     return product
 
 
 def _finish_product(product, before, action, request, *, fields=()):
     product.save(update_fields=[*fields, "updated_at"])
+    product.name.save(update_fields=["updated_at"])
     after = product_detail(product)
     _audit(product, action, before, after, request)
     return after, etag_for_instance(product)
@@ -112,6 +134,8 @@ def _finish_product(product, before, action, request, *, fields=()):
 def update_product(*, product_id, data, request):
     product = _locked_product(product_id, request)
     before = product_detail(product)
+    if "unit" in data:
+        validate_unit(data["unit"], previous=product.unit)
     for field, value in data.items():
         setattr(product, field, value)
     return _finish_product(product, before, "UPDATED", request, fields=data.keys())

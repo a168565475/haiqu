@@ -5,13 +5,20 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.customers.models import CustomerContact
+from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
 from ..models import SampleRequest, SampleRequestStatus
 from . import test_application_api as application_tests
 from . import test_application_products as product_tests
 
 
 class SampleApplicationBasicEditTests(APITestCase):
-    setUp = product_tests.SampleApplicationProductsTests.setUp
+    def setUp(self):
+        product_tests.SampleApplicationProductsTests.setUp(self)
+        # 转交业务员的用例需要真实有效的业务部归属，不能放宽接口候选范围。
+        department = OrganizationUnit.objects.get(unit_code='DEPT_BUSINESS')
+        EmployeeOrganizationAssignment.objects.create(employee=self.other_employee, organization_unit=department,
+                                                       effective_from=timezone.now())
+
     create_customer = product_tests.SampleApplicationProductsTests.create_customer
     payload = product_tests.SampleApplicationProductsTests.payload
     submit = product_tests.SampleApplicationProductsTests.submit

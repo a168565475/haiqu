@@ -221,6 +221,10 @@ class SampleApplicationProductsTests(APITestCase):
     @override_settings(MODULE_ACCESS_ENABLED=True, ACCESS_RESOURCE_SCOPES_ENABLED=True)
     def test_sample_only_identity_can_read_candidates_options_and_save(self):
         approved, selected, data = self.prepared()
+        from apps.product_catalog.models import ProductCatalog, ProductCatalogCategory, ProductCatalogName
+        category = ProductCatalogCategory.objects.create(name='样品候选类别')
+        name = ProductCatalogName.objects.create(category=category, name=selected.product_name)
+        catalog = ProductCatalog.objects.create(name=name, specification=selected.specification)
         self.user.user_permissions.set(Permission.objects.filter(content_type__app_label='samples', codename__in=['view_samplerequest', 'complete_sample_requirements']))
         self.client.force_authenticate(user=type(self.user).objects.get(pk=self.user.pk))
         url = f"/api/v1/sample-requests/{approved.data['data']['id']}/application-product-options/"
@@ -228,7 +232,9 @@ class SampleApplicationProductsTests(APITestCase):
         self.assertEqual(self.client.get('/api/v1/sample-requests/form-options/').status_code, 200)
         candidates = self.client.get(url, {'q': selected.product_name})
         self.assertEqual(candidates.status_code, 200, candidates.data)
-        self.assertEqual(candidates.data['data'], [{'id': str(selected.pk), 'product_name': selected.product_name, 'specification': selected.specification, 'category_id': str(selected.category_id)}])
+        self.assertEqual([row['id'] for row in candidates.data['data']], [str(catalog.pk)])
+        self.assertEqual(candidates.data['data'][0]['product_name'], selected.product_name)
+        self.assertEqual(candidates.data['data'][0]['category_id'], str(category.pk))
         self.assertEqual(self.client.get(url, {'q': 'a' * 201}).status_code, 400)
         self.assertEqual(self.save(approved, data).status_code, 200)
         self.assertEqual(self.client.get(url).status_code, 200)

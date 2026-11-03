@@ -1,4 +1,5 @@
 """确认 BOM 时按同一分区的物料属性判重，数量和来源编号不参与。"""
+import json
 from rest_framework.exceptions import ValidationError
 
 from .fabric_material_sync import _specification, _width
@@ -19,6 +20,13 @@ def _material_key(line):
     title = line.section.title.strip()
     raw = line.raw_values or {}
     common = (_text(line.category), _text(line.unit))
+    if line.material_catalog_id:
+        snapshot = line.material_selection_snapshot
+        state = {key: snapshot.get(key) for key in ("attributes", "processing_state", "processing_stage", "completed_craft", "semi_kind")}
+        if snapshot.get("product_color_id"):
+            state.update({key: snapshot.get(key, "") for key in ("product_color_id", "color_card", "color_code", "color_name")})
+        key = (str(line.material_catalog_id), json.dumps(state, ensure_ascii=False, sort_keys=True), line.unit)
+        return (*key, line.length_value, spray_color_value(raw)) if line.section.section_type == "PROFILE" else key
     if line.section.section_type == "PROFILE":
         parameters = pipe_parameter_values(raw)
         # 规格显示可能附带长管长度；完整结构字段才是切割后部件的截面身份。

@@ -2,11 +2,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus, { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SampleDetailView from './SampleDetailView.vue'
+import { createPinia } from 'pinia'
+import { apiClient } from '@/api/request'
 
 const api = vi.hoisted(() => ({ fetch: vi.fn(), pmc: vi.fn(), finance: vi.fn(), parameters: vi.fn(), file: vi.fn(), push: vi.fn(), permissions: null as string[] | null }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sampleId: 'sample-1' } }), useRouter: () => ({ push: api.push }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (permission: string) => api.permissions === null || api.permissions.includes(permission), moduleCan: (permission: string, legacy = permission) => api.permissions === null || api.permissions.includes(legacy) }) }))
-vi.mock('@/api/samples', () => ({ fetchSample: api.fetch, approveSamplePmc: api.pmc, confirmSampleFinance: api.finance, uploadSampleParameters: api.parameters, fetchSampleBusinessFile: api.file, transitionSample: vi.fn() }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1 }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: (permission: string) => api.permissions === null || api.permissions.includes(permission), moduleCan: (permission: string, legacy = permission) => api.permissions === null || api.permissions.includes(legacy) }) }))
+vi.mock('@/api/samples', async importOriginal => ({ ...await importOriginal<typeof import('@/api/samples')>(), fetchSample: api.fetch, approveSamplePmc: api.pmc, confirmSampleFinance: api.finance, uploadSampleParameters: api.parameters, fetchSampleBusinessFile: api.file, transitionSample: vi.fn() }))
 
 function response(status = 'PMC_REVIEW') {
   return { etag: '"v3"', data: {
@@ -20,13 +22,15 @@ function response(status = 'PMC_REVIEW') {
 }
 const mounted: ReturnType<typeof mount>[] = []
 async function render() {
-  const wrapper = mount(SampleDetailView, { global: { plugins: [ElementPlus] } })
+  const wrapper = mount(SampleDetailView, { global: { plugins: [createPinia(), ElementPlus] } })
   mounted.push(wrapper)
   await flushPromises()
   return wrapper
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.spyOn(apiClient, 'get').mockImplementation(((url: string, config: unknown) => api.file(url, config)) as typeof apiClient.get)
+  api.file.mockResolvedValue({ data: new Blob(['image'], { type: 'image/png' }), headers: {} })
   api.permissions = null
   api.fetch.mockResolvedValue(response())
   vi.spyOn(ElMessage, 'success').mockImplementation(() => ({ close: vi.fn() }))
@@ -110,7 +114,7 @@ describe('打样详情的真实状态与操作边界', () => {
     api.file.mockRejectedValue(new Error('无权查看附件'))
     await section.find('.record-file').trigger('click')
     await flushPromises()
-    expect(api.file).toHaveBeenCalledWith('sample-1', 'file-1')
+    expect(api.file).toHaveBeenCalledWith(expect.stringContaining('/api/v1/sample-requests/sample-1/business-files/file-1/'), expect.objectContaining({ responseType: 'blob', timeout: 120_000, signal: expect.any(AbortSignal) }))
     expect(ElMessage.error).toHaveBeenCalled()
     expect(section.text()).toContain('凭证.pdf')
   })

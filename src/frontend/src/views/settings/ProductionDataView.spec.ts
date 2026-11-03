@@ -1,10 +1,13 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProductionDataView from './ProductionDataView.vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import { apiClient } from '@/api/request'
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+enableAutoUnmount(afterEach)
 
 const fixtures = vi.hoisted(() => {
   const granted = new Set<string>()
@@ -90,7 +93,8 @@ const fixtures = vi.hoisted(() => {
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    user: { is_superuser: false },
+    user: { id: 1, is_superuser: false },
+    identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null,
     hasPermission: (permission: string) => fixtures.granted.has(permission),
   }),
 }))
@@ -122,6 +126,8 @@ vi.mock('@/api/rawMaterials', () => ({
 
 describe('ProductionDataView', () => {
   beforeEach(() => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new Blob(['color'], { type: 'image/png' }), headers: {} })
+    vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:color-test'); static revokeObjectURL = vi.fn() })
     document.body.innerHTML = ''
     fixtures.granted.clear()
     for (const model of [
@@ -253,12 +259,13 @@ describe('ProductionDataView', () => {
     wrapper.unmount()
   })
 
-  it('管材维护显示六个设置项并读取原始导入数据', async () => {
+  it('管材维护显示七个设置项并读取原始导入数据', async () => {
     const wrapper = mount(ProductionDataView, { global: { plugins: [createPinia(), ElementPlus] } })
     await flushPromises()
 
     const tubeButton = wrapper.findAll('.metric-card').find((button) => button.text().includes('管材维护'))
     expect(tubeButton).toBeTruthy()
+    expect(tubeButton!.text()).toContain('7 个设置项')
     await tubeButton!.trigger('click')
     await flushPromises()
 
@@ -364,5 +371,22 @@ describe('ProductionDataView', () => {
     expect(wrapper.text()).toContain('无生产资料权限')
     expect(apiMocks.fetchProductionDataSummary).not.toHaveBeenCalled()
     expect(apiMocks.fetchProductionDataList).not.toHaveBeenCalled()
+  })
+
+  it('管材维护按形状查看权限提供计算公式入口', async () => {
+    const wrapper = mount(ProductionDataView, { global: { plugins: [createPinia(), ElementPlus] } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('管材维护'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.category-panel').text()).toContain('计算公式')
+    wrapper.unmount()
+
+    fixtures.granted.delete('reference_data.view_tubeshape')
+    const restricted = mount(ProductionDataView, { global: { plugins: [createPinia(), ElementPlus] } })
+    await flushPromises()
+    await restricted.findAll('button').find(button => button.text().includes('管材维护'))!.trigger('click')
+    await flushPromises()
+    expect(restricted.find('.category-panel').text()).not.toContain('计算公式')
+    restricted.unmount()
   })
 })

@@ -93,6 +93,41 @@ class WageSchemeLineMetricsTests(APITestCase):
         self.assert_completed(line, '0', '0')
         self.assertEqual(line['estimated_amount'], '469.0000')
         self.assertEqual(self.detail(approved.data['data']['id'])['declared_total'], '2.3450')
+        self.assertEqual(self.detail(approved.data['data']['id'])['estimated_total'], '469.0000')
+
+    def test_list_amount_total_sums_active_lines_and_preserves_unknown_and_zero(self):
+        payload = self.scheme_payload()
+        operation = Operation.objects.create(
+            operation_number='WG-TOTAL-002', product_name='工价测试产品', craft=self.craft,
+            name='弯管', reporting_unit=self.unit,
+        )
+        second_line = deepcopy(payload['lines'][0])
+        second_line['operation_id'] = str(operation.pk)
+        payload['lines'].append(second_line)
+        created = self.client.post(self.scheme_base, payload, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        scheme = created.data['data']
+
+        for changes, expected in (
+            ({}, '938.0000'),
+            ({'status': 'VOID', 'required_quantity_snapshot': None}, '469.0000'),
+            ({'status': 'ACTIVE'}, None),
+            ({'required_quantity_snapshot': Decimal('0')}, '469.0000'),
+        ):
+            with self.subTest(changes=changes):
+                if changes:
+                    WageSchemeLine.objects.filter(pk=scheme['lines'][1]['id']).update(**changes)
+                response = self.client.get(self.scheme_base)
+                self.assertEqual(response.status_code, 200, response.data)
+                row = next(item for item in response.data['data'] if item['id'] == scheme['id'])
+                self.assertEqual(row['estimated_total'], expected)
+                self.assertEqual(row['lines'], [])
+                self.assertEqual(self.detail(scheme['id'])['estimated_total'], expected)
+
+        WageSchemeLine.objects.filter(scheme_id=scheme['id']).update(declared_price=Decimal('0'))
+        response = self.client.get(self.scheme_base)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['data'][0]['estimated_total'], '0.0000')
 
     def test_completed_amount_sums_rounded_snapshots_across_price_versions(self):
         approved = self.create_approved_scheme()
@@ -303,3 +338,24 @@ class WageSchemeEstimatedAmountPrecisionTests(SimpleTestCase):
             result['lines'][0]['estimated_amount'],
             '9999999999999999989999990000000000.0000',
         )
+        self.assertEqual(result['estimated_total'], '9999999999999999989999990000000000.0000')
+
+    def test_total_sums_each_rounded_line_amount_before_display_rounding(self):
+        line = MagicMock(
+            status='ACTIVE', required_quantity_snapshot=Decimal('0.0001'),
+            declared_price=Decimal('2.3450'),
+        )
+        scheme = MagicMock(status='DRAFT', parent_scheme_id=None, approved_by_employee_id=None)
+        scheme.lines.all.return_value = [line, line]
+        scheme.scheme_crafts.all.return_value = []
+
+        result = wage_scheme_data(scheme, detail=False)
+
+        self.assertEqual(result['estimated_total'], '0.0004')
+
+    def test_empty_scheme_total_is_zero(self):
+        scheme = MagicMock(status='DRAFT', parent_scheme_id=None, approved_by_employee_id=None)
+        scheme.lines.all.return_value = []
+        scheme.scheme_crafts.all.return_value = []
+
+        self.assertEqual(wage_scheme_data(scheme, detail=False)['estimated_total'], '0.0000')

@@ -69,6 +69,8 @@ FIXED_SELLER_TEMPLATE_CODE = "HAIQU_FIXED_BILINGUAL"
 
 def _quotation_product_mapping(line):
     """优先使用报价行已确认的产品关联，旧数据才按快照候选匹配。"""
+    if line.product_catalog_id:
+        return None, "MATCHED", 1
     linked_product = getattr(line, "product", None)
     if linked_product is not None:
         if linked_product.status == ProductStatus.ACTIVE and linked_product.archived_at is None:
@@ -358,6 +360,8 @@ class SalesOrderViewSet(
                 "specification_display": specification_display(line),
                 "color": line.color_snapshot or "",
                 "product_id": str(line.product_id) if line.product_id else None,
+                "product_catalog_id": str(line.product_catalog_id) if line.product_catalog_id else None,
+                "product_selection_snapshot": line.product_selection_snapshot,
                 "product_category_id": str(line.product_category_id) if line.product_category_id else None,
                 "product_unit_id": str(line.product_unit_id) if line.product_unit_id else None,
                 "product_color_id": str(line.product_color_id) if line.product_color_id else None,

@@ -1,5 +1,6 @@
 import type { BomLine, BomLineInput, BomSectionInput } from '@/types/bom'
 import { cuttingCalculation, legacyPipeCuttingValues } from './bomCuttingQuantities'
+import { packagingQuantity } from './bomPackagingQuantity'
 import { pipePlanForBomLine, type SavedPipePlanBasis } from './materialFlow'
 
 export interface BomPreviewColumn { key: string; label: string; width: number }
@@ -36,7 +37,7 @@ export function bomPreviewColumns(section: BomPreviewSection): BomPreviewColumn[
     column('part_name', '裁片', 120), unit, notes, images,
   ]
   if (/辅料/.test(section.title)) return [serial, name, specification, column('accessory_color', '颜色'), material, unit, consumption, notes, images]
-  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '箱数（多少一箱）', 140), consumption, images]
+  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '箱数（多少一箱）', 140), column('total_consumption', '需求数量'), images]
   if (/裁剪|裁片/.test(section.title)) return [
     serial, column('part_name', '裁剪名称', 140), specification,
     column('cutting_pieces_per_set', '裁片量（片/套）', 130),
@@ -52,6 +53,7 @@ function text(value: unknown) {
 }
 
 export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPreviewSection, orderQuantity: string, sections: BomPreviewSection[], savedLine?: SavedPipePlanBasis): string {
+  if (/包材|包装/.test(section.title) && key === 'total_consumption') return packagingQuantity(line.units_per_box, orderQuantity) || '—'
   if (section.section_type === 'PROFILE') {
     if (['total_consumption', 'tube_cut_length_m', 'branch_count', 'suggested_purchase_meters'].includes(key)) {
       const plan = pipePlanForBomLine(line, orderQuantity, savedLine || line)

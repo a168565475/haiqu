@@ -15,6 +15,7 @@ const emit = defineEmits<{ 'busy-change': [busy: boolean] }>()
 const authStore = useAuthStore()
 const canView = computed(() => authStore.hasPermission('production_tasks.view_productiontaskcost'))
 const canManage = computed(() => canView.value && authStore.hasPermission('production_tasks.manage_productiontaskexpense'))
+const canVoid = computed(() => canView.value && authStore.hasPermission('access_control.void_productiontaskexpense'))
 const summary = ref<ProductionTaskCostSummary | null>(null)
 const loading = ref(false)
 const loadError = ref('')
@@ -142,7 +143,7 @@ async function saveExpense() {
   }
 }
 async function voidExpense(expense: ProductionTaskExpense) {
-  if (!canManage.value || voiding.value) return
+  if (!canVoid.value || voiding.value) return
   const currentGeneration = generation
   const taskId = props.taskId
   try { await ElMessageBox.confirm(`作废“${expense.description}”后，将不再计入当前成本。`, '作废费用', { type: 'warning', confirmButtonText: '确认作废', cancelButtonText: '取消' }) }
@@ -150,7 +151,7 @@ async function voidExpense(expense: ProductionTaskExpense) {
     if (error !== 'cancel' && error !== 'close' && currentGeneration === generation) expensesError.value = errorText(error, '无法确认作废，请重试。')
     return
   }
-  if (currentGeneration !== generation || !canManage.value) return
+  if (currentGeneration !== generation || !canVoid.value) return
   voiding.value = expense.id
   try {
     await voidProductionTaskExpense(taskId, expense.id, expense.etag)
@@ -220,8 +221,8 @@ onBeforeUnmount(() => { generation += 1 })
             <div v-if="category.key === 'other'" class="expense-management">
               <p v-if="expensesLoading" role="status">正在加载费用…</p>
               <div v-if="expensesError" class="cost-error" role="alert">{{ expensesError }} <el-button @click="loadExpenses">刷新费用</el-button></div>
-              <template v-if="canManage && expensesLoaded">
-                <div v-for="expense in expenses" :key="expense.id" class="expense-actions"><span>{{ expenseTypes[expense.expense_type] }} · {{ expense.description }}</span><div><el-button :disabled="saving || !!voiding" @click="openExpense(expense)">编辑</el-button><el-button type="danger" plain :disabled="saving || !!voiding" :loading="voiding === expense.id" @click="voidExpense(expense)">作废</el-button></div></div>
+              <template v-if="(canManage || canVoid) && expensesLoaded">
+                <div v-for="expense in expenses" :key="expense.id" class="expense-actions"><span>{{ expenseTypes[expense.expense_type] }} · {{ expense.description }}</span><div><el-button v-if="canManage" :disabled="saving || !!voiding" @click="openExpense(expense)">编辑</el-button><el-button v-if="canVoid" type="danger" plain :disabled="saving || !!voiding" :loading="voiding === expense.id" @click="voidExpense(expense)">作废</el-button></div></div>
               </template>
             </div>
           </div>

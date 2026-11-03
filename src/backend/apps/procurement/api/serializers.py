@@ -233,6 +233,7 @@ class PurchaseOrderUpdateLineSerializer(serializers.Serializer):
 
 
 class PurchaseOrderUpdateSerializer(serializers.Serializer):
+    batch_type = serializers.ChoiceField(choices=["NORMAL", "SUPPLEMENT"], required=False)
     is_mailed = serializers.BooleanField(required=False, allow_null=True)
     lines = PurchaseOrderUpdateLineSerializer(many=True, allow_empty=False, max_length=5000)
 
@@ -272,6 +273,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
         model = PurchaseOrderLine
         fields = [
             "sample_line_key", "sample_demand_quantity", "sample_supply_quantity", "color",
+            "purchase_group_line_id",
             "id",
             "line_number",
             "bom_id",
@@ -291,6 +293,7 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "specification",
             "raw_material",
             "material_attributes_snapshot",
+            "material_catalog_id", "material_selection_snapshot",
             "required_quantity",
             "source_quantity_field",
             "source_quantity_text",
@@ -338,6 +341,7 @@ class PurchaseOrderListSerializer(serializers.ModelSerializer):
         model = PurchaseOrder
         fields = [
             "source_type", "source_type_display", "source_number", "sample_procurement_request_id", "sample_number_snapshot",
+            "purchase_group_id", "batch_number", "batch_type",
             "completion", "completed_at", "completion_remark",
             "id",
             "order_number",

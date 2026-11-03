@@ -4,9 +4,12 @@ from .views import ProductCatalogNameViewSet, ProductCatalogViewSet
 
 
 urlpatterns = [
+    path("product-catalog/selection-options/", ProductCatalogViewSet.as_view({"get": "selection_options"}), name="product-catalog-selection-options"),
     path("product-catalog/options/", ProductCatalogViewSet.as_view({"get": "options_list"}), name="product-catalog-options"),
     path("product-catalog/names/", ProductCatalogNameViewSet.as_view({"get": "list", "post": "create"}), name="product-catalog-names"),
-    path("product-catalog/names/<uuid:pk>/", ProductCatalogNameViewSet.as_view({"get": "retrieve", "patch": "partial_update"}), name="product-catalog-name-detail"),
+    path("product-catalog/names/editor/", ProductCatalogNameViewSet.as_view({"post": "create_editor"}), name="product-catalog-editor-create"),
+    path("product-catalog/names/<uuid:pk>/editor/", ProductCatalogNameViewSet.as_view({"get": "editor", "patch": "save_editor"}), name="product-catalog-editor"),
+    path("product-catalog/names/<uuid:pk>/", ProductCatalogNameViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"}), name="product-catalog-name-detail"),
     path("product-catalog/", ProductCatalogViewSet.as_view({"get": "list", "post": "create"}), name="product-catalog-list"),
     path("product-catalog/<uuid:pk>/", ProductCatalogViewSet.as_view({"get": "retrieve", "patch": "partial_update"}), name="product-catalog-detail"),
     path("product-catalog/<uuid:pk>/colors/", ProductCatalogViewSet.as_view({"post": "add_color"}), name="product-catalog-add-color"),

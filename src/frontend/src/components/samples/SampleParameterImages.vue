@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
-import { deleteSampleParameterImage, fetchSampleBusinessFile, uploadSampleParameterImage } from '@/api/samples'
+import { isCancel } from 'axios'
+import { useProtectedResourceActions, useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
+import { deleteSampleParameterImage, sampleBusinessFileUrl, uploadSampleParameterImage } from '@/api/samples'
 import type { SampleDetail, SampleParameterImage } from '@/types/sample'
 
 const props = defineProps<{
@@ -18,12 +20,15 @@ const emit = defineEmits<{
 
 const uploading = ref<'METALWORK' | 'CUTTING' | null>(null)
 const previewVisible = ref(false)
-const previewTitle = ref('')
-const previewUrl = ref('')
-const imageUrls = reactive<Record<string, string>>({})
-let imageLoadVersion = 0
+const actions = useProtectedResourceActions()
+const { previewName: previewTitle, previewUrl } = actions
 
 const images = computed(() => props.sample.parameter_images || [])
+const imageSource = (image: SampleParameterImage) => sampleBusinessFileUrl(props.sample.id, image.file_id)
+const imageResources = useProtectedResourceUrls(() => images.value.map(imageSource), { timeout: 120_000 })
+const imageUrls = computed(() => Object.fromEntries(images.value.map(image => [image.id, imageResources.urlFor(imageSource(image))])))
+watch(actions.active, active => { if (!active) previewVisible.value = false }, { flush: 'sync' })
+watch(() => props.sample.id, () => { closePreview(); actions.reset() }, { flush: 'sync' })
 const imagesFor = (type: 'METALWORK' | 'CUTTING') => images.value.filter(image => image.parameter_type === type)
 const canUpload = (type: 'METALWORK' | 'CUTTING') => type === 'METALWORK'
   ? Boolean(props.sample.workflow_actions?.can_upload_metalwork)
@@ -97,44 +102,19 @@ async function removeImage(image: SampleParameterImage) {
 }
 
 async function openPreview(image: SampleParameterImage) {
+  previewVisible.value = true
   try {
-    const blob = await fetchSampleBusinessFile(props.sample.id, image.file_id)
-    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = URL.createObjectURL(blob)
-    previewTitle.value = image.file_name
-    previewVisible.value = true
+    await actions.preview(imageSource(image), image.file_name, { timeout: 120_000 })
   } catch (error) {
-    ElMessage.error(messageForError(error))
+    if (!isCancel(error) && actions.active.value) ElMessage.error(messageForError(error))
   }
 }
 
 function closePreview() {
   previewVisible.value = false
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-  previewUrl.value = ''
+  actions.closePreview()
 }
-
-onBeforeUnmount(() => {
-  closePreview()
-  imageLoadVersion += 1
-  for (const url of Object.values(imageUrls)) URL.revokeObjectURL(url)
-})
-
-async function hydrateThumbnails() {
-  const version = ++imageLoadVersion
-  for (const url of Object.values(imageUrls)) URL.revokeObjectURL(url)
-  for (const key of Object.keys(imageUrls)) delete imageUrls[key]
-  await Promise.all(images.value.map(async image => {
-    try {
-      const blob = await fetchSampleBusinessFile(props.sample.id, image.file_id)
-      if (version === imageLoadVersion) imageUrls[image.id] = URL.createObjectURL(blob)
-    } catch {
-      // 缩略图加载失败时仍保留文件名和预览操作。
-    }
-  }))
-}
-
-watch(() => images.value.map(image => `${image.id}:${image.file_id}`).join('|'), () => { void hydrateThumbnails() }, { immediate: true })
+watch(previewVisible, value => { if (!value) actions.closePreview() }, { flush: 'sync' })
 </script>
 
 <template>
@@ -167,7 +147,7 @@ watch(() => images.value.map(image => `${image.id}:${image.file_id}`).join('|'),
     </article>
 
     <AppWindowDialog v-model="previewVisible" :title="previewTitle || '图片预览'" :width="1200" :height="760" destroy-on-close @close="closePreview">
-      <div class="parameter-preview"><img v-if="previewUrl" :src="previewUrl" :alt="previewTitle"></div>
+      <div class="parameter-preview"><p v-if="actions.previewLoading.value" role="status">正在读取图片…</p><img v-if="previewUrl" :src="previewUrl" :alt="previewTitle"></div>
     </AppWindowDialog>
   </div>
 </template>

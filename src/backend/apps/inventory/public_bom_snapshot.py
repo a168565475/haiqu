@@ -42,6 +42,8 @@ def _freeze_line(line):
             "bom_id": str(section.bom_id),
         },
         **{name: getattr(line, name, None) for name in _FIELDS},
+        **({"material_catalog_id": str(line.material_catalog_id),
+            "material_selection_snapshot": line.material_selection_snapshot} if getattr(line, "material_catalog_id", None) else {}),
         "raw_values": {key: value for key, value in (raw_values or {}).items() if key in _RAW_FIELDS},
     }
 
@@ -57,13 +59,15 @@ def freeze_bom_line(bom_line):
 
 
 def _hydrate_line(value):
-    if not isinstance(value, dict) or set(value) != {"id", "section", *_FIELDS}:
+    catalog_fields = {"material_catalog_id", "material_selection_snapshot"}
+    if not isinstance(value, dict) or set(value) not in ({"id", "section", *_FIELDS}, {"id", "section", *_FIELDS, *catalog_fields}):
         _invalid()
     section = value["section"]
     if (not isinstance(section, dict) or set(section) != {"section_type", "title", "bom_id"}
             or not value["id"] or not section["bom_id"]):
         _invalid()
     return SimpleNamespace(pk=value["id"], section=SimpleNamespace(**section),
+                           **{name: value.get(name) for name in catalog_fields},
                            **{name: value[name] for name in _FIELDS})
 
 

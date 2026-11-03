@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import InternalSemiReceiptView from './InternalSemiReceiptView.vue'
 import type { ReceiptPreview } from '@/types/internalReceipt'
 
+const identity = vi.hoisted(() => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => identity }))
 const api = vi.hoisted(() => ({ preview: vi.fn(), confirm: vi.fn() }))
 const route = vi.hoisted(() => ({ query: { schedule_product_id: 'plan-1', plan_category: 'SEWING' } }))
 vi.mock('vue-router', () => ({
@@ -33,6 +35,7 @@ const wrappers: ReturnType<typeof mount>[] = []
 
 beforeEach(() => {
   vi.resetAllMocks()
+  Object.assign(identity, { user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 })
   route.query = { schedule_product_id: 'plan-1', plan_category: 'SEWING' }
   sessionStorage.clear()
   api.preview.mockResolvedValue(structuredClone(preview))
@@ -41,6 +44,32 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('车缝半成品入库', () => {
+  it.each(['', '{broken', '{"payload":{"request_id":"historical-uuid","lines":[{"quantity":2}]},"etag":"old"}'])('无主历史pending隔离保留且不回查或新提交 %j', async raw => {
+    const key = 'internal-receipt-pending:plan-1:SEWING'
+    sessionStorage.setItem(key, raw)
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
+    await flushPromises()
+    const vm = wrapper.vm as any; await vm.submit()
+    expect(wrapper.text()).toContain('管理员人工核对')
+    expect(api.preview).not.toHaveBeenCalled(); expect(api.confirm).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBe(raw); expect(sessionStorage.getItem(`${key}:user:7`)).toBeNull()
+  })
+  it('owned损坏pending也必须原样保留并关闭新提交', async () => {
+    const key = 'internal-receipt-pending:plan-1:SEWING:user:7'; sessionStorage.setItem(key, '{broken')
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
+    await flushPromises(); await (wrapper.vm as any).submit()
+    expect(sessionStorage.getItem(key)).toBe('{broken'); expect(api.confirm).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('管理员人工核对')
+  })
+  it('A预览迟到不能落入B或发起任何新写请求', async () => {
+    let finish!: (value: ReceiptPreview) => void
+    api.preview.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } }); wrappers.push(wrapper)
+    identity.user = { id: 8 }; identity.identityGeneration++; identity.identityRequestGeneration++
+    finish(structuredClone(preview)); await flushPromises()
+    const vm = wrapper.vm as any
+    expect(vm.preview).toBeNull(); await vm.submit(); expect(api.confirm).not.toHaveBeenCalled()
+  })
   it('合法来源首次预览被后端400拦截时展示原因且不能提交', async () => {
     route.query.schedule_product_id = '86e0c84b-a809-4689-845b-806012ad342c'
     const message = '生产订单必须处于生产中。'
@@ -74,7 +103,7 @@ describe('车缝半成品入库', () => {
     expect(wrapper.findAll('button').find(button => button.text() === '提交待入库')!.attributes('disabled')).toBeDefined()
     await vm.submit()
     expect(api.confirm).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')).toBeNull()
 
     const refreshed = structuredClone(preview)
     refreshed.etag = '"receipt-2"'
@@ -107,7 +136,7 @@ describe('车缝半成品入库', () => {
     expect(wrapper.findAll('button').find(button => button.text() === '提交待入库')!.attributes('disabled')).toBeDefined()
     await vm.submit()
     expect(api.confirm).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')).toBeNull()
     complete(structuredClone(preview))
     await loading
     await flushPromises()
@@ -119,7 +148,7 @@ describe('车缝半成品入库', () => {
       zone_id: 'zone-1', receipt_date: '2026-09-29', remark: '原提交内容',
       lines: [{ bom_line_id: 'line-1', quantity: '5' }],
     } }
-    sessionStorage.setItem('internal-receipt-pending:plan-1:SEWING', JSON.stringify(saved))
+    sessionStorage.setItem('internal-receipt-pending:plan-1:SEWING:user:7', JSON.stringify(saved))
     api.preview.mockRejectedValue(new AxiosError('预览网络失败'))
     api.confirm.mockRejectedValueOnce(new AxiosError('提交结果仍未确认'))
     const wrapper = mount(InternalSemiReceiptView, { global: { plugins: [ElementPlus] } })
@@ -130,10 +159,10 @@ describe('车缝半成品入库', () => {
     expect(wrapper.findAll('button').find(button => button.text() === '核对本次提交')!.attributes('disabled')).toBeUndefined()
     await vm.submit()
     expect(api.confirm).toHaveBeenNthCalledWith(1, saved.payload, saved.etag)
-    expect(JSON.parse(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')!)).toEqual(saved)
+    expect(JSON.parse(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')!)).toEqual(saved)
     await vm.submit()
     expect(api.confirm).toHaveBeenNthCalledWith(2, saved.payload, saved.etag)
-    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')).toBeNull()
   })
   it('投入不核算时仍按服务端剩余套数提交，并说明累计入库口径', async () => {
     const data = structuredClone(preview)
@@ -171,7 +200,7 @@ describe('车缝半成品入库', () => {
     expect(api.confirm.mock.calls[1]).toEqual(original)
     expect(api.confirm).toHaveBeenCalledTimes(2)
     expect((wrapper.vm as any).pending).toBeNull()
-    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')).toBeNull()
     expect(wrapper.text()).toContain(message)
     expect(wrapper.get('input[aria-label="椅套本次入库"]').attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).not.toContain('核对本次提交')
@@ -195,7 +224,7 @@ describe('车缝半成品入库', () => {
     await (wrapper.vm as any).submit(); await flushPromises()
 
     expect((wrapper.vm as any).pending?.payload).toEqual(api.confirm.mock.calls[0]![0])
-    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING')).not.toBeNull()
+    expect(sessionStorage.getItem('internal-receipt-pending:plan-1:SEWING:user:7')).not.toBeNull()
     expect(wrapper.get('input[aria-label="椅套本次入库"]').attributes('disabled')).toBeDefined()
     expect(wrapper.text()).toContain('核对本次提交')
     expect(api.confirm).toHaveBeenCalledTimes(1)
@@ -246,7 +275,7 @@ describe('车缝半成品入库', () => {
   })
 
   it('待核对请求时共享日期和下拉仍锁定，避免修改原提交', async () => {
-    sessionStorage.setItem('internal-receipt-pending:plan-1:SEWING', JSON.stringify({
+    sessionStorage.setItem('internal-receipt-pending:plan-1:SEWING:user:7', JSON.stringify({
       etag: '"receipt-1"', payload: { request_id: 'pending-1', schedule_product_id: 'plan-1',
         plan_category: 'SEWING', zone_id: 'zone-1', receipt_date: '2026-09-29', remark: '',
         lines: [{ bom_line_id: 'line-1', quantity: '5' }] },

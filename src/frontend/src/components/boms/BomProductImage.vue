@@ -79,7 +79,7 @@ onBeforeUnmount(() => { requestVersion += 1 })
         <p>{{ errorMessage }}</p>
         <el-button v-if="canRetry" size="small" @click="loadImage">重试</el-button>
       </div>
-      <ProductImage v-else-if="imageUrl" :src="imageUrl" :name="imageName" large />
+      <ProductImage v-else-if="imageUrl" :src="imageUrl" :name="imageName" large @resource-error="handleImageError" />
       <p v-else role="status">暂无产品图片</p>
     </div>
     <figcaption v-if="imageUrl">生产任务产品主图 · 点击查看大图</figcaption>

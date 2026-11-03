@@ -27,8 +27,9 @@ class ArchivedBomTaskDeletionTests(management.ProductionTaskManagementTests):
         department, _ = OrganizationUnit.objects.get_or_create(
             unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'},
         )
-        EmployeeOrganizationAssignment.objects.create(
-            employee=self.employee, organization_unit=department, effective_from=timezone.now(),
+        EmployeeOrganizationAssignment.objects.get_or_create(
+            employee=self.employee, organization_unit=department,
+            defaults={'effective_from': timezone.now()},
         )
         production, _ = OrganizationUnit.objects.get_or_create(
             unit_code='DEPT_PRODUCTION', defaults={'unit_name': '生产部'},
@@ -41,8 +42,9 @@ class ArchivedBomTaskDeletionTests(management.ProductionTaskManagementTests):
                 'display_name': '跟单', 'auth_group': Group.objects.get_or_create(name='删除测试跟单')[0],
             },
         )
-        EmployeeRoleAssignment.objects.create(
-            employee=self.follower, role_profile=role, effective_from=timezone.now(),
+        EmployeeRoleAssignment.objects.get_or_create(
+            employee=self.follower, role_profile=role,
+            defaults={'effective_from': timezone.now()},
         )
 
     def task_and_bom(self):

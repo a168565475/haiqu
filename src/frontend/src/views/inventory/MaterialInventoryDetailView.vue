@@ -11,6 +11,7 @@ import type { MaterialInventorySummary, MaterialOrderIssue, MaterialOrderPurchas
 
 const route = useRoute()
 const stockItemId = computed(() => String(route.params.stockItemId || ''))
+const identityKey = computed(() => typeof route.query.identity_key === 'string' ? route.query.identity_key : undefined)
 const activeTab = ref(route.query.tab === 'purchases' ? 'purchases' : 'issues')
 const summary = ref<MaterialInventorySummary | null>(null)
 const purchases = ref<MaterialOrderPurchase[]>([])
@@ -23,7 +24,7 @@ async function load() {
   loading.value = true
   try {
     const [summaryData, purchaseData, issueData] = await Promise.all([
-      fetchMaterialInventorySummary(stockItemId.value), fetchMaterialOrderPurchases(stockItemId.value), fetchMaterialOrderIssues(stockItemId.value),
+      fetchMaterialInventorySummary(stockItemId.value, identityKey.value), fetchMaterialOrderPurchases(stockItemId.value, identityKey.value), fetchMaterialOrderIssues(stockItemId.value, identityKey.value),
     ])
     summary.value = summaryData; purchases.value = purchaseData; issues.value = issueData
   } catch (error) { ElMessage.error(apiMessage(error)) }
@@ -31,6 +32,7 @@ async function load() {
 }
 watch(activeTab, (tab) => { void router.replace({ query: { ...route.query, tab } }) })
 onMounted(load)
+watch([stockItemId, identityKey], load)
 </script>
 
 <template>

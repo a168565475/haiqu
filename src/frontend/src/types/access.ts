@@ -1,4 +1,4 @@
-export type AccessScope = 'OWN' | 'TEAM' | 'ALL' | 'MODULE' | 'WORKSHOP' | 'CRAFT' | 'STOCK'
+export type AccessScope = 'OWN' | 'TEAM' | 'ALL' | 'MODULE' | 'WORKSHOP' | 'CRAFT' | 'STOCK' | 'FOLLOWED'
 export interface Grant { permission: string; scope: AccessScope; resource_ids?: string[] }
 export interface ScopeOption { id: string; name: string; active: boolean }
 export interface ScopeOptions { enabled: boolean; workshops: ScopeOption[]; crafts: ScopeOption[] }

@@ -1,4 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { apiClient } from '@/api/request'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SalesOrderDetailView from './SalesOrderDetailView.vue'
@@ -10,7 +12,7 @@ vi.mock('@/api/salesOrders', async (importOriginal) => ({
 }))
 vi.mock('@/api/productionData', () => ({ fetchAllProductionDataRecords: api.fetchAllProductionDataRecords }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { orderId: 'order-1' } }), useRouter: () => ({ push: api.push }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 1, is_superuser: true }, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, identityVersion: null, hasPermission: () => true }) }))
 
 function fixture() {
   return {
@@ -50,11 +52,24 @@ async function openProducts(wrapper: ReturnType<typeof mount>) {
 describe('销售订单详情产品信息', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  setActivePinia(createPinia())
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new File(['png'], 'server-image.png', { type: 'image/png' }), headers: {} })
+  vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:server-image.png'); static revokeObjectURL = vi.fn() })
     api.fetchAllProductionDataRecords.mockImplementation(async (resource: string) => resource === 'product-categories'
       ? [{ id: 'category-1', category_name: '休闲椅' }]
       : [{ id: 'unit-1', unit_code: 'PCS', unit_name: '把' }])
   })
-  afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
+  afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+  it('草稿单位没有 ID 和编码时显示保存的单位与类别名称', async () => {
+    const order = fixture()
+    Object.assign(order.lines[0]!, { product_id: null, product_unit_id: null, product_category_id: null, unit_code_snapshot: '',
+      product_selection_snapshot: { unit_name: '新单位', category_name: '新类别' } })
+    const wrapper = await render(order)
+    await openProducts(wrapper)
+    expect(wrapper.find('.products-panel').text()).toContain('新单位')
+    expect(wrapper.find('.products-panel').text()).toContain('新类别')
+  })
 
   it('建单入口进入生产侧表单并预选来源，不从销售跟单员填充生产人员', async () => {
     const order = fixture()
@@ -76,7 +91,8 @@ describe('销售订单详情产品信息', () => {
       for (const text of ['休闲椅', '客户定制椅', '客户规格 60×40', '宝蓝色', '铝合金', '把', 'CP001', 'PC001', 'HH001', '议定价格', '1,400']) {
         expect(content.text()).toContain(text)
       }
-      expect(content.find('img[alt="客户定制椅"]').attributes('src')).toContain('/sales-orders/order-1/lines/line-1/product-image/')
+      expect(content.find('img[alt="客户定制椅"]').attributes('src')).toBe('blob:server-image.png')
+      expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/sales-orders/order-1/lines/line-1/product-image/'), expect.objectContaining({ responseType: 'blob', signal: expect.any(AbortSignal) }))
     }
     expect(wrapper.find('.products-panel').text()).toContain('品质保持')
   })

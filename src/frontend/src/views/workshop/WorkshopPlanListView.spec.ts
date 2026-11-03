@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
 vi.mock('@/api/productionScheduling', () => ({ fetchScheduleItems: api.items }))
 vi.mock('@/api/workshopReporting', () => ({ fetchPlanWageStatuses: api.wages }))
 vi.mock('vue-router', () => ({ useRoute: () => state.route, useRouter: () => ({ push: api.push }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, hasPermission: (code: string) => state.permissions.has(code) }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: false }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: (code: string) => state.permissions.has(code) }) }))
 
 const wrappers: ReturnType<typeof mount>[] = []
 beforeEach(() => {
@@ -76,7 +76,7 @@ describe('内部计划入库入口的订单状态', () => {
 
   it.each(['METAL', 'SEWING', 'ASSEMBLY'])('%s 任务暂停后仍可重新进入核对已有原请求', async category => {
     state.route.name = ({ METAL: 'workshop-metalworking-plan', SEWING: 'workshop-sewing-plan', ASSEMBLY: 'workshop-assembly-plan' } as Record<string, string>)[category]!
-    const key = category === 'ASSEMBLY' ? 'assembly-receipt:plan-1' : `internal-receipt-pending:plan-1:${category}`
+    const key = category === 'ASSEMBLY' ? 'assembly-receipt:plan-1:user:7' : `internal-receipt-pending:plan-1:${category}:user:7`
     const saved = JSON.stringify({ etag: '"v1"', payload: { request_id: 'original-request', schedule_product_id: 'plan-1', lines: [] } })
     sessionStorage.setItem(key, saved)
     const wrapper = await createPlan('PAUSED')
@@ -87,13 +87,23 @@ describe('内部计划入库入口的订单状态', () => {
     expect(sessionStorage.getItem(key)).toBe(saved)
   })
 
-  it('会话存储不可读时保留入口交由入库页处理恢复', async () => {
+  it.each(['', '{broken', '{"payload":{"request_id":"old"}}'])('历史无主及其他UID标记不解锁暂停任务入口，且逐字保留 %j', async raw => {
+    const key = 'internal-receipt-pending:plan-1:METAL'
+    sessionStorage.setItem(key, raw); sessionStorage.setItem(`${key}:user:8`, 'other-owner')
+    const wrapper = await createPlan('PAUSED')
+    const entry = wrapper.findAllComponents(ElDropdownItem).find(item => item.text() === '半成品入库')!
+    expect(entry.props('disabled')).toBe(true)
+    expect(entry.get('[role="menuitem"]').attributes('title')).toContain('管理员人工核对')
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(sessionStorage.getItem(`${key}:user:8`)).toBe('other-owner')
+  })
+  it('会话存储不可读时关闭入口，不能绕过待核对归属检测', async () => {
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('storage unavailable') })
     const wrapper = await createPlan('PAUSED')
     const entry = wrapper.findAllComponents(ElDropdownItem).find(item => item.text() === '半成品入库')!
-    expect(entry.props('disabled')).toBe(false)
-    expect(warning).toHaveBeenCalledWith('无法读取待核对入库标记，请进入入库页核对。')
+    expect(entry.props('disabled')).toBe(true)
+    expect(warning).toHaveBeenCalledWith('无法读取当前用户待核对入库标记，入口已停用。')
   })
 
   it.each(['workshop-metalworking-plan', 'workshop-assembly-plan'])('%s 缺少权限不显示入库入口', async routeName => {

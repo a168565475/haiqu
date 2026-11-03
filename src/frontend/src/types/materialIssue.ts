@@ -18,6 +18,8 @@ export interface MaterialIssueProduct {
   specification_display?: string; material?: string
 }
 export interface MaterialRequirement {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   bom_attributes?: BomAttributeField[]
   stock_mode?: MaterialIssueStockMode
   stock_before?: string | null
@@ -28,6 +30,9 @@ export interface MaterialRequirement {
     whole_bar_required?: boolean; integer_required?: boolean; issued_pieces?: number | string
     raw_deducted_bar_count?: string; raw_deducted_meters?: string
     component_identity?: string
+    public_bom_snapshot?: { line?: { part_name?: string } }
+    physical_issued_quantity?: string
+    manufacturing_issued_pieces?: string | null
   }
   semi_balance_allocations?: Array<{ balance_id: string; available_stock: string; pending_issue_quantity?: string; max_issue_quantity: string }>
   batch_candidates?: MaterialIssueBatch[]

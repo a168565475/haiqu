@@ -202,13 +202,13 @@ def _pipe_properties(line, values, craft, *, material_cache=None):
     diameter = _dimensions(_pipe_value(values, "tube_diameter", "F"), "tube_diameter")
     thickness = _number_text(_pipe_value(values, "tube_thickness", "G"), "tube_thickness")
     specification = _text(getattr(line, "specification", None), "specification", required=False)
-    # 已有管材规格末尾可带原料长管长度；只核对截面和厚度，不将长管长度带入半成品。
+    # 规格可只保存截面，壁厚独立填写；旧合并规格仍核对截面/厚度，末尾允许原料长管长度。
     if specification:
         normalized = _specification(specification, "specification")
         if re.fullmatch(r"\d+(?:\.\d+)?(?:\*\d+(?:\.\d+)?)+", normalized):
             expected = (diameter + "*" + thickness).split("*")
             actual = normalized.split("*")
-            if len(actual) not in {len(expected), len(expected) + 1} or actual[:len(expected)] != expected:
+            if normalized != diameter and (len(actual) not in {len(expected), len(expected) + 1} or actual[:len(expected)] != expected):
                 _invalid("specification", "管材规格中的截面/厚度与结构字段冲突。",
                          code="PUBLIC_STOCK_ATTRIBUTE_CONFLICT")
     return {
@@ -298,6 +298,9 @@ def build_semi_finished_identity(*, bom_line, completed_craft, unit, material_ca
         "material": properties.pop("material", None) or _text(getattr(line, "material", None), "material"),
         "completed_craft": craft, **properties,
     }
+    if getattr(line, "material_catalog_id", None):
+        from .catalog_stock_identity import catalog_processed_identity
+        return catalog_processed_identity(bom_line=line, unit=unit, processing_details=snapshot)
     return validate_public_identity(_make_identity(snapshot))
 
 
@@ -309,6 +312,9 @@ def validate_public_identity(identity):
 """
     if not isinstance(identity, dict) or set(identity) != _IDENTITY_FIELDS:
         _invalid("identity", "公共库存身份字段缺失或包含未支持字段。")
+    if identity["stock_kind"] in ("CATALOG_RAW", "CATALOG_SEMI"):
+        from .catalog_stock_identity import validate_catalog_stock_identity
+        return validate_catalog_stock_identity(identity)
     snapshot = identity["identity_snapshot"]
     if not isinstance(snapshot, dict) or type(snapshot.get("schema_version")) is not int or snapshot["schema_version"] != 1:
         _invalid("identity_snapshot", "不支持或缺失的库存属性快照版本。")

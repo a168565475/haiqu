@@ -174,6 +174,7 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
     content_lines = []
     for line in lines:
         pipe_fields = pipe_sheet_fields(line)
+        price_quantity = line.actual_purchase_meters if pipe_fields and line.material_catalog_id else line.actual_purchase_quantity
         if pipe_fields and settlement_mode == 'ACTUAL_WEIGHT':
             raise ValidationError({'template_version_id': '管材按米计价，请改选按米模板，不能使用按重量结算模板。'})
         content_lines.append(
@@ -188,8 +189,9 @@ def _default_content(order, supplier, lines, template_version, sheet_number):
                 "section_type": line.section_type_snapshot,
                 "section_title": line.section_title_snapshot,
                 "material_attributes_snapshot": deepcopy(line.material_attributes_snapshot) if isinstance(line.material_attributes_snapshot, dict) else {},
-                "quantity": format(line.actual_purchase_quantity, "f") if line.actual_purchase_quantity is not None else "",
-                "unit": line.source_unit_text,
+                **({"material_catalog_id": str(line.material_catalog_id), "material_selection_snapshot": deepcopy(line.material_selection_snapshot)} if line.material_catalog_id else {}),
+                "quantity": format(price_quantity, "f") if price_quantity is not None else "",
+                "unit": "米" if pipe_fields and line.material_catalog_id else line.source_unit_text,
                 "unit_price": format(line.unit_price, "f") if line.unit_price is not None else "",
                 "amount": format(line.amount, "f") if line.amount is not None else "",
                 "delivery_date": line.delivery_date.isoformat() if line.delivery_date else "",
@@ -495,6 +497,7 @@ def normalize_sheet_content(sheet, raw_content, *, for_publish=False):
                 "section_type": str(source_line.get("section_type") or "").strip(),
                 "section_title": str(source_line.get("section_title") or "").strip(),
                 "material_attributes_snapshot": deepcopy(source_line.get("material_attributes_snapshot")) if isinstance(source_line.get("material_attributes_snapshot"), dict) else {},
+                **({"material_catalog_id": source_line["material_catalog_id"], "material_selection_snapshot": deepcopy(source_line["material_selection_snapshot"])} if source_line.get("material_catalog_id") else {}),
                 "quantity": format(quantity, "f") if quantity is not None else "",
                 "unit": _string(item.get("unit"), field_name=f"lines.{index}.unit", max_length=50),
                 "unit_price": format(unit_price, "f") if unit_price is not None else "",

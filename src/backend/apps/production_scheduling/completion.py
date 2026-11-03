@@ -89,7 +89,7 @@ def schedule_completion_preview(*, schedule_id, request):
             "schedule_product_id": str(plan.pk), "product_name": display.get("product_name", ""),
             "specification": display.get("specification_display", ""), "color": display.get("color_name", ""),
             "material": display.get("material", ""), "required_quantity": quantities["required"],
-            "received_quantity": quantities["received"], "unit_name": plan.product_line.unit.unit_name,
+            "received_quantity": quantities["received"], "unit_name": plan.product_line.unit_name,
         })
     sales = {
         "id": None, "order_number": None, "status": None, "status_display": None,

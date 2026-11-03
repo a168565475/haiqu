@@ -8,6 +8,7 @@ import { advancePurchaseReturn, fetchPurchaseReturn, fetchPurchaseReturns, fetch
 import { useAuthStore } from '@/stores/auth'
 import PurchaseReturnConfirmDialog from '@/components/procurement/PurchaseReturnConfirmDialog.vue'
 import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
+import { materialSpecificationValue } from '@/utils/materialAttributes'
 import type { PurchaseReturn, ReturnOptions, ReturnOrderStatus, ReturnQuery } from '@/types/purchaseReturn'
 
 const auth = useAuthStore()
@@ -55,7 +56,12 @@ function time(value: string | null): string {
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date) : '—'
 }
 function materialField(row: PurchaseReturn, field: 'specification' | 'color' | 'material'): string {
-  return row.lines.map(line => line[field]?.trim() || '—').join('、') || '—'
+  return row.lines.map(line => {
+    if (line.material_selection_snapshot?.schema_version === 1) {
+      return field === 'specification' ? materialSpecificationValue(line) : line.material_selection_snapshot.attributes[field] || '—'
+    }
+    return line[field]?.trim() || '—'
+  }).join('、') || '—'
 }
 async function loadRows() {
   if (!canView.value || disposed) return

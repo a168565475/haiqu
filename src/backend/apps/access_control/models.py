@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from apps.core.models import TimeStampedModel, uppercase_code_validator
@@ -12,6 +13,7 @@ class AccessScope(models.TextChoices):
     WORKSHOP = "WORKSHOP", "指定车间"
     CRAFT = "CRAFT", "指定外协工艺"
     STOCK = "STOCK", "库存来源"
+    FOLLOWED = "FOLLOWED", "本人跟单任务"
 
 
 class RoleActionGrant(TimeStampedModel):
@@ -45,6 +47,18 @@ class RoleGrantResource(TimeStampedModel):
             models.UniqueConstraint(fields=['grant', 'workshop'], name='grant_workshop_unique'),
             models.UniqueConstraint(fields=['grant', 'craft'], name='grant_craft_unique'),
         ]
+
+
+class RoleSuperuserState(TimeStampedModel):
+    """角色提升前的原生标志；撤销角色不能误降级原生超级管理员。"""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                               related_name='role_superuser_state')
+    original_is_superuser = models.BooleanField(default=False)
+    original_is_staff = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'role_superuser_state'
+        default_permissions = ()
 
 
 class SalesTeam(TimeStampedModel):

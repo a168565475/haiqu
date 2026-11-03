@@ -171,6 +171,39 @@ class CostSummarySourceDatabaseTests(APITestCase):
     scheme_payload = reporting_fixtures.WorkshopReportingApiTests.scheme_payload
     create_approved_scheme = reporting_fixtures.WorkshopReportingApiTests.create_approved_scheme
 
+    def test_plan_and_pending_batch_do_not_duplicate_actual_dispatch_cost(self):
+        from apps.outsourcing.models import OutsourcingFactory
+        from apps.outsourcing.tube_models import TubeOutsourcingOrder, TubeOutsourcingLine, TubeOutsourcingAction
+
+        factory = OutsourcingFactory.objects.create(factory_number='COST-PLAN', name='计划加工厂',
+            created_by_employee=self.employee, updated_by_employee=self.employee)
+        component = uuid4()
+
+        def make(number, quantity, *, plan=None, is_plan=False, dispatched=False):
+            order = TubeOutsourcingOrder.objects.create(order_number=number, is_plan=is_plan, plan=plan,
+                schedule_product=self.schedule_product, product_line=self.product_line, bom=self.bom,
+                craft=self.craft, source_kind='METAL', planned_dispatch_date=timezone.localdate(),
+                expected_return_date=timezone.localdate(), status='PROCESSING' if dispatched else 'PENDING_DISPATCH',
+                client_request_id=uuid4(), request_payload_hash='c' * 64, source_revision_hash='d' * 64,
+                created_by_employee=self.employee, updated_by_employee=self.employee)
+            TubeOutsourcingLine.objects.create(order=order, bom_line=self.metal_bom_line,
+                component_identity=component, factory=factory, quantity=quantity, unit_price=Decimal('1.25'),
+                snapshot={'order_required': '1000'})
+            if dispatched:
+                TubeOutsourcingAction.objects.create(order=order, kind='DISPATCH', client_request_id=uuid4(),
+                    request_payload_hash='a' * 64, actual_dispatch_date=timezone.localdate(),
+                    actor_employee=self.employee, snapshot={'quantity': quantity})
+            return order
+
+        plan = make('WF-COST-PLAN', 9000, is_plan=True)
+        make('WF-COST-BATCH1', 200, plan=plan, dispatched=True)
+        make('WF-COST-BATCH2', 300, plan=plan, dispatched=True)
+        make('WF-COST-PENDING', 999, plan=plan)
+        summary = task_cost_summary(task=self.task)['categories'][2]
+        self.assertEqual(summary['amount'], '625.00')
+        self.assertEqual(summary['count'], 2)
+        self.assertEqual({row['number'] for row in summary['items']}, {'WF-COST-BATCH1', 'WF-COST-BATCH2'})
+
     def test_report_reads_current_saved_amount_and_ignores_deleted_history(self):
         from apps.workshop_reporting.models import WorkReport, WorkReportHistory
         scheme = self.create_approved_scheme().data['data']

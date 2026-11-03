@@ -43,13 +43,17 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 let wrapper: VueWrapper | undefined
+// 当前入口已替换为目录单项选料；此组保留旧候选状态模型的兼容/竞态断言，不代表新界面验收。
+function openLegacyModel(vm: Editor, entry: PickerCase) {
+  return (vm[entry.kind + 'Picker'] as { open: () => Promise<void> }).open()
+}
 async function open(entry: PickerCase) {
   wrapper = shallowMount(BomEditorView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true, stubs: { ElTableColumn: { template: '<div />' } } } })
   await flushPromises()
   const vm = wrapper.vm as unknown as Editor
   vm.sections.forEach(section => { section.lines = [] })
   vm.activeSectionIndex = vm.sections.findIndex(section => section.title === entry.title)
-  call(vm, `open${entry.name}Picker`)
+  void openLegacyModel(vm, entry)
   await flushPromises()
   return vm
 }
@@ -78,7 +82,7 @@ describe.each(cases)('$title 选料复用边界', entry => {
       expect(section.lines[0]?.draft_key).toBeTruthy()
       expect(vm.lineDrawerVisible).toBe(true)
     }
-    call(vm, `open${entry.name}Picker`); await flushPromises()
+    void openLegacyModel(vm, entry); await flushPromises()
     call(vm, `toggle${entry.name}Candidate`, material(), true)
     call(vm, `confirm${entry.name}Selection`)
     expect(section.lines).toHaveLength(1)
@@ -134,7 +138,7 @@ describe.each(cases)('$title 选料复用边界', entry => {
     const vm = await open(entry)
     vm[`${entry.kind}PickerVisible`] = false
     call(vm, `reset${entry.name}Picker`)
-    call(vm, `open${entry.name}Picker`); await flushPromises()
+    void openLegacyModel(vm, entry); await flushPromises()
     old.resolve([group('旧分组')]); await flushPromises()
     expect(vm[`visible${entry.name}Groups`]).toEqual([group('新分组')])
   })
@@ -184,7 +188,7 @@ describe.each(cases)('$title 选料复用边界', entry => {
     const section = vm.sections[vm.activeSectionIndex]!
     expect(section.lines).toHaveLength(1)
     expect(section.lines[0]).toMatchObject({ pending_raw_material: payload, source_raw_material_id: null, source_packaging_material_id: null, source_cutting_material_id: null })
-    call(vm, `open${entry.name}Picker`); await flushPromises()
+    void openLegacyModel(vm, entry); await flushPromises()
     call(vm, `toggle${entry.name}Page`, true)
     call(vm, `confirm${entry.name}Selection`)
     expect(section.lines).toHaveLength(2)

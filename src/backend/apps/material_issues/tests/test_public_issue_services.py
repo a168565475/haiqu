@@ -128,7 +128,8 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         self.requirement.outsourcing_issued_quantity = 6
         self.requirement.save(update_fields=["internal_issued_quantity", "outsourcing_issued_quantity"])
         old_required = self.requirement.required_quantity
-        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=3, pieces_per_bar=6, order_quantity=1000)
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=3, pieces_per_bar=6, order_quantity=1000,
+                         calculation_version=(self.bom_line.raw_values or {}).get("pipe_plan_version", 2))
         for field in ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
                       "suggested_bar_count", "suggested_purchase_meters"):
             setattr(self.bom_line, field, plan[field])
@@ -164,10 +165,10 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         self.assertNotIn("inbound_line_id", str(frozen))
 
     def test_pending_reserves_without_deducting_and_return_releases_it(self):
+        second = self.create("30")
         first = self.submit(self.create("36"))
         self.public_pipe.refresh_from_db()
         self.assertEqual(self.public_pipe.quantity, 10)
-        second = self.create("30")
         self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(second))
         first.refresh_from_db()
         return_issue(issue_id=first.pk, reason="调整领料", actor_employee=self.employee, request=self.request(first))
@@ -179,19 +180,22 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         values = public_line_quantities(second.lines.get(), context=public_issue_quantity_context(second, exclude_issue_id=second.pk))
         self.assertEqual((Decimal(values["available_stock"]), Decimal(values["public_pending_quantity"]), Decimal(values["max_issue_quantity"])), (60, 12, 48))
 
-    def test_legacy_issued_outsourcing_and_pending_reduce_the_same_raw_allowance(self):
+    def test_legacy_allowance_history_does_not_reserve_public_pipe_stock(self):
         self.requirement.internal_issued_quantity = 1980
         self.requirement.outsourcing_issued_quantity = 24
         self.requirement.save(update_fields=["internal_issued_quantity", "outsourcing_issued_quantity"])
         with override_settings(PUBLIC_STOCK_ISSUES_ENABLED=False):
             legacy = self.submit(self.create("12"))
         self.assertEqual(legacy.stock_mode, "LEGACY")
-        public = self.create("12")
-        self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(public))
-        public_small = self.submit(self.create("6"))
-        self.confirm(public_small)
+        public = self.create("24")
+        values = public_line_quantities(public.lines.get(), limit_to_order=False)
+        self.assertEqual((Decimal(values["order_remaining"]), Decimal(values["max_issue_quantity"])), (6, 60))
+        self.confirm(self.submit(public))
         self.requirement.refresh_from_db()
-        self.assertEqual(self.requirement.internal_issued_quantity, 1986)
+        self.assertEqual((self.requirement.internal_issued_quantity, self.requirement.outsourcing_issued_quantity), (2004, 24))
+        self.public_pipe.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertEqual((self.public_pipe.quantity, self.balance().quantity, legacy.status), (6, 337, "PENDING_REVIEW"))
 
     def test_pipe_must_be_whole_bar_and_multiple_components_share_one_stock_pool(self):
         self.assert_code("PIPE_WHOLE_BAR_REQUIRED", lambda: self.create("7"))
@@ -199,8 +203,9 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         second.pk, second.line_number, second.component_identity = None, 2, uuid.uuid4()
         second.save()
         specs, _ = pipe_specs(self.task.pk, self.product_line.pk)
-        issue = self.create(rows=[{"requirement_id": item["id"], "requested_quantity": Decimal(36)} for item in specs])
-        self.assert_code("STOCK_INSUFFICIENT", lambda: self.submit(issue))
+        self.assert_code("STOCK_INSUFFICIENT", lambda: self.create(rows=[
+            {"requirement_id": item["id"], "requested_quantity": Decimal(36)} for item in specs
+        ]))
 
     def test_multiple_public_zones_are_recorded_without_purchase_batch(self):
         other_zone = WarehouseZone.objects.create(warehouse=self.warehouse, zone_name="二楼")
@@ -215,7 +220,8 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
     def test_different_cutting_ratios_in_one_raw_pool_reserve_and_debit_total_bars(self):
         second = BomLine.objects.get(pk=self.bom_line.pk)
         second.pk, second.line_number, second.component_identity = None, 2, uuid.uuid4()
-        plan = pipe_plan(cutting_length_mm=600, pieces_per_product=2, pieces_per_bar=5, order_quantity=1000)
+        plan = pipe_plan(cutting_length_mm=600, pieces_per_product=2, pieces_per_bar=5, order_quantity=1000,
+                         calculation_version=(second.raw_values or {}).get("pipe_plan_version", 2))
         for field in ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
                       "suggested_bar_count", "suggested_purchase_meters"):
             setattr(second, field, plan[field])
@@ -225,11 +231,11 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         by_line = {item["line"].pk: item for item in specs}
         original_id = by_line[self.bom_line.pk]["id"]
         second_id = by_line[second.pk]["id"]
+        excess = self.create(rows=[{"requirement_id": original_id, "requested_quantity": Decimal(24)}])
         issue = self.submit(self.create(rows=[
             {"requirement_id": original_id, "requested_quantity": Decimal(18)},
             {"requirement_id": second_id, "requested_quantity": Decimal(20)},
         ]))
-        excess = self.create(rows=[{"requirement_id": original_id, "requested_quantity": Decimal(24)}])
         self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(excess))
         self.confirm(issue)
         self.public_pipe.refresh_from_db()
@@ -261,16 +267,15 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         self.public_semi.refresh_from_db()
         self.assertEqual(self.public_semi.quantity, 80)
 
-    def test_semi_stock_and_order_pending_are_both_checked(self):
-        too_large = self.create("2001", semi=True)
-        self.assert_code("ORDER_ALLOWANCE_EXCEEDED", lambda: self.submit(too_large))
-        self.submit(self.create("70", semi=True))
+    def test_semi_stock_and_pending_are_checked_at_create_and_submit(self):
+        self.assert_code("STOCK_INSUFFICIENT", lambda: self.create("2001", semi=True))
         second = self.create("40", semi=True)
+        self.submit(self.create("70", semi=True))
         self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(second))
         self.assert_code("INTEGER_REQUIRED", lambda: self.create("0.5", semi=True))
-        self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.submit(too_large))
+        self.assert_code("PENDING_ISSUE_CONFLICT", lambda: self.create("40", semi=True))
 
-    def test_same_component_coated_and_uncoated_requests_share_one_order_quota(self):
+    def test_same_component_coated_and_uncoated_requests_use_separate_stock_pools(self):
         self.raw_material.color_snapshot = "黑色"
         self.raw_material.save(update_fields=["color_snapshot"])
         self.bom_line.raw_values["source_inventory_material_id"] = str(self.raw_material.pk)
@@ -282,10 +287,10 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         metal_identity = build_semi_finished_identity(
             bom_line=self.bom_line, completed_craft=metal, unit=self.piece_unit,
         )
-        # 两个状态共用同一 BOM 部位额度，但库存池彼此独立。
+        # 两个状态共享 BOM 建议量，实际领用分别受各自实物库存限制。
         self.public_semi.quantity = 2000
         self.public_semi.save(update_fields=["quantity"])
-        self.credit(metal_identity, self.semi_zone, 2000)
+        metal_balance = self.credit(metal_identity, self.semi_zone, 2000).balance
         specs, blockers = build_public_semi_specs(self.task.pk, self.product_line.pk)
         self.assertFalse(blockers, blockers)
         self.assertEqual(len(specs), 2)
@@ -295,7 +300,13 @@ class PublicIssueServiceTests(PublicIssueFixture, TestCase):
         ])
         self.assertEqual(issue.lines.count(), 2)
         self.assertEqual({line.semi_requirement.required_quantity for line in issue.lines.all()}, {Decimal("2000")})
-        self.assert_code("ORDER_ALLOWANCE_EXCEEDED", lambda: self.submit(issue))
+        self.confirm(self.submit(issue))
+        self.public_semi.refresh_from_db()
+        metal_balance.refresh_from_db()
+        self.public_pipe.refresh_from_db()
+        self.assertEqual((self.public_semi.quantity, metal_balance.quantity), (900, 900))
+        self.assertEqual(self.public_pipe.quantity, 10)
+        self.assertEqual(sum(line.semi_requirement.internal_issued_quantity for line in issue.lines.all()), 2200)
 
     def test_confirm_repeat_returns_original_success_without_second_debit(self):
         issue = self.submit(self.create("12"))

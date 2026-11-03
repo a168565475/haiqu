@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   archiveBom,
-  createBomAuxiliaryReference,
+  confirmBomProduct,
   createBom,
   deleteBomDraftLineImage,
   deleteBomLineImage,
@@ -22,6 +22,7 @@ import {
   verifyBom,
 } from '@/api/boms'
 import { apiClient } from '@/api/request'
+import { emptyProductEntry } from '@/utils/productEntryDraft'
 
 vi.mock('@/api/request', () => ({
   apiClient: {
@@ -43,6 +44,15 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('产品核对保留无目录关联的逐项草稿与版本头，不请求产品建档', async () => {
+    mockedPost.mockResolvedValueOnce({ data: { data: { id: 'bom-1', product_information_confirmed: true } }, headers: { etag: 'v2' } })
+    const payload = { product_catalog_id: null, product_selection: { draft: { ...emptyProductEntry(), name: '新椅', unit_name: '新单位', color_name: '酒红' } } }
+    await confirmBomProduct('bom-1', payload, 'v1')
+    expect(mockedPost).toHaveBeenCalledTimes(1)
+    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/confirm-product/', payload, { headers: { 'If-Match': 'v1' } })
+    expect(mockedPatch).not.toHaveBeenCalled()
   })
 
   it('新增原料预检与确认使用相同整单字段，预检只发 POST，确认只发一次 PATCH', async () => {
@@ -243,28 +253,6 @@ describe('BOM API', () => {
     expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/bom-1/archive/', {}, {
       headers: { 'If-Match': '"bom-etag"' },
     })
-  })
-
-  it('辅料新增提交到 BOM 专用基础配置入口', async () => {
-    const created = {
-      id: 'accessory-1',
-      product_name: '测试辅料',
-      unit_name: '个',
-      pinyin_search: 'ceshifuliao csfl',
-      specifications: [{ id: 'spec-1', specification_value: '10mm' }],
-      colors: [{ id: 'color-1', color_name: '黑色' }],
-    }
-    mockedPost.mockResolvedValueOnce({ data: { data: created } })
-    const payload = {
-      product_name: '测试辅料',
-      unit_name: '个',
-      specification: '10mm',
-      color: '黑色',
-      material: '尼龙',
-    }
-
-    await expect(createBomAuxiliaryReference(payload)).resolves.toEqual(created)
-    expect(mockedPost).toHaveBeenCalledWith('/api/v1/boms/create-auxiliary-reference/', payload)
   })
 
   it('裁剪图片批量上传和删除均使用当前 BOM ETag', async () => {

@@ -19,7 +19,7 @@ class SampleMaterialActionsMixin:
         sample = self.get_object()
         record = _record(sample)
         procurement = getattr(record, 'procurement_request', None) if record else None
-        if sample.archived_at or sample.customer_account.archived_at or not procurement or not record.reviewed_at:
+        if sample.archived_at or (sample.customer_account_id and sample.customer_account.archived_at) or not procurement or not record.reviewed_at:
             raise NotFound('当前没有可读取的已核定打样缺料需求。')
         products = list(sample.products.order_by('line_number'))
         items = list(sample.items.order_by('line_number'))
@@ -27,7 +27,7 @@ class SampleMaterialActionsMixin:
         quantity = sum(item.sample_quantity for item in items) if items and all(item.sample_quantity is not None for item in items) else None
         return Response({'data': {'sample': {
             'id': str(sample.pk), 'request_number': sample.request_number, 'status': sample.status,
-            'status_display': sample_status_display(sample), 'customer_name': sample.customer_account.account_name,
+            'status_display': sample_status_display(sample), 'customer_name': (sample.customer_account.account_name if sample.customer_account_id else ''),
             'requested_at': sample.requested_at, 'product_name': '、'.join(product.product_name for product in products),
             'specification': '；'.join(product.specification for product in products),
             'color': '；'.join(color for color in colors if color), 'quantity_label': f'{quantity} PCS' if quantity is not None else '',

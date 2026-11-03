@@ -11,7 +11,7 @@ from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from .receipt_models import FinanceReceiptUpload, Receipt, ReceiptAttachment
 from .receipt_read_serializers import ReceiptDepositPageSerializer, ReceiptPageSerializer, ReceiptResponseSerializer, ReceiptSerializer, ReceiptUploadResponseSerializer, ReceiptUploadSerializer
-from .receipt_selectors import receipts
+from .receipt_selectors import accessible_receipts, receipts
 from .receipt_serializers import ReceiptCreateSerializer, ReceiptDepositQuerySerializer, ReceiptQuerySerializer, ReceiptUploadInputSerializer, ReceiptUploadQuerySerializer, ReceiptVoidSerializer
 from .receipt_uploads import create_receipt_upload, discard_receipt_upload, require_usable_file
 from .selectors import available_cny_accounts
@@ -51,10 +51,10 @@ class ReceiptViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.
             return receipts().none()
         query = ReceiptQuerySerializer(data=self.request.query_params)
         query.is_valid(raise_exception=True)
-        return receipts(query.validated_data if self.action == "list" else {})
+        return accessible_receipts(self.request, query.validated_data if self.action == "list" else {})
 
     def receipt_response(self, receipt, *, status=200, changed=None):
-        current = receipts().get(pk=receipt.pk)
+        current = accessible_receipts(self.request).get(pk=receipt.pk)
         data = dict(ReceiptSerializer(current).data)
         if changed is not None:
             data["changed"] = changed
@@ -186,14 +186,21 @@ class ReceiptStatementViewSet(viewsets.GenericViewSet):
     def get_statement(self, pk):
         from rest_framework.generics import get_object_or_404
         from .statement_models import ReceivableStatement
-        return get_object_or_404(ReceivableStatement.objects.all(), pk=pk)
+        from apps.access_control.role_policy import filter_statement_scope, role_scopes
+        from apps.access_control.resource_scopes import has_legacy_permission
+        queryset = ReceivableStatement.objects.all()
+        permission = 'finance.view_receipt'
+        if (self.action == 'receipts' and 'OWN' in role_scopes(self.request, permission)
+                and not has_legacy_permission(self.request, permission)):
+            queryset = filter_statement_scope(self.request, queryset, permission)
+        return get_object_or_404(queryset, pk=pk)
 
     @extend_schema(parameters=[ReceiptQuerySerializer], responses=ReceiptPageSerializer)
     def receipts(self, request, pk=None):
         statement = self.get_statement(pk)
         query = ReceiptQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        page = self.paginate_queryset(receipts({**query.validated_data, "statement_id": statement.pk}))
+        page = self.paginate_queryset(accessible_receipts(request, {**query.validated_data, "statement_id": statement.pk}))
         return self.get_paginated_response(ReceiptSerializer(page, many=True).data)
 
     @extend_schema(parameters=[ReceiptDepositQuerySerializer], responses=ReceiptDepositPageSerializer)

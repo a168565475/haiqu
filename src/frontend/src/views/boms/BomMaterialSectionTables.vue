@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
-import { toRefs } from 'vue'
+import { packagingQuantity } from '@/utils/bomPackagingQuantity'
+import { computed, onBeforeUnmount, ref, toRefs, watch } from 'vue'
+import { fetchMaterialCatalog, materialCatalogError } from '@/api/materialCatalog'
 import { Delete, Edit, FullScreen } from '@element-plus/icons-vue'
 import BomLineImageSummary from '@/components/BomLineImageSummary.vue'
 import type { BomLineInput, BomSectionInput } from '@/types/bom'
@@ -33,6 +35,8 @@ const props = withDefaults(defineProps<{
   isFabricSection: boolean
   isPackagingSection: boolean
   isCuttingSection: boolean
+  orderQuantity: string | number
+  catalogRefreshKey?: number
   canEdit: boolean
   tableFullscreen: boolean
   tubeOptionsLoading: boolean
@@ -64,7 +68,34 @@ const props = withDefaults(defineProps<{
   legacyPipeCuttingValues: (line: BomLineInput) => LegacyPipeValues
 }>(), {
   tubeCoatingColors: () => [],
+  catalogRefreshKey: 0,
 })
+
+const hardwareCatalogIds = computed(() => props.isHardwareSection
+  ? [...new Set(props.activeSection.lines.map(line => line.material_catalog_id).filter((id): id is string => !!id))].sort()
+  : [])
+const hardwareSprayEnabled = ref<Record<string, boolean>>({})
+const hardwareSprayErrors = ref<Record<string, string>>({})
+let hardwareSprayRequest = 0
+async function loadHardwareSprayConfiguration() {
+  const request = ++hardwareSprayRequest
+  hardwareSprayEnabled.value = {}
+  hardwareSprayErrors.value = {}
+  await Promise.all(hardwareCatalogIds.value.map(async id => {
+    try {
+      const { data } = await fetchMaterialCatalog(id)
+      if (request !== hardwareSprayRequest) return
+      if (data.id !== id || data.category_key !== 'HARDWARE' || typeof data.spray_enabled !== 'boolean') {
+        throw new Error('五金品名的喷塑配置不匹配，请重新读取。')
+      }
+      hardwareSprayEnabled.value[id] = data.spray_enabled
+    } catch (error) {
+      if (request === hardwareSprayRequest) hardwareSprayErrors.value[id] = materialCatalogError(error)
+    }
+  }))
+}
+watch([() => hardwareCatalogIds.value.join('|'), () => props.catalogRefreshKey], loadHardwareSprayConfiguration, { immediate: true })
+onBeforeUnmount(() => { ++hardwareSprayRequest })
 
 const {
   activeSection,
@@ -116,7 +147,7 @@ const {
                <ElTableColumn prop="material" label="材质" width="90" />
                 <ElTableColumn label="喷塑颜色" min-width="120">
                   <template #default="scope">
-                    <ElSelect v-model="scope.row.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
+                    <span v-if="scope.row.material_catalog_id">{{ scope.row.tube_coating_color || '—' }}</span><ElSelect v-else v-model="scope.row.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
                       <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
                     </ElSelect>
                   </template>
@@ -162,9 +193,12 @@ const {
               <ElTableColumn label="单个材料重量（kg）" width="170"><template #default="scope"><ElInput v-model="scope.row.unit_material_weight_kg" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="喷塑颜色" min-width="165">
                 <template #default="scope">
-                  <ElSelect v-model="scope.row.powder_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
+                  <ElSelect v-if="!scope.row.material_catalog_id || hardwareSprayEnabled[scope.row.material_catalog_id] === true" v-model="scope.row.powder_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :disabled="!canEdit" placeholder="选择颜色">
                     <ElOption v-for="item in tubeCoatingColors" :key="item.id" :label="item.color_name" :value="item.color_name" />
                   </ElSelect>
+                  <span v-else-if="hardwareSprayErrors[scope.row.material_catalog_id]" role="alert" :title="hardwareSprayErrors[scope.row.material_catalog_id]">配置读取失败 <ElButton link @click="loadHardwareSprayConfiguration">重试</ElButton></span>
+                  <span v-else-if="hardwareSprayEnabled[scope.row.material_catalog_id] === undefined">读取配置中…</span>
+                  <span v-else class="hardware-readonly-cell">{{ scope.row.powder_coating_color || '—' }}</span>
                 </template>
               </ElTableColumn>
               <ElTableColumn label="喷塑单个面积（㎡）" width="175"><template #default="scope"><ElInput v-model="scope.row.powder_coating_unit_area_sqm" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
@@ -253,15 +287,15 @@ const {
                   <div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div>
                 </template>
               </ElTableColumn>
-              <ElTableColumn label="规格" min-width="140"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_specification_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.specification || '选择规格'" @change="setFabricSpecification(scope.row, $event)"><ElOption v-for="item in fabricSpecificationOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="材质" min-width="130"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_material_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.material || '选择材质'" @change="setFabricMaterial(scope.row, $event)"><ElOption v-for="item in fabricMaterialOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="色卡" min-width="200"><template #default="scope"><ElSelect v-model="scope.row.source_product_color_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="fabricColorSnapshot(scope.row) || '选择色卡 / 颜色 / 色号'" @change="setFabricColor(scope.row, $event)"><ElOption v-for="item in fabricColorOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="规格" min-width="140"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_specification_id" filterable clearable :value-on-clear="null" :disabled="!canEdit || !!scope.row.material_catalog_id" :placeholder="scope.row.specification || '选择规格'" @change="setFabricSpecification(scope.row, $event)"><ElOption v-for="item in fabricSpecificationOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="材质" min-width="130"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_material_id" filterable clearable :value-on-clear="null" :disabled="!canEdit || !!scope.row.material_catalog_id" :placeholder="scope.row.material || '选择材质'" @change="setFabricMaterial(scope.row, $event)"><ElOption v-for="item in fabricMaterialOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="色卡" min-width="200"><template #default="scope"><ElSelect v-model="scope.row.source_product_color_id" filterable clearable :value-on-clear="null" :disabled="!canEdit || !!scope.row.material_catalog_id" :placeholder="fabricColorSnapshot(scope.row) || '选择色卡 / 颜色 / 色号'" @change="setFabricColor(scope.row, $event)"><ElOption v-for="item in fabricColorOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
               <ElTableColumn label="颜色" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_name || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="色号" min-width="120" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.fabric_color_code || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="门幅" min-width="120"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_width_id" filterable clearable :value-on-clear="null" :disabled="!canEdit" :placeholder="scope.row.fabric_width || '选择门幅'" @change="setFabricWidth(scope.row, $event)"><ElOption v-for="item in fabricWidthOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
-              <ElTableColumn label="单个用量" width="120"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
-              <ElTableColumn label="裁片" min-width="150"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit" maxlength="300" placeholder="填写裁片" /></template></ElTableColumn>
-              <ElTableColumn label="单位" width="70"><template #default><span class="hardware-readonly-cell">米</span></template></ElTableColumn>
+              <ElTableColumn label="门幅" min-width="120"><template #default="scope"><ElSelect v-model="scope.row.source_fabric_width_id" filterable clearable :value-on-clear="null" :disabled="!canEdit || !!scope.row.material_catalog_id" :placeholder="scope.row.fabric_width || '选择门幅'" @change="setFabricWidth(scope.row, $event)"><ElOption v-for="item in fabricWidthOptions(scope.row)" :key="item.id" :label="item.label" :value="item.id" :disabled="item.disabled" /></ElSelect></template></ElTableColumn>
+              <ElTableColumn label="单耗" width="120"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" aria-label="单耗" /></template></ElTableColumn>
+              <ElTableColumn label="裁片" min-width="150"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit || !!scope.row.material_catalog_id" maxlength="300" placeholder="填写裁片" /></template></ElTableColumn>
+              <ElTableColumn label="单位" width="70"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '米' }}</span></template></ElTableColumn>
               <ElTableColumn label="备注" min-width="170"><template #default="scope"><ElInput v-model="scope.row.notes" :disabled="!canEdit" maxlength="500" placeholder="填写" /></template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
             </ElTable>
@@ -270,14 +304,13 @@ const {
                 <template #header><ElTooltip :content="tableFullscreen ? '退出全屏' : '全屏'" placement="top"><ElButton class="table-fullscreen-button" size="small" circle plain :icon="FullScreen" :aria-label="tableFullscreen ? '退出全屏' : '全屏'" @click="toggleTableFullscreen" /></ElTooltip></template>
                 <template #default="scope"><div class="table-index-cell"><span class="table-row-number">{{ scope.$index + 1 }}</span><div v-if="canEdit" class="table-row-actions"><ElTooltip content="编辑当前行" placement="top"><ElButton class="row-action-button" size="small" circle link :icon="Edit" aria-label="编辑当前行" @click.stop="openLineDrawer(scope.$index)" /></ElTooltip><ElTooltip content="删除当前行" placement="top"><ElButton class="row-action-button row-delete-button" size="small" circle link type="danger" :icon="Delete" aria-label="删除当前行" @click="removeLine(scope.$index)" /></ElTooltip></div></div></template>
               </ElTableColumn>
-              <ElTableColumn label="品号" width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.packaging_material_number || scope.row.raw_material || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="品名" min-width="165" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.part_name || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="材质" width="105" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.material || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.packaging_color) }}</span></template></ElTableColumn>
               <ElTableColumn label="规格" min-width="155" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="单位" width="76"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="*箱数（多少一箱）" width="170"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="numeric" :disabled="!canEdit" placeholder="填写正整数" /></template></ElTableColumn>
-              <ElTableColumn label="*单个用量" width="125"><template #default="scope"><ElInput v-model="scope.row.unit_consumption" inputmode="decimal" :disabled="!canEdit" placeholder="填写" /></template></ElTableColumn>
+              <ElTableColumn label="需求数量" width="125"><template #default="scope">{{ packagingQuantity(scope.row.units_per_box, props.orderQuantity) || '—' }}</template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
             </ElTable>
             <ElTable v-else-if="isCuttingSection" class="erp-table-editor cutting-table" :data="activeSection.lines" border scrollbar-always-on empty-text="当前裁剪明细暂无数据，点击“选择裁剪”批量添加">
@@ -318,7 +351,7 @@ const {
                 </template>
               </ElTableColumn>
               <ElTableColumn label="材质" width="112"><template #default="scope"><ElInput v-model="scope.row.material" :disabled="!canEdit" /></template></ElTableColumn>
-              <ElTableColumn label="配件 / 裁片名称" min-width="170"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit" /></template></ElTableColumn>
+              <ElTableColumn label="配件 / 裁片名称" min-width="170"><template #default="scope"><ElInput v-model="scope.row.part_name" :disabled="!canEdit || !!scope.row.material_catalog_id" /></template></ElTableColumn>
               <ElTableColumn v-if="activeSection.section_type !== 'FABRIC'" label="规格 / 厚度" min-width="145"><template #default="scope"><ElInput v-model="scope.row.specification" :disabled="!canEdit" /></template></ElTableColumn>
               <ElTableColumn v-if="activeSection.section_type === 'FABRIC'" label="原材料" min-width="160"><template #default="scope"><ElInput v-model="scope.row.raw_material" :disabled="!canEdit" /></template></ElTableColumn>
               <ElTableColumn v-if="activeSection.section_type === 'FABRIC'" label="裁片量" width="100"><template #default="scope"><ElInput v-model="scope.row.cut_piece_quantity" :disabled="!canEdit" /></template></ElTableColumn>

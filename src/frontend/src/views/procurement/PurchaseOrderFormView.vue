@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { compactDecimal } from '@/utils/compactDecimal'
 import { pipeMeters, pipeRootError } from '@/utils/pipeQuantities'
-import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import backIcon from '@/assets/procurement/create-back.svg'
 import refreshIcon from '@/assets/procurement/create-refresh.svg'
 import calendarIcon from '@/assets/procurement/create-calendar.svg'
@@ -15,7 +15,11 @@ import {
   fetchPurchaseOrderOptions,
   fetchPurchaseOrderSource,
   fetchSamplePurchaseOrderSource,
+  fetchVersionedPurchaseOrder,
 } from '@/api/purchaseOrders'
+import { createPurchaseBatch, createPurchaseGroup, fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
+import type { PurchaseBatchInput, PurchaseGroup, PurchaseGroupProgressLine } from '@/types/purchaseGroup'
+import type { SupplierCategory } from '@/types/supplier'
 import { useAuthStore } from '@/stores/auth'
 import type {
   PurchaseOrderInput,
@@ -24,10 +28,12 @@ import type {
   PurchaseOrderProductionTaskOption,
   PurchaseOrderSource,
   PurchaseOrderSourceLine,
+  PurchaseBatchType,
 } from '@/types/purchaseOrder'
 import { materialAttributeFields, materialSpecificationValue } from '@/utils/materialAttributes'
 
 interface PurchaseLineDraft extends PurchaseOrderSourceLine {
+  purchase_group_line_id?: string
   supplier_id: string | null
   delivery_date: string
   actual_bar_count: string
@@ -41,12 +47,33 @@ const route = useRoute()
 const authStore = useAuthStore()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
 const canAdd = computed(() => isSuperuser.value || authStore.hasPermission('procurement.add_purchaseorder'))
+const isBatchMode = computed(() => route.name === 'purchase-batch-create')
+const group = ref<PurchaseGroup | null>(null)
+const groupEtag = ref('')
+const batchType = ref<PurchaseBatchType>('NORMAL')
+const batchRequestId = ref('')
+let batchContentSignature = ''
+const batchConflict = ref('')
+const selectedLines = computed(() => isBatchMode.value
+  ? lines.value.filter(line => isPositiveDecimal(line.required_quantity || '') && isPositiveDecimal(effectivePurchaseQuantity(line)))
+  : lines.value)
+const canWriteLines = computed(() => isBatchMode.value ? Boolean(group.value && group.value.progress.status !== 'UNKNOWN' && !saving.value) : Boolean(source.value?.can_create))
 
 const options = ref<PurchaseOrderOptions>({
   production_tasks: [], suppliers: [], currencies: [], default_currency_id: null,
 })
 const source = ref<PurchaseOrderSource | null>(null)
 const lines = ref<PurchaseLineDraft[]>([])
+const batchRemainingQuantities = computed(() => new Map((group.value?.progress.lines || []).map(line => {
+  const snapshot = line.source_snapshot
+  const isPipe = snapshot.section_type_snapshot === 'PROFILE'
+  const quantity = remainingPurchaseQuantity(isPipe ? snapshot.suggested_purchase_meters : line.required_quantity, line.purchased_quantity)
+  const roots = isPipe ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) : null
+  return [line.id, {
+    primary: isPipe ? roots === null ? '根数待核对' : `${roots} 根` : quantity ?? '待核对',
+    detail: isPipe ? quantity === null ? '米数待核对' : `${quantity} 米` : line.source_unit_text || '单位未识别',
+  }]
+})))
 const selectedTaskId = ref('')
 const selectedBomId = ref('')
 const sourceTypeFilter = ref<'ALL' | 'PRODUCTION' | 'SAMPLE'>('ALL')
@@ -72,18 +99,17 @@ const sourceOptions = computed<PurchaseOrderProductionTaskOption[]>(() => [
   ...options.value.production_tasks.map(item => ({ ...item, source_type: 'PRODUCTION' as const, source_number: item.task_number })),
   ...(options.value.sample_requests || []).map(item => ({ ...item, source_id: item.id, id: `sample:${item.id}`, task_number: item.source_number, order_number: '' })),
 ].sort((left, right) => Number(right.can_create) - Number(left.can_create)))
-const visibleSourceOptions = computed(() => sourceOptions.value.filter(item => item.can_create
+const visibleSourceOptions = computed(() => sourceOptions.value.filter(item => (item.can_create || (item.source_type !== 'SAMPLE' && item.blockers?.some(blocker => ['PURCHASE_GROUP_EXISTS', 'PURCHASE_ORDER_EXISTS'].includes(blocker.code))))
   && (sourceTypeFilter.value === 'ALL' || item.source_type === sourceTypeFilter.value)))
-const isDetailStep = computed(() => route.name === 'purchase-order-create-details')
+const isDetailStep = computed(() => route.name === 'purchase-order-create-details' || isBatchMode.value)
 const isSampleSource = computed(() => selectedTask.value?.source_type === 'SAMPLE')
 const sourceTypeLabel = computed(() => isSampleSource.value ? '打样单' : '生产订单')
 const selectedTask = computed(() => sourceOptions.value.find((item) => item.id === selectedTaskId.value) || null)
-const selectedProducts = computed(() => (source.value?.production_task?.products || []).filter(
-  product => !productBomOption(product.id)?.blockers.some(blocker => blocker.code === 'PURCHASE_ORDER_EXISTS'),
-))
+const selectedProducts = computed(() => source.value?.production_task?.products || [])
+const existingSourceBlocker = computed(() => source.value?.blockers.find(blocker => ['PURCHASE_GROUP_EXISTS', 'PURCHASE_ORDER_EXISTS'].includes(blocker.code)))
 const selectedBom = computed(() => source.value?.bom_options.find((item) => item.bom_id === selectedBomId.value) || null)
 const selectedProduct = computed(() => selectedProducts.value.find((item) => item.id === selectedBom.value?.product_line_id) || null)
-const selectedSupplierCount = computed(() => new Set(lines.value.map((line) => line.supplier_id).filter(Boolean)).size)
+const selectedSupplierCount = computed(() => new Set(selectedLines.value.map((line) => line.supplier_id).filter(Boolean)).size)
 const supplierCategories = computed(() => [...new Set(lines.value.map((line) => line.category || '未分类'))])
 const bulkSupplierLines = computed(() => {
   if (!bulkSupplierCategory.value) return []
@@ -101,7 +127,7 @@ const bulkSupplierOptions = computed(() => {
 const bulkSupplierEmptyText = computed(() => bulkSupplierLines.value.some((line) => !line.suggested_supplier_category)
   ? '当前物料分类尚未对应供应商类别，请逐行选择供应商'
   : '暂无匹配供应商，请在供应商信息中维护对应类别')
-const completeLineCount = computed(() => lines.value.filter(isLineComplete).length)
+const completeLineCount = computed(() => selectedLines.value.filter(isLineComplete).length)
 const isPreviewMode = computed(() => Boolean(source.value && !source.value.can_create && lines.value.length))
 const detailTableHeight = computed(() => detailFullscreen.value ? 'calc(100dvh - 108px)'
   : isSampleSource.value && !lines.value.some(line => isPipePurchaseLine(line)) && lines.value.length <= 4 ? `${40 + lines.value.length * 40}px` : '100%')
@@ -124,6 +150,7 @@ function apiErrorMessage(error: unknown, fallback: string): string {
     : ''
   if (response?.status === 401) return '登录状态已失效，请刷新页面或重新登录。'
   if (response?.status === 403) return '当前账号没有新建采购订单的权限。'
+  if (response?.status === 412) return '总单已有更新，输入已保留。请重新读取总单版本后核对并重试。'
   if (response?.status === 409) return response.data?.error?.message || response.data?.detail || '采购来源已变化，请重新读取采购需求。'
   return firstFieldError || response?.data?.error?.message || response?.data?.detail || fallback
 }
@@ -334,7 +361,7 @@ function disablePastDeliveryDate(date: Date): boolean {
 }
 
 function applyBulkSupplier(value: string | null): void {
-  if (!source.value?.can_create || sourceLoading.value) return
+  if (!canWriteLines.value || sourceLoading.value) return
   if (value && !bulkSupplierOptions.value.some((supplier) => supplier.id === value)) {
     refreshBulkSupplier()
     showActionError('该供应商不属于当前分类，请重新选择。')
@@ -355,6 +382,7 @@ function refreshBulkSupplier(): void {
 }
 
 function applyBulkDeliveryDate(value: string | null): void {
+  if (!canWriteLines.value || sourceLoading.value) return
   const normalizedValue = value || ''
   for (const line of lines.value) line.delivery_date = normalizedValue
 }
@@ -432,7 +460,7 @@ function defaultPurchaseQuantity(line: PurchaseLineDraft): string {
 
 function effectivePurchaseQuantity(line: PurchaseLineDraft): string {
   if (isPipePurchaseLine(line) || line.raw_bar_length_m) return pipeMeters(line.actual_bar_count, line.raw_bar_length_m || '')
-  return line.actual_purchase_quantity.trim() || defaultPurchaseQuantity(line)
+  return line.actual_purchase_quantity.trim() || (isBatchMode.value ? '' : defaultPurchaseQuantity(line))
 }
 
 function pipeMetersLabel(line: PurchaseLineDraft): string {
@@ -460,6 +488,19 @@ function decimalParts(value: string): { digits: bigint; scale: number } | null {
   return { digits: BigInt(`${matched[1] || '0'}${fraction}`), scale: fraction.length }
 }
 
+function remainingPurchaseQuantity(target: string | number | null | undefined, purchased: string | null | undefined, roots = false): string | null {
+  const targetText = typeof target === 'number' && roots && Number.isSafeInteger(target) ? String(target) : target
+  if (typeof targetText !== 'string' || typeof purchased !== 'string') return null
+  const left = decimalParts(targetText)
+  const right = decimalParts(purchased)
+  if (!left || !right || (roots && (left.scale !== 0 || right.scale !== 0))) return null
+  const scale = Math.max(left.scale, right.scale)
+  const remaining = left.digits * 10n ** BigInt(scale - left.scale) - right.digits * 10n ** BigInt(scale - right.scale)
+  if (remaining <= 0n) return '0'
+  const digits = remaining.toString().padStart(scale + 1, '0')
+  return scale ? compactDecimal(`${digits.slice(0, -scale)}.${digits.slice(-scale)}`) : digits
+}
+
 function scaledProduct(quantity: string, price: string): bigint | null {
   const left = decimalParts(quantity)
   const right = decimalParts(price)
@@ -485,7 +526,7 @@ function lineAmount(line: PurchaseLineDraft): string {
 }
 
 const totalAmount = computed(() => {
-  const amounts = lines.value.map((line) => scaledProduct(effectivePurchaseQuantity(line), line.unit_price))
+  const amounts = selectedLines.value.map((line) => scaledProduct(effectivePurchaseQuantity(line), line.unit_price))
   if (!amounts.length || amounts.some((amount) => amount === null)) return '待计算'
   let total = 0n
   for (const amount of amounts) {
@@ -512,6 +553,19 @@ function isLineComplete(line: PurchaseLineDraft): boolean {
 }
 
 function validateDraft(): string {
+  if (isBatchMode.value) {
+    if (!canWriteLines.value || !groupEtag.value) return '总单不可用或版本信息缺失，请重新读取。'
+    // 空白和零表示本批不采购；有输入但格式错误必须提示，不能过滤后漏单。
+    for (const [index, line] of lines.value.entries()) {
+      const quantity = (line.raw_bar_length_m ? line.actual_bar_count : line.actual_purchase_quantity).trim()
+      if (!quantity) continue
+      if (line.raw_bar_length_m ? !/^\d{1,14}$/.test(quantity) : !isNonNegativeDecimal(quantity)) {
+        return line.raw_bar_length_m ? `第 ${index + 1} 行管材根数应为整数，0 表示本批不采购。`
+          : `第 ${index + 1} 行实际采购数量应为大于或等于 0、最多 4 位小数的数字。`
+      }
+    }
+    if (!selectedLines.value.length) return '请至少填写一项需求数量大于 0 的材料采购数量。'
+  } else {
   if (!selectedTaskId.value) return '请先选择采购来源。'
   if (!isSampleSource.value && !selectedBomId.value) return '请选择本次要采购的产品 BOM。'
   if (!source.value?.can_create) {
@@ -520,8 +574,10 @@ function validateDraft(): string {
     }
     return source.value?.blockers?.[0]?.message || '所选 BOM 尚未校验、明细为空或已失效，暂不能保存采购草稿。'
   }
+  }
   if (!lines.value.length) return '当前生产订单没有可保存的采购明细。'
-  for (const [index, line] of lines.value.entries()) {
+  for (const [index, line] of selectedLines.value.entries()) {
+    if (isBatchMode.value && !isPositiveDecimal(effectivePurchaseQuantity(line))) return `第 ${index + 1} 项实际采购数量应大于 0。`
     if (isPipePurchaseLine(line)) {
       if (!isPositiveDecimal(line.raw_bar_length_m || '')) return `第 ${index + 1} 行：请填写大于 0 的每根长度（米）。`
       const error = pipeRootError(line.actual_bar_count)
@@ -545,7 +601,7 @@ function validateConfirmation(): string {
   if (draftError) return draftError
   const selectedCurrency = options.value.currencies.find((item) => item.id === form.currencyId)
   if (!selectedCurrency || selectedCurrency.code !== 'CNY') return '系统未找到人民币（CNY）采购币种，请联系管理员检查基础资料。'
-  for (const [index, line] of lines.value.entries()) {
+  for (const [index, line] of selectedLines.value.entries()) {
     const missing: string[] = []
     if (!line.supplier_id) missing.push('供应商')
     if (!line.delivery_date) missing.push('采购交期')
@@ -587,16 +643,41 @@ async function createOrder(nextStep: 'list' | 'confirm'): Promise<void> {
   }
   saving.value = true
   try {
-    const result = await createPurchaseOrder(buildPayload())
+    let batchInput: PurchaseBatchInput | null = null
+    if (isBatchMode.value) {
+      const content = {
+        batch_type: batchType.value,
+        currency_id: form.currencyId,
+        is_mailed: form.isMailed,
+        lines: selectedLines.value.map(line => ({
+          purchase_group_line_id: line.purchase_group_line_id!,
+          supplier_id: line.supplier_id || null,
+          delivery_date: line.delivery_date || null,
+          ...(line.raw_bar_length_m ? { actual_bar_count: line.actual_bar_count } : { actual_purchase_quantity: effectivePurchaseQuantity(line) }),
+          unit_price: line.unit_price.trim() || null,
+        })),
+      }
+      const signature = JSON.stringify(content)
+      if (!batchRequestId.value || signature !== batchContentSignature) batchRequestId.value = crypto.randomUUID()
+      batchContentSignature = signature
+      batchInput = { ...content, request_id: batchRequestId.value }
+    }
+    const result = batchInput && group.value
+      ? await createPurchaseBatch(group.value.id, batchInput, groupEtag.value)
+      : await createPurchaseOrder(buildPayload())
     if (nextStep === 'confirm') {
       ElMessage.success('采购订单已保存，请核对后确认。')
       await router.push({ name: 'purchase-order-confirm', params: { id: result.data.id } })
     } else {
       ElMessage.success('采购订单草稿已创建。')
-      await router.push({ name: 'purchase-orders' })
+      await router.push(isBatchMode.value && group.value ? { name: 'purchase-group-detail', params: { id: group.value.id } } : { name: 'purchase-orders', query: { view: 'orders' } })
     }
   } catch (error) {
     const message = apiErrorMessage(error, '采购订单草稿保存失败，请稍后重试。')
+    if (isBatchMode.value) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      batchConflict.value = status ? message : '提交结果尚未确认，输入已保留。可重试相同内容；修改内容前请返回总单核对是否已创建批次。'
+    }
     ElMessage.error(message)
   } finally {
     saving.value = false
@@ -643,10 +724,12 @@ async function restoreDetailSource(): Promise<void> {
 
 async function initializePage(): Promise<void> {
   await loadOptions()
-  if (isDetailStep.value && canAdd.value && !loadError.value) await restoreDetailSource()
+  if (!canAdd.value || loadError.value) return
+  if (isBatchMode.value) await loadGroup()
+  else if (isDetailStep.value) await restoreDetailSource()
 }
 
-function goToDetails(): void {
+async function goToDetails(): Promise<void> {
   if (!selectedTaskId.value) {
     showActionError('请先选择采购来源。')
     return
@@ -660,6 +743,16 @@ function goToDetails(): void {
     return
   }
   const sourceId = isSampleSource.value ? selectedTask.value?.source_id || '' : selectedTaskId.value
+  if (!isSampleSource.value) {
+    if (saving.value) return
+    saving.value = true
+    try {
+      const result = await createPurchaseGroup({ production_task_id: sourceId, bom_id: selectedBomId.value, source_revision: source.value!.source_revision })
+      await router.push({ name: 'purchase-batch-create', params: { groupId: result.data.id } })
+    } catch (error) { ElMessage.error(apiErrorMessage(error, '创建采购总单失败，请重新读取来源。')) }
+    finally { saving.value = false }
+    return
+  }
   void router.push({
     name: 'purchase-order-create-details',
     query: {
@@ -671,8 +764,96 @@ function goToDetails(): void {
 }
 
 function back(): void {
-  void router.push({ name: isDetailStep.value ? 'purchase-order-create' : 'purchase-orders' })
+  void router.push(isBatchMode.value ? { name: 'purchase-group-detail', params: { id: route.params.groupId } } : { name: isDetailStep.value ? 'purchase-order-create' : 'purchase-orders' })
 }
+
+function groupSupplierCategory(snapshot: PurchaseGroupProgressLine['source_snapshot']): SupplierCategory | null {
+  const catalogCategory = snapshot.material_selection_snapshot?.category_key
+  if (catalogCategory) {
+    const categories: Record<string, SupplierCategory> = {
+      TUBE: 'TUBE', HARDWARE: 'HARDWARE', PLASTIC: 'PLASTIC_PART', PACKAGING: 'PACKAGING', FABRIC: 'FABRIC', AUXILIARY: 'AUXILIARY',
+    }
+    return Object.hasOwn(categories, catalogCategory) ? categories[catalogCategory]! : null
+  }
+  // 旧总单没有目录类别时，沿用采购来源已有的分类顺序，仅使用冻结文字。
+  if (snapshot.section_type_snapshot === 'PROFILE') return 'TUBE'
+  const text = [snapshot.section_title_snapshot, snapshot.category_snapshot, snapshot.material_snapshot,
+    snapshot.part_name_snapshot, snapshot.raw_material_snapshot].join(' ').toLowerCase()
+  const rules: [SupplierCategory, string[]][] = [
+    ['PACKAGING', ['包材', '包装', '纸箱', '纸盒', '塑料袋', '编织袋']],
+    ['PLASTIC_PART', ['塑料', '塑胶', '尼龙件', '注塑']],
+    ['HARDWARE', ['五金', '螺丝', '螺母', '铆钉', '垫片', '铁件']],
+    ['AUXILIARY', ['辅料', '织带', '松紧', '拉链', '魔术贴', '绳', '线']],
+    ['FABRIC', ['面料', '布', '牛津', '涤纶', '帆布', '网布']],
+  ]
+  return rules.find(([, keywords]) => keywords.some(keyword => text.includes(keyword)))?.[0] || null
+}
+
+function groupDraft(line: PurchaseGroupProgressLine): PurchaseLineDraft {
+  const snapshot = line.source_snapshot
+  return {
+    purchase_group_line_id: line.id,
+    material_catalog_id: snapshot.material_catalog_id, material_selection_snapshot: snapshot.material_selection_snapshot,
+    bom_id: snapshot.bom_id || undefined, bom_line_id: snapshot.bom_line_id || undefined,
+    bom_number: snapshot.bom_number_snapshot, bom_status: '', bom_status_display: '', line_number: line.line_number,
+    section_type: snapshot.section_type_snapshot, section_title: snapshot.section_title_snapshot, category: snapshot.category_snapshot,
+    product_line_id: snapshot.product_line_id_snapshot || '', product_line_number: 0,
+    product_number: snapshot.product_number_snapshot, product_name: snapshot.product_name_snapshot,
+    product_specification: snapshot.product_specification_snapshot, product_color: '',
+    material: snapshot.material_snapshot, part_name: snapshot.part_name_snapshot, specification: snapshot.specification_snapshot,
+    raw_material: snapshot.raw_material_snapshot, source_bom_line_id_snapshot: snapshot.source_bom_line_id_snapshot || '',
+    required_quantity: line.required_quantity, source_quantity_field: snapshot.source_quantity_field,
+    source_quantity_text: snapshot.source_quantity_text, source_unit_text: line.source_unit_text,
+    quantity_parse_status: snapshot.quantity_parse_status, suggested_supplier_category: groupSupplierCategory(snapshot), category_source: 'UNKNOWN',
+    material_attributes_snapshot: snapshot.material_attributes_snapshot,
+    raw_bar_length_m: snapshot.raw_bar_length_m, suggested_bar_count: snapshot.suggested_bar_count,
+    suggested_purchase_meters: snapshot.suggested_purchase_meters,
+    supplier_id: null, delivery_date: '',
+    actual_bar_count: snapshot.raw_bar_length_m ? remainingPurchaseQuantity(snapshot.suggested_bar_count, line.purchased_bar_count, true) ?? '' : '',
+    actual_purchase_quantity: snapshot.raw_bar_length_m ? '' : remainingPurchaseQuantity(line.required_quantity, line.purchased_quantity) ?? '',
+    unit_price: '',
+  }
+}
+
+async function loadGroup(preserveInput = false): Promise<void> {
+  const current = ++sourceRequestId
+  sourceLoading.value = true
+  try {
+    const result = await fetchVersionedPurchaseGroup(String(route.params.groupId))
+    if (current !== sourceRequestId) return
+    group.value = result.data
+    groupEtag.value = result.etag
+    // 首次读取失败时没有可保留的草稿；重试成功必须初始化材料。
+    if (!preserveInput || !lines.value.length) {
+      lines.value = result.data.progress.lines.map(groupDraft)
+      batchRequestId.value = ''
+      batchContentSignature = ''
+      batchType.value = 'NORMAL'
+    }
+    batchConflict.value = ''
+    sourceError.value = result.data.progress.status === 'UNKNOWN' ? '总单来源待核对，暂不能创建批次。' : ''
+  } catch (error) {
+    if (current === sourceRequestId) batchConflict.value = apiErrorMessage(error, '采购总单读取失败。')
+  } finally { if (current === sourceRequestId) sourceLoading.value = false }
+}
+
+async function openExistingGroup(): Promise<void> {
+  const blocker = existingSourceBlocker.value
+  if (!blocker) return
+  try {
+    const id = blocker.existing_purchase_group_id || (blocker.existing_purchase_order_id ? (await fetchVersionedPurchaseOrder(blocker.existing_purchase_order_id)).data.purchase_group_id : null)
+    if (id) await router.push({ name: 'purchase-group-detail', params: { id } })
+    else ElMessage.warning('该来源没有可读取的总单归属，请联系管理员核对。')
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '总单归属读取失败。')) }
+}
+
+watch(() => route.fullPath, () => {
+  sourceRequestId++
+  resetSource()
+  group.value = null
+  groupEtag.value = ''
+  void initializePage()
+})
 
 function toggleDetailFullscreen(): void {
   detailFullscreen.value = !detailFullscreen.value
@@ -701,21 +882,29 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
       <header class="page-heading">
         <div>
           
-          <h1>{{ isDetailStep ? '填写采购明细' : '新建采购订单' }}</h1>
-          <p>{{ isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
+          <h1>{{ isBatchMode ? '新增采购批次' : isDetailStep ? '填写采购明细' : '新建采购订单' }}</h1>
+          <p>{{ isBatchMode ? `${group?.group_number || '采购总单'} · 默认带入剩余采购量，可修改；空白或 0 不计入，可超过建议量` : isDetailStep ? '填写供应商、采购交期、数量和单价' : '先选择订单，再选择本次采购的产品 BOM' }}</p>
         </div>
         <div class="page-action-panel">
           <div class="page-actions">
-            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
-            <ElButton v-if="!isDetailStep" type="primary" :disabled="!canContinueToDetails || sourceLoading" data-testid="purchase-source-next" @click="goToDetails">下一步：填写明细<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
+            <ElButton :disabled="saving" @click="back"><img class="purchase-icon" :src="backIcon" alt="" />{{ isBatchMode ? '返回总单' : isDetailStep ? '返回选择' : '返回列表' }}</ElButton>
+            <ElButton v-if="!isDetailStep" type="primary" :loading="saving" :disabled="!canContinueToDetails || sourceLoading || saving" data-testid="purchase-source-next" @click="goToDetails">下一步：填写明细<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
             <ElButton v-if="isDetailStep" type="primary" plain :loading="saving" :disabled="saving" @click="saveDraft">保存草稿</ElButton>
           </div>
         </div>
       </header>
 
       <ElAlert v-if="loadError" type="error" :title="loadError" :closable="false" show-icon>
-        <ElButton link @click="loadOptions">重新加载</ElButton>
+        <ElButton link @click="initializePage">重新加载</ElButton>
       </ElAlert>
+      <ElAlert v-if="isBatchMode && (batchConflict || sourceError)" type="warning" :title="batchConflict || sourceError" :closable="false" show-icon>
+        <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取总单版本（保留输入）</ElButton>
+        <ElButton link @click="back">查看总单已有批次</ElButton>
+      </ElAlert>
+      <div v-if="isBatchMode" class="batch-type-field">
+        <span>批次类型</span><ElRadioGroup v-model="batchType" :disabled="saving" aria-label="批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
+        <span>本批采购 {{ selectedLines.length }} / {{ lines.length }} 项材料</span>
+      </div>
 
       <section v-if="!isDetailStep" v-loading="optionsLoading || sourceLoading" class="task-card">
         <header>
@@ -747,7 +936,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
               :key="task.id"
               :label="`${task.source_number} · ${task.source_type === 'SAMPLE' ? '打样单' : '生产订单'} · ${task.customer_name}`"
               :value="task.id"
-              :disabled="!task.can_create"
+              :disabled="!task.can_create && !task.blockers?.some(blocker => ['PURCHASE_GROUP_EXISTS', 'PURCHASE_ORDER_EXISTS'].includes(blocker.code))"
             >
               <div class="task-select-option" :data-task-id="task.id">
                 <strong>{{ task.task_number }}</strong>
@@ -794,6 +983,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
               {{ sourceError || (selectedBom ? `当前选择：第 ${selectedBom.product_line_number} 行 · ${selectedBom.product_color || selectedBom.product_name}` : '请选择本次采购的产品 BOM') }}
               <template v-if="selectedBom && !source?.can_create && !sourceError"> · {{ source?.blockers?.[0]?.message || '当前仅可预览，不能采购' }}</template>
             </p>
+            <ElButton v-if="existingSourceBlocker" link type="primary" @click="openExistingGroup">进入已有采购总单</ElButton>
           </section>
           <div v-else class="sample-source-summary">
             <strong>{{ source?.sample_request?.summary || '打样采购需求' }}</strong>
@@ -818,7 +1008,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           <div class="detail-header-actions">
             <label class="bulk-field bulk-field--category" data-testid="purchase-bulk-supplier-category">
               <span>分类</span>
-              <ElSelect v-model="bulkSupplierCategory" filterable clearable :value-on-clear="null" aria-label="统一供应商分类" :disabled="!source?.can_create || sourceLoading || !lines.length" placeholder="请选择分类" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
+              <ElSelect v-model="bulkSupplierCategory" filterable clearable :value-on-clear="null" aria-label="统一供应商分类" :disabled="!canWriteLines || sourceLoading || !lines.length" placeholder="请选择分类" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
                 <ElOption label="全部分类" value="__all__" />
                 <ElOption v-for="category in supplierCategories" :key="category" :label="category" :value="category" />
               </ElSelect>
@@ -830,7 +1020,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
                 filterable
                 clearable
                 aria-label="统一供应商"
-                :disabled="!source?.can_create || sourceLoading || !bulkSupplierLines.length"
+                :disabled="!canWriteLines || sourceLoading || !bulkSupplierLines.length"
                 :placeholder="!bulkSupplierCategory ? '请先选择分类' : bulkSupplierCategory === '__all__' ? '选择后同步全部' : '选择后同步本分类'"
                 :no-data-text="bulkSupplierEmptyText"
                 popper-class="purchase-detail-popper"
@@ -848,7 +1038,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
                 value-format="YYYY-MM-DD"
                 format="YYYY-MM-DD"
                 :disabled-date="disablePastDeliveryDate"
-                :disabled="!source?.can_create || !lines.length"
+                :disabled="!canWriteLines || !lines.length"
                 placeholder="选择后同步全部"
                 popper-class="purchase-detail-popper"
                 @change="applyBulkDeliveryDate"
@@ -866,7 +1056,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           <ElTableColumn v-if="isSampleSource" label="材质" width="118" show-overflow-tooltip>
             <template #default="{ row }">{{ row.material || row.raw_material || '—' }}</template>
           </ElTableColumn>
-          <ElTableColumn v-if="isSampleSource" label="规格" prop="specification" width="220" show-overflow-tooltip />
+          <ElTableColumn v-if="isSampleSource" label="规格" width="220">
+            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineKey === purchaseLineKey(row)" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ row.specification || '—' }}</span></ElTooltip></template>
+          </ElTableColumn>
           <ElTableColumn v-if="isSampleSource" label="颜色" width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.product_color || '—' }}</template>
           </ElTableColumn>
@@ -879,13 +1071,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
           <ElTableColumn v-if="isSampleSource" label="仓库可供" width="100">
             <template #default="{ row }">{{ formatSuggestedQuantity(row.sample_supply_quantity) }} {{ isPipePurchaseLine(row) ? '米' : row.source_unit_text }}</template>
           </ElTableColumn>
-          <ElTableColumn :label="isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
-            <template #default="{ row }"><div class="quantity-cell"><template v-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ compactDecimal(row.suggested_purchase_meters) }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
+          <ElTableColumn :label="isBatchMode ? '剩余采购量' : isSampleSource ? '待采购量' : '建议采购量'" :width="isSampleSource ? 110 : 180" align="right" header-align="left">
+            <template #default="{ row }"><div class="quantity-cell"><template v-if="isBatchMode"><strong>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.primary ?? '待核对' }}</strong><small>{{ batchRemainingQuantities.get(row.purchase_group_line_id)?.detail }}</small></template><template v-else-if="isPipePurchaseLine(row)"><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }} 米</strong></template><template v-else-if="row.raw_bar_length_m"><strong>{{ row.suggested_bar_count }} 根</strong><small>{{ compactDecimal(row.suggested_purchase_meters) }} 米</small></template><template v-else><strong>{{ formatSuggestedQuantity(row.required_quantity || row.source_quantity_text) }}</strong><small>{{ row.source_unit_text || '单位未识别' }}</small></template></div></template>
           </ElTableColumn>
           <ElTableColumn label="供应商" :width="isSampleSource ? 210 : 271">
             <template #default="{ row, $index }">
               <div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="0" data-testid="purchase-line-supplier" @keydown.capture="handleGridNavigation($event, $index, 0)">
-                <ElSelect v-model="row.supplier_id" filterable clearable :disabled="!source?.can_create" :placeholder="source?.can_create ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
+                <ElSelect v-model="row.supplier_id" filterable clearable :disabled="!canWriteLines" :placeholder="canWriteLines ? '请选择供应商' : '当前仅预览'" popper-class="purchase-detail-popper" @change="refreshBulkSupplier">
                   <template #label="{ value, label }">{{ options.suppliers.find(supplier => supplier.id === value)?.supplier_name || label }}</template>
                 <ElOption v-for="supplier in options.suppliers" :key="supplier.id" :label="supplier.supplier_name" :value="supplier.id" />
                 </ElSelect>
@@ -893,20 +1085,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             </template>
           </ElTableColumn>
           <ElTableColumn label="采购交期" :width="isSampleSource ? 170 : 195">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!source?.can_create" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
+            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="1" data-testid="purchase-line-delivery-date" @keydown.capture="handleGridNavigation($event, $index, 1)"><ElDatePicker v-model="row.delivery_date" type="date" :prefix-icon="CalendarIcon" value-format="YYYY-MM-DD" format="YYYY-MM-DD" :disabled-date="disablePastDeliveryDate" :disabled="!canWriteLines" placeholder="选择采购交期" popper-class="purchase-detail-popper" @change="refreshBulkDeliveryDate" /></div></template>
           </ElTableColumn>
           <ElTableColumn label="实际采购数量" :width="isSampleSource ? 148 : 163">
             <template #default="{ row, $index }">
               <div class="line-field line-field--quantity" :class="{ 'pipe-order-quantity': !isPipePurchaseLine(row) && row.raw_bar_length_m }" data-grid-field :data-grid-row="$index" data-grid-column="2" data-testid="purchase-line-quantity" @keydown.capture="handleGridNavigation($event, $index, 2)">
-                <ElPopover v-if="isPipePurchaseLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!source?.can_create" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
-                  <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!source?.can_create">{{ pipeQuantitySummary(row) }}</button></template>
+                <ElPopover v-if="isPipePurchaseLine(row)" trigger="click" placement="top" :width="340" :show-arrow="false" :teleported="true" :disabled="!canWriteLines" @after-enter="focusPipeQuantity(purchaseLineKey(row))">
+                  <template #reference><button type="button" class="pipe-quantity-trigger" data-pipe-quantity-trigger :aria-label="`第 ${$index + 1} 行管材采购数量`" :disabled="!canWriteLines">{{ pipeQuantitySummary(row) }}</button></template>
                   <div class="pipe-quantity-editor erp-table-editor" :data-pipe-editor="purchaseLineKey(row)">
-                    <label><span>采购根数</span><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="填写根数"><template #append>根</template></ElInput></label>
-                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!source?.can_create" placeholder="每根米数"><template #append>米/根</template></ElInput></label>
+                    <label><span>采购根数</span><ElInput v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="填写根数"><template #append>根</template></ElInput></label>
+                    <label><span>每根长度</span><ElInput v-model="row.raw_bar_length_m" aria-label="采购每根长度（米）" inputmode="decimal" maxlength="14" :disabled="!canWriteLines" placeholder="每根米数"><template #append>米/根</template></ElInput></label>
                   </div>
                 </ElPopover>
-                <ElInput v-else-if="row.raw_bar_length_m" v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!source?.can_create" placeholder="整根数"><template #append>根</template></ElInput>
-                <ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!source?.can_create" :placeholder="defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
+                <ElInput v-else-if="row.raw_bar_length_m" v-model="row.actual_bar_count" aria-label="实际采购根数" inputmode="numeric" maxlength="14" :disabled="!canWriteLines" placeholder="整根数"><template #append>根</template></ElInput>
+                <ElInput v-else v-model="row.actual_purchase_quantity" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" :placeholder="isBatchMode ? '本批采购数量' : defaultPurchaseQuantity(row) || '请输入'"><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
               </div>
             </template>
           </ElTableColumn>
@@ -914,7 +1106,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
             <template #default="{ row }"><ElTooltip :content="pipeMetersLabel(row)" placement="top" :show-after="200"><span v-if="row.raw_bar_length_m" class="pipe-meters">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></ElTooltip></template>
           </ElTableColumn>
           <ElTableColumn label="采购单价（管材元/米）" width="164">
-            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!source?.can_create" placeholder="请输入" /></div></template>
+            <template #default="{ row, $index }"><div class="line-field" data-grid-field :data-grid-row="$index" data-grid-column="3" data-testid="purchase-line-unit-price" @keydown.capture="handleGridNavigation($event, $index, 3)"><ElInput v-model="row.unit_price" inputmode="decimal" maxlength="24" :disabled="!canWriteLines" placeholder="请输入" /></div></template>
           </ElTableColumn>
           <ElTableColumn label="采购金额（元）" min-width="173" align="left">
             <template #default="{ row }"><div class="amount-preview">{{ lineAmount(row) }}</div></template>
@@ -932,9 +1124,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
       </section>
 
       <section v-if="isDetailStep" class="summary-card">
-        <div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ lines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div>
+        <div class="summary-counts"><span>{{ isPreviewMode ? '采购需求预览' : '采购明细' }} <strong>{{ selectedLines.length }}</strong> 项</span><span>·</span><span>已选供应商 <strong>{{ selectedSupplierCount }}</strong> 家</span></div>
         <div class="summary-actions">
-          <label class="mail-field"><span>是否邮寄</span><ElRadioGroup v-model="form.isMailed" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></label>
+          <label class="mail-field"><span>是否邮寄</span><ElRadioGroup v-model="form.isMailed" :disabled="isBatchMode && saving" aria-label="是否邮寄"><ElRadio :value="false">否</ElRadio><ElRadio :value="true">是</ElRadio></ElRadioGroup></label>
           <div class="summary-total"><span>采购总金额</span><strong>{{ totalAmount === '待计算' ? totalAmount : `¥ ${totalAmount}` }}</strong></div>
           <ElButton type="primary" :loading="saving" :disabled="saving" data-testid="purchase-next" @click="confirmPurchase">下一步：确认采购<img class="purchase-icon" :src="rightIcon" alt="" /></ElButton>
         </div>
@@ -959,6 +1151,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
   --el-border-radius-base: 5px;
 }
 .purchase-icon { width: 16px; height: 16px; flex: none; }
+.batch-type-field { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
 .purchase-form-page :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 10px; }
 .purchase-form-page :deep(.el-button) { border-radius: 5px; }
 .page-heading { flex: none; min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }

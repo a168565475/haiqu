@@ -142,6 +142,11 @@ class ProductionTaskManagementTests(APITestCase):
         self.assertEqual(task.products.get().quantity, 10)
 
     def test_new_header_fields_edit_during_production_and_tax_merge(self):
+        from django.utils import timezone
+        from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
+        production, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_PRODUCTION', defaults={'unit_name': '生产部'})
+        EmployeeOrganizationAssignment.objects.create(employee=self.follower, organization_unit=production,
+                                                       effective_from=timezone.now())
         task, url = self.task()
         for state in (ProductionTaskStatus.IN_PRODUCTION, ProductionTaskStatus.PAUSED):
             task.status = state

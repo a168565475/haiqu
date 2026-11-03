@@ -23,7 +23,7 @@ from apps.inventory.models import (
     WarehouseZone,
 )
 from apps.organizations.models import Employee
-from apps.procurement.models import PurchaseOrder, PurchaseOrderStatus
+from apps.procurement.models import PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus
 from apps.products.models import ProductInformation, RawMaterialInformation
 from apps.production_tasks.models import DeliveryMethod, OrderSource, ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.production_scheduling.services import create_schedule
@@ -153,7 +153,7 @@ class MaterialIssueApiTests(APITestCase):
             budget_quantity="500",
             raw_values={"source_raw_material_id": str(self.raw_material.pk)},
         )
-        PurchaseOrder.objects.create(
+        purchase_order = PurchaseOrder.objects.create(
             order_number="CGDD-MATERIAL-ISSUE-001",
             production_task=self.task,
             production_task_number_snapshot=self.task.task_number,
@@ -164,6 +164,24 @@ class MaterialIssueApiTests(APITestCase):
             created_by_employee=self.employee,
             completed_by_employee=self.employee,
             completed_at=timezone.now(),
+        )
+        PurchaseOrderLine.objects.create(
+            purchase_order=purchase_order,
+            line_number=1,
+            bom=self.bom,
+            bom_line=self.bom_line,
+            source_bom_line_id_snapshot=self.bom_line.pk,
+            product_line_id_snapshot=self.product_line.pk,
+            bom_number_snapshot=self.bom.bom_number,
+            product_number_snapshot=self.product.product_number,
+            product_name_snapshot=self.product.product_name,
+            section_type_snapshot=section.section_type,
+            section_title_snapshot=section.title,
+            part_name_snapshot=self.raw_material.material_name,
+            required_quantity=Decimal("500"),
+            actual_purchase_quantity=Decimal("500"),
+            source_unit_text=stock_unit.unit_name,
+            quantity_parse_status="READY",
         )
         self.warehouse = Warehouse.objects.create(
             warehouse_number="CKISSUE",
@@ -858,8 +876,9 @@ class MaterialIssueApiTests(APITestCase):
             first_issue_snapshot,
         )
 
-    def test_pending_review_quantity_is_visible_and_reserves_order_allowance(self):
+    def test_pending_review_quantity_is_visible_and_reserves_available_stock(self):
         first_created = self._create_issue(quantity="120")
+        duplicate = self._create_issue(quantity="481")
         first_submitted = self.client.post(
             f"/api/v1/material-issues/{first_created.data['data']['id']}/submit/",
             {},
@@ -873,10 +892,9 @@ class MaterialIssueApiTests(APITestCase):
         self.assertEqual(requirement["internal_issued_quantity"], "0.0000")
         self.assertEqual(requirement["pending_issue_quantity"], "120.0000")
         self.assertEqual(requirement["order_remaining"], "380.0000")
-        self.assertEqual(requirement["max_issue_quantity"], "380.0000")
+        self.assertEqual(requirement["max_issue_quantity"], "480.0000")
         self.assertEqual(MaterialIssue.objects.get(pk=draft.data["data"]["id"]).status, MaterialIssueStatus.DRAFT)
 
-        duplicate = self._create_issue(quantity="381")
         duplicate_submit = self.client.post(
             f"/api/v1/material-issues/{duplicate.data['data']['id']}/submit/",
             {},
@@ -897,10 +915,11 @@ class MaterialIssueApiTests(APITestCase):
         released = self._requirements()
         self.assertEqual(released["pending_issue_quantity"], "0")
         self.assertEqual(released["order_remaining"], "500.0000")
+        self.assertEqual(released["max_issue_quantity"], "600.0000")
 
     def concurrency_pending_review_reservation_prevents_duplicate_submit(self):
-        first_created = self._create_issue(quantity="300")
-        second_created = self._create_issue(quantity="300")
+        first_created = self._create_issue(quantity="301")
+        second_created = self._create_issue(quantity="301")
         barrier = threading.Barrier(2)
         results = []
 
@@ -1111,8 +1130,20 @@ class MaterialIssueApiTests(APITestCase):
         reasons = [item["reason"] for item in returned.data["data"]["audit_events"]]
         self.assertIn("请核对本次数量", reasons)
 
-    def test_submit_rejects_stock_shortage_without_writes(self):
-        created = self._create_issue(quantity="700.0000")
+    def test_create_and_submit_reject_stock_shortage_without_writes(self):
+        requirement = self._requirements()
+        too_large = self.client.post("/api/v1/material-issues/", {
+            **self._plan_source(), "client_request_id": str(uuid.uuid4()),
+            "production_task_id": str(self.task.pk), "product_line_id": str(self.product_line.pk),
+            "workshop_id": str(self.workshop.pk), "recipient_workshop_employee_id": str(self.recipient.pk),
+            "issue_at": timezone.now().isoformat(),
+            "lines": [{"requirement_id": requirement["requirement_id"], "requested_quantity": "700.0000"}],
+        }, format="json")
+        self.assertEqual(too_large.status_code, 400, too_large.data)
+        self.assertEqual(too_large.data["error"]["code"], "STOCK_INSUFFICIENT")
+        self.assertFalse(MaterialIssue.objects.exists())
+        created = self._create_issue(quantity="600.0000")
+        MaterialStockBalance.objects.filter(raw_material=self.raw_material).update(quantity=Decimal("599"))
         issue_id = created.data["data"]["id"]
         response = self.client.post(
             f"/api/v1/material-issues/{issue_id}/submit/",
@@ -1121,9 +1152,10 @@ class MaterialIssueApiTests(APITestCase):
             HTTP_IF_MATCH=created["ETag"],
         )
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertEqual(response.data["error"]["code"], "ORDER_ALLOWANCE_EXCEEDED")
+        self.assertEqual(response.data["error"]["code"], "STOCK_INSUFFICIENT")
         self.assertEqual(MaterialIssue.objects.get(pk=issue_id).status, MaterialIssueStatus.DRAFT)
-        self.assertEqual(MaterialStockBalance.objects.get(raw_material=self.raw_material).quantity, Decimal("600"))
+        self.assertEqual(MaterialStockBalance.objects.get(raw_material=self.raw_material).quantity, Decimal("599"))
+        self.assertFalse(MaterialStockMovement.objects.filter(source_type="MATERIAL_ISSUE").exists())
 
     def test_user_without_review_permission_cannot_confirm_issue(self):
         created = self._create_issue()

@@ -44,11 +44,11 @@ export async function fetchQuotationOrderContext(versionId: string): Promise<Quo
   return data.data
 }
 export async function createSalesOrder(payload: SalesOrderInput): Promise<VersionedSalesOrder> {
-  return versioned(await apiClient.post<DataResponse<SalesOrder>>(basePath, payload))
+  return versioned(await apiClient.post<DataResponse<SalesOrder>>(basePath, salesOrderInput(payload)))
 }
 export async function updateSalesOrder(id: string, payload: SalesOrderInput, etag: string): Promise<VersionedSalesOrder> {
   return versioned(await apiClient.patch<DataResponse<SalesOrder>>(
-    `${basePath}${encodeURIComponent(id)}/`, payload, { headers: { 'If-Match': etag } },
+    `${basePath}${encodeURIComponent(id)}/`, salesOrderInput(payload), { headers: { 'If-Match': etag } },
   ))
 }
 export async function confirmSalesOrder(id: string, etag: string): Promise<VersionedSalesOrder> {
@@ -62,8 +62,15 @@ export async function changeConfirmedSalesOrder(
   etag: string,
 ): Promise<VersionedSalesOrder> {
   return versioned(await apiClient.post<DataResponse<SalesOrder>>(
-    `${basePath}${encodeURIComponent(id)}/confirmed-change/`, payload, { headers: { 'If-Match': etag } },
+    `${basePath}${encodeURIComponent(id)}/confirmed-change/`, { ...payload, order: salesOrderInput(payload.order) }, { headers: { 'If-Match': etag } },
   ))
+}
+function salesOrderInput(payload: SalesOrderInput): SalesOrderInput {
+  return { ...payload, lines: payload.lines.map(({ product_selection_snapshot: _snapshot, product_selection_id: _pickerId, product_category_name: _categoryName, product_selection, ...line }) => ({
+    ...line,
+    ...(line.product_catalog_id || product_selection?.draft ? { product_id: null, product_category_id: null, product_color_id: null } : {}),
+    ...(product_selection ? { product_selection } : {}),
+  })) }
 }
 export async function addSalesOrderCollaborationEvent(
   id: string,

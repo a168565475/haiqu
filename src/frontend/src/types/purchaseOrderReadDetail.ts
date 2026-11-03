@@ -1,4 +1,4 @@
-import type { PurchaseOrderDetail } from './purchaseOrder'
+import type { PurchaseOrderDetail, PurchaseOrderStatus } from './purchaseOrder'
 import type { PurchaseReturn } from './purchaseReturn'
 
 export type PurchaseReadLine = PurchaseOrderDetail['lines'][number] & {
@@ -12,6 +12,8 @@ export type PurchaseReadLine = PurchaseOrderDetail['lines'][number] & {
 }
 
 export interface PurchaseReadInboundLine {
+  material_catalog_id?: string | null
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot | Record<string, never>
   measurement_kind?: string
   raw_bar_length_m?: string | null
   received_bar_count?: number | null
@@ -49,6 +51,7 @@ export interface PurchaseReadInbound {
 }
 
 export interface PurchaseOrderReadDetail extends Omit<PurchaseOrderDetail, 'lines'> {
+  display_status?: PurchaseOrderStatus
   lines: PurchaseReadLine[]
   completed_by_name: string
   inbounds: PurchaseReadInbound[]

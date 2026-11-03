@@ -1,4 +1,5 @@
 import type { OutsourcingOptions, OutsourcingOrder, OutsourcingOrderStatus } from './outsourcing'
+import type { TubePlanSummary } from './tubeOutsourcing'
 
 export type UnifiedOutsourcingSourceKind = 'RAW' | 'METAL' | 'REWORK' | 'UNSELECTED' | 'RAW_PIPE' | 'PUBLIC_SEMI' | 'TUBE_METAL' | 'PUBLIC_CUTTING' | 'SEWING'
 export type UnifiedOutsourcingSourceGroup = 'RAW' | 'TUBE_PUBLIC' | 'TUBE_METAL' | 'OLD_METAL' | 'REWORK' | 'UNSELECTED' | 'CUTTING_PUBLIC' | 'SEWING'
@@ -10,6 +11,8 @@ export interface OutsourcingQuantitySummary {
 }
 
 export interface UnifiedOutsourcingOrder extends Omit<OutsourcingOrder, 'status' | 'delivery_date' | 'planned_amount'> {
+  is_plan?: boolean
+  plan_summary?: TubePlanSummary
   warehouse_actions?: ('dispatch' | 'return' | 'raw')[]
   record_type: 'ORIGINAL' | 'REWORK' | 'TUBE'
   row_key: string

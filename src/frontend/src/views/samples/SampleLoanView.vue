@@ -9,7 +9,6 @@ import {
   deleteSampleLoan,
   fetchSampleLoanOptions,
   fetchSampleLoans,
-  fetchSampleLoanSummary,
 } from '@/api/samples'
 import SampleLoanCreateDialog from '@/components/samples/SampleLoanCreateDialog.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -17,7 +16,6 @@ import type {
   SampleLoanOptions,
   SampleLoanQuery,
   SampleLoanRow,
-  SampleLoanSummary,
 } from '@/types/sample'
 
 type OperatedPeriod = NonNullable<SampleLoanQuery['operated_period']>
@@ -25,23 +23,19 @@ type OperatedPeriod = NonNullable<SampleLoanQuery['operated_period']>
 const router = useRouter()
 const authStore = useAuthStore()
 const loading = ref(false)
-const summaryLoading = ref(false)
 const optionsLoading = ref(false)
 const loanDialogVisible = ref(false)
 const dialogMounted = ref(false)
 watch(loanDialogVisible, visible => { if (visible) dialogMounted.value = true })
 const deletingLoanIds = ref<Set<string>>(new Set())
 const errorMessage = ref('')
-const summaryError = ref('')
 const optionsError = ref('')
 let listRequest = 0
-let summaryRequest = 0
 let optionsRequest = 0
 const rows = ref<SampleLoanRow[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
-const summary = ref<SampleLoanSummary | null>(null)
 const options = ref<SampleLoanOptions>({ borrower_names: [], product_categories: [] })
 const filters = reactive<{
   keyword: string
@@ -56,12 +50,6 @@ const timeOptions: Array<{ value: OperatedPeriod; label: string }> = [
   { value: 'LAST_30_DAYS', label: '近30天' },
 ]
 
-const statCards = computed(() => [
-  { key: 'active', label: '借出中', value: summary.value?.active_documents, icon: '↗', tone: 'orange' },
-  { key: 'cumulative', label: '累计借出', value: summary.value?.cumulative_borrowed, icon: '→', tone: 'blue' },
-  { key: 'customer', label: '客户现场确认', value: summary.value?.customer_confirmation, icon: '✓', tone: 'green' },
-  { key: 'showroom', label: '展厅 / 拍摄', value: summary.value?.showroom_or_photo, icon: '◎', tone: 'purple' },
-])
 const canDeleteLoan = computed(() => (
   authStore.hasPermission('samples.delete_sampleinventoryloan')
 ))
@@ -120,23 +108,6 @@ async function loadRows() {
   }
 }
 
-async function loadSummary() {
-  const request = ++summaryRequest
-  summaryError.value = ''
-  summaryLoading.value = true
-  try {
-    const result = await fetchSampleLoanSummary()
-    if (request !== summaryRequest) return
-    summary.value = result
-  } catch (error) {
-    if (request !== summaryRequest) return
-    summary.value = null
-    summaryError.value = `借出统计加载失败：${getErrorMessage(error)}`
-  } finally {
-    if (request === summaryRequest) summaryLoading.value = false
-  }
-}
-
 async function loadOptions() {
   const request = ++optionsRequest
   optionsError.value = ''
@@ -165,7 +136,7 @@ function resetFilters() {
 }
 
 function refreshPage() {
-  void Promise.all([loadRows(), loadSummary(), loadOptions()])
+  void Promise.all([loadRows(), loadOptions()])
 }
 
 function openInventoryList() {
@@ -227,36 +198,16 @@ onMounted(() => {
     <section v-glass-spotlight class="erp-list-filter">
     <header class="page-heading erp-list-heading">
       <div class="title-line">
-        <h1 id="sample-loan-title">样品库</h1>
-        <span>查看样品借出单及库存占用明细</span>
+        <h1 id="sample-loan-title">样品借出</h1>
       </div>
 
     </header>
 
-    <nav class="inventory-tabs erp-list-tabs" aria-label="样品库分类">
-      <button type="button" class="inventory-tab" :disabled="!canViewInventory" @click="openInventoryList">样品库存</button>
-      <button type="button" class="inventory-tab" :disabled="!canViewOutbound" @click="openOutboundList">样品出库</button>
-      <button type="button" class="inventory-tab is-active" aria-current="page">样品借出</button>
-    </nav>
-
-    <div v-loading="summaryLoading" class="stats-grid erp-list-summary">
-      <article v-for="card in statCards" :key="card.key" class="stat-card erp-list-summary-item">
-        <div class="stat-copy">
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value ?? '—' }}</strong>
-        </div>
-        <span class="stat-icon erp-list-tag" :class="`erp-list-tag--${({ green: 'success', orange: 'warning', blue: 'info', red: 'danger', purple: 'brand' } as Record<string, string>)[card.tone] || 'info'}`" aria-hidden="true">
-          {{ card.icon }}
-        </span>
-      </article>
-    </div>
-
-    <div v-if="summaryError" class="load-error" role="alert">{{ summaryError }} <ElButton link @click="loadSummary">重试统计</ElButton></div>
     <div v-if="optionsError" class="load-error" role="alert">{{ optionsError }} <ElButton link @click="loadOptions">重试选项</ElButton></div>
 
     <div class="filter-card">
-      <ElForm class="filter-grid erp-list-filters" label-position="top" @submit.prevent="searchLoans">
-        <ElFormItem label="关键词">
+      <ElForm class="filter-grid erp-list-filters" @submit.prevent="searchLoans">
+        <ElFormItem>
           <ElInput
             v-model="filters.keyword"
             clearable
@@ -265,18 +216,18 @@ onMounted(() => {
             maxlength="100"
           />
         </ElFormItem>
-        <ElFormItem label="借用人">
-          <ElSelect v-model="filters.borrowerName" aria-label="借用人" clearable placeholder="全部" :loading="optionsLoading">
+        <ElFormItem>
+          <ElSelect v-model="filters.borrowerName" aria-label="借用人" clearable placeholder="借用人" :loading="optionsLoading">
             <ElOption v-for="item in options.borrower_names" :key="item" :label="item" :value="item" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="产品类别">
-          <ElSelect v-model="filters.categoryName" aria-label="产品类别" clearable placeholder="全部" :loading="optionsLoading">
+        <ElFormItem>
+          <ElSelect v-model="filters.categoryName" aria-label="产品类别" clearable placeholder="产品类别" :loading="optionsLoading">
             <ElOption v-for="item in options.product_categories" :key="item" :label="item" :value="item" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="操作时间">
-          <ElSelect v-model="filters.operatedPeriod" aria-label="操作时间" clearable placeholder="全部时间">
+        <ElFormItem>
+          <ElSelect v-model="filters.operatedPeriod" aria-label="操作时间" clearable placeholder="操作时间">
             <ElOption v-for="item in timeOptions" :key="item.value" :label="item.label" :value="item.value" />
           </ElSelect>
         </ElFormItem>

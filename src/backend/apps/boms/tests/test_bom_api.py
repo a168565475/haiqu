@@ -1880,6 +1880,10 @@ class BomApiTests(APITestCase):
             {
                 "part_name": "舍入边界管",
                 "source_inventory_material_id": str(pipe_source.pk),
+                "material": "铁-硬管",
+                "tube_shape": "圆管",
+                "tube_diameter": "25",
+                "tube_thickness": "1.2",
                 "length_value": "2005",
                 "unit_consumption": "1",
                 "tube_cut_piece_count": "5",
@@ -1908,25 +1912,26 @@ class BomApiTests(APITestCase):
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["part_name"], "新增连接管")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][0]["specification"], "Φ25 × 1.2 mm")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][0]["tube_coating_color"], "黑色磨砂")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["purchase_unit_weight_kg"], "0.56")
+        # 单支指标由圆管公式重算，忽略客户端手填值和每件用量 2。
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["purchase_unit_weight_kg"], "0.4092")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["unit"], "根")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["total_consumption"], "20")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["tube_cut_piece_count"], "10")
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["tube_cut_length_m"], "5.86")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["branch_count"], "3")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["long_material_unit_weight_kg"], "2.719")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["tube_unit_weight_kg"], "0.5392")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["long_material_total_weight_kg"], "8.1571")
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["branch_count"], "2")
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["long_material_unit_weight_kg"], "4.1274")
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["tube_unit_weight_kg"], "0.4092")
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][1]["long_material_total_weight_kg"], "8.2548")
         self.assertEqual(
             updated.data["data"]["sections"][0]["lines"][1]["raw_values"]["coating_unit_area_sqm"],
-            "0.18",
+            "0.0456",
         )
         self.assertEqual(
             updated.data["data"]["sections"][0]["lines"][1]["raw_values"]["tube_cut_piece_count"],
             "10",
         )
         self.assertEqual(updated.data["data"]["sections"][0]["lines"][2]["tube_cut_length_m"], "10.08")
-        self.assertEqual(updated.data["data"]["sections"][0]["lines"][2]["branch_count"], "3")
+        self.assertEqual(updated.data["data"]["sections"][0]["lines"][2]["branch_count"], "2")
         hardware_line = updated.data["data"]["sections"][1]["lines"][0]
         self.assertEqual(hardware_line["category"], "五金")
         self.assertEqual(hardware_line["part_name"], hardware_source.material_name)
@@ -2318,7 +2323,9 @@ class BomApiTests(APITestCase):
         self.assertEqual(historical_cutting["part_name"], saved_cutting["part_name"])
         self.assertEqual(historical_cutting["cutting_material_number"], saved_cutting["cutting_material_number"])
 
-    def test_packaging_requires_positive_integer_box_quantity_and_positive_consumption(self):
+    def test_packaging_requires_positive_integer_box_quantity_and_calculates_without_consumption(self):
+        self.product_line.quantity = 25
+        self.product_line.save(update_fields=["quantity"])
         created = self.client.post(
             "/api/v1/boms/",
             {
@@ -2354,14 +2361,18 @@ class BomApiTests(APITestCase):
         self.assertIn("正整数", str(invalid_box_quantity.data))
 
         packaging_section["lines"][0]["units_per_box"] = "10"
-        invalid_consumption = self.client.patch(
+        packaging_section["lines"][0].pop("unit_consumption")
+        saved = self.client.patch(
             f"/api/v1/boms/{created.data['data']['id']}/",
             {"sections": sections},
             format="json",
             HTTP_IF_MATCH=created.headers["ETag"],
         )
-        self.assertEqual(invalid_consumption.status_code, 400, invalid_consumption.data)
-        self.assertIn("单个用量必须大于 0", str(invalid_consumption.data))
+        self.assertEqual(saved.status_code, 200, saved.data)
+        saved_line = BomLine.objects.get(section__bom_id=created.data["data"]["id"], section__title="包材类")
+        self.assertEqual(saved_line.unit_consumption, "")
+        self.assertEqual(saved_line.total_consumption, "3")
+        self.assertEqual(saved_line.total_purchase_quantity, "3")
 
     def test_archive_removes_bom_from_list_and_writes_audit(self):
         created = self.client.post(
@@ -2383,34 +2394,3 @@ class BomApiTests(APITestCase):
         self.assertTrue(Bom.objects.get(pk=bom_id).archived_at)
         self.assertFalse(any(item["id"] == bom_id for item in self.client.get("/api/v1/boms/").data["data"]))
         self.assertTrue(AuditLog.objects.filter(object_type="BOM", object_id=bom_id, action="ARCHIVE").exists())
-
-    def test_create_auxiliary_reference_is_atomic_and_immediately_selectable(self):
-        self.user.user_permissions.add(
-            *Permission.objects.filter(
-                content_type__app_label="reference_data",
-                codename__in=[
-                    "add_accessoryproductname",
-                    "add_accessoryspecification",
-                    "add_accessorycolor",
-                    "add_accessorymaterial",
-                ],
-            )
-        )
-        response = self.client.post(
-            "/api/v1/boms/create-auxiliary-reference/",
-            {
-                "product_name": "QA即时新增辅料",
-                "unit_name": "PCS",
-                "specification": "QA规格",
-                "color": "QA颜色",
-                "material": "QA材质",
-            },
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(response.data["data"]["specifications"][0]["specification_value"], "QA规格")
-        self.assertEqual(response.data["data"]["colors"][0]["color_name"], "QA颜色")
-        self.assertTrue(AccessoryMaterial.objects.filter(material_name="QA材质").exists())
-        options = self.client.get("/api/v1/boms/editor-reference-options/")
-        self.assertTrue(any(item["id"] == response.data["data"]["id"] for item in options.data["data"]["auxiliary_products"]))

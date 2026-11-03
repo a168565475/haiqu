@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.mocked(api.fetchSamplePurchaseOrderSource).mockResolvedValue({
     can_create: true, bom_options: [], blockers: [], preview_lines: [], selected_bom_id: null,
     lines: [{ sample_line_key: 'pipe-1', section_type: 'PROFILE', category: '管材', part_name: '铁管', material: '铁', raw_material: '铁', specification: '20×28', product_color: '白色',
+      material_selection_snapshot: { schema_version: 1, name: '铁管', template_key: 'TUBE', unit_name: '根', attributes: { section_size: '20×28', thickness: '2.0', material: '铁', color: '白色' } },
       sample_demand_quantity: '20', sample_supply_quantity: '8', required_quantity: '12', source_quantity_text: '12', source_unit_text: '米', quantity_parse_status: 'READY' }],
   } as never)
 })
@@ -36,12 +37,20 @@ async function render() {
 }
 
 describe('样品管材采购浮层', () => {
-  it('材质规格颜色独立显示，待采购量保留缺口而非原始总需求', async () => {
+  it('保留材质规格颜色列，鼠标经过显示含厚度的保存属性，待采购量保留缺口', async () => {
     const page = await render()
     const headers = page.findAll('.el-table__header th').map(cell => cell.text())
     expect(headers).toEqual(expect.arrayContaining(['材质', '规格', '颜色', '待采购量']))
+    expect(headers).not.toContain('厚度')
     expect(headers).not.toContain('材质规格')
     const cells = page.findAll('.el-table__body tbody tr')[0]!.findAll('td')
+    for (const [label, value] of [['规格', '20×28'], ['材质', '铁'], ['颜色', '白色']]) {
+      expect(cells[headers.indexOf(label!)]!.text()).toBe(value)
+    }
+    await cells[headers.indexOf('规格')]!.trigger('mouseenter')
+    await flushPromises()
+    const attributes = document.querySelector('.material-attribute-tooltip')?.textContent || ''
+    for (const value of ['规格20×28', '厚度2.0', '材质铁', '颜色白色']) expect(attributes).toContain(value)
     expect(cells[headers.indexOf('待采购量')]!.text()).toBe('12 米')
     expect(page.get('[data-pipe-quantity-trigger]').text()).toBe('根/米')
   })

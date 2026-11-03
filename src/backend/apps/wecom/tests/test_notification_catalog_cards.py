@@ -1,4 +1,5 @@
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
+from apps.wecom.notification_plan_catalog import PLAN_EVENTS
 
 from apps.wecom.notification_catalog import (
     EVENTS, MULTILINE_DEFAULT_BODIES, VARIABLE, VARIABLE_DEFINITIONS,
@@ -7,8 +8,14 @@ from apps.wecom.notification_catalog import (
 
 
 class NotificationCardCatalogTests(SimpleTestCase):
+    def test_confirmed_event_visibility_follows_rollout_gate(self):
+        with override_settings(CONFIRMED_ROLE_POLICY_ENABLED=False):
+            self.assertEqual(len(all_events()), 35)
+        with override_settings(CONFIRMED_ROLE_POLICY_ENABLED=True):
+            self.assertEqual(len(all_events()), 35 + len(PLAN_EVENTS))
+
     def test_all_default_templates_preserve_their_existing_variables(self):
-        self.assertEqual(len(EVENTS), 35)
+        self.assertEqual(len(EVENTS), 35 + len(PLAN_EVENTS))
         self.assertEqual(set(MULTILINE_DEFAULT_BODIES), set(EVENTS))
         for event in all_events():
             with self.subTest(event=event["event_code"]):

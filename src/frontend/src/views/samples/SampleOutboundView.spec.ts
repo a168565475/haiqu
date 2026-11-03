@@ -166,34 +166,31 @@ describe('SampleOutboundView', () => {
     expect(apiMocks.list).toHaveBeenLastCalledWith({ page: 1, page_size: 50, ordering: '-outbound__operated_at' })
   })
 
-  it('加载失败可分别重试，未知统计不显示为零', async () => {
-    apiMocks.summary.mockRejectedValueOnce(new Error('断网'))
+  it('列表和选项加载失败可重试，不再加载筛选区统计', async () => {
     apiMocks.options.mockRejectedValueOnce(new Error('断网'))
     apiMocks.list.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
-    expect(wrapper.findAll('.stat-copy strong').map(item => item.text())).toEqual(['—', '—', '—', '—'])
-    expect(wrapper.findAll('.load-error')).toHaveLength(2)
+    expect(wrapper.find('.erp-list-summary').exists()).toBe(false)
+    expect(apiMocks.summary).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.load-error')).toHaveLength(1)
     expect(wrapper.find('.list-error').exists()).toBe(true)
     await wrapper.findAll('button').find(item => item.text() === '重新加载')!.trigger('click'); await flushPromises()
     expect(wrapper.findAll('.load-error')).toHaveLength(0)
     expect(wrapper.find('.list-error').exists()).toBe(false)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('3')
   })
 
-  it('出库后的刷新不受未完成的旧列表、统计和选项请求覆盖', async () => {
-    let oldList!: (value: unknown) => void, oldSummary!: (value: unknown) => void, oldOptions!: (value: unknown) => void
+  it('出库后的刷新不受未完成的旧列表和选项请求覆盖', async () => {
+    let oldList!: (value: unknown) => void, oldOptions!: (value: unknown) => void
     apiMocks.list.mockImplementationOnce(() => new Promise(resolve => { oldList = resolve }))
-    apiMocks.summary.mockImplementationOnce(() => new Promise(resolve => { oldSummary = resolve }))
     apiMocks.options.mockImplementationOnce(() => new Promise(resolve => { oldOptions = resolve }))
     const wrapper = await render(['samples.add_sampleinventoryoutbound'])
     expect(wrapper.findComponent({ name: 'SampleOutboundCreateDialog' }).exists()).toBe(false)
     await wrapper.findAll('.heading-actions button').find(button => button.text() === '样品出库')!.trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'SampleOutboundCreateDialog' }).vm.$emit('created'); await flushPromises()
-    oldList({ data: [], meta: { total: 0 } }); oldSummary({ outbound_today: 0 }); oldOptions({ outbound_methods: [], product_categories: [] })
+    oldList({ data: [], meta: { total: 0 } }); oldOptions({ outbound_methods: [], product_categories: [] })
     await flushPromises()
     expect(wrapper.text()).toContain(fixture.row.product_name)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('3')
     expect(wrapper.findAllComponents({ name: 'ElOption' }).some(item => item.props('value') === '户外桌椅')).toBe(true)
   })
 

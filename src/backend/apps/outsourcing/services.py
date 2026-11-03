@@ -654,7 +654,7 @@ def confirm_return(
         action="RETURN_CONFIRMED",
         actor_employee=actor_employee,
         before_data=before,
-        after_data=order_audit_snapshot(order),
+        after_data={**order_audit_snapshot(order), "notification_return_id": str(return_record.pk)},
         context_type="PRODUCTION_SCHEDULE",
         context_id=order.schedule_id,
         request=request,

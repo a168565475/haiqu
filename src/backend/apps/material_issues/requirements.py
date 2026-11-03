@@ -131,6 +131,8 @@ def build_requirement_specs(production_task_id, *, lock_material_identities=Fals
             if not _is_purchasable_bom_section(section):
                 continue
             for line in section.lines.all():
+                if line.material_catalog_id:
+                    continue  # 新目录需求按保存单位和材料身份独立建账，不解析旧组合档。
                 if line.cutting_length_mm is not None:
                     blockers.append(_blocker("PIPE_SERVICE_REQUIRED", "新口径管材须使用按部位额度及批次出库入口。",
                                              product_line=product_line, bom=bom, bom_line=line, section_code="PROFILE"))
@@ -341,7 +343,7 @@ def build_requirement_specs(production_task_id, *, lock_material_identities=Fals
 
 
 @transaction.atomic
-def sync_order_requirements(production_task_id):
+def sync_order_requirements(production_task_id, *, allow_excess_issue=False):
     ProductionTask.objects.select_for_update().get(pk=production_task_id)
     task, specs, blockers, revision_hash = build_requirement_specs(
         production_task_id,
@@ -353,6 +355,17 @@ def sync_order_requirements(production_task_id):
         .filter(production_task=task, measurement_kind="OTHER")
         .order_by("pk")
     }
+    plan_issued = {}
+    overage_ids = [spec['id'] for spec in specs if spec['id'] in locked_existing and
+        spec['required_quantity'] < (locked_existing[spec['id']].internal_issued_quantity
+                                    + locked_existing[spec['id']].outsourcing_issued_quantity)]
+    if overage_ids:
+        from apps.outsourcing.models import TubeOutsourcingMaterial
+        from django.db.models import Sum
+        plan_issued = {row['requirement_id']: row['quantity'] for row in TubeOutsourcingMaterial.objects.filter(
+            requirement_id__in=overage_ids, order__is_plan=False, order__plan__is_plan=True,
+            order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH'
+        ).values('requirement_id').annotate(quantity=Sum('quantity'))}
     active_ids = []
     requirements = []
     for spec in specs:
@@ -368,8 +381,11 @@ def sync_order_requirements(production_task_id):
                 required_quantity=spec["required_quantity"],
                 source_revision_hash=revision_hash,
             )
-        already_issued = requirement.internal_issued_quantity + requirement.outsourcing_issued_quantity
-        if spec["required_quantity"] < already_issued:
+        # 新总单允许补料超BOM；仅其有实际发出凭证的数量豁免旧额度下限，实际已发账不改写。
+        protected_issued = requirement.internal_issued_quantity + max(
+            requirement.outsourcing_issued_quantity - plan_issued.get(requirement.pk, 0), 0)
+        if (not allow_excess_issue and spec["required_quantity"] < protected_issued
+                and spec["required_quantity"] < requirement.required_quantity):
             raise ValidationError(
                 {
                     "code": "REQUIREMENT_BELOW_ISSUED",

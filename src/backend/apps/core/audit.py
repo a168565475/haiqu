@@ -1,6 +1,7 @@
 import json
 import uuid
 
+from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 
@@ -32,7 +33,7 @@ def write_audit_log(
     context_id=None,
     request=None,
 ):
-    return AuditLog.objects.create(
+    log = AuditLog.objects.create(
         actor_employee=actor_employee,
         actor_employee_code_snapshot=getattr(actor_employee, "employee_code", ""),
         actor_name_snapshot=getattr(actor_employee, "display_name", ""),
@@ -48,3 +49,7 @@ def write_audit_log(
         user_agent=(request.META.get("HTTP_USER_AGENT", "")[:500] if request else ""),
         occurred_at=timezone.now(),
     )
+    if getattr(settings, 'CONFIRMED_ROLE_POLICY_ENABLED', False):
+        from apps.wecom.notification_audit_events import register_audit_notification
+        register_audit_notification(log)
+    return log

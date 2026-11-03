@@ -109,6 +109,8 @@ class ExpenseApiTests(DashboardFixture, APITestCase):
         self.assertEqual(self.client.patch(f'{self.url}invalid-uuid/', {'amount': '26.00'}, format='json', HTTP_IF_MATCH=created['etag']).status_code, 400)
         updated = self.client.patch(url, {'amount': '26.00'}, format='json', HTTP_IF_MATCH=created['etag'])
         self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(self.client.delete(url, HTTP_IF_MATCH=updated.data['data']['etag']).status_code, 403)
+        self.grant('access_control.void_productiontaskexpense')
         self.assertEqual(self.client.delete(url, HTTP_IF_MATCH=updated.data['data']['etag']).status_code, 204)
         self.assertEqual(self.client.get(self.url).data['data'], [])
         self.assertEqual(self.client.post(self.url, self.payload, format='json').status_code, 409)

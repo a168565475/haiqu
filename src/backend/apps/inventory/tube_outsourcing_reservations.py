@@ -18,7 +18,7 @@ def tube_raw_reserved_quantities(product_components, *, exclude_order_id=None):
     for product, component in targets:
         scope |= Q(order__product_line_id=product, component_identity=component)
     rows = TubeOutsourcingLine.objects.filter(
-        scope, order__status="PENDING_DISPATCH", order__source_kind="RAW_PIPE",
+        scope, order__status="PENDING_DISPATCH", order__source_kind="RAW_PIPE", order__is_plan=False,
     )
     if exclude_order_id:
         rows = rows.exclude(order_id=exclude_order_id)
@@ -40,7 +40,7 @@ def tube_public_reserved_quantities(identities, *, zone_id=None, exclude_order_i
         scope |= Q(input_identity__stock_kind=kind, input_identity__identity_key=key,
                    input_identity__unit_id=unit)
     rows = TubeOutsourcingLine.objects.filter(
-        scope, order__status="PENDING_DISPATCH", order__source_kind__in=["RAW_PIPE", "PUBLIC_SEMI", "PUBLIC_CUTTING"],
+        scope, order__status="PENDING_DISPATCH", order__source_kind__in=["RAW_PIPE", "PUBLIC_SEMI", "PUBLIC_CUTTING"], order__is_plan=False,
     )
     if exclude_order_id:
         rows = rows.exclude(order_id=exclude_order_id)
@@ -53,6 +53,23 @@ def tube_public_reserved_quantities(identities, *, zone_id=None, exclude_order_i
         pool = (row["input_identity__stock_kind"], str(row["input_identity__identity_key"]),
                 str(row["input_identity__unit_id"]))
         reserved[(pool, str(row["order__zone_id"]))] += Decimal(row["total"] or 0)
+    # 新目录附带料使用同一个公共余额，所有领料和外发扣库都须看到其待发占用。
+    from apps.outsourcing.models import TubeOutsourcingMaterial
+    material_scope = Q(pk__in=[])
+    for kind, key, unit in pools:
+        material_scope |= Q(snapshot__public_identity__stock_kind=kind,
+            snapshot__public_identity__identity_key=key, snapshot__public_identity__unit_id=unit)
+    materials = TubeOutsourcingMaterial.objects.filter(material_scope, material_catalog__isnull=False,
+        order__status='PENDING_DISPATCH', order__is_plan=False)
+    if exclude_order_id:
+        materials = materials.exclude(order_id=exclude_order_id)
+    if zone_id is not None:
+        materials = materials.filter(zone_id=zone_id)
+    for row in materials.values('snapshot__public_identity__stock_kind', 'snapshot__public_identity__identity_key',
+            'snapshot__public_identity__unit_id', 'zone_id').annotate(total=Sum('quantity')):
+        pool = (row['snapshot__public_identity__stock_kind'], row['snapshot__public_identity__identity_key'],
+                row['snapshot__public_identity__unit_id'])
+        reserved[(pool, str(row['zone_id']))] += row['total']
     return reserved
 
 
@@ -68,7 +85,7 @@ def tube_material_reserved_quantities(*, requirement_ids=(), raw_material_ids=()
     """附带五金同时占用订单额度及普通原料库区；与管材预留共用主单状态。"""
     from apps.outsourcing.models import TubeOutsourcingMaterial
 
-    rows = TubeOutsourcingMaterial.objects.filter(order__status='PENDING_DISPATCH')
+    rows = TubeOutsourcingMaterial.objects.filter(order__status='PENDING_DISPATCH', order__is_plan=False)
     if exclude_order_id:
         rows = rows.exclude(order_id=exclude_order_id)
     by_requirement = {row['requirement_id']: row['total'] for row in rows.filter(

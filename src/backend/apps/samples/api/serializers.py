@@ -742,7 +742,7 @@ class SampleRequestListSerializer(ModuleAccessSerializerMixin, serializers.Model
     def get_application_actions(self, instance) -> dict:
         return application_actions(instance, self.context.get('request'))
 
-    customer_name = serializers.CharField(source="customer_account.account_name", read_only=True)
+    customer_name = serializers.CharField(source="customer_account.account_name", default="", read_only=True)
     owner = EmployeeSummarySerializer(source="owner_employee", read_only=True)
     requested_by = EmployeeSummarySerializer(source="requested_by_employee", read_only=True)
     status_display = serializers.SerializerMethodField()
@@ -905,7 +905,7 @@ class SampleRequestDetailSerializer(SampleRequestListSerializer):
                 "can_delete_metalwork": False,
                 "can_delete_cutting": False,
             }
-        ready = not instance.application_payload_hash or (instance.archived_at is None and instance.customer_account.archived_at is None and production_ready(instance))
+        ready = not instance.application_payload_hash or (instance.archived_at is None and (not instance.customer_account_id or instance.customer_account.archived_at is None) and production_ready(instance))
         from apps.access_control.module_policy import can_report_sample
         return {
             "can_report_production": can_report_production(instance, request),

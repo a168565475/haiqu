@@ -30,6 +30,7 @@ const confirming = ref(false)
 const loadError = ref('')
 const actionError = ref('')
 const order = ref<PurchaseOrderDetail | null>(null)
+const canReturnToGroup = computed(() => !!order.value?.purchase_group_id && auth.hasPermission('procurement.view_purchaseorder'))
 const options = ref<Pick<PurchaseOrderOptions, 'suppliers'> | null>(null)
 const optionsLoading = ref(false)
 const optionsReady = ref(false)
@@ -38,6 +39,12 @@ const hoveredLineId = ref('')
 const etag = ref('')
 let orderRequestId = 0
 let optionsRequestId = 0
+
+function backToList() {
+  void router.push(canReturnToGroup.value && order.value?.purchase_group_id
+    ? { name: 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
+    : { name: 'purchase-orders', query: { view: 'orders' } })
+}
 
 const today = new Date()
 today.setHours(0, 0, 0, 0)
@@ -210,6 +217,7 @@ function updatePayload() {
   if (!order.value) return null
   return {
     is_mailed: order.value.is_mailed,
+    ...(order.value.purchase_group_id && order.value.status === 'DRAFT' && order.value.batch_type ? { batch_type: order.value.batch_type } : {}),
     lines: order.value.lines.map((line) => ({
       id: line.id,
       supplier_id: line.supplier_id || null,
@@ -294,10 +302,15 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
   <section v-loading="loading" class="confirm-page erp-glass-form">
     <header class="page-heading">
       <div><h1>确认采购订单</h1><p>核对供应商、交期、数量及单价</p></div>
-      <ElButton class="back-button" @click="router.push({ name: 'purchase-orders' })"><img :src="backIcon" alt="" class="purchase-icon" />返回列表</ElButton>
+      <div><ElButton class="back-button" @click="backToList"><img :src="backIcon" alt="" class="purchase-icon" />返回{{ canReturnToGroup ? '采购总单' : '列表' }}</ElButton></div>
     </header>
     <section v-if="loadError" class="load-error" role="alert"><ElAlert type="error" :title="loadError" :closable="false" show-icon /><ElButton @click="load">重新加载</ElButton></section>
     <template v-else-if="order">
+      <div v-if="order.purchase_group_id" class="batch-context">
+        <span>第 {{ order.batch_number }} 批 · 批次类型</span>
+        <ElRadioGroup v-if="order.status === 'DRAFT'" v-model="order.batch_type" :disabled="!canEdit || saving || confirming" aria-label="编辑批次类型"><ElRadio value="NORMAL">正常采购</ElRadio><ElRadio value="SUPPLEMENT">补料</ElRadio></ElRadioGroup>
+        <span v-else>{{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</span>
+      </div>
       <ElAlert v-if="optionsError" type="error" :title="optionsError" :closable="false" show-icon>
         <ElButton link @click="loadOptions">重试供应商</ElButton>
       </ElAlert>
@@ -314,20 +327,20 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
         </header>
         <ElTable :data="order.lines" row-key="id" height="100%" class="erp-table-editor detail-table" @cell-mouse-enter="handleLineMouseEnter" @mouseleave="handleLineMouseLeave">
           <ElTableColumn type="index" label="序号" width="48" align="center" />
-          <ElTableColumn label="分类" prop="section_title" width="106" />
-          <ElTableColumn label="物料信息" width="208">
+          <ElTableColumn label="分类" prop="section_title" min-width="106" />
+          <ElTableColumn label="物料信息" min-width="208">
             <template #default="{ row }"><div class="material-cell"><strong>{{ materialTitle(row) }}</strong></div></template>
           </ElTableColumn>
-          <ElTableColumn v-if="order.source_type === 'SAMPLE'" label="材质规格" width="220">
-            <template #default="{ row }"><ElTooltip :content="materialDetail(row)" placement="top" :show-after="200"><span class="material-detail">{{ materialDetail(row) }}</span></ElTooltip></template>
+          <ElTableColumn v-if="order.source_type === 'SAMPLE'" label="材质规格" min-width="220">
+            <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialDetail(row) }}</span></ElTooltip></template>
           </ElTableColumn>
-          <ElTableColumn v-else label="规格" width="220">
+          <ElTableColumn v-else label="规格" min-width="220">
             <template #default="{ row }"><ElTooltip placement="top" :show-after="80" :visible="hoveredLineId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row)" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="material-detail">{{ materialSpecificationValue(row) }}</span></ElTooltip></template>
           </ElTableColumn>
-          <ElTableColumn label="建议采购量" width="180" align="right" header-align="left">
+          <ElTableColumn label="建议采购量" min-width="180" align="right" header-align="left">
             <template #default="{ row }"><div class="quantity-cell"><strong v-if="row.raw_bar_length_m">{{ row.suggested_bar_count }} 根</strong><strong v-else>{{ formatQuantity(row.required_quantity) }}</strong><small>{{ row.raw_bar_length_m ? compactDecimal(row.suggested_purchase_meters) + ' 米' : row.source_unit_text || '单位未识别' }}</small></div></template>
           </ElTableColumn>
-          <ElTableColumn label="供应商" width="271">
+          <ElTableColumn label="供应商" min-width="271">
             <template #default="{ row }">
               <ElSelect v-model="row.supplier_id" filterable clearable :loading="optionsLoading" :disabled="!optionsReady" :placeholder="optionsLoading ? '正在加载供应商' : '请选择供应商'" teleported>
                 <ElOption
@@ -340,7 +353,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
               </ElSelect>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="采购交期" width="195">
+          <ElTableColumn label="采购交期" min-width="195">
             <template #default="{ row }">
               <ElDatePicker
                 v-model="row.delivery_date"
@@ -354,7 +367,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
               />
             </template>
           </ElTableColumn>
-          <ElTableColumn label="实际采购数量" width="163">
+          <ElTableColumn label="实际采购数量" min-width="163">
             <template #default="{ row }">
               <ElInput v-if="row.raw_bar_length_m" v-model="row.actual_bar_count" inputmode="numeric" maxlength="14" aria-label="实际采购根数"><template #append>根</template></ElInput>
               <ElInput
@@ -368,13 +381,13 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
               ><template #append>{{ row.source_unit_text || '单位未识别' }}</template></ElInput>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="折算采购米数" width="180">
+          <ElTableColumn label="折算采购米数" min-width="180">
             <template #default="{ row }"><span v-if="row.raw_bar_length_m" class="pipe-meters" :title="pipeMetersLabel(row)">{{ pipeMetersLabel(row) }}</span><span v-else>—</span></template>
           </ElTableColumn>
-          <ElTableColumn label="采购单价（管材元/米）" width="164">
+          <ElTableColumn label="采购单价（管材元/米）" min-width="164">
             <template #default="{ row }"><ElInput v-model="row.unit_price" :aria-label="`第 ${row.line_number} 行采购单价`" data-testid="confirm-price" inputmode="decimal" placeholder="请输入单价" /></template>
           </ElTableColumn>
-          <ElTableColumn label="采购金额（元）" width="173" align="left">
+          <ElTableColumn label="采购金额（元）" min-width="173" align="left">
             <template #default="{ row }"><strong>{{ lineAmount(row) }}</strong></template>
           </ElTableColumn>
         </ElTable>
@@ -398,6 +411,7 @@ onBeforeUnmount(() => { orderRequestId++; optionsRequestId++ })
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as crm;
 @use '@/styles/theme/detail' as detail;
+.batch-context { display: flex; gap: 20px; align-items: center; margin-bottom: 14px; font-size: 13px; }
 .confirm-page { height: auto; min-height: 0; box-sizing: border-box; padding: 0; display: flex; flex-direction: column; color: crm.$crm-text-primary; background: transparent; font-family: crm.$crm-font-body; font-size: 14px;
   --el-color-primary: #{crm.$crm-primary}; --el-text-color-primary: #{crm.$crm-text-primary}; --el-text-color-regular: #{crm.$crm-text-regular}; --el-text-color-placeholder: #{crm.$crm-text-muted}; --el-border-color: #{crm.$crm-border-default}; --el-border-color-light: #{crm.$crm-border-subtle}; --el-fill-color-blank: #{crm.$crm-color-surface}; --el-fill-color-light: #{crm.$crm-color-subtle}; --el-border-radius-base: 5px;
 }

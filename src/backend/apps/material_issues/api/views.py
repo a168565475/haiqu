@@ -17,14 +17,13 @@ from apps.core.api.permissions import BusinessActionPermission, HasActiveEmploye
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.boms.material_attributes import bom_attribute_fields, merge_bom_attribute_fields, override_bom_attribute
 from apps.inventory.models import MaterialStockBalance, MaterialStockQuality, SemiFinishedStockBalance
-from apps.inventory.stock_services import available_stock
 from apps.organizations.models import Employee
 from apps.production_tasks.models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 from apps.production_tasks.selectors import accessible_production_tasks, production_task_source_image_ids
 from apps.workshop_config.models import RecordStatus, Workshop
 from apps.workshop_config.selectors import active_employees
 
-from ..material_flow import pipe_requirement_rows
+from ..material_flow import pipe_requirement_rows, ordinary_pending_stock_quantities, ordinary_available_stock
 from ..models import MaterialIssueStatus, OrderMaterialRequirement
 from ..requirements import build_requirement_specs
 from ..scopes import (
@@ -377,16 +376,14 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             quantity__gt=0,
             zone__status="ACTIVE",
             zone__warehouse__status="ACTIVE",
+            zone__warehouse__warehouse_type="MATERIAL",
         ).select_related("zone").order_by("zone__zone_name", "id"):
             key = (balance.raw_material_id, balance.unit_id)
             zones = stock_zones.setdefault(key, [])
             if balance.zone.zone_name not in zones:
                 zones.append(balance.zone.zone_name)
         pending_raw, _ = pending_issue_quantities(requirement_ids=[item["id"] for item in specs], exclude_issue_id=exclude_issue_id)
-        public_pending = {}
-        if public_stock:
-            from ..public_issue_services import public_ordinary_pending_quantities
-            public_pending = public_ordinary_pending_quantities(stock_material_ids, exclude_issue_id=exclude_issue_id)
+        public_pending = ordinary_pending_stock_quantities(stock_material_ids, exclude_issue_id=exclude_issue_id)
         rows = []
         for spec in specs:
             if spec["section_code"] not in allowed_section_codes:
@@ -398,7 +395,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             outsourcing = current.outsourcing_issued_quantity if current else 0
             pending = pending_raw.get(spec["id"], 0)
             remaining = spec["required_quantity"] - internal - outsourcing - pending
-            stock = available_stock(spec["raw_material"].pk, spec["unit"].pk)
+            stock = ordinary_available_stock(spec["raw_material"].pk, spec["unit"].pk)
             stock_pending = public_pending.get((spec["raw_material"].pk, spec["unit"].pk), 0)
             material = spec["raw_material"]
             part_names = list(dict.fromkeys(
@@ -431,7 +428,7 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                     "pending_issue_quantity": str(pending),
                     "order_remaining": str(max(remaining, 0)),
                     "available_stock": str(stock),
-                    "max_issue_quantity": str(max(min(remaining, stock - stock_pending), 0)),
+                    "max_issue_quantity": str(max(stock - stock_pending, 0)),
                     "warehouse_zones": stock_zones.get((material.pk, spec["unit"].pk), []),
                     "bom_version": max(item["bom"].version_number for item in spec["contributions"]),
                     "validation_errors": [],
@@ -443,6 +440,14 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
             pipe_rows, pipe_blockers = pipe_requirement_rows(task.pk, product_line_id,
                 exclude_issue_id=exclude_issue_id, public_stock=public_stock)
             rows.extend(pipe_rows); blockers.extend(pipe_blockers)
+        from ..catalog_requirements import catalog_requirement_rows
+        catalog_rows, catalog_blockers = catalog_requirement_rows(task.pk, product_line_id, exclude_issue_id=exclude_issue_id)
+        blockers.extend(item for item in catalog_blockers if item["section_code"] in allowed_section_codes)
+        catalog_rows = [row for row in catalog_rows if row["section_code"] in allowed_section_codes]
+        if public_stock:
+            rows.extend(catalog_rows)
+        elif catalog_rows:
+            blockers.append({"code": "PUBLIC_STOCK_FLOW_DISABLED", "detail": "新材料领料须使用既有公共库存入口，不能回退到旧材料余额。"})
         if public_stock:
             if "SEMI" in allowed_section_codes:
                 from ..public_semi_requirements import public_semi_requirement_rows
@@ -466,7 +471,8 @@ class MaterialIssueViewSet(viewsets.GenericViewSet):
                 quantity__gt=0,
             ).order_by("completed_craft__name", "bom_line__line_number", "zone__zone_name", "id")
         semi_balances = list(semi_balances)
-        _, pending_semi = pending_issue_quantities(semi_balance_ids=[item.pk for item in semi_balances])
+        _, pending_semi = pending_issue_quantities(
+            semi_balance_ids=[item.pk for item in semi_balances], exclude_issue_id=exclude_issue_id)
         # 半成品领料按“部位 + 已完成工艺 + 颜色 + 单位 + 库区”聚合，前端不暴露回货批次；
         # 实际领料时再由后端按可用余额自动拆分到各个余额行。
         grouped = {}

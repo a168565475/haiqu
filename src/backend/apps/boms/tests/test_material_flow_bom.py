@@ -15,6 +15,11 @@ class MaterialFlowBomTests(TestCase):
 
     def setUpFixture(self):
         # 事务测试 flush 后迁移种子不会重建，各用例自行准备所需的最小引用数据。
+        from apps.reference_data.models import TubeCalculationFormula
+        from apps.reference_data.tube_formulas import DEFAULT_TUBE_FORMULAS
+        for group_key, formula in DEFAULT_TUBE_FORMULAS.items():
+            TubeCalculationFormula.objects.get_or_create(group_key=group_key,
+                defaults={key: value for key, value in formula.items() if key != "group_key"})
         if not Currency.objects.filter(status="ACTIVE", archived_at__isnull=True).exists():
             Currency.objects.create(code="CNY", numeric_code="156", chinese_name="人民币")
         if not ProductInformation.objects.filter(status="ACTIVE", archived_at__isnull=True).exclude(product_code="").exists():
@@ -38,6 +43,10 @@ class MaterialFlowBomTests(TestCase):
         self.meter_unit, _ = ProductionUnit.objects.get_or_create(unit_name="米", defaults={"unit_code": "S4METER"})
         ProductionUnit.objects.get_or_create(unit_name="支", defaults={"unit_code": "S4PIECE"})
         self.pipe = self.material("S4PIPE", "管材", self.root_unit)
+        self.pipe.diameter, self.pipe.thickness, self.pipe.length = "25", "1", "3050"
+        self.pipe.specification = "圆管 25*1*3050"
+        self.pipe.warehouse_number, self.pipe.warehouse_name = "CK003", "原料管材仓"
+        self.pipe.save()
         self.fabric = self.material("S4FABRIC", "面料", self.meter_unit)
 
     def material(self, code, category, unit):
@@ -52,6 +61,7 @@ class MaterialFlowBomTests(TestCase):
 
     def pipe_payload(self, **changes):
         return {"part_name": "座架", "source_inventory_material_id": str(self.pipe.pk), "length_value": "500",
+                "material": self.pipe.material, "tube_shape": "圆管", "tube_diameter": "25", "tube_thickness": "1",
                 "unit_consumption": "2", "tube_cut_piece_count": "6", **changes}
 
     def save(self, supplied):
@@ -327,7 +337,7 @@ class MaterialFlowBomTests(TestCase):
         self.product_line.save()
         copied = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=self.bom, actor_employee=self.employee)
         line = BomLine.objects.get(section__bom=copied)
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("3.05") * 667 * Decimal("0.464"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
 
     def imported_plan(self, *, with_cutting_header=False):
         from io import BytesIO

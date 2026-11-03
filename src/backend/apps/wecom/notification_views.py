@@ -159,11 +159,11 @@ class NotificationTargetView(NotificationPersonalView):
     def get(self, request, recipient_id):
         employee = active_employee_for(request.user)
         recipient = selectors.inbox_queryset(employee.pk).filter(pk=recipient_id).first()
-        if recipient is None or not selectors.target_accessible(recipient, request.user) or recipient.event.target is None:
+        if recipient is None:
             raise NotFound("通知目标当前不可访问。")
-        target = recipient.event.target
+        target = selectors.recipient_target(recipient, request.user)
         # 点击时按真实来源更新入口，兼容历史通知；列表读取不增加逐条来源查询。
-        if recipient.event.event_code in {"OUTSOURCING_ORDER_CREATED", "TUBE_OUTSOURCING_ORDER_CREATED"}:
+        if recipient.scope != 'ROLE_POLICY' and recipient.event.event_code in {"OUTSOURCING_ORDER_CREATED", "TUBE_OUTSOURCING_ORDER_CREATED"}:
             target = target_for(recipient.event.event_code, recipient.event.object_id)
         if target is None:
             raise NotFound("通知目标当前不可访问。")

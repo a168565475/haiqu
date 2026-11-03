@@ -2,7 +2,7 @@
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
 import { ArrowDown, Plus, Upload } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -13,6 +13,7 @@ import {
   exportProductionTasks,
   fetchProductionTask,
   fetchProductionTaskFilterOptions,
+  fetchProductionTaskAdvancedFilterOptions,
   fetchProductionTasks,
   finishProductionTask,
 } from '@/api/productionTasks'
@@ -24,7 +25,9 @@ import type {
   ProductionDeliveryMethod,
   ProductionOrderSource,
   ProductionTask,
+  ProductionTaskListItem,
   ProductionTaskFilterOptions,
+  ProductionTaskAdvancedFilterOptions,
   ProductionTaskQuery,
   ProductionTaskStatus,
 } from '@/types/productionTask'
@@ -36,7 +39,7 @@ type LifecycleAction = 'cancel' | 'finish'
 
 interface AdvancedFilters {
   contract_number: string
-  product_id: string
+  product_selection: string
   salesperson_id: string
   follower_id: string
   order_source: ProductionOrderSource | ''
@@ -44,6 +47,7 @@ interface AdvancedFilters {
 }
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const loading = ref(false)
 const exportLoading = ref(false)
@@ -51,8 +55,12 @@ let latestRowsRequest = 0
 let latestOptionsRequest = 0
 const optionsLoading = ref(false)
 const optionsError = ref('')
-const rows = ref<ProductionTask[]>([])
+const rows = ref<ProductionTaskListItem[]>([])
 const options = ref<ProductionTaskFilterOptions | null>(null)
+let latestAdvancedOptionsRequest = 0
+const advancedOptions = ref<ProductionTaskAdvancedFilterOptions | null>(null)
+const advancedOptionsLoading = ref(false)
+const advancedOptionsError = ref('')
 const errorMessage = ref('')
 const page = ref(1)
 const pageSize = ref(50)
@@ -66,36 +74,33 @@ const deliveryRange = ref<[string, string] | []>([])
 const lifecycleDialogVisible = ref(false)
 const lifecycleLoading = ref(false)
 const lifecycleAction = ref<LifecycleAction>('cancel')
-const lifecycleTarget = ref<ProductionTask | null>(null)
+const lifecycleTarget = ref<(ProductionTaskListItem & Partial<Pick<ProductionTask, 'total_quantity'>>) | null>(null)
 const lifecycleReason = ref('')
 const completionActualQuantity = ref('0')
 const completionGoodQuantity = ref('0')
 const completionBatches = ref<Array<{ batch_number: string; planned_quantity: string; actual_quantity: string; good_quantity: string; note: string }>>([])
 const scheduleDialogVisible = ref(false)
-const scheduleTarget = ref<ProductionTask | null>(null)
+const scheduleTarget = ref<ProductionTaskListItem | null>(null)
 const costDialogVisible = ref(false)
-const costTarget = ref<ProductionTask | null>(null)
+const costTarget = ref<ProductionTaskListItem | null>(null)
 const costBusy = ref(false)
 
 
 const advancedFilters = reactive<AdvancedFilters>({
-  contract_number: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '',
+  contract_number: '', product_selection: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '',
 })
 
-const canDelete = computed(() => authStore.hasPermission('production_tasks.delete_productiontask'))
 const canViewCost = computed(() => authStore.hasPermission('production_tasks.view_productiontaskcost'))
 const deletingId = ref('')
 const hoveredProductElement = ref<HTMLElement>()
 const hoveredProductDetails = ref('')
 const rowTooltipVisible = ref(false)
-function showRowProducts(row: ProductionTask, _column: unknown, cell: HTMLElement) {
+function showRowProducts(row: ProductionTaskListItem, _column: unknown, cell: HTMLElement) {
   hoveredProductElement.value = cell.parentElement?.querySelector<HTMLElement>('.production-product-cell') || undefined
   hoveredProductDetails.value = productSpecifications(row.products)
   rowTooltipVisible.value = Boolean(hoveredProductElement.value) && row.products.length > 0
 }
-const canEdit = computed(() => authStore.hasPermission('production_tasks.change_productiontask'))
 const canCreate = computed(() => authStore.hasPermission('production_tasks.add_productiontask'))
-const canConfirm = computed(() => authStore.hasPermission('production_tasks.confirm_productiontask'))
 const canSchedule = computed(() => (
   authStore.hasPermission('production_scheduling.view_productionschedule')
   && authStore.hasPermission('production_scheduling.add_productionschedule')
@@ -104,7 +109,7 @@ const lifecycleTitle = computed(() => lifecycleAction.value === 'cancel' ? '取�
 const lifecycleReasonLabel = computed(() => lifecycleAction.value === 'cancel' ? '取消原因' : '结束原因')
 const lifecycleConfirmText = computed(() => lifecycleAction.value === 'cancel' ? '确认取消' : '确认结束')
 const advancedFilterCount = computed(() => [
-  advancedFilters.contract_number, advancedFilters.product_id,
+  advancedFilters.contract_number, advancedFilters.product_selection,
   advancedFilters.salesperson_id, advancedFilters.follower_id, advancedFilters.order_source,
   advancedFilters.delivery_method, deliveryRange.value.length ? 'range' : '',
 ].filter(Boolean).length)
@@ -142,7 +147,9 @@ function buildQuery(): ProductionTaskQuery {
     search: searchText.value.trim() || undefined, ...statusQuery(),
   }
   if (advancedFilters.contract_number.trim()) query.contract_number = advancedFilters.contract_number.trim()
-  if (advancedFilters.product_id) query.product_id = advancedFilters.product_id
+  const [productSource, productId] = (advancedFilters.product_selection || '').split(':')
+  if (productSource === 'catalog' && productId) query.product_catalog_id = productId
+  else if (productSource === 'legacy' && productId) query.product_id = productId
   if (advancedFilters.salesperson_id) query.salesperson_id = advancedFilters.salesperson_id
   if (advancedFilters.follower_id) query.follower_id = advancedFilters.follower_id
   if (advancedFilters.order_source) query.order_source = advancedFilters.order_source
@@ -198,6 +205,21 @@ async function loadFilterOptions(): Promise<boolean> {
   }
 }
 
+async function loadAdvancedFilterOptions() {
+  if (advancedOptions.value || advancedOptionsLoading.value) return
+  const requestId = ++latestAdvancedOptionsRequest
+  advancedOptionsLoading.value = true
+  advancedOptionsError.value = ''
+  try {
+    const result = await fetchProductionTaskAdvancedFilterOptions()
+    if (requestId === latestAdvancedOptionsRequest) advancedOptions.value = result
+  } catch (error) {
+    if (requestId === latestAdvancedOptionsRequest) advancedOptionsError.value = apiError(error)
+  } finally {
+    if (requestId === latestAdvancedOptionsRequest) advancedOptionsLoading.value = false
+  }
+}
+
 function resetListFilters() { searchText.value = ''; activeStatusTab.value = 'all'; quantityPending.value = false; dueSoon.value = false; resetAdvancedFilters(); search() }
 function search() { page.value = 1; void loadRows() }
 function handleSearchEnter(event: KeyboardEvent) {
@@ -208,7 +230,7 @@ function handleSearchEnter(event: KeyboardEvent) {
 function applyStatusTab(key: StatusTabKey) { activeStatusTab.value = key; page.value = 1; void loadRows() }
 function applyAdvancedFilters() { advancedVisible.value = false; search() }
 function resetAdvancedFilters() {
-  Object.assign(advancedFilters, { contract_number: '', product_id: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '' })
+  Object.assign(advancedFilters, { contract_number: '', product_selection: '', salesperson_id: '', follower_id: '', order_source: '', delivery_method: '' })
   deliveryRange.value = []
 }
 
@@ -228,8 +250,8 @@ function progressStatusClass(status?: string) {
   return 'warning'
 }
 function openCreate() { void router.push({ name: 'production-task-create' }) }
-function openTask(row: ProductionTask, edit = false) { void router.push({ name: edit ? 'production-task-edit' : 'production-task-detail', params: { taskId: row.id } }) }
-function openCost(row: ProductionTask) {
+function openTask(row: ProductionTaskListItem, edit = false) { void router.push({ name: edit ? 'production-task-edit' : 'production-task-detail', params: { taskId: row.id } }) }
+function openCost(row: ProductionTaskListItem) {
   if (!canViewCost.value) return
   costTarget.value = row
   costBusy.value = false
@@ -238,12 +260,23 @@ function openCost(row: ProductionTask) {
 function closeCost(done: () => void) {
   if (!costBusy.value) done()
 }
-function canChangeLifecycle(row: ProductionTask) { return canEdit.value && row.status !== 'CANCELLED' && row.status !== 'COMPLETED' }
-function handleRowAction(command: string, row: ProductionTask) {
+function canTask(row: ProductionTaskListItem, permission: string, legacy = permission) {
+  if (row.allowed_permissions !== undefined) return row.allowed_permissions.includes(permission)
+  return authStore.moduleCan(permission, legacy)
+}
+function canEditTask(row: ProductionTaskListItem) {
+  return !['CANCELLED', 'COMPLETED'].includes(row.status) && (
+    canTask(row, 'production_tasks.change_productiontask') || canTask(row, 'access_control.edit_productionplan'))
+}
+function canChangeLifecycle(row: ProductionTaskListItem, action: LifecycleAction) {
+  return canTask(row, `access_control.${action}_productiontask`, 'production_tasks.change_productiontask')
+    && (action === 'finish' ? row.status === 'IN_PRODUCTION' : !['CANCELLED', 'COMPLETED'].includes(row.status))
+}
+function handleRowAction(command: string, row: ProductionTaskListItem) {
   if (command === 'delete') { void deleteTask(row); return }
   if (command === 'view') { openTask(row); return }
   if (command === 'cost') { openCost(row); return }
-  if (command === 'edit') { openTask(row, true); return }
+  if (command === 'edit') { if (canEditTask(row)) openTask(row, true); return }
   if (command === 'confirm') { void openPmcConfirm(row); return }
   if (command === 'schedule') {
     if (!canSchedule.value || !isTaskReadyForScheduling(row)) return
@@ -251,7 +284,7 @@ function handleRowAction(command: string, row: ProductionTask) {
     scheduleDialogVisible.value = true
     return
   }
-  if ((command !== 'cancel' && command !== 'finish') || !canChangeLifecycle(row)) return
+  if ((command !== 'cancel' && command !== 'finish') || !canChangeLifecycle(row, command)) return
   if (command === 'finish' && row.sales_order_id) {
     void prepareLinkedFinish(row)
     return
@@ -261,11 +294,12 @@ function handleRowAction(command: string, row: ProductionTask) {
   lifecycleReason.value = ''
   lifecycleDialogVisible.value = true
 }
-async function deleteTask(row: ProductionTask) {
-  if (!canDelete.value || row.status !== 'CANCELLED' || deletingId.value) return
+async function deleteTask(row: ProductionTaskListItem) {
+  if (!canTask(row, 'production_tasks.delete_productiontask') || row.status !== 'CANCELLED' || deletingId.value) return
   deletingId.value = row.id
   try {
     const current = await fetchProductionTask(row.id)
+    if (!canTask(current.data, 'production_tasks.delete_productiontask')) { ElMessage.warning('当前任务没有删除权限。'); return }
     if (current.data.status !== 'CANCELLED') { ElMessage.warning('任务状态已变化，请刷新后重试。'); return }
     if (!current.etag) { ElMessage.error('未取得任务版本，请刷新后重试。'); return }
     await ElMessageBox.confirm(`确定删除任务单 ${row.task_number}？删除后不可恢复。存在 BOM、排产、采购等下游记录时将无法删除。`, '删除生产任务单', { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' })
@@ -278,10 +312,12 @@ async function deleteTask(row: ProductionTask) {
     else ElMessage.error(apiError(error))
   } finally { deletingId.value = '' }
 }
-async function prepareLinkedFinish(row: ProductionTask) {
+async function prepareLinkedFinish(row: ProductionTaskListItem) {
+  if (!canChangeLifecycle(row, 'finish') || lifecycleLoading.value) return
   lifecycleLoading.value = true
   try {
     const current = await fetchProductionTask(row.id)
+    if (!canChangeLifecycle(current.data, 'finish')) { ElMessage.warning('当前任务不可完结，请刷新后重试。'); return }
     lifecycleAction.value = 'finish'
     lifecycleTarget.value = current.data
     lifecycleReason.value = ''
@@ -297,8 +333,8 @@ async function prepareLinkedFinish(row: ProductionTask) {
     lifecycleDialogVisible.value = true
   } catch (error) { ElMessage.error(apiError(error)) } finally { lifecycleLoading.value = false }
 }
-async function openPmcConfirm(row: ProductionTask) {
-  if (row.status !== 'PENDING_VALIDATION' || !canConfirm.value) return
+async function openPmcConfirm(row: ProductionTaskListItem) {
+  if (row.status !== 'PENDING_VALIDATION' || !canTask(row, 'production_tasks.confirm_productiontask')) return
   await router.push({ name: 'production-task-detail', params: { taskId: row.id }, query: { pmc: 'confirm' } })
 }
 
@@ -308,7 +344,7 @@ async function handleScheduleSaved() {
 async function confirmLifecycleAction() {
   const row = lifecycleTarget.value
   const reason = lifecycleReason.value.trim()
-  if (!row || lifecycleLoading.value) return
+  if (!row || lifecycleLoading.value || !canChangeLifecycle(row, lifecycleAction.value)) return
   const linkedFinish = lifecycleAction.value === 'finish' && Boolean(row.sales_order_id)
   if (!reason && (!linkedFinish || Number(completionGoodQuantity.value) < Number(row.total_quantity))) {
     ElMessage.warning(linkedFinish ? '合格数量不足时必须填写异常完结原因（责任提示：PMC）。' : `请填写${lifecycleReasonLabel.value}。`)
@@ -317,6 +353,7 @@ async function confirmLifecycleAction() {
   lifecycleLoading.value = true
   try {
     const current = await fetchProductionTask(row.id)
+    if (!canChangeLifecycle(current.data, lifecycleAction.value)) { ElMessage.warning('任务状态或操作权限已变化，请刷新后重试。'); return }
     if (lifecycleAction.value === 'cancel') await cancelProductionTask(row.id, reason, current.etag)
     else if (current.data.sales_order_id) {
       await finishProductionTask(row.id, reason, current.etag, {
@@ -363,11 +400,23 @@ async function exportList() {
   }
 }
 
-onMounted(() => { void loadRows(); void loadFilterOptions() })
+onMounted(async () => {
+  void loadRows()
+  void loadFilterOptions()
+  const finishId = route.query.finish
+  if (typeof finishId !== 'string' || !finishId) return
+  try {
+    const current = await fetchProductionTask(finishId)
+    handleRowAction('finish', current.data)
+  } catch (error) { ElMessage.error(apiError(error)) }
+  await router.replace({ query: { ...route.query, finish: undefined } })
+})
 watch(canViewCost, allowed => { if (!allowed) costDialogVisible.value = false })
+watch(advancedVisible, visible => { if (visible) void loadAdvancedFilterOptions() })
 onBeforeUnmount(() => {
   ++latestRowsRequest
   ++latestOptionsRequest
+  ++latestAdvancedOptionsRequest
 })
 </script>
 
@@ -378,7 +427,7 @@ onBeforeUnmount(() => {
       <div class="page-heading__title"><h1>生产任务单</h1><span>{{ total }} 条</span></div>
     </header>
 
-    <ElAlert v-if="optionsError" type="warning" :title="`筛选选项加载失败：${optionsError}`" :closable="false"><ElButton class="erp-button-motion" size="small" @click="loadFilterOptions">重试选项</ElButton></ElAlert>
+    <ElAlert v-if="optionsError" type="warning" :title="`业务员选项加载失败：${optionsError}`" :closable="false"><ElButton class="erp-button-motion" size="small" @click="loadFilterOptions">重试业务员选项</ElButton></ElAlert>
 
     <section class="list-filters erp-list-filters" aria-label="生产任务单筛选">
         <ElInput v-model="searchText" class="search-filter" clearable placeholder="搜索任务 / 订单 / 客户 / 产品" @keydown.enter="handleSearchEnter" @clear="search">
@@ -389,7 +438,7 @@ onBeforeUnmount(() => {
           <ElOption label="状态：已暂停" value="paused" />
           <ElOption label="状态：已取消" value="cancelled" />
         </ElSelect>
-        <ElSelect v-model="advancedFilters.salesperson_id" :loading="optionsLoading" clearable placeholder="业务员：全部" @change="search">
+        <ElSelect v-model="advancedFilters.salesperson_id" :loading="optionsLoading" :disabled="!options" clearable placeholder="业务员：全部" @change="search">
           <ElOption v-for="item in options?.salespeople || []" :key="item.id" :label="item.display_name" :value="item.id" />
         </ElSelect>
         <ElSelect v-model="dueSoon" aria-label="交期筛选" @change="search">
@@ -398,16 +447,17 @@ onBeforeUnmount(() => {
         </ElSelect>
         <ElPopover v-model:visible="advancedVisible" placement="bottom-start" :width="760" trigger="click" popper-class="production-filter-popper erp-list-filter-popover">
           <template #reference><ElButton class="erp-button-motion" :class="{ 'is-filter-active': advancedFilterCount > 0 }">更多筛选<template v-if="advancedFilterCount">（{{ advancedFilterCount }}）</template><ElIcon><ArrowDown /></ElIcon></ElButton></template>
-          <section v-if="advancedVisible" class="advanced-filter-panel" v-loading="optionsLoading">
+          <section v-if="advancedVisible" class="advanced-filter-panel">
             <header><strong>更多筛选</strong><span>按业务字段组合筛选生产任务单</span></header>
+            <ElAlert v-if="advancedOptionsError" type="warning" :title="`更多筛选选项加载失败：${advancedOptionsError}`" :closable="false"><ElButton size="small" @click="loadAdvancedFilterOptions">重试更多筛选选项</ElButton></ElAlert>
             <div class="advanced-filter-grid">
               <label><span>合同编号</span><ElInput v-model="advancedFilters.contract_number" clearable placeholder="输入合同编号" /></label>
-              <label><span>产品</span><ElSelect v-model="advancedFilters.product_id" filterable clearable placeholder="全部产品"><ElOption v-for="item in options?.products || []" :key="item.id" :label="`${item.product_code} · ${item.item_number} · ${item.product_name}`" :value="item.id" /></ElSelect></label>
-              <label><span>业务员</span><ElSelect v-model="advancedFilters.salesperson_id" filterable clearable placeholder="全部业务员"><ElOption v-for="item in options?.salespeople || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
-              <label><span>跟单员</span><ElSelect v-model="advancedFilters.follower_id" filterable clearable placeholder="全部跟单员"><ElOption v-for="item in options?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
+              <label><span>产品</span><ElSelect v-model="advancedFilters.product_selection" :loading="advancedOptionsLoading" :disabled="!advancedOptions" filterable clearable placeholder="全部产品" aria-label="筛选产品"><ElOptionGroup label="产品管理"><ElOption v-for="item in advancedOptions?.product_catalogs || []" :key="`catalog:${item.id}`" :label="[item.product_name, item.item_number, item.specification, item.product_code].filter(Boolean).join(' · ')" :value="`catalog:${item.id}`" /></ElOptionGroup><ElOptionGroup label="历史产品"><ElOption v-for="item in advancedOptions?.products || []" :key="`legacy:${item.id}`" :label="[item.product_name, item.item_number, item.specification, item.product_code].filter(Boolean).join(' · ')" :value="`legacy:${item.id}`" /></ElOptionGroup></ElSelect></label>
+              <label><span>业务员</span><ElSelect v-model="advancedFilters.salesperson_id" :loading="optionsLoading" :disabled="!options" filterable clearable placeholder="全部业务员"><ElOption v-for="item in options?.salespeople || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
+              <label><span>跟单员</span><ElSelect v-model="advancedFilters.follower_id" :loading="advancedOptionsLoading" :disabled="!advancedOptions" filterable clearable placeholder="全部跟单员"><ElOption v-for="item in advancedOptions?.employees || []" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect></label>
               <label class="delivery-range"><span>交期范围</span><ElDatePicker v-model="deliveryRange" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
-              <label><span>订单来源</span><ElSelect v-model="advancedFilters.order_source" clearable placeholder="全部来源"><ElOption v-for="item in options?.order_sources || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
-              <label><span>交货方式</span><ElSelect v-model="advancedFilters.delivery_method" clearable placeholder="全部方式"><ElOption v-for="item in options?.delivery_methods || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
+              <label><span>订单来源</span><ElSelect v-model="advancedFilters.order_source" :loading="advancedOptionsLoading" :disabled="!advancedOptions" clearable placeholder="全部来源"><ElOption v-for="item in advancedOptions?.order_sources || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
+              <label><span>交货方式</span><ElSelect v-model="advancedFilters.delivery_method" :loading="advancedOptionsLoading" :disabled="!advancedOptions" clearable placeholder="全部方式"><ElOption v-for="item in advancedOptions?.delivery_methods || []" :key="item.value" :label="item.label" :value="item.value" /></ElSelect></label>
               <label><span>数量校验</span><ElCheckbox v-model="quantityPending">仅看数量待确认</ElCheckbox></label>
             </div>
             <footer><ElButton class="erp-button-motion" @click="resetAdvancedFilters">重置</ElButton><ElButton class="erp-button-motion" type="primary" @click="applyAdvancedFilters">应用筛选</ElButton></footer>
@@ -453,12 +503,12 @@ onBeforeUnmount(() => {
                   <ElDropdownMenu>
                     <ElDropdownItem command="view">查看</ElDropdownItem>
                     <ElDropdownItem v-if="canViewCost" command="cost" data-test="open-cost">成本</ElDropdownItem>
-                    <ElDropdownItem v-if="canEdit && row.status !== 'CANCELLED' && row.status !== 'COMPLETED'" command="edit">编辑</ElDropdownItem>
-                    <ElDropdownItem v-if="row.status === 'PENDING_VALIDATION' && canConfirm" command="confirm">PMC 确认</ElDropdownItem>
+                    <ElDropdownItem v-if="canEditTask(row)" command="edit">编辑</ElDropdownItem>
+                    <ElDropdownItem v-if="row.status === 'PENDING_VALIDATION' && canTask(row, 'production_tasks.confirm_productiontask')" command="confirm">PMC 确认</ElDropdownItem>
                     <ElDropdownItem v-if="canSchedule && isTaskReadyForScheduling(row)" command="schedule">计划排产</ElDropdownItem>
-                    <ElDropdownItem v-if="canChangeLifecycle(row) && row.status === 'IN_PRODUCTION'" command="finish">完结生产</ElDropdownItem>
-                    <ElDropdownItem v-if="canChangeLifecycle(row)" command="cancel" class="danger-menu-item" divided>取消订单</ElDropdownItem>
-                    <ElDropdownItem v-if="canDelete" command="delete" :disabled="row.status !== 'CANCELLED' || !!deletingId" class="danger-menu-item">删除</ElDropdownItem>
+                    <ElDropdownItem v-if="canChangeLifecycle(row, 'finish')" command="finish">完结生产</ElDropdownItem>
+                    <ElDropdownItem v-if="canChangeLifecycle(row, 'cancel')" command="cancel" class="danger-menu-item" divided>取消订单</ElDropdownItem>
+                    <ElDropdownItem v-if="canTask(row, 'production_tasks.delete_productiontask')" command="delete" :disabled="row.status !== 'CANCELLED' || !!deletingId" class="danger-menu-item">删除</ElDropdownItem>
                   </ElDropdownMenu>
                 </template>
               </ElDropdown>

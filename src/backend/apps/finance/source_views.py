@@ -41,6 +41,20 @@ class FinanceSourceTaskViewSet(viewsets.GenericViewSet):
     http_method_names = ["get", "head", "options"]
     action_permission_map = {"list": SOURCE_PERMISSIONS, "products": SOURCE_PERMISSIONS}
 
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        from apps.access_control import module_policy
+        from apps.access_control.role_policy import role_scopes
+        from apps.access_control.resource_scopes import has_legacy_permission
+        from rest_framework.exceptions import PermissionDenied
+
+        permission = 'finance.view_receivablestatement'
+        scopes = role_scopes(request, permission)
+        if ('OWN' in scopes and not scopes & {'MODULE', 'ALL'}
+                and not request.user.is_superuser and not has_legacy_permission(request, permission)
+                and not any(module_policy.has_permission(request, code) for code in SOURCE_PERMISSIONS if code != permission)):
+            raise PermissionDenied('当前权限只能查看本人对账单及关联收款，不能读取财务制单来源。')
+
     @extend_schema(parameters=[SourceQuerySerializer])
     def list(self, request):
         query = SourceQuerySerializer(data=request.query_params)

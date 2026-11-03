@@ -299,7 +299,7 @@ def task_section(request, filters, today, permissions):
             "delivery_date": task.delivery_date, "days_to_due": (task.delivery_date - today).days,
             "status": task.status, "status_display": task.get_status_display(), "priority": task.production_priority,
             "products": [{"id": str(product.pk), "name": product.product_name_snapshot,
-                          "quantity": str(product.quantity), "unit": product.unit.unit_name} for product in products],
+                          "quantity": str(product.quantity), "unit": product.unit_name} for product in products],
             "schedule_id": str(task.dashboard_schedule_id) if permissions["schedules"] and task.dashboard_schedule_id else None,
             "stages": stages, "href": f"/production-tasks/{task.pk}",
         })
@@ -318,6 +318,9 @@ def outsourcing_section(request, filters, today):
     fields = ("id", "updated_at", "record_type", "unified_source", "unified_access")
     for index, queryset in enumerate(sources):
         queryset = queryset.filter(status__in=["PROCESSING", "PARTIAL_RETURN"])
+        if index == 2:
+            # 总单展示待达标进度，实际发出子单不再重复成为一张待回单。
+            queryset = queryset.filter(plan__isnull=True)
         if index == 0:
             # 金工受限投影不提供原单交期，也不能通过逾期计数间接泄露它。
             due = Case(When(unified_access="REGULAR", then=F("delivery_date")), default=Value(None), output_field=DateField())
@@ -374,7 +377,7 @@ def receipts_section(request, filters, today, permissions):
         pending_unknown = products.filter(wrong_receipt_unit=True).exists()
         for product in products.select_related("production_task", "unit").order_by("production_task__delivery_date", "pk")[:LIMIT]:
             pending.append({"product_line_id": str(product.pk), "task_number": product.production_task.task_number,
-                            "name": product.product_name_snapshot, "unit": product.unit.unit_name,
+                            "name": product.product_name_snapshot, "unit": product.unit_name,
                             "state": "UNKNOWN" if product.wrong_receipt_unit else "READY",
                             "required": str(product.quantity), "received": None if product.wrong_receipt_unit else str(product.received),
                             "remaining": None if product.wrong_receipt_unit else str(product.quantity - product.received),

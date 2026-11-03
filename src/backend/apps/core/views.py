@@ -5,7 +5,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import connection, transaction
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import csrf_protect
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -13,7 +13,13 @@ from rest_framework.response import Response
 
 from .auth import can_access_erp
 from .login_records import record_successful_login
-from .serializers import AuthenticationStateSerializer, HealthResponseSerializer, LoginSerializer
+from .serializers import (
+    AuthenticationStateSerializer, HealthResponseSerializer, LoginSerializer,
+    ReturnAdminSerializer, SwitchAccountSerializer, SwitchTargetQuerySerializer,
+    SwitchTargetsResponseSerializer,
+)
+from . import identity_switch_services as identity
+from .identity_switch_selectors import switch_target_list
 
 
 def user_payload(user):
@@ -108,7 +114,7 @@ def auth_login(request):
         django_login(request, user, backend=backend)
         request.session.save()
         record_successful_login(request, user, "PASSWORD")
-    return Response({"authenticated": True, "user": user_payload(user)})
+    return Response(authentication_payload(request))
 
 
 @extend_schema(
@@ -142,10 +148,88 @@ def auth_logout(request):
 @permission_classes([AllowAny])
 def current_user(request):
     get_token(request)
-    if not request.user.is_authenticated:
-        return Response({"authenticated": False, "user": None})
+    return Response(authentication_payload(request))
 
-    return Response({"authenticated": True, "user": user_payload(request.user)})
+
+def authentication_payload(request):
+    authenticated = bool(request.user.is_authenticated)
+    payload = {"authenticated": authenticated, "user": user_payload(request.user) if authenticated else None}
+    state = identity.switch_state(request)
+    if state is not None:
+        payload["account_switch"] = state
+    return payload
+
+
+def switch_error(request, exc):
+    return Response({"error": {"code": exc.code, "message": exc.message, "field_errors": {},
+                              "request_id": getattr(request, "request_id", None)}}, status=exc.status)
+
+
+IDENTITY_VERSION_PARAMETER = OpenApiParameter(
+    name="X-Identity-Version", location=OpenApiParameter.HEADER, required=True,
+    type=str, description="从 me 或 switch-targets 获取的不透明身份版本；每次切换/返回后更新。",
+)
+SWITCH_ERRORS = {
+    400: OpenApiResponse(description="请求字段错误"),
+    403: OpenApiResponse(description="管理员原登录、切换凭据或 CSRF 校验失败"),
+    409: OpenApiResponse(description="身份版本冲突或员工状态已变化"),
+    428: OpenApiResponse(description="缺少 X-Identity-Version"),
+}
+
+
+@extend_schema(parameters=[SwitchTargetQuerySerializer], responses={
+    200: SwitchTargetsResponseSerializer, 400: OpenApiResponse(description="查询参数错误"),
+    403: OpenApiResponse(description="仅有效原 admin 登录可查询"),
+})
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def account_switch_targets(request):
+    try:
+        identity.authorize_switch(request)
+    except identity.IdentitySwitchError as exc:
+        return switch_error(request, exc)
+    serializer = SwitchTargetQuerySerializer(data=request.query_params)
+    serializer.is_valid(raise_exception=True)
+    get_token(request)
+    payload = switch_target_list(
+        serializer.validated_data.get("q", ""),
+        department_id=serializer.validated_data.get("department_id"),
+        role_id=serializer.validated_data.get("role_id"),
+    )
+    return Response({**payload, "identity_version": identity.identity_version(request)})
+
+
+@extend_schema(request=SwitchAccountSerializer, parameters=[IDENTITY_VERSION_PARAMETER], responses={
+    200: AuthenticationStateSerializer, 404: OpenApiResponse(description="员工账号不存在或不可切换"),
+    **SWITCH_ERRORS,
+})
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_protect
+def account_switch(request):
+    serializer = SwitchAccountSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        identity.switch_account(request, serializer.validated_data["employee_id"])
+    except identity.IdentitySwitchError as exc:
+        return switch_error(request, exc)
+    return Response(authentication_payload(request))
+
+
+@extend_schema(request=ReturnAdminSerializer, parameters=[IDENTITY_VERSION_PARAMETER], responses={
+    200: AuthenticationStateSerializer, **SWITCH_ERRORS,
+})
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_protect
+def account_return_admin(request):
+    serializer = ReturnAdminSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        identity.return_admin(request)
+    except identity.IdentitySwitchError as exc:
+        return switch_error(request, exc)
+    return Response(authentication_payload(request))
 
 
 @extend_schema(

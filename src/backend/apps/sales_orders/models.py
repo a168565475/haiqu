@@ -220,6 +220,11 @@ class SalesOrder(ArchivableModel):
 
 
 class SalesOrderLine(TimeStampedModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="sales_order_lines",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.PROTECT, related_name="lines")
     line_number = models.PositiveIntegerField()
     source_quotation_line = models.ForeignKey(
@@ -294,6 +299,10 @@ class SalesOrderLine(TimeStampedModel):
         db_table = "sales_order_line"
         ordering = ["sales_order", "line_number", "id"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="sales_product_source_exclusive",
+            ),
             models.UniqueConstraint(fields=["sales_order", "line_number"], name="sales_order_line_number_uniq"),
             models.CheckConstraint(condition=Q(quantity__gt=0), name="sales_order_line_qty_positive"),
             models.CheckConstraint(condition=Q(unit_price__gte=0), name="sales_order_line_price_nonneg"),
@@ -312,7 +321,7 @@ class SalesOrderLine(TimeStampedModel):
 
     def clean(self):
         super().clean()
-        if not self.product_id and not (self.customer_product_name_snapshot or self.product_name_snapshot).strip():
+        if not self.product_id and not self.product_catalog_id and not (self.customer_product_name_snapshot or self.product_name_snapshot).strip():
             raise ValidationError({"customer_product_name_snapshot": "未关联产品主档时必须填写客户产品名称。"})
         if (
             self.source_quotation_line_id

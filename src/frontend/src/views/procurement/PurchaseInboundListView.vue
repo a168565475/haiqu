@@ -143,6 +143,7 @@ onMounted(() => { if (canView.value) void loadRows() })
         <div class="erp-list-table-frame">
         <ElTable v-loading="loading" :data="filteredRows" height="100%" class="purchase-table" row-key="id" :empty-text="loadError ? '采购入库列表加载失败' : loading ? '正在加载采购入库…' : '暂无采购入库订单'" @row-click="rowClicked">
           <ElTableColumn label="采购单" min-width="174" show-overflow-tooltip><template #default="{ row }"><strong class="purchase-number">{{ row.order_number }}</strong></template></ElTableColumn>
+          <ElTableColumn label="采购批次" width="96"><template #default="{ row }">{{ row.batch_number ? `第 ${row.batch_number} 批` : '—' }}</template></ElTableColumn>
           <ElTableColumn label="来源单号" min-width="126" show-overflow-tooltip><template #default="{ row }">{{ row.source_number || '—' }}</template></ElTableColumn>
           <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'product_name') }}</template></ElTableColumn>
           <ElTableColumn label="货号" min-width="110" show-overflow-tooltip><template #default="{ row }">{{ displayProductField(row, 'item_number') }}</template></ElTableColumn>

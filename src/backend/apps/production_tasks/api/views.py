@@ -25,6 +25,7 @@ from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.selectors import active_department_employees, active_role_employees, employee_filter_choices
 from apps.organizations.models import Employee, EmployeeStatus
+from apps.product_catalog.models import ProductCatalog
 from apps.products.models import ProductInformation, ProductStatus
 from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductItemType, ProductionUnit, ReferenceStatus
 from apps.sales_orders.selectors import sales_orders_with_context
@@ -47,9 +48,9 @@ from ..services import (
     decide_production_order_by_pmc,
     delete_production_task,
     reserve_contract_number,
+    set_production_task_paused,
     start_production_order,
     submit_production_task,
-    transition_production_task,
     update_production_task,
 )
 from .serializers import (
@@ -93,7 +94,7 @@ class ProductionTaskViewSet(
         "sales_order_sources": "production_tasks.add_productiontask",
         "sales_order_source_image": "production_tasks.add_productiontask",
         "reserve_contract_number": "production_tasks.add_productiontask",
-        "partial_update": "production_tasks.change_productiontask",
+        "partial_update": ("production_tasks.change_productiontask", "access_control.edit_productionplan"),
         "destroy": "production_tasks.delete_productiontask",
         "options": "production_tasks.view_productiontask",
         "stats": "production_tasks.view_productiontask",
@@ -102,12 +103,15 @@ class ProductionTaskViewSet(
         "confirm": "production_tasks.confirm_productiontask",
         "pmc_decision": "production_tasks.confirm_productiontask",
         "start": "production_tasks.start_productiontask",
+        "pause": "access_control.pause_productiontask",
+        "resume": "access_control.resume_productiontask",
         "cancel": "production_tasks.change_productiontask",
         "finish": "production_tasks.change_productiontask",
         "cost_summary": "production_tasks.view_productiontaskcost",
         "cost_expenses.GET": "production_tasks.view_productiontaskcost",
         "cost_expenses.POST": "production_tasks.manage_productiontaskexpense",
-        "cost_expense": "production_tasks.manage_productiontaskexpense",
+        "cost_expense.PATCH": "production_tasks.manage_productiontaskexpense",
+        "cost_expense.DELETE": "access_control.void_productiontaskexpense",
     }
 
     def _filtered_queryset(self, *, include_status=True):
@@ -136,6 +140,7 @@ class ProductionTaskViewSet(
         uuid_filters = {
             "customer_id": "customer_account_id",
             "product_id": "products__product_id",
+            "product_catalog_id": "products__product_catalog_id",
             "salesperson_id": "salesperson_id",
             "follower_id": "followers__id",
         }
@@ -263,6 +268,14 @@ class ProductionTaskViewSet(
 
     def create(self, request, *args, **kwargs):
         payload = self._payload()
+        if 'import_object_id' in payload:
+            from apps.production_task_imports.saving import save_import
+            task, replay = save_import(request, payload, self._serializer_context(), self._validate_file_fields)
+            task = production_tasks_with_context().get(pk=task.pk)
+            response = Response({'data': ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data,
+                                 'replay': replay}, status=status.HTTP_200_OK if replay else status.HTTP_201_CREATED)
+            response['ETag'] = etag_for_instance(task)
+            return response
         self._validate_file_fields(payload)
         serializer_context = self._serializer_context()
         serializer_context["require_contract_number_token"] = True
@@ -275,7 +288,7 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data}, status=status.HTTP_201_CREATED)
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data}, status=status.HTTP_201_CREATED)
         response["ETag"] = etag_for_instance(task)
         return response
 
@@ -292,7 +305,7 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data}, status=status.HTTP_201_CREATED)
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data}, status=status.HTTP_201_CREATED)
         response["ETag"] = etag_for_instance(task)
         return response
 
@@ -368,7 +381,7 @@ class ProductionTaskViewSet(
 
     def retrieve(self, request, *args, **kwargs):
         task = self.get_object()
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
 
@@ -434,23 +447,54 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
 
-    @extend_schema(parameters=[OpenApiParameter("scope", str, enum=["full", "filters"], description="默认返回完整编辑选项；filters 仅返回列表筛选选项。")])
+    @extend_schema(parameters=[OpenApiParameter("scope", str, enum=["full", "filters", "advanced_filters"], description="默认返回完整编辑选项；filters 仅返回业务员；advanced_filters 返回高级筛选的跟单员、产品、来源和交货方式。")])
     @action(detail=False, methods=["get"])
     def options(self, request):
         scope = request.query_params.get("scope", "full")
-        if scope not in {"full", "filters"}:
-            raise ValidationError({"scope": "选项范围必须是 full 或 filters。"})
+        if scope not in {"full", "filters", "advanced_filters"}:
+            raise ValidationError({"scope": "选项范围必须是 full、filters 或 advanced_filters。"})
+        if scope in {"filters", "advanced_filters"}:
+            visible = self._filtered_queryset()
+            if scope == "filters":
+                salespeople = employee_filter_choices(
+                    active_department_employees("DEPT_BUSINESS"), visible.values("salesperson_id"),
+                ).values("id", "display_name")
+                return Response({"data": {"salespeople": [
+                    {"id": str(item["id"]), "display_name": item["display_name"]} for item in salespeople
+                ]}})
+
+            employees = employee_filter_choices(
+                active_role_employees("MERCHANDISER"), visible.values("followers__pk"),
+            ).values("id", "display_name")
+            products = ProductInformation.objects.filter(
+                status=ProductStatus.ACTIVE, archived_at__isnull=True,
+                category__item_type=ProductItemType.FINISHED, category__status=ReferenceStatus.ACTIVE,
+                category__archived_at__isnull=True,
+            ).order_by("product_number").values(
+                "id", "product_code", "product_name", "specification", item_number=F("product_item__item_number"),
+            )[:1000]
+            catalog_products = ProductCatalog.objects.filter(
+                Q(archived_at__isnull=True, name__archived_at__isnull=True,
+                  name__category__archived_at__isnull=True)
+                | Q(pk__in=visible.values("products__product_catalog_id"))
+            ).order_by("name__name", "item_number", "specification", "id").values(
+                "id", "product_code", "item_number", "specification", product_name=F("name__name"),
+            )
+            return Response({"data": {
+                "employees": [{"id": str(item["id"]), "display_name": item["display_name"]} for item in employees],
+                "products": [{**item, "id": str(item["id"])} for item in products],
+                "product_catalogs": [{**item, "id": str(item["id"])} for item in catalog_products],
+                "order_sources": [{"value": value, "label": label} for value, label in OrderSource.choices],
+                "delivery_methods": [{"value": value, "label": label} for value, label in DeliveryMethod.choices],
+            }})
+
         customers = self._customer_references().filter(archived_at__isnull=True).order_by("account_name", "account_code")[:500]
         employees = active_role_employees("MERCHANDISER").order_by("employee_code")
         salespeople = active_department_employees("DEPT_BUSINESS").order_by("employee_code")
-        if scope == "filters":
-            visible = self.get_queryset()
-            employees = employee_filter_choices(employees, visible.values("followers__pk"))
-            salespeople = employee_filter_choices(salespeople, visible.values("salesperson_id"))
         products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True).select_related(
             "unit", "product_item"
         ).filter(category__item_type=ProductItemType.FINISHED, category__status=ReferenceStatus.ACTIVE,
@@ -472,8 +516,6 @@ class ProductionTaskViewSet(
                 "category_id": str(item.category_id), "unit_code": item.unit.unit_code, "unit_name": item.unit.unit_name,
             } for item in products],
         }
-        if scope == "filters":
-            return Response({"data": data})
         data.update({
             "categories": [{"id": str(item.pk), "category_name": item.category_name} for item in
                 ProductCategory.objects.filter(item_type=ProductItemType.FINISHED, status=ReferenceStatus.ACTIVE,
@@ -585,18 +627,7 @@ class ProductionTaskViewSet(
         require_matching_etag(request, current)
         task = submit_production_task(task=current, actor_employee=request.employee, request=request)
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
-        response["ETag"] = etag_for_instance(task)
-        return response
-
-    def _transition(self, request, target_status):
-        current = self.get_object()
-        require_matching_etag(request, current)
-        task = transition_production_task(
-            task=current, target_status=target_status, actor_employee=request.employee, request=request,
-        )
-        task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
 
@@ -614,7 +645,7 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
 
@@ -629,27 +660,25 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
 
     @action(detail=True, methods=["post"])
     def start(self, request, *args, **kwargs):
         current = self.get_object()
-        if current.sales_order_id:
-            serializer = ProductionTaskStartSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            task = start_production_order(
-                task=current,
-                waiver_reason=serializer.validated_data.get("start_waiver_reason", ""),
-                actor_employee=request.employee,
-                request=request,
-            )
-            task = production_tasks_with_context().get(pk=task.pk)
-            response = Response({"data": ProductionTaskReadSerializer(task).data})
-            response["ETag"] = etag_for_instance(task)
-            return response
-        return self._transition(request, ProductionTaskStatus.IN_PRODUCTION)
+        serializer = ProductionTaskStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        task = start_production_order(
+            task=current,
+            waiver_reason=serializer.validated_data.get("start_waiver_reason", ""),
+            actor_employee=request.employee,
+            request=request,
+        )
+        task = production_tasks_with_context().get(pk=task.pk)
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
+        response["ETag"] = etag_for_instance(task)
+        return response
 
     def _close(self, request, target_status):
         current = self.get_object()
@@ -664,9 +693,30 @@ class ProductionTaskViewSet(
             request=request,
         )
         task = production_tasks_with_context().get(pk=task.pk)
-        response = Response({"data": ProductionTaskReadSerializer(task).data})
+        response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
         response["ETag"] = etag_for_instance(task)
         return response
+
+    def _set_paused(self, request, *, paused):
+        serializer = ProductionTaskReasonSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        task = set_production_task_paused(task=self.get_object(), paused=paused,
+            reason=serializer.validated_data['reason'], actor_employee=request.employee, request=request)
+        task = production_tasks_with_context().get(pk=task.pk)
+        return Response({'data': ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data},
+                        headers={'ETag': etag_for_instance(task)})
+
+    @extend_schema(request=ProductionTaskReasonSerializer,
+        parameters=[OpenApiParameter('If-Match', str, OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=['post'])
+    def pause(self, request, *args, **kwargs):
+        return self._set_paused(request, paused=True)
+
+    @extend_schema(request=ProductionTaskReasonSerializer,
+        parameters=[OpenApiParameter('If-Match', str, OpenApiParameter.HEADER, required=True)])
+    @action(detail=True, methods=['post'])
+    def resume(self, request, *args, **kwargs):
+        return self._set_paused(request, paused=False)
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, *args, **kwargs):
@@ -685,7 +735,7 @@ class ProductionTaskViewSet(
                 request=request,
             )
             task = production_tasks_with_context().get(pk=task.pk)
-            response = Response({"data": ProductionTaskReadSerializer(task).data})
+            response = Response({"data": ProductionTaskReadSerializer(task, context=self.get_serializer_context()).data})
             response["ETag"] = etag_for_instance(task)
             return response
         return self._close(request, ProductionTaskStatus.COMPLETED)

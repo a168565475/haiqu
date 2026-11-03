@@ -8,7 +8,7 @@ from .definitions import CATEGORY_CHOICES, TEMPLATE_CHOICES
 
 class MaterialScope(models.TextChoices):
     BASE = "BASE", "基础属性"
-    SPRAY = "SPRAY", "喷塑属性"
+    SPRAY = "SPRAY", "半成品属性"
 
 
 class MaterialCatalog(ArchivableModel):
@@ -16,6 +16,12 @@ class MaterialCatalog(ArchivableModel):
     template_key = models.CharField(max_length=30, choices=TEMPLATE_CHOICES)
     name = models.CharField(max_length=200)
     spray_enabled = models.BooleanField(default=False)
+    base_warehouse = models.ForeignKey(
+        "inventory.Warehouse", null=True, blank=True, on_delete=models.PROTECT, related_name="base_material_catalogs",
+    )
+    semi_warehouse = models.ForeignKey(
+        "inventory.Warehouse", null=True, blank=True, on_delete=models.PROTECT, related_name="semi_material_catalogs",
+    )
 
     class Meta:
         db_table = "material_catalog"
@@ -47,6 +53,9 @@ class MaterialAttributeValue(ArchivableModel):
     field_key = models.CharField(max_length=40)
     value = models.CharField(max_length=300)
     parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="dimensions")
+    product_color = models.ForeignKey(
+        "reference_data.ProductColor", null=True, blank=True, on_delete=models.PROTECT, related_name="catalog_color_options",
+    )
 
     class Meta:
         db_table = "material_catalog_attribute_value"
@@ -55,7 +64,15 @@ class MaterialAttributeValue(ArchivableModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["catalog", "scope", "field_key", "value", "parent"],
-                nulls_distinct=False, name="mat_catalog_value_uniq",
+                nulls_distinct=False, condition=Q(product_color__isnull=True), name="mat_catalog_value_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["catalog", "scope", "field_key", "product_color"],
+                condition=Q(product_color__isnull=False), name="mat_catalog_color_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(product_color__isnull=True) | Q(scope="BASE", field_key="color"),
+                name="mat_catalog_color_field_valid",
             ),
             models.CheckConstraint(condition=Q(scope__in=MaterialScope.values), name="mat_catalog_value_scope_valid"),
             models.CheckConstraint(condition=~Q(value=""), name="mat_catalog_value_not_empty"),

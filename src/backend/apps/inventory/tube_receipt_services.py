@@ -20,6 +20,8 @@ from apps.reference_data.models import ProductionUnit
 from apps.workshop_reporting.models import WageScheme
 from .models import InternalReceiptStatus, InternalSemiFinishedReceipt, InternalSemiFinishedReceiptLine, WarehouseZone
 from .public_stock_identity import build_semi_finished_identity
+from .public_bom_snapshot import build_output_identity
+from .catalog_stock_identity import build_catalog_stock_identity
 from .public_stock_mode import public_flow_enabled
 from .public_stock_services import credit_public_stock
 from .receipt_permissions import receipt_plans_for_category
@@ -52,7 +54,7 @@ def uses_tube_receipt(*, schedule_product_id=None, request_id=None):
         product_id = ProductionScheduleProduct.objects.filter(pk=plan_id).values_list('product_line_id', flat=True).first()
         if product_id and (records.filter(schedule_product__product_line_id=product_id).exists()
                 or TubeOutsourcingOrder.objects.filter(product_line_id=product_id, source_kind='METAL',
-                    status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED']).exists()):
+                    is_plan=False, status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED']).exists()):
             return True
     return False
 
@@ -112,7 +114,7 @@ def load_tube_receipt_context(request, schedule_product_id, *, lock=False, exclu
               if str(day) != basis['as_of']]
     schemes = _schemes(basis)
     requirements = {}
-    for requirement in OrderMaterialRequirement.objects.filter(product_line=product, measurement_kind='PIPE'):
+    for requirement in OrderMaterialRequirement.objects.filter(product_line=product, measurement_kind__in=['PIPE', 'CATALOG']):
         requirements.setdefault(str(requirement.component_identity), []).append(requirement)
     history = {}
     history_query = InternalSemiFinishedReceiptLine.objects.filter(
@@ -130,13 +132,31 @@ def load_tube_receipt_context(request, schedule_product_id, *, lock=False, exclu
         value = basis['components'][key]
         blockers = list(value['blockers'])
         identity = None
+        input_selection = {}
+        input_proofs = value['catalog_inputs']
         try:
-            identity = build_semi_finished_identity(bom_line=line, completed_craft=craft, unit=unit)
+            if line.material_catalog_id and input_proofs:
+                outputs = [build_output_identity(proof['public_bom_snapshot'], craft, unit) for proof in input_proofs]
+                identity = outputs[0]
+                input_selection = input_proofs[0]['input_material_selection_snapshot']
+                if len({item['identity_key'] for item in outputs}) != 1:
+                    blockers.append('实际领料批次的加工产物不一致，不能合并入库。')
+            else:
+                identity = build_semi_finished_identity(bom_line=line, completed_craft=craft, unit=unit)
         except ValidationError as error:
             blockers.append(str(error.detail))
-        if identity and any(row.attribute_snapshot != identity['identity_snapshot'] for row in history.get(key, [])):
-            blockers.append('已入库部位的实物属性或完成工艺发生变化，请先核对原单。')
-        matching = requirements.get(key, [])
+        if identity:
+            for prior in history.get(key, []):
+                if line.material_catalog_id:
+                    saved_identity = build_catalog_stock_identity(material_catalog_id=line.material_catalog_id,
+                        material_selection_snapshot=prior.attribute_snapshot.get('material_selection_snapshot'))
+                    changed = saved_identity['identity_key'] != identity['identity_key']
+                else:
+                    changed = prior.attribute_snapshot != identity['identity_snapshot']
+                if changed:
+                    blockers.append('已入库部位的实物属性或完成工艺发生变化，请先核对原单。')
+        matching = [item for item in requirements.get(key, [])
+                    if bool(item.material_catalog_id) == bool(line.material_catalog_id)]
         requirement = matching[0] if len(matching) == 1 else None
         if len(matching) > 1 or (value['issued'] and requirement is None):
             blockers.append('无法唯一关联该部位的有效领料需求，请核对原领料单。')
@@ -170,9 +190,12 @@ def load_tube_receipt_context(request, schedule_product_id, *, lock=False, exclu
         row = {'bom_line_id': str(line.pk), 'component_identity': key,
             'component_key': f'{product.pk}:{key}:METAL', 'usage': str(line.pieces_per_product or ''),
             'specification': line.specification, 'attributes': attributes, 'stage': '金工完成',
+            'input_material_selection_snapshot': input_selection,
+            'output_material_selection_snapshot': attributes.get('material_selection_snapshot', {}),
             'required': required, 'received': received, 'can_receive': _integer(available), 'metal_processing': metadata}
         rows.append(row)
-        facts[str(line.pk)] = {'line': line, 'requirement': requirement, 'identity': identity, 'row': row}
+        facts[str(line.pk)] = {'line': line, 'requirement': requirement, 'identity': identity, 'row': row,
+            'input_proofs': input_proofs}
     revision = digest({'quantity_basis': QUANTITY_BASIS, 'plan': str(plan.pk), 'plan_revision': plan.source_revision_hash,
         'schedule_version': plan.schedule.version, 'bom': str(bom.pk), 'basis_revision': basis['revision'],
         'future_revisions': [value['revision'] for value in future], 'rows': rows, 'blockers': global_blockers})
@@ -182,6 +205,9 @@ def load_tube_receipt_context(request, schedule_product_id, *, lock=False, exclu
 
 
 def tube_preview_data(context, actor):
+    from .processing_material_snapshots import tube_processing_not_enabled
+    for row in context['rows']:
+        row['processing_not_enabled_reason'] = tube_processing_not_enabled(context['facts'][row['bom_line_id']]['line'])
     plan, task, product = context['plan'], context['task'], context['product']
     zones = WarehouseZone.objects.filter(status='ACTIVE', warehouse__status='ACTIVE',
         warehouse__warehouse_type='SEMI_FINISHED').select_related('warehouse').order_by('warehouse__warehouse_name', 'zone_name', 'pk')
@@ -192,7 +218,7 @@ def tube_preview_data(context, actor):
     return {'schedule_product_id': str(plan.pk), 'plan_category': 'METAL', 'etag': f'"{context["revision"]}"',
         'production_order': task.task_number, 'order_number': task.order_number, 'schedule_number': plan.schedule.schedule_number,
         'product': product.product_name_snapshot, 'product_number': product.product_number_snapshot,
-        'item_number': product.item_number_snapshot, 'product_unit': product.unit.unit_name,
+        'item_number': product.item_number_snapshot, 'product_unit': product.unit_name,
         'product_color': product.color_name_snapshot, 'order_quantity': str(product.quantity),
         'actor': actor.display_name, 'receipt_date': str(timezone.localdate()), 'processing_state': '未喷塑',
         'lines': context['rows'], 'excluded': [], 'zones': [{'id': str(zone.pk), 'warehouse_id': str(zone.warehouse_id),
@@ -283,7 +309,10 @@ def submit_tube_receipt(request, data):
             input_unit_name='支', quantity=quantity, input_per_output=1, input_quantity=quantity,
             required_quantity_snapshot=row['required'], received_before=row['received'],
             received_after=int(row['received']) + quantity, stock_movement=None,
-            attribute_snapshot=fact['identity']['identity_snapshot'], input_snapshot=row['metal_processing'])
+            attribute_snapshot=fact['identity']['identity_snapshot'], input_snapshot={**row['metal_processing'],
+                'input_material_selection_snapshot': row['input_material_selection_snapshot'],
+                'output_material_selection_snapshot': row['output_material_selection_snapshot'],
+                'catalog_inputs': fact['input_proofs']})
     from .notification_events import internal_receipt_submitted
     internal_receipt_submitted(header, actor)
     return header, False
@@ -323,13 +352,26 @@ def confirm_tube_receipt(request, receipt):
                   f'“{fact["line"].part_name}”本次最多可入{row["can_receive"]}支。')
         if fact['requirement'] is None:
             _fail('该部位尚无有效领料需求，请先领料。')
+        if fact['line'].material_catalog_id:
+            saved_proofs = line.input_snapshot.get('catalog_inputs', [])
+            actual_proofs = {proof['issue_line_id']: proof for proof in fact['input_proofs']}
+            if (not saved_proofs or any(proof != actual_proofs.get(proof.get('issue_line_id')) for proof in saved_proofs)
+                    or line.input_snapshot.get('input_material_selection_snapshot') not in
+                        [proof['input_material_selection_snapshot'] for proof in saved_proofs]):
+                raise PreconditionFailed('待入库原单保存的投入凭证不一致，请核对原领料明细。')
+            saved_identity = build_catalog_stock_identity(material_catalog_id=fact['line'].material_catalog_id,
+                material_selection_snapshot=line.attribute_snapshot.get('material_selection_snapshot'))
+            identity_changed = saved_identity['identity_key'] != fact['identity']['identity_key']
+            fact['identity'] = saved_identity
+        else:
+            identity_changed = line.attribute_snapshot != fact['identity']['identity_snapshot']
         if (line.component_identity != fact['line'].component_identity
                 or line.unit_id != context['unit'].pk
                 or line.input_requirement_id != fact['requirement'].pk
                 or line.input_unit_name != '支' or line.input_per_output != 1
                 or line.input_quantity != line.quantity
                 or line.required_quantity_snapshot != Decimal(row['required'])
-                or line.attribute_snapshot != fact['identity']['identity_snapshot']):
+                or identity_changed):
             raise PreconditionFailed('待入库部位、实物属性或投入依据已变化，请删除原单后重新提交。')
         requested[key] = quantity
     assert_tube_quantity_available(product_line_id=context['product'].pk, requested=requested,
@@ -344,6 +386,10 @@ def confirm_tube_receipt(request, receipt):
             actor_employee=actor, production_task=context['task'], product_line=context['product'], bom_line=fact['line'],
             snapshot={**receipt.source_snapshot, 'receipt_number': receipt.receipt_number,
                 'receipt_date': str(receipt.receipt_date), 'actor_name': actor.display_name,
+                'public_identity': fact['identity'],
+                'input_material_selection_snapshot': line.input_snapshot.get('input_material_selection_snapshot', {}),
+                'output_material_selection_snapshot': line.attribute_snapshot.get('material_selection_snapshot', {}),
+                'catalog_inputs': line.input_snapshot.get('catalog_inputs', []),
                 'source': '厂内入库', 'remark': receipt.remark})
         line.stock_movement = movement
         line.save(update_fields=['stock_movement', 'updated_at'])

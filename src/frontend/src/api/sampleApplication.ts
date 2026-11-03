@@ -14,9 +14,18 @@ export async function fetchSampleApplicationProductOptions(sampleId: string, que
 
 export async function completeSampleApplicationProducts(sampleId: string, etag: string, products: SampleProductEdit[], purpose: string, referenceImage?: File, basic?: SampleApplicationBasicInput): Promise<{ data: SampleDetail; etag: string }> {
   if (!sampleId || !etag) throw new Error('缺少申请或数据版本，请重新加载。')
-  const payload = { products: products.map(product => ({ ...product, product_id: product.product_id || null,
-    material_snapshot: product.specification.match(/(?:^|[；;])\s*材质\s*[:：]\s*([^；;]*)/)?.[1]?.trim() || '',
-  })), purpose, ...(basic ? { basic } : {}) }
+  const payload = { products: products.map(product => {
+    const { product_selection_snapshot: _snapshot, ...input } = product
+    const usesDraft = Boolean(product.product_catalog_id || product.product_selection?.draft || _snapshot?.entry_draft)
+    return { ...input, product_id: usesDraft ? null : product.product_id || null,
+      category_id: usesDraft ? null : product.category_id || null,
+      details: product.details.map(detail => ({ ...detail, product_color_id: detail.product_color_id || null })),
+      ...(usesDraft ? {} : { material_snapshot: product.specification.match(/(?:^|[；;])\s*材质\s*[:：]\s*([^；;]*)/)?.[1]?.trim() || '' }),
+    }
+  }), purpose, ...(basic ? { basic: (() => {
+    const { is_salesperson, customer_account_id, customer_contact_id, ...fields } = basic
+    return { ...fields, ...(is_salesperson === false ? {} : { customer_account_id, customer_contact_id }) }
+  })() } : {}) }
   let body: typeof payload | FormData = payload
   if (referenceImage) {
     body = new FormData()
@@ -30,9 +39,12 @@ export async function completeSampleApplicationProducts(sampleId: string, etag: 
 export async function submitSampleApplication(draft: SampleApplicationDraft, submission: { key: string; sampleId?: string; etag?: string }): Promise<{ id: string; etag: string; status: SampleDetail['status'] }> {
   const body = new FormData()
   body.append('payload', JSON.stringify({
-    customer_account_id: draft.customerId, customer_contact_id: draft.contactId || null, owner_employee_id: draft.ownerId,
+    ...(draft.isSalesperson === false ? {} : { customer_account_id: draft.customerId, customer_contact_id: draft.contactId || null }), owner_employee_id: draft.ownerId,
+    manual_request_number: draft.manualRequestNumber.trim(), product_color_id: draft.productColorId,
     source_type: draft.sourceType, source_id: draft.sourceId || null, source_product_id: draft.sourceProductId || null,
-    product_id: draft.productId || null,
+    product_id: draft.productCatalogId || draft.productSelection?.draft || draft.productSelectionSnapshot?.entry_draft ? null : draft.productId || null,
+    product_catalog_id: draft.productCatalogId || null,
+    ...(draft.productSelection ? { product_selection: draft.productSelection } : {}),
     sample_type: draft.sampleType, shipping_method: draft.shippingMethod, delivery_batch: draft.deliveryBatch, is_repeat_order: draft.repeatOrder,
     order_date: draft.orderDate || null, sample_due_date: draft.dueDate || null,
     product_name: draft.productName.trim(), specification: draft.specification, purpose: draft.requirements, quantity: draft.quantity,

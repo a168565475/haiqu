@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import { getLogoutErrorMessage } from '@/api/auth'
 import chevronDownIcon from '@/assets/crm-v2/chevron-down.svg'
 import headerLogo from '@/assets/navigation/hitree-header-logo.png'
+import AccountSwitchMenuItems from '@/components/auth/AccountSwitchMenuItems.vue'
 import GlobalPageTabs from '@/components/navigation/GlobalPageTabs.vue'
 import HeaderMessages from '@/components/navigation/HeaderMessages.vue'
 import ConfirmedSidebarIcon from '@/components/navigation/ConfirmedSidebarIcon.vue'
@@ -15,6 +16,8 @@ import { useThemeStore } from '@/stores/theme'
 import { isEnabledTheme } from '@/theme'
 import { isWeComBrowser } from '@/utils/wecom'
 
+const props = withDefaults(defineProps<{ switchBusy?: boolean; switchError?: string }>(), { switchBusy: false })
+const emit = defineEmits<{ 'switch-account': []; 'return-admin': []; 'verify-identity': [] }>()
 const router = useRouter()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
@@ -28,14 +31,25 @@ function handleThemeCommand(command: string | number | object) {
 
 const visibleName = computed(() => {
   const user = authStore.user
-  if (user?.is_superuser) return '超级管理员'
   return user?.employee?.display_name || user?.display_name || user?.username || '用户'
 })
 
 async function handleUserCommand(command: string | number | object) {
-  if (inWeCom || command !== 'logout' || logoutLoading.value) {
+  if (logoutLoading.value || props.switchBusy) return
+  if (command === 'switch-account') {
+    if (authStore.canSwitchAccount) emit('switch-account')
     return
   }
+  if (command === 'return-admin') {
+    if (authStore.canReturnAdmin) emit('return-admin')
+    return
+  }
+  if (command === 'verify-identity') {
+    if (authStore.identityRevalidationRequired || props.switchError
+      || (authStore.accountSwitch?.can_return && !authStore.canReturnAdmin)) emit('verify-identity')
+    return
+  }
+  if (inWeCom || command !== 'logout') return
 
   logoutLoading.value = true
   try {
@@ -86,13 +100,13 @@ async function handleUserCommand(command: string | number | object) {
           </ElDropdownMenu>
         </template>
       </ElDropdown>
-      <span v-if="inWeCom" class="app-header__user-name" data-current-user>{{ visibleName }}</span>
+      <span v-if="inWeCom && !authStore.canSwitchAccount && !authStore.accountSwitch?.can_return && !authStore.identityRevalidationRequired && !switchError" class="app-header__user-name" data-current-user>{{ visibleName }}</span>
       <ElDropdown
         v-else
         class="app-header__user-menu"
         trigger="click"
         placement="bottom-end"
-        :disabled="logoutLoading"
+        :disabled="logoutLoading || switchBusy"
         @command="handleUserCommand"
       >
         <button
@@ -100,15 +114,16 @@ async function handleUserCommand(command: string | number | object) {
           class="app-header__user"
           data-current-user
           aria-label="打开用户菜单"
-          :aria-busy="logoutLoading"
-          :disabled="logoutLoading"
+          :aria-busy="logoutLoading || switchBusy"
+          :disabled="logoutLoading || switchBusy"
         >
           <span class="app-header__user-name">{{ visibleName }}</span>
           <img class="app-header__user-chevron" :src="chevronDownIcon" alt="" aria-hidden="true" />
         </button>
         <template #dropdown>
           <ElDropdownMenu>
-            <ElDropdownItem command="logout" :disabled="logoutLoading" data-logout-action>
+            <AccountSwitchMenuItems :busy="logoutLoading || switchBusy" :error="switchError" />
+            <ElDropdownItem v-if="!inWeCom" command="logout" :disabled="logoutLoading || switchBusy" data-logout-action>
               <ElIcon><SwitchButton /></ElIcon>
               <span>{{ logoutLoading ? '正在退出…' : '退出登录' }}</span>
             </ElDropdownItem>

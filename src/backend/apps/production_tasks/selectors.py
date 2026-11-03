@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.db.models import Case, CharField, Exists, OuterRef, Prefetch, Q, Sum, Value, When
+from django.db.models import Case, CharField, Exists, F, OuterRef, Prefetch, Q, Sum, Value, When
 
 from apps.customers.selectors import accessible_customers
 from apps.files.models import USABLE_FILE_SCAN_STATUSES
@@ -139,12 +139,36 @@ def production_sales_order_sources(request):
     )
 
 
-def accessible_production_tasks(request):
+def accessible_production_tasks(request, permission=None):
     queryset = ProductionTask.objects.all()
     from apps.access_control import module_policy
     view = (getattr(request, 'parser_context', None) or {}).get('view')
-    permission = module_policy.action_permission(request, view) if view is not None else None
+    if permission is None:
+        permission = module_policy.action_permission(request, view) if view is not None else 'production_tasks.view_productiontask'
     direct = type(view).__name__ == 'ProductionTaskViewSet'
+    from apps.access_control.role_policy import filter_task_scope, role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+    if isinstance(permission, str) and 'FOLLOWED' in role_scopes(request, permission):
+        selected = filter_task_scope(request, queryset, permission, task_lookup='').distinct()
+        from apps.access_control.sales_policy import access_for
+        resources = {pk for source in access_for(request)['actions'].get(permission, {}).get('sources', [])
+                     if source.get('scope') == 'WORKSHOP' for pk in source.get('resource_ids', [])}
+        if resources:
+            selected = selected | queryset.filter(
+                production_schedules__record_status='ACTIVE',
+                production_schedules__products__removed_at__isnull=True,
+                production_schedules__products__crafts__removed_at__isnull=True,
+                production_schedules__products__crafts__craft__workshop_id__in=resources,
+            ).distinct()
+        if has_legacy_permission(request, permission):
+            selected = selected | legacy_accessible_production_tasks(request)
+        return selected.distinct()
+    if isinstance(permission, (list, tuple)):
+        selected = queryset.none().distinct()
+        for code in permission:
+            if module_policy.has_permission(request, code):
+                selected = selected | accessible_production_tasks(request, permission=code).distinct()
+        return selected.distinct()
     modules = ('production_tasks',) if direct else (
         'production_tasks', 'production_scheduling', 'boms', 'procurement', 'inventory',
         'material_issues', 'outsourcing', 'workshop_reporting')
@@ -194,40 +218,57 @@ def legacy_accessible_production_tasks(request):
 def production_tasks_with_context(queryset=None, *, include_progress=False, list_mode=False, include_bom_details=False):
     if queryset is None:
         queryset = ProductionTask.objects.all()
-    related = [
-        "customer_account",
-        "salesperson",
-        "currency",
-        "sales_order",
-        "sales_order_delivery_batch",
-    ]
-    if not list_mode:
-        related.extend([
+    if list_mode:
+        from apps.organizations.models import Employee
+
+        related = ["salesperson", "sales_order"]
+        # 列表仅提取快照中的单位，不装载图片、明细、汇率或产品选择的完整 JSON。
+        products = ProductionTaskProduct.objects.annotate(
+            _list_unit_name=F("product_selection_snapshot__unit_name"),
+            _list_unit_code=F("product_selection_snapshot__unit_code"),
+        ).select_related("unit", "product_color").only(
+            "id", "production_task_id", "line_number", "product_name_snapshot",
+            "customer_product_name_snapshot", "item_number_snapshot", "specification_snapshot",
+            "customer_specification_snapshot", "material_snapshot", "customer_color_snapshot",
+            "color_name_snapshot", "color_code_snapshot", "quantity", "total_amount", "exchange_rate",
+            "unit_id", "unit__id", "unit__unit_name", "unit__unit_code",
+            "product_color_id", "product_color__id", "product_color__color_name",
+        ).order_by("production_task_id", "line_number")
+        prefetched = [
+            Prefetch("products", queryset=products),
+            Prefetch("followers", queryset=Employee.objects.only("id", "display_name")),
+        ]
+        queryset = queryset.only(
+            "id", "task_number", "delivery_date", "status", "sales_order_id", "sales_order__order_number",
+            "salesperson_id", "salesperson__id", "salesperson__display_name",
+        )
+    else:
+        related = [
+            "customer_account", "salesperson", "currency", "sales_order", "sales_order_delivery_batch",
             "created_by_employee", "sales_order_line", "sales_order__source_quotation_version",
             "planner", "accepted_by_employee", "start_waiver_by_employee",
-        ])
-    blockers = [When(
-        Exists(relation.related_model._base_manager.filter(**{relation.field.name: OuterRef("pk")})),
-        then=Value(business_relation_message(relation)),
-    ) for relation in external_business_relations(ProductionTaskProduct)]
-    product_queryset = ProductionTaskProduct.objects.annotate(
-        _deletion_blocked_reason=Case(*blockers, default=Value(""), output_field=CharField()),
-    )
-    prefetched = [
-        Prefetch("products", queryset=product_queryset),
-        "followers",
-        "products__product",
-        "products__unit",
-        "products__currency",
-        "products__product_color",
-        "products__sales_order_delivery_batch_line__sales_order_line__source_quotation_line__source_inquiry_item",
-        "products__image_file",
-        "products__images__image_file",
-        "products__details__image_file",
-        "delivery_batches",
-    ]
-    if not list_mode:
-        prefetched.append("run_batches")
+        ]
+        blockers = [When(
+            Exists(relation.related_model._base_manager.filter(**{relation.field.name: OuterRef("pk")})),
+            then=Value(business_relation_message(relation)),
+        ) for relation in external_business_relations(ProductionTaskProduct)]
+        product_queryset = ProductionTaskProduct.objects.annotate(
+            _deletion_blocked_reason=Case(*blockers, default=Value(""), output_field=CharField()),
+        )
+        prefetched = [
+            Prefetch("products", queryset=product_queryset),
+            "followers",
+            "products__product",
+            "products__unit",
+            "products__currency",
+            "products__product_color",
+            "products__sales_order_delivery_batch_line__sales_order_line__source_quotation_line__source_inquiry_item",
+            "products__image_file",
+            "products__images__image_file",
+            "products__details__image_file",
+            "delivery_batches",
+            "run_batches",
+        ]
     queryset = queryset.select_related(*related).prefetch_related(*prefetched)
     if not include_progress:
         return queryset
@@ -239,13 +280,19 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
     boms = Bom.objects.filter(archived_at__isnull=True).order_by(
         "product_line_id", "-version_number", "-created_at", "-id"
     )
+    orders = purchase_orders_with_product_ids(active_purchase_orders())
+    requests = PurchaseRequest.objects.filter(archived_at__isnull=True).order_by("-created_at", "-id")
+    if list_mode:
+        boms = boms.only("id", "production_task_id", "product_line_id", "status")
+        orders = orders.only("id", "production_task_id", "status")
+        requests = requests.only("id", "production_task_id", "status")
     if include_bom_details:
         boms = boms.select_related("product_line", "product_line__product_color", "confirmed_by_employee")
 
     return queryset.prefetch_related(
         Prefetch(
             "purchase_orders",
-            queryset=purchase_orders_with_product_ids(active_purchase_orders()),
+            queryset=orders,
             to_attr="_active_purchase_orders_for_status",
         ),
         Prefetch(
@@ -255,9 +302,7 @@ def production_tasks_with_context(queryset=None, *, include_progress=False, list
         ),
         Prefetch(
             "purchase_requests",
-            queryset=PurchaseRequest.objects.filter(archived_at__isnull=True).order_by(
-                "-created_at", "-id"
-            ),
+            queryset=requests,
             to_attr="_active_purchase_requests_for_status",
         ),
     )

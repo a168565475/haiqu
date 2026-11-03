@@ -1,11 +1,8 @@
-.title-line, .heading-actions, .toolbar-actions, .stat-copy { display: flex; align-items: center; gap: 12px; }
-.title-line { gap: 20px; }.title-line span { color: var(--erp-color-text-secondary); font-size: 13px; }
-.inventory-tabs, .stats-grid { margin-bottom: 12px; }
-.stat-card { justify-content: space-between; }.stat-copy span { font-size: 12px; }.stat-icon { min-width: 28px; padding: 0 4px; }
+.title-line, .heading-actions, .toolbar-actions { display: flex; align-items: center; gap: 12px; }
+.title-line { gap: 20px; }
 .filter-grid { align-items: flex-end; }
 .filter-grid :deep(.el-form-item) { width: 176px; min-width: 0; margin: 0; }
 .filter-grid :deep(.el-form-item:first-child) { width: 250px; }
-.filter-grid :deep(.el-form-item__label) { height: 22px; margin: 0; padding: 0 0 4px; color: var(--erp-color-text-secondary); font-size: 12px; line-height: 18px; }
 .filter-grid :deep(.el-input), .filter-grid :deep(.el-select) { width: 100%; }
 .table-toolbar > span { margin-left: auto; color: var(--erp-color-text-secondary); font-size: 12px; }
 .load-error { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; color: var(--erp-color-danger); font-size: 13px; }

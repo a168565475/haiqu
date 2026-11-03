@@ -31,6 +31,8 @@ from .models import (InternalReceiptStatus, InternalSemiFinishedReceipt, Interna
                      WarehouseZone, PublicStockMovement)
 from .public_stock_cutover import stock_write_transaction
 from .public_stock_identity import build_semi_finished_identity
+from .catalog_stock_identity import build_catalog_stock_identity
+from .processing_material_snapshots import copy_material_selection, freeze_processing_materials
 from .public_stock_services import credit_public_stock
 from .public_stock_mode import public_flow_enabled
 from .stock_services import InventoryStockValidationError
@@ -63,6 +65,30 @@ def _json(value):
     if isinstance(value, (list, tuple)):
         return [_json(item) for item in value]
     return value
+
+
+def _receipt_frozen_identity(line, fact):
+    """显示文字可变化；核对实物身份后仍返回原入库单保存的库存身份。"""
+    if not fact:
+        raise Conflict('已入库部位不在当前 BOM，请先核对原单。')
+    if not fact['material_pair']:
+        if line.attribute_snapshot != fact['identity']['identity_snapshot']:
+            raise Conflict('已入库部位的实物属性或工序发生变化，请先核对原单。')
+        return fact['identity']
+    selected = copy_material_selection(line.attribute_snapshot.get('material_selection_snapshot'),
+        field='output_material_selection_snapshot')
+    identity = build_catalog_stock_identity(material_catalog_id=selected['catalog_id'], material_selection_snapshot=selected)
+    if (identity['identity_snapshot'] != line.attribute_snapshot
+            or identity['identity_key'] != fact['identity']['identity_key']
+            or line.input_snapshot.get('output_material_selection_snapshot') != selected):
+        raise Conflict('裁片产出实物身份或原单冻结内容不一致，请先核对原单。')
+    for name, current in fact['material_pair'].items():
+        saved = copy_material_selection(line.input_snapshot.get(name), field=name)
+        saved_identity = build_catalog_stock_identity(material_catalog_id=saved['catalog_id'], material_selection_snapshot=saved)
+        current_identity = build_catalog_stock_identity(material_catalog_id=current['catalog_id'], material_selection_snapshot=current)
+        if saved_identity['identity_key'] != current_identity['identity_key']:
+            raise Conflict('裁片投入或产出实物身份已变化，请先核对原单。')
+    return identity
 
 
 def load_receipt_context(request, schedule_product_id, category, *, lock=False, exclude_receipt_id=None,
@@ -157,10 +183,32 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
         if len(requirements) != 1:
             _fail(f'{line.part_name}尚无唯一有效的领料需求，请先完成对应原料领料。')
         requirement = next(iter(requirements.values()))
-        material, _ = resolve_bom_line_raw_material(line) if category == 'METAL' else resolve_cutting_fabric_material(line)
-        if material is None or requirement.raw_material_id != material.pk:
-            _fail(f'{line.part_name}的已领原料与当前 BOM 关联原料不一致。')
-        input_unit = '支' if category == 'METAL' else '米'
+        input_material = None
+        fabric = line.fabric_source_line if category == 'SEWING' else None
+        if fabric is not None and fabric.material_catalog_id:
+            saved = copy_material_selection(fabric.material_selection_snapshot,
+                field='input_material_selection_snapshot', catalog_id=fabric.material_catalog_id)
+            input_material = copy_material_selection(requirement.material_selection_snapshot,
+                field='input_material_selection_snapshot', catalog_id=requirement.material_catalog_id)
+            expected_identity = build_catalog_stock_identity(material_catalog_id=fabric.material_catalog_id,
+                material_selection_snapshot=saved)
+            input_identity = build_catalog_stock_identity(material_catalog_id=requirement.material_catalog_id,
+                material_selection_snapshot=input_material)
+            if (saved['category_key'] != 'FABRIC' or saved['processing_state'] != 'RAW'
+                    or requirement.raw_material_id or requirement.measurement_kind != 'CATALOG'
+                    or requirement.material_catalog_id != fabric.material_catalog_id
+                    or requirement.product_line_id != product.pk
+                    or requirement.component_identity != fabric.component_identity
+                    or input_identity['identity_key'] != expected_identity['identity_key']
+                    or requirement.conversion_snapshot.get('public_identity') != input_identity
+                    or str(requirement.unit_id) != input_material['unit_id']):
+                _fail(f'{line.part_name}的面料需求与保存材料、单位或来源部位不一致。')
+            input_unit = input_material['unit_name']
+        else:
+            material, _ = resolve_bom_line_raw_material(line) if category == 'METAL' else resolve_cutting_fabric_material(line)
+            if material is None or requirement.raw_material_id != material.pk:
+                _fail(f'{line.part_name}的已领原料与当前 BOM 关联原料不一致。')
+            input_unit = '支' if category == 'METAL' else '米'
         if requirement.unit.unit_name != input_unit:
             _fail(f'{line.part_name}的投入单位应为{input_unit}。')
         if category == 'METAL' and (requirement.measurement_kind != 'PIPE'
@@ -187,7 +235,16 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
                                        external_received.get(line.component_identity, Decimal(0)),
                                        sum(direct_usage.get(str(line.component_identity), {}).get(name, 0)
                                            for name in ('dispatched', 'reserved'))))
-        facts[component_key] = dict(line=line, requirement=requirement, identity=identity, usage=usage)
+        material_pair = {}
+        if category == 'SEWING' and line.material_catalog_id:
+            if input_material is None:
+                _fail(f'{line.part_name}的新目录裁片缺少已保存的新目录面料投入。')
+            material_pair = freeze_processing_materials(input_snapshot=input_material,
+                input_catalog_id=requirement.material_catalog_id,
+                output_snapshot=identity['identity_snapshot']['material_selection_snapshot'],
+                output_catalog_id=line.material_catalog_id, completed_craft=stock_craft, semi_kind='CUTTING')
+        facts[component_key] = dict(line=line, requirement=requirement, identity=identity, usage=usage,
+                                    material_pair=material_pair)
         requirement_ids.add(requirement.pk)
     issued_query = MaterialIssueLine.objects.filter(issue__production_task=task, issue__product_line=product,
         issue__status='ISSUED', line_type='RAW', requirement_id__in=requirement_ids).select_related(
@@ -243,8 +300,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
         history.append(ReceivedOutput(scope, component_key, f'{product.pk}:{row.input_requirement_id}',
             row.input_unit_name, row.unit.unit_name, row.quantity, row.input_quantity))
         fact = facts.get(component_key)
-        if not fact or fact['identity']['identity_snapshot'] != row.attribute_snapshot:
-            raise Conflict('已入库部位的实物属性或工序发生变化，请先核对原单。')
+        _receipt_frozen_identity(row, fact)
     tube_basis = None
     if category == 'SEWING':
         known_components = {str(fact['line'].component_identity) for fact in facts.values()}
@@ -255,7 +311,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
         from apps.outsourcing.models import TubeOutsourcingLine
         pending = {str(row['component_identity']): Decimal(row['quantity']) for row in
             TubeOutsourcingLine.objects.filter(order__product_line=product,
-                order__source_kind='METAL', order__status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED'])
+                order__source_kind='METAL', order__is_plan=False, order__status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED'])
                 .values('component_identity').annotate(quantity=Sum('quantity'))}
         if pending:
             from .tube_processing_services import metal_component_limits
@@ -270,6 +326,7 @@ def load_receipt_context(request, schedule_product_id, category, *, lock=False, 
     revision = digest({'plan': str(plan.pk), 'plan_revision': plan.source_revision_hash, 'bom':str(bom.pk),
         'category':category, 'demands':[asdict(item) for item in demands], 'pools':[asdict(item) for item in pools],
         'history':[asdict(item) for item in history], 'identities':[fact['identity'] for fact in facts.values()],
+        'material_pairs':[fact['material_pair'] for fact in facts.values()],
         'sources':[(str(line.pk), source.version if source else 0) for line, source, _ in source_facts],
         'tube_basis_revision': tube_basis['revision'] if tube_basis else None,
         **({'quantity_basis':'ORDER_REMAINING'} if category == 'SEWING' else {})})
@@ -286,7 +343,9 @@ def preview_data(context, actor):
     for key, fact in context['facts'].items():
         identity = fact['identity']['identity_snapshot']
         row = dict(bom_line_id=str(fact['line'].pk), component_key=key, usage=str(fact['usage']), attributes=identity,
+                   output_material_selection_snapshot=identity.get('material_selection_snapshot', {}),
                    stage='金工完成' if context['category']=='METAL' else '车缝完成')
+        row.update(fact['material_pair'])
         row.update(_json(asdict(context['calculation'].components[key])))
         if context.get('tube_basis'):
             basis = context['tube_basis']['components'].get(str(fact['line'].component_identity))
@@ -368,7 +427,8 @@ def submit_receipt(request, data):
             input_unit_name=demand.input_unit,quantity=quantity,input_per_output=demand.input_per_output,
             input_quantity=allowance.consumes_input,required_quantity_snapshot=allowance.required,
             received_before=allowance.received,received_after=allowance.received_after,stock_movement=None,
-            attribute_snapshot=fact['identity']['identity_snapshot'],input_snapshot=_json(asdict(allowance)))
+            attribute_snapshot=fact['identity']['identity_snapshot'],
+            input_snapshot=_json({**asdict(allowance), **fact['material_pair']}))
     from .notification_events import internal_receipt_submitted
     internal_receipt_submitted(header, actor)
     return header, False
@@ -406,7 +466,7 @@ def confirm_receipt(request, receipt_id):
             or receipt.completed_craft_id != context['craft'].pk):
         raise Conflict('BOM或完成工序已变化，请删除待入库原单后重新提交。')
     by_id = {str(fact['line'].pk): key for key, fact in context['facts'].items()}
-    requested, pending_lines = {}, {}
+    requested, pending_lines, pending_identities = {}, {}, {}
     for item in receipt.lines.select_related('bom_line').all():
         key = by_id.get(str(item.bom_line_id))
         if not key or key in requested:
@@ -414,10 +474,10 @@ def confirm_receipt(request, receipt_id):
         fact = context['facts'][key]
         demand = next(row for row in context['args']['demands'] if row.component_key == key)
         if (item.component_identity != fact['line'].component_identity
-                or item.attribute_snapshot != fact['identity']['identity_snapshot']
                 or item.unit_id != context['unit'].pk or item.input_requirement_id != fact['requirement'].pk
                 or item.input_unit_name != demand.input_unit or item.input_per_output != demand.input_per_output):
             raise Conflict('部位实物属性或投入依据已变化，请删除待入库原单后重新提交。')
+        pending_identities[key] = _receipt_frozen_identity(item, fact)
         requested[key] = item.quantity
         pending_lines[key] = item
     calculation = validate_receipt(**context['args'], requested=requested)
@@ -451,10 +511,12 @@ def confirm_receipt(request, receipt_id):
             if remaining:
                 raise Conflict('实际已领投入不足，本次入库已全部回滚。')
         line = pending_lines[key]
-        movement = credit_public_stock(identity=fact['identity'], zone=receipt.zone, quantity=quantity,
+        movement = credit_public_stock(identity=pending_identities[key], zone=receipt.zone, quantity=quantity,
             source_type='INTERNAL_SEMI_RECEIPT', source_id=receipt.pk, source_line_id=line.pk,
             actor_employee=actor, production_task=context['task'], product_line=context['product'], bom_line=fact['line'],
             snapshot={**receipt.source_snapshot, 'receipt_number':receipt.receipt_number,
+                      **{name: line.input_snapshot[name] for name in fact['material_pair']},
+                      **({'public_identity': _json(pending_identities[key])} if fact['material_pair'] else {}),
                       'receipt_date':str(receipt.receipt_date), 'actor_name':actor.display_name,
                       'source':'厂内入库', 'remark':receipt.remark})
         line.stock_movement = movement

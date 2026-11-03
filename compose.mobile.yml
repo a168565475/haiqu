@@ -1,0 +1,20 @@
+services:
+  frontend-mobile:
+    build:
+      context: ./src/frontend-mobile
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      VITE_PROXY_TARGET: http://backend:8000
+    ports:
+      - "${MOBILE_HOST_IP:-127.0.0.1}:${MOBILE_HOST_PORT:-8082}:8082"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8082/m/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s

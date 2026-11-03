@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Delete, Picture, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -224,7 +225,7 @@ const pendingDeleteReleasedLines = computed(() => {
     key: line.client_key,
     product: productDisplayName(line),
     quantity: batchQuantity(batch, line.client_key),
-    unit: quoteLineById.value.get(line.source_quotation_line_id || '')?.unit_code || productById.value.get(line.product_id || '')?.unit_code || '-',
+    unit: unitDisplay(line),
   })).filter((item) => item.quantity > 0)
 })
 const primaryDeliveryDate = computed({
@@ -298,6 +299,9 @@ function productLabel(id: string | null | undefined) {
   return item ? `${item.product_number} · ${item.product_name}` : '未映射产品'
 }
 function unitDisplay(line: SalesOrderLineInput) {
+  if (line.product_selection?.draft || line.product_selection_snapshot) return productEntryUnitName(line) || '-'
+  const sourceSnapshot = quoteLineById.value.get(line.source_quotation_line_id || '')?.product_selection_snapshot
+  if (sourceSnapshot?.unit_name) return sourceSnapshot.unit_name
   const quoteUnit = quoteLineById.value.get(line.source_quotation_line_id || '')?.unit_code
   const product = productById.value.get(line.product_id || '')
   const code = line.unit_code || quoteUnit || product?.unit_code
@@ -309,7 +313,7 @@ function productDisplayName(line: SalesOrderLineInput) {
 }
 function productCategoryDisplay(line: SalesOrderLineInput) {
   const category = productCategoryChoices.value.find((item) => item.id === line.product_category_id)
-  return category?.category_name || productById.value.get(line.product_id || '')?.category_name || '—'
+  return line.product_selection_snapshot?.category_name || line.product_category_name || category?.category_name || productById.value.get(line.product_id || '')?.category_name || '—'
 }
 function productSpecificationDisplay(line: SalesOrderLineInput) {
   return line.specification_display || line.customer_specification_snapshot || productById.value.get(line.product_id || '')?.specification || '—'
@@ -354,6 +358,10 @@ function productDialogItemFor(line: SalesOrderLineInput): InquiryItem {
   return {
     id: line.client_key,
     product_id: line.product_id,
+    product_catalog_id: line.product_catalog_id || null,
+    product_selection: line.product_selection ? { ...line.product_selection } : null,
+    product_selection_snapshot: line.product_selection_snapshot || null,
+    product_category_name: line.product_category_name || line.product_selection_snapshot?.category_name,
     product_category_id: line.product_category_id || product?.category_id || null,
     product_unit_id: line.product_unit_id || product?.unit_id || null,
     product_color_id: line.product_color_id || null,
@@ -367,7 +375,7 @@ function productDialogItemFor(line: SalesOrderLineInput): InquiryItem {
     target_unit_price: line.unit_price,
     target_currency_code: form.currency_code,
     expected_date: null,
-    product_match_status: line.product_id ? 'MATCHED' : 'PENDING',
+    product_match_status: line.product_id || line.product_catalog_id ? 'MATCHED' : 'PENDING',
     notes: '',
     product_number_snapshot: line.product_number_snapshot || product?.product_number || '',
     product_code_snapshot: line.product_code_snapshot || product?.product_code || '',
@@ -375,6 +383,7 @@ function productDialogItemFor(line: SalesOrderLineInput): InquiryItem {
   }
 }
 function openProductDialog(line?: SalesOrderLineInput) {
+  if (hasLockedStructure.value) return
   const draft = line ? productDialogItemFor(line) : productDialogItemFor(createLineDraft())
   if (!line) draft.id = undefined
   productDialogLineKey.value = line?.client_key || ''
@@ -383,6 +392,10 @@ function openProductDialog(line?: SalesOrderLineInput) {
 }
 function applyProductDialogItem(line: SalesOrderLineInput, item: InquiryItem) {
   line.product_id = item.product_id || null
+  line.product_catalog_id = item.product_catalog_id || null
+  line.product_selection = item.product_selection ? { ...item.product_selection } : null
+  line.product_selection_snapshot = item.product_selection_snapshot || null
+  line.product_category_name = item.product_category_name || item.product_selection_snapshot?.category_name
   line.product_selection_id = item.product_id || null
   line.product_category_id = item.product_category_id || null
   line.product_unit_id = item.product_unit_id || null
@@ -402,6 +415,7 @@ function applyProductDialogItem(line: SalesOrderLineInput, item: InquiryItem) {
   line.unit_price = String(item.target_unit_price ?? '')
 }
 function handleProductDialogConfirm(payload: { item: InquiryItem; imageChanged: boolean; imageFile: File | null; removeImage: boolean }) {
+  if (hasLockedStructure.value) return
   const existing = lines.value.find((line) => line.client_key === productDialogLineKey.value)
   if (existing) {
     applyProductDialogItem(existing, payload.item)
@@ -532,6 +546,7 @@ function pinProductChoices(items: SalesOrderProduct[]) {
 }
 
 function quotationProduct(item: QuotationOrderLineOption): SalesOrderProduct | null {
+  if (item.product_catalog_id || item.product_selection_snapshot?.entry_draft) return null
   if (!item.product_id) return item.suggested_product
   return {
     id: item.product_id,
@@ -552,6 +567,9 @@ function lineFromQuotation(item: QuotationOrderLineOption): SalesOrderLineInput 
     client_key: newKey('quote'),
     source_quotation_line_id: item.id,
     product_id: item.product_id || null,
+    product_catalog_id: item.product_catalog_id || null,
+    product_selection: null,
+    product_selection_snapshot: item.product_selection_snapshot || null,
     product_selection_id: item.product_id || null,
     product_category_id: item.product_category_id || product?.category_id || '',
     product_unit_id: item.product_unit_id || null,
@@ -633,7 +651,7 @@ function quoteRemainingText(line: SalesOrderLineInput): string {
   if (!source) return '来源报价'
   const currentReserved = isEdit.value ? Number(line.quantity || 0) : 0
   const available = Number(source.remaining_quantity || 0) + currentReserved
-  return `报价剩余 ${available.toLocaleString('zh-CN', { maximumFractionDigits: 4 })} ${source.unit_code}`
+  return `报价剩余 ${available.toLocaleString('zh-CN', { maximumFractionDigits: 4 })} ${productEntryUnitName(source)}`
 }
 
 function lineTotal(line: SalesOrderLineInput): number {
@@ -731,6 +749,9 @@ async function loadExisting() {
     keyById.set(line.id, key)
     return {
       client_key: key, source_quotation_line_id: line.source_quotation_line_id, product_id: line.product_id, product_selection_id: line.product_id,
+      product_catalog_id: line.product_catalog_id || null,
+      product_selection: null,
+      product_selection_snapshot: line.product_selection_snapshot || null,
       product_category_id: line.product_category_id || productById.value.get(line.product_id || '')?.category_id || '',
       product_unit_id: line.product_unit_id || undefined,
       product_color_id: line.product_color_id || null,
@@ -841,8 +862,9 @@ async function save(confirmAfterSave = false) {
   }
   saving.value = true
   try {
-    const submittedLines = lines.value.map(({ product_selection_id: _productSelectionId, ...line }) => ({
+    const submittedLines = lines.value.map(({ product_selection_id: _productSelectionId, product_selection_snapshot: _snapshot, product_category_name: _categoryName, product_selection, ...line }) => ({
       ...line,
+      ...(product_selection && !hasLockedStructure.value ? { product_selection } : {}),
       product_id: line.product_id || null,
       customer_product_name_snapshot: String(line.customer_product_name_snapshot || line.product_name_input || '').trim(),
       customer_specification_snapshot: String(line.customer_specification_snapshot || '').trim(),
@@ -1197,6 +1219,7 @@ watch(() => form.currency_code, () => { if (trackingChanges.value) void loadExch
       :pending-image="productDialogLineKey ? pendingProductImages[productDialogLineKey] : null"
       :pending-removal="productDialogLineKey ? pendingProductImageRemovals[productDialogLineKey] : false"
       :can-upload="canSaveOrder && !hasLockedStructure"
+      :identity-disabled="hasLockedStructure"
       :catalog-error="productCatalogError"
       @confirm="handleProductDialogConfirm"
     />

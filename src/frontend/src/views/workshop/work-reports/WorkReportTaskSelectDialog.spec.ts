@@ -1,4 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
+import { apiClient } from '@/api/request'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -8,6 +11,7 @@ import WorkReportTaskSelectDialog from './WorkReportTaskSelectDialog.vue'
 const api = vi.hoisted(() => ({ tasks: vi.fn() }))
 vi.mock('@/api/workshopReporting', () => ({ fetchWorkReportTasks: api.tasks }))
 
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 enableAutoUnmount(afterEach)
 
 const task = {
@@ -37,6 +41,10 @@ const cardSelector = (id: string) => `[data-testid="work-report-task-card"][data
 const workshopSelector = (name: string) => `[data-testid="work-report-workshop-choice"][data-workshop-name="${name}"]`
 
 beforeEach(() => {
+  setActivePinia(createPinia())
+  vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new File(['png'], 'server-image.png', { type: 'image/png' }), headers: {} })
+  useAuthStore().applyAuthResponse({ authenticated: true, user: { id: 1, username: 'test', display_name: '单测', is_superuser: true, employee: null, permissions: [], data_scope: 'ALL' } })
+  vi.stubGlobal('URL', class extends URL { static createObjectURL = vi.fn(() => 'blob:server-image.png'); static revokeObjectURL = vi.fn() })
   api.tasks.mockReset()
   api.tasks.mockResolvedValue(response([task, secondTask]))
 })
@@ -65,7 +73,8 @@ it('卡片呈现真实图片、产品数和任务合计，选车间仅切换当�
   const wrapper = mountDialog()
   await flushPromises()
   const first = wrapper.get(cardSelector('task-1'))
-  expect(first.get('img').attributes('src')).toBe('/api/task-image/1/')
+  expect(first.get('img').attributes('src')).toBe('blob:server-image.png')
+  expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/api/task-image/1/'), expect.objectContaining({ responseType: 'blob' }))
   expect(first.text()).toContain('共 2 条产品明细')
   expect(first.text()).toContain('可查看车间已报工')
   expect(first.text()).toContain('¥644.00')
@@ -106,7 +115,8 @@ it('初始任务由最新响应更新金额和图片，已失权车间清除后�
   const first = wrapper.get(cardSelector('task-1'))
   expect(first.text()).toContain('¥644.00')
   expect(first.text()).not.toContain('¥999.00')
-  expect(first.get('img').attributes('src')).toBe('/api/task-image/1/')
+  expect(first.get('img').attributes('src')).toBe('blob:server-image.png')
+  expect(apiClient.get).toHaveBeenCalledWith(expect.stringContaining('/api/task-image/1/'), expect.objectContaining({ responseType: 'blob' }))
   expect(wrapper.get(workshopSelector('金工车间')).attributes('disabled')).toBeDefined()
   expect(wrapper.get('[data-testid="work-report-task-confirm"]').attributes('disabled')).toBeDefined()
 })

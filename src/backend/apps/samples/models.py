@@ -81,6 +81,8 @@ class SampleParameterType(models.TextChoices):
 class SampleRequest(ArchivableModel):
     customer_account = models.ForeignKey(
         "customers.CustomerAccount",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="sample_requests",
     )
@@ -363,10 +365,16 @@ class SampleMaterialIssue(TimeStampedModel):
 
 
 class SampleMaterialIssueLine(TimeStampedModel):
+    material_catalog = models.ForeignKey(
+        "material_catalog.MaterialCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="sample_issue_lines",
+    )
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
     issue = models.ForeignKey(SampleMaterialIssue, on_delete=models.PROTECT, related_name="lines")
     line_key = models.UUIDField()
     raw_material = models.ForeignKey(
         "products.RawMaterialInformation",
+        null=True, blank=True,
         on_delete=models.PROTECT,
         related_name="sample_material_issue_lines",
     )
@@ -392,6 +400,10 @@ class SampleMaterialIssueLine(TimeStampedModel):
         ordering = ["issue", "id"]
         constraints = [
             models.UniqueConstraint(fields=["issue", "line_key"], name="sample_issue_line_key_uniq"),
+            models.CheckConstraint(condition=(
+                Q(raw_material__isnull=False, material_catalog__isnull=True)
+                | Q(raw_material__isnull=True, material_catalog__isnull=False)
+            ), name="sample_issue_material_source_one"),
             models.CheckConstraint(condition=Q(requested_quantity__gt=0), name="sample_issue_line_request_positive"),
             models.CheckConstraint(condition=Q(warehouse_quantity__gte=0), name="sample_issue_line_warehouse_nonnegative"),
             models.CheckConstraint(condition=Q(arrived_quantity__gte=0), name="sample_issue_line_arrived_nonnegative"),
@@ -416,6 +428,11 @@ class SampleCollaborator(TimeStampedModel):
 
 
 class SampleProduct(TimeStampedModel):
+    product_catalog = models.ForeignKey(
+        "product_catalog.ProductCatalog", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="sample_products",
+    )
+    product_selection_snapshot = models.JSONField(default=dict, blank=True)
     sample_request = models.ForeignKey(SampleRequest, on_delete=models.PROTECT, related_name="products")
     source_inquiry_item = models.ForeignKey(
         "inquiries.InquiryItem",
@@ -477,6 +494,10 @@ class SampleProduct(TimeStampedModel):
         db_table = "sample_product"
         ordering = ["sample_request", "line_number"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(product__isnull=True) | Q(product_catalog__isnull=True),
+                name="sample_product_source_exclusive",
+            ),
             models.UniqueConstraint(fields=["sample_request", "line_number"], name="sample_product_line_uniq"),
             models.CheckConstraint(condition=Q(length_cm__isnull=True) | Q(length_cm__gt=0), name="sample_product_length_pos"),
             models.CheckConstraint(condition=Q(armrest_width_cm__isnull=True) | Q(armrest_width_cm__gt=0), name="sample_product_armrest_pos"),

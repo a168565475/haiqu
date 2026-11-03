@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onMounted, ref } from 'vue'
 import { AxiosError } from 'axios'
@@ -200,7 +201,7 @@ onMounted(() => { void load() })
               <header>{{ scheduleProductSummary(row.products) }}</header>
               <div class="schedule-products-grid">
                 <article v-for="product in row.products" :key="product.id" class="schedule-hover-product">
-                  <img :src="product.image_file_id ? imageUrl(row, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" />
+                  <ProtectedImage :src="product.image_file_id ? imageUrl(row, product.image_file_id) : productImagePlaceholder" :class="{ 'is-placeholder': !product.image_file_id }" :alt="`${product.product.product_name || '产品'}图片`" @error="useProductImageFallback" />
                   <div class="schedule-hover-product-info">
                     <strong>{{ product.product.product_name || '未命名产品' }}</strong>
                     <small>{{ product.product.item_number || product.product.product_number || '—' }}</small>

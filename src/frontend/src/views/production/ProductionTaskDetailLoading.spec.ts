@@ -1,16 +1,87 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import ElementPlus from 'element-plus'
+import ElementPlus, { ElMessageBox, type MessageBoxData } from 'element-plus'
 import * as api from '@/api/productionTasks'
 import ProductImage from '@/components/products/ProductImage.vue'
 import ProductionTaskDetailView from './ProductionTaskDetailView.vue'
 
 const permissionState = vi.hoisted(() => ({ allowed: true }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { taskId: 'one' } }), useRouter: () => ({ push: vi.fn() }) }))
+const router = vi.hoisted(() => ({ push: vi.fn() }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { taskId: 'one' } }), useRouter: () => router }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => permissionState.allowed, moduleCan: () => permissionState.allowed }) }))
-vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), fetchProductionTaskOptions: vi.fn(), decideProductionTaskByPmc: vi.fn() }))
+vi.mock('@/api/productionTasks', async original => ({ ...await original<typeof import('@/api/productionTasks')>(), fetchProductionTask: vi.fn(), fetchProductionTaskOptions: vi.fn(), decideProductionTaskByPmc: vi.fn(), holdProductionTask: vi.fn(), transitionProductionTask: vi.fn(), cancelProductionTask: vi.fn(), finishProductionTask: vi.fn() }))
 
 describe('生产任务详情按需选项', () => {
+  it.each([['READY', 'production_tasks.start_productiontask', '开始生产'], ['IN_PRODUCTION', 'access_control.cancel_productiontask', '取消任务']] as const)('%s 只显示授权生命周期动作，携带原因和版本', async (status, permission, label) => {
+    const response = await api.fetchProductionTask('one')
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data, status, allowed_permissions: [permission], allowed_update_fields: [] } })
+    vi.mocked(api.transitionProductionTask).mockResolvedValue(response)
+    vi.mocked(api.cancelProductionTask).mockResolvedValue(response)
+    const prompt = vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '  已确认原因  ', action: 'confirm' } as MessageBoxData)
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
+    await flushPromises()
+    if (status === 'READY') expect(api.transitionProductionTask).toHaveBeenCalledWith('one', 'start', 'v1', { start_waiver_reason: '已确认原因' })
+    else expect(api.cancelProductionTask).toHaveBeenCalledWith('one', '已确认原因', 'v1')
+    prompt.mockRestore()
+    wrapper.unmount()
+  })
+  it('关联销售任务完结进入现有数量和批次窗口，不发送缺项请求', async () => {
+    const response = await api.fetchProductionTask('one')
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data, status: 'IN_PRODUCTION', sales_order_id: 'sales', allowed_permissions: ['access_control.finish_productiontask'], allowed_update_fields: [] } })
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '完成生产')!.trigger('click')
+    await flushPromises()
+    expect(router.push).toHaveBeenCalledWith({ name: 'production-tasks', query: { finish: 'one' } })
+    expect(api.finishProductionTask).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+  it.each([['READY', 'pause', '暂停任务'], ['PAUSED', 'resume', '恢复任务']] as const)('%s 按对象权限显示%s，原因和 ETag 随动作提交', async (status, action, label) => {
+    const response = await api.fetchProductionTask('one')
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data, status,
+      allowed_permissions: [`access_control.${action}_productiontask`], allowed_update_fields: [],
+    } })
+    vi.mocked(api.holdProductionTask).mockResolvedValue(response)
+    const prompt = vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: '  调整计划  ', action: 'confirm' } as MessageBoxData)
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
+    await flushPromises()
+    expect(api.holdProductionTask).toHaveBeenCalledWith('one', action, '调整计划', 'v1')
+    prompt.mockRestore()
+    wrapper.unmount()
+  })
+  it('对象权限覆盖全局权限，当前任务不可确认时不打开确认窗口', async () => {
+    const response = await api.fetchProductionTask('one')
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data, allowed_permissions: [] } })
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })
+    await flushPromises()
+    const page = wrapper.vm as unknown as { openPmcDialog: (mode: 'CONFIRM') => void }
+    page.openPmcDialog('CONFIRM')
+    expect(api.fetchProductionTaskOptions).not.toHaveBeenCalled()
+    expect(wrapper.get('.detail-heading__actions').text()).toBe('返回')
+    wrapper.unmount()
+  })
+  it('PMC 确认只携带计划字段，不携带只读财务与任务信息', async () => {
+    const response = await api.fetchProductionTask('one')
+    vi.mocked(api.fetchProductionTask).mockResolvedValue({ ...response, data: { ...response.data,
+      allowed_permissions: ['production_tasks.confirm_productiontask'],
+      allowed_update_fields: ['planned_start_date', 'planned_end_date', 'production_priority', 'follower_ids'],
+    } })
+    vi.mocked(api.fetchProductionTaskOptions).mockResolvedValue({ employees: [] } as never)
+    vi.mocked(api.decideProductionTaskByPmc).mockResolvedValue(response)
+    const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus] } })
+    await flushPromises()
+    const page = wrapper.vm as unknown as { openPmcDialog: (mode: 'CONFIRM') => void; decideByPmc: () => Promise<void>; pmcForm: Record<string, unknown> }
+    page.openPmcDialog('CONFIRM')
+    await flushPromises()
+    Object.assign(page.pmcForm, { planned_start_date: '2026-11-03', planned_end_date: '2026-11-04', production_priority: 'HIGH', follower_ids: ['follower'], tax_rate: 99, delivery_date: '' })
+    await page.decideByPmc()
+    expect(api.decideProductionTaskByPmc).toHaveBeenCalledWith('one', { decision: 'CONFIRM', planned_start_date: '2026-11-03', planned_end_date: '2026-11-04', production_priority: 'HIGH', follower_ids: ['follower'] }, 'v1')
+    wrapper.unmount()
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     permissionState.allowed = true
@@ -18,7 +89,8 @@ describe('生产任务详情按需选项', () => {
   })
   it.each([
     ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false],
-    ['VERIFIED', 'ORDER_PURCHASING', true, false],
+    ['VERIFIED', 'ORDER_PURCHASING', true, true],
+    ['VERIFIED', 'NOT_STARTED', true, true],
     ['VERIFIED', 'ORDER_COMPLETED', false, false],
     ['VERIFIED', 'ORDER_COMPLETED', true, true],
   ])('排产按钮遵守 BOM=%s、采购=%s 和权限=%s', async (bomStatus, purchaseStatus, allowed, visible) => {

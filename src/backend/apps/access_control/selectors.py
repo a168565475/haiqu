@@ -97,16 +97,17 @@ def effective_access(user):
     actions = {}
     legacy = []
     roles = []
-    if active and user.is_superuser:
-        actions = {item["code"]: {"scopes": ["ALL"] if "ALL" in item["scopes"] else ["MODULE"],
-                                   "sources": [{"type": "SUPERUSER"}]} for item in catalog() if item["available"]}
-    elif active:
+    role_ids = []
+    if active:
         assignments = current_assignments(employee).select_related("role_profile").order_by("role_profile__role_code")
-        role_ids = []
         for assignment in assignments:
             role = assignment.role_profile
             role_ids.append(role.pk)
             roles.append({"id": str(role.pk), "code": role.role_code, "name": role.display_name})
+    if active and user.is_superuser:
+        actions = {item["code"]: {"scopes": ["ALL"] if "ALL" in item["scopes"] else ["MODULE"],
+                                   "sources": [{"type": "SUPERUSER"}]} for item in catalog() if item["available"]}
+    elif active:
         from .resource_scopes import configured, selected_ids
         grants = RoleActionGrant.objects.filter(role_id__in=role_ids).select_related("permission__content_type", "role")
         if configured():

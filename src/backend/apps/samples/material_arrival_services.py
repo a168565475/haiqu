@@ -91,6 +91,10 @@ def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_i
     if inbound.status != 'CONFIRMED' or line.accepted_quantity <= 0:
         raise Conflict('材料必须完成验收入库且合格数量大于 0。')
     accepted_quantity = line.accepted_quantity
+    if demand.get('material_catalog_id'):
+        from .catalog_materials import sample_saved_selection
+        if str(line.material_catalog_id) != str(demand['material_catalog_id']) or line.material_selection_snapshot != sample_saved_selection(demand):
+            raise ValidationError('到货材料完整属性或单位与打样缺料来源不一致。')
     if demand['category'] == 'tube':
         from .pipe_materials import sample_pipe_arrival_quantity
         accepted_quantity = sample_pipe_arrival_quantity(line, procurement, demand)
@@ -112,7 +116,7 @@ def receive_material_arrival(*, procurement_request_id, line_key, inbound_line_i
             SampleRequestStatus.MATERIAL_ISSUE_PENDING,
             SampleRequestStatus.MATERIAL_ISSUE_REVIEW,
         } and not keep_production_stage
-    ) or sample.archived_at or sample.customer_account.archived_at:
+    ) or sample.archived_at or (sample.customer_account_id and sample.customer_account.archived_at):
         raise Conflict('当前样品不在等待采购到货阶段。')
     before = model_snapshot(sample, SAMPLE_FIELDS)
     SampleMaterialArrival.objects.create(procurement_request=procurement, line_key=line_key,

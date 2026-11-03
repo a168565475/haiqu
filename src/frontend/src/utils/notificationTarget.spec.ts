@@ -4,6 +4,20 @@ import { notificationRoute } from './notificationTarget'
 const id = '12345678-1234-1234-1234-123456789abc'
 const target = { object_id: id, target_key: 'bom-detail', route_name: 'bom-preview', params: { bomId: id } }
 describe('通知命名路由白名单', () => {
+  it('岗位策略按服务端目标进入采购来源、当前跟单任务及财务列表', () => {
+    const policy = { ...target, target_key: 'role-policy' }
+    expect(notificationRoute('PRODUCTION_TASK_BOMS_CONFIRMED', { ...policy, route_name: 'purchase-order-create', params: {} })).toEqual({ name: 'purchase-order-create', params: {} })
+    expect(notificationRoute('ASSEMBLY_FINISHED_RECEIPT_CONFIRMED', { ...policy, route_name: 'production-task-detail', params: { taskId: id } })).toEqual({ name: 'production-task-detail', params: { taskId: id } })
+    expect(notificationRoute('FINANCE_RECEIPT_CHANGED', { ...policy, route_name: 'finance-receipts', params: {} })).toEqual({ name: 'finance-receipts', params: {} })
+    expect(notificationRoute('OUTSOURCING_ORDER_CREATED', { ...policy, route_name: 'workshop-outsourcing-detail', params: { orderId: id } }).name).toBe('workshop-outsourcing-detail')
+  })
+  it('岗位新目标仍拒绝错配页面、额外参数和删除通知的伪造目标', () => {
+    const policy = { ...target, target_key: 'role-policy' }
+    expect(() => notificationRoute('PRODUCTION_TASK_UPDATED', policy)).toThrow()
+    expect(() => notificationRoute('FINANCE_RECEIPT_CHANGED', { ...policy, route_name: 'finance-receipts', params: { id } })).toThrow()
+    expect(() => notificationRoute('WORK_REPORT_DELETED', policy)).toThrow()
+    expect(() => notificationRoute('OUTSOURCING_FACTORY_DISABLED', policy)).toThrow()
+  })
   it('使用route_name而非语义target_key', () => {
     expect(notificationRoute('BOM_CONFIRMED', target)).toEqual({ name: 'bom-preview', params: { bomId: id } })
   })

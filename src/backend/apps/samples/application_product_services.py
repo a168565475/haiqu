@@ -3,7 +3,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Prefetch, Q, Sum
+from django.db.models import Prefetch, Sum
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
@@ -14,18 +14,20 @@ from apps.customers.services import model_snapshot
 from apps.customers.selectors import accessible_customers
 from apps.inquiries.models import Inquiry
 from apps.quotations.models import QuotationVersion
-from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.selectors import selection_options
 from apps.files.uploads import save_scanned_image
 from .form_services import application_requirements_pending, _legacy_datetime
 from .models import SampleInventoryLine, SampleItem, SampleRequest, SampleRequestStatus, SampleWorkflowStage
 from .services import SAMPLE_FIELDS, _record_workflow_stage, _start_sla, _write_sample_records, sample_product_values_from_source
+from .catalog_products import apply_catalog_selection, sample_detail_color_values
+from .application_fields import is_sample_salesperson, request_number_values
 
 
 def require_application_product_edit(sample, request):
     actor = getattr(request, 'employee', None)
     if not actor or not can_sample(request, sample, 'samples.complete_sample_requirements'):
         raise PermissionDenied('当前账号没有完善样品需求的权限。')
-    if sample.archived_at or sample.customer_account.archived_at:
+    if sample.archived_at or (sample.customer_account_id and sample.customer_account.archived_at):
         raise Conflict('已归档的申请或客户不能编辑。')
     if not sample.application_payload_hash:
         raise Conflict('当前申请不是新版打样需求。')
@@ -33,14 +35,18 @@ def require_application_product_edit(sample, request):
 
 def application_product_candidates(*, sample, query, request):
     require_application_product_edit(sample, request)
-    products = ProductInformation.objects.filter(status=ProductStatus.ACTIVE, archived_at__isnull=True)
-    if query:
-        products = products.filter(Q(product_name__icontains=query) | Q(specification__icontains=query) | Q(product_number__icontains=query))
-    return products.order_by('product_number', 'id').values('id', 'product_name', 'specification', 'category_id')[:50]
+    query = query.casefold().strip()
+    products = selection_options()['products']
+    return [{**row, 'product_name': row['name']} for row in products
+            if not query or any(query in row[key].casefold() for key in ('name', 'specification', 'product_code', 'item_number'))][:50]
 
 
 def _application_basic_values(*, sample, basic, request):
     values = dict(basic)
+    if 'manual_request_number' in values:
+        values.update(request_number_values(values.pop('manual_request_number'), sample))
+    if not is_sample_salesperson(request):
+        values.update(customer_account=sample.customer_account, customer_contact=sample.customer_contact)
     source_type = values.pop('source_type')
     source_id = values.pop('source_id')
     previous_type = 'quotation' if sample.source_quotation_version_id else 'inquiry' if sample.source_inquiry_id else None
@@ -66,12 +72,12 @@ def _application_basic_values(*, sample, basic, request):
                     raise ValidationError({'basic': {'source_id': '来源报价版本不存在或当前账号无权访问。'}})
                 values.update(source_quotation_version=source, source_inquiry=source.quotation.source_inquiry,
                               transaction_entity=source.quotation.transaction_entity)
-    elif values['customer_account'].pk != sample.customer_account_id:
+    elif getattr(values['customer_account'], 'pk', None) != sample.customer_account_id:
         values['transaction_entity'] = None
     inquiry = values.get('source_inquiry', sample.source_inquiry)
     quotation = values.get('source_quotation_version', sample.source_quotation_version)
-    if ((inquiry and inquiry.customer_account_id != values['customer_account'].pk)
-            or (quotation and quotation.quotation.customer_account_id != values['customer_account'].pk)):
+    if ((inquiry and inquiry.customer_account_id != getattr(values['customer_account'], 'pk', None))
+            or (quotation and quotation.quotation.customer_account_id != getattr(values['customer_account'], 'pk', None))):
         raise ValidationError({'basic': {'customer_account_id': '客户必须与所选来源记录属于同一客户账户。'}})
     values['requested_due_at'] = _legacy_datetime(values['sample_due_date']) if values['sample_due_date'] else None
     return values, source_changed
@@ -95,7 +101,7 @@ def complete_application_products(*, sample_id, data, request, uploaded_file=Non
 
 @transaction.atomic
 def _complete_application_products(*, sample_id, data, request, uploaded_file, saved_images):
-    sample = SampleRequest.objects.select_for_update().select_related('customer_account').get(pk=sample_id)
+    sample = SampleRequest.objects.select_for_update(of=('self',)).select_related('customer_account').get(pk=sample_id)
     require_matching_etag(request, sample)
     require_application_product_edit(sample, request)
     completing_first_requirements = application_requirements_pending(sample)
@@ -123,6 +129,7 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
         attributes = split_product_specification(values.get('specification', ''))
         values['specification'] = attributes['specification']
         product = products[values['id']]
+        uses_catalog = apply_catalog_selection(values, existing=product)
         selected = values.get('product')
         if selected and (values['product_name'] != selected.product_name or values.get('specification', '') != selected.specification):
             # 与现有申请身份解析一致：手改名称/规格后作为自定义产品，不能保留旧档案身份。
@@ -130,13 +137,14 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
         details = {detail.pk: detail for detail in product.details.all()}
         if {detail['id'] for detail in values['details']} != set(details):
             raise ValidationError({'products': '必须保留产品现有颜色明细，不能引用其他产品的明细。'})
-        snapshots = sample_product_values_from_source(selected) if selected else {
+        snapshots = values if uses_catalog else sample_product_values_from_source(selected) if selected else {
             'product': None, 'product_number_snapshot': '', 'product_code_snapshot': '',
             'item_number_snapshot': '', 'material_snapshot': '', 'product_image': None,
         }
         # 同一产品的纯规格提交不能清空已有材质；合并文本中的材质仍单独落库。
         material_submitted = 'material_snapshot' in values
-        snapshots['material_snapshot'] = values.pop('material_snapshot', attributes['material'] or snapshots['material_snapshot'])
+        material_value = values.pop('material_snapshot', attributes['material'] or snapshots['material_snapshot'])
+        snapshots['material_snapshot'] = values['product_selection_snapshot'].get('material', '') if uses_catalog else material_value
         if not material_submitted and not snapshots['material_snapshot'] and selected == product.product and values['product_name'] == product.product_name:
             snapshots['material_snapshot'] = product.material_snapshot or split_product_specification(product.specification)['material']
         for field in ('product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image'):
@@ -147,7 +155,13 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
         if source_changed:
             product.source_inquiry_item = None
             product.source_quotation_line = None
-        product.category_name_snapshot = product.category.category_name
+        if uses_catalog:
+            product.category = None
+            product.category_name_snapshot = product.product_selection_snapshot['category_name']
+        elif product.category is None:
+            raise ValidationError({'products': '自定义或旧产品必须选择产品类别。'})
+        else:
+            product.category_name_snapshot = product.category.category_name
         product.save()
         for detail_values in values['details']:
             detail = details[detail_values['id']]
@@ -155,11 +169,9 @@ def _complete_application_products(*, sample_id, data, request, uploaded_file, s
                 raise ValidationError({'products': '打样数量不能小于已有报工数量。'})
             if detail_values['sample_quantity'] < received_quantities.get(detail.pk, 0):
                 raise ValidationError({'products': '打样数量不能小于累计已入库数量。'})
-            color = detail_values['product_color']
-            detail.product_color = color
-            detail.color_card_snapshot = color.color_card
-            detail.color_name_snapshot = color.color_name
-            detail.color_code_snapshot = detail_values.get('color_code') or color.color_code
+            selected_color = detail_values.get('product_color') or detail.product_color
+            for field, value in sample_detail_color_values(product, selected_color).items():
+                setattr(detail, field, value)
             detail.sample_quantity = detail_values['sample_quantity']
             detail.requested_quantity = detail.sample_quantity
             detail.tolerance = detail_values['tolerance']

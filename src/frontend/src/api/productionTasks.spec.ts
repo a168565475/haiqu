@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl } from '@/api/productionTasks'
+import { deleteProductionTask, createProductionOrderFromSalesOrder, decideProductionTaskByPmc, exportProductionTasks, updateProductionTask, fetchProductionSalesOrderSources, fetchProductionSalesOrderSource, productionSalesOrderSourceImageUrl, holdProductionTask, fetchProductionTaskFilterOptions, fetchProductionTaskAdvancedFilterOptions, fetchProductionTaskOptions } from '@/api/productionTasks'
 import { apiClient } from '@/api/request'
 
 vi.mock('@/api/request', () => ({
@@ -18,11 +18,31 @@ const mockedPatch = vi.mocked(apiClient.patch)
 const mockedPost = vi.mocked(apiClient.post)
 
 describe('生产任务单 API', () => {
+  it.each(['pause', 'resume'] as const)('%s 使用独立动作入口与当前 ETag', async action => {
+    mockedPost.mockResolvedValueOnce({ data: { data: { id: 'task-1' } }, headers: { etag: 'v2' } })
+    const result = await holdProductionTask('task-1', action, '安排调整', 'v1')
+    expect(mockedPost).toHaveBeenCalledWith(`/api/v1/production-tasks/task-1/${action}/`, { reason: '安排调整' }, { headers: { 'If-Match': 'v1' } })
+    expect(result.etag).toBe('v2')
+  })
   beforeEach(() => {
     mockedGet.mockReset()
     mockedPatch.mockReset()
     mockedPost.mockReset()
     vi.mocked(apiClient.getUri).mockReset()
+  })
+
+  it('列表基础与高级筛选使用独立范围，完整编辑选项保持默认入口', async () => {
+    const basic = { salespeople: [{ id: 'sales-one', display_name: '业务甲' }] }
+    const advanced = { employees: [], products: [], product_catalogs: [], order_sources: [], delivery_methods: [] }
+    mockedGet.mockResolvedValueOnce({ data: { data: basic } })
+    await expect(fetchProductionTaskFilterOptions()).resolves.toEqual(basic)
+    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/options/', { params: { scope: 'filters' } })
+    mockedGet.mockResolvedValueOnce({ data: { data: advanced } })
+    await expect(fetchProductionTaskAdvancedFilterOptions()).resolves.toEqual(advanced)
+    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/options/', { params: { scope: 'advanced_filters' } })
+    mockedGet.mockResolvedValueOnce({ data: { data: { detail_template: [] } } })
+    await fetchProductionTaskOptions()
+    expect(mockedGet).toHaveBeenLastCalledWith('/api/v1/production-tasks/options/')
   })
 
   it('工厂只通过生产权限入口查询可生产来源和产品图', async () => {

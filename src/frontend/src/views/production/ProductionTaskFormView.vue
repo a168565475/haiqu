@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import ElDialog from '@/components/common/AppWindowDialog.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -11,6 +12,7 @@ import InquiryWangEditor from '@/components/InquiryWangEditor.vue'
 import ProductCreateDialog from '@/components/products/ProductCreateDialog.vue'
 import ProductPickerDialog from '@/components/products/ProductPickerDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import type { ProductInformation } from '@/types/product'
 import {
   createProductionTask,
@@ -125,6 +127,8 @@ const imageManagerKey = ref('')
 const previewDialogVisible = ref(false)
 const previewImageUrl = ref('')
 const previewImageName = ref('')
+const imageResources = useProtectedResourceUrls(() => [])
+watch(imageResources.active, active => { if (!active) { imageDialogVisible.value = false; previewDialogVisible.value = false; previewImageUrl.value = '' } }, { flush: 'sync' })
 const contractNumber = ref('')
 const contractNumberToken = ref('')
 const taskId = computed(() => typeof route.params.taskId === 'string' ? route.params.taskId : '')
@@ -577,7 +581,7 @@ function applyExisting(task: ProductionTask) {
      customer_color: item.customer_color ?? item.color_name ?? '', material: item.material || '',
     unit_label: `${item.unit_code} · ${item.unit_name}`, color_card: item.color_card || '', color_name: item.color_name || '',
     product_color_id: item.product_color_id || '', color_code: item.color_code, quantity: String(item.quantity),
-    unit_id: item.unit_id, currency_id: form.currency_id, unit_price: item.unit_price,
+    unit_id: item.unit_id || '', currency_id: form.currency_id, unit_price: item.unit_price,
     exchange_rate: Number(item.exchange_rate).toFixed(8),
     existingImages: item.images || [], newImages: [],
   })) : [blankProduct()]
@@ -894,7 +898,7 @@ onBeforeUnmount(revokeAllProductPreviews)
         <article v-for="(group, groupIndex) in productGroups" :key="group.key" class="product-group">
             <div class="fixed-product-card" :class="{ 'fixed-product-card--manual': !group.productId }" :aria-label="`产品 ${groupIndex + 1}`">
               <div class="fixed-product-image">
-                <img v-if="firstImageUrl(group.rows[0])" :src="firstImageUrl(group.rows[0])" alt="产品图片" />
+                <ProtectedImage v-if="firstImageUrl(group.rows[0])" :src="firstImageUrl(group.rows[0])" alt="产品图片" />
                 <template v-else><ElIcon><Picture /></ElIcon><span>产品主图</span></template>
               </div>
               <div class="fixed-product-content">
@@ -980,20 +984,20 @@ onBeforeUnmount(revokeAllProductPreviews)
       />
       <ProductCreateDialog v-model="productCreateDialogVisible" @created="handleProductCreated" />
 
-      <ElDialog v-model="imageDialogVisible" title="明细图片管理" width="960px" destroy-on-close>
+      <ElDialog v-model="imageDialogVisible" v-if="imageResources.active.value" title="明细图片管理" width="960px" destroy-on-close>
         <div v-if="imageManagerRow" class="image-manager">
           <div class="image-manager__summary"><div><strong>{{ imageManagerRow.color_name || '未选择颜色' }}</strong><span>{{ imageManagerRow.color_code || '未选择色号' }}</span></div><ElTag type="info">{{ rowImageCount(imageManagerRow) }} / 20 张</ElTag></div>
           <ElUpload v-if="!isReadOnly" class="image-upload" drag multiple :auto-upload="false" :show-file-list="false" accept=".jpg,.jpeg,.png,.gif,.webp" :on-change="chooseProductImages"><ElIcon class="image-upload__icon"><UploadFilled /></ElIcon><div>点击或拖拽上传图片</div><small>支持 JPG、PNG、GIF、WebP，单张不超过 10MB</small></ElUpload>
           <div v-if="imageManagerRow.existingImages.length || imageManagerRow.newImages.length" class="image-list">
-            <article v-for="image in imageManagerRow.existingImages" :key="image.id" class="image-item"><img :src="productionTaskBusinessFileUrl(taskId, image.id)" :alt="image.name" /><div><strong :title="image.name">{{ image.name }}</strong><span>已保存 · {{ (image.size_bytes / 1024 / 1024).toFixed(2) }}MB</span></div><div class="image-item__actions"><ElButton circle :icon="View" aria-label="查看图片" @click="previewExistingImage(image)" /><ElButton v-if="!isReadOnly" circle type="danger" plain :icon="Delete" aria-label="删除图片" @click="removeExistingImage(imageManagerRow, image.id)" /></div></article>
-            <article v-for="image in imageManagerRow.newImages" :key="image.key" class="image-item"><img :src="image.previewUrl" :alt="image.file.name" /><div><strong :title="image.file.name">{{ image.file.name }}</strong><span>待上传 · {{ (image.file.size / 1024 / 1024).toFixed(2) }}MB</span></div><div class="image-item__actions"><ElButton circle :icon="View" aria-label="查看图片" @click="previewPendingImage(image)" /><ElButton v-if="!isReadOnly" circle type="danger" plain :icon="Delete" aria-label="删除图片" @click="removePendingImage(imageManagerRow, image.key)" /></div></article>
+            <article v-for="image in imageManagerRow.existingImages" :key="image.id" class="image-item"><ProtectedImage :src="productionTaskBusinessFileUrl(taskId, image.id)" :alt="image.name" /><div><strong :title="image.name">{{ image.name }}</strong><span>已保存 · {{ (image.size_bytes / 1024 / 1024).toFixed(2) }}MB</span></div><div class="image-item__actions"><ElButton circle :icon="View" aria-label="查看图片" @click="previewExistingImage(image)" /><ElButton v-if="!isReadOnly" circle type="danger" plain :icon="Delete" aria-label="删除图片" @click="removeExistingImage(imageManagerRow, image.id)" /></div></article>
+            <article v-for="image in imageManagerRow.newImages" :key="image.key" class="image-item"><ProtectedImage :src="image.previewUrl" :alt="image.file.name" /><div><strong :title="image.file.name">{{ image.file.name }}</strong><span>待上传 · {{ (image.file.size / 1024 / 1024).toFixed(2) }}MB</span></div><div class="image-item__actions"><ElButton circle :icon="View" aria-label="查看图片" @click="previewPendingImage(image)" /><ElButton v-if="!isReadOnly" circle type="danger" plain :icon="Delete" aria-label="删除图片" @click="removePendingImage(imageManagerRow, image.key)" /></div></article>
           </div>
           <ElEmpty v-else :image-size="72" description="暂无明细图片" />
         </div>
         <template #footer><ElButton type="primary" @click="imageDialogVisible = false">完成</ElButton></template>
       </ElDialog>
 
-      <ElDialog v-model="previewDialogVisible" :title="previewImageName || '查看图片'" width="920px" append-to-body><div class="image-preview"><img :src="previewImageUrl" :alt="previewImageName" /></div></ElDialog>
+      <ElDialog v-model="previewDialogVisible" v-if="imageResources.active.value" :title="previewImageName || '查看图片'" width="920px" append-to-body><div class="image-preview"><ProtectedImage v-if="previewDialogVisible" :src="previewImageUrl" :alt="previewImageName" /></div></ElDialog>
     </template>
     <ElResult v-else icon="error" title="生产任务单加载失败" :sub-title="errorMessage"><template #extra><ElButton type="primary" @click="load">重新加载</ElButton><ElButton @click="back">返回列表</ElButton></template></ElResult>
   </section>

@@ -6,7 +6,7 @@ import { useReferenceCacheSync } from './useReferenceCacheSync'
 import { useReferenceOptionsStore } from '@/stores/referenceOptions'
 import { fetchPublishedOptions, fetchPublishedConfigVersion } from '@/api/referenceData'
 
-const auth = reactive({ user: { id: 'one' } })
+const auth = reactive({ user: { id: 'one' }, identityGeneration: 0 })
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 vi.mock('@/api/referenceData', () => ({ fetchPublishedOptions: vi.fn(), fetchPublishedConfigVersion: vi.fn() }))
 
@@ -20,8 +20,11 @@ describe('全局配置不轮询', () => {
     expect(fetchPublishedConfigVersion).not.toHaveBeenCalled()
     expect(fetchPublishedOptions).not.toHaveBeenCalled()
     const store = useReferenceOptionsStore(), generation = store.identityGeneration
-    auth.user = { id: 'two' }
+    auth.user = { id: 'two' }; auth.identityGeneration++
     expect(store.identityGeneration).toBe(generation + 1)
+    // 同员工新版本也必须清空引用数据；无版本变化的 /me 不触发。
+    auth.identityGeneration++
+    expect(store.identityGeneration).toBe(generation + 2)
     wrapper.unmount()
   })
 })

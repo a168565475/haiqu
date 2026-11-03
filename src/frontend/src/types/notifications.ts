@@ -1,4 +1,4 @@
-export type NotificationScope = 'ROLE_MEMBERS' | 'WORKSHOP' | 'SUBMITTER'
+export type NotificationScope = 'ROLE_MEMBERS' | 'WORKSHOP' | 'SUBMITTER' | 'ROLE_POLICY'
 
 export interface NotificationRoleOption {
   role_code: string

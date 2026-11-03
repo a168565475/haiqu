@@ -8,6 +8,8 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from apps.product_catalog.selection import is_product_entry_snapshot, resolve_product_selection
+from apps.reference_data.models import ProductionUnit
 from django.db.models import Max
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -106,6 +108,8 @@ LINE_FIELDS = [
     "notes",
     "product_image",
     "product",
+    "product_catalog",
+    "product_selection_snapshot",
     "product_category",
     "product_unit",
     "product_color",
@@ -134,6 +138,8 @@ def quotation_line_values_from_inquiry_item(item):
     return {
         "source_inquiry_item": item,
         "product": item.product,
+        "product_catalog_id": item.product_catalog_id,
+        "product_selection_snapshot": item.product_selection_snapshot,
         "product_category": item.product_category,
         "product_unit": item.product_unit,
         "product_color": item.product_color,
@@ -141,7 +147,7 @@ def quotation_line_values_from_inquiry_item(item):
         "product_code_snapshot": item.product_code_snapshot,
         "item_number_snapshot": item.item_number_snapshot,
         "product_description_snapshot": item.product_description,
-        "specification_snapshot": format_inquiry_item_specification(
+        "specification_snapshot": item.specification if item.product_catalog_id or is_product_entry_snapshot(item.product_selection_snapshot) else format_inquiry_item_specification(
             item.specification,
             item.color,
             item.material,
@@ -196,7 +202,20 @@ def sync_quotation_line_to_inquiry(*, line, inquiry_etag, actor_employee, reques
         "material": line.material_snapshot,
         "unit_code": line.unit_code,
     }
-    values = prepare_inquiry_item_data(identity_data, existing=source_item)
+    if line.product_catalog_id or is_product_entry_snapshot(line.product_selection_snapshot):
+        # 来源报价已经固化产品信息，显式同步也不重新读取今天的产品属性。
+        values = {
+            **identity_data,
+            "product_catalog_id": line.product_catalog_id,
+            "product_catalog": line.product_catalog,
+            "product_selection_snapshot": line.product_selection_snapshot,
+            "product_number_snapshot": line.product_number_snapshot,
+            "product_code_snapshot": line.product_code_snapshot,
+            "item_number_snapshot": line.item_number_snapshot,
+        }
+    else:
+        identity_data["product_catalog_id"] = None
+        values = prepare_inquiry_item_data(identity_data, existing=source_item)
     for field_name, value in values.items():
         if field_name in ITEM_FIELDS:
             setattr(source_item, field_name, value)
@@ -607,6 +626,8 @@ def _copy_version_content(source, target):
             "notes": source_line.notes,
             "product_image": source_line.product_image,
             "product": source_line.product,
+            "product_catalog_id": source_line.product_catalog_id,
+            "product_selection_snapshot": source_line.product_selection_snapshot,
             "product_category": source_line.product_category,
             "product_unit": source_line.product_unit,
             "product_color": source_line.product_color,
@@ -915,6 +936,28 @@ def _ensure_draft(version):
 def _apply_line_product_snapshots(data, *, current=None):
     """只在建立新关联时取产品主档快照，编辑同一关联不重新套用主档默认值。"""
     values = dict(data)
+    selection = values.pop("product_selection", None)
+    catalog_id = values.pop("product_catalog_id", getattr(current, "product_catalog_id", None))
+    if catalog_id or selection is not None or is_product_entry_snapshot(getattr(current, "product_selection_snapshot", None)):
+        if values.get("product") is not None:
+            raise ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+        catalog, snapshot = resolve_product_selection(
+            catalog_id, selection,
+            existing_catalog_id=getattr(current, "product_catalog_id", None),
+            existing_snapshot=getattr(current, "product_selection_snapshot", None),
+        )
+        values.update({
+            "product_catalog": catalog, "product_selection_snapshot": snapshot,
+            "product": None, "product_category": None, "product_color": None,
+            "product_unit": ProductionUnit.objects.get(pk=snapshot["unit_id"]) if snapshot["unit_id"] else None,
+            "product_description_snapshot": snapshot["name"], "specification_snapshot": snapshot["specification"],
+            "color_snapshot": snapshot["color_name"], "material_snapshot": snapshot["material"],
+            "unit_code": snapshot["unit_code"], "product_number_snapshot": "",
+            "product_code_snapshot": snapshot["product_code"], "item_number_snapshot": snapshot["item_number"],
+        })
+        return values
+    if "product_catalog_id" in data:
+        values.update(product_catalog=None, product_selection_snapshot={})
     product = values.get("product", getattr(current, "product", None))
     product_changed = current is None or (
         "product" in values and getattr(current, "product_id", None) != getattr(product, "pk", None)

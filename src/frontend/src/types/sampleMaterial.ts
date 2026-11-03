@@ -6,6 +6,9 @@ export const sampleMaterialCategories = [
 ] as const
 export type SampleMaterialCategory = typeof sampleMaterialCategories[number]['key']
 export interface SampleMaterialLine {
+  material_catalog_id?: string
+  material_selection?: import('./materialCatalog').MaterialSelectionInput
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot
   key: string
   category: SampleMaterialCategory
   name: string
@@ -47,6 +50,9 @@ export interface SampleMaterialReferences {
   accessories: Array<SampleMaterialOption & { id: string; unitLabel: string; specifications: SampleMaterialOption[]; colors: SampleMaterialOption[] }>
 }
 export interface SampleMaterialCandidate {
+  material_catalog_id?: string
+  material_selection?: import('./materialCatalog').MaterialSelectionInput
+  material_selection_snapshot?: import('./materialCatalog').MaterialSelectionSnapshot
   id: string; number: string; name: string; specification: string; material: string; color: string; unitId: string; unitLabel: string
 }
 export interface SampleMaterialProgress {

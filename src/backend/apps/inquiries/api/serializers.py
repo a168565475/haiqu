@@ -17,6 +17,7 @@ from apps.customers.selectors import accessible_customers
 from apps.files.models import BusinessFile, FileScanStatus, USABLE_FILE_SCAN_STATUSES
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
 from apps.reference_data.models import (
     Currency,
     Incoterm,
@@ -51,6 +52,9 @@ class InquiryProductImageMetadataSerializer(serializers.Serializer):
 
 
 class InquiryItemSerializer(serializers.ModelSerializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, write_only=True)
+    product_selection_snapshot = serializers.JSONField(read_only=True)
     line_number = serializers.IntegerField(required=False, min_value=1)
     product_category_name = serializers.CharField(source="product_category.category_name", read_only=True, default="")
     product_id = serializers.PrimaryKeyRelatedField(
@@ -83,7 +87,7 @@ class InquiryItemSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     product_image = serializers.SerializerMethodField()
-    unit_code = serializers.CharField(max_length=30)
+    unit_code = serializers.CharField(max_length=30, allow_blank=True)
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     target_unit_price = serializers.DecimalField(
         max_digits=18,
@@ -105,6 +109,9 @@ class InquiryItemSerializer(serializers.ModelSerializer):
             "id",
             "line_number",
             "product_id",
+            "product_catalog_id",
+            "product_selection",
+            "product_selection_snapshot",
             "product_category_id",
             "product_category_name",
             "product_unit_id",
@@ -211,6 +218,17 @@ class InquiryItemSerializer(serializers.ModelSerializer):
 
     def _validate_item_rules(self, attrs, current=None):
         attrs = self._validate_reference_codes(attrs, current)
+        catalog_id = attrs.get("product_catalog_id", getattr(current, "product_catalog_id", None))
+        uses_entry = bool(catalog_id or (attrs.get("product_selection") or {}).get("draft") or getattr(current, "product_selection_snapshot", {}).get("entry_state") == "draft")
+        if uses_entry:
+            if attrs.get("product") is not None:
+                raise serializers.ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+            attrs["product"] = None
+            attrs["product_category"] = None
+            attrs["product_color"] = None
+            attrs["product_unit"] = None
+        elif not attrs.get("unit_code", getattr(current, "unit_code", "")):
+            raise serializers.ValidationError({"unit_code": "请填写单位。"})
         errors = {}
         unit = attrs.get("product_unit", getattr(current, "product_unit", None))
         unit_text = attrs.get("unit_code", getattr(current, "unit_code", ""))

@@ -16,6 +16,8 @@ class TubeSourceKind(models.TextChoices):
 
 class TubeOutsourcingOrder(TimeStampedModel):
     order_number = models.CharField(max_length=50, unique=True)
+    is_plan = models.BooleanField(default=False)
+    plan = models.ForeignKey('self', null=True, blank=True, on_delete=models.PROTECT, related_name='dispatch_batches')
     stock_mode = models.CharField(max_length=16, default='PUBLIC_V2')
     schedule_product = models.ForeignKey('production_scheduling.ProductionScheduleProduct', on_delete=models.PROTECT,
                                          related_name='tube_outsourcing_orders')
@@ -45,6 +47,8 @@ class TubeOutsourcingOrder(TimeStampedModel):
         default_permissions = ()
         ordering = ['-created_at', '-id']
         constraints = [
+            models.CheckConstraint(condition=Q(is_plan=False) | Q(plan__isnull=True), name='tube_plan_not_nested'),
+            models.UniqueConstraint(fields=['product_line', 'craft'], condition=Q(is_plan=True) & ~Q(status='CANCELLED'), name='tube_active_plan_unique'),
             models.CheckConstraint(condition=Q(stock_mode='PUBLIC_V2'), name='tube_order_public_mode'),
             models.CheckConstraint(condition=Q(source_kind__in=TubeSourceKind.values), name='tube_order_source_valid'),
             models.CheckConstraint(condition=Q(status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED', 'CANCELLED']),
@@ -69,6 +73,12 @@ class TubeOutsourcingLine(TimeStampedModel):
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     stock_quantity = models.PositiveBigIntegerField(null=True, blank=True)
     input_identity = models.JSONField(default=dict, blank=True)
+    input_material_catalog = models.ForeignKey('material_catalog.MaterialCatalog', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='outsourcing_input_lines')
+    output_material_catalog = models.ForeignKey('material_catalog.MaterialCatalog', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='outsourcing_output_lines')
+    input_material_selection_snapshot = models.JSONField(default=dict, blank=True)
+    output_material_selection_snapshot = models.JSONField(default=dict, blank=True)
     snapshot = models.JSONField(default=dict)
 
     class Meta:
@@ -125,8 +135,11 @@ class TubeOutsourcingMaterial(TimeStampedModel):
     bom_line = models.ForeignKey('boms.BomLine', on_delete=models.PROTECT, related_name='tube_outsourcing_materials')
     requirement = models.ForeignKey('material_issues.OrderMaterialRequirement', on_delete=models.PROTECT,
                                     related_name='tube_outsourcing_materials')
-    raw_material = models.ForeignKey('products.RawMaterialInformation', on_delete=models.PROTECT,
+    raw_material = models.ForeignKey('products.RawMaterialInformation', null=True, blank=True, on_delete=models.PROTECT,
                                      related_name='tube_outsourcing_materials')
+    material_catalog = models.ForeignKey('material_catalog.MaterialCatalog', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='outsourcing_auxiliary_materials')
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
     unit = models.ForeignKey('reference_data.ProductionUnit', on_delete=models.PROTECT,
                              related_name='tube_outsourcing_materials')
     zone = models.ForeignKey('inventory.WarehouseZone', on_delete=models.PROTECT,
@@ -143,6 +156,8 @@ class TubeOutsourcingMaterial(TimeStampedModel):
             models.UniqueConstraint(fields=['order', 'bom_line', 'factory', 'zone'],
                                     condition=Q(order_line__isnull=True), name='tube_material_factory_unique'),
             models.CheckConstraint(condition=Q(quantity__gt=0), name='tube_material_qty_positive'),
+            models.CheckConstraint(condition=(Q(raw_material__isnull=False, material_catalog__isnull=True)
+                | Q(raw_material__isnull=True, material_catalog__isnull=False)), name='tube_material_source_valid'),
         ]
         indexes = [models.Index(fields=['raw_material', 'unit', 'zone'], name='tube_material_stock_idx')]
 

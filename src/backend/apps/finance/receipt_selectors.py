@@ -3,6 +3,17 @@ from django.db.models import Exists, OuterRef, Prefetch, Q
 from .receipt_models import Receipt, ReceiptAttachment
 
 
+def accessible_receipts(request, filters=None):
+    from apps.access_control.role_policy import filter_statement_scope, role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+
+    queryset = receipts(filters)
+    permission = 'finance.view_receipt'
+    if 'OWN' in role_scopes(request, permission) and not has_legacy_permission(request, permission):
+        return filter_statement_scope(request, queryset, permission, statement_lookup='statement')
+    return queryset
+
+
 def receipts(filters=None):
     from .allocation_models import DepositAllocation
     filters = filters or {}

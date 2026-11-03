@@ -1443,6 +1443,30 @@ class QuotationApiTests(APITestCase):
         self.assertEqual(response.data["data"]["records"][0]["unit_price"], "20.0000")
         self.assertEqual(response.data["data"]["metrics"]["latest_quote_price"], "20.0000")
 
+    def test_price_history_keeps_typed_units_separate_without_fake_codes(self):
+        from apps.quotations.models import QuotationLine
+        from apps.product_catalog.tests.test_product_entry_drafts import typed_product_draft
+        from apps.product_catalog.selection import resolve_product_selection
+
+        quotation = self.create_quotation()
+        response = self.create_version(quotation.data["data"]["id"], quotation.headers["ETag"])
+        version = QuotationVersion.objects.get(pk=response.data["data"]["id"])
+        for index, unit_name in enumerate(("未建档小套", "未建档大套"), start=1):
+            _, snapshot = resolve_product_selection(None, {"draft": typed_product_draft(unit_name=unit_name)})
+            QuotationLine.objects.create(quotation_version=version, line_number=index,
+                product_description_snapshot="草稿折叠椅", specification_snapshot="60*80", quantity="1",
+                unit_code="", unit_price="20", line_total="20", product_selection_snapshot=snapshot)
+        now = timezone.now()
+        QuotationVersion.objects.filter(pk=version.pk).update(status="SENT", locked_at=now, issued_at=now,
+            transaction_entity_snapshot={"legal_name": "测试交易主体"},
+            address_snapshot={"address_line1": "测试地址"}, contact_snapshot={"display_name": "测试联系人"})
+        result = self.client.get("/api/v1/quotations/price-history/", {"product": "草稿折叠椅"})
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["data"]["unit_codes"], [])
+        self.assertEqual(set(result.data["data"]["unit_names"]), {"未建档小套", "未建档大套"})
+        self.assertIn("多个计量单位", result.data["data"]["calculation_warning"])
+        self.assertIsNone(result.data["data"]["metrics"]["average_quote_price"])
+
     def test_price_history_blocks_average_when_units_are_not_comparable(self):
         quotation = self.create_quotation()
         version = self.create_version(quotation.data["data"]["id"], quotation.headers["ETag"])

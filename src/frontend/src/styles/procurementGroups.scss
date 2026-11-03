@@ -1,0 +1,12 @@
+.group-table-frame { border: 1px solid var(--erp-table-grid); border-radius: var(--erp-radius-control); overflow: auto; background: var(--erp-table-body-fill); }
+.group-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; color: var(--erp-table-text); }
+.group-table th, .group-table td { box-sizing: border-box; padding: 0 16px; border-right: 1px solid var(--erp-table-grid); border-bottom: 1px solid var(--erp-table-grid); text-align: left; overflow-wrap: anywhere; }
+.group-table th { height: 44px; color: var(--erp-table-header-text); background: var(--erp-table-header-fill); font-size: 11px; line-height: 16px; font-weight: 500; }
+.group-table td { height: 40px; color: var(--erp-table-text); font-size: 12px; line-height: 18px; }
+.group-table th:last-child, .group-table td:last-child { border-right: 0; }
+.group-table tbody tr:last-child td { border-bottom: 0; }
+.group-table tbody tr:hover { background: var(--erp-color-hover); }
+.group-table td small { display: block; color: var(--erp-color-text-secondary); }
+.group-table .empty { text-align: center; padding: 32px 16px; color: var(--erp-color-text-secondary); }
+.group-table .satisfied { color: var(--erp-color-success); }
+.group-table .unknown { color: var(--erp-color-warning); }

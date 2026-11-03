@@ -27,7 +27,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
   let controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   const identity = computed(() => auth.user && !auth.waitingForRole
-    ? JSON.stringify([auth.user.id, auth.user.employee?.id, auth.user.employee?.status, auth.user.permissions, auth.user.effective_access]) : '')
+    && !auth.identityTransitionPending && !auth.identityRevalidationRequired
+    ? JSON.stringify([auth.identityGeneration, auth.identitySignature]) : '')
 
   function clear() {
     epoch++

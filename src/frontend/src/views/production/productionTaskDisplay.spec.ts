@@ -4,14 +4,14 @@ import { productLabels, productSpecifications, quantityWithUnits, localAmountTot
 const product = (overrides: Partial<ProductionTaskProduct>) => ({ product_id: null, product_name: '产品', quantity: 1, unit_id: 'piece', unit_name: '件', local_total_amount: '0.10', ...overrides }) as ProductionTaskProduct
 
 describe('生产任务显示口径', () => {
-  it('只有已接单、全部 BOM 已确认且已完成采购时才允许进入排产', () => {
+  it('已接单且全部 BOM 已确认即可进入排产，采购进度不作门槛', () => {
     const ready = { status: 'READY', bom_status: 'VERIFIED', purchase_status: 'ORDER_COMPLETED' } as const
     expect(isTaskReadyForScheduling(ready)).toBe(true)
     for (const bom_status of ['NOT_CREATED', 'PARTIAL', 'PENDING_CONFIRMATION', undefined] as const) {
       expect(isTaskReadyForScheduling({ ...ready, bom_status })).toBe(false)
     }
     for (const purchase_status of ['NOT_STARTED', 'REQUEST_FULLY_ALLOCATED', 'ORDER_DRAFT', 'ORDER_SUBMITTED', 'ORDER_PURCHASING', undefined] as const) {
-      expect(isTaskReadyForScheduling({ ...ready, purchase_status })).toBe(false)
+      expect(isTaskReadyForScheduling({ ...ready, purchase_status })).toBe(true)
     }
     expect(isTaskReadyForScheduling({ ...ready, status: 'IN_PRODUCTION' })).toBe(false)
     expect(isTaskReadyForScheduling(null)).toBe(false)
@@ -22,6 +22,11 @@ describe('生产任务显示口径', () => {
   it('按真实单位分组，不能把箱和件相加', () => {
     expect(quantityWithUnits([product({ quantity: 2 }), product({ quantity: 3 }), product({ unit_id: 'box', unit_name: '箱', quantity: 1 })])).toBe('5 件 / 1 箱')
     expect(quantityWithUnits([])).toBe('—')
+  })
+  it('新单位尚无 ID 和编码时，按已保存的单位名称分别汇总', () => {
+    const first = product({ unit_id: null, unit_name: '', unit_code: '', quantity: 2, product_selection_snapshot: { unit_name: '新单位甲' } as ProductionTaskProduct['product_selection_snapshot'] })
+    const second = product({ unit_id: null, unit_name: '', unit_code: '', quantity: 3, product_selection_snapshot: { unit_name: '新单位乙' } as ProductionTaskProduct['product_selection_snapshot'] })
+    expect(quantityWithUnits([first, second])).toBe('2 新单位甲 / 3 新单位乙')
   })
   it('人民币只累加本币行金额，显示去除尾零，不混用原币金额', () => {
     expect(localAmountTotal([product({ total_amount: '999.00' }), product({ local_total_amount: '0.20' })])).toBe('0.3')

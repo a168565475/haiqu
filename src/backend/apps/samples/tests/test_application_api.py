@@ -16,17 +16,22 @@ from . import test_sample_api as legacy_tests
 class SampleApplicationApiTests(APITestCase):
     def setUp(self):
         from django.utils import timezone
-        from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit
+        from django.contrib.auth.models import Group
+        from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit, EmployeeRoleAssignment, RoleProfile
         legacy_tests.SampleApiTests.setUp(self)
         department, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
         EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=department,
                                                        effective_from=timezone.now())
+        group, _ = Group.objects.get_or_create(name='打样测试业务员')
+        role, _ = RoleProfile.objects.get_or_create(role_code='SALESPERSON', defaults={'auth_group': group, 'display_name': '业务员'})
+        EmployeeRoleAssignment.objects.create(employee=self.employee, role_profile=role, effective_from=timezone.now())
     create_customer = legacy_tests.SampleApiTests.create_customer
     create_inquiry_with_item = legacy_tests.SampleApiTests.create_inquiry_with_item
     create_quotation_version_with_line = legacy_tests.SampleApiTests.create_quotation_version_with_line
 
     def payload(self, **updates):
         data = {
+            'manual_request_number': uuid.uuid4().hex[:12].upper(), 'product_color_id': str(self.product_color.pk),
             'customer_account_id': str(self.customer.pk), 'customer_contact_id': str(self.contact.pk), 'owner_employee_id': str(self.employee.pk),
             'source_type': None, 'source_id': None, 'source_product_id': None,
             'sample_type': 'PRE_SALES', 'shipping_method': 'MAIL', 'delivery_batch': 'SINGLE', 'is_repeat_order': False,
@@ -75,7 +80,8 @@ class SampleApplicationApiTests(APITestCase):
         created = self.submit()
         self.assertEqual(created.status_code, 201, created.data)
         data = created.data['data']
-        self.assertTrue(data['request_number'].startswith('SRQ-'))
+        self.assertEqual(data['request_number'], 'HTS' + data['manual_request_number'])
+        self.assertTrue(data['intake_number'].startswith('SRQ-'))
         self.assertEqual(data['status'], 'DIRECTOR_REVIEW')
         self.assertEqual(data['products'][0]['total_sample_quantity'], 3)
         self.assertEqual(data['products'][0]['length_cm'], '50.00')

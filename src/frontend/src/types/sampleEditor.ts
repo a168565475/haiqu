@@ -1,13 +1,14 @@
 import type { SampleProduct } from './sample'
+import type { ProductCatalogSelectionOption, ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
 
-export interface SampleProductCandidate {
-  id: string
+export interface SampleProductCandidate extends ProductCatalogSelectionOption {
   product_name: string
-  specification: string
-  category_id: string
 }
 
 export interface SampleProductEdit {
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   id: string
   product_id: string
   category_id: string

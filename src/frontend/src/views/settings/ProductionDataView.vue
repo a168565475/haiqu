@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import ElDialog from '@/components/common/AppWindowDialog.vue'
+import TubeFormulaSettings from './TubeFormulaSettings.vue'
+import PublicMaterialOptionsSettings from './PublicMaterialOptionsSettings.vue'
+import RawMaterialManagementView from '@/views/products/RawMaterialManagementView.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Delete, Edit, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
@@ -18,9 +21,12 @@ import {
   uploadProductColorImage,
 } from '@/api/productionData'
 import { fetchAllInventoryRawMaterials } from '@/api/rawMaterials'
+import { fetchPublicMaterialFields } from '@/api/materialCatalog'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import type { ReferenceStatus } from '@/types/referenceData'
 import type { RawMaterialInformation } from '@/types/rawMaterial'
+import type { MaterialScope, PublicMaterialFields } from '@/types/materialCatalog'
 import type {
   AccessoryProductName,
   ProductCategory,
@@ -31,14 +37,14 @@ import type {
   ProductionDataSummary,
 } from '@/types/productionData'
 
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const props = withDefaults(defineProps<{ embedded?: boolean; initialCategory?: string }>(), { embedded: false, initialCategory: '' })
 
 interface CategoryDefinition {
   key:
     | 'category' | 'unit' | 'color' | 'item'
     | 'fabric-material' | 'fabric-specification' | 'fabric-width'
-    | 'accessory-product-name' | 'accessory-specification' | 'accessory-color' | 'accessory-material'
-    | 'tube-product-name' | 'tube-thickness' | 'tube-diameter'
+    | 'accessory-specification' | 'accessory-color' | 'accessory-material'
+    | 'tube-thickness' | 'tube-diameter'
     | 'tube-material' | 'tube-shape' | 'tube-coating-color'
   label: string
   title: string
@@ -47,19 +53,30 @@ interface CategoryDefinition {
   countKey: string
 }
 
-type MaintenanceGroupKey = 'production' | 'fabric' | 'accessory' | 'tube'
+type MaintenanceGroupKey = 'production' | 'fabric' | 'accessory' | 'tube' | 'hardware' | 'plastic' | 'packaging' | 'fabric-semi'
 
 interface MaintenanceGroupDefinition {
   key: MaintenanceGroupKey
   label: string
-  pendingText: string
   categories: CategoryDefinition[]
+  catalogCategory?: string
 }
+
+type MaintenanceItem = {
+  key: string
+  label: string
+} & (
+  | { kind: 'existing'; category: CategoryDefinition }
+  | { kind: 'public'; categoryKey: string; templateKey: string; scope: MaterialScope; fieldKey: string }
+  | { kind: 'catalog' }
+  | { kind: 'formula' }
+)
 
 const productionCategories: CategoryDefinition[] = [
   { key: 'category', label: '类别维护', title: '产品类别', resource: 'product-categories', permissionModel: 'productcategory', countKey: 'product_categories' },
   { key: 'unit', label: '单位维护', title: '生产单位', resource: 'production-units', permissionModel: 'productionunit', countKey: 'production_units' },
-  { key: 'color', label: '颜色维护', title: '产品颜色', resource: 'product-colors', permissionModel: 'productcolor', countKey: 'product_colors' },
+  { key: 'color', label: '普通颜色', title: '普通颜色', resource: 'product-colors', permissionModel: 'productcolor', countKey: 'product_colors' },
+  { key: 'tube-coating-color', label: '喷塑颜色', title: '喷塑颜色', resource: 'tube-coating-colors', permissionModel: 'tubecoatingcolor', countKey: 'tube_coating_colors' },
   { key: 'item', label: '货号维护', title: '产品货号', resource: 'product-items', permissionModel: 'productitem', countKey: 'product_items' },
 ]
 
@@ -70,28 +87,29 @@ const fabricCategories: CategoryDefinition[] = [
 ]
 
 const accessoryCategories: CategoryDefinition[] = [
-  { key: 'accessory-product-name', label: '品名维护', title: '辅料品名', resource: 'accessory-product-names', permissionModel: 'accessoryproductname', countKey: 'accessory_product_names' },
   { key: 'accessory-specification', label: '规格维护', title: '辅料规格', resource: 'accessory-specifications', permissionModel: 'accessoryspecification', countKey: 'accessory_specifications' },
   { key: 'accessory-color', label: '颜色维护', title: '辅料颜色', resource: 'accessory-colors', permissionModel: 'accessorycolor', countKey: 'accessory_colors' },
   { key: 'accessory-material', label: '材质维护', title: '辅料材质', resource: 'accessory-materials', permissionModel: 'accessorymaterial', countKey: 'accessory_materials' },
 ]
 
 const tubeCategories: CategoryDefinition[] = [
-  { key: 'tube-product-name', label: '品名维护', title: '管材品名', resource: 'tube-product-names', permissionModel: 'tubeproductname', countKey: 'tube_product_names' },
   { key: 'tube-thickness', label: '厚度维护', title: '管材厚度', resource: 'tube-thicknesses', permissionModel: 'tubethickness', countKey: 'tube_thicknesses' },
-  { key: 'tube-diameter', label: '直径维护', title: '管材直径', resource: 'tube-diameters', permissionModel: 'tubediameter', countKey: 'tube_diameters' },
+  { key: 'tube-diameter', label: '规格', title: '管材规格', resource: 'tube-diameters', permissionModel: 'tubediameter', countKey: 'tube_diameters' },
   { key: 'tube-material', label: '材质维护', title: '管材材质', resource: 'tube-materials', permissionModel: 'tubematerial', countKey: 'tube_materials' },
   { key: 'tube-shape', label: '形状维护', title: '管材形状', resource: 'tube-shapes', permissionModel: 'tubeshape', countKey: 'tube_shapes' },
-  { key: 'tube-coating-color', label: '喷塑颜色', title: '管材喷塑颜色', resource: 'tube-coating-colors', permissionModel: 'tubecoatingcolor', countKey: 'tube_coating_colors' },
 ]
 
 const allCategories = [...productionCategories, ...fabricCategories, ...accessoryCategories, ...tubeCategories]
 
 const maintenanceGroups: MaintenanceGroupDefinition[] = [
-  { key: 'production', label: '生产维护', pendingText: '', categories: productionCategories },
-  { key: 'fabric', label: '面料维护', pendingText: '', categories: fabricCategories },
-  { key: 'accessory', label: '辅料维护', pendingText: '', categories: accessoryCategories },
-  { key: 'tube', label: '管材维护', pendingText: '', categories: tubeCategories },
+  { key: 'production', label: '通用维护', categories: productionCategories },
+  { key: 'fabric', label: '面料维护', categories: fabricCategories, catalogCategory: 'FABRIC' },
+  { key: 'tube', label: '管材维护', categories: tubeCategories, catalogCategory: 'TUBE' },
+  { key: 'accessory', label: '辅料维护', categories: accessoryCategories, catalogCategory: 'AUXILIARY' },
+  { key: 'hardware', label: '五金维护', categories: [], catalogCategory: 'HARDWARE' },
+  { key: 'plastic', label: '塑料维护', categories: [], catalogCategory: 'PLASTIC' },
+  { key: 'packaging', label: '包材维护', categories: [], catalogCategory: 'PACKAGING' },
+  { key: 'fabric-semi', label: '裁片维护', categories: [], catalogCategory: 'FABRIC_SEMI' },
 ]
 
 const itemTypeOptions: Array<{ value: ProductItemType; label: string }> = [
@@ -112,17 +130,64 @@ function canView(category: CategoryDefinition): boolean {
   return can(permission(category, 'view'))
 }
 
-function visibleGroupCategoryCount(group: MaintenanceGroupDefinition): number {
-  return group.categories.filter(canView).length
+const publicDefinitions = ref<PublicMaterialFields>({ categories: [], spray_fields: [] })
+const publicDefinitionsLoading = ref(false)
+const publicDefinitionsError = ref('')
+const canViewCatalog = computed(() => can('material_catalog.view_materialcatalog'))
+
+function groupItems(group: MaintenanceGroupDefinition): MaintenanceItem[] {
+  const items: MaintenanceItem[] = []
+  const sources = new Set<string>()
+  if (group.catalogCategory && canViewCatalog.value) items.push({ key: 'catalog-names', label: '品名维护', kind: 'catalog' })
+  for (const category of group.categories) {
+    sources.add(category.resource)
+    if (canView(category)) items.push({ key: category.key, label: category.label, kind: 'existing', category })
+  }
+  const catalogCategory = publicDefinitions.value.categories.find(item => item.key === group.catalogCategory)
+  for (const template of catalogCategory?.templates || []) {
+    const templatePrefix = (catalogCategory?.templates.length || 0) > 1 ? `${template.label} · ` : ''
+    const scopes: MaterialScope[] = template.supports_spray ? ['BASE', 'SPRAY'] : ['BASE']
+    for (const scope of scopes) {
+      const fields = scope === 'BASE' ? template.fields : publicDefinitions.value.spray_fields
+      for (const field of fields) {
+        if (group.key !== 'production' && ['production-units', 'product-colors', 'tube-coating-colors'].includes(field.source)) continue
+        if (group.key === 'fabric-semi' && ['fabric-materials', 'fabric-specifications', 'fabric-widths'].includes(field.source)) continue
+        if (field.source === 'material-attribute-values' || field.source === 'tube-shape-dimensions') {
+          if (!canViewCatalog.value) continue
+          const label = field.source === 'tube-shape-dimensions' ? '形状规格对应' : `${templatePrefix}${scope === 'SPRAY' ? '半成品' : ''}${field.label}`
+          items.push({ key: `public:${template.key}:${scope}:${field.key}`, label, kind: 'public', categoryKey: catalogCategory!.key, templateKey: template.key, scope, fieldKey: field.key })
+          continue
+        }
+        if (sources.has(field.source)) continue
+        sources.add(field.source)
+        const category = allCategories.find(item => item.resource === field.source)
+        if (category && canView(category)) {
+          const label = field.source === 'production-units' ? '单位维护' : scope === 'SPRAY' ? `半成品${field.label}` : field.label
+          items.push({ key: category.key, label, kind: 'existing', category })
+        }
+      }
+    }
+  }
+  if (group.key === 'tube' && can('reference_data.view_tubeshape')) items.push({ key: 'tube-formula', label: '计算公式', kind: 'formula' })
+  return items
 }
 
 const selectedGroupKey = ref<MaintenanceGroupKey>('production')
 const selectedGroup = computed(() => maintenanceGroups.find((item) => item.key === selectedGroupKey.value) ?? maintenanceGroups[0])
-const visibleCategories = computed(() => selectedGroup.value.categories.filter(canView))
-const canViewPage = computed(() => allCategories.some(canView))
-const selectedKey = ref<CategoryDefinition['key']>('category')
-const selectedCategory = computed(() => visibleCategories.value.find((item) => item.key === selectedKey.value) ?? allCategories[0])
-const hasSelectedCategory = computed(() => visibleCategories.value.some((item) => item.key === selectedKey.value))
+const visibleItems = computed(() => groupItems(selectedGroup.value))
+const canViewPage = computed(() => allCategories.some(canView) || can('material_catalog.view_materialcatalog'))
+const selectedKey = ref('category')
+const selectedItem = computed(() => visibleItems.value.find(item => item.key === selectedKey.value))
+const publicSelection = computed(() => selectedItem.value?.kind === 'public' ? selectedItem.value : null)
+const publicAttributesSelected = computed(() => !!publicSelection.value)
+const publicAttributesRef = ref<InstanceType<typeof PublicMaterialOptionsSettings> | null>(null)
+const catalogSelected = computed(() => selectedItem.value?.kind === 'catalog')
+const catalogViewRef = ref<InstanceType<typeof RawMaterialManagementView> | null>(null)
+const changingView = ref(false)
+const formulaSelected = computed(() => selectedItem.value?.kind === 'formula')
+const formulaSettingsRef = ref<InstanceType<typeof TubeFormulaSettings> | null>(null)
+const selectedCategory = computed(() => selectedItem.value?.kind === 'existing' ? selectedItem.value.category : allCategories[0])
+const hasSelectedCategory = computed(() => selectedItem.value?.kind === 'existing')
 const canAddSelected = computed(() => hasSelectedCategory.value && can(permission(selectedCategory.value, 'add')))
 function canChangeStatus(row: { status: string }): boolean {
   const action = row.status === 'ACTIVE' ? 'deactivate' : 'activate'
@@ -161,6 +226,10 @@ const fileInputKey = ref(0)
 const selectedImageFile = ref<File | null>(null)
 const imagePreviewUrl = ref('')
 const clearExistingImage = ref(false)
+const imageResources = useProtectedResourceUrls(() => [
+  ...(selectedKey.value === 'color' ? records.value.map(record => (record as ProductColor).image_url) : []),
+  imagePreviewUrl.value,
+])
 
 const form = reactive({
   item_type: 'FINISHED' as ProductItemType,
@@ -188,7 +257,9 @@ const form = reactive({
 
 const dialogTitle = computed(() => `${editingId.value ? '编辑' : '新增'}${selectedCategory.value.title}`)
 
-function canClose(): boolean {
+async function canClose(): Promise<boolean> {
+  if (formulaSettingsRef.value && !formulaSettingsRef.value.canClose()) return false
+  if (publicAttributesRef.value && !publicAttributesRef.value.canClose()) return false
   if (saving.value || pendingActions.value) {
     ElMessage.warning('生产资料操作进行中，请稍候再关闭。')
     return false
@@ -197,7 +268,7 @@ function canClose(): boolean {
     ElMessage.warning('请先保存或取消当前生产资料编辑。')
     return false
   }
-  return true
+  return catalogViewRef.value ? catalogViewRef.value.canLeave() : true
 }
 
 defineExpose({ canClose })
@@ -214,6 +285,19 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function statusCode(error: unknown): number | undefined {
   return (error as { response?: { status?: number } })?.response?.status
+}
+
+async function loadPublicDefinitions(): Promise<void> {
+  if (publicDefinitionsLoading.value) return
+  publicDefinitionsLoading.value = true
+  publicDefinitionsError.value = ''
+  try {
+    publicDefinitions.value = await fetchPublicMaterialFields()
+  } catch (error) {
+    publicDefinitionsError.value = errorMessage(error, '原料属性导航加载失败，请重试。')
+  } finally {
+    publicDefinitionsLoading.value = false
+  }
 }
 
 async function loadSummary(): Promise<void> {
@@ -299,17 +383,35 @@ async function reloadAll(): Promise<void> {
   }
 }
 
-function selectCategory(key: CategoryDefinition['key']): void {
-  if (selectedKey.value === key) return
-  selectedKey.value = key
+async function selectCategory(key: string): Promise<void> {
+  if (selectedKey.value === key || changingView.value) return
+  changingView.value = true
+  try {
+    if (await canClose()) selectedKey.value = key
+  } finally {
+    changingView.value = false
+  }
 }
 
-function selectGroup(key: MaintenanceGroupKey): void {
-  if (selectedGroupKey.value === key) return
-  selectedGroupKey.value = key
-  dialogVisible.value = false
-  const firstVisible = visibleCategories.value[0]
-  if (firstVisible) selectedKey.value = firstVisible.key
+async function selectGroup(key: MaintenanceGroupKey): Promise<void> {
+  if (selectedGroupKey.value === key || changingView.value) return
+  changingView.value = true
+  try {
+    if (!await canClose()) return
+    selectedGroupKey.value = key
+    selectedKey.value = visibleItems.value[0]?.key || ''
+  } finally {
+    changingView.value = false
+  }
+}
+
+async function selectRelatedCategory(resource: string): Promise<void> {
+  const item = visibleItems.value.find(item => item.kind === 'existing' && item.category.resource === resource)
+  if (!item) {
+    ElMessage.warning('当前账号没有此配置的查看权限。')
+    return
+  }
+  await selectCategory(item.key)
 }
 
 function runSearch(): void {
@@ -396,18 +498,16 @@ async function openEdit(row: ProductionDataRecord): Promise<void> {
 function validateForm(): string {
   if (selectedKey.value === 'category' && !form.category_name.trim()) return '请填写品号类别。'
   if (selectedKey.value === 'unit' && (!form.unit_code.trim() || !form.unit_name.trim())) return '请填写单位编号和单位名称。'
-  if (selectedKey.value === 'color' && (!form.color_card.trim() || !form.color_code.trim() || !form.color_name.trim())) return '请填写色卡、色号和颜色名称。'
+  if (selectedKey.value === 'color' && !form.color_name.trim()) return '请填写颜色名称。'
   if (selectedKey.value === 'item' && (!form.item_number.trim() || !form.category)) return '请填写货号并选择产品类别。'
   if (selectedKey.value === 'fabric-material' && !form.material_name.trim()) return '请填写面料材质。'
   if (selectedKey.value === 'fabric-specification' && !form.specification_name.trim()) return '请填写面料规格。'
   if (selectedKey.value === 'fabric-width' && !form.width_value.trim()) return '请填写面料门幅。'
-  if (selectedKey.value === 'accessory-product-name' && (!form.product_name.trim() || !form.unit_name.trim())) return '请填写辅料品名和单位。'
-  if (selectedKey.value === 'accessory-specification' && (!form.product_name || !form.specification_value.trim())) return '请选择辅料品名并填写规格。'
-  if (selectedKey.value === 'accessory-color' && (!form.product_name || !form.color_name.trim())) return '请选择辅料品名并填写颜色。'
+  if (selectedKey.value === 'accessory-specification' && (!form.product_name || !form.specification_value.trim())) return '请选择规格所属品名并填写规格。'
+  if (selectedKey.value === 'accessory-color' && (!form.product_name || !form.color_name.trim())) return '请选择颜色所属品名并填写颜色。'
   if (selectedKey.value === 'accessory-material' && !form.material_name.trim()) return '请填写辅料材质。'
-  if (selectedKey.value === 'tube-product-name' && !form.product_name.trim()) return '请填写管材品名。'
   if (selectedKey.value === 'tube-thickness' && !form.thickness_value.trim()) return '请填写管材厚度。'
-  if (selectedKey.value === 'tube-diameter' && !form.diameter_value.trim()) return '请填写管材直径。'
+  if (selectedKey.value === 'tube-diameter' && !form.diameter_value.trim()) return '请填写管材规格。'
   if (selectedKey.value === 'tube-material' && !form.material_name.trim()) return '请填写管材材质。'
   if (selectedKey.value === 'tube-shape' && !form.shape_name.trim()) return '请填写管材形状。'
   if (selectedKey.value === 'tube-coating-color' && !form.color_name.trim()) return '请填写喷塑颜色。'
@@ -432,9 +532,6 @@ function normalizedPayload(): Record<string, unknown> {
   }
   if (selectedKey.value === 'fabric-specification') return { ...common, specification_name: form.specification_name.trim() }
   if (selectedKey.value === 'fabric-width') return { ...common, width_value: form.width_value.trim() }
-  if (selectedKey.value === 'accessory-product-name') {
-    return { ...common, product_name: form.product_name.trim(), unit_name: form.unit_name.trim() }
-  }
   if (selectedKey.value === 'accessory-specification') {
     return {
       ...common,
@@ -453,7 +550,6 @@ function normalizedPayload(): Record<string, unknown> {
       inventory_raw_material: form.inventory_raw_material || null,
     }
   }
-  if (selectedKey.value === 'tube-product-name') return { ...common, product_name: form.product_name.trim() }
   if (selectedKey.value === 'tube-thickness') return { ...common, thickness_value: form.thickness_value.trim() }
   if (selectedKey.value === 'tube-diameter') return { ...common, diameter_value: form.diameter_value.trim() }
   if (selectedKey.value === 'tube-material') return { ...common, material_name: form.material_name.trim() }
@@ -566,11 +662,11 @@ watch([selectedGroupKey, selectedKey], () => {
 
 onMounted(async () => {
   if (!canViewPage.value) return
-  const firstGroup = maintenanceGroups.find((group) => group.categories.some(canView))
+  const firstGroup = maintenanceGroups.find(group => group.catalogCategory === props.initialCategory && groupItems(group).length > 0)
+    ?? maintenanceGroups.find(group => groupItems(group).length > 0)
   if (firstGroup) selectedGroupKey.value = firstGroup.key
-  const firstVisible = firstGroup?.categories.find(canView)
-  if (firstVisible && !canView(selectedCategory.value)) selectedKey.value = firstVisible.key
-  await reloadAll()
+  selectedKey.value = visibleItems.value[0]?.key || ''
+  await Promise.all([loadPublicDefinitions(), ...(allCategories.some(canView) ? [reloadAll()] : [])])
 })
 
 onBeforeUnmount(() => {
@@ -587,11 +683,11 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <section v-glass-spotlight class="erp-list-filter">
-      <header v-if="!props.embedded || !hasSelectedCategory" class="page-heading erp-list-heading">
+      <header v-if="!props.embedded" class="page-heading erp-list-heading">
         <div v-if="!props.embedded">
           <h1>生产维护</h1>
         </div>
-        <div v-if="!hasSelectedCategory" class="page-heading__actions">
+        <div v-if="!hasSelectedCategory && !formulaSelected && !publicAttributesSelected && !catalogSelected" class="page-heading__actions">
           <el-button class="erp-button-motion" :icon="Refresh" @click="reloadAll">刷新</el-button>
           <el-button class="erp-button-motion" v-if="canAddSelected" type="primary" :icon="Plus" @click="openCreate">新增{{ selectedCategory.title }}</el-button>
         </div>
@@ -603,10 +699,11 @@ onBeforeUnmount(() => {
           :key="item.key"
           type="button"
           :class="['metric-card', { active: selectedGroupKey === item.key }]"
+          :disabled="changingView"
           @click="selectGroup(item.key)"
         >
           <span>{{ item.label }}</span>
-          <small>{{ item.categories.length ? `${visibleGroupCategoryCount(item)} 个设置项` : '待导入' }}</small>
+          <small>{{ groupItems(item).length }} 个设置项</small>
         </button>
       </div>
 
@@ -627,7 +724,7 @@ onBeforeUnmount(() => {
               v-model="productNameFilter"
               clearable
               filterable
-              placeholder="全部辅料品名"
+              :placeholder="selectedKey === 'accessory-specification' ? '全部规格所属品名' : '全部颜色所属品名'"
             >
               <el-option v-for="item in accessoryProductNames" :key="item.id" :label="item.product_name" :value="item.id" />
             </el-select>
@@ -639,23 +736,31 @@ onBeforeUnmount(() => {
           </div>
 
       </section>
+      <el-alert v-if="publicDefinitionsError" :title="publicDefinitionsError" type="error" :closable="false" show-icon>
+        <el-button link :loading="publicDefinitionsLoading" @click="loadPublicDefinitions">重新加载属性导航</el-button>
+      </el-alert>
       <div class="content-layout">
         <aside class="category-panel erp-list-filter erp-list-catalog-nav">
           <h2>{{ selectedGroup.label }}</h2>
           <button
-            v-for="item in visibleCategories"
+            v-for="item in visibleItems"
             :key="item.key"
             type="button"
             :class="{ active: selectedKey === item.key }"
+            :disabled="changingView"
             @click="selectCategory(item.key)"
           >
             <span>{{ item.label }}</span>
-            <em>{{ summary.category_counts[item.countKey] || 0 }}</em>
+            <em v-if="item.kind === 'existing'">{{ summary.category_counts[item.category.countKey] || 0 }}</em>
+            <em v-else-if="item.kind === 'formula'">3</em>
           </button>
-          <p v-if="visibleCategories.length === 0" class="category-panel__empty">设置项待导入</p>
+          <p v-if="visibleItems.length === 0" class="category-panel__empty">{{ publicDefinitionsLoading ? '正在加载配置…' : '当前分区暂无可查看的配置' }}</p>
         </aside>
 
-        <main v-if="hasSelectedCategory" class="data-card erp-list-data">
+        <PublicMaterialOptionsSettings v-if="publicSelection" ref="publicAttributesRef" :category-key="publicSelection.categoryKey" :template-key="publicSelection.templateKey" :scope="publicSelection.scope" :field-key="publicSelection.fieldKey" @open-existing="selectRelatedCategory" />
+        <RawMaterialManagementView v-else-if="catalogSelected" ref="catalogViewRef" :key="selectedGroup.catalogCategory" :fixed-category="selectedGroup.catalogCategory" class="catalog-maintenance" />
+        <TubeFormulaSettings v-else-if="formulaSelected" ref="formulaSettingsRef" :can-edit="can('reference_data.change_tubeshape')" class="data-card erp-list-data" />
+        <main v-else-if="hasSelectedCategory" class="data-card erp-list-data">
           <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon class="load-error" />
 
           <div class="table-heading erp-list-toolbar">
@@ -680,10 +785,10 @@ onBeforeUnmount(() => {
               <el-table-column label="图片" width="92">
                 <template #default="scope">
                   <el-image
-                    v-if="(scope.row as ProductColor).image_url"
+                    v-if="(scope.row as ProductColor).image_url && imageResources.active.value"
                     class="color-thumb"
-                    :src="(scope.row as ProductColor).image_url || ''"
-                    :preview-src-list="[(scope.row as ProductColor).image_url || '']"
+                    :src="imageResources.urlFor((scope.row as ProductColor).image_url)"
+                    :preview-src-list="imageResources.urlsFor([(scope.row as ProductColor).image_url])"
                     preview-teleported
                     fit="cover"
                   />
@@ -716,19 +821,13 @@ onBeforeUnmount(() => {
             <template v-else-if="selectedKey === 'fabric-width'">
               <el-table-column prop="width_value" label="门幅" min-width="320" />
             </template>
-            <template v-else-if="selectedKey === 'accessory-product-name'">
-              <el-table-column prop="product_name" label="品名" min-width="260" />
-              <el-table-column label="单位" width="120">
-                <template #default="scope">{{ scope.row.unit_name || '待维护' }}</template>
-              </el-table-column>
-            </template>
             <template v-else-if="selectedKey === 'accessory-specification'">
-              <el-table-column prop="product_name_label" label="品名" min-width="180" />
+              <el-table-column prop="product_name_label" label="规格所属品名" min-width="180" />
               <el-table-column prop="specification_value" label="规格" min-width="260" show-overflow-tooltip />
               <el-table-column prop="weight" label="克重" width="120" />
             </template>
             <template v-else-if="selectedKey === 'accessory-color'">
-              <el-table-column prop="product_name_label" label="品名" min-width="200" />
+              <el-table-column prop="product_name_label" label="颜色所属品名" min-width="200" />
               <el-table-column prop="color_name" label="颜色" min-width="260" show-overflow-tooltip />
             </template>
             <template v-else-if="selectedKey === 'accessory-material'">
@@ -742,14 +841,11 @@ onBeforeUnmount(() => {
                 </template>
               </el-table-column>
             </template>
-            <template v-else-if="selectedKey === 'tube-product-name'">
-              <el-table-column prop="product_name" label="品名" min-width="320" />
-            </template>
             <template v-else-if="selectedKey === 'tube-thickness'">
               <el-table-column prop="thickness_value" label="厚度" min-width="320" />
             </template>
             <template v-else-if="selectedKey === 'tube-diameter'">
-              <el-table-column prop="diameter_value" label="直径" min-width="320" />
+              <el-table-column prop="diameter_value" label="规格" min-width="320" />
             </template>
             <template v-else-if="selectedKey === 'tube-material'">
               <el-table-column prop="material_name" label="材质" min-width="320" />
@@ -791,9 +887,7 @@ onBeforeUnmount(() => {
           /></footer>
         </main>
         <main v-else class="data-card pending-card erp-list-data">
-          <el-empty :description="selectedGroup.pendingText">
-            <p>请提供对应维护表格及字段规则后再导入，当前未创建虚构数据。</p>
-          </el-empty>
+          <el-empty :description="publicDefinitionsLoading ? '正在加载配置…' : '当前分区暂无可查看的配置'" />
         </main>
       </div>
 
@@ -823,13 +917,13 @@ onBeforeUnmount(() => {
           </template>
           <template v-else-if="selectedKey === 'color'">
             <div class="form-grid">
-              <el-form-item label="色卡" required><el-input v-model="form.color_card" maxlength="100" /></el-form-item>
-              <el-form-item label="色号" required><el-input v-model="form.color_code" maxlength="100" /></el-form-item>
+              <el-form-item label="色卡"><el-input v-model="form.color_card" maxlength="100" /></el-form-item>
+              <el-form-item label="色号"><el-input v-model="form.color_code" maxlength="100" /></el-form-item>
             </div>
             <el-form-item label="颜色名称" required><el-input v-model="form.color_name" maxlength="200" /></el-form-item>
             <el-form-item label="颜色图片">
               <div class="image-editor">
-                <el-image v-if="imagePreviewUrl" :src="imagePreviewUrl" fit="contain" class="image-preview" />
+                <el-image v-if="imagePreviewUrl && imageResources.active.value" :src="imageResources.urlFor(imagePreviewUrl)" fit="contain" class="image-preview" />
                 <div v-else class="image-placeholder">暂无图片</div>
                 <div class="image-actions">
                   <label class="file-button">
@@ -876,15 +970,9 @@ onBeforeUnmount(() => {
           <template v-else-if="selectedKey === 'fabric-width'">
             <el-form-item label="门幅" required><el-input v-model="form.width_value" maxlength="50" placeholder="例如：1.7" /></el-form-item>
           </template>
-          <template v-else-if="selectedKey === 'accessory-product-name'">
-            <div class="form-grid">
-              <el-form-item label="品名" required><el-input v-model="form.product_name" maxlength="200" /></el-form-item>
-              <el-form-item label="单位" required><el-input v-model="form.unit_name" maxlength="50" placeholder="例如：个、米、PCS" /></el-form-item>
-            </div>
-          </template>
           <template v-else-if="selectedKey === 'accessory-specification'">
-            <el-form-item label="品名" required>
-              <el-select v-model="form.product_name" filterable placeholder="请选择启用中的辅料品名">
+            <el-form-item label="规格所属品名" required>
+              <el-select v-model="form.product_name" filterable placeholder="请选择已有规格分组">
                 <el-option
                   v-for="item in accessoryProductNames"
                   :key="item.id"
@@ -892,6 +980,7 @@ onBeforeUnmount(() => {
                   :value="item.id"
                 />
               </el-select>
+              <small class="mapping-hint">这里选择已有规格的所属分组；新增原料品名请使用左侧“品名维护”。</small>
             </el-form-item>
             <div class="form-grid">
               <el-form-item label="规格" required><el-input v-model="form.specification_value" maxlength="300" /></el-form-item>
@@ -899,8 +988,8 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <template v-else-if="selectedKey === 'accessory-color'">
-            <el-form-item label="品名" required>
-              <el-select v-model="form.product_name" filterable placeholder="请选择启用中的辅料品名">
+            <el-form-item label="颜色所属品名" required>
+              <el-select v-model="form.product_name" filterable placeholder="请选择已有颜色分组">
                 <el-option
                   v-for="item in accessoryProductNames"
                   :key="item.id"
@@ -908,6 +997,7 @@ onBeforeUnmount(() => {
                   :value="item.id"
                 />
               </el-select>
+              <small class="mapping-hint">这里选择已有颜色的所属分组；新增原料品名请使用左侧“品名维护”。</small>
             </el-form-item>
             <el-form-item label="颜色" required><el-input v-model="form.color_name" maxlength="200" /></el-form-item>
           </template>
@@ -931,14 +1021,11 @@ onBeforeUnmount(() => {
               <small class="mapping-hint">不按名称自动匹配；未关联时，相关 BOM 会在领料和委外发料前安全阻断。</small>
             </el-form-item>
           </template>
-          <template v-else-if="selectedKey === 'tube-product-name'">
-            <el-form-item label="品名" required><el-input v-model="form.product_name" maxlength="200" /></el-form-item>
-          </template>
           <template v-else-if="selectedKey === 'tube-thickness'">
             <el-form-item label="厚度" required><el-input v-model="form.thickness_value" maxlength="50" placeholder="例如：1.2" /></el-form-item>
           </template>
           <template v-else-if="selectedKey === 'tube-diameter'">
-            <el-form-item label="直径" required><el-input v-model="form.diameter_value" maxlength="50" placeholder="例如：25*15" /></el-form-item>
+            <el-form-item label="规格" required><el-input v-model="form.diameter_value" maxlength="50" placeholder="例如：25*15" /></el-form-item>
           </template>
           <template v-else-if="selectedKey === 'tube-material'">
             <el-form-item label="材质" required><el-input v-model="form.material_name" maxlength="150" /></el-form-item>
@@ -969,6 +1056,7 @@ onBeforeUnmount(() => {
 .metric-grid { margin-bottom: 10px; }
 .metric-card small { margin-left: 8px; }
 .content-layout { display: grid; flex: 1; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; }
+.catalog-maintenance { min-width: 0; min-height: 0; }
 .category-panel { min-height: 0; overflow-y: auto; }
 .category-panel h2 { margin: 2px 12px 10px; color: var(--erp-color-text-secondary); font-size: 13px; font-weight: 500; }
 .category-panel button { display: flex; width: 100%; align-items: center; justify-content: space-between; font-size: 13px; }

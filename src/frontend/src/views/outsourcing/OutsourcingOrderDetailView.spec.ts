@@ -4,12 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import OutsourcingOrderDetailView from './OutsourcingOrderDetailView.vue'
 
 const api = vi.hoisted(() => ({ fetch: vi.fn(), remove: vi.fn(), revoke: vi.fn(), push: vi.fn(), replace: vi.fn() }))
-const auth = vi.hoisted(() => ({ permissions: new Set(['outsourcing.view_outsourcingorder']) }))
+const auth = vi.hoisted(() => ({ permissions: new Set(['outsourcing.view_outsourcingorder']), followed: false }))
 const route = vi.hoisted(() => ({ params: { orderId: 'order-1' }, path: '/workshop/outsourcing/order-1', query: {} as Record<string, string>, meta: { outsourcingWorkspace: 'workshop' } }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false }, hasPermission: (permission: string) => auth.permissions.has(permission) }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: false, effective_access: { actions: {
+  'outsourcing.view_outsourcingorder': { scopes: [auth.followed ? 'FOLLOWED' : 'MODULE'], sources: [] },
+}, legacy_sources: [] } }, canReadAccessDirectory: false, hasPermission: (permission: string) => auth.permissions.has(permission) }) }))
 vi.mock('@/api/outsourcing', () => ({ fetchOutsourcingOrder: api.fetch, deleteOutsourcingOrder: api.remove, revokeDispatchedOutsourcingOrder: api.revoke, outsourcingProductImageUrl: () => '' }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: api.push, replace: api.replace }) }))
 const baseDetail = {
+  production_task_id: 'task-1',
   id: 'order-1', order_number: '原单-001', status: 'PARTIAL_RETURN', status_display: '部分回货', planned_amount: '25.0000',
   schedule_number: '排产-001', production_task_number: '任务-001', craft: { name: '喷塑', outsourcing_code: 'POWDER_COATING' },
   products: [{ id: 'product-1', product: { product_name: '桌子' }, image_file_id: null, planned_quantity: 100,
@@ -35,10 +38,16 @@ async function createView(detail: Record<string, unknown> = structuredClone(base
   await flushPromises()
   return wrapper
 }
-beforeEach(() => { route.meta.outsourcingWorkspace = 'workshop'; vi.resetAllMocks(); route.query = {}; auth.permissions = new Set(['outsourcing.view_outsourcingorder']) })
+beforeEach(() => { route.meta.outsourcingWorkspace = 'workshop'; vi.resetAllMocks(); route.query = {}; auth.permissions = new Set(['outsourcing.view_outsourcingorder']); auth.followed = false })
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('原外发详情的直接交接展示及保护', () => {
+  it('跟单查看关联外发详情后返回生产任务，不跳独立委外列表', async () => {
+    auth.followed = true
+    const wrapper = await createView({ ...structuredClone(baseDetail), direct_handoff: false })
+    await wrapper.findAll('button').find(button => button.text() === '返回生产任务')!.trigger('click')
+    expect(api.push).toHaveBeenCalledWith({ name: 'production-task-detail', params: { taskId: 'task-1' } })
+  })
   it('仓库仅有旧金工交接权限时可进入已有交接单的操作投影', async () => {
     route.meta.outsourcingWorkspace = 'warehouse'
     route.query = { view: 'metal' }
@@ -216,4 +225,36 @@ describe('原外发详情的直接交接展示及保护', () => {
     const legacyVm = (await createView({ ...completed, direct_handoff: false })).vm as any
     expect(legacyVm.allocationStage(legacyVm.allocationRows[0])).toBe('已结清')
   })
+})
+
+it('仓库普通旧单隐藏整个价款卡片，原详情读取和动作保留', async () => {
+  route.meta.outsourcingWorkspace = 'warehouse'
+  const wrapper = await createView({ ...structuredClone(baseDetail), direct_handoff: false })
+  expect(api.fetch).toHaveBeenCalledWith('order-1', true)
+  expect(wrapper.find('.order-price-card').exists()).toBe(false)
+  expect(wrapper.find('outsourcing-flow-actions-stub').exists()).toBe(true)
+})
+
+it.each(['涤纶', ''])('旧裁剪发料记录显示冻结材质，缺失不猜测：%s', async materialValue => {
+  route.meta.outsourcingWorkspace = 'warehouse'
+  const product = structuredClone(baseDetail.products[0]!)
+  const part = product.processing_items[0]!
+  const detail = { ...structuredClone(baseDetail), direct_handoff: false,
+    craft: { name: '裁剪', outsourcing_code: 'CUTTING' },
+    products: [{ ...product, processing_items: [{ ...part, allocations: [{ ...part.allocations[0]!,
+      materials: [{ id: 'fabric-material', name: '牛津布', specification: '600D', bom_attributes: materialValue ? [{ key: 'material', value: materialValue }] : [] }],
+    }] }] }],
+    dispatch: { id: 'dispatch-1', dispatch_date: '2026-11-02', remark: '', lines: [{ id: 'dispatch-line', material_item_id: 'fabric-material',
+      material_quantity: '12.5', material_unit: '米', source_quantity: '12.5', source_unit: '米', issued_piece_count: null, issued_meters: null }] },
+  }
+  const wrapper = await createView(detail)
+  const table = wrapper.findAll('.order-record-card')[0]!
+  const headers = table.findAll('th').map(cell => cell.text())
+  expect(headers).toContain('材质')
+  const row = table.find('.el-table__body tbody tr')
+  expect(row.findAll('td')[headers.indexOf('材质')]!.text()).toBe(materialValue || '—')
+  expect(row.text()).toContain('600D')
+  expect(row.text()).toContain('12.5 米')
+  expect(wrapper.find('.order-price-card').exists()).toBe(false)
+  expect(table.find('input').exists()).toBe(false)
 })

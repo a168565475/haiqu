@@ -158,34 +158,31 @@ describe('SampleLoanView', () => {
     expect(apiMocks.list).toHaveBeenLastCalledWith({ page: 1, page_size: 50, ordering: '-loan__operated_at' })
   })
 
-  it('接口失败显示错误和未知统计，重试后恢复', async () => {
-    apiMocks.summary.mockRejectedValueOnce(new Error('断网'))
+  it('接口失败显示错误并可重试，不再加载筛选区统计', async () => {
     apiMocks.options.mockRejectedValueOnce(new Error('断网'))
     apiMocks.list.mockRejectedValueOnce(new Error('断网'))
     const wrapper = await render()
-    expect(wrapper.findAll('.stat-copy strong').map(item => item.text())).toEqual(['—', '—', '—', '—'])
-    expect(wrapper.findAll('.load-error')).toHaveLength(2)
+    expect(wrapper.find('.erp-list-summary').exists()).toBe(false)
+    expect(apiMocks.summary).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.load-error')).toHaveLength(1)
     expect(wrapper.find('.list-error').exists()).toBe(true)
     await wrapper.findAll('button').find(item => item.text() === '重新加载')!.trigger('click'); await flushPromises()
     expect(wrapper.findAll('.load-error')).toHaveLength(0)
     expect(wrapper.find('.list-error').exists()).toBe(false)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('3')
   })
 
-  it('借出后的刷新不被旧列表、统计和选项请求覆盖', async () => {
-    let oldList!: (value: unknown) => void, oldSummary!: (value: unknown) => void, oldOptions!: (value: unknown) => void
+  it('借出后的刷新不被旧列表和选项请求覆盖', async () => {
+    let oldList!: (value: unknown) => void, oldOptions!: (value: unknown) => void
     apiMocks.list.mockImplementationOnce(() => new Promise(resolve => { oldList = resolve }))
-    apiMocks.summary.mockImplementationOnce(() => new Promise(resolve => { oldSummary = resolve }))
     apiMocks.options.mockImplementationOnce(() => new Promise(resolve => { oldOptions = resolve }))
     const wrapper = await render(['samples.add_sampleinventoryloan'])
     expect(wrapper.findComponent({ name: 'SampleLoanCreateDialog' }).exists()).toBe(false)
     await wrapper.findAll('.heading-actions button').find(button => button.text() === '样品借出')!.trigger('click')
     await flushPromises()
     wrapper.findComponent({ name: 'SampleLoanCreateDialog' }).vm.$emit('created'); await flushPromises()
-    oldList({ data: [], meta: { total: 0 } }); oldSummary({ active_documents: 0 }); oldOptions({ borrower_names: [], product_categories: [] })
+    oldList({ data: [], meta: { total: 0 } }); oldOptions({ borrower_names: [], product_categories: [] })
     await flushPromises()
     expect(wrapper.text()).toContain(fixture.row.product_name)
-    expect(wrapper.find('.stat-copy strong').text()).toBe('3')
     expect(wrapper.findAllComponents({ name: 'ElOption' }).some(item => item.props('value') === '王立新')).toBe(true)
   })
 

@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
+import { useProtectedResourceUrl } from '@/composables/useProtectedResourceUrl'
 const props = withDefaults(defineProps<{ src: string; name?: string; large?: boolean }>(), { name: '产品图片', large: false })
-const open = ref(false), failed = ref(false)
-watch(() => props.src, () => { failed.value = false; open.value = false })
+const emit = defineEmits<{ 'resource-error': [] }>()
+const { url, error, active } = useProtectedResourceUrl(() => props.src)
+const open = ref(false), imageFailed = ref(false)
+const failed = computed(() => imageFailed.value || error.value)
+watch(() => props.src, () => { imageFailed.value = false; open.value = false }, { flush: 'sync' })
+watch([url, active], () => { if (!url.value || !active.value) open.value = false }, { flush: 'sync' })
+watch(error, value => { if (value) emit('resource-error') }, { immediate: true, flush: 'sync' })
 </script>
 <template>
-  <button type="button" class="product-image" :class="{ large }" :disabled="!src || failed" :aria-label="failed ? `${name}加载失败` : src ? `查看${name}` : '暂无产品图片'" :title="failed ? '图片暂无法加载' : src ? '查看产品图片' : '暂无产品图片'" @click="open = true"><img v-if="src && !failed" :src="src" :alt="name" @error="failed = true"/><el-icon v-else><Picture/></el-icon></button>
-  <AppWindowDialog v-model="open" class="product-image-preview-window" :title="name" :width="1000" :height="680" destroy-on-close><div class="product-image-stage"><img v-if="!failed" :src="src" :alt="name" @error="failed = true"/><p v-else role="alert">图片暂无法加载，请关闭后重新打开单据。</p></div><template #footer><el-button @click="open = false">关闭</el-button></template></AppWindowDialog>
+  <button type="button" class="product-image" :class="{ large }" :disabled="!url || failed || !active" :aria-label="failed ? `${name}加载失败` : src ? `查看${name}` : '暂无产品图片'" :title="failed ? '图片暂无法加载' : src ? '查看产品图片' : '暂无产品图片'" @click="open = true"><img v-if="url && !failed" :key="url" :src="url" :alt="name" @error="imageFailed = true; emit('resource-error')"/><el-icon v-else><Picture/></el-icon></button>
+  <AppWindowDialog v-model="open" class="product-image-preview-window" :title="name" :width="1000" :height="680" destroy-on-close><div class="product-image-stage"><img v-if="url && !failed" :key="url" :src="url" :alt="name" @error="imageFailed = true; emit('resource-error')"/><p v-else role="alert">图片暂无法加载，请关闭后重新打开单据。</p></div><template #footer><el-button @click="open = false">关闭</el-button></template></AppWindowDialog>
 </template>
 <style scoped lang="scss">
 @use '@/styles/crm/tokens' as token;

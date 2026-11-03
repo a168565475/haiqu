@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 from apps.core.api.exceptions import Conflict
 from apps.boms.material_flow_calculations import MaterialFlowValueError, decimal_quantity, pipe_plan_for_line, positive_integer
 from apps.products.material_identity import resolve_bom_line_raw_material
+from .catalog_materials import bom_catalog_fields, purchase_catalog_selection
 
 
 PIPE_PURCHASE_FIELDS = ('raw_bar_length_m', 'suggested_bar_count', 'suggested_purchase_meters',
@@ -20,8 +21,12 @@ def is_sample_total_meter_snapshot(snapshot):
 def pipe_source_snapshot(line):
     if line is None or line.section.section_type != 'PROFILE':
         raise ValidationError({'lines': '管材采购缺少明确的 BOM 部位来源。'})
-    material, _ = resolve_bom_line_raw_material(line)
-    if (material is None or material.item_type != 'MATERIAL' or material.category.category_name != '管材'
+    material = None
+    if line.material_catalog_id and bom_catalog_fields(line)['material_selection_snapshot']['unit_name'] != '根':
+        raise ValidationError({'lines': '管材保存选料须沿用根制原料单位。'})
+    if not line.material_catalog_id:
+        material, _ = resolve_bom_line_raw_material(line)
+    if not line.material_catalog_id and (material is None or material.item_type != 'MATERIAL' or material.category.category_name != '管材'
             or material.unit.unit_name != '根' or material.unit.status != 'ACTIVE' or material.unit.archived_at
             or material.category.status != 'ACTIVE' or material.category.archived_at):
         raise ValidationError({'lines': '管材须关联有效的根制原材料。'})
@@ -35,7 +40,9 @@ def pipe_source_snapshot(line):
         raise Conflict('管材 BOM 的计算参数与结果不一致，请重新确认 BOM。')
     pipe_meters(result['suggested_bar_count'], result['raw_bar_length_m'])
     return {**result, 'bom_id': str(line.section.bom_id), 'bom_line_id': str(line.pk),
-            'component_identity': str(line.component_identity), 'raw_material_id': str(material.pk)}
+            'component_identity': str(line.component_identity),
+            **({**bom_catalog_fields(line), 'material_catalog_id': str(line.material_catalog_id)} if line.material_catalog_id
+               else {'raw_material_id': str(material.pk)})}
 
 
 def pipe_meters(bars, length, *, field='bar_count', allow_zero=False):
@@ -90,6 +97,13 @@ def purchase_pipe_values(snapshot, data):
 
 
 def validate_pipe_purchase_source(line):
+    if line.purchase_group_line_id and line.purchase_order.batch_request_id:
+        from .group_services import validate_group_line_source
+        validate_group_line_source(line)
+        return
+    if line.material_catalog_id:
+        purchase_catalog_selection(line)
+        return
     from .reset_sources import validate_reset_source
     validate_reset_source(line)
     if line.section_type_snapshot != 'PROFILE':
@@ -152,7 +166,9 @@ def pipe_sheet_fields(line):
         if line.section_type_snapshot == 'PROFILE':
             raise Conflict('旧口径管材采购不能生成新供应商表，请先补齐根米参数。')
         return {}
-    return {'measurement_kind': 'PIPE', 'schema_version': 2,
+    selected = purchase_catalog_selection(line) if line.material_catalog_id else None
+    return {**({'material_catalog_id': str(line.material_catalog_id), 'material_selection_snapshot': selected} if selected else {}),
+            'measurement_kind': 'PIPE', 'schema_version': 2,
             'raw_bar_length_m': format(line.raw_bar_length_m, '.2f'),
             'actual_bar_count': line.actual_bar_count,
             'actual_purchase_meters': format(line.actual_purchase_meters, '.2f') if line.actual_purchase_meters is not None else '',
@@ -180,6 +196,8 @@ def normalize_pipe_sheet_line(original, submitted, settlement_mode):
                 raise ValidationError({'lines': '管材根数、长度、米数及每米单价已由采购确认，请返回采购流程调整。'})
     keys = ('measurement_kind', 'schema_version', 'raw_bar_length_m', 'actual_bar_count',
             'actual_purchase_meters', 'suggested_bar_count', 'suggested_purchase_meters', 'calculation_snapshot', 'price_unit')
+    if original.get('material_catalog_id'):
+        keys += ('material_catalog_id', 'material_selection_snapshot')
     return {key: original.get(key) for key in keys}
 
 
@@ -206,6 +224,6 @@ def validate_pipe_sheet_source(sheet):
         row = rows.get(str(source.pk), {})
         if not source.raw_bar_length_m or row.get('measurement_kind') != 'PIPE' or row.get('schema_version') != 2:
             raise ValidationError({'content': '旧单位管材采购表不能继续发布，请重新建立根米采购表。'})
-        expected = {**pipe_sheet_fields(source), 'quantity': str(source.actual_purchase_quantity),
+        expected = {**pipe_sheet_fields(source), 'quantity': str(source.actual_purchase_meters if source.material_catalog_id else source.actual_purchase_quantity),
                     'unit': '米', 'unit_price': str(source.unit_price)}
         normalize_pipe_sheet_line(expected, row, snapshot.get('settlement_mode'))

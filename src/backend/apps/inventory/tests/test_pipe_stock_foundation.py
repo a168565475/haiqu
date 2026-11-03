@@ -73,7 +73,7 @@ class PipeStockFoundationTests(PipeFixture, TestCase):
         self.assertEqual((self.requirement.internal_issued_quantity, self.requirement.outsourcing_issued_quantity), (600, 1200))
         self.assertEqual((self.balance().quantity, self.balance().meter_quantity), (37, Decimal("112.85")))
         self.assertEqual(movements[0].snapshot["requested_pieces"], 600)
-        with self.assertRaisesMessage(ValidationError, "ORDER_ALLOWANCE_EXCEEDED"):
+        with self.assertRaisesMessage(ValidationError, "STOCK_INSUFFICIENT"):
             issue_pipe_material(**self.args(228))
 
     def test_retry_does_not_double_deduct_and_changed_payload_conflicts(self):
@@ -132,8 +132,11 @@ class PipeStockFoundationTests(PipeFixture, TestCase):
         for changes in [{"quantity": Decimal("1.5"), "meter_quantity": Decimal("4.575")}, {"meter_quantity": 1}]:
             with self.assertRaises(IntegrityError), transaction.atomic():
                 MaterialStockBalance.objects.filter(pk=balance.pk).update(**changes)
+        OrderMaterialRequirement.objects.filter(pk=self.requirement.pk).update(internal_issued_quantity=2023)
+        self.requirement.refresh_from_db()
+        self.assertEqual(self.requirement.internal_issued_quantity, 2023)
         with self.assertRaises(IntegrityError), transaction.atomic():
-            OrderMaterialRequirement.objects.filter(pk=self.requirement.pk).update(internal_issued_quantity=2023)
+            OrderMaterialRequirement.objects.filter(pk=self.requirement.pk).update(internal_issued_quantity=Decimal("2023.5"))
 
     def test_old_quantity_service_cannot_consume_new_pipe_balance(self):
         self.assertEqual(available_stock(self.raw_material.pk, self.raw_material.unit_id), 0)

@@ -103,8 +103,15 @@ async function initiate() {
   finally { saving.value = false }
 }
 
+function issueUnit(line: SampleMaterialIssueLine) {
+  if (line.material_catalog_id && line.category === 'tube') return line.unitLabel === '米' ? '米' : '待核实'
+  return line.material_catalog_id ? line.material_selection_snapshot?.unit_name || '单位缺失' : line.unitLabel || '—'
+}
+
 function issueQuantity(line: SampleMaterialIssueLine) {
   const quantity = line.issuedQuantity ?? line.availableQuantity
+  if (line.material_catalog_id && line.category === 'tube' && line.unitLabel !== '米') return '管材数量口径待核实'
+  if (line.material_catalog_id && line.category !== 'tube') return `${quantity.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')} ${issueUnit(line)}`
   if (line.category !== 'tube') return quantity
   const bars = line.barCount != null && (line.pipeBatches?.length || Number(quantity) === 0) ? line.barCount : '—'
   const meters = quantity.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')
@@ -112,6 +119,7 @@ function issueQuantity(line: SampleMaterialIssueLine) {
 }
 
 function pipeBatchDescription(line: SampleMaterialIssueLine) {
+  if (line.material_catalog_id && line.category !== 'tube') return ''
   return line.pipeBatches?.map(batch => `${batch.warehouseName} / ${batch.zoneName}：${batch.barCount} 根 × ${batch.rawBarLengthM} 米 = ${batch.meterQuantity} 米`).join('；') || ''
 }
 
@@ -159,7 +167,7 @@ onMounted(loadPage)
                   <tr v-for="line in visibleLines" :key="line.id || line.lineKey">
                     <td>{{ sampleMaterialCategories.find((category) => category.key === line.category)?.label || line.category || '—' }}</td><td class="primary-text">{{ line.name || '—' }}</td><td class="specification">{{ line.specification || '—' }}</td><td>{{ line.material || '—' }}</td><td>{{ line.color || '—' }}</td>
                     <td>{{ line.requestedQuantity }}</td><td>{{ line.warehouseQuantity }}</td><td>{{ line.procurementQuantity ?? '—' }}</td><td>{{ line.arrivedQuantity }}</td>
-                    <td :title="pipeBatchDescription(line)"><span data-testid="readonly-issued-quantity">{{ issueQuantity(line) }}</span></td><td>{{ line.shortageQuantity || '0' }}</td><td>{{ line.unitLabel || '—' }}</td><td><SampleStatusTag :status="issueTagStatus" :label="result.statusLabel || '待发起领料'" /></td>
+                    <td :title="pipeBatchDescription(line)"><span data-testid="readonly-issued-quantity">{{ issueQuantity(line) }}</span></td><td>{{ line.shortageQuantity || '0' }}</td><td>{{ issueUnit(line) }}</td><td><SampleStatusTag :status="issueTagStatus" :label="result.statusLabel || '待发起领料'" /></td>
                   </tr>
                 </tbody>
               </table>

@@ -5,7 +5,7 @@ import * as api from '@/api/productionTasks'
 import ProductionTaskListView from './ProductionTaskListView.vue'
 
 const state = vi.hoisted(() => ({ canViewCost: true, panelLoads: vi.fn() }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
   hasPermission: (code: string) => code === 'production_tasks.view_productiontaskcost' && state.canViewCost,
   moduleCan: () => false,

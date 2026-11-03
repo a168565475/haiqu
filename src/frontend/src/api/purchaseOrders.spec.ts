@@ -157,6 +157,28 @@ describe('采购订单 API', () => {
     expect(mockedDelete).toHaveBeenCalledWith('/api/v1/purchase-orders/purchase-order-1/')
   })
 
+  it('删除新批次携带读取到的批次ETag', async () => {
+    mockedDelete.mockResolvedValueOnce({ status: 204 })
+
+    await deletePurchaseOrder('batch-1', '"batch-v1"')
+
+    expect(mockedDelete).toHaveBeenCalledWith('/api/v1/purchase-orders/batch-1/', {
+      headers: { 'If-Match': '"batch-v1"' },
+    })
+  })
+
+  it('编辑批次类型仍使用原采购明细接口及其版本', async () => {
+    const payload = { batch_type: 'SUPPLEMENT' as const, is_mailed: null, lines: [{
+      id: 'line-1', supplier_id: null, delivery_date: null, actual_purchase_quantity: '120.0001', unit_price: null,
+    }] }
+    mockedPatch.mockResolvedValueOnce({ data: { data: { id: 'batch-1', batch_type: 'SUPPLEMENT' } }, headers: { etag: '"batch-v2"' } })
+
+    expect((await updatePurchaseOrder('batch-1', payload, '"batch-v1"')).data.batch_type).toBe('SUPPLEMENT')
+    expect(mockedPatch).toHaveBeenCalledWith('/api/v1/purchase-orders/batch-1/', payload, {
+      headers: { 'If-Match': '"batch-v1"' },
+    })
+  })
+
   it('采购订单详情兼容后端直接返回订单对象', async () => {
     mockedGet.mockResolvedValueOnce({
       data: { id: 'purchase-order-1', order_number: 'CGDD2026090801', lines: [] },

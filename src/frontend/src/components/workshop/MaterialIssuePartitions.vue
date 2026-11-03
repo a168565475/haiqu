@@ -5,6 +5,7 @@ import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import type { MaterialRequirement, MaterialIssueBatch } from '@/types/materialIssue'
 import { decimalUnits } from '@/utils/outsourcingQuantities'
 import { issuePipePlan, issueQuantityError, issueQuantityText } from '@/utils/materialIssueQuantities'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 
 const props = withDefaults(defineProps<{
   requirements: MaterialRequirement[]
@@ -41,16 +42,18 @@ const pipeRows = computed(() => raw.value.filter(isPipe))
 const showPipeDeduction = computed(() => props.showPipeDeductionColumns && pipeRows.value.length > 0)
 const isPipe = (r: MaterialRequirement) => r.line_type === 'RAW' && r.conversion_snapshot?.kind === 'PIPE'
 const name = (r: MaterialRequirement) => r.conversion_snapshot?.part_name || r.material_name
-const partNames = (r: MaterialRequirement) => r.part_names?.length ? r.part_names.join('、') : (r.conversion_snapshot?.part_name || '—')
+const partNames = (r: MaterialRequirement) => r.material_catalog_id && r.conversion_snapshot?.public_bom_snapshot?.line?.part_name
+  ? r.conversion_snapshot.public_bom_snapshot.line.part_name : r.part_names?.length ? r.part_names.join('、') : (r.conversion_snapshot?.part_name || '—')
+const attributeFields = (r: MaterialRequirement) => r.material_catalog_id ? materialAttributeFields(r) : r.bom_attributes || []
 const attributeValue = (r: MaterialRequirement, keys: string[], fallback = '') => {
-  const field = (r.bom_attributes || []).find(item => keys.includes(item.key) && String(item.value || '').trim())
+  const field = attributeFields(r).find(item => keys.includes(item.key) && String(item.value || '').trim())
   return field?.value || fallback || '—'
 }
 const materialValue = (r: MaterialRequirement) => attributeValue(r, ['material'], r.material || '')
 const specificationValue = (r: MaterialRequirement) => attributeValue(r, ['specification'], r.specification || '')
 const colorValue = (r: MaterialRequirement, preferActual = false) => {
   if (preferActual && String(r.color || '').trim()) return r.color
-  return attributeValue(r, ['hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'], r.color || '')
+  return attributeValue(r, ['color', 'hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'], r.color || '')
 }
 const tooltipKeys = ['part_name', 'material', 'specification', 'hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color']
 function chosen(type: string) { return props.requirements.filter(r => r.line_type === type && r.requirement_id in props.selected) }
@@ -99,11 +102,12 @@ function remainder(row: MaterialRequirement) {
 
 <template>
   <div class="issue-partitions">
+    <p class="partition-note">BOM 需求仅供参考；本次可领按扣除其他占用后的合格库存计算，可超过 BOM 建议量。</p>
     <section class="mi-surface partition" data-testid="raw-partition">
       <header><div><h2>原材料领料</h2><span v-if="showPipeDeduction">管材按支申请，按整根及米数扣库</span></div><ElButton @click="open('RAW')">＋ 添加原材料</ElButton></header>
       <ElTable class="erp-table-editor scroll-actions-table" :data="raw" border empty-text="请选择本产品、本车间的原材料" row-key="requirement_id">
-         <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
-         <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
+         <ElTableColumn label="品名" min-width="150" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+         <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="颜色" width="100"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
@@ -125,7 +129,7 @@ function remainder(row: MaterialRequirement) {
     <section class="mi-surface partition" data-testid="semi-partition">
       <header><div><h2>外发回库半成品领料</h2><span>管材按支、裁片按套领取，按部位分别计算</span></div><ElButton @click="open('SEMI')">＋ 添加半成品</ElButton></header>
       <ElTable class="erp-table-editor scroll-actions-table" :data="semi" border empty-text="本次尚未选择外发回库半成品" row-key="requirement_id">
-         <ElTableColumn label="半成品 / 部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+         <ElTableColumn label="半成品 / 部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
          <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="规格" min-width="170" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
          <ElTableColumn label="颜色" width="100"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
@@ -157,7 +161,7 @@ function remainder(row: MaterialRequirement) {
         </div>
       <ElTable :data="candidates" class="candidate-table" border max-height="540" row-key="requirement_id" empty-text="当前范围没有可领库存或材料" :row-class-name="({ row }: { row: MaterialRequirement }) => draftSelectedIds.has(row.requirement_id) ? 'is-picked' : ''" @row-click="addCandidate">
         <template v-if="picker === 'SEMI'">
-           <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
+           <ElTableColumn label="部位" min-width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
            <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="规格" min-width="165" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="颜色" width="90"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
@@ -168,8 +172,8 @@ function remainder(row: MaterialRequirement) {
         </template>
         <template v-else>
           <ElTableColumn width="52" align="center" header-align="center"><template #header><ElCheckbox :model-value="draftSelectedIds.size === candidates.length && candidates.length > 0" aria-label="选择材料" @change="(value: boolean | string | number) => candidates.forEach(row => setDraftSelected(row, Boolean(value)))" @click.stop /></template><template #default="{ row }"><ElCheckbox :model-value="draftSelectedIds.has(row.requirement_id)" :aria-label="`选择${name(row)}`" @change="(value: boolean | string | number) => setDraftSelected(row, Boolean(value))" @click.stop /></template></ElTableColumn>
-           <ElTableColumn label="品名" min-width="145" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
-           <ElTableColumn label="部位" min-width="125" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
+           <ElTableColumn label="品名" min-width="145" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+           <ElTableColumn label="部位" min-width="125" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ partNames(row) }}</BomAttributesTooltip></template></ElTableColumn>
            <ElTableColumn label="材质" min-width="120" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="规格" min-width="165" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
            <ElTableColumn label="颜色" width="90"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>

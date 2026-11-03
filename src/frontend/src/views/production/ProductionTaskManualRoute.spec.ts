@@ -6,7 +6,7 @@ import * as api from '@/api/productionTasks'
 import ProductionTaskCreateView from './ProductionTaskCreateView.vue'
 
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({
-  isAuthenticated: true, ensureFreshAuthentication: vi.fn(), initialize: vi.fn(),
+  isAuthenticated: true, ensureAuthentication: vi.fn(), initialize: vi.fn(),
   hasPermission: () => true, moduleCan: () => true,
 }) }))
 vi.mock('@/api/productionData', () => ({ fetchAllProductionDataRecords: vi.fn().mockResolvedValue([]) }))

@@ -71,17 +71,17 @@ describe('企业微信业务门禁响应', () => {
     const first = apiClient.get('/api/v1/customers/').catch(error => error)
     await flushPromises()
     auth.applyAuthResponse({ authenticated: true, user: { ...auth.user!, id: nextId, waiting_for_role: waiting } })
-    const checkedAt = auth.authenticationCheckedAt
+    const verified = auth.authenticationVerified
     if (failed) old.reject(new Error('旧身份刷新失败'))
     else old.resolve({ authenticated: true, user: { ...auth.user!, id: 1, waiting_for_role: true } })
     await first
     expect(auth.user?.id).toBe(nextId)
     expect(auth.waitingForRole).toBe(waiting)
-    expect(auth.authenticationCheckedAt).toBe(checkedAt)
+    expect(auth.authenticationVerified).toBe(verified)
     expect(router.currentRoute.value.name).toBe('home')
   })
 
-  it('角色刷新等待的旧登录失败，不使新身份验证时间失效或触发导航', async () => {
+  it('角色刷新等待的旧登录失败，不使新身份核验状态失效或触发导航', async () => {
     const { router, auth } = await setup()
     const oldLogin = deferredResponse()
     vi.mocked(requestLogin).mockReturnValueOnce(oldLogin.promise)
@@ -89,11 +89,11 @@ describe('企业微信业务门禁响应', () => {
     const request = apiClient.get('/api/v1/customers/').catch(error => error)
     await flushPromises()
     auth.applyAuthResponse({ authenticated: true, user: { ...auth.user!, id: 2, waiting_for_role: true } })
-    const checkedAt = auth.authenticationCheckedAt
+    const verified = auth.authenticationVerified
     oldLogin.reject(new Error('旧登录失败'))
     await Promise.all([login, request])
     expect(auth.user?.id).toBe(2)
-    expect(auth.authenticationCheckedAt).toBe(checkedAt)
+    expect(auth.authenticationVerified).toBe(verified)
     expect(router.currentRoute.value.name).toBe('home')
   })
 

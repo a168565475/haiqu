@@ -28,7 +28,81 @@ class TubeQuantityField(serializers.Field):
         return str(value)
 
 
+class TubeCorrectionLineSerializer(serializers.Serializer):
+    component_identity = serializers.UUIDField()
+    quantity = TubeQuantityField()
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and set(data) - set(self.fields):
+            raise serializers.ValidationError({'non_field_errors': ['调整只接受原部件编号和数量。']})
+        return super().to_internal_value(data)
+
+    def validate_quantity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('已有部件数量必须为正整数，不能通过填0删除明细。')
+        return value
+
+
+class TubePlanRecordCorrectionSerializer(serializers.Serializer):
+    client_request_id = serializers.UUIDField()
+    record_kind = serializers.ChoiceField(choices=['DISPATCH', 'RECEIPT'])
+    record_id = serializers.UUIDField()
+    operation = serializers.ChoiceField(choices=['UPDATE', 'DELETE'])
+    business_date = serializers.DateField(required=False)
+    lines = TubeCorrectionLineSerializer(many=True, required=False, allow_empty=False)
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict) and set(data) - set(self.fields):
+            raise serializers.ValidationError({'non_field_errors': ['仅允许调整数量和业务日期；厂家、来源、库区及辅料不能修改。']})
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        fields = {'business_date', 'lines'}
+        if attrs['operation'] == 'DELETE':
+            if fields & set(attrs):
+                raise serializers.ValidationError('删除整次记录不能同时提交调整内容。')
+        else:
+            if not fields.issubset(attrs):
+                raise serializers.ValidationError('调整须完整提交业务日期和原部件明细。')
+            components = [row['component_identity'] for row in attrs['lines']]
+            if len(components) != len(set(components)):
+                raise serializers.ValidationError({'lines': '部件编号不能重复。'})
+        return attrs
+
+
+class TubePlanQuantityLineSerializer(serializers.Serializer):
+    order_line_id = serializers.UUIDField()
+    quantity = TubeQuantityField()
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) - set(self.fields):
+            raise serializers.ValidationError('仅允许填写原部件编号和计划数量。')
+        return super().to_internal_value(data)
+
+    def validate_quantity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('计划数量必须为正整数。')
+        return value
+
+
+class TubePlanQuantityWriteSerializer(serializers.Serializer):
+    lines = TubePlanQuantityLineSerializer(many=True, allow_empty=False, max_length=500)
+
+    def to_internal_value(self, data):
+        if not isinstance(data, dict) or set(data) - set(self.fields):
+            raise serializers.ValidationError('本次只允许修改总单部件的计划数量。')
+        return super().to_internal_value(data)
+
+    def validate_lines(self, rows):
+        identifiers = [row['order_line_id'] for row in rows]
+        if len(identifiers) != len(set(identifiers)):
+            raise serializers.ValidationError('同一总单部件不能重复提交。')
+        return rows
+
+
 class TubeSourceQuerySerializer(serializers.Serializer):
+    is_plan = serializers.BooleanField(required=False)
+    plan_id = serializers.UUIDField(required=False)
     schedule_product_id = serializers.UUIDField()
     source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
     zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
@@ -89,6 +163,9 @@ class TubeOrderWriteSerializer(TubeSourceQuerySerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        attrs.pop('plan_id', None)
+        if attrs.get('is_plan') and any(line.get('unit_price') is None for line in attrs['lines']):
+            raise serializers.ValidationError({'lines': '每个委外计划部件都须填写加工单价。'})
         if attrs['expected_return_date'] < attrs['planned_dispatch_date']:
             raise serializers.ValidationError({'expected_return_date': '预计回货日期不能早于计划发出日期。'})
         materials = attrs.get('materials', [])
@@ -138,6 +215,32 @@ class TubeDispatchWriteSerializer(TubeActionWriteSerializer):
 
 class TubeCancelWriteSerializer(TubeActionWriteSerializer):
     remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
+
+
+class TubePlanDispatchSerializer(TubeActionWriteSerializer):
+    source_kind = serializers.ChoiceField(choices=TubeSourceKind.choices)
+    zone_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    actual_dispatch_date = serializers.DateField()
+    remark = serializers.CharField(required=False, allow_blank=True, max_length=2000, default='')
+    lines = TubeLineWriteSerializer(many=True, allow_empty=False)
+    materials = TubeMaterialWriteSerializer(many=True, required=False)
+    material_source_revision = serializers.CharField(min_length=64, max_length=64, required=False)
+
+    def validate_lines(self, rows):
+        rows = TubeOrderWriteSerializer().validate_lines(rows)
+        if any(row.get('unit_price') is None for row in rows):
+            raise serializers.ValidationError('实际外发须填写每个部件的加工单价。')
+        return rows
+
+    def validate_materials(self, rows):
+        return TubeOrderWriteSerializer().validate_materials(rows)
+
+    def validate(self, attrs):
+        if attrs.get('materials') and attrs['source_kind'] not in CUTTING_SOURCES:
+            raise serializers.ValidationError({'materials': '管材委外总单不再附带五金。'})
+        if attrs.get('materials') and not attrs.get('material_source_revision'):
+            raise serializers.ValidationError({'material_source_revision': '请选择并刷新辅料来源。'})
+        return attrs
 
 
 class TubeReceiptCandidatesQuerySerializer(serializers.Serializer):

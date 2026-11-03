@@ -1,0 +1,34 @@
+approval_policy = "never"
+cli_auth_credentials_store = "file"
+web_search = "disabled"
+sandbox_mode = "read-only"
+sqlite_home = "/tmp/codex-state"
+log_dir = "/tmp/codex-log"
+
+[features]
+shell_tool = false
+view_image = false
+apps = false
+multi_agent_v2 = false
+plugins = false
+skip_host_skill_discovery = true
+browser_use = false
+computer_use = false
+image_generation = false
+
+[agents]
+enabled = false
+
+[apps._default]
+enabled = false
+
+[plugins._default]
+enabled = false
+
+[skills]
+include_instructions = false
+
+[skills.bundled]
+enabled = false
+
+[mcp_servers]

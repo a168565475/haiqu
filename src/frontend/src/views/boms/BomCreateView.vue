@@ -2,16 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AxiosError } from 'axios'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadFiles, UploadInstance } from 'element-plus'
 
 import { createBom, fetchBomOptions, previewBomWorkbook } from '@/api/boms'
-import ProductCreateDialog from '@/components/products/ProductCreateDialog.vue'
-import ProductPickerDialog from '@/components/products/ProductPickerDialog.vue'
-import ProductionTaskProductUpdateDialog from '@/components/production/ProductionTaskProductUpdateDialog.vue'
-import { useAuthStore } from '@/stores/auth'
-import type { ProductInformation } from '@/types/product'
-import type { ProductOption, ProductionTaskOptions, ProductionTaskProductUpdateDraft } from '@/types/productionTask'
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import type {
   BomCreationMethod,
   BomOptions,
@@ -21,7 +16,6 @@ import type {
 
 const router = useRouter()
 const route = useRoute()
-const authStore = useAuthStore()
 const uploadRef = ref<UploadInstance>()
 const maxWorkbookBytes = 100 * 1024 * 1024
 const wizardSteps = [1, 2, 3] as const
@@ -47,21 +41,6 @@ const sourceBomId = ref('')
 const preview = ref<BomWorkbookPreview | null>(null)
 const previewError = ref('')
 const quantityDifferenceReason = ref('')
-const productionOptions = ref<ProductionTaskOptions | null>(null)
-const productPickerVisible = ref(false)
-const productCreateVisible = ref(false)
-const productUpdateVisible = ref(false)
-const replacementProduct = ref<ProductOption | null>(null)
-const replacementDraft = ref<ProductionTaskProductUpdateDraft | null>(null)
-
-const canCreateProduct = computed(() => Boolean(
-  authStore.user?.is_superuser
-  || (
-    authStore.hasPermission('products.view_productinformation')
-    && authStore.hasPermission('products.add_productinformation')
-  )
-))
-
 const methodCards: Array<{ value: BomCreationMethod; title: string; description: string }> = [
   { value: 'IMPORT', title: '从 Excel BOM 导入', description: '读取本地 Excel 文件，自动识别物料、分类、规格和用量等信息' },
   { value: 'COPY', title: '复制历史 BOM', description: '选择同产品的历史 BOM，复制结构后再调整' },
@@ -120,11 +99,14 @@ const filteredProducts = computed(() => {
 
 const copyCandidates = computed(() => {
   if (!selectedProduct.value) return []
-  const productCode = replacementProduct.value?.product_code || selectedProduct.value.product_code
-  const productNumber = replacementProduct.value?.product_number || selectedProduct.value.product_number
+  const productCode = selectedProduct.value.product_code
+  const productNumber = selectedProduct.value.product_number
+  const catalogId = selectedProduct.value.product_catalog_id
   return (options.value?.history_boms || []).filter((item) => (
-    item.product_code_snapshot === productCode
-    || (!productCode && item.product_number_snapshot === productNumber)
+    catalogId
+      ? item.product_catalog_id === catalogId
+      : !item.product_catalog_id && (item.product_code_snapshot === productCode
+        || (!productCode && item.product_number_snapshot === productNumber))
   ))
 })
 
@@ -136,7 +118,6 @@ const sourceReady = computed(() => {
 
 const canSubmit = computed(() => {
   if (!selectedProduct.value || submitting.value || previewLoading.value) return false
-  if (replacementProduct.value && !replacementDraft.value) return false
   if (creationMethod.value === 'IMPORT' && !(selectedFile.value && sourceReady.value)) return false
   if (creationMethod.value === 'COPY' && !sourceBomId.value) return false
   return !quantityRequiresReason.value || Boolean(quantityDifferenceReason.value.trim())
@@ -150,7 +131,7 @@ const reviewSource = computed(() => (
 
 const reviewQuantities = computed(() => {
   const baseline = Number(selectedProduct.value?.order_quantity || 0)
-  const current = Number(replacementDraft.value?.payload.quantity || selectedProduct.value?.order_quantity || 0)
+  const current = Number(selectedProduct.value?.order_quantity || 0)
   const sourceValue = creationMethod.value === 'IMPORT'
     ? preview.value?.quantity.source_quantity
     : creationMethod.value === 'COPY'
@@ -201,11 +182,6 @@ async function loadOptions() {
   optionsLoading.value = true
   try {
     options.value = await fetchBomOptions()
-    productionOptions.value = {
-      order_sources: [], delivery_methods: [], statuses: [], boolean_options: [], customers: [], employees: [], salespeople: [],
-      products: options.value.products, currencies: options.value.currencies, units: options.value.units,
-      colors: options.value.colors, detail_template: options.value.detail_template,
-    }
     const requestedProductId = String(route.query.production_task_product_id || '')
     if (requestedProductId) {
       const requestedProduct = options.value.production_task_products.find((item) => item.id === requestedProductId)
@@ -219,64 +195,6 @@ async function loadOptions() {
   } finally {
     optionsLoading.value = false
   }
-}
-
-async function chooseReplacementProduct(product: ProductOption) {
-  if (!selectedProduct.value) return
-  if (product.id === (replacementProduct.value?.id || selectedProduct.value.product_id)) {
-    productPickerVisible.value = false
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      '更换产品将同步更新生产任务，是否继续？',
-      '确认更换产品',
-      { type: 'warning', confirmButtonText: '继续填写', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
-  replacementProduct.value = product
-  replacementDraft.value = null
-  productPickerVisible.value = false
-  productUpdateVisible.value = true
-}
-
-function handleReplacementDraft(draft: ProductionTaskProductUpdateDraft) {
-  replacementDraft.value = draft
-  clearUpload()
-  sourceBomId.value = ''
-}
-
-function openProductCreate() {
-  if (canCreateProduct.value) productCreateVisible.value = true
-}
-
-async function handleProductCreated(product: ProductInformation) {
-  if (!productionOptions.value) return
-  const fallback: ProductOption = {
-    id: product.id,
-    product_number: product.product_number,
-    product_code: product.product_code,
-    item_number: product.item_number,
-    product_name: product.product_name,
-    specification: product.specification,
-    default_unit_id: product.unit,
-  }
-  let candidate = fallback
-  try {
-    const refreshed = await fetchBomOptions()
-    options.value = refreshed
-    productionOptions.value.products = refreshed.products
-    productionOptions.value.currencies = refreshed.currencies
-    productionOptions.value.units = refreshed.units
-    productionOptions.value.colors = refreshed.colors
-    productionOptions.value.detail_template = refreshed.detail_template
-    candidate = refreshed.products.find((item) => item.id === product.id) || fallback
-  } catch {
-    productionOptions.value.products = [fallback, ...productionOptions.value.products.filter((item) => item.id !== fallback.id)]
-  }
-  await chooseReplacementProduct(candidate)
 }
 
 function selectProduct(item: BomProductionTaskProduct) {
@@ -402,11 +320,6 @@ async function handleFileChange(uploadFile: UploadFile, _uploadFiles: UploadFile
     clearUpload()
     return
   }
-  if (replacementProduct.value && !replacementDraft.value) {
-    ElMessage.warning('请先完整填写更换后的生产任务信息。')
-    clearUpload()
-    return
-  }
   const invalidMessage = validateFile(file)
   if (invalidMessage) {
     ElMessage.error(invalidMessage)
@@ -420,9 +333,8 @@ async function handleFileChange(uploadFile: UploadFile, _uploadFiles: UploadFile
   previewLoading.value = true
   const requestId = ++previewRequestId
   const productId = selectedProduct.value.id
-  const productUpdate = replacementDraft.value?.payload
   try {
-    const result = await previewBomWorkbook(productId, file, productUpdate)
+    const result = await previewBomWorkbook(productId, file)
     if (requestId !== previewRequestId || selectedFile.value !== file || selectedProductId.value !== productId) return
     preview.value = result
     if (result.identity_errors.length) {
@@ -451,9 +363,6 @@ async function submit() {
       creationMethod: creationMethod.value,
       workbook: creationMethod.value === 'IMPORT' ? selectedFile.value : null,
       sourceBomId: creationMethod.value === 'COPY' ? sourceBomId.value : undefined,
-      productUpdate: replacementDraft.value?.payload,
-      productImages: replacementDraft.value?.productImages,
-      detailImages: replacementDraft.value?.detailImages,
       taskEtag: selectedProduct.value.task_etag,
       quantityDifferenceReason: quantityDifferenceReason.value,
     })
@@ -474,8 +383,6 @@ watch(selectedProductId, () => {
   clearUpload()
   sourceBomId.value = ''
   quantityDifferenceReason.value = ''
-  replacementProduct.value = null
-  replacementDraft.value = null
 })
 
 watch(creationMethod, () => {
@@ -529,7 +436,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
             <ElTableColumn prop="task_number" label="生产任务单" min-width="150" show-overflow-tooltip />
             <ElTableColumn prop="customer_name" label="客户" min-width="130" show-overflow-tooltip><template #default="{ row }">{{ row.customer_name || '—' }}</template></ElTableColumn>
             <ElTableColumn label="产品" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.product_code || row.product_number }} · {{ row.product_name }}</template></ElTableColumn>
-            <ElTableColumn label="生产数量" width="110" align="right"><template #default="{ row }">{{ number(row.order_quantity) }} PCS</template></ElTableColumn>
+            <ElTableColumn label="生产数量" width="110" align="right"><template #default="{ row }">{{ number(row.order_quantity) }} {{ productEntryUnitName(row) || 'PCS' }}</template></ElTableColumn>
             <ElTableColumn label="PMC状态" width="100" align="center"><template #default="{ row }"><span class="strong-tag" :class="taskStatusTagClass(row.task_status)">{{ row.task_status === 'READY' ? '已接单' : row.task_status_display }}</span></template></ElTableColumn>
             <ElTableColumn label="操作" width="84" align="center" class-name="task-action-column"><template #default="{ row }"><button type="button" class="task-select-action" @click="selectProductAndContinue(row)">选择</button></template></ElTableColumn>
           </ElTable>
@@ -583,7 +490,7 @@ onBeforeUnmount(cancelPendingTaskSearch)
             <div><dt>识别结果</dt><dd>{{ expectedResult }}</dd></div>
             <div><dt>来源产品</dt><dd>{{ selectedProduct?.product_code || selectedProduct?.product_number }} {{ selectedProduct?.product_name }}</dd></div>
           </dl>
-          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/PCS</th><th>与当前任务差异</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
+          <table class="quantity-table"><thead><tr><th>数量来源</th><th>数量/{{ productEntryUnitName(selectedProduct) || 'PCS' }}</th><th>与当前任务差异</th></tr></thead><tbody><tr v-for="item in reviewQuantities" :key="item.label"><td>{{ item.label }}</td><td>{{ item.value === null ? '—' : number(item.value) }}</td><td :class="{ warning: item.difference }">{{ differenceText(item.difference) }}</td></tr></tbody></table>
           <label class="reason-field"><span>数量差异说明<span v-if="quantityRequiresReason"> *</span></span><ElInput v-model="quantityDifferenceReason" maxlength="500" show-word-limit :placeholder="quantityRequiresReason ? '请说明数量差异及本次执行依据' : '数量一致，可不填写'" /></label>
           <div class="info-strip">此操作只创建草稿，BOM需在编辑页单独确认。</div>
         </section>
@@ -594,9 +501,9 @@ onBeforeUnmount(cancelPendingTaskSearch)
             <div><dt>生产任务单</dt><dd>{{ selectedProduct?.task_number || '—' }}</dd></div>
             <div><dt>客户订单</dt><dd>{{ selectedProduct?.order_number || '—' }}</dd></div>
             <div><dt>客户名称</dt><dd>{{ selectedProduct?.customer_name || '—' }}</dd></div>
-            <div><dt>产品编号</dt><dd>{{ replacementProduct?.product_code || replacementProduct?.product_number || selectedProduct?.product_code || selectedProduct?.product_number || '—' }}</dd></div>
-            <div><dt>产品名称</dt><dd>{{ replacementProduct?.product_name || selectedProduct?.product_name || '—' }}</dd></div>
-            <div><dt>生产数量</dt><dd>{{ number(replacementDraft?.payload.quantity || selectedProduct?.order_quantity) }} PCS</dd></div>
+            <div><dt>产品编号</dt><dd>{{ selectedProduct?.product_code || selectedProduct?.product_number || '—' }}</dd></div>
+            <div><dt>产品名称</dt><dd>{{ selectedProduct?.product_name || '—' }}</dd></div>
+            <div><dt>生产数量</dt><dd>{{ number(selectedProduct?.order_quantity) }} {{ productEntryUnitName(selectedProduct) || 'PCS' }}</dd></div>
             <div><dt>任务状态</dt><dd><span class="strong-tag" :class="taskStatusTagClass(selectedProduct?.task_status || '')">{{ selectedProduct?.task_status === 'READY' ? '已接单' : selectedProduct?.task_status_display || '—' }}</span></dd></div>
             <div><dt>计划开工</dt><dd>{{ selectedProduct?.planned_start_date || '—' }}</dd></div>
             <div><dt>计划完工</dt><dd>{{ selectedProduct?.planned_end_date || selectedProduct?.delivery_date || '—' }}</dd></div>
@@ -612,24 +519,6 @@ onBeforeUnmount(cancelPendingTaskSearch)
     </div>
 
     <footer v-if="currentStep > 1" class="wizard-actions"><ElButton @click="goPrevious">上一步</ElButton><ElButton v-if="currentStep === 2" type="primary" :disabled="!sourceReady" @click="goNext">下一步：检查并创建</ElButton><ElButton v-else type="primary" :loading="submitting" :disabled="!canSubmit" @click="submit">创建BOM草稿</ElButton></footer>
-    <ProductPickerDialog
-      v-model="productPickerVisible"
-      :products="productionOptions?.products || []"
-      :units="productionOptions?.units || []"
-      :selected-id="replacementProduct?.id || selectedProduct?.product_id || ''"
-      :can-create="canCreateProduct"
-      @select="chooseReplacementProduct"
-      @create="openProductCreate"
-    />
-    <ProductCreateDialog v-model="productCreateVisible" @created="handleProductCreated" />
-    <ProductionTaskProductUpdateDialog
-      v-model="productUpdateVisible"
-      :product="replacementProduct"
-      :line-id="selectedProduct?.id || ''"
-      :task-currency-id="selectedProduct?.task_currency_id || ''"
-      :options="productionOptions"
-      @confirm="handleReplacementDraft"
-    />
   </section>
 </template>
 

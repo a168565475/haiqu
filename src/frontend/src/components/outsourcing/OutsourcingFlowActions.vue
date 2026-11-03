@@ -11,11 +11,11 @@ import { decimalUnits, outsourcingDispatchPlan } from '@/utils/outsourcingQuanti
 import { pipeMeters } from '@/utils/pipeQuantities'
 import type { OutsourcingConversion } from '@/types/outsourcing'
 
-const props = defineProps<{ detail: OutsourcingOrderDetail; etag: string }>()
+const props = defineProps<{ detail: OutsourcingOrderDetail; etag: string; entryAction?: string; hideTriggers?: boolean }>()
 const route = useRoute()
 const warehouseWorkspace = computed(() => route.meta?.outsourcingWorkspace === 'warehouse')
 const warehouseArgs = computed<[true] | []>(() => warehouseWorkspace.value ? [true] : [])
-const emit = defineEmits<{ updated: [value: VersionedOutsourcingOrder] }>()
+const emit = defineEmits<{ updated: [value: VersionedOutsourcingOrder]; closed: [] }>()
 const publicStock = computed(() => props.detail.stock_mode === 'PUBLIC_V2')
 type Mode = 'dispatch' | 'return' | 'raw' | 'record' | 'complete'
 const visible = ref(false)
@@ -40,11 +40,14 @@ type DispatchRow = { row_key: string; material: DispatchMaterial; zone_id: strin
 const dispatchRows = ref<DispatchRow[]>([])
 const dispatchMaterials = computed(() => [...new Map(dispatchRows.value.map(row => [row.material.material_item_id, row.material] as const)).values()])
 const receipt = ref({ date: '', receiver: '', goodZone: '', badZone: '', delivery: '' })
-const titles: Record<Mode, string> = { dispatch: '仓库确认实际发料', return: '分批回货入库', raw: '原料退回', record: '投入与损耗登记', complete: '结清检查' }
+const titles: Record<Mode, string> = { dispatch: '材料发出', return: '外发入库', raw: '原料退回', record: '投入与损耗登记', complete: '结清检查' }
 const title = computed(() => titles[mode.value])
 const factories = computed(() => Array.from(new Map((state.value?.outputs || []).map(row => [row.factory_id, { id: row.factory_id, name: row.factory_name }])).values()))
 const rawRows = computed(() => (state.value?.raw_materials || []).filter(row => !factoryId.value || row.factory_id === factoryId.value))
 const outputRows = computed(() => (state.value?.outputs || []).filter(row => !factoryId.value || row.factory_id === factoryId.value))
+const hasDispatchPipe = computed(() => dispatchRows.value.some(row => row.material.conversion_snapshot.kind === 'PIPE'))
+const hasReturnPipe = computed(() => outputRows.value.some(output => rawRows.value.some(row =>
+  row.allocation_id === output.allocation_id && row.conversion_snapshot.kind === 'PIPE')))
 const positive = (value: string | undefined) => (decimalUnits(value) ?? 0n) > 0n
 const integer = (value: string | undefined) => { const amount = decimalUnits(value || '0'); return amount !== null && amount % 10000n === 0n }
 const quantityText = (value: string) => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
@@ -67,6 +70,8 @@ const specificationValue = (row: BomAttributeRow) => {
   const field = (row.bom_attributes || []).find(item => item.key === 'specification' && item.value)
   return field?.value || row.specification || '—'
 }
+const cuttingLength = (row: BomAttributeRow & { conversion_snapshot?: { cutting_length_mm?: number } }) => row.conversion_snapshot?.cutting_length_mm
+  ?? row.bom_attributes?.find(item => item.key === 'cutting_length_mm')?.value ?? '—'
 const colorValue = (row: BomAttributeRow & { color?: string }, preferActual = false) => {
   if (preferActual && String(row.color || '').trim()) return row.color
   const field = (row.bom_attributes || []).find(item => ['hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'].includes(item.key) && item.value)
@@ -152,10 +157,13 @@ async function open(next: Mode) {
 }
 
 let openedEntryAction = ''
-watch(() => [route.query?.action, props.detail.id, props.detail.status, warehouseWorkspace.value], () => {
-  const action = route.query?.action
+watch(() => [props.entryAction ?? route.query?.action, props.detail.id, props.detail.status, warehouseWorkspace.value], () => {
+  const action = props.entryAction ?? route.query?.action
   if (!warehouseWorkspace.value || !['dispatch', 'return', 'raw'].includes(String(action)) || openedEntryAction) return
-  if (!actionAllowed(action as Mode)) return
+  if (!actionAllowed(action as Mode)) {
+    if (props.hideTriggers) { mode.value = action as Mode; visible.value = true; error.value = props.detail.direct_handoff_lock_reason || '当前单据状态或权限已变化，请关闭后刷新核对。' }
+    return
+  }
   openedEntryAction = String(action)
   void open(action as Mode)
 }, { immediate: true })
@@ -255,14 +263,14 @@ async function submit() {
 </script>
 
 <template>
-  <div v-if="!detail.direct_handoff && detail.status !== 'CANCELLED'" class="flow-actions">
+  <div v-if="!hideTriggers && !detail.direct_handoff && detail.status !== 'CANCELLED'" class="flow-actions">
     <ElButton v-if="actionAllowed('dispatch')" type="primary" @click="open('dispatch')">确认外发</ElButton>
     <ElButton v-if="actionAllowed('return')" type="primary" @click="open('return')">登记回货</ElButton>
     <ElButton v-if="actionAllowed('raw')" @click="open('raw')">原料退回</ElButton>
     <ElButton v-if="actionAllowed('record')" @click="open('record')">投入与损耗</ElButton>
     <ElButton v-if="actionAllowed('complete')" @click="open('complete')">结清检查</ElButton>
   </div>
-  <AppWindowDialog v-model="visible" :title="title" :width="mode === 'dispatch' ? 1700 : 1320" :height="820" :close-on-click-modal="false" :close-on-press-escape="!busy" :before-close="done => { if (!busy) done() }" destroy-on-close>
+  <AppWindowDialog v-model="visible" :title="title" :width="warehouseWorkspace ? 1800 : mode === 'dispatch' ? 1700 : 1320" :height="820" :close-on-click-modal="false" :close-on-press-escape="!busy" :before-close="done => { if (!busy) done() }" destroy-on-close @closed="emit('closed')">
     <div v-loading="loading" class="flow-body" :class="{ 'flow-body--dispatch': mode === 'dispatch' }">
       <ElAlert v-if="error" :title="error" type="error" :closable="false" show-icon><ElButton v-if="!context && !state" @click="load">重试</ElButton></ElAlert>
       <template v-if="mode === 'dispatch' && context">
@@ -279,21 +287,22 @@ async function submit() {
             </template>
           </ElDropdown>
         </div>
-        <ElTable :data="dispatchRows" row-key="row_key" border max-height="540" scrollbar-always-on empty-text="当前没有可发料明细" class="dispatch-table">
-          <ElTableColumn label="加工厂" width="200" show-overflow-tooltip><template #default="{ row }">{{ row.material.factory_name }}</template></ElTableColumn>
-          <ElTableColumn label="原料" width="130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.material.bom_attributes" :hide-keys="tooltipKeys">{{ row.material.material_name }}</BomAttributesTooltip></template></ElTableColumn>
-          <ElTableColumn label="材质" width="110" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row.material) }}</template></ElTableColumn>
-          <ElTableColumn label="规格" width="140" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row.material) }}</template></ElTableColumn>
-          <ElTableColumn label="颜色" width="100" show-overflow-tooltip><template #default="{ row }">{{ colorValue(row.material) }}</template></ElTableColumn>
-          <ElTableColumn label="单位" width="60"><template #default="{ row }">{{ row.material.unit }}</template></ElTableColumn>
-          <ElTableColumn label="计划外发" width="100"><template #default="{ row }">{{ quantityText(row.material.planned_issue_quantity) }}</template></ElTableColumn>
-          <ElTableColumn label="已领" width="85"><template #default="{ row }"><span :title="`厂内 ${quantityText(row.material.internal_issued_quantity)} / 委外 ${quantityText(row.material.outsourcing_issued_quantity)}`">{{ issuedTotal(row.material) }}</span></template></ElTableColumn>
-          <ElTableColumn label="本次可领" width="100"><template #default="{ row }"><span :class="{ 'flow-error': Number(row.material.max_issue_quantity) < Number(row.material.planned_issue_quantity) }" :title="`订单剩余 ${quantityText(row.material.order_remaining)}，可用库存 ${quantityText(row.material.available_stock)}`">{{ quantityText(row.material.max_issue_quantity) }}</span></template></ElTableColumn>
-          <ElTableColumn label="发料库区" width="170"><template #default="{ row }"><ElSelect v-model="row.zone_id" :aria-label="`${row.material.material_name}发料库区`" placeholder="选择库区" filterable><ElOption v-for="zone in row.material.zones" :key="zone.zone_id" :value="zone.zone_id" :label="`${zone.zone_name} / ${zone.warehouse_name}`" /></ElSelect></template></ElTableColumn>
-          <ElTableColumn label="库区可用" width="225"><template #default="{ row }"><template v-if="selectedZone(row)">{{ quantityText(selectedZone(row)!.available_input_quantity) }}<template v-if="row.material.conversion_snapshot.kind === 'PIPE'"> / {{ quantityText(selectedZone(row)!.available_quantity) }} {{ row.material.procurement_unit }} / {{ selectedZone(row)!.available_meters === null ? '—' : quantityText(selectedZone(row)!.available_meters!) }} 米</template></template><span v-else>—</span></template></ElTableColumn>
-          <ElTableColumn label="本次发料" width="115"><template #default="{ row }"><ElTooltip :disabled="!pipeQuantityError(row)" :content="pipeQuantityRule(row)" placement="top" effect="light" popper-class="dispatch-pipe-rule-tooltip"><ElInput v-model="row.quantity" class="dispatch-quantity-input" :class="{ 'is-rule-error': Boolean(pipeQuantityError(row)) }" :aria-invalid="Boolean(pipeQuantityError(row))" :aria-label="`${row.material.material_name}本次发料数量`" :inputmode="row.material.conversion_snapshot.kind === 'PIPE' ? 'numeric' : 'decimal'" /></ElTooltip></template></ElTableColumn>
-          <ElTableColumn label="预计扣库" width="180"><template #default="{ row }"><span v-if="row.quantity && outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error" class="flow-error" :title="outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error">{{ outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error }}</span><span v-else-if="row.quantity">{{ row.material.conversion_snapshot.kind === 'PIPE' ? `${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw} ${row.material.procurement_unit} / ${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).meters} 米` : outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw }}</span><span v-else>—</span></template></ElTableColumn>
-          <ElTableColumn v-if="dispatchRows.length > context.materials.length" label="操作" width="80" fixed="right"><template #default="{ row }"><ElButton v-if="zoneRowCount(row.material.material_item_id) > 1" link type="danger" @click="removeZone(row)">移除</ElButton></template></ElTableColumn>
+        <ElTable :data="dispatchRows" row-key="row_key" border max-height="540" :scrollbar-always-on="!warehouseWorkspace" empty-text="当前没有可发料明细" class="dispatch-table" :class="{ 'warehouse-dispatch-table': warehouseWorkspace }">
+          <ElTableColumn label="加工厂" :width="warehouseWorkspace ? 110 : 200" show-overflow-tooltip><template #default="{ row }">{{ row.material.factory_name }}</template></ElTableColumn>
+          <ElTableColumn label="原料" :width="warehouseWorkspace ? 90 : 130" show-overflow-tooltip><template #default="{ row }"><BomAttributesTooltip :fields="row.material.bom_attributes" :hide-keys="tooltipKeys">{{ row.material.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+          <ElTableColumn label="材质" :width="warehouseWorkspace ? 60 : 110" show-overflow-tooltip><template #default="{ row }">{{ materialValue(row.material) }}</template></ElTableColumn>
+          <ElTableColumn label="规格" :width="warehouseWorkspace ? 90 : 140" show-overflow-tooltip><template #default="{ row }">{{ specificationValue(row.material) }}</template></ElTableColumn>
+          <ElTableColumn v-if="hasDispatchPipe" label="切割长度 mm" :width="warehouseWorkspace ? 85 : 110" align="center" header-align="center"><template #default="{ row }">{{ cuttingLength(row.material) }}</template></ElTableColumn>
+          <ElTableColumn label="颜色" :width="warehouseWorkspace ? 60 : 100" show-overflow-tooltip><template #default="{ row }">{{ colorValue(row.material) }}</template></ElTableColumn>
+          <ElTableColumn label="单位" :width="warehouseWorkspace ? 50 : 60"><template #default="{ row }">{{ row.material.unit }}</template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="计划外发" :width="warehouseWorkspace ? 75 : 100"><template #default="{ row }">{{ quantityText(row.material.planned_issue_quantity) }}</template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="已领" :width="warehouseWorkspace ? 60 : 85"><template #default="{ row }"><span :title="`厂内 ${quantityText(row.material.internal_issued_quantity)} / 委外 ${quantityText(row.material.outsourcing_issued_quantity)}`">{{ issuedTotal(row.material) }}</span></template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="本次可领" :width="warehouseWorkspace ? 75 : 100"><template #default="{ row }"><span :class="{ 'flow-error': Number(row.material.max_issue_quantity) < Number(row.material.planned_issue_quantity) }" :title="`订单剩余 ${quantityText(row.material.order_remaining)}，可用库存 ${quantityText(row.material.available_stock)}`">{{ quantityText(row.material.max_issue_quantity) }}</span></template></ElTableColumn>
+          <ElTableColumn label="发料库区" :width="warehouseWorkspace ? 120 : 170"><template #default="{ row }"><ElSelect v-model="row.zone_id" :aria-label="`${row.material.material_name}发料库区`" placeholder="选择库区" filterable><ElOption v-for="zone in row.material.zones" :key="zone.zone_id" :value="zone.zone_id" :label="`${zone.zone_name} / ${zone.warehouse_name}`" /></ElSelect></template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="库区可用" :width="warehouseWorkspace ? 120 : 225"><template #default="{ row }"><template v-if="selectedZone(row)">{{ quantityText(selectedZone(row)!.available_input_quantity) }}<template v-if="row.material.conversion_snapshot.kind === 'PIPE'"> / {{ quantityText(selectedZone(row)!.available_quantity) }} {{ row.material.procurement_unit }} / {{ selectedZone(row)!.available_meters === null ? '—' : quantityText(selectedZone(row)!.available_meters!) }} 米</template></template><span v-else>—</span></template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="本次发料" :width="warehouseWorkspace ? 95 : 115"><template #default="{ row }"><ElTooltip :disabled="!pipeQuantityError(row)" :content="pipeQuantityRule(row)" placement="top" effect="light" popper-class="dispatch-pipe-rule-tooltip"><ElInput v-model="row.quantity" class="dispatch-quantity-input" :class="{ 'is-rule-error': Boolean(pipeQuantityError(row)) }" :aria-invalid="Boolean(pipeQuantityError(row))" :aria-label="`${row.material.material_name}本次发料数量`" :inputmode="row.material.conversion_snapshot.kind === 'PIPE' ? 'numeric' : 'decimal'" /></ElTooltip></template></ElTableColumn>
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="预计扣库" :width="warehouseWorkspace ? 110 : 180"><template #default="{ row }"><span v-if="row.quantity && outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error" class="flow-error" :title="outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error">{{ outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).error }}</span><span v-else-if="row.quantity">{{ row.material.conversion_snapshot.kind === 'PIPE' ? `${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw} ${row.material.procurement_unit} / ${outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).meters} 米` : outsourcingDispatchPlan(row.quantity, row.material.conversion_snapshot).raw }}</span><span v-else>—</span></template></ElTableColumn>
+          <ElTableColumn v-if="dispatchRows.length > context.materials.length" label="操作" :width="warehouseWorkspace ? 65 : 80" fixed="right"><template #default="{ row }"><ElButton v-if="zoneRowCount(row.material.material_item_id) > 1" link type="danger" @click="removeZone(row)">移除</ElButton></template></ElTableColumn>
         </ElTable>
       </template>
       <template v-else-if="state">
@@ -315,11 +324,12 @@ async function submit() {
             <ElTableColumn label="部位" min-width="180"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.component }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="140"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
+            <ElTableColumn v-if="hasReturnPipe" label="切割长度 mm" width="110" align="center" header-align="center"><template #default="{ row }">{{ cuttingLength(row) }}</template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="110"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
             <ElTableColumn prop="unit" label="单位" width="70" />
-            <ElTableColumn prop="remaining" label="已投入待回/报废" width="150" />
-            <ElTableColumn label="合格数量" width="150"><template #default="{ row }"><ElInput v-model="good[row.allocation_id]" aria-label="合格数量" /></template></ElTableColumn>
-            <ElTableColumn v-if="!publicStock" label="不良数量" width="150"><template #default="{ row }"><ElInput v-model="defective[row.allocation_id]" aria-label="不良数量" /></template></ElTableColumn>
+            <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="remaining" label="已投入待回/报废" width="150" />
+            <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" label="合格数量" width="150"><template #default="{ row }"><ElInput v-model="good[row.allocation_id]" aria-label="合格数量" /></template></ElTableColumn>
+            <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" v-if="!publicStock" label="不良数量" width="150"><template #default="{ row }"><ElInput v-model="defective[row.allocation_id]" aria-label="不良数量" /></template></ElTableColumn>
             <ElTableColumn v-if="!publicStock" label="不良原因" min-width="210"><template #default="{ row }"><ElInput v-model="defectReasons[row.allocation_id]" /></template></ElTableColumn>
           </ElTable>
         </template>
@@ -329,22 +339,22 @@ async function submit() {
           <ElTableColumn label="材质" width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
           <ElTableColumn label="规格" width="140"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
           <ElTableColumn label="颜色" width="105"><template #default="{ row }">{{ colorValue(row) }}</template></ElTableColumn>
-          <ElTableColumn prop="unit" label="单位" width="64" /><ElTableColumn prop="dispatched" label="已发" width="100" /><ElTableColumn prop="returned" label="已退" width="90" /><ElTableColumn prop="input" label="已投入" width="100" /><ElTableColumn prop="loss" label="损失" width="90" /><ElTableColumn prop="remaining" label="未处理" width="110" />
-          <ElTableColumn v-if="mode === 'return' || mode === 'raw' || (mode === 'record' && kind !== 'OUTPUT_SCRAP')" :label="mode === 'raw' ? '本次退回' : mode === 'record' && kind === 'RAW_LOSS' ? '本次原料损失' : '本次投入'" width="160"><template #default="{ row }"><ElInput v-if="mode === 'return'" v-model="rawInputs[row.dispatch_line_id]" aria-label="本次新增投入" /><ElInput v-else v-model="quantities[row.dispatch_line_id]" aria-label="本次原料数量" /><small v-if="row.conversion_snapshot.kind === 'PIPE'" class="flow-sub">整根 · {{ row.conversion_snapshot.raw_bar_length_m }} 米/根<br>{{ rootNote(mode === 'return' ? rawInputs[row.dispatch_line_id] : quantities[row.dispatch_line_id], row.conversion_snapshot) }}</small></template></ElTableColumn>
+          <ElTableColumn prop="unit" label="单位" width="64" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="dispatched" label="已发" width="100" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="returned" label="已退" width="90" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="input" label="已投入" width="100" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="loss" label="损失" width="90" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="remaining" label="未处理" width="110" />
+          <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" v-if="mode === 'return' || mode === 'raw' || (mode === 'record' && kind !== 'OUTPUT_SCRAP')" :label="mode === 'raw' ? '本次退回' : mode === 'record' && kind === 'RAW_LOSS' ? '本次原料损失' : '本次投入'" width="160"><template #default="{ row }"><ElInput v-if="mode === 'return'" v-model="rawInputs[row.dispatch_line_id]" aria-label="本次新增投入" /><ElInput v-else v-model="quantities[row.dispatch_line_id]" aria-label="本次原料数量" /><small v-if="row.conversion_snapshot.kind === 'PIPE'" class="flow-sub">整根 · {{ row.conversion_snapshot.raw_bar_length_m }} 米/根<br>{{ rootNote(mode === 'return' ? rawInputs[row.dispatch_line_id] : quantities[row.dispatch_line_id], row.conversion_snapshot) }}</small></template></ElTableColumn>
         </ElTable>
         <template v-if="mode === 'complete' || (mode === 'record' && kind === 'OUTPUT_SCRAP')">
           <h3>加工产出去向</h3>
           <ElTable :data="mode === 'complete' ? state.outputs : outputRows" border>
-            <ElTableColumn prop="factory_name" label="加工厂" min-width="150" /><ElTableColumn label="部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.component }}</BomAttributesTooltip></template></ElTableColumn><ElTableColumn label="材质" width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn><ElTableColumn label="规格" width="140"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn><ElTableColumn label="颜色" width="110"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn><ElTableColumn prop="unit" label="单位" width="64" /><ElTableColumn prop="capacity" label="实际投入可产出" width="140" /><ElTableColumn prop="good" label="合格回库" width="105" /><ElTableColumn prop="defective" label="不良回库" width="105" /><ElTableColumn prop="scrap" label="加工报废" width="105" /><ElTableColumn prop="remaining" label="未处理" width="105" />
-            <ElTableColumn v-if="mode === 'record'" label="本次加工报废" width="155"><template #default="{ row }"><ElInput v-model="quantities[row.allocation_id]" aria-label="本次加工报废" /></template></ElTableColumn>
+            <ElTableColumn prop="factory_name" label="加工厂" min-width="150" /><ElTableColumn label="部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.component }}</BomAttributesTooltip></template></ElTableColumn><ElTableColumn label="材质" width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn><ElTableColumn label="规格" width="140"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn><ElTableColumn label="颜色" width="110"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn><ElTableColumn prop="unit" label="单位" width="64" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="capacity" label="实际投入可产出" width="140" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="good" label="合格回库" width="105" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="defective" label="不良回库" width="105" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="scrap" label="加工报废" width="105" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="remaining" label="未处理" width="105" />
+            <ElTableColumn class-name="outsourcing-number" align="center" header-align="center" v-if="mode === 'record'" label="本次加工报废" width="155"><template #default="{ row }"><ElInput v-model="quantities[row.allocation_id]" aria-label="本次加工报废" /></template></ElTableColumn>
           </ElTable>
           <ElAlert v-if="mode === 'record'" title="仅登记未回库加工报废，已入库不良不能再次报废回货。" type="warning" :closable="false" />
         </template>
         <template v-if="mode === 'complete'">
           <ElAlert v-for="text in state.blockers" :key="text" :title="text" type="warning" :closable="false" />
           <ElAlert v-if="!state.blockers.length" :title="detail.status === 'COMPLETED' ? '本单已结清' : '原料与产出均已对清，可确认结清。'" type="success" :closable="false" />
-          <h3>投入与损耗记录</h3><ElTable :data="state.records" border empty-text="暂无登记"><ElTableColumn label="类型" width="120"><template #default="{ row }">{{ ({ RAW_INPUT: '投入加工', RAW_LOSS: '原料损失', OUTPUT_SCRAP: '加工报废' } as Record<string, string>)[row.kind] }}</template></ElTableColumn><ElTableColumn prop="quantity" label="数量" width="120" /><ElTableColumn prop="unit" label="单位" width="70" /><ElTableColumn prop="reason" label="原因" /><ElTableColumn prop="actor" label="确认人" width="120" /><ElTableColumn prop="confirmed_at" label="确认时间" width="240" /></ElTable>
-          <h3>原料退回记录</h3><ElTable :data="state.raw_returns" border empty-text="暂无退料"><ElTableColumn prop="factory_name" label="加工厂" width="150" /><ElTableColumn prop="component" label="部位" width="130" /><ElTableColumn prop="quantity" label="原单位数量" width="130" /><ElTableColumn prop="unit" label="单位" width="70" /><ElTableColumn prop="meters" label="管材/面料米数" width="140" /><ElTableColumn prop="reason" label="原因" /><ElTableColumn prop="actor" label="确认人" width="120" /><ElTableColumn prop="confirmed_at" label="确认时间" width="240" /></ElTable>
+          <h3>投入与损耗记录</h3><ElTable :data="state.records" border empty-text="暂无登记"><ElTableColumn label="类型" width="120"><template #default="{ row }">{{ ({ RAW_INPUT: '投入加工', RAW_LOSS: '原料损失', OUTPUT_SCRAP: '加工报废' } as Record<string, string>)[row.kind] }}</template></ElTableColumn><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="quantity" label="数量" width="120" /><ElTableColumn prop="unit" label="单位" width="70" /><ElTableColumn prop="reason" label="原因" /><ElTableColumn prop="actor" label="确认人" width="120" /><ElTableColumn prop="confirmed_at" label="确认时间" width="240" /></ElTable>
+          <h3>原料退回记录</h3><ElTable :data="state.raw_returns" border empty-text="暂无退料"><ElTableColumn prop="factory_name" label="加工厂" width="150" /><ElTableColumn prop="component" label="部位" width="130" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="quantity" label="原单位数量" width="130" /><ElTableColumn prop="unit" label="单位" width="70" /><ElTableColumn class-name="outsourcing-number" align="center" header-align="center" prop="meters" label="管材/面料米数" width="140" /><ElTableColumn prop="reason" label="原因" /><ElTableColumn prop="actor" label="确认人" width="120" /><ElTableColumn prop="confirmed_at" label="确认时间" width="240" /></ElTable>
         </template>
       </template>
       <ElForm v-if="mode !== 'complete'" label-width="100px"><ElFormItem :label="mode === 'raw' || mode === 'record' ? '原因（必填）' : '备注'"><ElInput v-model="reason" maxlength="1000" /></ElFormItem></ElForm>
@@ -368,9 +378,11 @@ async function submit() {
 .flow-sub { display:block; color:var(--erp-color-text-secondary); font-size:12px; }
 .flow-error { color:var(--erp-color-danger); }
 .flow-body :deep(.el-table) { flex-shrink:0; }
+.flow-body :deep(.outsourcing-number .el-input__inner) { text-align:center; }
 .flow-body--dispatch :deep(.dispatch-table) { flex:1 1 auto; min-height:0; }
 .dispatch-toolbar { display:flex; justify-content:flex-end; }
 .dispatch-table :deep(.cell) { white-space:nowrap; }
+.warehouse-dispatch-table :deep(.cell) { padding-inline: 7px; white-space: normal; overflow-wrap: anywhere; }
 .dispatch-quantity-input.is-rule-error :deep(.el-input__wrapper) { box-shadow:0 0 0 1px var(--erp-color-danger) inset; }
 .dispatch-quantity-input.is-rule-error :deep(.el-input__inner) { color:var(--erp-color-danger); }
 :global(.dispatch-pipe-rule-tooltip.el-popper.is-light) { max-width:280px; padding:7px 10px; border-color:var(--erp-color-danger-border); background:var(--erp-color-danger-soft); color:var(--erp-color-danger); font-size:12px; line-height:18px; }

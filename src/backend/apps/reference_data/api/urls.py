@@ -31,6 +31,7 @@ from .views import (
     ReferenceDataSummaryView,
     ReferenceDictionaryViewSet,
     SystemParameterViewSet,
+    TubeCalculationFormulaViewSet,
     TubeCoatingColorViewSet,
     TubeDiameterViewSet,
     TubeMaterialViewSet,
@@ -42,7 +43,12 @@ from .views import (
 )
 
 
+from .material_public import MaterialAttributePublicValueViewSet, TubeShapeDimensionViewSet
+
+
 router = SimpleRouter()
+router.register("reference-data/material-attribute-values", MaterialAttributePublicValueViewSet, basename="material-public-attribute")
+router.register("reference-data/tube-shape-dimensions", TubeShapeDimensionViewSet, basename="tube-shape-dimension")
 router.register("reference-data/dictionary-types", DictionaryTypeViewSet, basename="dictionary-type")
 router.register("reference-data/dictionary-items", ReferenceDictionaryViewSet, basename="dictionary-item")
 router.register("reference-data/config-releases", ConfigReleaseViewSet, basename="config-release")
@@ -69,6 +75,7 @@ router.register("reference-data/tube-thicknesses", TubeThicknessViewSet, basenam
 router.register("reference-data/tube-diameters", TubeDiameterViewSet, basename="tube-diameter")
 router.register("reference-data/tube-materials", TubeMaterialViewSet, basename="tube-material")
 router.register("reference-data/tube-shapes", TubeShapeViewSet, basename="tube-shape")
+router.register("reference-data/tube-calculation-formulas", TubeCalculationFormulaViewSet, basename="tube-calculation-formula")
 router.register("reference-data/tube-coating-colors", TubeCoatingColorViewSet, basename="tube-coating-color")
 router.register("reference-data/accessory-product-names", AccessoryProductNameViewSet, basename="accessory-product-name")
 router.register("reference-data/accessory-specifications", AccessorySpecificationViewSet, basename="accessory-specification")

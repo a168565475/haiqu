@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, ref } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
@@ -9,12 +10,15 @@ import productImagePlaceholder from '@/assets/productionScheduling/product-image
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import BomAttributesTooltip from '@/components/common/BomAttributesTooltip.vue'
 import { issueQuantityText } from '@/utils/materialIssueQuantities'
+import { materialAttributeFields } from '@/utils/materialAttributes'
 import { router } from '@/router'
+import { canOpenPage } from '@/router/pageAccess'
 import { useAuthStore } from '@/stores/auth'
 import type { MaterialIssue, MaterialIssueLine, MaterialIssuePreviewLine, MaterialIssueStatus } from '@/types/materialIssue'
 
 const route = useRoute()
 const auth = useAuthStore()
+const canOpenList = computed(() => canOpenPage('material-issues', auth))
 const issueId = computed(() => String(route.params.issueId || ''))
 const issue = ref<MaterialIssue | null>(null)
 const etag = ref('')
@@ -57,7 +61,7 @@ const confirmationRows = computed(() => (issue.value?.lines || []).map(line => {
 const publicAllocations = computed(() => (issue.value?.lines || []).flatMap(line =>
   (line.public_stock_allocations || []).map(allocation => ({ ...allocation,
     material_name: line.conversion_snapshot?.part_name || line.material_name,
-    bom_attributes: line.bom_attributes,
+    bom_attributes: attributeFields(line),
     material: materialValue(line),
     specification: specificationValue(line),
     color: line.line_type === 'SEMI' ? colorValue(line, true) : colorValue(line),
@@ -65,11 +69,11 @@ const publicAllocations = computed(() => (issue.value?.lines || []).flatMap(line
   }))))
 const canOpenMetalProcessing = computed(() => isIssued.value && issue.value?.workshop?.name === '金工车间'
   && rawLines.value.some(line => line.conversion_snapshot?.kind === 'PIPE')
+  && canOpenPage('workshop-outsourcing', auth)
   && (auth.user?.is_superuser || auth.hasPermission('material_issues.view_metalprocessingsource')))
 const isReturned = computed(() => issue.value?.status === 'RETURNED')
 const returnEvent = computed(() => [...(issue.value?.audit_events || [])].reverse().find((item) => item.action === 'RETURNED'))
-const conflictLine = computed(() => issue.value?.lines.find(overStock) || issue.value?.lines.find(overAllowance) || null)
-const conflictKind = computed(() => conflictLine.value ? (overStock(conflictLine.value) ? 'stock' : 'allowance') : '')
+const conflictLine = computed(() => issue.value?.lines.find(overStock) || null)
 const productImageUrl = computed(() => {
   const taskId = issue.value?.production_task?.id
   const imageId = issue.value?.product?.image_file_id
@@ -90,18 +94,18 @@ const sectionLabels: Record<string, string> = {
 }
 const sectionText = (value: string | null | undefined) => value ? (sectionLabels[value] || value) : '—'
 const tooltipKeys = ['part_name', 'material', 'specification', 'hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color']
+const attributeFields = (row: Partial<MaterialIssueLine>) => row.material_catalog_id ? materialAttributeFields(row) : row.bom_attributes || []
 const attributeValue = (row: MaterialIssueLine, keys: string[], fallback = '') => {
-  const field = (row.bom_attributes || []).find(item => keys.includes(item.key) && String(item.value || '').trim())
+  const field = attributeFields(row).find(item => keys.includes(item.key) && String(item.value || '').trim())
   return field?.value || fallback || '—'
 }
 const materialValue = (row: MaterialIssueLine) => attributeValue(row, ['material'], row.material || '')
 const specificationValue = (row: MaterialIssueLine) => attributeValue(row, ['specification'], row.specification || '')
 const colorValue = (row: MaterialIssueLine, preferActual = false) => {
   if (preferActual && String(row.color || '').trim()) return row.color
-  return attributeValue(row, ['hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'], row.color || '')
+  return attributeValue(row, ['color', 'hardware_color', 'plastic_color', 'fabric_color_name', 'accessory_color', 'packaging_color'], row.color || '')
 }
-const overStock = (line: MaterialIssueLine) => Number(line.requested_quantity) > Number(line.available_stock)
-const overAllowance = (line: MaterialIssueLine) => Number(line.requested_quantity) > Number(line.order_remaining)
+const overStock = (line: MaterialIssueLine) => Number(line.requested_quantity) > Number(line.max_issue_quantity)
 function isPublicLine(line: MaterialIssueLine): boolean { return line.stock_mode === 'PUBLIC_V2' || isPublicIssue.value }
 
 async function load() {
@@ -119,7 +123,7 @@ async function openConfirmation() {
     previewLines.value = preview.lines || []
     previewReady.value = preview.can_confirm && issue.value.lines.every(line =>
       previewLines.value.some(row => (row.line_id || row.id) === line.id))
-    if (!preview.can_confirm) previewError.value = preview.errors?.map(e => e.detail).join('；') || '库存、额度或来源已变化，请刷新核对。'
+    if (!preview.can_confirm) previewError.value = preview.errors?.map(e => e.detail).join('；') || '库存、占用或来源已变化，请刷新核对。'
     else if (!previewReady.value) previewError.value = '出库预检明细不完整，请重新核对后再确认。'
     confirmVisible.value = true
   } catch (error) { previewError.value = apiMessage(error, '出库预检超时，请稍后重试。'); ElMessage.error(previewError.value) }
@@ -147,7 +151,11 @@ async function submitReturn() {
   } catch (error) { ElMessage.error(apiMessage(error)) }
   finally { acting.value = false }
 }
-function back() { void router.push({ name: 'material-issues', query: route.query }) }
+function back() {
+  void router.push(canOpenList.value ? { name: 'material-issues', query: route.query }
+    : issue.value?.production_task?.id ? { name: 'production-task-detail', params: { taskId: issue.value.production_task.id } }
+      : { name: 'workshop-scheduling' })
+}
 function edit() { void router.push({ name: 'material-issue-edit', params: { issueId: issueId.value } }) }
 function openMetalProcessing() {
   if (!canOpenMetalProcessing.value) return
@@ -179,11 +187,10 @@ onMounted(load)
         </section>
         <section v-else-if="issue.status === 'PENDING_REVIEW' && conflictLine" class="error-banner">
           <div>
-            <strong>无法出库：{{ conflictLine.material_name }}{{ conflictKind === 'stock' ? '库存不足。' : '超过订单可领数量。' }}</strong>
-            <p v-if="conflictKind === 'stock'">本次申请 {{ numberText(conflictLine.requested_quantity) }} {{ conflictLine.unit }}，公共可用库存 {{ numberText(conflictLine.available_stock) }} {{ conflictLine.unit }}。整张领料单尚未扣库存。</p>
-            <p v-else>订单剩余可领 {{ numberText(conflictLine.order_remaining) }} {{ conflictLine.unit }}，本次申请 {{ numberText(conflictLine.requested_quantity) }} {{ conflictLine.unit }}。整张领料单尚未扣库存。</p>
+            <strong>无法出库：{{ conflictLine.material_name }}可用库存不足。</strong>
+            <p>本次申请 {{ numberText(conflictLine.requested_quantity) }} {{ conflictLine.unit }}，扣除其他占用后可领 {{ numberText(conflictLine.max_issue_quantity) }} {{ conflictLine.unit }}。整张领料单尚未扣库存。</p>
           </div>
-          <ElButton link type="primary" @click="load">刷新{{ conflictKind === 'stock' ? '库存' : '额度' }}</ElButton>
+          <ElButton link type="primary" @click="load">刷新库存</ElButton>
         </section>
 
         <section class="mi-surface detail-basic">
@@ -205,7 +212,7 @@ onMounted(load)
               <label><span>备注</span><b>{{ issue.remark || '—' }}</b></label>
             </div>
             <div class="product-preview">
-              <img :src="productImageUrl" :class="{ 'is-placeholder': !issue.product?.image_file_id }" :alt="`${issue.product?.product_name || '产品'}图片`" @error="useProductImageFallback" />
+              <ProtectedImage :src="productImageUrl" :class="{ 'is-placeholder': !issue.product?.image_file_id }" :alt="`${issue.product?.product_name || '产品'}图片`" @error="useProductImageFallback" />
               <div><strong>{{ issue.product?.product_number || '—' }}<br />{{ issue.product?.product_name || '—' }}</strong><p>{{ issue.product?.color || '—' }}</p></div>
             </div>
           </div>
@@ -216,7 +223,7 @@ onMounted(load)
           <ElTable :data="rawLines" border row-key="id" empty-text="本次没有原材料领料明细">
             <ElTableColumn type="index" label="序号" width="68" align="center" />
             <ElTableColumn label="物料分类" width="120"><template #default="{ row }">{{ sectionText(row.section_code) }}</template></ElTableColumn>
-            <ElTableColumn label="物料 / 部位" min-width="160"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+            <ElTableColumn label="物料 / 部位" min-width="160"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
             <ElTableColumn v-if="rawLines.some(r => r.conversion_snapshot?.kind === 'PIPE')" label="管材扣库换算" min-width="230"><template #default="{ row }"><span v-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根 / {{ numberText(row.meters) }} 米</span><span v-else>—</span></template></ElTableColumn>
@@ -227,15 +234,15 @@ onMounted(load)
               <ElTableColumn label="本次实领" min-width="105" align="center"><template #default="{ row }">{{ numberText(row.issued_quantity) }}</template></ElTableColumn>
               <ElTableColumn label="累计厂内已领" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.internal_issued_quantity) }}</template></ElTableColumn>
               <ElTableColumn label="累计委外已发" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="剩余可领" min-width="105" align="center"><template #default="{ row }">{{ numberText(row.order_remaining) }}</template></ElTableColumn>
+              <ElTableColumn label="BOM剩余参考" min-width="105" align="center"><template #default="{ row }">{{ numberText(row.order_remaining) }}</template></ElTableColumn>
             </template>
             <template v-else>
               <ElTableColumn label="厂内已领" min-width="100" align="center"><template #default="{ row }">{{ numberText(row.internal_issued_quantity) }}</template></ElTableColumn>
               <ElTableColumn label="委外已发" min-width="100" align="center"><template #default="{ row }">{{ numberText(row.outsourcing_issued_quantity) }}</template></ElTableColumn>
               <ElTableColumn v-if="isPublicIssue" label="本订单待审核" min-width="120" align="center"><template #default="{ row }">{{ numberText(row.pending_issue_quantity) }}</template></ElTableColumn>
-              <ElTableColumn label="订单可领" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overAllowance(row) }">{{ numberText(row.order_remaining) }}</span></template></ElTableColumn>
+              <ElTableColumn label="本次可领" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.max_issue_quantity) }}</span></template></ElTableColumn>
               <ElTableColumn label="公共可用库存" min-width="120" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.available_stock) }}</span></template></ElTableColumn>
-              <ElTableColumn label="本次领取" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) || overAllowance(row) }">{{ numberText(row.requested_quantity) }}</span></template></ElTableColumn>
+              <ElTableColumn label="本次领取" min-width="105" align="center"><template #default="{ row }"><span :class="{ conflict: overStock(row) }">{{ numberText(row.requested_quantity) }}</span></template></ElTableColumn>
             </template>
           </ElTable>
         </section>
@@ -243,7 +250,7 @@ onMounted(load)
         <section class="mi-surface detail-table">
           <h2>外发回库半成品领料</h2>
           <ElTable :data="semiLines" border row-key="id" empty-text="本次没有半成品领料明细">
-            <ElTableColumn label="半成品 / 部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+            <ElTableColumn label="半成品 / 部位" min-width="170"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="规格" min-width="180" class-name="specification-cell"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
             <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ colorValue(row, true) }}</template></ElTableColumn>
@@ -265,7 +272,7 @@ onMounted(load)
         <section v-if="isIssued && publicAllocations.length" class="mi-surface detail-table" data-testid="public-stock-deductions">
           <h2>实际扣库明细</h2>
           <ElTable :data="publicAllocations" border>
-            <ElTableColumn label="分区 / 物料部位" min-width="210"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+            <ElTableColumn label="分区 / 物料部位" min-width="210"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
             <ElTableColumn prop="material" label="材质" min-width="110" />
             <ElTableColumn prop="specification" label="规格" min-width="180" class-name="specification-cell" />
             <ElTableColumn prop="color" label="颜色" min-width="100" />
@@ -289,9 +296,9 @@ onMounted(load)
     </div>
 
     <footer v-if="issue" class="detail-footer">
-      <span><b>共 {{ issue.line_count }} 项</b><i></i>{{ isIssued ? (isPublicIssue ? '已从公共库存扣减；半成品领用不重复扣原料。' : '已扣减库存；半成品领用不重复扣原料。') : isReturned ? '已退回，未扣库存。' : '仓库审核确认后扣库存；本期不允许超领。' }}</span>
+      <span><b>共 {{ issue.line_count }} 项</b><i></i>{{ isIssued ? (isPublicIssue ? '已从公共库存扣减；半成品领用不重复扣原料。' : '已扣减库存；半成品领用不重复扣原料。') : isReturned ? '已退回，未扣库存。' : '本次可领按扣除其他占用后的合格库存计算。' }}</span>
       <div>
-        <ElButton @click="back">返回列表</ElButton>
+        <ElButton @click="back">{{ canOpenList ? '返回列表' : issue.production_task?.id ? '返回生产任务' : '返回排产' }}</ElButton>
         <ElButton v-if="canOpenMetalProcessing" data-testid="issue-metal-processing-entry" @click="openMetalProcessing">金工完成登记</ElButton>
         <ElButton v-if="isReturned && canEdit" type="primary" @click="edit">修改领料单</ElButton>
         <ElButton v-else-if="issue.status === 'DRAFT' && canEdit" type="primary" @click="edit">修改领料单</ElButton>
@@ -304,16 +311,16 @@ onMounted(load)
 
     <AppWindowDialog v-model="confirmVisible" title="仓库确认出库" :width="1200" :height="650" :show-close="!acting" :close-on-click-modal="!acting" :close-on-press-escape="!acting">
       <ElAlert v-if="previewError" :title="previewError" type="error" :closable="false" />
-      <p>请核对每项物料和数量。确认时将重新检查合格库存、额度与来源，任一明细失败均不会部分扣账。</p>
+      <p>请核对每项物料和数量。本次可领是扣除其他占用后的合格库存，BOM 剩余仅供参考；确认时重新检查库存和来源，任一明细失败均不会部分扣账。</p>
       <ElTable class="issue-confirm-table" :data="confirmationRows" border show-overflow-tooltip max-height="420" data-testid="issue-live-preview">
-        <ElTableColumn label="分区 / 物料部位" min-width="220"><template #default="{ row }"><BomAttributesTooltip :fields="row.bom_attributes" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
+        <ElTableColumn label="分区 / 物料部位" min-width="220"><template #default="{ row }"><BomAttributesTooltip :fields="attributeFields(row)" :hide-keys="tooltipKeys">{{ row.line_type === 'SEMI' ? '半成品' : '原材料' }} · {{ row.conversion_snapshot?.part_name || row.material_name }}</BomAttributesTooltip></template></ElTableColumn>
         <ElTableColumn label="材质" min-width="110"><template #default="{ row }">{{ materialValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="规格" min-width="220"><template #default="{ row }">{{ specificationValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="颜色" min-width="100"><template #default="{ row }">{{ row.line_type === 'SEMI' ? colorValue(row, true) : colorValue(row) }}</template></ElTableColumn>
         <ElTableColumn label="申请数量" width="150"><template #default="{ row }">{{ numberText(row.requested_quantity) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="公共可用量" min-width="120"><template #default="{ row }">{{ numberText(row.available_stock) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="本订单剩余" min-width="120"><template #default="{ row }">{{ numberText(row.order_remaining) }} {{ row.unit }}</template></ElTableColumn>
-        <ElTableColumn v-if="isPublicIssue" label="本次可领" min-width="120"><template #default="{ row }">{{ numberText(row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
+        <ElTableColumn label="本次可领" min-width="120"><template #default="{ row }">{{ numberText(row.max_issue_quantity) }} {{ row.unit }}</template></ElTableColumn>
         <ElTableColumn label="预计扣库" min-width="230"><template #default="{ row }"><span v-if="row.conversion_snapshot?.kind === 'PIPE'">{{ numberText(row.requested_quantity) }} 支 → {{ numberText(row.bar_count) }} 根 / {{ numberText(row.meters) }} 米</span><span v-else>{{ numberText(row.requested_quantity) }} {{ row.unit }} · {{ row.warehouse_zone || '合格公共库存' }}</span></template></ElTableColumn>
       </ElTable>
       <template #footer><ElButton :disabled="acting" @click="confirmVisible = false">取消</ElButton><ElButton :disabled="acting" @click="openConfirmation">重新核对</ElButton><ElButton type="primary" :loading="acting" :disabled="acting || !previewReady || Boolean(previewError)" @click="confirmIssue">确认出库</ElButton></template>

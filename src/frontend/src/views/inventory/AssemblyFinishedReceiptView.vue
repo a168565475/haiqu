@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed,onMounted,ref } from 'vue'
 import { useRoute,useRouter } from 'vue-router'
-import { AxiosError } from 'axios'
+import { AxiosError, isCancel } from 'axios'
+import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { ElMessage } from 'element-plus'
 import { fetchAssemblyPreview,submitAssemblyReceipt } from '@/api/finishedReceipts'
 import { fetchInventoryOptions } from '@/api/inventory'
@@ -15,6 +16,18 @@ const sourceError=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 const preview=ref<AssemblyPreview>(),options=ref<InventoryOptions>(),loading=ref(false),saving=ref(false),error=ref('')
 const quantity=ref(''),perBox=ref(''),date=ref(''),color=ref(''),warehouse=ref(''),zone=ref(''),location=ref(''),remark=ref('')
 const pending=ref<{payload:AssemblyPayload;etag:string}|null>(null),pendingKey='assembly-receipt:'+planId
+const owned=useIdentityOwnedStorage({storage:'session',key:pendingKey,legacyKeys:[pendingKey]})
+const storageBlocked=ref(false)
+let pendingRaw:string|null=null
+function checkStorage():boolean {
+ if(!owned.isCurrent()){storageBlocked.value=true;error.value='身份尚未核验或已变化，请核验身份后重新打开本页。';return false}
+ try{if(owned.legacyExists()){storageBlocked.value=true;error.value='发现历史无主待核对记录，已原样隔离保留并暂停新提交。请联系管理员人工核对，不能认领或删除后重试。';return false}return !storageBlocked.value}
+ catch{storageBlocked.value=true;error.value='浏览器无法读取待核对记录，已暂停新提交，请联系管理员人工核对。';return false}
+}
+function consumePending():boolean {
+ try{if(pendingRaw===null||!owned.removeIfUnchanged(pendingRaw))throw Error('pending changed');pending.value=null;pendingRaw=null;return true}
+ catch{storageBlocked.value=true;error.value='待核对记录已变化或无法更新，已保留记录并暂停提交，请联系管理员人工核对。';return false}
+}
 const warehouses=computed(()=>options.value?.warehouses.filter(w=>w.warehouse_type==='FINISHED'&&w.status==='ACTIVE')||[])
 const zones=computed(()=>options.value?.zones.filter(z=>z.warehouse===warehouse.value&&z.status==='ACTIVE')||[])
 const locations=computed(()=>options.value?.locations.filter(l=>l.zone===zone.value&&l.warehouse_id===warehouse.value&&l.status==='ACTIVE')||[])
@@ -37,16 +50,18 @@ function resetEntry(){quantity.value='';perBox.value='';remark.value='';error.va
 function message(cause:unknown) { return cause instanceof AxiosError?cause.response?.data?.error?.message||'请求失败，请重试。':'页面操作失败，请重试。' }
 async function load() {
  if(sourceError){error.value=sourceError;return}
+ if(!checkStorage())return
  loading.value=true;error.value=''
  try {
-  const [data,opts]=await Promise.all([fetchAssemblyPreview(planId),fetchInventoryOptions()]);preview.value=data;options.value=opts
+  owned.assertCurrent()
+  const [data,opts]=await Promise.all([fetchAssemblyPreview(planId),fetchInventoryOptions()]);owned.assertCurrent();preview.value=data;options.value=opts
   date.value||=data.receipt_date
   // 未确认的提交继续沿用原请求；新入库始终使用订单颜色。
   if(!pending.value)color.value=data.actual_color
   const pendingLocation=opts.locations.find(l=>l.id===location.value)
   warehouse.value||=pendingLocation?.warehouse_id||(warehouses.value.length===1?warehouses.value[0]!.id:'')
   zone.value||=pendingLocation?.zone||''
- }catch(cause){preview.value=undefined;error.value=message(cause)}finally{loading.value=false}
+ }catch(cause){if(isCancel(cause)||!owned.isCurrent())return;preview.value=undefined;error.value=message(cause)}finally{if(owned.isCurrent())loading.value=false}
 }
 function validate() {
  if(!preview.value)return '请先读取订单额度。'
@@ -58,7 +73,7 @@ function validate() {
  return ''
 }
 async function submit() {
- if(sourceError||saving.value||loading.value||(!preview.value&&!pending.value))return
+ if(!checkStorage()||sourceError||saving.value||loading.value||(!preview.value&&!pending.value))return
  error.value=''
  if(!pending.value){
   const validationMessage=validate()
@@ -69,23 +84,29 @@ async function submit() {
    return
   }
   const value={etag:preview.value!.etag,payload:{request_id:crypto.randomUUID(),schedule_product_id:planId,location_id:location.value,receipt_date:date.value,received_quantity:q.value,quantity_per_box:validPack.value?pack.value:null,actual_color:color.value.trim(),remark:remark.value.trim()}}
-  try{sessionStorage.setItem(pendingKey,JSON.stringify(value));pending.value=value}catch{error.value='浏览器无法保存提交编号，请启用会话存储后再试。';return}
+  try{if(owned.read()!==null)throw Error('existing pending');const raw=JSON.stringify(value);owned.write(raw);pendingRaw=raw;pending.value=value}catch{storageBlocked.value=true;error.value='浏览器无法保存提交编号或已有待核对记录，请重新打开本页核对，暂勿提交。';return}
  }
  saving.value=true
  try{
+  owned.assertCurrent()
+  if(owned.read()!==pendingRaw){storageBlocked.value=true;error.value='待核对记录已变化，请重新打开本页并联系管理员人工核对。';return}
   const result=await submitAssemblyReceipt(pending.value.payload,pending.value.etag)
-  pending.value=null;sessionStorage.removeItem(pendingKey);quantity.value='';ElMessage.success(`已提交待入库：${result.receipt_number}`);await load()
+  owned.assertCurrent()
+  if(!consumePending())return
+  quantity.value='';ElMessage.success(`已提交待入库：${result.receipt_number}`);await load()
  }catch(cause){
+  if(isCancel(cause)||!owned.isCurrent())return
   const status=cause instanceof AxiosError?cause.response?.status:undefined
   const code=cause instanceof AxiosError?cause.response?.data?.error?.code:undefined
-  if(status&&([400,412,428].includes(status)||(status===409&&(code==='CONFLICT'||code==='RECEIPT_REQUEST_DELETED')))){pending.value=null;sessionStorage.removeItem(pendingKey);error.value=message(cause)}
+  if(status&&([400,412,428].includes(status)||(status===409&&(code==='CONFLICT'||code==='RECEIPT_REQUEST_DELETED')))){if(!consumePending())return;error.value=message(cause)}
   else error.value=code==='RECEIPT_REQUEST_CONFLICT'?message(cause):'提交结果尚未确认，请点击“核对本次提交”使用原编号核对，不要另建单据。'
- }finally{saving.value=false}
+ }finally{if(owned.isCurrent())saving.value=false}
 }
 onMounted(()=>{
  if(sourceError){error.value=sourceError;return}
- try{const raw=sessionStorage.getItem(pendingKey);if(raw){const value=JSON.parse(raw);if(!value?.payload?.request_id||value.payload.schedule_product_id!==planId||!value.etag)throw Error();pending.value=value;const p=value.payload;location.value=p.location_id;date.value=p.receipt_date;color.value=p.actual_color;quantity.value=String(p.received_quantity);perBox.value=p.quantity_per_box==null?'':String(p.quantity_per_box);remark.value=p.remark}}
- catch{error.value='原提交记录无法读取，请先到入库记录核对，避免重复登记。';return}
+ if(!checkStorage())return
+ try{const raw=owned.read();if(raw!==null){pendingRaw=raw;const value=JSON.parse(raw);if(!value?.payload?.request_id||value.payload.schedule_product_id!==planId||!value.etag)throw Error();pending.value=value;const p=value.payload;location.value=p.location_id;date.value=p.receipt_date;color.value=p.actual_color;quantity.value=String(p.received_quantity);perBox.value=p.quantity_per_box==null?'':String(p.quantity_per_box);remark.value=p.remark}}
+ catch{storageBlocked.value=true;error.value='原提交记录无法读取，已保留并暂停提交，请联系管理员人工核对，避免重复登记。';return}
  void load()
 })
 </script>
@@ -121,12 +142,12 @@ onMounted(()=>{
    <section class="ar-workspace">
     <ElAlert v-if="!preview.reporting_basis_ready" title="装配工序或有效工价明细未完整设置，当前可入库为0，请先完善报工依据。" type="warning" :closable="false" show-icon />
     <div class="ar-workspace-heading"><h2>本次入库</h2><span>按仓库实际收到的数量填写</span></div>
-    <ElForm label-position="top" :disabled="saving||!!pending" class="ar-form" @submit.prevent="submit">
+    <ElForm label-position="top" :disabled="storageBlocked||!owned.isCurrent()||saving||!!pending" class="ar-form" @submit.prevent="submit">
      <div class="ar-fields">
       <ElFormItem label="入库数量" required><ElInput v-model="quantity" aria-label="本次入库数量" inputmode="numeric" placeholder="填写本次实收数量"><template #suffix>{{preview.unit_name}}</template></ElInput><p class="ar-help">本次最多可入 <b>{{n(preview.remaining_receivable)}}</b> {{preview.unit_name}}</p></ElFormItem>
       <ElFormItem label="收货日期" required><ElDatePicker v-model="date" aria-label="收货日期" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" :clearable="false" placeholder="选择日期" popper-class="ar-popper" /></ElFormItem>
       <ElFormItem label="成品仓" required><ElSelect v-model="warehouse" aria-label="成品仓" placeholder="选择成品仓" popper-class="ar-popper" @change="changeWarehouse"><ElOption v-for="w in warehouses" :key="w.id" :value="w.id" :label="`${w.warehouse_number} · ${w.warehouse_name}`" /></ElSelect></ElFormItem>
-      <ElFormItem label="库区 / 库位" required><ElCascader v-model="locationPath" aria-label="库区 / 库位" :options="locationOptions" :props="{expandTrigger:'hover'}" :disabled="saving||!!pending||!warehouse" filterable clearable placeholder="选择库区，再选择库位" popper-class="ar-popper"><template #default="{node,data}"><span>{{data.label}}</span><span v-if="node.isLeaf" class="ar-location-capacity">{{data.remaining==null?'未设容量':'剩余 '+n(data.remaining)+' 箱位'}}</span></template></ElCascader><p class="ar-help">先选库区，再选库位<span v-if="selectedLocation"> · {{selectedLocation.remaining_box_slots==null?'未设容量':'当前剩余 '+n(selectedLocation.remaining_box_slots)+' 箱位'}}</span></p></ElFormItem>
+      <ElFormItem label="库区 / 库位" required><ElCascader v-model="locationPath" aria-label="库区 / 库位" :options="locationOptions" :props="{expandTrigger:'hover'}" :disabled="storageBlocked||!owned.isCurrent()||saving||!!pending||!warehouse" filterable clearable placeholder="选择库区，再选择库位" popper-class="ar-popper"><template #default="{node,data}"><span>{{data.label}}</span><span v-if="node.isLeaf" class="ar-location-capacity">{{data.remaining==null?'未设容量':'剩余 '+n(data.remaining)+' 箱位'}}</span></template></ElCascader><p class="ar-help">先选库区，再选库位<span v-if="selectedLocation"> · {{selectedLocation.remaining_box_slots==null?'未设容量':'当前剩余 '+n(selectedLocation.remaining_box_slots)+' 箱位'}}</span></p></ElFormItem>
      </div>
      <div class="ar-result"><span>本次入库 <b>{{validQuantity?n(q):'—'}}</b> {{preview.unit_name}}</span><i></i><span>入库后累计 <b>{{n(after)}}</b> {{preview.unit_name}}</span><i></i><span>入库后剩余额度 <b>{{n(remainingAfter)}}</b> {{preview.unit_name}}</span></div>
      <section class="ar-packing"><div class="ar-subheading"><h3>包装信息</h3><span>选填，填写后自动计算箱数与占用箱位</span></div><div class="ar-packing-fields">
@@ -141,6 +162,6 @@ onMounted(()=>{
    </section>
   </template>
   <div v-else-if="!loading&&!sourceError" class="fg-empty">未读取到订单入库信息，请刷新重试。</div>
-  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">提交后由仓库确认，确认后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="!!sourceError||saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="!!sourceError||saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="!!sourceError||(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'提交待入库'}}</ElButton></footer>
+  <footer class="fg-form-footer"><div>本次入库 <strong>{{validQuantity?n(q):'0'}}</strong> {{preview?.unit_name}}<p class="fg-muted">提交后由仓库确认，确认后增加成品库存，已领用的半成品不重复扣减。</p></div><ElButton @click="router.push({name:'workshop-assembly-plan'})">返回</ElButton><ElButton :disabled="storageBlocked||!owned.isCurrent()||!!sourceError||saving||loading||!!pending" @click="resetEntry">重填</ElButton><ElButton :disabled="storageBlocked||!owned.isCurrent()||!!sourceError||saving||loading" @click="load">刷新</ElButton><ElButton type="primary" :loading="saving" :disabled="storageBlocked||!owned.isCurrent()||!!sourceError||(!preview&&!pending)||loading" @click="submit">{{pending?'核对本次提交':'提交待入库'}}</ElButton></footer>
  </section>
 </template>

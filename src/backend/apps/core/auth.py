@@ -38,13 +38,13 @@ class ErpModelBackend(ModelBackend):
         cache_name = "_erp_role_perm_cache"
         if not hasattr(user_obj, cache_name):
             now = timezone.now()
+            # 员工和有效期必须匹配同一任职行，不能借用同岗位其他员工的有效任职。
             role_groups = Group.objects.filter(
+                Q(role_profile__employee_assignments__effective_to__isnull=True)
+                | Q(role_profile__employee_assignments__effective_to__gt=now),
                 role_profile__archived_at__isnull=True,
                 role_profile__employee_assignments__employee__user=user_obj,
                 role_profile__employee_assignments__effective_from__lte=now,
-            ).filter(
-                Q(role_profile__employee_assignments__effective_to__isnull=True)
-                | Q(role_profile__employee_assignments__effective_to__gt=now)
             )
             role_permissions = {
                 f"{app_label}.{codename}"

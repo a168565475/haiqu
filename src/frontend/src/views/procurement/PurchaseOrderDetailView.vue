@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElTooltip } from 'element-plus'
+import { ElAlert, ElTooltip } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { fetchPurchaseOrderReadDetail } from '@/api/purchaseOrderReadDetail'
+import { fetchVersionedPurchaseGroup } from '@/api/purchaseGroups'
 import { useAuthStore } from '@/stores/auth'
 import { usePageTabsStore } from '@/stores/pageTabs'
 import type { PurchaseOrderReadDetail } from '@/types/purchaseOrderReadDetail'
 import { materialAttributeFields, materialSpecificationValue, type MaterialAttributeSource } from '@/utils/materialAttributes'
 import { formatMoney, formatTime, formatUnitPrice, purchaseQuantityText, quantityTotal } from './purchaseOrderDetailDisplay'
+import PurchaseInboundHistory from '@/components/procurement/PurchaseInboundHistory.vue'
 
 type Tab = 'materials' | 'inbounds' | 'returns' | 'completion'
 interface Column { key: string; label: string; width: number; numeric?: boolean }
@@ -22,7 +24,13 @@ const can = (permission: string) => auth.user?.is_superuser === true || auth.has
 const canRead = computed(() => ['procurement.view_purchaseorder', 'inventory.receive_material', 'inventory.quality_confirm_material'].some(can))
 const canReadSheets = computed(() => auth.user?.is_superuser === true || auth.moduleCan('procurement.view_supplierpurchasesheet', 'procurement.view_purchaseorder'))
 const fromInbound = computed(() => route.name === 'purchase-inbound-detail')
+const canReadGroup = computed(() => can('procurement.view_purchaseorder'))
+const groupNumber = ref('')
+const groupError = ref('')
 const order = ref<PurchaseOrderReadDetail | null>(null)
+const inboundColors = computed(() => Object.fromEntries((order.value?.lines ?? []).map(line => [line.id, line.color])))
+const headerStatus = computed(() => order.value?.purchase_group_id ? order.value.display_status ?? order.value.status : order.value?.status || '')
+const headerStatusLabel = computed(() => order.value?.purchase_group_id && headerStatus.value === 'COMPLETED' ? '采购完成' : order.value?.status_display || '')
 const loading = ref(false)
 const errorMessage = ref('')
 const activeTab = ref<Tab>('materials')
@@ -144,7 +152,12 @@ const totals = computed<Record<string, string>>(() => {
 function statusTone(status: string) {
   return ['COMPLETED', 'CONFIRMED'].includes(status) ? 'success' : ['DRAFT', 'PENDING_QUALITY', 'QUALITY_GENERATED'].includes(status) ? 'warning' : 'info'
 }
-function backToList() { void router.push({ name: fromInbound.value ? 'purchase-inbounds' : 'purchase-orders' }) }
+function backToList() {
+  void router.push(fromInbound.value ? { name: 'purchase-inbounds' }
+    : order.value?.purchase_group_id && canReadGroup.value && !groupError.value
+      ? { name: 'purchase-group-detail', params: { id: order.value.purchase_group_id } }
+      : { name: 'purchase-orders', query: { view: 'orders' } })
+}
 function openSheets() { if (order.value && canReadSheets.value) void router.push({ name: 'supplier-purchase-sheets', query: { purchase_order_id: order.value.id } }) }
 function switchTab(event: KeyboardEvent, index: number) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -156,6 +169,8 @@ function switchTab(event: KeyboardEvent, index: number) {
 async function load() {
   const version = ++requestVersion
   order.value = null
+  groupNumber.value = ''
+  groupError.value = ''
   errorMessage.value = ''
   loading.value = false
   if (!canRead.value) return
@@ -164,6 +179,7 @@ async function load() {
     const result = await fetchPurchaseOrderReadDetail(String(route.params.id || ''))
     if (disposed || version !== requestVersion) return
     order.value = result
+    if (result.purchase_group_id && canReadGroup.value) void loadGroupNumber(result.purchase_group_id, version)
     if (pageTabs.accountId === String(auth.user?.id)) {
       pageTabs.setTabTitle(route, fromInbound.value ? '采购入库明细' : '采购明细')
     }
@@ -173,6 +189,14 @@ async function load() {
     errorMessage.value = response?.status === 404 ? '采购订单不存在或不在可查看范围内。' : response?.status === 403 ? '当前账号无权查看此采购订单。' : response?.data?.error?.message || (error instanceof Error ? error.message : '明细加载失败，请重试。')
   } finally {
     if (!disposed && version === requestVersion) loading.value = false
+  }
+}
+async function loadGroupNumber(id: string, version: number): Promise<void> {
+  try {
+    const result = await fetchVersionedPurchaseGroup(id)
+    if (!disposed && version === requestVersion) groupNumber.value = result.data.group_number
+  } catch {
+    if (!disposed && version === requestVersion) groupError.value = '总单信息暂不可读，批次明细仍可查看。'
   }
 }
 watch([() => route.params.id, canRead, fromInbound], () => {
@@ -185,17 +209,19 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
 <template>
   <section class="purchase-detail-page erp-glass-detail" data-testid="purchase-order-detail" :aria-busy="loading">
     <header class="detail-heading">
-      <div class="heading-identity"><h1>采购订单详情</h1><span v-if="order" class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span><span class="readonly-label">只读</span></div>
+      <div class="heading-identity"><h1>{{ fromInbound ? '采购入库详情' : '采购订单详情' }}</h1><span v-if="order" class="detail-tag" :class="statusTone(headerStatus)">{{ headerStatusLabel }}</span><span class="readonly-label">只读</span></div>
       <div class="heading-actions">
         <button v-if="order && canReadSheets && order.status !== 'DRAFT'" class="detail-button erp-list-button erp-button-motion" @click="openSheets">查看采购表</button>
-        <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : '采购订单' }}</button>
+        <button class="detail-button erp-list-button erp-list-button--primary erp-button-motion" @click="backToList"><ArrowLeft aria-hidden="true" />返回{{ fromInbound ? '采购入库' : order?.purchase_group_id && canReadGroup && !groupError ? '采购总单' : '采购订单' }}</button>
       </div>
     </header>
     <div v-if="!canRead" class="detail-state" role="status">无权查看采购明细，请联系管理员开通相应权限。</div>
     <div v-else-if="loading" class="detail-state" role="status">正在加载采购明细…</div>
     <div v-else-if="errorMessage" class="detail-state error-state" role="alert"><p>{{ errorMessage }}</p><button class="detail-button erp-list-button erp-button-motion" @click="load">重新加载</button></div>
     <template v-else-if="order">
+      <ElAlert v-if="groupError" :title="groupError" type="warning" :closable="false" />
       <dl class="order-metadata">
+        <div v-if="order.purchase_group_id"><dt>所属采购总单 / 批次</dt><dd>{{ groupNumber || '已关联采购总单' }} · 第 {{ order.batch_number }} 批 · {{ order.batch_type === 'SUPPLEMENT' ? '补料' : '正常采购' }}</dd></div>
         <div><dt>采购单号</dt><dd :title="order.order_number">{{ order.order_number }}</dd></div>
         <div><dt>采购来源</dt><dd>{{ order.source_type_display || (order.source_type === 'SAMPLE' ? '打样采购' : '生产订单') }}</dd></div>
         <div><dt>{{ order.source_type === 'SAMPLE' ? '打样单号' : '生产单号' }}</dt><dd :title="order.source_number || order.production_task_number">{{ order.source_number || order.production_task_number || '—' }}</dd></div>
@@ -221,11 +247,12 @@ onBeforeUnmount(() => { disposed = true; requestVersion++ })
           <template v-if="order.completed_at"><dl><div><dt>采购状态</dt><dd><span class="detail-tag" :class="statusTone(order.status)">{{ order.status_display }}</span></dd></div><div><dt>完成人</dt><dd>{{ order.completed_by_name || '—' }}</dd></div><div><dt>完成时间</dt><dd>{{ formatTime(order.completed_at) }}</dd></div></dl><p><span>完成备注</span>{{ order.completion_remark || '—' }}</p></template>
           <p v-else class="empty-record">暂无完成记录</p>
         </div>
+        <PurchaseInboundHistory v-else-if="fromInbound && activeTab === 'inbounds'" :purchase-order-id="order.id" :inbounds="order.inbounds" :colors="inboundColors" embedded />
         <div v-else class="detail-table-scroll" tabindex="0" :aria-label="`${tabs.find(tab => tab.key === activeTab)?.label}表格`">
           <table class="detail-table" :style="{ minWidth: `${tableWidth}px` }" :data-testid="`detail-table-${activeTab}`">
             <colgroup><col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
             <thead><tr><th v-for="column in columns" :key="column.key" scope="col" :class="{ numeric: column.numeric }">{{ column.key === 'price' || column.key === 'amount' ? column.label.replace('元', order.currency_code === 'CNY' ? '元' : order.currency_code || '币种未记录') : column.label }}</th></tr></thead>
-            <tbody><tr v-for="row in rows" :key="row.id" @mouseenter="hoveredRowId = row.id" @mouseleave="hoveredRowId = ''"><td v-for="column in columns" :key="column.key" :class="{ numeric: column.numeric, 'material-name': column.key === 'name', 'money-cell': column.key === 'amount' }" :title="column.key === 'name' || column.key === 'specification' ? undefined : row.cells[column.key]"><ElTooltip v-if="column.key === 'specification' && order.source_type !== 'SAMPLE'" placement="top" :show-after="80" :visible="hoveredRowId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.materialSource || {})" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="cell-text">{{ row.cells[column.key] || '—' }}</span></ElTooltip><span v-else-if="column.key === 'status'" class="detail-tag" :class="statusTone(row.status || '')">{{ row.cells[column.key] }}</span><span v-else class="cell-text">{{ row.cells[column.key] || '—' }}</span></td></tr><tr v-if="!rows.length"><td :colspan="columns.length" class="empty-record">暂无{{ tabs.find(tab => tab.key === activeTab)?.label }}</td></tr></tbody>
+            <tbody><tr v-for="row in rows" :key="row.id" @mouseenter="hoveredRowId = row.id" @mouseleave="hoveredRowId = ''"><td v-for="column in columns" :key="column.key" :class="{ numeric: column.numeric, 'material-name': column.key === 'name', 'money-cell': column.key === 'amount' }" :title="column.key === 'name' || column.key === 'specification' ? undefined : row.cells[column.key]"><ElTooltip v-if="column.key === 'specification'" placement="top" :show-after="80" :visible="hoveredRowId === row.id" :teleported="true"><template #content><div class="material-attribute-tooltip"><div v-for="field in materialAttributeFields(row.materialSource || {})" :key="field.key"><span>{{ field.label }}</span><strong>{{ field.value }}</strong></div></div></template><span class="cell-text">{{ row.cells[column.key] || '—' }}</span></ElTooltip><span v-else-if="column.key === 'status'" class="detail-tag" :class="statusTone(row.status || '')">{{ row.cells[column.key] }}</span><span v-else class="cell-text">{{ row.cells[column.key] || '—' }}</span></td></tr><tr v-if="!rows.length"><td :colspan="columns.length" class="empty-record">暂无{{ tabs.find(tab => tab.key === activeTab)?.label }}</td></tr></tbody>
             <tfoot v-if="activeTab === 'materials' && rows.length"><tr><td v-for="column in columns" :key="column.key" :class="{ numeric: column.numeric }" :title="['purchase', 'received', 'accepted', 'returned'].includes(column.key) && totals[column.key] === '—' ? '不同单位或缺少数量时不合计' : undefined"><span class="cell-text">{{ totals[column.key] || '—' }}</span></td></tr></tfoot>
           </table>
         </div>

@@ -13,6 +13,7 @@ from rest_framework.test import APIClient, APITestCase
 from apps.audit.models import AuditLog
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation
+from apps.reference_data.models import ProductionUnit
 
 
 ROOT = "/api/v1/product-catalog/"
@@ -31,6 +32,8 @@ class ProductCatalogApiTests(APITestCase):
         self.client.force_authenticate(self.user)
         self.category = self.Category.objects.create(name="折叠椅")
         self.name = self.Name.objects.create(category=self.category, name="折叠休闲椅（完整品名）")
+        ProductionUnit.objects.get_or_create(unit_name="套", defaults={"unit_code": "PC-SET"})
+        ProductionUnit.objects.get_or_create(unit_name="只", defaults={"unit_code": "PC-PCS"})
 
     def create_product(self, **overrides):
         payload = {"name_id": str(self.name.pk), "product_code": "", "item_number": "A 01", "specification": "100 × 50", "unit": "", "scale": "常规"}
@@ -78,10 +81,11 @@ class ProductCatalogApiTests(APITestCase):
         names = self.client.get(f"{ROOT}names/", {"category_id": self.category.pk, "q": "完整"})
         self.assertEqual(names.data["data"][0]["product_count"], 55)
 
-    def test_options_only_use_independent_categories_units_and_scales(self):
+    def test_options_use_production_units_and_independent_categories_scales(self):
         self.create_product(unit="套", scale="定制")
         response = self.client.get(f"{ROOT}options/")
-        self.assertEqual(response.data["data"], {"categories": [{"id": str(self.category.pk), "name": "折叠椅", "name_count": 1}], "units": ["套"], "scales": ["定制"]})
+        self.assertEqual(response.data["data"], {"categories": [{"id": str(self.category.pk), "name": "折叠椅", "name_count": 1}],
+            "units": list(ProductionUnit.objects.filter(status="ACTIVE", archived_at__isnull=True).values_list("unit_name", flat=True)), "scales": ["定制"]})
         self.assertEqual(self.client.post(f"{ROOT}options/", {"name": "非法类别"}, format="json").status_code, 405)
 
     def test_options_count_active_names_including_empty_without_product_multiplication(self):
@@ -126,7 +130,7 @@ class ProductCatalogApiTests(APITestCase):
         self.assertEqual(conflict.status_code, 400)
         self.assertEqual(self.client.post(f"{ROOT}names/", {"category_id": str(self.category.pk), "name": self.name.name}, format="json").status_code, 400)
         self.assertEqual(self.client.patch(url, {"category_id": str(uuid4())}, format="json", HTTP_IF_MATCH=changed["ETag"]).status_code, 400)
-        self.assertEqual(self.client.delete(url, HTTP_IF_MATCH=changed["ETag"]).status_code, 405)
+        self.assertEqual(self.client.delete(url, HTTP_IF_MATCH=changed["ETag"]).status_code, 204)
 
     def test_colors_share_parent_version_and_soft_removal_restores_identity(self):
         original = self.create_product()

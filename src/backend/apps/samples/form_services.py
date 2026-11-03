@@ -9,6 +9,7 @@ from apps.core.api.exceptions import Conflict
 from apps.customers.services import model_snapshot
 from apps.customers.models import CustomerContact
 from apps.inquiries.models import Inquiry, InquiryItem
+from apps.product_catalog.selection import is_product_entry_snapshot
 from apps.quotations.models import Quotation, QuotationLine, QuotationVersion, QuotationVersionStatus
 
 from .models import (
@@ -69,10 +70,20 @@ def sample_form_edit_capabilities(sample_request):
     if (
         not sample_request.manual_request_number
         or not sample_request.products.exists()
-        or sample_request.products.filter(category__isnull=True).exists()
+        or any(
+            product.category_id is None and not product.product_catalog_id
+            and not is_product_entry_snapshot(product.product_selection_snapshot)
+            for product in sample_request.products.all()
+        )
         or sample_request.products.filter(task_sheet_file__isnull=True).exists()
         or sample_request.items.filter(sample_product__isnull=True).exists()
-        or sample_request.items.filter(product_color__isnull=True).exists()
+        or any(
+            item.sample_product is None or (
+                not item.sample_product.product_catalog_id
+                and not is_product_entry_snapshot(item.sample_product.product_selection_snapshot)
+            )
+            for item in sample_request.items.filter(product_color__isnull=True).select_related("sample_product")
+        )
         or sample_request.items.filter(sample_quantity__isnull=True).exists()
     ):
         return {
@@ -261,6 +272,7 @@ def _update_sampling_details(*, product, details, sampling_image_files):
 
 
 def _create_products(*, sample_request, products, task_files, sampling_image_files, source_relations):
+    from .catalog_products import apply_catalog_selection, sample_detail_color_values
     detail_line_number = 1
     for product_line_number, raw_product in enumerate(products, start=1):
         product_data = dict(raw_product)
@@ -278,18 +290,23 @@ def _create_products(*, sample_request, products, task_files, sampling_image_fil
         if source is not None:
             for field_name, value in sample_product_values_from_source(source).items():
                 product_data.setdefault(field_name, value)
-        category = product_data.pop("category")
+        uses_catalog = apply_catalog_selection(product_data, source=source)
+        category = product_data.pop("category", None)
+        if category is None and not uses_catalog:
+            raise ValidationError({"products": "自定义或旧产品必须选择产品类别。"})
+        category_name = product_data.pop("category_name_snapshot", category.category_name if category else "")
         from .product_attributes import split_product_specification
         attributes = split_product_specification(product_data.get('specification', ''))
-        product_data['specification'] = attributes['specification']
-        product_data['material_snapshot'] = attributes['material'] or product_data.get('material_snapshot', '')
+        if not uses_catalog:
+            product_data['specification'] = attributes['specification']
+            product_data['material_snapshot'] = attributes['material'] or product_data.get('material_snapshot', '')
         product = SampleProduct.objects.create(
             sample_request=sample_request,
             source_inquiry_item=source_inquiry_item,
             source_quotation_line=source_quotation_line,
             line_number=product_line_number,
             category=category,
-            category_name_snapshot=category.category_name,
+            category_name_snapshot=category_name,
             task_sheet_file=task_file,
             **product_data,
         )
@@ -301,8 +318,9 @@ def _create_products(*, sample_request, products, task_files, sampling_image_fil
         for raw_detail in details:
             detail = dict(raw_detail)
             detail.pop("id", None)
-            color = detail.pop("product_color")
-            color_code = detail.pop("color_code", "") or color.color_code
+            color = detail.pop("product_color", None)
+            color_code = detail.pop("color_code", "")
+            color_values = sample_detail_color_values(product, color, color_code)
             quantity = detail["sample_quantity"]
             SampleItem.objects.create(
                 sample_request=sample_request,
@@ -313,11 +331,7 @@ def _create_products(*, sample_request, products, task_files, sampling_image_fil
                 product_description_snapshot=product.product_name,
                 specification_snapshot=product.specification,
                 requested_quantity=quantity,
-                unit_code="PCS",
-                product_color=color,
-                color_card_snapshot=color.color_card,
-                color_name_snapshot=color.color_name,
-                color_code_snapshot=color_code,
+                **color_values,
                 **detail,
             )
             detail_line_number += 1
@@ -441,6 +455,9 @@ def _update_reporting_only(sample_request, products, purpose):
         raise Conflict("当前阶段不能增删产品。")
     for product_data in products:
         product = existing_products[str(product_data["id"])]
+        if (product_data.get("product_catalog_id", product.product_catalog_id) != product.product_catalog_id
+                or product_data.get("product_selection") is not None):
+            raise Conflict("当前阶段不能重新选择产品或属性。")
         product_comparisons = {
             "source_inquiry_item_id": product.source_inquiry_item_id,
             "source_quotation_line_id": product.source_quotation_line_id,
@@ -467,7 +484,7 @@ def _update_reporting_only(sample_request, products, purpose):
             detail = existing_details[str(detail_data["id"])]
             if (
                 detail.sample_quantity != detail_data["sample_quantity"]
-                or detail.product_color_id != detail_data["product_color"].pk
+                or detail.product_color_id != getattr(detail_data.get("product_color"), "pk", None)
                 or detail.color_code_snapshot != detail_data.get("color_code", detail.color_code_snapshot)
                 or detail.tolerance != detail_data["tolerance"]
                 or detail.notes != detail_data.get("notes", "")
@@ -526,6 +543,7 @@ def _update_full(
     require_sampling_details=True,
     require_task_sheet=True,
 ):
+    from .catalog_products import apply_catalog_selection, sample_detail_color_values
     for field_name in [
         "owner_employee",
         "shipping_method",
@@ -593,11 +611,17 @@ def _update_full(
         product_id = product_data.pop("id", None)
         submitted_inquiry_id = product_data.pop("source_inquiry_item_id", None)
         submitted_quote_id = product_data.pop("source_quotation_line_id", None)
-        category = product_data.pop("category")
+        existing_product = existing_products[str(product_id)] if product_id else None
+        uses_catalog = apply_catalog_selection(product_data, existing=existing_product)
+        category = product_data.pop("category", None)
+        if category is None and not uses_catalog:
+            raise ValidationError({"products": "自定义或旧产品必须选择产品类别。"})
+        category_name = product_data.pop("category_name_snapshot", category.category_name if category else "")
         from .product_attributes import split_product_specification
         attributes = split_product_specification(product_data.get('specification', ''))
-        product_data['specification'] = attributes['specification']
-        if attributes['material']:
+        if not uses_catalog:
+            product_data['specification'] = attributes['specification']
+        if attributes['material'] and not uses_catalog:
             product_data['material_snapshot'] = attributes['material']
         if product_id:
             product = existing_products[str(product_id)]
@@ -606,7 +630,7 @@ def _update_full(
             if submitted_inquiry_id != product.source_inquiry_item_id or submitted_quote_id != product.source_quotation_line_id:
                 raise Conflict("产品来源关系创建后不可修改。")
             product.category = category
-            product.category_name_snapshot = category.category_name
+            product.category_name_snapshot = category_name
             product.line_number = product_line_number
             for field_name, value in product_data.items():
                 setattr(product, field_name, value)
@@ -625,7 +649,7 @@ def _update_full(
                 sample_request=sample_request,
                 line_number=product_line_number,
                 category=category,
-                category_name_snapshot=category.category_name,
+                category_name_snapshot=category_name,
                 task_sheet_file=task_file,
                 **product_data,
             )
@@ -644,19 +668,16 @@ def _update_full(
         for raw_detail in details:
             detail_data = dict(raw_detail)
             detail_id = detail_data.pop("id", None)
-            color = detail_data.pop("product_color")
-            color_code = detail_data.pop("color_code", "") or color.color_code
+            color = detail_data.pop("product_color", None)
+            color_code = detail_data.pop("color_code", "")
+            color_values = sample_detail_color_values(product, color, color_code)
             quantity = detail_data["sample_quantity"]
             common = {
                 "line_number": detail_line_number,
                 "product_description_snapshot": product.product_name,
                 "specification_snapshot": product.specification,
                 "requested_quantity": quantity,
-                "unit_code": "PCS",
-                "product_color": color,
-                "color_card_snapshot": color.color_card,
-                "color_name_snapshot": color.color_name,
-                "color_code_snapshot": color_code,
+                **color_values,
                 **detail_data,
             }
             if detail_id:

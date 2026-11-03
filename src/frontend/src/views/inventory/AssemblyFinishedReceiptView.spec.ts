@@ -4,6 +4,8 @@ import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AssemblyFinishedReceiptView from './AssemblyFinishedReceiptView.vue'
 
+const identity = vi.hoisted(() => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => identity }))
 const api = vi.hoisted(() => ({ preview: vi.fn(), submit: vi.fn(), options: vi.fn() }))
 const route = vi.hoisted(() => ({ query: {} as Record<string, string | string[] | null | undefined> }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: vi.fn() }) }))
@@ -19,6 +21,7 @@ const preview = {
 const wrappers: ReturnType<typeof mount>[] = []
 beforeEach(() => {
   vi.resetAllMocks()
+  Object.assign(identity, { user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 })
   route.query = { schedule_product_id: planId }
   sessionStorage.clear()
   api.preview.mockResolvedValue({ ...preview })
@@ -29,7 +32,7 @@ beforeEach(() => {
     locations: [{ id: 'location-1', zone: 'zone-1', warehouse_id: 'warehouse-1', location_number: 'A1', status: 'ACTIVE', remaining_box_slots: null }],
   })
 })
-afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 async function form() {
   const wrapper = mount(AssemblyFinishedReceiptView, { global: { plugins: [ElementPlus] } })
   wrappers.push(wrapper)
@@ -95,7 +98,7 @@ describe('成品入库来源参数', () => {
   })
   it('合法来源已有待核对请求时，预览失败仍可用原编号核对', async () => {
     const payload = { request_id: 'pending-receipt', schedule_product_id: planId, location_id: 'location-1', receipt_date: '2026-09-29', received_quantity: 2, quantity_per_box: null, actual_color: '', remark: '' }
-    sessionStorage.setItem(`assembly-receipt:${planId}`, JSON.stringify({ etag: '"receipt-1"', payload }))
+    sessionStorage.setItem(`assembly-receipt:${planId}:user:7`, JSON.stringify({ etag: '"receipt-1"', payload }))
     api.preview.mockRejectedValue(new AxiosError('网络不可用'))
     const { wrapper, vm } = await form()
     expect(wrapper.findAll('button').find(button => button.text() === '核对本次提交')!.attributes('disabled')).toBeUndefined()
@@ -105,6 +108,54 @@ describe('成品入库来源参数', () => {
 })
 
 describe('成品入库提交恢复', () => {
+  it.each(['', '{broken', '{"payload":{"request_id":"historical-uuid","quantity":2},"etag":"old"}'])('无主历史pending逐字保留、无恢复请求且禁止新UUID提交 %j', async raw => {
+    const key = `assembly-receipt:${planId}`
+    sessionStorage.setItem(key, raw)
+    const { vm, wrapper } = await form()
+    await vm.submit()
+    expect(wrapper.text()).toContain('管理员人工核对')
+    expect(api.preview).not.toHaveBeenCalled(); expect(api.submit).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(sessionStorage.getItem(`${key}:user:7`)).toBeNull()
+  })
+  it('存储写入失败必须在POST之前停止，不回退临时UUID请求', async () => {
+    const { vm } = await form()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => { throw new Error('storage denied') })
+    await vm.submit(); expect(api.submit).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)).toBeNull()
+  })
+  it('成功后存储删除异常保留原pending并锁定，不能再发第二个请求', async () => {
+    const { vm } = await form()
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementationOnce(() => { throw new Error('storage denied') })
+    await vm.submit()
+    const raw = sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)
+    expect(raw).not.toBeNull(); await vm.submit()
+    expect(api.submit).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)).toBe(raw)
+  })
+  it('A提交晚回包不能清除A原pending或触发B刷新', async () => {
+    const { vm } = await form()
+    let finish!: (value: unknown) => void
+    api.submit.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const operation = vm.submit(); await flushPromises()
+    const key = `assembly-receipt:${planId}:user:7`, raw = sessionStorage.getItem(key)
+    identity.user = { id: 8 }; identity.identityGeneration++; identity.identityRequestGeneration++
+    finish({ receipt_number: 'late-A' }); await operation
+    expect(sessionStorage.getItem(key)).toBe(raw)
+    expect(api.preview).toHaveBeenCalledTimes(1)
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:8`)).toBeNull()
+  })
+  it('成功回包只消耗捕获原文，后写入的pending保持锁定', async () => {
+    const { vm } = await form()
+    let finish!: (value: unknown) => void
+    api.submit.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const operation = vm.submit(); await flushPromises()
+    const key = `assembly-receipt:${planId}:user:7`
+    sessionStorage.setItem(key, 'newer-pending')
+    finish({ receipt_number: 'confirmed' }); await operation
+    expect(sessionStorage.getItem(key)).toBe('newer-pending')
+    await vm.submit(); expect(api.submit).toHaveBeenCalledTimes(1)
+  })
   it('原请求已删除时展示服务端原因并解锁，主动再提交才使用新编号', async () => {
     const { wrapper, vm } = await form()
     api.submit.mockRejectedValueOnce(new AxiosError('响应丢失', 'ECONNABORTED'))
@@ -121,7 +172,7 @@ describe('成品入库提交恢复', () => {
     expect(api.submit.mock.calls[1]).toEqual(original)
     expect(api.submit).toHaveBeenCalledTimes(2)
     expect(vm.pending).toBeNull()
-    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).toBeNull()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)).toBeNull()
     expect(wrapper.text()).toContain(message)
     expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(false)
     expect(wrapper.text()).not.toContain('核对本次提交')
@@ -142,7 +193,7 @@ describe('成品入库提交恢复', () => {
     await vm.submit(); await flushPromises()
 
     expect(vm.pending?.payload).toEqual(api.submit.mock.calls[0]![0])
-    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).not.toBeNull()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)).not.toBeNull()
     expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(true)
     expect(wrapper.text()).toContain('核对本次提交')
     expect(api.submit).toHaveBeenCalledTimes(1)
@@ -156,7 +207,7 @@ describe('成品入库提交恢复', () => {
     await vm.submit(); await flushPromises()
 
     expect(vm.pending).toBeNull()
-    expect(sessionStorage.getItem(`assembly-receipt:${planId}`)).toBeNull()
+    expect(sessionStorage.getItem(`assembly-receipt:${planId}:user:7`)).toBeNull()
     expect(wrapper.text()).toContain('额度已变化')
     expect(wrapper.getComponent({ name: 'ElForm' }).props('disabled')).toBe(false)
     expect(api.submit).toHaveBeenCalledTimes(1)

@@ -3,6 +3,17 @@ from django.db.models import Exists, F, OuterRef, Prefetch, Q
 from .statement_models import ReceivableStatement, ReceivableStatementLine
 
 
+def accessible_statements(request, filters=None, *, detail=False):
+    from apps.access_control.role_policy import filter_statement_scope, role_scopes
+    from apps.access_control.resource_scopes import has_legacy_permission
+
+    queryset = statements(filters, detail=detail)
+    permission = 'finance.view_receivablestatement'
+    if 'OWN' in role_scopes(request, permission) and not has_legacy_permission(request, permission):
+        return filter_statement_scope(request, queryset, permission)
+    return queryset
+
+
 def statements(filters=None, *, detail=False):
     from .receipt_models import Receipt
     from .settlement_selectors import annotate_settlement_totals

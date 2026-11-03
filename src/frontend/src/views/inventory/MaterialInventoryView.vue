@@ -26,6 +26,7 @@ const canConfigure = computed(() => can('inventory.view_warehouse') || can('inve
 const rows = ref<MaterialInventoryRow[]>([])
 const options = ref<MaterialFilterOptions>({ warehouses: [], zones: [], sections: [] })
 const publicStock = computed(() => options.value.stock_mode === 'PUBLIC_V2')
+const hasCatalogRows = computed(() => rows.value.some(row => !!row.material_catalog_id))
 const loading = ref(false)
 let rowsVersion = 0
 let disposed = false
@@ -42,7 +43,7 @@ function routeStockKind(value: unknown): 'RAW' | 'SEMI' {
 const stockKind = ref<'RAW' | 'SEMI'>(routeStockKind(route.query.stock_kind))
 
 const warehousesForFilter = computed(() => options.value.warehouses.filter((item) =>
-  !publicStock.value || !item.warehouse_type || item.warehouse_type === (stockKind.value === 'SEMI' ? 'SEMI_FINISHED' : 'MATERIAL')))
+  !item.warehouse_type || item.warehouse_type === (stockKind.value === 'SEMI' ? 'SEMI_FINISHED' : 'MATERIAL')))
 const zonesForFilter = computed(() => options.value.zones.filter((item) =>
   warehousesForFilter.value.some((warehouse) => warehouse.id === item.warehouse)
   && (!filters.warehouseId || item.warehouse === filters.warehouseId)))
@@ -52,7 +53,7 @@ function apiMessage(error: unknown, fallback: string): string {
 }
 function formatQuantity(value: string | number): string {
   const number = Number(value)
-  return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) : '—'
+  return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) : '—'
 }
 function stockQuantityText(row: MaterialInventoryRow): string {
   const quantity = formatQuantity(row.inventory_quantity)
@@ -102,7 +103,7 @@ function inboundSaved() { closeInbound(); if (canView.value) refresh() }
 function openConfig(kind: 'warehouse' | 'location') { void warehouseConfiguration.value?.open(kind) }
 function openMaterialDetail(row: MaterialInventoryRow, tab: 'issues' | 'purchases' = 'issues') {
   if (!row.stock_item_id) { ElMessage.warning('该库存行缺少稳定原料标识，暂不能查看订单追溯。'); return }
-  void router.push({ name: 'material-inventory-detail', params: { stockItemId: row.stock_item_id }, query: { tab } })
+  void router.push({ name: 'material-inventory-detail', params: { stockItemId: row.stock_item_id }, query: { tab, ...(row.material_catalog_id ? { identity_key: row.identity_key } : {}) } })
 }
 
 onBeforeUnmount(() => { disposed = true; rowsVersion++ })
@@ -155,7 +156,7 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
 
       </section>
       <section class="inventory-table erp-list-data">
-        <header class="erp-list-toolbar"><div><h2>材料库存明细</h2><span>{{ stockKind === 'SEMI' && publicStock ? '公共半成品按实物属性、工艺和单位汇总，不关联采购批次' : publicStock ? '原材料按实物属性和库区汇总' : '原材料按长度、材料仓和库区汇总；半成品按订单、部位和工艺区分' }}</span></div><span>共 {{ total }} 条</span></header>
+        <header class="erp-list-toolbar"><div><h2>材料库存明细</h2><span>{{ stockKind === 'SEMI' && publicStock ? '公共半成品按实物属性、工艺和单位汇总，不关联采购批次' : stockKind === 'SEMI' && hasCatalogRows ? '新材料按保存属性、工艺和单位汇总；旧半成品保留订单与部位' : publicStock ? '原材料按实物属性和库区汇总' : '原材料按长度、材料仓和库区汇总；半成品按订单、部位和工艺区分' }}</span></div><span>共 {{ total }} 条</span></header>
         <div class="table-shell erp-list-table-frame">
           <ElTable v-loading="loading" :data="rows" height="100%" stripe empty-text="暂无材料库存" row-key="inventory_key">
           <ElTableColumn type="index" label="序号" width="66" align="center" class-name="sequence-column" label-class-name="sequence-column" :index="(index: number) => (page - 1) * pageSize + index + 1" />
@@ -165,13 +166,14 @@ onMounted(() => { if (canView.value) void Promise.all([loadRows(), loadOptions()
           <ElTableColumn prop="part_name" label="部件" min-width="120" />
           <ElTableColumn prop="color" label="颜色" width="110"><template #default="{ row }">{{ row.color || '—' }}</template></ElTableColumn>
           <ElTableColumn prop="specification" label="规格/切割长度" min-width="170" />
-          <ElTableColumn v-if="stockKind === 'SEMI' && publicStock" label="厚度" width="82"><template #default="{ row }">{{ row.tube_thickness || '—' }}</template></ElTableColumn>
+          <ElTableColumn v-if="stockKind === 'SEMI' && (publicStock || hasCatalogRows)" label="厚度" width="82"><template #default="{ row }">{{ row.tube_thickness || '—' }}</template></ElTableColumn>
           <ElTableColumn label="当前库存" :min-width="stockKind === 'RAW' ? 240 : 110" align="right"><template #default="{ row }"><span class="stock-quantity" :title="stockQuantityText(row)"><b>{{ formatQuantity(row.inventory_quantity) }}</b><small v-if="row.measurement_kind === 'PIPE'"> · {{ compactDecimal(row.meter_quantity) }} 米 · {{ row.raw_bar_length_m || '—' }} 米/根</small></span></template></ElTableColumn>
           <ElTableColumn prop="unit" label="单位" width="65" align="center" />
           <ElTableColumn label="材料仓" min-width="150"><template #default="{ row }">{{ row.warehouse_name || '—' }}</template></ElTableColumn>
           <ElTableColumn label="库区" min-width="175"><template #default="{ row }">{{ row.zone_name }}</template></ElTableColumn>
           <ElTableColumn v-if="stockKind === 'RAW'" label="订单追溯" width="126" align="center"><template #default="{ row }"><ElButton link type="primary" @click="openMaterialDetail(row, 'purchases')">采购</ElButton><ElButton link type="primary" @click="openMaterialDetail(row, 'issues')">领用</ElButton></template></ElTableColumn>
-          <ElTableColumn v-if="stockKind === 'SEMI' && publicStock" label="加工状态" min-width="112"><template #default="{ row }">{{ row.processing_status_label || row.completed_craft || '—' }}</template></ElTableColumn>
+          <ElTableColumn v-if="stockKind === 'SEMI' && hasCatalogRows" label="库存详情" width="100" align="center"><template #default="{ row }"><ElButton v-if="row.material_catalog_id" link type="primary" @click="openMaterialDetail(row, 'purchases')">查看</ElButton><span v-else>—</span></template></ElTableColumn>
+          <ElTableColumn v-if="stockKind === 'SEMI' && (publicStock || hasCatalogRows)" label="加工状态" min-width="112"><template #default="{ row }">{{ row.processing_status_label || row.completed_craft || '—' }}</template></ElTableColumn>
           <ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="production_task_number" label="生产单号" min-width="150" /><ElTableColumn v-if="stockKind === 'SEMI' && !publicStock" prop="product_name" label="产品" min-width="150" /><ElTableColumn prop="latest_inbound_date" label="最近入库日期" width="129" align="center" />
           </ElTable>
         </div>

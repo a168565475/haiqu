@@ -20,16 +20,18 @@ from .form_services import _source_relations, _validate_source_tampering, _legac
 from .models import SampleItem, SampleProduct, SampleRequest, SampleRequestStatus
 from .services import SAMPLE_FIELDS, _write_sample_records, sample_product_values_from_source
 from .product_attributes import split_product_specification, sample_product_attributes, sample_product_specification_display
+from .catalog_products import apply_catalog_selection
+from .application_fields import is_sample_salesperson, request_number_values
 
 
 def application_actions(sample, request):
     from .material_services import material_actions
     actor = getattr(request, 'employee', None) if request else None
-    active = bool(actor and sample.archived_at is None and sample.customer_account.archived_at is None)
+    active = bool(actor and sample.archived_at is None and (not sample.customer_account_id or sample.customer_account.archived_at is None))
     can_resubmit = bool(active and sample.status == SampleRequestStatus.APPLICATION_RETURNED and request.user.has_perm('samples.add_samplerequest') and (request.user.is_superuser or actor.pk in [sample.requested_by_employee_id, sample.owner_employee_id]))
     if can_resubmit:
         source_permission = 'quotations.view_quotationversion' if sample.source_quotation_version_id else 'inquiries.view_inquiry' if sample.source_inquiry_id else None
-        can_resubmit = (not source_permission or request.user.has_perm(source_permission)) and accessible_customers(request, 'add_samplerequest').filter(pk=sample.customer_account_id, archived_at__isnull=True).exists()
+        can_resubmit = (not source_permission or request.user.has_perm(source_permission)) and (not sample.customer_account_id or not is_sample_salesperson(request) or accessible_customers(request, 'add_samplerequest').filter(pk=sample.customer_account_id, archived_at__isnull=True).exists())
     return {
         **material_actions(sample, request),
         'is_application': bool(sample.application_payload_hash),
@@ -84,9 +86,17 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 raise Conflict('该提交标识已经使用且内容不同，请刷新列表核对申请。')
             return existing, True
 
+    data.update(request_number_values(data.pop('manual_request_number'), sample))
+    color = data.pop('product_color')
+    if not is_sample_salesperson(request):
+        data.update(customer_account=sample.customer_account if sample else None,
+                    customer_contact=sample.customer_contact if sample else None)
     source_type, source_id = data.pop('source_type'), data.pop('source_id')
     source_product_id = data.pop('source_product_id')
     selected_product = data.pop('product', None)
+    selection_values = {key: data.pop(key) for key in ('product_catalog_id', 'product_selection') if key in data}
+    has_product_draft = bool((selection_values.get('product_selection') or {}).get('draft'))
+    original_product = sample.products.get(line_number=1) if sample else None
     if sample:
         original_type = 'quotation' if sample.source_quotation_version_id else 'inquiry' if sample.source_inquiry_id else None
         if source_type != original_type:
@@ -118,17 +128,19 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 if source_type == 'inquiry'
                 else relations['quotation_lines'].get(str(source_product_id))
             )
+        if not is_sample_salesperson(request):
+            data.update(customer_account=relations['customer_account'], customer_contact=relations['customer_contact'])
         _validate_source_tampering(data, relations)
-        if source_product is None or data['product_name'] != source_product['product_name'] or data['specification'] not in {
+        if source_product is None or (not has_product_draft and (data['product_name'] != source_product['product_name'] or data['specification'] not in {
             source_product['specification'], split_product_specification(source_product['specification'])['specification'],
-        }:
+        })):
             raise ValidationError({'source_product_id': '产品必须与当前来源中的产品一致。'})
         product_source = {'source_inquiry_item_id': source_product['source_inquiry_item_id'], 'source_quotation_line_id': source_product['source_quotation_line_id']}
         if source_model is not None:
             source_values = sample_product_values_from_source(source_model)
             source_product_values = {
                 field: source_values[field]
-                for field in ['product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
+                for field in ['product', 'product_catalog', 'product_selection_snapshot', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
             }
     elif selected_product is not None and (
         data['product_name'].strip() != selected_product.product_name
@@ -140,8 +152,17 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
         source_values = sample_product_values_from_source(selected_product)
         source_product_values = {
             field: source_values[field]
-            for field in ['product', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
+            for field in ['product', 'product_catalog', 'product_selection_snapshot', 'product_number_snapshot', 'product_code_snapshot', 'item_number_snapshot', 'material_snapshot', 'product_image']
         }
+    if selected_product is not None:
+        selection_values['product'] = selected_product
+    uses_catalog = apply_catalog_selection(selection_values, existing=original_product, source=source_model if source_type and not has_product_draft else None)
+    if uses_catalog:
+        source_product_values.update(selection_values)
+        data['product_name'] = source_product_values.pop('product_name')
+        data['specification'] = source_product_values.pop('specification')
+    elif 'product_catalog' in selection_values:
+        source_product_values.update(selection_values)
     if sample and (sample.source_inquiry_id != (relations.get('source_inquiry').pk if relations.get('source_inquiry') else None) or sample.source_quotation_version_id != (relations.get('source_quotation_version').pk if relations.get('source_quotation_version') else None)):
         raise ValidationError({'source_id': '退回补充不能更换申请来源。'})
 
@@ -173,7 +194,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
     quantity = data.pop('quantity')
     product_fields = {field: data.pop(field) for field in ['product_name', 'specification', 'length_cm', 'armrest_width_cm', 'seat_width_cm', 'back_height_cm', 'seat_height_cm']}
     attributes = split_product_specification(product_fields['specification'])
-    if source_type and source_model is not None:
+    if source_type and source_model is not None and not has_product_draft:
         if sample:
             attributes = sample_product_attributes(source_model)
         elif source_type == 'inquiry':
@@ -185,6 +206,10 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             attributes['color'] = source_model.color_snapshot or attributes['color']
             attributes['material'] = source_model.material_snapshot or attributes['material']
     product_fields['specification'] = attributes['specification']
+    if uses_catalog:
+        snapshot = source_product_values['product_selection_snapshot']
+        product_fields['specification'] = snapshot['specification']
+        attributes.update(specification=snapshot['specification'], color=snapshot.get('color_name', ''), material=snapshot.get('material', ''))
     if len(attributes['color']) > 200:
         raise ValidationError({'specification': '产品颜色不能超过 200 字。'})
     source_product_values['material_snapshot'] = attributes['material'] or source_product_values.get('material_snapshot', '')
@@ -198,9 +223,9 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             saved_image = save_scanned_image(uploaded_file, actor, storage_folder='samples/application-references', field_label='参考图片')
         if sample is None:
             number = next_business_number('SAMPLE_INTAKE')
-            sample = SampleRequest.objects.create(**data, request_number=number, intake_number=number, requested_at=timezone.now(), requested_by_employee=actor, created_by_employee=actor, creation_idempotency_key=key, application_payload_hash=fingerprint, reference_image=saved_image or inherited_image)
+            sample = SampleRequest.objects.create(**data, intake_number=number, requested_at=timezone.now(), requested_by_employee=actor, created_by_employee=actor, creation_idempotency_key=key, application_payload_hash=fingerprint, reference_image=saved_image or inherited_image)
             product = SampleProduct.objects.create(sample_request=sample, line_number=1, **product_fields, **source_product_values, **product_source)
-            SampleItem.objects.create(sample_request=sample, sample_product=product, line_number=1, product_description_snapshot=product.product_name, specification_snapshot=product.specification, color_name_snapshot=attributes['color'], requested_quantity=quantity, sample_quantity=quantity, unit_code='PCS', **product_source)
+            SampleItem.objects.create(sample_request=sample, sample_product=product, line_number=1, product_description_snapshot=product.product_name, specification_snapshot=product.specification, product_color=color, color_card_snapshot=color.color_card, color_code_snapshot=color.color_code, color_name_snapshot=color.color_name, requested_quantity=quantity, sample_quantity=quantity, unit_code=product.product_selection_snapshot.get('unit_code', 'PCS'), **product_source)
         else:
             for field, value in data.items():
                 setattr(sample, field, value)
@@ -208,7 +233,7 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
                 sample.reference_image = saved_image or inherited_image
             sample.save()
             product = sample.products.get(line_number=1)
-            if not source_type and selected_product is None and product.product_id is not None:
+            if not source_type and not uses_catalog and selected_product is None and product.product_id is not None:
                 # 正式产品改为自定义产品后，旧档案关联及派生快照不再适用。
                 source_product_values = {
                     'product': None, 'product_number_snapshot': '', 'product_code_snapshot': '',
@@ -221,6 +246,11 @@ def submit_application(*, data, uploaded_file, request, sample_id=None):
             item = sample.items.get(line_number=1)
             for field, value in {**product_source, 'product_description_snapshot': product.product_name, 'specification_snapshot': product.specification, 'color_name_snapshot': attributes['color'], 'requested_quantity': quantity, 'sample_quantity': quantity}.items():
                 setattr(item, field, value)
+            item.unit_code = product.product_selection_snapshot.get('unit_code', 'PCS')
+            item.product_color = color
+            item.color_card_snapshot = color.color_card
+            item.color_code_snapshot = color.color_code
+            item.color_name_snapshot = color.color_name
             item.save()
         _write_sample_records(sample_request=sample,
             action='APPLICATION_EFFECTIVE' if directly_effective else 'APPLICATION_RESUBMITTED' if sample_id else 'APPLICATION_SUBMITTED',

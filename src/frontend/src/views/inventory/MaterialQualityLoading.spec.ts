@@ -3,18 +3,23 @@ import ElementPlus, { ElMessageBox } from 'element-plus'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from '@/api/inventory'
 import MaterialQualityConfirmationView from './MaterialQualityConfirmationView.vue'
+import { router } from '@/router'
 
 vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
+const identity = vi.hoisted(() => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: () => true }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => identity }))
 vi.mock('@/api/inventory', () => ({ fetchMaterialQualityBatches: vi.fn(), fetchMaterialQualityBatch: vi.fn(), confirmMaterialQuality: vi.fn() }))
 const line = { id: 'line-1', received_quantity: '3.0000', return_quantity: '0.0000', quality_remark: '', supplier_name_snapshot: '供应商' }
 const first = { id: 'batch-1', inbound_number: 'RK01', status: 'PENDING_QUALITY', lines: [line] }
 const second = { ...first, id: 'batch-2', inbound_number: 'RK02', lines: [{ ...line, id: 'line-2' }] }
 type View = { loading: boolean; loadError: string; canSubmit: boolean; selectedBatchId: string; batch: typeof first | null; rows: Array<{ included: boolean; line: typeof line; returnQuantity: string; qualityRemark: string }>; loadBatches: () => Promise<void>; selectBatch: (preserve?: boolean) => Promise<void>; confirmInbound: () => Promise<void> }
 const mount = () => shallowMount(MaterialQualityConfirmationView, { global: { plugins: [ElementPlus] } })
+// Element Plus declares MessageBoxData as input-data & Action; confirm without input resolves the action string.
+const confirmedAction = 'confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>
 describe('品质确认读取', () => {
   beforeEach(() => {
     vi.resetAllMocks(); localStorage.clear()
+    Object.assign(identity, { user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0 })
     vi.mocked(api.fetchMaterialQualityBatches).mockResolvedValue([first, second] as never)
     vi.mocked(api.fetchMaterialQualityBatch).mockImplementation(async id => (id === second.id ? second : first) as never)
   })
@@ -59,14 +64,50 @@ describe('品质确认读取', () => {
     await vm.loadBatches(); expect(vm.batch).toBeNull(); expect(vm.rows).toEqual([]); expect(vm.loading).toBe(false); expect(vm.canSubmit).toBe(false)
     wrapper.unmount()
   })
+  it('历史无主质检草稿逐字隔离，新的普通草稿只写当前UID', async () => {
+    const key = 'material-quality-draft:v2:batch-1'
+    const raw = JSON.stringify({ 'line-1': { returnQuantity: '0.1234', qualityRemark: '历史无主内容' } })
+    localStorage.setItem(key, raw)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View & { saveDraft: () => void }
+    expect(vm.rows[0]?.qualityRemark).not.toBe('历史无主内容')
+    vm.saveDraft()
+    expect(localStorage.getItem(key)).toBe(raw)
+    expect(localStorage.getItem(`${key}:user:7`)).not.toBeNull()
+    wrapper.unmount()
+  })
   it('草稿与刷新后的数量精度校验、已确认状态门禁保留', async () => {
-    localStorage.setItem('material-quality-draft:v2:batch-1', JSON.stringify({ 'line-1': { returnQuantity: '0.1234', qualityRemark: '草稿' } }))
+    localStorage.setItem('material-quality-draft:v2:batch-1:user:7', JSON.stringify({ 'line-1': { returnQuantity: '0.1234', qualityRemark: '草稿' } }))
     const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
     expect(vm.rows[0]).toMatchObject({ returnQuantity: '0.1234', qualityRemark: '草稿' }); expect(vm.canSubmit).toBe(true)
     for (const value of ['-1', '3.0001', '0.12345', 'x']) { vm.rows[0]!.returnQuantity = value; expect(vm.canSubmit).toBe(false) }
     vm.rows[0]!.returnQuantity = '3.0000'; expect(vm.canSubmit).toBe(true)
     vi.mocked(api.fetchMaterialQualityBatch).mockResolvedValueOnce({ ...first, status: 'CONFIRMED' } as never)
     await vm.selectBatch(); expect(vm.canSubmit).toBe(false); expect(vm.loadError).not.toBe(''); wrapper.unmount()
+  })
+  it('确认框等待期间切换身份，关闭确认后不得以新身份提交旧批次', async () => {
+    const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
+    let accept!: (value: Awaited<ReturnType<typeof ElMessageBox.confirm>>) => void
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockReturnValueOnce(new Promise(resolve => { accept = resolve }))
+    const operation = vm.confirmInbound(); await flushPromises()
+    identity.user = { id: 8 }; identity.identityGeneration++; identity.identityRequestGeneration++
+    accept(confirmedAction); await operation
+    expect(api.confirmMaterialQuality).not.toHaveBeenCalled(); expect(router.push).not.toHaveBeenCalled()
+    confirm.mockRestore(); wrapper.unmount()
+  })
+  it('A质检成功迟到不得删除A owned草稿、跳转或污染B', async () => {
+    const key = 'material-quality-draft:v2:batch-1:user:7', raw = JSON.stringify({ 'line-1': { returnQuantity: '1', qualityRemark: 'A-original' } })
+    localStorage.setItem(key, raw)
+    const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValueOnce(confirmedAction)
+    let finish!: (value: never) => void
+    vi.mocked(api.confirmMaterialQuality).mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const operation = vm.confirmInbound(); await flushPromises()
+    identity.user = { id: 8 }; identity.identityGeneration++; identity.identityRequestGeneration++
+    finish({} as never); await operation
+    expect(localStorage.getItem(key)).toBe(raw); expect(router.push).not.toHaveBeenCalled()
+    expect(localStorage.getItem('material-quality-draft:v2:batch-1:user:8')).toBeNull()
+    confirm.mockRestore(); wrapper.unmount()
   })
   it('卸载期间回包失效，取消确认不提交', async () => {
     const wrapper = mount(); await flushPromises(); const vm = wrapper.vm as unknown as View

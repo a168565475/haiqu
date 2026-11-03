@@ -1,8 +1,10 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { startWeComLoginIfNeeded, wecomRouteRedirect } from './wecomGuard'
+import { canOpenPage } from './pageAccess'
 
 import { useAuthStore } from '@/stores/auth'
+import { approveRouteIdentity, hasStaleRouteIdentity, isCleanIdentityLanding } from '@/composables/useRouteIdentityBoundary'
 import LoginView from '@/views/LoginView.vue'
 
 const WorkbenchLandingView = () => import('@/views/workbench/WorkbenchLandingView.vue')
@@ -70,6 +72,7 @@ const PurchaseOrderListView = () => import('@/views/procurement/PurchaseOrderLis
 const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFormView.vue')
 const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
 const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
+const PurchaseGroupDetailView = () => import('@/views/procurement/PurchaseGroupDetailView.vue')
 const PurchaseSheetTemplateSelectView = () => import('@/views/procurement/PurchaseSheetTemplateSelectView.vue')
 const SupplierPurchaseSheetListView = () => import('@/views/procurement/SupplierPurchaseSheetListView.vue')
 const SupplierPurchaseSheetEditorView = () => import('@/views/procurement/SupplierPurchaseSheetEditorView.vue')
@@ -107,6 +110,11 @@ const OutsourcingReworkDetailView = () => import('@/views/outsourcing/Outsourcin
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/auth/account-switch-transition',
+      name: 'account-switch-transition',
+      component: () => import('@/views/auth/AccountSwitchTransitionView.vue'),
+    },
     {
       path: '/auth/waiting-role',
       name: 'waiting-role',
@@ -1574,6 +1582,28 @@ export const router = createRouter({
       },
     },
     {
+      path: '/purchase-groups/:id',
+      name: 'purchase-group-detail',
+      component: PurchaseGroupDetailView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
+        headerTitle: '采购管理 / 采购总单',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders?view=groups' }, { label: '采购总单' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-groups/:groupId/batches/new',
+      name: 'purchase-batch-create',
+      component: PurchaseOrderFormView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-orders',
+        headerTitle: '采购管理 / 新增采购批次',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购订单', to: '/purchase-orders?view=groups' }, { label: '新增采购批次' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/purchase-orders/new',
       name: 'purchase-order-create',
       component: PurchaseOrderFormView,
@@ -1883,13 +1913,18 @@ export const router = createRouter({
 })
 
 router.beforeEach(async (to, from) => {
+  // 唯一公开静态过渡页不读业务数据、不自动 /me/OAuth；旧页的 beforeRouteLeave 已先执行。
+  // 身份写必须等待这里的正常导航完成，其他业务路由的认证守卫完全不变。
+  if (to.name === 'account-switch-transition') return true
   if (to.name === 'internal-semi-receipt') {
     to.meta.activeMenu = to.query.plan_category === 'METAL' ? 'workshop-internal-plan' : 'material-inventory'
   }
   const authStore = useAuthStore()
+  const wasInitialized = authStore.initialized
+  const identityGeneration = authStore.identityGeneration
 
   try {
-    if (to.meta.requiresAuth) await authStore.ensureFreshAuthentication()
+    if (to.meta.requiresAuth) await authStore.ensureAuthentication()
     else await authStore.initialize()
   } catch {
     if (authStore.isAuthenticated && authStore.waitingForRole) {
@@ -1905,17 +1940,40 @@ router.beforeEach(async (to, from) => {
     return true
   }
 
+  // A fresh /me may observe a switch made in another tab. Neither the old target nor
+  // the currently mounted object's URL belongs to that newly applied identity.
+  // Leave guards run before this guard and can await a confirmation across a switch.
+  // An old protected source cannot transfer that intent; clean recovery must still pass
+  // (including redirects to the same home), and ordinary login deep-links stay intact.
+  const staleSource = from.meta.requiresAuth && hasStaleRouteIdentity(from, authStore)
+    && !isCleanIdentityLanding(to)
+  if (wasInitialized && (identityGeneration !== authStore.identityGeneration || staleSource)) {
+    return { name: !authStore.isAuthenticated ? 'login' : authStore.waitingForRole ? 'waiting-role' : 'home',
+      params: {}, query: {}, hash: '', replace: true }
+  }
+
+  // An anonymous employee session can still hold the independent administrator proof.
+  // Do not let automatic WeCom OAuth replace that explicit return/login choice.
+  if (!authStore.isAuthenticated && authStore.accountSwitch?.can_return && to.meta.requiresAuth) {
+    return { name: 'login', params: {}, query: {}, hash: '', replace: true }
+  }
+
   if (startWeComLoginIfNeeded(to.name, to.meta.requiresAuth === true, authStore.isAuthenticated, to.fullPath)) return false
 
   const wecomRedirect = wecomRouteRedirect(to.name, authStore.isAuthenticated, authStore.waitingForRole)
   if (wecomRedirect) return wecomRedirect
 
-  if (to.name === 'login' && authStore.isAuthenticated && authStore.authenticationCheckedAt > 0) {
+  if (to.name === 'login' && authStore.isAuthenticated && authStore.authenticationVerified) {
     return { name: 'home' }
   }
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  if (to.meta.requiresAuth && !canOpenPage(to.name, authStore)) {
+    ElMessage.warning('当前岗位没有此页面的访问权限。')
+    return { name: 'home', query: {}, hash: '', replace: true }
   }
 
   if (to.name === 'home') {
@@ -1931,5 +1989,6 @@ router.beforeEach(async (to, from) => {
     }
   }
 
+  approveRouteIdentity(to, authStore)
   return true
 })

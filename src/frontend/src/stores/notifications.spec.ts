@@ -191,6 +191,31 @@ describe('个人消息状态（测试替身，不是真实验收）', () => {
     await store.readAndResolve({ ...item, target_accessible: false })
     expect(api.read).toHaveBeenCalled(); expect(api.target).toHaveBeenCalled()
   })
+  it('同员工版本变化清通知并丢弃旧回包；同上下文/me保留打开面板和正文', async () => {
+    const auth = useAuthStore()
+    const flow = (version: string) => ({ authenticated: true, user: { ...auth.user!, permissions: [...auth.user!.permissions] },
+      account_switch: { active: true, can_return: true, identity_version: version } })
+    auth.applyAuthResponse(flow('v1'))
+    const store = useNotificationsStore(); await store.open()
+    const generation = auth.identityGeneration
+    auth.applyAuthResponse(flow('v1')); await flush()
+    expect(auth.identityGeneration).toBe(generation); expect(store.opened).toBe(true); expect(store.items).toHaveLength(1)
+    const old = deferred<number>(); api.count.mockReturnValueOnce(old.promise)
+    const request = store.refreshUnread(); auth.applyAuthResponse(flow('v2'))
+    expect(store.items).toEqual([]); expect(store.opened).toBe(false); expect(store.unread).toBeNull()
+    old.resolve(99); await request
+    expect(store.unread).toBeNull(); expect(store.arrival).toBe(0)
+  })
+  it('身份待核验时停止轮询并清消息，但不自动查询身份或恢复管理员', async () => {
+    const store = useNotificationsStore(); store.start(); await flush(); await store.open()
+    expect(store.items).toHaveLength(1)
+    useAuthStore().requireIdentityRevalidation()
+    expect(store.items).toEqual([]); expect(store.unread).toBeNull()
+    const calls = api.count.mock.calls.length
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(api.count).toHaveBeenCalledTimes(calls)
+    login(); await flush(); expect(store.unread).toBe(2)
+  })
   it('删除知悉按服务端历史权限标已读，保留正文且不请求伪造目标', async () => {
     const store = useNotificationsStore(); await store.open()
     const deleted = { ...item, event_code: 'WORK_REPORT_DELETED', body: '原记录已删除，仅供知悉。',

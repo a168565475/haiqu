@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Check, Close, Plus, Search } from '@element-plus/icons-vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
+import { Check, Delete, Plus, Search } from '@element-plus/icons-vue'
 import MaterialCatalogSelect from '@/components/products/MaterialCatalogSelect.vue'
-import ProductCatalogField from '@/components/products/ProductCatalogField.vue'
 import ProductCatalogRow from '@/components/products/ProductCatalogRow.vue'
-import ProductCatalogError from '@/components/products/ProductCatalogError.vue'
 import ProductCatalogSaveButton from '@/components/products/ProductCatalogSaveButton.vue'
 import { useAuthStore } from '@/stores/auth'
+import { createClientUuid } from '@/utils/clientUuid'
 import {
-  createProductCatalog, createProductCatalogName, fetchProductCatalogName, fetchProductCatalogNames,
-  fetchProductCatalogOptions, fetchProductCatalogs, productCatalogError, productCatalogErrorStatus, updateProductCatalogName,
+  createProductCatalogEditor, deleteProductCatalogName, fetchProductCatalogEditor,
+  fetchProductCatalogNames, fetchProductCatalogOptions, productCatalogError,
+  productCatalogErrorStatus, saveProductCatalogEditor,
 } from '@/api/productCatalog'
-import { productCatalogFields, type ProductCatalog, type ProductCatalogFields, type ProductCatalogName, type ProductCatalogOptions } from '@/types/productCatalog'
+import {
+  productCatalogFields, type ProductCatalog, type ProductCatalogDraftRow, type ProductCatalogEditorRow,
+  type ProductCatalogName, type ProductCatalogOptions, type VersionedProductCatalogEditor,
+} from '@/types/productCatalog'
 
 const auth = useAuthStore()
 const canView = computed(() => auth.hasPermission('product_catalog.view_productcatalog'))
@@ -20,304 +25,381 @@ const canAdd = computed(() => auth.hasPermission('product_catalog.add_productcat
 const canChange = computed(() => auth.hasPermission('product_catalog.change_productcatalog'))
 const options = ref<ProductCatalogOptions>()
 const category = ref('')
+const categoryControlKey = ref(0)
 const search = ref('')
 const names = ref<ProductCatalogName[]>([])
 const selected = ref<ProductCatalogName>()
-const products = ref<ProductCatalog[]>([])
+const newName = ref(false)
+const draftName = ref('')
+const products = ref<ProductCatalogDraftRow[]>([])
+const baselineName = ref('')
+const baselineProducts = ref<ProductCatalogEditorRow[]>([])
+const baseline = ref('')
+const etag = ref('')
 const currentPage = ref(1)
-const total = ref(0)
-const totalPages = ref(0)
 const optionsLoading = ref(false)
 const namesLoading = ref(false)
 const productsLoading = ref(false)
+const saving = ref(false)
+const deleting = ref(false)
+const confirming = ref(false)
 const optionsError = ref('')
 const namesError = ref('')
 const productsError = ref('')
-const lockedRows = ref<Record<string, boolean>>({})
-const addingName = ref(false)
-const newName = ref('')
+const saveError = ref('')
+const versionWarning = ref('')
 const nameInput = ref<HTMLInputElement>()
-const nameCreateError = ref('')
-const creatingName = ref(false)
-const editingName = ref(false)
-const nameLoading = ref(false)
-const nameVersion = ref('')
-const nameWarning = ref('')
-const addingProduct = ref(false)
-const creatingProduct = ref(false)
-const productCreateError = ref('')
-const draftRow = ref<HTMLTableRowElement>()
-const newProduct = reactive<ProductCatalogFields>({ product_code: '', item_number: '', specification: '', unit: '', scale: '' })
-const rowLocked = computed(() => Object.values(lockedRows.value).some(Boolean))
-const navigationLocked = computed(() => rowLocked.value || addingName.value || editingName.value || addingProduct.value || creatingName.value || creatingProduct.value || nameLoading.value)
-const categoryOptions = computed(() => options.value?.categories.map(item => ({ value: item.id, label: item.name })) ?? [])
-const categoryNameCounts = computed(() => Object.fromEntries(options.value?.categories.map(item => [item.id, item.name_count]) ?? []))
-const scaleOptions = computed(() => [...new Set(['', '常规', '定制', ...(options.value?.scales ?? [])])].map(value => ({ value, label: value || '未填写' })))
+const table = ref<HTMLElement>()
+const navigationLocked = computed(() => saving.value || deleting.value || confirming.value)
+const editorOpen = computed(() => newName.value || !!selected.value)
+const canEdit = computed(() => newName.value ? canAdd.value : canChange.value)
+const editorDisabled = computed(() => navigationLocked.value || productsLoading.value || !!productsError.value)
+const canCreateRow = computed(() => canAdd.value && (newName.value || canChange.value))
+const categoryOptions = computed(() => (options.value?.categories ?? []).map(item => ({ value: item.id, label: item.name, count: item.name_count })))
+const totalPages = computed(() => Math.max(1, Math.ceil(products.value.length / 50)))
+const visibleProducts = computed(() => products.value.slice((currentPage.value - 1) * 50, currentPage.value * 50))
+const hasUnsavedChanges = computed(() => editorOpen.value && (newName.value || (baseline.value !== '' && signature() !== baseline.value)))
 let namesSequence = 0
-let productsSequence = 0
-let initializationSequence = 0
+let detailSequence = 0
+let initSequence = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let appliedSearch = ''
 
-function cancelSearch() {
-  if (searchTimer !== undefined) { clearTimeout(searchTimer); searchTimer = undefined; search.value = appliedSearch }
+function rowInput(row: ProductCatalogDraftRow): ProductCatalogEditorRow {
+  return {
+    ...(row.id ? { id: row.id } : {}),
+    product_code: row.product_code, item_number: row.item_number, specification: row.specification,
+    unit: row.unit, scale: row.scale, colors: [...row.colors], materials: [...row.materials], thicknesses: [...row.thicknesses],
+  }
 }
-watch(navigationLocked, locked => { if (locked) cancelSearch() })
-function applyProduct(product: ProductCatalog) {
-  products.value = products.value.map(item => item.id === product.id ? product : item)
+function toDraft(product: ProductCatalog): ProductCatalogDraftRow {
+  return {
+    key: product.id, id: product.id, product_code: product.product_code, item_number: product.item_number,
+    specification: product.specification, unit: product.unit, scale: product.scale,
+    colors: product.colors.map(color => color.value), materials: [...(product.materials ?? [])], thicknesses: [...(product.thicknesses ?? [])],
+  }
 }
-function lockRow(id: string, active: boolean) {
-  if (active) lockedRows.value[id] = true
-  else delete lockedRows.value[id]
-}
-async function loadProducts() {
-  const id = selected.value?.id
-  if (!id) return
-  const sequence = ++productsSequence
-  productsLoading.value = true
-  productsError.value = ''
-  products.value = []
+function signature() { return JSON.stringify({ name: draftName.value, products: products.value.map(rowInput) }) }
+function cancelSearch() { clearTimeout(searchTimer); searchTimer = undefined }
+async function confirmAction(message: string, title: string, confirmButtonText: string) {
+  confirming.value = true
   try {
-    const result = await fetchProductCatalogs({ name_id: id, page: currentPage.value, page_size: 50 })
-    if (sequence !== productsSequence || selected.value?.id !== id) return
-    products.value = result.data
-    total.value = result.meta.total
-    selected.value = { ...selected.value, product_count: result.meta.total }
-    names.value = names.value.map(item => item.id === id ? { ...item, product_count: result.meta.total } : item)
-    totalPages.value = result.meta.total_pages
-    currentPage.value = result.meta.page
-  } catch (issue) { if (sequence === productsSequence) productsError.value = productCatalogError(issue) }
-  finally { if (sequence === productsSequence) productsLoading.value = false }
+    await ElMessageBox.confirm(message, title, { confirmButtonText, cancelButtonText: '取消', type: 'warning', closeOnClickModal: false })
+    return true
+  } catch (action) {
+    if (action === 'cancel' || action === 'close') return false
+    throw action
+  } finally { confirming.value = false }
 }
-async function selectName(item: ProductCatalogName) {
-  if (navigationLocked.value || namesLoading.value || item.id === selected.value?.id) return
-  selected.value = item
-  products.value = []
-  currentPage.value = 1
-  total.value = 0
-  totalPages.value = 0
-  nameVersion.value = ''
-  nameWarning.value = ''
-  await loadProducts()
+async function canLeave(): Promise<boolean> {
+  if (navigationLocked.value) return false
+  if (!hasUnsavedChanges.value) return true
+  return confirmAction('当前品名有未保存的修改，是否放弃并离开？', '未保存的修改', '放弃修改')
 }
-async function loadNames(preferredId?: string) {
-  if (!category.value) return
-  const sequence = ++namesSequence
-  ++productsSequence
-  namesLoading.value = true
-  namesError.value = ''
+function resetDetail() {
+  ++detailSequence
   selected.value = undefined
+  newName.value = false
+  draftName.value = ''
   products.value = []
+  baselineName.value = ''
+  baselineProducts.value = []
+  baseline.value = ''
+  etag.value = ''
+  currentPage.value = 1
   productsLoading.value = false
   productsError.value = ''
-  nameVersion.value = ''
-  nameWarning.value = ''
-  currentPage.value = 1
-  total.value = 0
-  totalPages.value = 0
+  saveError.value = ''
+  versionWarning.value = ''
+}
+function checkEditor(result: VersionedProductCatalogEditor, id?: string) {
+  if ((id && result.data.name.id !== id) || result.data.name.category_id !== category.value ||
+      result.data.products.some(product => product.name_id !== result.data.name.id)) {
+    throw new Error('返回的产品档案与当前品名不一致，请重新读取。')
+  }
+}
+function applyEditor(result: VersionedProductCatalogEditor) {
+  selected.value = { ...result.data.name }
+  newName.value = false
+  draftName.value = result.data.name.name
+  products.value = result.data.products.map(toDraft)
+  baselineName.value = draftName.value
+  baselineProducts.value = products.value.map(rowInput)
+  baseline.value = signature()
+  etag.value = result.etag
+  versionWarning.value = result.etag ? '' : '未取得品名编辑版本，请重新读取后再保存。'
+  productsError.value = ''
+  saveError.value = ''
+  currentPage.value = Math.min(currentPage.value, totalPages.value)
+  const index = names.value.findIndex(item => item.id === result.data.name.id)
+  if (index >= 0) names.value[index] = { ...result.data.name }
+  else names.value.push({ ...result.data.name })
+}
+async function loadEditor(item: ProductCatalogName) {
+  const request = ++detailSequence
+  selected.value = item
+  draftName.value = item.name
+  productsLoading.value = true
+  productsError.value = ''
   try {
-    const query = search.value.trim()
-    const result = await fetchProductCatalogNames({ category_id: category.value, q: query })
-    if (sequence !== namesSequence) return
+    const result = await fetchProductCatalogEditor(item.id)
+    if (request !== detailSequence) return
+    checkEditor(result, item.id)
+    applyEditor(result)
+  } catch (error) {
+    if (request === detailSequence) productsError.value = productCatalogError(error)
+  } finally { if (request === detailSequence) productsLoading.value = false }
+}
+async function selectName(item: ProductCatalogName) {
+  if ((!newName.value && selected.value?.id === item.id) || !await canLeave()) return
+  cancelSearch()
+  search.value = appliedSearch
+  resetDetail()
+  await loadEditor(item)
+}
+async function loadNames(preferredId?: string) {
+  const request = ++namesSequence
+  const categoryId = category.value
+  resetDetail()
+  names.value = []
+  namesError.value = ''
+  namesLoading.value = true
+  try {
+    const result = await fetchProductCatalogNames({ category_id: categoryId, q: appliedSearch })
+    if (request !== namesSequence) return
     names.value = result
-    appliedSearch = query
-    selected.value = result.find(item => item.id === preferredId) ?? result[0]
-    if (selected.value) await loadProducts()
-  } catch (issue) { if (sequence === namesSequence) { names.value = []; namesError.value = productCatalogError(issue) } }
-  finally { if (sequence === namesSequence) namesLoading.value = false }
+    const first = result.find(item => item.id === preferredId) ?? result[0]
+    if (first) await loadEditor(first)
+  } catch (error) {
+    if (request === namesSequence) namesError.value = productCatalogError(error)
+  } finally { if (request === namesSequence) namesLoading.value = false }
 }
 async function initialize() {
   if (!canView.value) return
-  const sequence = ++initializationSequence
+  const request = ++initSequence
   optionsLoading.value = true
   optionsError.value = ''
   try {
     const result = await fetchProductCatalogOptions()
-    if (sequence !== initializationSequence) return
+    if (request !== initSequence) return
     options.value = result
     category.value = result.categories[0]?.id ?? ''
-    await loadNames()
-  } catch (issue) { if (sequence === initializationSequence) optionsError.value = productCatalogError(issue) }
-  finally { if (sequence === initializationSequence) optionsLoading.value = false }
+    if (category.value) await loadNames()
+  } catch (error) {
+    if (request === initSequence) optionsError.value = productCatalogError(error)
+  } finally { if (request === initSequence) optionsLoading.value = false }
 }
-function changeCategory() {
-  if (navigationLocked.value) return
+async function changeCategory(value: string) {
   cancelSearch()
+  if (value === category.value) return
+  if (!await canLeave()) { categoryControlKey.value += 1; return }
+  category.value = value
   search.value = ''
-  void loadNames()
+  appliedSearch = ''
+  await loadNames()
 }
-function applyCatalogFilters() {
-  if (navigationLocked.value || optionsLoading.value) return
-  clearTimeout(searchTimer)
-  searchTimer = undefined
-  void loadNames()
+async function applyCatalogFilters(reset = false) {
+  cancelSearch()
+  if (!await canLeave()) { search.value = appliedSearch; return }
+  if (reset) search.value = ''
+  appliedSearch = search.value
+  await loadNames()
 }
-
-function resetCatalogFilters() {
-  if (navigationLocked.value || optionsLoading.value) return
-  category.value = options.value?.categories[0]?.id ?? ''
-  changeCategory()
-}
-
 function searchNames() {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => {
-    searchTimer = undefined
-    if (!navigationLocked.value) void loadNames()
-  }, 250)
+  cancelSearch()
+  searchTimer = setTimeout(() => { void applyCatalogFilters() }, 250)
 }
-function changePage(page: number) {
-  if (navigationLocked.value || productsLoading.value || page < 1 || page > totalPages.value) return
-  currentPage.value = page
-  void loadProducts()
+async function reloadEditor() {
+  cancelSearch()
+  if (!selected.value || !await canLeave()) return
+  const item = selected.value
+  resetDetail()
+  await loadEditor(item)
 }
+async function retryNames() { if (await canLeave()) await loadNames() }
 async function startName() {
-  if (navigationLocked.value || !canAdd.value) return
-  addingName.value = true
-  newName.value = ''
-  nameCreateError.value = ''
+  cancelSearch()
+  if (!canAdd.value || !category.value || !await canLeave()) return
+  resetDetail()
+  newName.value = true
   await nextTick()
   nameInput.value?.focus()
 }
-async function saveName() {
-  if (creatingName.value || !canAdd.value) return
-  if (!newName.value.trim()) { nameCreateError.value = '请输入品名。'; return }
-  creatingName.value = true
-  nameCreateError.value = ''
-  try {
-    const result = await createProductCatalogName({ category_id: category.value, name: newName.value })
-    const savedCategory = options.value?.categories.find(item => item.id === result.data.category_id)
-    if (savedCategory) savedCategory.name_count += 1
-    addingName.value = false
-    search.value = ''
-    await loadNames(result.data.id)
-  } catch (issue) { nameCreateError.value = productCatalogError(issue) }
-  finally { creatingName.value = false }
+async function startProduct() {
+  if (!canCreateRow.value || editorDisabled.value) return
+  products.value.push({ key: createClientUuid(), product_code: '', item_number: '', specification: '', unit: '', scale: '', colors: [], materials: [], thicknesses: [] })
+  currentPage.value = totalPages.value
+  await nextTick()
+  table.value?.querySelector<HTMLElement>('[data-new-product]:last-child input')?.focus()
 }
-async function readName() {
-  if (!selected.value) return
-  const id = selected.value.id
-  nameLoading.value = true
-  try {
-    const result = await fetchProductCatalogName(id)
-    if (selected.value?.id !== id) return
-    selected.value = result.data
-    names.value = names.value.map(item => item.id === id ? result.data : item)
-    nameVersion.value = result.etag
-    nameWarning.value = result.etag ? '' : '未取得品名版本，请重新读取后再保存。'
-  } finally { nameLoading.value = false }
+function updateProduct(row: ProductCatalogDraftRow) {
+  if (!canEdit.value || editorDisabled.value) return
+  const index = products.value.findIndex(item => item.key === row.key)
+  if (index >= 0) products.value[index] = row
 }
-async function saveExistingName(value: string) {
-  if (!canChange.value || !selected.value) throw new Error('没有修改品名权限，输入内容已保留。')
-  if (!value.trim()) throw new Error('请输入品名。')
-  if (!nameVersion.value || nameWarning.value) throw new Error('请重新读取品名后再保存。')
+function removeProduct(key: string) {
+  if (!canEdit.value || editorDisabled.value) return
+  products.value = products.value.filter(item => item.key !== key)
+  currentPage.value = Math.min(currentPage.value, totalPages.value)
+}
+function validationError(index: number, message: string): never {
+  currentPage.value = Math.floor(index / 50) + 1
+  throw new Error(`第 ${index + 1} 条产品：${message}`)
+}
+function changedRows() {
+  const previous = new Map(baselineProducts.value.map(row => [row.id, row]))
+  return products.value.flatMap((draft, index) => {
+    const row = rowInput(draft)
+    const old = row.id ? previous.get(row.id) : undefined
+    if (old && JSON.stringify(row) === JSON.stringify(old)) return []
+    for (const field of productCatalogFields) {
+      if (row[field.key].length > field.maxLength && row[field.key] !== old?.[field.key]) validationError(index, `${field.label}最多 ${field.maxLength} 个字。`)
+    }
+    if (row.unit && row.unit !== old?.unit && !options.value?.units.includes(row.unit)) validationError(index, '请选择生产维护中已有的单位。')
+    for (const [key, label] of [['colors', '颜色'], ['materials', '材质'], ['thicknesses', '壁厚']] as const) {
+      if (old && JSON.stringify(row[key]) === JSON.stringify(old[key])) continue
+      row[key] = row[key].map(value => value.trim())
+      if (row[key].some(value => !value)) validationError(index, `请填写或删除空的${label}输入框。`)
+      const maxLength = key === 'thicknesses' ? 80 : 200
+      if (row[key].some(value => value.length > maxLength)) validationError(index, `${label}最多 ${maxLength} 个字。`)
+      if (new Set(row[key]).size !== row[key].length) validationError(index, `${label}不能重复。`)
+    }
+    return old && JSON.stringify(row) === JSON.stringify(old) ? [] : [row]
+  })
+}
+async function saveDraft() {
+  cancelSearch()
+  if (!canEdit.value || editorDisabled.value || !editorOpen.value) return
+  saveError.value = ''
+  if (!draftName.value.trim()) { saveError.value = '请输入品名。'; nameInput.value?.focus(); return }
+  if (draftName.value.length > 200) { saveError.value = '品名最多 200 个字。'; return }
+  if (!newName.value && (!etag.value || versionWarning.value)) {
+    saveError.value = '档案版本已变化或缺失，请重新读取后再保存。'
+    return
+  }
+  let changed: ProductCatalogEditorRow[]
+  try { changed = changedRows() } catch (error) { saveError.value = productCatalogError(error); return }
+  if (changed.some(row => !row.id) && !canAdd.value) { saveError.value = '没有新增产品权限。'; return }
+  const remaining = new Set(products.value.flatMap(row => row.id ? [row.id] : []))
+  const removed = baselineProducts.value.flatMap(row => row.id && !remaining.has(row.id) ? [row.id] : [])
+  if (!newName.value && !changed.length && !removed.length && draftName.value === baselineName.value) {
+    baseline.value = signature()
+    return
+  }
+  const creating = newName.value
+  const id = selected.value?.id
+  saving.value = true
   try {
-    const result = await updateProductCatalogName(selected.value.id, { name: value }, nameVersion.value)
-    selected.value = result.data
-    nameVersion.value = result.etag
-    nameWarning.value = result.etag ? '' : '未取得品名版本，请重新读取后再保存。'
-    names.value = names.value.map(item => item.id === result.data.id ? result.data : item)
-    products.value = products.value.map(item => ({ ...item, name: result.data.name }))
-  } catch (issue) {
-    if ([412, 428].includes(productCatalogErrorStatus(issue) ?? 0)) nameWarning.value = productCatalogError(issue)
-    throw issue
+    const result = creating
+      ? await createProductCatalogEditor({ category_id: category.value, name: draftName.value, products: changed })
+      : await saveProductCatalogEditor(id!, { name: draftName.value, products: changed, delete_product_ids: removed }, etag.value)
+    checkEditor(result, id)
+    applyEditor(result)
+    if (creating) {
+      const group = options.value?.categories.find(item => item.id === category.value)
+      if (group) group.name_count += 1
+    }
+  } catch (error) {
+    saveError.value = productCatalogError(error)
+    if ([412, 428].includes(productCatalogErrorStatus(error) ?? 0)) versionWarning.value = saveError.value
+  } finally { saving.value = false }
+}
+async function deleteName(item: ProductCatalogName) {
+  cancelSearch()
+  if (!canChange.value || navigationLocked.value) return
+  saveError.value = ''
+  deleting.value = true
+  let deleted = false
+  try {
+    const result = await fetchProductCatalogEditor(item.id)
+    checkEditor(result, item.id)
+    if (!result.etag) throw new Error('未取得品名编辑版本，无法删除，请重新读取。')
+    const dirtyWarning = selected.value?.id === item.id && hasUnsavedChanges.value ? ' 当前未保存的修改也会放弃。' : ''
+    if (!await confirmAction(`删除“${result.data.name.name}”及其全部 ${result.data.products.length} 条产品？包含所有分页。${dirtyWarning}`, '删除品名', '确认删除')) return
+    await deleteProductCatalogName(item.id, result.etag)
+    names.value = names.value.filter(name => name.id !== item.id)
+    const group = options.value?.categories.find(group => group.id === item.category_id)
+    if (group) group.name_count = Math.max(0, group.name_count - 1)
+    deleted = true
+  } catch (error) {
+    saveError.value = productCatalogError(error)
+  } finally { deleting.value = false }
+  if (deleted && selected.value?.id === item.id) {
+    resetDetail()
+    if (names.value[0]) await loadEditor(names.value[0])
   }
 }
-async function reloadName() {
-  try { await readName() }
-  catch (issue) { nameWarning.value = productCatalogError(issue) }
+function changePage(page: number) {
+  if (!navigationLocked.value && page >= 1 && page <= totalPages.value) currentPage.value = page
 }
-async function startProduct() {
-  if (!selected.value || navigationLocked.value || !canAdd.value) return
-  Object.assign(newProduct, { product_code: '', item_number: '', specification: '', unit: '', scale: '' })
-  addingProduct.value = true
-  productCreateError.value = ''
-  await nextTick()
-  draftRow.value?.querySelector('input')?.focus()
-  draftRow.value?.scrollIntoView?.({ block: 'nearest' })
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (hasUnsavedChanges.value || navigationLocked.value) { event.preventDefault(); event.returnValue = '' }
 }
-async function saveProduct() {
-  if (!selected.value || !canAdd.value || creatingProduct.value) return
-  creatingProduct.value = true
-  productCreateError.value = ''
-  try {
-    await createProductCatalog({ name_id: selected.value.id, ...newProduct })
-    addingProduct.value = false
-    selected.value = { ...selected.value, product_count: selected.value.product_count + 1 }
-    names.value = names.value.map(item => item.id === selected.value?.id ? selected.value : item)
-    currentPage.value = Math.max(1, Math.ceil((total.value + 1) / 50))
-    await loadProducts()
-  } catch (issue) { productCreateError.value = productCatalogError(issue) }
-  finally { creatingProduct.value = false }
-}
-onMounted(initialize)
-onBeforeUnmount(() => { ++namesSequence; ++productsSequence; ++initializationSequence; clearTimeout(searchTimer) })
+onBeforeRouteLeave(canLeave)
+onBeforeRouteUpdate(canLeave)
+onMounted(() => { window.addEventListener('beforeunload', beforeUnload); void initialize() })
+onBeforeUnmount(() => {
+  ++initSequence; ++namesSequence; ++detailSequence
+  cancelSearch()
+  window.removeEventListener('beforeunload', beforeUnload)
+})
+defineExpose({ canLeave })
 </script>
 
 <template>
   <section class="product-catalog-page erp-glass-list erp-glass-list--catalog" aria-label="产品管理">
-    <p v-if="!canView" class="page-message" role="alert">无权查看产品管理</p>
-    <div v-else-if="optionsError" class="page-message error-message" role="alert">{{ optionsError }} <button class="erp-list-button erp-button-motion" type="button" @click="initialize">重新加载</button></div>
+    <p v-if="!canView" class="page-message">无权查看产品管理</p>
+    <div v-else-if="optionsError" class="error-message" role="alert">{{ optionsError }} <button class="erp-list-button erp-button-motion" type="button" @click="initialize">重新加载</button></div>
     <template v-else>
       <aside v-glass-spotlight class="catalog-sidebar erp-list-filter" aria-label="产品品名">
-        <MaterialCatalogSelect v-model="category" ariaLabel="产品类别" :options="categoryOptions" :placeholder="optionsLoading ? '加载类别中…' : '暂无类别'" :disabled="optionsLoading || navigationLocked" @change="changeCategory">
-          <template #option="{ option, selected: isSelected }">
-            <span class="material-catalog-select-option-label">{{ option.label }}</span>
-            <span class="product-category-count" :data-category-count="option.value">{{ categoryNameCounts[option.value] ?? '—' }}</span>
-            <span class="product-category-check" aria-hidden="true"><Check v-if="isSelected" /></span>
-          </template>
+        <MaterialCatalogSelect :key="categoryControlKey" :model-value="category" ariaLabel="产品类别" :options="categoryOptions" :disabled="optionsLoading || navigationLocked" @change="changeCategory">
+          <template #option="{ option, selected: active }"><span class="product-name-label">{{ option.label }}</span><span class="product-category-count" :data-category-count="option.value">{{ categoryOptions.find(item => item.value === option.value)?.count ?? 0 }}</span><Check v-if="active" class="product-category-check" aria-hidden="true" /></template>
         </MaterialCatalogSelect>
-        <div class="catalog-search"><Search aria-hidden="true" /><input class="erp-list-control" v-model="search" type="search" aria-label="搜索品名" placeholder="搜索品名" :disabled="optionsLoading || navigationLocked" @input="searchNames" /></div>
-        <div class="erp-list-filter-actions"><button class="erp-list-button erp-button-motion" type="button" :disabled="optionsLoading || navigationLocked" @click="resetCatalogFilters">重置</button><button type="button" class="erp-list-button erp-button-motion erp-list-button--primary" :disabled="optionsLoading || navigationLocked" @click="applyCatalogFilters">应用筛选</button></div>
-        <button v-if="canAdd" type="button" class="erp-list-button erp-button-motion add-name" data-action="add-name" aria-label="新增品名" :disabled="!category || optionsLoading || namesLoading || navigationLocked" @click="startName"><Plus aria-hidden="true" />新增品名</button>
-        <form v-if="addingName" class="name-editor" @submit.prevent="saveName">
-          <input class="erp-list-control" ref="nameInput" v-model="newName" aria-label="新品名" placeholder="输入新品名" maxlength="200" :aria-invalid="!!nameCreateError" :disabled="creatingName || !canAdd" />
-          <ProductCatalogSaveButton type="submit" class="small-save" data-action="save-name" label="保存" ariaLabel="保存品名" :loading="creatingName" :disabled="!canAdd" />
-          <button type="button" class="erp-list-button erp-button-motion icon-button" aria-label="取消新增品名" title="取消新增品名" :disabled="creatingName" @click="addingName = false"><Close aria-hidden="true" /></button>
-          <ProductCatalogError v-if="nameCreateError" :message="nameCreateError" />
-        </form>
-        <div v-if="namesError" class="error-message" role="alert">{{ namesError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked" @click="loadNames()">重试</button></div>
+        <div class="catalog-search"><Search aria-hidden="true" /><input v-model="search" class="erp-list-control" type="search" aria-label="搜索品名" placeholder="搜索品名" :disabled="optionsLoading || navigationLocked" @input="searchNames" /></div>
+        <div class="erp-list-filter-actions">
+          <button class="erp-list-button erp-button-motion" type="button" :disabled="optionsLoading || navigationLocked" @click="applyCatalogFilters(true)">重置</button>
+          <button class="erp-list-button erp-button-motion" type="button" :disabled="optionsLoading || navigationLocked" @click="applyCatalogFilters()">应用筛选</button>
+        </div>
+        <button v-if="canAdd" class="erp-list-button erp-list-button--primary erp-button-motion add-name" type="button" data-action="add-name" aria-label="新增品名" :disabled="optionsLoading || namesLoading || navigationLocked || !category" @click="startName"><Plus aria-hidden="true" />新增品名</button>
+        <div v-if="namesError" class="error-message" role="alert">{{ namesError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked" @click="retryNames">重试</button></div>
         <nav class="product-names erp-list-catalog-nav" data-testid="product-names" aria-label="品名列表" tabindex="0" :aria-busy="namesLoading">
-          <button v-for="item in names" :key="item.id" type="button" :data-name-id="item.id" :title="item.name" :class="{ selected: selected?.id === item.id }" :aria-current="selected?.id === item.id ? 'true' : undefined" :disabled="navigationLocked || namesLoading" @click="selectName(item)">
-            <span class="product-name-label">{{ item.name }}</span>
-            <span class="product-name-count">{{ item.product_count }}</span>
-          </button>
+          <div v-for="item in names" :key="item.id" class="product-name-row">
+            <button class="name-select" type="button" :data-name-id="item.id" :title="item.name" :class="{ selected: selected?.id === item.id }" :aria-current="selected?.id === item.id ? 'true' : undefined" :disabled="navigationLocked" @click="selectName(item)">
+              <span class="product-name-label">{{ item.name }}</span><span class="product-name-count">{{ item.product_count }}</span>
+            </button>
+            <button v-if="canChange" class="erp-list-button erp-button-motion name-delete" type="button" :aria-label="`删除品名${item.name}`" title="删除整个品名" :disabled="navigationLocked || namesLoading || productsLoading" @click="deleteName(item)"><Delete aria-hidden="true" /></button>
+          </div>
           <p v-if="namesLoading" class="list-message" role="status">加载品名中…</p>
           <p v-else-if="!names.length && !optionsLoading && !namesError" class="list-message">{{ search ? '没有匹配品名，请调整搜索。' : '暂无品名' }}</p>
         </nav>
       </aside>
       <main class="catalog-detail erp-list-data" :class="{ 'catalog-detail--no-footer': totalPages <= 1 }" :data-name-id="selected?.id" :aria-busy="productsLoading">
         <header class="erp-list-heading"><h1>产品管理</h1></header>
-        <template v-if="selected">
+        <template v-if="editorOpen">
           <div class="detail-heading">
-            <h2><ProductCatalogField :key="selected.id" :value="selected.name" label="品名" :max-length="200" :readonly="!canChange" :disabled="nameLoading || rowLocked || addingProduct || !!nameWarning" :on-start="readName" :on-save="saveExistingName" @editing="active => editingName = active" /></h2>
-            <span class="product-count">{{ total }} 条产品</span>
-            <button v-if="canAdd && !addingProduct" class="erp-list-button erp-list-button--primary erp-button-motion" type="button" data-action="add-product" aria-label="新增产品" :disabled="navigationLocked || productsLoading || !!productsError" @click="startProduct"><Plus aria-hidden="true" />新增产品</button>
+            <input ref="nameInput" v-model="draftName" class="erp-list-control name-input" aria-label="品名" placeholder="输入品名" maxlength="200" :readonly="!canEdit" :disabled="editorDisabled" @keydown.enter.prevent />
+            <ProductCatalogSaveButton v-if="canEdit" type="button" data-action="save-draft" label="保存" ariaLabel="保存" :loading="saving" :disabled="editorDisabled || !!versionWarning" @click="saveDraft" />
+            <span class="product-count">{{ products.length }} 条产品</span>
+            <button v-if="canCreateRow" class="erp-list-button erp-list-button--primary erp-button-motion" type="button" data-action="add-product" aria-label="新增产品" :disabled="editorDisabled" @click="startProduct"><Plus aria-hidden="true" />新增产品</button>
           </div>
-          <div v-if="nameWarning" class="error-message" role="alert">{{ nameWarning }} <button class="erp-list-button erp-button-motion" type="button" data-action="reload-name" :disabled="nameLoading" @click="reloadName">重新读取</button></div>
-          <div v-if="productsError" class="error-message" role="alert">{{ productsError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked || productsLoading" @click="loadProducts">重试</button></div>
+          <div v-if="versionWarning" class="error-message" role="alert">{{ versionWarning }} <button class="erp-list-button erp-button-motion" type="button" data-action="reload" :disabled="navigationLocked || productsLoading" @click="reloadEditor">重新读取</button></div>
+          <div v-if="productsError" class="error-message" role="alert">{{ productsError }} <button class="erp-list-button erp-button-motion" type="button" :disabled="navigationLocked || productsLoading" @click="reloadEditor">重试</button></div>
+          <div v-if="saveError" class="error-message" role="alert">{{ saveError }}</div>
           <div class="erp-list-table-frame">
-          <div class="product-table-scroll erp-list-table-scroll" tabindex="0" aria-label="产品表格滚动区域">
-            <table class="erp-table-editor product-table erp-list-native-table" aria-label="品名下的产品">
-              <colgroup><col class="code-column" /><col class="item-column" /><col class="spec-column" /><col class="unit-column" /><col class="scale-column" /><col class="colors-column" /></colgroup>
-              <thead><tr><th v-for="field in productCatalogFields" :key="field.key" scope="col">{{ field.label }}</th><th scope="col">颜色</th></tr></thead>
-              <tbody>
-                <ProductCatalogRow v-for="product in products" :key="product.id" :product="product" :can-change="canChange" :scales="options?.scales ?? []" @updated="applyProduct" @lock="lockRow" />
-                <tr v-if="addingProduct" ref="draftRow" class="new-product-row" data-new-product>
-                  <td v-for="field in productCatalogFields" :key="field.key" :data-field="field.key">
-                    <MaterialCatalogSelect v-if="field.key === 'scale'" v-model="newProduct.scale" ariaLabel="新产品常规/定制" :options="scaleOptions" placeholder="未填写" :disabled="creatingProduct || !canAdd" />
-                    <input class="erp-list-control" v-else v-model="newProduct[field.key]" :aria-label="`新产品${field.label}`" :maxlength="field.maxLength" :placeholder="field.label" :disabled="creatingProduct || !canAdd" @keydown.enter.prevent="saveProduct" />
-                  </td>
-                  <td><div class="new-product-actions"><span class="muted">无颜色</span><ProductCatalogSaveButton type="button" class="small-save" data-action="save-product" label="保存产品" ariaLabel="保存产品" :loading="creatingProduct" :disabled="!canAdd" @click="saveProduct" /><button type="button" class="erp-list-button erp-button-motion icon-button" aria-label="取消新增产品" title="取消新增产品" :disabled="creatingProduct" @click="addingProduct = false"><Close aria-hidden="true" /></button><ProductCatalogError v-if="productCreateError" :message="productCreateError" /></div></td>
-                </tr>
-                <tr v-if="!products.length && !addingProduct"><td colspan="6" class="table-message">{{ productsLoading ? '正在读取产品…' : productsError ? '读取产品失败，请重试。' : '暂无产品，可在上方新增。' }}</td></tr>
-              </tbody>
-            </table>
+            <div ref="table" class="product-table-scroll erp-list-table-scroll" tabindex="0" aria-label="产品表格滚动区域">
+              <table class="erp-table-editor product-table erp-list-native-table" aria-label="品名下的产品">
+                <colgroup><col class="code-column" /><col class="item-column" /><col class="spec-column" /><col class="unit-column" /><col class="scale-column" /><col class="options-column" /><col class="options-column" /><col class="options-column" /><col class="actions-column" /></colgroup>
+                <thead><tr><th v-for="field in productCatalogFields" :key="field.key" scope="col">{{ field.label }}</th><th scope="col">颜色</th><th scope="col">材质</th><th scope="col">壁厚</th><th scope="col" aria-label="操作"></th></tr></thead>
+                <tbody>
+                  <ProductCatalogRow v-for="product in visibleProducts" :key="product.key" :product="product" :can-change="canEdit" :disabled="editorDisabled" :units="options?.units ?? []" :scales="options?.scales ?? []" @update="updateProduct" @remove="removeProduct(product.key)" />
+                  <tr v-if="!products.length"><td colspan="9" class="table-message">{{ productsLoading ? '正在读取产品…' : productsError ? '读取产品失败，请重试。' : '暂无产品，可在上方新增。' }}</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          </div>
-          <div v-if="totalPages > 1" class="product-pagination erp-list-footer"><span>共 {{ total }} 条 · 每页 50 条</span><div><button class="erp-list-button erp-button-motion" type="button" aria-label="上一页产品" :disabled="currentPage <= 1 || navigationLocked || productsLoading" @click="changePage(currentPage - 1)">上一页</button><span>{{ currentPage }} / {{ totalPages }}</span><button class="erp-list-button erp-button-motion" type="button" aria-label="下一页产品" :disabled="currentPage >= totalPages || navigationLocked || productsLoading" @click="changePage(currentPage + 1)">下一页</button></div></div>
+          <div v-if="totalPages > 1" class="product-pagination erp-list-footer"><span>共 {{ products.length }} 条 · 每页 50 条</span><div><button class="erp-list-button erp-button-motion" type="button" aria-label="上一页产品" :disabled="currentPage <= 1 || navigationLocked || productsLoading" @click="changePage(currentPage - 1)">上一页</button><span>{{ currentPage }} / {{ totalPages }}</span><button class="erp-list-button erp-button-motion" type="button" aria-label="下一页产品" :disabled="currentPage >= totalPages || navigationLocked || productsLoading" @click="changePage(currentPage + 1)">下一页</button></div></div>
         </template>
-        <p v-else class="page-message">{{ optionsLoading || namesLoading ? '加载中…' : '选择或新增品名，维护产品。' }}</p>
+        <template v-else><div v-if="saveError" class="error-message" role="alert">{{ saveError }}</div><p class="page-message">{{ optionsLoading || namesLoading ? '加载中…' : '选择或新增品名，维护产品。' }}</p></template>
       </main>
     </template>
   </section>
@@ -336,27 +418,26 @@ onBeforeUnmount(() => { ++namesSequence; ++productsSequence; ++initializationSeq
 .product-names::-webkit-scrollbar { display: none; }
 .catalog-detail { overflow: hidden; }
 .catalog-detail.catalog-detail--no-footer { padding-bottom: var(--erp-space-3); }
-h2 { min-width: 0; margin: 0; font-size: 17px; line-height: 24px; font-weight: 600; }
-.page-message, .list-message, .list-empty { margin: 0; padding: 12px 0; color: var(--erp-color-text-secondary); }
+.page-message, .list-message { margin: 0; padding: 12px 0; color: var(--erp-color-text-secondary); }
 .error-message { margin: 4px 0; color: var(--erp-color-danger); overflow-wrap: anywhere; }
 .product-catalog-page svg { width: 16px; height: 16px; flex-shrink: 0; }
-.name-editor, .new-product-actions { position: relative; display: flex; align-items: center; gap: 6px; }
-.name-editor input { flex: 1; min-width: 0; }
-.icon-button { width: 32px; padding: 0; flex-shrink: 0; }
-.product-names > button { position: relative; display: flex; gap: 8px; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-.product-names > button.selected, .product-names > button.selected:hover { background: color-mix(in srgb, var(--erp-menu-selected-background) 88%, var(--erp-menu-accent)); color: var(--erp-menu-accent); }
-.product-names > button.selected::before { content: ''; position: absolute; inset: 6px auto 6px 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--erp-menu-accent); }
+.product-name-row { position: relative; }
+.product-name-row .name-select { position: relative; display: flex; gap: 8px; width: 100%; padding-right: 32px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.product-name-row .name-select.selected, .product-name-row .name-select.selected:hover { background: color-mix(in srgb, var(--erp-menu-selected-background) 88%, var(--erp-menu-accent)); color: var(--erp-menu-accent); }
+.product-name-row .name-select.selected::before { content: ''; position: absolute; inset: 6px auto 6px 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--erp-menu-accent); }
 .product-name-label { flex: 1; min-width: 0; }
 .product-name-count, .product-category-count { flex-shrink: 0; white-space: nowrap; font-weight: 400; color: var(--erp-color-text-secondary); }
 .product-category-check { display: flex; flex: 0 0 16px; width: 16px; height: 16px; }
-.detail-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.detail-heading h2 { max-width: calc(100% - 110px); }
+.name-delete { position: absolute; top: calc(50% - 14px); right: 2px; width: 28px; height: 28px; min-height: 0; padding: 0; opacity: 0; pointer-events: none; }
+.product-name-row:hover .name-delete, .product-name-row:focus-within .name-delete, .name-delete:focus-visible { opacity: 1; pointer-events: auto; }
+.detail-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+.name-input { width: min(280px, 100%); min-width: 0; }
 .detail-heading > .product-count, .detail-heading > .erp-list-button { flex-shrink: 0; }
-.product-count, .muted { color: var(--erp-color-text-secondary); }
-.product-table { min-width: 1420px; }
-.code-column, .item-column { width: 190px; }.spec-column { width: 280px; }.unit-column { width: 180px; }.scale-column { width: 220px; }.colors-column { width: 360px; }
+.product-count { color: var(--erp-color-text-secondary); }
+.product-table { min-width: 1836px; }
+.code-column, .item-column { width: 190px; }.spec-column { width: 280px; }.unit-column { width: 180px; }.scale-column { width: 180px; }.options-column { width: 260px; }.actions-column { width: 36px; }
 .product-table :deep(td) { vertical-align: top; overflow-wrap: anywhere; }
-.new-product-row td { background: var(--erp-table-selected); }
 .product-pagination > div { display: flex; align-items: center; gap: 10px; }
 .table-message { text-align: center; vertical-align: middle; }
+@media (hover: none) { .name-delete { opacity: 1; pointer-events: auto; } }
 </style>

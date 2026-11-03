@@ -1,3 +1,4 @@
+import type { ProductSelectionInput, ProductSelectionSnapshot } from './productCatalog'
 import type { PageMeta } from './referenceData'
 import type { SalesOrder, SalesOrderBatchLine, SalesOrderDeliveryBatch, SalesOrderLine, SalesOrderListItem } from './salesOrder'
 
@@ -56,8 +57,17 @@ export interface ProductionTaskOptions {
   detail_template: ProductionTaskDetailTemplate[]
 }
 
-export type ProductionTaskFilterOptions = Pick<ProductionTaskOptions,
-  'order_sources' | 'delivery_methods' | 'statuses' | 'customers' | 'employees' | 'salespeople' | 'products'>
+export interface ProductionTaskFilterOptions {
+  salespeople: Array<Pick<EmployeeOption, 'id' | 'display_name'>>
+}
+
+export interface ProductionTaskAdvancedFilterOptions {
+  employees: Array<Pick<EmployeeOption, 'id' | 'display_name'>>
+  products: Array<Pick<ProductOption, 'id' | 'product_code' | 'item_number' | 'product_name' | 'specification'>>
+  product_catalogs: Array<Pick<ProductOption, 'id' | 'product_code' | 'item_number' | 'product_name' | 'specification'>>
+  order_sources: ValueOption<ProductionOrderSource>[]
+  delivery_methods: ValueOption<ProductionDeliveryMethod>[]
+}
 
 export interface ProductionTaskDetailInput {
   client_key: string
@@ -75,6 +85,8 @@ export interface ProductionTaskDetail extends ProductionTaskDetailInput {
 }
 
 export interface ProductionTaskProductInput {
+  product_catalog_id?: string | null
+  product_selection?: ProductSelectionInput | null
   replace_primary_image?: boolean
   product_category_id?: string | null
   client_key: string
@@ -86,7 +98,7 @@ export interface ProductionTaskProductInput {
   customer_color?: string
   material?: string
   quantity: string
-  unit_id: string
+  unit_id: string | null
   currency_id: string
   unit_price: string
   exchange_rate_record_id?: string | null
@@ -106,6 +118,8 @@ export interface ProductionTaskProductUpdateDraft {
 export interface ProductionDeliveryBatchInput { quantity: string; delivery_date: string; note: string }
 
 export interface ProductionTaskInput {
+  import_object_id?: string
+  result_revision?: number
   planned_start_date?: string | null
   planned_end_date?: string | null
   production_priority?: 'URGENT' | 'HIGH' | 'NORMAL' | 'LOW'
@@ -163,6 +177,8 @@ export interface ProductionTaskPatchInput {
 }
 
 export interface ProductionTaskProduct {
+  product_catalog_id?: string | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   max_production_quantity?: number | null
   deletion_blocked_reason?: string
   product_category_id?: string | null
@@ -189,7 +205,7 @@ export interface ProductionTaskProduct {
   color_name: string
   color_code: string
   quantity: number
-  unit_id: string
+  unit_id: string | null
   unit_code: string
   unit_name: string
   currency_id: string
@@ -214,7 +230,11 @@ export interface ProductionTaskProductImage {
   size_bytes: number
 }
 
+export type ProductionTaskHoldAction = 'pause' | 'resume'
+
 export interface ProductionTask {
+  allowed_permissions?: string[]
+  allowed_update_fields?: string[]
   id: string
   task_number: string
   contract_number: string
@@ -314,6 +334,23 @@ export interface ProductionTask {
   }>
 }
 
+export interface ProductionTaskListProduct extends Pick<ProductionTaskProduct,
+  'id' | 'customer_product_name' | 'product_name' | 'item_number'
+  | 'specification_display' | 'customer_specification' | 'specification' | 'material'
+  | 'customer_color' | 'color_name' | 'color_code' | 'quantity'
+  | 'unit_id' | 'unit_name' | 'unit_code' | 'local_total_amount'> {
+  product_selection_snapshot?: Pick<ProductSelectionSnapshot, 'unit_name'> | null
+}
+
+export interface ProductionTaskListItem extends Pick<ProductionTask,
+  'id' | 'task_number' | 'source_sales_order_number' | 'delivery_date'
+  | 'status' | 'status_display' | 'bom_status' | 'bom_status_display'
+  | 'purchase_status' | 'purchase_status_display' | 'allowed_permissions' | 'sales_order_id'> {
+  salesperson: Pick<EmployeeOption, 'display_name'>
+  followers: Array<Pick<EmployeeOption, 'display_name'>>
+  products: ProductionTaskListProduct[]
+}
+
 export interface ProductionExchangeRate {
   record_id: string | null
   base_currency_code: string
@@ -392,6 +429,7 @@ export interface ProductionTaskQuery {
   contract_number?: string
   customer_id?: string
   product_id?: string
+  product_catalog_id?: string
   salesperson_id?: string
   follower_id?: string
   delivery_from?: string
@@ -401,7 +439,7 @@ export interface ProductionTaskQuery {
   ordering?: string
 }
 
-export interface PaginatedProductionTasks { data: ProductionTask[]; meta: PageMeta }
+export interface PaginatedProductionTasks { data: ProductionTaskListItem[]; meta: PageMeta }
 export interface VersionedProductionTask { data: ProductionTask; etag: string }
 export interface ReservedContractNumber { contract_number: string; token: string }
 
@@ -409,7 +447,7 @@ export interface ReservedContractNumber { contract_number: string; token: string
 export type ProductionSalesOrderSourceSummary = Pick<SalesOrderListItem,
   'id' | 'order_number' | 'currency_code' | 'total_amount' | 'total_amount_cny' | 'status' | 'line_count' | 'delivery_batch_count' | 'next_delivery_date' | 'has_remaining_production_capacity'> & { product_names?: string[] }
 export type ProductionSalesOrderSourceLine = Pick<SalesOrderLine,
-  'id' | 'product_id' | 'product_image_id' | 'customer_product_name_snapshot' | 'customer_specification_snapshot'
+  'id' | 'product_id' | 'product_catalog_id' | 'product_selection_snapshot' | 'product_image_id' | 'customer_product_name_snapshot' | 'customer_specification_snapshot'
   | 'customer_color_snapshot' | 'product_color_id' | 'product_number_snapshot' | 'product_code_snapshot' | 'product_name_snapshot'
   | 'specification_snapshot' | 'specification_display' | 'item_number_snapshot' | 'material_snapshot' | 'quality_requirements' | 'packaging_requirements'
   | 'unit_price_cny' | 'line_total_cny'> & { unit_id?: string; unit_name?: string; unit_price?: string; line_total?: string }

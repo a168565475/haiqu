@@ -16,6 +16,8 @@ from apps.files.models import FileScanStatus
 from apps.inquiries.models import InquiryStatus
 from apps.quotations.models import QuotationOutcomeStatus
 from apps.customers.models import CustomerEntityAddress
+from apps.product_catalog.selection import is_product_entry_snapshot, resolve_product_selection
+from apps.reference_data.models import ProductionUnit
 
 from .models import (
     CollaborationEventStatus,
@@ -164,6 +166,8 @@ def sales_order_snapshot(order):
                 "line_number": line.line_number,
                 "source_quotation_line_id": str(line.source_quotation_line_id) if line.source_quotation_line_id else None,
                 "product_id": str(line.product_id) if line.product_id else None,
+                "product_catalog_id": str(line.product_catalog_id) if line.product_catalog_id else None,
+                "product_selection_snapshot": line.product_selection_snapshot,
                 "customer_product_name": line.customer_product_name_snapshot,
                 "customer_specification": line.customer_specification_snapshot,
                 "customer_color": line.customer_color_snapshot,
@@ -254,7 +258,7 @@ def _lock_and_validate_quote_capacity(quote_version, lines, *, exclude_order_id=
             )
 
 
-def _line_identity(values, product, quote_line):
+def _line_identity(values, product, quote_line, *, existing=None):
     """根据产品主档或客户文字输入生成订单行当前快照。
 
     产品主档存在时，编号、规格和单位始终以主档为准；未建档时保留客户输入，
@@ -272,6 +276,32 @@ def _line_identity(values, product, quote_line):
     require_non_finance_receipt_file(image_input or getattr(quote_line, "product_image", None))
     material_input = values.pop("material", None)
     quotation_color = str(getattr(quote_line, "color_snapshot", None) or "").strip()
+    source = existing if existing is not None else quote_line
+    catalog_id = values.pop("product_catalog_id", getattr(source, "product_catalog_id", None))
+    selection = values.pop("product_selection", None)
+    if catalog_id or selection is not None or is_product_entry_snapshot(getattr(source, "product_selection_snapshot", None)):
+        if product is not None:
+            raise ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+        if getattr(source, "product_catalog_id", None) != catalog_id and getattr(quote_line, "product_catalog_id", None) == catalog_id:
+            source = quote_line
+        catalog, snapshot = resolve_product_selection(
+            catalog_id, selection,
+            existing_catalog_id=getattr(source, "product_catalog_id", None),
+            existing_snapshot=getattr(source, "product_selection_snapshot", None),
+        )
+        return {
+            "product_catalog": catalog, "product_selection_snapshot": snapshot,
+            "product": None, "product_category": None, "product_color": None,
+            "product_unit": ProductionUnit.objects.get(pk=snapshot["unit_id"]) if snapshot["unit_id"] else None,
+            "product_image": image_input or getattr(source, "product_image", None),
+            "product_number_snapshot": "", "product_code_snapshot": snapshot["product_code"],
+            "item_number_snapshot": snapshot["item_number"], "product_name_snapshot": snapshot["name"],
+            "specification_snapshot": snapshot["specification"], "material_snapshot": snapshot["material"],
+            "unit_code_snapshot": snapshot["unit_code"],
+            "customer_product_name_snapshot": customer_name_input if customer_name_input is not None else snapshot["name"],
+            "customer_specification_snapshot": customer_spec_input if customer_spec_input is not None else snapshot["specification"],
+            "customer_color_snapshot": customer_color_input if customer_color_input is not None else snapshot["color_name"],
+        }
 
     if product is not None:
         inherited_quote = quote_line is not None and getattr(quote_line, "product_id", None) == getattr(product, "pk", None)
@@ -332,6 +362,7 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
     from apps.files.reference_guards import require_non_finance_receipt_file
     for business_file in evidence_files:
         require_non_finance_receipt_file(business_file)
+    existing_lines = {str(line.pk): line for line in order.lines.select_related("product_image").all()}
     SalesOrderDeliveryBatchLine.objects.filter(delivery_batch__sales_order=order).delete()
     SalesOrderDeliveryBatch.objects.filter(sales_order=order).delete()
     SalesOrderPriceException.objects.filter(sales_order_line__sales_order=order).delete()
@@ -346,7 +377,7 @@ def _replace_children(order, lines, batches, evidence_files, actor_employee):
         client_key = values.pop("client_key")
         product = values.pop("product", None)
         quote_line = values.pop("source_quotation_line", None)
-        identity = _line_identity(values, product, quote_line)
+        identity = _line_identity(values, product, quote_line, existing=existing_lines.get(str(client_key)))
         quote_price = _quote_unit_price(quote_line, order.source_quotation_version) if quote_line else None
         unit_price = Decimal(values["unit_price"])
         quantity = Decimal(values["quantity"])
@@ -660,6 +691,10 @@ def _update_confirmed_children_in_place(order, lines, batches):
         line = existing_lines[str(values.pop("client_key"))]
         product = values.pop("product", line.product)
         quote_line = values.pop("source_quotation_line", line.source_quotation_line)
+        catalog_id = values.pop("product_catalog_id", line.product_catalog_id)
+        selection = values.pop("product_selection", None)
+        if catalog_id != line.product_catalog_id or selection is not None:
+            raise ValidationError({"lines": "订单确认后不能更换产品或产品属性；新增产品请另建销售订单。"})
         if getattr(product, "pk", None) != line.product_id or getattr(quote_line, "pk", None) != line.source_quotation_line_id:
             raise ValidationError({"lines": "订单确认后不能更换产品或报价来源行；新增产品请另建销售订单。"})
         identity_inputs = {

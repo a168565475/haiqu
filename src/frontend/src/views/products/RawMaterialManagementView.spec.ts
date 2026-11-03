@@ -9,12 +9,13 @@ const api = vi.hoisted(() => ({
   fetchMaterialCatalogOptions: vi.fn(), fetchMaterialCatalogs: vi.fn(), fetchMaterialCatalog: vi.fn(),
   createMaterialCatalog: vi.fn(), updateMaterialCatalog: vi.fn(), addMaterialAttributeValue: vi.fn(),
   deleteMaterialAttributeValue: vi.fn(), addMaterialAllowedUnit: vi.fn(), deleteMaterialAllowedUnit: vi.fn(),
+  updateMaterialAttributeValue: vi.fn(), updateMaterialAllowedUnit: vi.fn(),
 }))
 vi.mock('@/api/materialCatalog', async (original) => ({ ...await original<object>(), ...api }))
 
 const fields = [
   { key: 'material', label: '材质', kind: 'text' }, { key: 'color', label: '颜色', kind: 'text' },
-  { key: 'shape', label: '截面形状', kind: 'shape' }, { key: 'section_size', label: '截面尺寸', kind: 'dimension' },
+  { key: 'shape', label: '截面形状', kind: 'shape' }, { key: 'section_size', label: '规格', kind: 'dimension' },
   { key: 'thickness', label: '厚度', kind: 'text' }, { key: 'length', label: '长度', kind: 'text' },
   { key: 'unit', label: '可用单位', kind: 'unit' },
 ]
@@ -32,10 +33,11 @@ const definitions = {
     ] },
   ],
   spray_fields: [{ key: 'color', label: '颜色', kind: 'text' }, { key: 'length', label: '长度', kind: 'text' }, { key: 'unit', label: '可用单位', kind: 'unit' }],
+  warehouses: [{ id: 'wh-base', warehouse_number: 'RAW', warehouse_name: '原料仓', warehouse_type: 'MATERIAL' }, { id: 'wh-semi', warehouse_number: 'SEMI', warehouse_name: '半成品仓', warehouse_type: 'SEMI_FINISHED' }],
   units: [{ id: 'unit-root', unit_name: '根' }, { id: 'unit-kg', unit_name: '公斤' }],
 }
 function detail(id = 'a', name = '铁管') {
-  return { id, name, category_key: 'TUBE', template_key: 'TUBE', spray_enabled: false, updated_at: '2026-10-16T00:00:00Z',
+  return { id, name, base_warehouse_id: null as string | null, semi_warehouse_id: null as string | null, category_key: 'TUBE', template_key: 'TUBE', spray_enabled: false, updated_at: '2026-10-16T00:00:00Z',
     values: [
       { id: `${id}-color`, scope: 'BASE', field_key: 'color', value: '无颜色', parent_id: null },
       { id: `${id}-round`, scope: 'BASE', field_key: 'shape', value: '圆管', parent_id: null },
@@ -56,7 +58,7 @@ async function choose(label: string, value: string) {
 }
 async function draft(field: string, value: string, scope = 'BASE', parent = '') {
   await row(field, scope, parent).get('[data-action="add"]').trigger('click')
-  await row(field, scope, parent).get('input').setValue(value)
+  await row(field, scope, parent).findComponent(MaterialCatalogSelect).setValue(value)
 }
 
 beforeEach(() => {
@@ -69,12 +71,71 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers() })
 
 describe('独立原料管理', () => {
-  it('用后端定义展示独立属性和形状尺寸，不生成属性组合', async () => {
+  it('点击已有属性原位编辑，保存使用原ID和主档版本，不新增或删除', async () => {
+    await open()
+    await row('color').get('[data-action="edit"]').trigger('click')
+    expect(row('color').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('无颜色')
+    await row('color').findComponent(MaterialCatalogSelect).setValue('  黑色  ')
+    await row('color').get('input').trigger('blur')
+    expect(api.updateMaterialAttributeValue).not.toHaveBeenCalled()
+    const saved = detail(); saved.values[0]!.value = '黑色'
+    api.updateMaterialAttributeValue.mockResolvedValue({ data: saved, etag: '"a-2"' })
+    await row('color').get('form').trigger('submit'); await flushPromises()
+    expect(api.updateMaterialAttributeValue).toHaveBeenCalledWith('a', 'a-color', { value: '黑色' }, '"a-1"')
+    expect(row('color').text()).toContain('黑色')
+    expect(row('color').find('input').exists()).toBe(false)
+    expect(api.addMaterialAttributeValue).not.toHaveBeenCalled()
+    expect(api.deleteMaterialAttributeValue).not.toHaveBeenCalled()
+  })
+
+  it('编辑失败保留原框输入，取消不写库，删除不进入编辑', async () => {
+    await open()
+    await row('color').get('[data-action="edit"]').trigger('click')
+    await row('color').findComponent(MaterialCatalogSelect).setValue('黑色')
+    api.updateMaterialAttributeValue.mockRejectedValue({ response: { status: 400, data: { error: { field_errors: { value: ['该选项已存在'] } } } } })
+    await row('color').get('[data-action="save"]').trigger('click'); await flushPromises()
+    expect(row('color').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('黑色')
+    expect(row('color').get('[role="alert"]').text()).toContain('该选项已存在')
+    await row('color').get('[aria-label="取消修改"]').trigger('click')
+    expect(row('color').text()).toContain('无颜色')
+    expect(api.updateMaterialAttributeValue).toHaveBeenCalledTimes(1)
+    api.deleteMaterialAttributeValue.mockResolvedValue({ data: { ...detail(), values: detail().values.slice(1) }, etag: '"a-2"' })
+    await row('color').get('[data-action="delete"]').trigger('click'); await flushPromises()
+    expect(api.deleteMaterialAttributeValue).toHaveBeenCalledWith('a', 'a-color', '"a-1"')
+    expect(row('color').find('input').exists()).toBe(false)
+  })
+
+  it('已有可用单位以文字回填并原位更换', async () => {
+    await open()
+    await row('unit').get('[data-action="edit"]').trigger('click')
+    const select = row('unit').findComponent(MaterialCatalogSelect)
+    expect(select.props('modelValue')).toBe('根')
+    await choose('修改可用单位', '公斤')
+    api.updateMaterialAllowedUnit.mockResolvedValue({ data: { ...detail(), units: [{ id: 'a-unit', scope: 'BASE', unit_id: 'unit-kg', unit_name: '公斤' }] }, etag: '"a-2"' })
+    await row('unit').get('[data-action="save"]').trigger('click'); await flushPromises()
+    expect(api.updateMaterialAllowedUnit).toHaveBeenCalledWith('a', 'a-unit', { unit_name: '公斤' }, '"a-1"')
+    expect(row('unit').text()).toContain('公斤')
+  })
+
+  it('形状标签可编辑并保持该形状下的规格', async () => {
+    await open()
+    const dimension = row('section_size', 'BASE', 'a-round')
+    await dimension.get('.shape-label [data-action="edit"]').trigger('click')
+    await dimension.findComponent(MaterialCatalogSelect).setValue('椭圆管')
+    const saved = detail(); saved.values[1]!.value = '椭圆管'
+    api.updateMaterialAttributeValue.mockResolvedValue({ data: saved, etag: '"a-2"' })
+    await dimension.get('[data-action="save"]').trigger('click'); await flushPromises()
+    expect(api.updateMaterialAttributeValue).toHaveBeenCalledWith('a', 'a-round', { value: '椭圆管' }, '"a-1"')
+    expect(dimension.text()).toContain('椭圆管')
+    expect(dimension.text()).toContain('Φ16')
+  })
+
+  it('用后端定义展示独立属性和形状规格，不生成属性组合', async () => {
     await open()
     expect(wrapper.get('[data-testid="material-names"]').text()).toContain('铁管')
     expect(row('section_size', 'BASE', 'a-round').text()).toContain('Φ16')
     expect(row('section_size', 'BASE', 'a-square').text()).not.toContain('Φ16')
-    expect(wrapper.get('.section-labels').text()).toContain('截面形状截面尺寸')
+    expect(wrapper.get('.section-labels').text()).toContain('截面形状规格')
     expect(row('shape').find('.option-chip').exists()).toBe(false)
     expect(wrapper.findAll('[data-field]')).toHaveLength(8)
     expect(wrapper.find('table').exists()).toBe(false)
@@ -98,14 +159,14 @@ describe('独立原料管理', () => {
     await open(); await draft('material', '   ')
     await row('material').get('[data-action="save"]').trigger('click'); await flushPromises()
     expect(api.addMaterialAttributeValue).not.toHaveBeenCalled()
-    await row('material').get('input').setValue('Q235')
+    await row('material').findComponent(MaterialCatalogSelect).setValue('Q235')
     api.addMaterialAttributeValue.mockRejectedValue({ response: { status: 400, data: { error: { field_errors: { value: ['该选项已存在'] } } } } })
     await row('material').get('[data-action="save"]').trigger('click'); await flushPromises()
-    expect((row('material').get('input').element as HTMLInputElement).value).toBe('Q235')
+    expect(row('material').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('Q235')
     expect(row('material').get('[role="alert"]').text()).toContain('该选项已存在')
   })
 
-  it('尺寸新增携带对应形状父项，删除只移除服务器确认的选项', async () => {
+  it('规格新增携带对应形状父项，删除只移除服务器确认的选项', async () => {
     await open(); await draft('section_size', '20×20', 'BASE', 'a-square')
     const updated = detail(); updated.values.push({ id: 'size-new', scope: 'BASE', field_key: 'section_size', value: '20×20', parent_id: 'a-square' })
     api.addMaterialAttributeValue.mockResolvedValue({ data: updated, etag: '"a-2"' })
@@ -117,7 +178,7 @@ describe('独立原料管理', () => {
     expect(row('section_size', 'BASE', 'a-square').text()).not.toContain('20×20')
   })
 
-  it('喷塑在同档启用，只呈现喷塑定义并从现有单位字典选取', async () => {
+  it('半成品在同档启用，单位只显示本品名候选且可输入', async () => {
     await open()
     const enabled = { ...detail(), spray_enabled: true }
     api.updateMaterialCatalog.mockResolvedValue({ data: enabled, etag: '"a-2"' })
@@ -125,10 +186,10 @@ describe('独立原料管理', () => {
     expect(api.updateMaterialCatalog).toHaveBeenCalledWith('a', { spray_enabled: true }, '"a-1"')
     expect(wrapper.findAll('[data-field^="SPRAY:"]')).toHaveLength(3)
     await row('unit', 'SPRAY').get('[data-action="add"]').trigger('click')
-    await choose('添加可用单位', 'unit-kg')
+    await choose('添加可用单位', '公斤')
     api.addMaterialAllowedUnit.mockResolvedValue({ data: { ...enabled, units: [...enabled.units, { id: 'spray-unit', scope: 'SPRAY', unit_id: 'unit-kg', unit_name: '公斤' }] }, etag: '"a-3"' })
     await row('unit', 'SPRAY').get('[data-action="save"]').trigger('click'); await flushPromises()
-    expect(api.addMaterialAllowedUnit).toHaveBeenCalledWith('a', { scope: 'SPRAY', unit_id: 'unit-kg' }, '"a-2"')
+    expect(api.addMaterialAllowedUnit).toHaveBeenCalledWith('a', { scope: 'SPRAY', unit_name: '公斤' }, '"a-2"')
     expect(row('unit', 'SPRAY').text()).toContain('公斤')
     expect(api.createMaterialCatalog).not.toHaveBeenCalled()
   })
@@ -164,7 +225,7 @@ describe('独立原料管理', () => {
     await row('unit').get('[aria-label="取消添加"]').trigger('click')
 
     await draft('flow_unit', '箱')
-    expect(row('flow_unit').findComponent(MaterialCatalogSelect).exists()).toBe(false)
+    expect(row('flow_unit').findComponent(MaterialCatalogSelect).props('options')).toEqual([{ value: '套', label: '套' }])
     const saved = { ...hardware, values: [...hardware.values, { id: 'flow-new', scope: 'BASE', field_key: 'flow_unit', value: '箱', parent_id: null }] }
     api.addMaterialAttributeValue.mockResolvedValue({ data: saved, etag: '"hardware-2"' })
     await row('flow_unit').get('[data-action="save"]').trigger('click'); await flushPromises()
@@ -350,7 +411,7 @@ describe('独立原料管理', () => {
     expect(api.fetchMaterialCatalogs).toHaveBeenCalledTimes(1)
     expect((wrapper.get('[aria-label="搜索品名"]').element as HTMLInputElement).value).toBe('')
     expect(wrapper.get('[data-catalog-id="a"]').attributes('aria-current')).toBe('true')
-    if (failed) expect((row('material').get('input').element as HTMLInputElement).value).toBe('Q235')
+    if (failed) expect(row('material').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('Q235')
   })
 
   it('分类列表尚未返回时不允许打开上一分类残留的品名', async () => {
@@ -363,9 +424,9 @@ describe('独立原料管理', () => {
     expect(wrapper.get('[data-testid="material-names"]').text()).toContain('暂无品名')
   })
 
-  it('删除有尺寸的形状被拒绝时保留形状与尺寸并显示原因', async () => {
+  it('删除有规格的形状被拒绝时保留形状与规格并显示原因', async () => {
     await open()
-    api.deleteMaterialAttributeValue.mockRejectedValue({ response: { status: 400, data: { error: { message: '请先删除该形状下的尺寸。' } } } })
+    api.deleteMaterialAttributeValue.mockRejectedValue({ response: { status: 400, data: { error: { message: '请先删除该形状下的规格。' } } } })
     await row('section_size', 'BASE', 'a-round').get('[aria-label="删除圆管"]').trigger('click'); await flushPromises()
     expect(row('section_size', 'BASE', 'a-round').get('[role="alert"]').text()).toContain('请先删除')
     expect(row('section_size', 'BASE', 'a-round').text()).toContain('Φ16')
@@ -380,8 +441,8 @@ describe('独立原料管理', () => {
     await row('length').get('[data-action="save"]').trigger('click')
     first.reject({ response: { status: 412 } }); await flushPromises()
     expect(api.addMaterialAttributeValue).toHaveBeenCalledTimes(1)
-    expect((row('material').get('input').element as HTMLInputElement).value).toBe('Q235')
-    expect((row('length').get('input').element as HTMLInputElement).value).toBe('6000')
+    expect(row('material').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('Q235')
+    expect(row('length').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('6000')
   })
 
   it('版本冲突不重试覆盖，重新读取后保留失败草稿供手动保存', async () => {
@@ -391,7 +452,7 @@ describe('独立原料管理', () => {
     expect(wrapper.get('[data-testid="version-warning"]').text()).toContain('重新读取')
     api.fetchMaterialCatalog.mockResolvedValue({ data: detail(), etag: '"a-latest"' })
     await wrapper.get('[data-testid="reload-detail"]').trigger('click'); await flushPromises()
-    expect((row('material').get('input').element as HTMLInputElement).value).toBe('Q235')
+    expect(row('material').findComponent(MaterialCatalogSelect).props('modelValue')).toBe('Q235')
     expect(api.addMaterialAttributeValue).toHaveBeenCalledTimes(1)
   })
 
@@ -422,5 +483,53 @@ describe('独立原料管理', () => {
     expect(wrapper.find('[data-action="delete"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="create-name"]').exists()).toBe(false)
     expect(wrapper.get('.shape-heading').isVisible()).toBe(false)
+  })
+})
+
+
+describe('U1独立单位与仓库', () => {
+  it('未开喷塑仍可维护管材半成品仓库，直接裁片只写半成品仓库', async () => {
+    await open()
+    expect(wrapper.findAllComponents(MaterialCatalogSelect).some(item => item.props('ariaLabel') === '半成品仓库')).toBe(true)
+    wrapper.unmount()
+    api.fetchMaterialCatalogOptions.mockResolvedValue({ ...definitions, categories: [{ key: 'FABRIC_SEMI', label: '裁片', templates: [{ key: 'FABRIC_SEMI', label: '裁片', supports_spray: false, fields: [{ key: 'color', label: '颜色', kind: 'text' }] }] }] })
+    const cutting = { ...detail(), category_key: 'FABRIC_SEMI', template_key: 'FABRIC_SEMI', name: '裁片' }
+    api.fetchMaterialCatalog.mockResolvedValue({ data: cutting, etag: '"cut-1"' })
+    await open()
+    expect(wrapper.findAllComponents(MaterialCatalogSelect).some(item => item.props('ariaLabel') === '原料仓库')).toBe(false)
+    await choose('半成品仓库', 'wh-semi')
+    api.updateMaterialCatalog.mockResolvedValue({ data: { ...cutting, semi_warehouse_id: 'wh-semi' }, etag: '"cut-2"' })
+    await wrapper.get('.warehouse-row button').trigger('click'); await flushPromises()
+    expect(api.updateMaterialCatalog).toHaveBeenLastCalledWith('a', { semi_warehouse_id: 'wh-semi' }, '"cut-1"')
+  })
+
+  it('单位候选只来自当前品名，输入新文字并保留失败草稿', async () => {
+    await open()
+    await row('unit').get('[data-action="add"]').trigger('click')
+    const select = row('unit').findComponent(MaterialCatalogSelect)
+    expect(select.props('options')).toEqual([{ value: '根', label: '根' }])
+    expect(select.props('allowCreate')).toBe(true)
+    await select.get('input').setValue('公斤')
+    api.addMaterialAllowedUnit.mockRejectedValue(new Error('单位保存失败'))
+    await row('unit').get('[data-action="save"]').trigger('click'); await flushPromises()
+    expect(api.addMaterialAllowedUnit).toHaveBeenCalledWith('a', { scope: 'BASE', unit_name: '公斤' }, '"a-1"')
+    expect(select.props('modelValue')).toBe('公斤')
+    expect(row('unit').text()).toContain('单位保存失败')
+  })
+
+  it('两类仓库独立保存，失败保留选择，关闭半成品不清除仓库', async () => {
+    await open()
+    await choose('原料仓库', 'wh-base')
+    api.updateMaterialCatalog.mockRejectedValueOnce(new Error('仓库保存失败'))
+    await wrapper.get('.warehouse-row button').trigger('click'); await flushPromises()
+    expect(wrapper.findAllComponents(MaterialCatalogSelect).find(item => item.props('ariaLabel') === '原料仓库')!.props('modelValue')).toBe('wh-base')
+    expect(wrapper.text()).toContain('仓库保存失败')
+    api.updateMaterialCatalog.mockResolvedValue({ data: { ...detail(), base_warehouse_id: 'wh-base' }, etag: '"a-2"' })
+    await wrapper.get('.warehouse-row button').trigger('click'); await flushPromises()
+    expect(api.updateMaterialCatalog).toHaveBeenLastCalledWith('a', { base_warehouse_id: 'wh-base' }, '"a-1"')
+    api.updateMaterialCatalog.mockResolvedValue({ data: { ...detail(), spray_enabled: true, base_warehouse_id: 'wh-base', semi_warehouse_id: 'wh-semi' }, etag: '"a-3"' })
+    await wrapper.get('[data-testid="spray-enabled"]').setValue(true); await flushPromises()
+    expect(wrapper.find('[aria-label="半成品属性"]').exists()).toBe(true)
+    expect(wrapper.findAllComponents(MaterialCatalogSelect).find(item => item.props('ariaLabel') === '半成品仓库')!.props('modelValue')).toBe('wh-semi')
   })
 })

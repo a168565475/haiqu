@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionFailed
 from apps.inventory.public_stock_identity import build_semi_finished_identity
+from apps.inventory.processing_material_snapshots import freeze_processing_materials
 from apps.inventory.stock_services import InventoryStockValidationError
 from apps.inventory.tube_processing_quantities import whole_pieces, TubeQuantityError
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine, OrderMaterialRequirement
@@ -29,7 +30,7 @@ def _json(value):
     return json.loads(json.dumps(value, cls=DjangoJSONEncoder))
 
 
-def _build_context(*, schedule_product, source_kind, craft, zone=None, exclude_order_id=None):
+def _build_context(*, schedule_product, source_kind, craft, zone=None, exclude_order_id=None, plan_mode=False):
     from apps.inventory.sewing_processing_services import sewing_component_limits
     # 锁等待期间订单或计划可能已变更，不沿用调用方预先加载的关联对象。
     schedule_product = ProductionScheduleProduct.objects.select_related('product_line', 'schedule').get(pk=schedule_product.pk)
@@ -48,9 +49,9 @@ def _build_context(*, schedule_product, source_kind, craft, zone=None, exclude_o
         section__title='裁剪明细').select_related('section__bom', 'fabric_source_line__section')) if bom else []
     if any(count != 1 for count in Counter(line.component_identity for line in lines).values()):
         blockers.append('BOM裁片部位编号重复，请先修正。')
-    basis = sewing_component_limits(product, exclude_tube_order_id=exclude_order_id) if source_kind == 'SEWING' else None
+    basis = sewing_component_limits(product, exclude_tube_order_id=exclude_order_id) if source_kind == 'SEWING' and not plan_mode else None
     allocations = TubeOutsourcingLine.objects.filter(order__product_line=product,
-        order__source_kind__in=CUTTING_SOURCES).exclude(order__status='CANCELLED')
+        order__source_kind__in=CUTTING_SOURCES, order__is_plan=False).exclude(order__status='CANCELLED')
     allocated = {str(row['component_identity']): row['total'] for row in
         allocations.values('component_identity').annotate(total=Sum('quantity'))}
     own_allocated = {str(row['component_identity']): row['total'] for row in
@@ -81,15 +82,26 @@ def _build_context(*, schedule_product, source_kind, craft, zone=None, exclude_o
             attributes = input_identity['identity_snapshot']
             total_allocated = allocated.get(key, 0)
             # 历史冲突包含当前待发单；只有本次可用量扣减时才排除本单预留。
-            if total_allocated > required:
+            if total_allocated > required and not plan_mode:
                 row['blockers'].append(f'历史裁片加工占用{total_allocated}套超过订单需求{required}套，请核对历史占用。')
-            remaining = max(Decimal(required) - total_allocated + own_allocated.get(key, 0), Decimal(0))
+            remaining = Decimal('99999999999999') if plan_mode else max(Decimal(required) - total_allocated + own_allocated.get(key, 0), Decimal(0))
             row.update(order_required=str(required), pieces_per_set=attributes['pieces_per_set'],
                 material=attributes['material'], raw_color=attributes['color'],
                 fabric_material=attributes['fabric']['material'], fabric_specification=attributes['fabric']['specification'],
                 fabric_color=attributes['color'], completed_craft_name=sewing.name,
                 snapshot={'public_output_identity': _json(output_identity), 'shared_remaining': str(remaining)})
-            if source_kind == 'SEWING':
+            if line.material_catalog_id:
+                pair = freeze_processing_materials(
+                    input_snapshot=input_identity['identity_snapshot']['material_selection_snapshot'],
+                    output_snapshot=output_identity['identity_snapshot']['material_selection_snapshot'],
+                    input_catalog_id=line.material_catalog_id, output_catalog_id=line.material_catalog_id,
+                    completed_craft=craft, semi_kind='CUTTING')
+                row['snapshot'].update(pair)
+                row.update(pair)
+                row['input_identity'] = _json(input_identity)
+            if source_kind == 'SEWING' and plan_mode:
+                row['max_quantity'] = '99999999999999'
+            elif source_kind == 'SEWING':
                 component = basis['components'].get(key)
                 if not component or not component['basis_ready']:
                     row['blockers'].extend(component['blockers'] if component else ['缺少该部位有效车缝报工依据。'])
@@ -119,9 +131,9 @@ def _build_context(*, schedule_product, source_kind, craft, zone=None, exclude_o
             zone_quantity = sum((value.quantity for value in stock['balances'][pool] if value.zone_id == zone.pk), Decimal(0))
             zone_pending = stock['tube_reserved_by_zone'].get((pool, str(zone.pk)), Decimal(0))
             all_zone_pending = all_reservations['tube_reserved_by_zone'].get((pool, str(zone.pk)), Decimal(0))
-            if all_zone_pending > zone_quantity:
+            if all_zone_pending > zone_quantity and not plan_mode:
                 row['blockers'].append(f'历史待发预留{all_zone_pending}套超过来源库区现存{zone_quantity}套，请核对库存及预留。')
-            if all_reservations['pending_stock'][pool] > stock['stock'][pool]:
+            if all_reservations['pending_stock'][pool] > stock['stock'][pool] and not plan_mode:
                 row['blockers'].append(f'历史待领及待发预留{all_reservations["pending_stock"][pool]}套超过同类裁片现存'
                     f'{stock["stock"][pool]}套，请核对库存及预留。')
             available = max(min(zone_quantity - zone_pending, stock['stock'][pool] - stock['pending_stock'][pool]), Decimal(0))
@@ -146,7 +158,7 @@ def cutting_source_context(**kwargs):
 
 
 def prepare_cutting_source(*, schedule_product, source_kind, craft, zone, requested, expected_revision,
-                           exclude_order_id=None, require_revision=True, additional_stock_lines=()):
+                           exclude_order_id=None, require_revision=True, additional_stock_lines=(), plan_mode=False):
     if not connection.in_atomic_block:
         raise RuntimeError('裁片预留必须在同一事务内保存。')
     product = lock_source_product(schedule_product.product_line_id, source_kind)
@@ -155,7 +167,7 @@ def prepare_cutting_source(*, schedule_product, source_kind, craft, zone, reques
     lock_bom_line_material_identities(lines)
     list(OrderMaterialRequirement.objects.filter(production_task_id=product.production_task_id)
         .order_by('pk').select_for_update(of=('self',)))
-    args = dict(schedule_product=schedule_product, source_kind=source_kind, craft=craft, zone=zone, exclude_order_id=exclude_order_id)
+    args = dict(schedule_product=schedule_product, source_kind=source_kind, craft=craft, zone=zone, exclude_order_id=exclude_order_id, plan_mode=plan_mode)
     context, issue, stock_lines = _build_context(**args)
     if stock_lines or additional_stock_lines:
         _lock_public_issue_stock(issue, [*stock_lines, *additional_stock_lines])
@@ -191,7 +203,7 @@ def prepare_cutting_source(*, schedule_product, source_kind, craft, zone, reques
             available[pool] = Decimal(row['snapshot']['pool_available'])
     if any(quantity > available[pool] for pool, quantity in totals.items()):
         raise ValidationError({'lines': '多个部位共用同一种裁片库存，合计外发套数超过可用库存。'})
-    if source_kind == 'SEWING':
+    if source_kind == 'SEWING' and not plan_mode:
         from apps.inventory.sewing_processing_services import assert_sewing_quantity_available
         assert_sewing_quantity_available(product_line_id=product.pk, requested=normalized,
             expected_revision=context['sewing_basis_revision'], exclude_tube_order_id=exclude_order_id)

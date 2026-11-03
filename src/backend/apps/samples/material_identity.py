@@ -7,6 +7,11 @@ CATEGORIES = {'hardware': '五金', 'plastic': '塑料件', 'accessory': '辅料
 
 
 def sample_material_snapshot(procurement, row):
+    if row.get('material_catalog_id'):
+        from .catalog_materials import sample_saved_selection
+        return {'schema_version': 1, 'source': 'SAMPLE', 'material_catalog_id': str(row['material_catalog_id']),
+            'material_selection_snapshot': sample_saved_selection(row),
+            'sample_procurement_request_id': str(procurement.pk), 'sample_line_key': str(row['key'])}
     try:
         material = RawMaterialInformation.objects.select_related('unit').filter(
             pk=row.get('rawMaterialId'), item_type='MATERIAL', archived_at__isnull=True,

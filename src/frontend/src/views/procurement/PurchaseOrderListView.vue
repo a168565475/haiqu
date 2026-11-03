@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { MoreFilled, Plus, Search, Filter } from '@element-plus/icons-vue'
 import BuildingOne from '@icon-park/vue-next/es/icons/BuildingOne'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   completePurchaseOrder,
@@ -16,6 +16,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import PurchaseOrderCompleteDialog from '@/components/procurement/PurchaseOrderCompleteDialog.vue'
 import SupplierAmountPopover from '@/components/procurement/SupplierAmountPopover.vue'
+import PurchaseGroupList from '@/components/procurement/PurchaseGroupList.vue'
 import type {
   PurchaseOrderListItem,
   PurchaseOrderFilterOptions,
@@ -25,6 +26,8 @@ import type {
 } from '@/types/purchaseOrder'
 
 const router = useRouter()
+const route = useRoute()
+const showingGroups = computed(() => route.query?.view !== 'orders')
 const authStore = useAuthStore()
 const isSuperuser = computed(() => authStore.user?.is_superuser === true)
 const can = (permission: string) => isSuperuser.value || authStore.hasPermission(permission)
@@ -336,7 +339,9 @@ async function submitCompletion(remark: string): Promise<void> {
 async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及归档文件也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
+      row.purchase_group_id
+        ? `确定删除采购批次 ${row.order_number} 吗？系统将校验关联采购表及下游记录；删除后可在原总单中追加新批次。`
+        : `确定删除采购订单 ${row.order_number} 吗？已生成的供应商采购表、历史版本及归档文件也会一并删除。删除后无法恢复，但可以从原生产订单重新创建。`,
       '删除采购订单',
       {
         type: 'warning',
@@ -353,7 +358,9 @@ async function removeOrder(row: PurchaseOrderListItem): Promise<void> {
 
   deletingId.value = row.id
   try {
-    await deletePurchaseOrder(row.id)
+    const snapshot = row.purchase_group_id ? await fetchVersionedPurchaseOrder(row.id) : null
+    if (snapshot && !snapshot.etag) throw new Error('采购单版本信息缺失，请刷新后重试。')
+    await deletePurchaseOrder(row.id, snapshot?.etag)
     ElMessage.success('采购订单及关联供应商采购表已删除。')
     await reloadAll()
   } catch (error) {
@@ -375,10 +382,10 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
     <section v-glass-spotlight class="erp-list-filter">
     <header class="page-heading erp-list-heading">
       <div class="page-heading__title">
-        <h1>采购订单</h1>
-        <span v-if="canView" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
+        <h1>{{ showingGroups ? '采购总单' : '采购订单' }}</h1>
+        <span v-if="canView && !showingGroups" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
       </div>
-      <div v-if="!canView && canViewSuppliers" class="page-heading__actions">
+      <div v-if="canViewSuppliers && (!canView || showingGroups)" class="page-heading__actions">
         <ElButton class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
           <BuildingOne theme="outline" size="18" :stroke-width="3" aria-hidden="true" />
           <span>供应商管理</span>
@@ -386,7 +393,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
       </div>
     </header>
 
-      <section v-if="canView" class="filter-section" aria-label="采购订单筛选">
+      <section v-if="canView && !showingGroups" class="filter-section" aria-label="采购订单筛选">
         <form class="filter-row erp-list-filters" @submit.prevent="search">
           <ElInput v-model="filters.keyword" class="keyword-filter" clearable aria-label="搜索采购订单"
             placeholder="搜索采购单、来源单等" title="支持采购单、生产单、销售单、打样单、客户、供应商或物料名称" @keydown.enter="handleSearchEnter" @clear="search">
@@ -419,6 +426,7 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
       <p>请联系管理员开通“采购订单查看”权限后重试。</p>
     </div>
 
+    <PurchaseGroupList v-else-if="showingGroups" :can-add="canAdd" />
     <template v-else>
       <ElAlert v-if="listError" class="load-error" type="error" :title="listError" :closable="false" show-icon>
         <ElButton link @click="loadList">重新加载</ElButton>

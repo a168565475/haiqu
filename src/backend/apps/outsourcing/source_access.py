@@ -93,6 +93,8 @@ def scoped_tube_orders(queryset, request, permission, legacy_queryset):
             return queryset
         if scope == 'CRAFT':
             allowed |= Q(craft_id__in=source.get('resource_ids', []))
+        elif scope == 'FOLLOWED' and permission == 'outsourcing.view_outsourcingorder':
+            allowed |= Q(schedule_product__schedule__production_task__followers=request.employee)
         elif scope == 'STOCK':
             allowed |= Q(source_kind__in=STOCK_SOURCES)
         elif scope == 'WORKSHOP':
@@ -117,6 +119,8 @@ def scoped_regular_orders(queryset, request, permission, legacy_queryset):
             return queryset
         if scope == 'CRAFT':
             allowed |= Q(craft_id__in=source.get('resource_ids', []))
+        elif scope == 'FOLLOWED' and permission == 'outsourcing.view_outsourcingorder':
+            allowed |= Q(schedule__production_task__followers=request.employee)
         elif scope == 'STOCK':
             allowed |= Q(metal_processing_original_handoffs__isnull=True)
         elif scope == 'WORKSHOP':

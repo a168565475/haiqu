@@ -9,6 +9,7 @@ from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
 from apps.reference_data.models import (
     ProductCategory,
     ProductColor,
@@ -30,6 +31,7 @@ class SampleFormDetailSerializer(serializers.Serializer):
     product_color_id = serializers.PrimaryKeyRelatedField(
         source="product_color",
         queryset=ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False, allow_null=True,
     )
     color_code = serializers.CharField(max_length=100, required=False, allow_blank=True, trim_whitespace=True)
     sample_quantity = serializers.IntegerField(min_value=1)
@@ -63,6 +65,8 @@ class SampleProductSamplingDetailSerializer(serializers.Serializer):
 
 
 class SampleFormProductSerializer(serializers.Serializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, allow_null=True)
     id = serializers.UUIDField(required=False)
     client_key = serializers.RegexField(r"^[A-Za-z0-9_-]{1,64}$")
     source_inquiry_item_id = serializers.UUIDField(required=False, allow_null=True)
@@ -75,6 +79,7 @@ class SampleFormProductSerializer(serializers.Serializer):
     )
     category_id = serializers.PrimaryKeyRelatedField(
         source="category",
+        required=False, allow_null=True,
         queryset=ProductCategory.objects.filter(
             item_type=ProductItemType.FINISHED,
             status=ReferenceStatus.ACTIVE,
@@ -100,6 +105,11 @@ class SampleFormProductSerializer(serializers.Serializer):
     )
     details = SampleFormDetailSerializer(many=True, min_length=1, max_length=200)
     sampling_details = SampleProductSamplingDetailSerializer(many=True, required=False, default=list, max_length=100)
+
+    def validate(self, attrs):
+        if (attrs.get('product_catalog_id') or (attrs.get('product_selection') or {}).get('draft')) and attrs.get('product'):
+            raise serializers.ValidationError({'product_catalog_id': '新旧产品不能同时选择。'})
+        return attrs
 
 
 class SampleRequestFormSerializer(serializers.Serializer):
@@ -237,6 +247,8 @@ class SampleProductSamplingDetailReadSerializer(serializers.Serializer):
 
 
 class SampleFormProductReadSerializer(serializers.Serializer):
+    product_catalog_id = serializers.UUIDField(allow_null=True)
+    product_selection_snapshot = serializers.JSONField()
     id = serializers.UUIDField()
     line_number = serializers.IntegerField()
     source_inquiry_item_id = serializers.UUIDField(allow_null=True)

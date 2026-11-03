@@ -1,3 +1,5 @@
+import type { ProductSelectionSnapshot } from './productCatalog'
+import type { MaterialSelectionInput, MaterialSelectionSnapshot } from './materialCatalog'
 import type { PageMeta } from './referenceData'
 import type { RawMaterialInput } from './rawMaterial'
 
@@ -33,6 +35,10 @@ export interface BomSectionSummary {
 }
 
 export interface BomLine {
+  material_quantity?: string | null
+  material_catalog_id?: string | null
+  material_selection_snapshot?: MaterialSelectionSnapshot
+  manual_tube_metrics?: boolean
   cutting_material_original?: string | null
   cutting_pieces_per_set?: number | null
   fabric_meters_per_piece?: string | null
@@ -149,6 +155,8 @@ export interface Bom {
   product_name_snapshot: string
   specification_snapshot: string
   material_snapshot?: string
+  product_catalog_id?: string | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_master_id?: string | null
   product_category_id?: string | null
   product_unit_id?: string | null
@@ -208,7 +216,31 @@ export interface BomDetail extends Bom {
   product_information?: import('./product').ProductInformation | null
 }
 
+export interface TubeCalculationInput {
+  tube_shape: string
+  tube_diameter: string
+  tube_thickness: string
+  length_value: string
+  tube_cut_piece_count?: string
+}
+
+export interface TubeCalculationPreview {
+  formula_version: string
+  coating_unit_area_sqm: string
+  purchase_unit_weight_kg: string
+  long_material_unit_weight_kg: string
+}
+
 export interface BomLineInput {
+  material_quantity?: string | null
+  material_catalog_id?: string | null
+  material_selection_snapshot?: MaterialSelectionSnapshot
+  material_selection?: MaterialSelectionInput
+  manual_tube_metrics?: boolean
+  recalculate_tube_metrics?: boolean
+  expected_tube_formula_version?: string
+  /** 编辑器预览状态，不作为服务端公式或结果的权威来源。 */
+  tube_calculation_preview?: TubeCalculationPreview
   pending_raw_material?: RawMaterialInput
   client_key?: string
   fabric_source_client_key?: string | null
@@ -327,6 +359,7 @@ export interface BomQuery {
   q?: string
   status?: BomStatus | ''
   product_category_id?: string
+  product_catalog_category_id?: string
   updated_after?: string
   updated_before?: string
 }
@@ -503,6 +536,8 @@ export interface BomProductionTaskProduct {
   task_currency_code: string
   task_status: string
   task_status_display: string
+  product_catalog_id?: string | null
+  product_selection_snapshot?: ProductSelectionSnapshot | null
   product_id: string | null
   product_number: string
   product_code: string
@@ -517,7 +552,7 @@ export interface BomProductionTaskProduct {
   existing_bom_count: number
 }
 
-export type BomFilterOptions = Pick<BomOptions, 'product_categories'>
+export type BomFilterOptions = Pick<BomOptions, 'product_categories' | 'product_catalog_categories'>
 
 export interface BomOptions {
   production_task_products: BomProductionTaskProduct[]
@@ -528,6 +563,7 @@ export interface BomOptions {
   detail_template: import('./productionTask').ProductionTaskDetailTemplate[]
   history_boms: Bom[]
   product_categories: Array<{ id: string; category_name: string }>
+  product_catalog_categories?: Array<{ id: string; category_name: string }>
   creation_methods: Array<{ value: BomCreationMethod; label: string }>
   configured_field_labels: string[]
   updated_date_presets: Array<{ value: string; label: string }>

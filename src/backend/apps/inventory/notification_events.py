@@ -14,9 +14,9 @@ INVENTORY_EVENTS = {"SEMI_FINISHED_RECEIPT_SUBMITTED", "INTERNAL_SEMI_RECEIPT_CO
 
 def inventory_event_submitter_id(code, obj):
     if code in {"SEMI_FINISHED_RECEIPT_SUBMITTED", "INTERNAL_SEMI_RECEIPT_CONFIRMED"}:
-        return str(obj.actor_employee_id)
+        return str(getattr(obj, 'submitted_by_employee_id', None) or obj.actor_employee_id)
     if code in {"ASSEMBLY_FINISHED_RECEIPT_SUBMITTED", "ASSEMBLY_FINISHED_RECEIPT_CONFIRMED"}:
-        return str(obj.received_by_employee_id)
+        return str(getattr(obj, 'submitted_by_employee_id', None) or obj.received_by_employee_id)
     return None
 
 
@@ -57,7 +57,7 @@ def current_inventory_object(code, identifier, version=None):
                        or (code.endswith("CONFIRMED") and status != "CONFIRMED")):
             return None
         if code == "INTERNAL_SEMI_RECEIPT_CONFIRMED" and (not obj.lines.exists() or obj.lines.exclude(
-            stock_movement__direction="IN", stock_movement__balance__stock_kind="SEMI",
+            stock_movement__direction="IN", stock_movement__balance__stock_kind__in=["SEMI", "CATALOG_SEMI"],
             stock_movement__source_type="INTERNAL_SEMI_RECEIPT", stock_movement__source_id=obj.pk,
         ).exists()):
             return None
@@ -80,6 +80,7 @@ def current_inventory_object(code, identifier, version=None):
 def _register(code, obj, actor, document_no, occurred_at, **facts):
     from apps.wecom.notification_services import register_business_event
     return register_business_event(event_code=code, idempotency_key=f"{code}:{obj.pk}",
+        actor_employee=actor,
         object_type=obj._meta.label, object_id=obj.pk, object_version=inventory_event_version(code, obj),
         context={"document_no": document_no, "operator": actor.display_name,
             "occurred_at": occurred_at.isoformat(), "status": "已入库" if code != "FINISHED_GOODS_OUTBOUND_CONFIRMED" else "已出库",
@@ -88,8 +89,8 @@ def _register(code, obj, actor, document_no, occurred_at, **facts):
 
 def _confirmation_facts(receipt, actor, occurred_at, *, submitter_id=None, confirmed_by=None, confirmed_at=None):
     """统一登记提交人及仓库确认事实，兼容当前直接确认和后续待确认单据。"""
-    original_submitter = submitter_id or getattr(receipt, "actor_employee_id", None) or getattr(receipt, "received_by_employee_id", None)
-    submitter = getattr(receipt, "actor_employee", None)
+    original_submitter = submitter_id or getattr(receipt, 'submitted_by_employee_id', None) or getattr(receipt, "actor_employee_id", None) or getattr(receipt, "received_by_employee_id", None)
+    submitter = getattr(receipt, 'submitted_by_employee', None) or getattr(receipt, "actor_employee", None)
     if submitter is None and getattr(receipt, "received_by_employee_id", None):
         submitter = getattr(receipt, "received_by_employee", None)
     confirmer = actor

@@ -291,6 +291,7 @@ class MaterialInbound(TimeStampedModel):
     stock_mode = models.CharField(max_length=12, choices=[("LEGACY", "原有库存"), ("PUBLIC_V2", "公共库存")], default="LEGACY")
     inbound_number = models.CharField(max_length=50, unique=True, validators=[uppercase_code_validator])
     client_request_id = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    manual_request_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     purchase_order = models.ForeignKey(
         "procurement.PurchaseOrder",
         null=True,
@@ -346,6 +347,8 @@ class MaterialMeasurementKind(models.TextChoices):
 
 
 class MaterialInboundLine(TimeStampedModel):
+    material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True, on_delete=models.PROTECT, related_name="inbound_lines")
+    material_selection_snapshot = models.JSONField(default=dict, blank=True)
     measurement_kind = models.CharField(max_length=10, choices=MaterialMeasurementKind.choices, default=MaterialMeasurementKind.OTHER)
     raw_bar_length_m = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     received_bar_count = models.PositiveBigIntegerField(null=True, blank=True)
@@ -422,7 +425,7 @@ class MaterialInboundLine(TimeStampedModel):
         ordering = ["inbound", "id"]
         constraints = [
             models.CheckConstraint(
-                condition=Q(purchase_order_line__isnull=False) | Q(raw_material_information__isnull=False),
+                condition=Q(purchase_order_line__isnull=False) | Q(raw_material_information__isnull=False) | Q(material_catalog__isnull=False),
                 name="inv_mat_line_source_valid",
             ),
             models.CheckConstraint(
@@ -444,13 +447,14 @@ class MaterialInboundLine(TimeStampedModel):
             models.CheckConstraint(
                 condition=(Q(measurement_kind="OTHER", raw_bar_length_m__isnull=True, received_bar_count__isnull=True,
                              accepted_bar_count__isnull=True, return_bar_count__isnull=True)
-                    | Q(measurement_kind="PIPE", raw_material_information__isnull=False, raw_bar_length_m__isnull=False,
+                    | ((Q(raw_material_information__isnull=False) | Q(material_catalog__isnull=False))
+                      & Q(measurement_kind="PIPE", raw_bar_length_m__isnull=False,
                         raw_bar_length_m__gt=0, received_bar_count__isnull=False, received_bar_count__gt=0,
                         accepted_bar_count__isnull=False, return_bar_count__isnull=False,
                         received_bar_count=F("accepted_bar_count") + F("return_bar_count"),
                         received_quantity=F("received_bar_count") * F("raw_bar_length_m"),
                         accepted_quantity=F("accepted_bar_count") * F("raw_bar_length_m"),
-                        return_quantity=F("return_bar_count") * F("raw_bar_length_m"))),
+                        return_quantity=F("return_bar_count") * F("raw_bar_length_m")))),
                 name="inv_pipe_inbound_shape_valid",
             ),
         ]
@@ -729,11 +733,15 @@ class SemiFinishedStockMovement(TimeStampedModel):
 class PublicStockKind(models.TextChoices):
     RAW_PIPE = "RAW_PIPE", "公共原料管材"
     SEMI = "SEMI", "公共半成品"
+    CATALOG_RAW = "CATALOG_RAW", "目录原材料"
+    CATALOG_SEMI = "CATALOG_SEMI", "目录半成品"
 
 
 class PublicStockBalance(TimeStampedModel):
     """第 3 步新增底层；尚未接入旧业务入口，不与旧余额相加。"""
 
+    material_catalog = models.ForeignKey("material_catalog.MaterialCatalog", null=True, blank=True,
+                                         on_delete=models.PROTECT, related_name="public_stock_balances")
     stock_kind = models.CharField(max_length=12, choices=PublicStockKind.choices)
     identity_key = models.CharField(max_length=64)
     identity_snapshot = models.JSONField()
@@ -761,7 +769,7 @@ class PublicStockBalance(TimeStampedModel):
                                    name="inv_pub_balance_kind_valid"),
             models.CheckConstraint(condition=Q(quality__in=MaterialStockQuality.values),
                                    name="inv_pub_balance_quality"),
-            models.CheckConstraint(condition=Q(quantity__gte=0) & Q(quantity=Floor(F("quantity"))),
+            models.CheckConstraint(condition=Q(quantity__gte=0) & (Q(stock_kind__in=["CATALOG_RAW", "CATALOG_SEMI"]) | Q(quantity=Floor(F("quantity")))),
                                    name="inv_pub_balance_whole_qty"),
             models.CheckConstraint(condition=Q(version__gt=0), name="inv_pub_balance_version"),
             models.CheckConstraint(
@@ -770,7 +778,13 @@ class PublicStockBalance(TimeStampedModel):
                              meter_quantity__isnull=False, meter_quantity__gte=0,
                              meter_quantity=F("quantity") * F("raw_bar_length_m"))
                            | Q(stock_kind="SEMI", raw_material__isnull=True,
-                               raw_bar_length_m__isnull=True, meter_quantity__isnull=True)),
+                               raw_bar_length_m__isnull=True, meter_quantity__isnull=True)
+                           | Q(stock_kind="CATALOG_RAW", material_catalog__isnull=False, raw_material__isnull=True,
+                               raw_bar_length_m__isnull=False, raw_bar_length_m__gt=0, quantity=Floor(F("quantity")),
+                               meter_quantity__isnull=False, meter_quantity__gte=0,
+                               meter_quantity=F("quantity") * F("raw_bar_length_m"))
+                           | Q(stock_kind__in=["CATALOG_RAW", "CATALOG_SEMI"], material_catalog__isnull=False,
+                               raw_material__isnull=True, raw_bar_length_m__isnull=True, meter_quantity__isnull=True)),
                 name="inv_pub_balance_shape_valid",
             ),
         ]
@@ -783,6 +797,7 @@ class PublicStockBalance(TimeStampedModel):
 class PublicStockMovement(TimeStampedModel):
     """保留来源单据和领用订单，不以来源批次分割公共余额。"""
 
+    stock_kind_snapshot = models.CharField(max_length=12, blank=True, default="")
     balance = models.ForeignKey(PublicStockBalance, on_delete=models.PROTECT, related_name="movements")
     direction = models.CharField(max_length=10, choices=MaterialStockDirection.choices)
     quantity = models.DecimalField(max_digits=18, decimal_places=4)
@@ -813,10 +828,10 @@ class PublicStockMovement(TimeStampedModel):
                                     name="inv_pub_movement_source_uniq"),
             models.CheckConstraint(condition=Q(direction__in=MaterialStockDirection.values),
                                    name="inv_pub_movement_direction"),
-            models.CheckConstraint(condition=Q(quantity__gt=0) & Q(quantity=Floor(F("quantity")))
-                                   & Q(before_quantity__gte=0) & Q(after_quantity__gte=0)
-                                   & Q(before_quantity=Floor(F("before_quantity")))
-                                   & Q(after_quantity=Floor(F("after_quantity"))),
+            models.CheckConstraint(condition=Q(quantity__gt=0) & Q(before_quantity__gte=0) & Q(after_quantity__gte=0)
+                                   & (Q(stock_kind_snapshot__in=["CATALOG_RAW", "CATALOG_SEMI"])
+                                      | (Q(quantity=Floor(F("quantity"))) & Q(before_quantity=Floor(F("before_quantity")))
+                                         & Q(after_quantity=Floor(F("after_quantity"))))),
                                    name="inv_pub_movement_whole_qty"),
             models.CheckConstraint(
                 condition=(Q(direction="IN", after_quantity=F("before_quantity") + F("quantity"))

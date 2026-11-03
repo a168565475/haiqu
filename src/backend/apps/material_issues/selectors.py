@@ -7,14 +7,17 @@ from .models import MaterialIssue, MaterialIssuePublicStockAllocation
 
 def accessible_material_issues(request, permission=None):
     queryset = MaterialIssue.objects.all()
-    if request.user.is_superuser or (permission is None and request.user.has_perm("material_issues.view_all_materialissue")):
-        return queryset
     from apps.access_control.resource_scopes import enforcing, current_permission, resource_ids
+    from apps.access_control.role_policy import filter_task_scope
     code = permission or current_permission(request, 'material_issues.view_materialissue')
+    if request.user.is_superuser or (code == 'material_issues.view_materialissue'
+                                   and request.user.has_perm("material_issues.view_all_materialissue")):
+        return queryset
     if enforcing(request, code):
         from apps.access_control.resource_scopes import has_legacy_permission
         ids = resource_ids(request, code, 'WORKSHOP', include_legacy=False)
         selected = queryset if ids is None else queryset.filter(workshop_id__in=ids)
+        selected = selected.distinct() | filter_task_scope(request, queryset, code).distinct()
         legacy = queryset.filter(Q(production_task_id__in=legacy_accessible_production_tasks(request).values('id')) |
             Q(production_task__isnull=True, created_by_employee=request.employee))
         return selected.distinct() | legacy.distinct() if has_legacy_permission(request, code) else selected

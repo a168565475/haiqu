@@ -119,7 +119,7 @@ function applyScope() {
 }
 let effectiveRequest = 0
 const form = reactive({code:'', name:'', description:'', username:'', password:'', employeeId:'', managerId:'', departmentId:'', roleIds:[] as string[], memberIds:[] as string[]})
-const scopeNames: Record<string,string> = {OWN:'本人',TEAM:'所管团队',ALL:'全部',MODULE:'按模块',WORKSHOP:'指定车间',CRAFT:'指定工艺',STOCK:'库存来源'}
+const scopeNames: Record<string,string> = {OWN:'本人',TEAM:'所管团队',ALL:'全部',MODULE:'按模块',WORKSHOP:'指定车间',CRAFT:'指定工艺',STOCK:'库存来源',FOLLOWED:'本人跟单任务'}
 const operationColumns = [{key:'view',label:'查看'},{key:'add',label:'新增'},{key:'change',label:'编辑'},{key:'delete',label:'删除'},{key:'submit',label:'提交'},{key:'approve',label:'审批'}]
 const catalogByCode = computed(() => Object.fromEntries(catalog.value.map(c => [c.code,c])))
 const normalize = (rows: Grant[]) => JSON.stringify([...rows].sort((a,b) => (a.permission+a.scope).localeCompare(b.permission+b.scope)))

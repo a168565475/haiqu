@@ -30,6 +30,37 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
+it('委外总单入库按本次实收展示支或套，不推算批次少回', async () => {
+  const detail: SemiReceiptRecord = { ...record, source: 'EXTERNAL', source_detail: { source_type: 'TUBE_OUTSOURCING_RETURN', is_plan: true, source_number: 'WF-总单', receipt_number: 'RK-批次', received_quantity: '200', output_unit: '套' } }
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
+  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  try {
+    await flushPromises(); await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    expect(wrapper.text()).toContain('委外总单入库')
+    expect(wrapper.text()).toContain('WF-总单')
+    expect(wrapper.text()).toContain('本次实收200 套')
+    expect(wrapper.text()).not.toContain('少回支数')
+    expect(wrapper.text()).not.toContain('实发支数')
+  } finally { wrapper.unmount() }
+})
+
+it.each(['SEWING', 'PUBLIC_CUTTING'])('非总单裁片回货 %s 沿保存单位展示数量', async sourceKind => {
+  const detail: SemiReceiptRecord = { ...record, source: 'EXTERNAL', unit: sourceKind === 'SEWING' ? '支' : '套', source_detail: {
+    source_type: 'TUBE_OUTSOURCING_RETURN', is_plan: false, source_kind_label: sourceKind,
+    dispatched_quantity: '120', received_quantity: '100', shortage_quantity: '20', output_unit: sourceKind === 'SEWING' ? '套' : undefined,
+  } }
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
+  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  try {
+    await flushPromises(); await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    const summary = wrapper.get('.receipt-detail-progress').text()
+    expect(summary).toContain('实发数量120 套')
+    expect(summary).toContain('实收数量100 套')
+    expect(summary).toContain('少回数量20 套')
+    expect(summary).not.toContain('支')
+  } finally { wrapper.unmount() }
+})
+
 describe('半成品入库记录原料投入展示', () => {
   it.each([
     [null, '不核算'],

@@ -1,11 +1,12 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import InquiryProductDialog from './InquiryProductDialog.vue'
-import type { InquiryItem, InquiryProductCandidate } from '@/types/inquiry'
+import type { InquiryItem } from '@/types/inquiry'
+import ProductCatalogSelection from '@/components/productCatalog/ProductCatalogSelection.vue'
 
 const api = vi.hoisted(() => ({ selection: vi.fn() }))
+vi.mock('@/api/productCatalog', () => ({ fetchProductCatalogSelectionOptions: api.selection, productCatalogError: (error: Error) => error.message }))
 vi.mock('@/api/inquiries', () => ({ fetchInquiryProductSelectionOptions: api.selection, inquiryProductImageUrl: (id: string) => `/api/v1/inquiry-items/${id}/product-image/` }))
-const first: InquiryProductCandidate = { id: 'p1', category_id: 'c1', category_name: '成品', product_name: '导演椅', specification: '50X60', unit_id: 'u1', unit_code: 'PCS', unit_name: '件', product_number: 'P1', product_code: 'C1', item_number: 'I1' }
 const item = (overrides: Partial<InquiryItem> = {}): InquiryItem => ({ line_number: 1, product_description: '', specification: '', color: '亚黑', material: '铝', quantity: '8', unit_code: 'PCS', target_unit_price: '20', target_currency_code: 'USD', expected_date: null, product_match_status: 'PENDING', notes: '', ...overrides })
 const control = { props: ['modelValue', 'disabled'], emits: ['update:modelValue', 'change'], template: '<input :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" @change="$emit(\'change\', $event.target.value)"/>' }
 const selectControl = { ...control, inheritAttrs: false, template: '<div><input v-bind="$attrs" :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" @change="$emit(\'change\', $event.target.value)"/><slot name="label"/></div>' }
@@ -13,7 +14,8 @@ function open(value = item(), units = [{ id: 'u1', unit_code: 'PCS', unit_name: 
   return mount(InquiryProductDialog, { props: { modelValue: true, item: value, categories: [{ id: 'c1', category_name: '成品' }], units, colors: [], currencies: [], canUpload: true }, slots, global: { stubs: { AppWindowDialog: { template: '<section><slot/><slot name="footer"/></section>' }, ElInput: control, ElSelect: selectControl, ElDatePicker: control, ElOption: true, ElImage: true, ElIcon: { template: '<span><slot/></span>' }, ElButton: { template: '<button><slot/></button>' } } } })
 }
 const button = (wrapper: ReturnType<typeof open>, label: string) => wrapper.findAll('button').find(row => row.text() === label)!
-beforeEach(() => { vi.clearAllMocks(); api.selection.mockResolvedValue({ category: { id: 'c1', category_name: '成品' }, groups: [{ product_name: '导演椅', specifications: [{ specification: '50X60', products: [first, { ...first, id: 'p2', product_number: 'P2', product_code: 'C2' }] }] }] }) })
+const catalogProduct = { id: 'p2', name_id: 'n1', name: '导演椅', category_id: 'c1', category_name: '成品', product_code: 'C2', item_number: 'I2', specification: '50X60', unit: '件', unit_id: 'u1', unit_code: 'PCS', scale: '', colors: [{ id: 'blue', value: '蓝色' }], materials: ['铝'], thicknesses: ['1.2'], catalog_version: 'v1', updated_at: 'v1' }
+beforeEach(() => { vi.clearAllMocks(); api.selection.mockResolvedValue({ categories: [{ id: 'c1', name: '成品' }], names: [{ id: 'n1', category_id: 'c1', name: '导演椅' }], products: [catalogProduct] }) })
 describe('询盘A组产品弹窗', () => {
   it('生产嵌入可隐藏销售标题并使用生产文案，普通销售弹窗仍保留标题', async () => {
     const wrapper = open()
@@ -54,42 +56,40 @@ describe('询盘A组产品弹窗', () => {
     expect(original.target_unit_price).toBe('')
     wrapper.unmount()
   })
-  it('三级选择后必须明确选中同名同规格中的真实记录，保留本单要求', async () => {
+  it('前序按品名规格选择，隐藏货号编码但保留真实关联和本单数量价格', async () => {
     const wrapper = open()
-    await wrapper.get('input[aria-label="类别"]').setValue('c1'); await flushPromises()
-    expect(api.selection).toHaveBeenCalledWith('c1')
-    await wrapper.get('input[aria-label="品名"]').setValue('导演椅')
-    await wrapper.get('input[aria-label="规格"]').setValue('50X60')
+    await flushPromises()
+    await wrapper.get('input[aria-label="产品库类别"]').setValue('c1')
+    await wrapper.get('input[aria-label="产品库品名"]').setValue('n1')
     await button(wrapper, '添加到当前单据').trigger('click')
     expect(wrapper.emitted('confirm')).toBeUndefined()
-    expect(wrapper.text()).toContain('请选择具体产品记录')
-    await wrapper.get('input[aria-label="选择 P2"]').setValue(true)
+    expect(wrapper.find('input[aria-label="产品库货号"]').exists()).toBe(false)
+    expect(wrapper.find('input[aria-label="产品库产品编码"]').exists()).toBe(false)
+    await wrapper.get('input[aria-label="产品库规格"]').setValue('50X60')
     await button(wrapper, '添加到当前单据').trigger('click')
     const result = wrapper.emitted('confirm')![0]![0] as { item: InquiryItem }
-    expect(result.item).toMatchObject({ product_id: 'p2', product_number_snapshot: 'P2', product_description: '导演椅', specification: '50X60', quantity: '8', color: '亚黑', target_unit_price: '20' })
+    expect(result.item).toMatchObject({ product_id: null, product_catalog_id: 'p2', product_category_id: null, product_color_id: null, product_selection: { catalog_version: 'v1', draft: { color_id: 'blue', material: '铝' } }, product_description: '导演椅', specification: '50X60', quantity: '8', color: '蓝色', target_unit_price: '20' })
     wrapper.unmount()
   })
-  it('切换定制模式与单位手填清除失效关联，取消不修改原记录', async () => {
+  it('逐项手填新值清除失效关联，取消不修改原记录', async () => {
     const original = item({ product_id: 'p1', product_category_id: 'c1', product_description: '导演椅', specification: '50X60', product_number_snapshot: 'P1' })
     const wrapper = open(original); await flushPromises()
-    await button(wrapper, '手工录入定制产品').trigger('click')
-    await wrapper.get('input[aria-label="单位"]').setValue('把')
-    await wrapper.get('input[aria-label="品名"]').setValue('定制导演椅')
+    expect(wrapper.text()).not.toContain('手工录入定制产品')
+    await wrapper.get('input[aria-label="产品库单位"]').setValue('把')
+    await wrapper.get('input[aria-label="产品库品名"]').setValue('定制导演椅')
     await button(wrapper, '保存产品信息').trigger('click')
     const result = wrapper.emitted('confirm')![0]![0] as { item: InquiryItem }
-    expect(result.item).toMatchObject({ product_id: null, product_unit_id: null, unit_code: '把', product_description: '定制导演椅', quantity: '8', color: '亚黑' })
+    expect(result.item).toMatchObject({ product_id: null, product_unit_id: null, unit_code: '', product_description: '定制导演椅', quantity: '8', color: '亚黑', product_selection: { draft: { unit_name: '把', sources: { unit_name: 'typed' } } } })
     expect(original.product_id).toBe('p1'); expect(original.product_description).toBe('导演椅')
     wrapper.unmount()
   })
-  it('较早请求晚返回时不能替换新类别的选项', async () => {
-    let finish!: (value: unknown) => void
-    api.selection.mockReturnValueOnce(new Promise(resolve => { finish = resolve })).mockResolvedValueOnce({ category: { id: 'c2' }, groups: [] })
+  it('身份锁定时新库选框禁用，程序触发选择也不改变原产品', async () => {
     const wrapper = open()
-    await wrapper.get('input[aria-label="类别"]').setValue('c1')
-    await wrapper.get('input[aria-label="类别"]').setValue('c2'); await flushPromises()
-    finish({ category: { id: 'c1' }, groups: [{ product_name: '旧选项', specifications: [] }] }); await flushPromises()
-    expect(wrapper.text()).toContain('没有匹配的产品')
-    expect(wrapper.text()).not.toContain('旧选项')
+    await wrapper.setProps({ identityDisabled: true }); await flushPromises()
+    expect(wrapper.findComponent(ProductCatalogSelection).props('disabled')).toBe(true)
+    wrapper.findComponent(ProductCatalogSelection).vm.$emit('selected', { product: catalogProduct, selection: { catalog_version: 'v1' } })
+    await flushPromises()
+    expect(wrapper.findComponent(ProductCatalogSelection).props('catalogId')).toBeNull()
     wrapper.unmount()
   })
   it('保存错误提示保留输入，重复点击仅发出一次确认', async () => {
@@ -101,19 +101,13 @@ describe('询盘A组产品弹窗', () => {
     expect(wrapper.emitted('confirm')).toHaveLength(1)
     wrapper.unmount()
   })
-  it('手填搜索内容按 Enter 或离开输入框时保存文本，不伪造维护项 ID', async () => {
+  it('手填文本提交时保存，不伪造维护项 ID', async () => {
     const wrapper = open(item({ product_category_id: 'c1', product_description: '定制椅', specification: '旧规格' })); await flushPromises()
-    const spec = wrapper.get('input[aria-label="规格"]')
-    ;(spec.element as HTMLInputElement).value = '手填新规格'
-    await spec.trigger('keydown', { key: 'Enter' })
-    const unit = wrapper.get('input[aria-label="单位"]')
-    ;(unit.element as HTMLInputElement).value = '定制套装'
-    await unit.trigger('blur')
-    const color = wrapper.get('input[aria-label="颜色"]')
-    ;(color.element as HTMLInputElement).value = '手填亚黑'
-    await color.trigger('blur')
+    await wrapper.get('input[aria-label="产品库规格"]').setValue('手填新规格')
+    await wrapper.get('input[aria-label="产品库单位"]').setValue('定制套装')
+    await wrapper.get('input[aria-label="产品库颜色"]').setValue('手填亚黑')
     await button(wrapper, '保存产品信息').trigger('click')
-    expect((wrapper.emitted('confirm')![0]![0] as { item: InquiryItem }).item).toMatchObject({ specification: '手填新规格', unit_code: '定制套装', product_unit_id: null, color: '手填亚黑', product_color_id: null })
+    expect((wrapper.emitted('confirm')![0]![0] as { item: InquiryItem }).item).toMatchObject({ specification: '手填新规格', unit_code: '', product_unit_id: null, color: '手填亚黑', product_color_id: null, product_selection: { draft: { unit_name: '定制套装' } } })
     wrapper.unmount()
   })
 })

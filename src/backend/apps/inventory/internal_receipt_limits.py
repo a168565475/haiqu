@@ -9,7 +9,7 @@ from .stock_services import InventoryStockValidationError
 
 def validate_combined_output(*, source, identity, quantity, quality):
     types = ['INTERNAL_SEMI_RECEIPT','OUTSOURCING_RETURN','METAL_P4_EXTERNAL_RETURN']
-    if source['source_type'] not in types or identity['stock_kind'] != 'SEMI' or quality != 'AVAILABLE':
+    if source['source_type'] not in types or identity['stock_kind'] not in ('SEMI', 'CATALOG_SEMI') or quality != 'AVAILABLE':
         return
     line = BomLine.objects.filter(pk=source['bom_line_id']).first()
     product = ProductionTaskProduct.objects.filter(pk=source['product_line_id']).first()
@@ -25,7 +25,7 @@ def validate_combined_output(*, source, identity, quantity, quality):
     if source['source_type'] == 'INTERNAL_SEMI_RECEIPT' and stage == 'METAL':
         from apps.outsourcing.models import TubeOutsourcingLine
         pending = TubeOutsourcingLine.objects.filter(order__product_line=product,
-                order__source_kind='METAL', order__status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED']).exists()
+                order__source_kind='METAL', order__is_plan=False, order__status__in=['PENDING_DISPATCH', 'PROCESSING', 'COMPLETED']).exists()
         report_based = InternalSemiFinishedReceipt.objects.filter(schedule_product__product_line=product,
             source_snapshot__quantity_basis='WORK_REPORT_MINIMUM').exists()
         if pending or report_based:

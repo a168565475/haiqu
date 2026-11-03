@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, Document, Promotion, Refresh, Upload } from '@element-plus/icons-vue'
@@ -16,6 +17,7 @@ import type { ContactListItem } from '@/types/contact'
 import type { CustomerAddress } from '@/types/customer'
 import type { QuotationDetail, QuotationDispatchRecord, QuotationEmailDispatchAttempt, QuotationLine, QuotationPriceBasis, QuotationVersionDetail } from '@/types/quotation'
 import { useAuthStore } from '@/stores/auth'
+import { useProtectedResourceUrls } from '@/composables/useProtectedResourceUrl'
 import QuotationWorkflowStatus from './components/QuotationWorkflowStatus.vue'
 import QuotationEmailRecoveryDialog from './components/QuotationEmailRecoveryDialog.vue'
 import QuotationStatusTag from './components/QuotationStatusTag.vue'
@@ -28,6 +30,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 const quotation = ref<QuotationDetail | null>(null)
 const version = ref<QuotationVersionDetail | null>(null)
+const imageResources = useProtectedResourceUrls(() => version.value?.lines
+  .filter(line => line.product_image).map(line => quotationLineProductImageUrl(line.id)) || [])
 const quotationEtag = ref('')
 const versionEtag = ref('')
 const contacts = ref<ContactListItem[]>([])
@@ -874,12 +878,12 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshWhenVi
 
             <section class="quotation-document__section">
               <div class="quotation-document__section-title"><b>PRODUCTS / 产品明细</b><span v-if="!selectedBasis">价格口径尚未设置，金额不在预览中虚构</span></div>
-              <table class="quotation-lines-table"><thead><tr><th>Image / 图片</th><th>Product / 产品与规格</th><th>Qty / 数量</th><th>Unit price / 单价</th><th>Amount / 金额</th></tr></thead><tbody><tr v-for="item in version.lines" :key="item.id"><td><ElImage v-if="item.product_image" class="quotation-product-image" :src="quotationLineProductImageUrl(item.id)" :preview-src-list="[quotationLineProductImageUrl(item.id)]" preview-teleported fit="cover"/><span v-else class="quotation-image-placeholder">无图片</span></td><td class="quotation-product-info" :title="`${item.product_description_snapshot} · ${item.specification_snapshot || '—'}`"><b>{{ item.product_description_snapshot }}</b><span>{{ item.specification_snapshot || '—' }}</span></td><td class="quotation-number-cell"><b>{{ item.quantity }} {{ item.unit_code }}</b></td><td class="quotation-number-cell" :class="{ 'is-pending': basisPrice(item, selectedBasis) === '—' }"><b>{{ basisPrice(item, selectedBasis) === '—' ? '—' : `${version.currency_code} ${basisPrice(item, selectedBasis)}` }}</b><small v-if="basisPrice(item, selectedBasis) === '—'">待设置</small></td><td class="quotation-number-cell" :class="{ 'is-pending': lineAmount(item) === '—' }"><b>{{ lineAmount(item) === '—' ? `— ${version.currency_code}` : `${version.currency_code} ${lineAmount(item)}` }}</b></td></tr></tbody></table>
+              <table class="quotation-lines-table"><thead><tr><th>Image / 图片</th><th>Product / 产品与规格</th><th>Qty / 数量</th><th>Unit price / 单价</th><th>Amount / 金额</th></tr></thead><tbody><tr v-for="item in version.lines" :key="item.id"><td><ElImage v-if="item.product_image && imageResources.active.value" class="quotation-product-image" :src="imageResources.urlFor(quotationLineProductImageUrl(item.id))" :preview-src-list="imageResources.urlsFor([quotationLineProductImageUrl(item.id)])" preview-teleported fit="cover"/><span v-else class="quotation-image-placeholder">无图片</span></td><td class="quotation-product-info" :title="`${item.product_description_snapshot} · ${item.specification_snapshot || '—'}`"><b>{{ item.product_description_snapshot }}</b><span>{{ item.specification_snapshot || '—' }}</span></td><td class="quotation-number-cell"><b>{{ item.quantity }} {{ productEntryUnitName(item) }}</b></td><td class="quotation-number-cell" :class="{ 'is-pending': basisPrice(item, selectedBasis) === '—' }"><b>{{ basisPrice(item, selectedBasis) === '—' ? '—' : `${version.currency_code} ${basisPrice(item, selectedBasis)}` }}</b><small v-if="basisPrice(item, selectedBasis) === '—'">待设置</small></td><td class="quotation-number-cell" :class="{ 'is-pending': lineAmount(item) === '—' }"><b>{{ lineAmount(item) === '—' ? `— ${version.currency_code}` : `${version.currency_code} ${lineAmount(item)}` }}</b></td></tr></tbody></table>
             </section>
 
             <section class="quotation-document__section">
               <div class="quotation-document__section-title"><b>CONTAINER TIERS / 装柜数量档</b><span>系统计算 · 可在配置页调整</span></div>
-              <table v-if="containerTierRows.length" class="quotation-container-table"><thead><tr><th>产品</th><th>柜型</th><th>报价数量</th><th>装柜单价</th><th>装载系数</th><th>备注</th></tr></thead><tbody><tr v-for="row in containerTierRows" :key="row.tier.id"><td><b>{{ row.line.product_description_snapshot }}</b></td><td>{{ row.tier.container_type_code }}</td><td>{{ row.tier.final_quantity }} {{ row.line.unit_code }}</td><td>{{ version.currency_code }} {{ row.tier.unit_price }}</td><td>{{ (Number(row.tier.load_factor) * 100).toFixed(0) }}%</td><td>{{ row.tier.override_reason || '系统计算' }}</td></tr></tbody></table>
+              <table v-if="containerTierRows.length" class="quotation-container-table"><thead><tr><th>产品</th><th>柜型</th><th>报价数量</th><th>装柜单价</th><th>装载系数</th><th>备注</th></tr></thead><tbody><tr v-for="row in containerTierRows" :key="row.tier.id"><td><b>{{ row.line.product_description_snapshot }}</b></td><td>{{ row.tier.container_type_code }}</td><td>{{ row.tier.final_quantity }} {{ productEntryUnitName(row.line) }}</td><td>{{ version.currency_code }} {{ row.tier.unit_price }}</td><td>{{ (Number(row.tier.load_factor) * 100).toFixed(0) }}%</td><td>{{ row.tier.override_reason || '系统计算' }}</td></tr></tbody></table>
               <p v-else class="container-empty">当前报价未配置装柜数量档，固定模板不会写入示例柜型或示例数量。</p>
             </section>
 

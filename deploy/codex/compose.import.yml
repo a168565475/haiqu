@@ -1,0 +1,48 @@
+# 仅在单元三验收、迁移和发布获授权后，与已核验 ERP 配置及 compose.codex.yml 合并。
+services:
+  backend:
+    environment:
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+    volumes:
+      - type: bind
+        source: ${PRODUCTION_IMPORT_DIR:?set the private import directory}
+        target: /state/production-imports
+        bind: {create_host_path: false}
+
+  codex-worker:
+    environment:
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+    volumes:
+      - type: bind
+        source: ${PRODUCTION_IMPORT_DIR:?set the private import directory}
+        target: /state/production-imports
+        read_only: true
+        bind: {create_host_path: false}
+
+  production-import-worker:
+    image: ${CODEX_ERP_IMAGE:?set the reviewed ERP image with unit03 code}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    env_file: ["${ERP_ENV_FILE:?set the existing ERP environment file}"]
+    environment:
+      PRODUCTION_IMPORT_ROOT: /state/production-imports
+      PYTHONDONTWRITEBYTECODE: "1"
+    command: ["python", "manage.py", "process_production_task_imports", "--watch"]
+    mem_limit: 1024m
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=64m"]
+    volumes:
+      - type: bind
+        source: ${PRODUCTION_IMPORT_DIR:?set the private import directory}
+        target: /state/production-imports
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${ERP_MEDIA_DIR:?set the existing ERP media directory}
+        target: /app/media
+        bind: {create_host_path: false}
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}

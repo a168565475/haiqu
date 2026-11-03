@@ -8,17 +8,41 @@ from .models import WageScheme, WageSchemeLine, WageSchemeStatus, WorkshopReport
 
 
 def reporting_source_products(request, permission):
-    from apps.access_control.resource_scopes import enabled
+    from apps.access_control.resource_scopes import enforcing
+    from apps.access_control.role_policy import filter_task_scope
     from apps.production_scheduling.models import ProductionScheduleProduct, ScheduleStatus
     from apps.production_scheduling.selectors import accessible_production_schedules
     queryset = ProductionScheduleProduct.objects.filter(
         removed_at__isnull=True, schedule__record_status=ScheduleStatus.ACTIVE)
-    if not enabled():
+    if not enforcing(request, permission):
         return queryset.filter(schedule__in=accessible_production_schedules(request))
     ids = allowed_workshop_ids(request, permission=permission, for_work_reports=permission.endswith('workreport'))
-    if ids is not None:
-        queryset = queryset.filter(crafts__removed_at__isnull=True, crafts__craft__workshop_id__in=ids)
-    return queryset.distinct()
+    selected = queryset if ids is None else queryset.filter(crafts__removed_at__isnull=True, crafts__craft__workshop_id__in=ids)
+    followed = filter_task_scope(request, queryset, permission, 'schedule__production_task')
+    return selected.distinct() | followed.distinct()
+
+
+def reporting_source_crafts(request, permission, queryset=None):
+    """按产品所属任务与本动作车间授权过滤每条工艺，避免跨任务拼接车间范围。"""
+    from apps.access_control.role_policy import filter_task_scope
+    from apps.production_scheduling.models import ProductionScheduleProductCraft
+    if queryset is None:
+        queryset = ProductionScheduleProductCraft.objects.filter(removed_at__isnull=True,
+            schedule_product__removed_at__isnull=True, schedule_product__schedule__record_status='ACTIVE')
+    ids = allowed_workshop_ids(request, permission=permission, for_work_reports=permission.endswith('workreport'))
+    selected = queryset if ids is None else queryset.filter(craft__workshop_id__in=ids)
+    followed = filter_task_scope(request, queryset, permission, 'schedule_product__schedule__production_task')
+    return selected.distinct() | followed.distinct()
+
+
+def reporting_source_workshop_ids(request, permission='workshop_reporting.view_workreport'):
+    """只供读取选项使用；不能用于写入权限判断。"""
+    from apps.workshop_config.models import Workshop
+    ids = allowed_workshop_ids(request, permission=permission, for_work_reports=permission.endswith('workreport'))
+    if ids is None:
+        return None
+    sources = reporting_source_crafts(request, permission)
+    return Workshop.objects.filter(Q(pk__in=ids) | Q(pk__in=sources.values('craft__workshop_id'))).values_list('pk', flat=True)
 
 
 def allowed_workshop_ids(request, *, for_work_reports=False, permission=None):
@@ -74,11 +98,14 @@ def wage_schemes_with_context(queryset=None):
 
 
 def accessible_work_reports(request, permission=None):
+    from apps.access_control.resource_scopes import current_permission
+    from apps.access_control.role_policy import filter_task_scope
     queryset = WorkReport.objects.all()
-    workshop_ids = allowed_workshop_ids(request, for_work_reports=True, permission=permission)
-    if workshop_ids is not None:
-        queryset = queryset.filter(workshop_id__in=workshop_ids)
-    return queryset
+    code = permission or current_permission(request, 'workshop_reporting.view_workreport')
+    workshop_ids = allowed_workshop_ids(request, for_work_reports=True, permission=code)
+    selected = queryset if workshop_ids is None else queryset.filter(workshop_id__in=workshop_ids)
+    followed = filter_task_scope(request, queryset, code, 'product_line__production_task')
+    return selected.distinct() | followed.distinct()
 
 
 def work_report_selection_sources(request):
@@ -93,9 +120,7 @@ def work_report_selection_sources(request):
         craft_type_snapshot=CraftType.INTERNAL, craft__craft_type=CraftType.INTERNAL,
         craft__status=RecordStatus.ACTIVE, craft__workshop__status=RecordStatus.ACTIVE,
     )
-    workshop_ids = allowed_workshop_ids(request, for_work_reports=True, permission=permission)
-    if workshop_ids is not None:
-        crafts = crafts.filter(craft__workshop_id__in=workshop_ids)
+    crafts = reporting_source_crafts(request, permission, crafts)
     return reports, crafts
 
 
@@ -225,13 +250,15 @@ def work_report_task_cards(tasks, reports, crafts):
 
 def wage_scheme_line_metrics(request, scheme):
     from apps.access_control.module_policy import has_permission
+    from apps.access_control.role_policy import filter_task_scope
 
     permission = "workshop_reporting.view_workreport"
     if not has_permission(request, permission):
         return {}
     workshop_ids = allowed_workshop_ids(request, for_work_reports=True, permission=permission)
     if workshop_ids is not None and str(scheme.workshop_id) not in {str(pk) for pk in workshop_ids}:
-        return {}
+        if not filter_task_scope(request, WageScheme.objects.filter(pk=scheme.pk), permission, 'product_line__production_task').exists():
+            return {}
 
     work_item_ids = {line.work_item_id for line in scheme.lines.all()}
     metrics = {
@@ -239,6 +266,7 @@ def wage_scheme_line_metrics(request, scheme):
         for work_item_id in work_item_ids
     }
     lines = WorkReportLine.objects.filter(
+        report__in=accessible_work_reports(request, permission=permission),
         report__product_line_id=scheme.product_line_id,
         report__workshop_id=scheme.workshop_id,
         report__scheme__scope_craft_id=scheme.scope_craft_id,

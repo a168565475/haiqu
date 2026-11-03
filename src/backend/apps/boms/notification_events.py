@@ -110,6 +110,7 @@ def register_task_boms_confirmed(*, task_id, actor_employee, confirmed_at):
     expire_task_bom_events(task_id)
     return register_business_event(
         event_code=EVENT_CODE, idempotency_key=key, object_type="production_tasks.ProductionTask",
+        actor_employee=actor_employee,
         object_id=task.pk, object_version=version,
         context={"document_no": task.task_number, "product_count": len(snapshot),
                  "operator": actor_employee.display_name, "occurred_at": confirmed_at.isoformat(),

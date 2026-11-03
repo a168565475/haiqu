@@ -11,6 +11,7 @@ export const systemSettings = [
   { key: 'theme', name: '界面主题', description: '选择界面配色与显示风格' },
   { key: 'parameters', name: '业务参数', description: '维护业务参数与配置草稿' },
   { key: 'wecom', name: '企业微信管理', description: '管理企微接入与应用消息' },
+  { key: 'codex', name: 'Codex 连接设置', description: '管理专属账号、模型与连接测试' },
   { key: 'access', name: '权限管理', description: '管理角色授权、团队与授权记录' },
   { key: 'dictionary', name: '字典配置', description: '维护分类选项、启停与排序' },
 ] as const
@@ -39,6 +40,7 @@ export function canOpenSystemSetting(auth: ReturnType<typeof useAuthStore>, key:
     case 'notifications': return auth.managementCan('access_control.manage_notifications')
     case 'sendRecords': return auth.managementCan('access_control.manage_notifications') || auth.managementCan('access_control.manage_wecom')
     case 'wecom': return auth.managementCan('access_control.manage_wecom')
+    case 'codex': return auth.managementCan('access_control.manage_codex_connection')
     case 'access': return auth.canReadAccessDirectory
     case 'dictionary': return canView(['dictionarytype', 'referencedictionary'])
     case 'parameters': return canView(['systemparameterdefinition'])

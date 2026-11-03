@@ -50,6 +50,7 @@ from apps.reference_data.models import (
     ReferenceStatus,
     SystemParameterDefinition,
     SystemParameterValue,
+    TubeCalculationFormula,
     TubeCoatingColor,
     TubeDiameter,
     TubeMaterial,
@@ -104,6 +105,7 @@ from .serializers import (
     StatusActionSerializer,
     SystemParameterDraftSerializer,
     SystemParameterSerializer,
+    TubeCalculationFormulaSerializer,
     TubeCoatingColorSerializer,
     TubeDiameterSerializer,
     TubeMaterialSerializer,
@@ -666,6 +668,47 @@ class TubeShapeViewSet(ManagedReferenceViewSet):
     serializer_class = TubeShapeSerializer
     search_fields = ("shape_name", "pinyin_search")
     object_type = "TUBE_SHAPE"
+
+
+class TubeCalculationFormulaViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = TubeCalculationFormula.objects.all()
+    serializer_class = TubeCalculationFormulaSerializer
+    permission_classes = [IsAuthenticated, HasActiveEmployee, ReferenceDataManagementPermission]
+    permission_model = TubeShape
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def response_with_etag(self, instance):
+        response = Response({"data": self.get_serializer(instance).data})
+        response["ETag"] = etag_for_instance(instance)
+        return response
+
+    def retrieve(self, request, *args, **kwargs):
+        return self.response_with_etag(self.get_object())
+
+    def partial_update(self, request, *args, **kwargs):
+        current = self.get_object()
+        require_matching_etag(request, current)
+        with transaction.atomic():
+            instance = TubeCalculationFormula.objects.select_for_update().get(pk=current.pk)
+            require_matching_etag(request, instance)
+            before_data = self.get_serializer(instance).data
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            instance = serializer.save()
+            write_audit_log(
+                object_type="TUBE_CALCULATION_FORMULA",
+                object_id=instance.pk,
+                action="UPDATED",
+                actor_employee=getattr(request, "employee", None),
+                before_data=before_data,
+                after_data=self.get_serializer(instance).data,
+                request=request,
+            )
+        return self.response_with_etag(instance)
 
 
 class TubeCoatingColorViewSet(ManagedReferenceViewSet):

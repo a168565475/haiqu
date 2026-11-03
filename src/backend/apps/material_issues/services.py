@@ -2,6 +2,7 @@ from apps.organizations.models import Employee
 from apps.inventory.public_stock_cutover import stock_write_transaction
 import hashlib
 import json
+from collections import defaultdict
 from decimal import Decimal
 
 from django.conf import settings
@@ -46,7 +47,8 @@ from .models import (
 )
 from .requirements import build_requirement_specs, sync_order_requirements
 from .material_flow import (sync_selected_pipes, pipe_line_snapshot, semi_errors,
-    validate_pipe_lines, lock_issue_stock, auto_allocate_pipe_lines, issue_pipe_line, line_stock, line_flow_data)
+    validate_pipe_lines, lock_issue_stock, auto_allocate_pipe_lines, issue_pipe_line, line_stock, line_flow_data,
+    legacy_pending_stock, legacy_line_stock_quantities)
 from .scopes import filter_blockers_for_scope, material_section_codes_for_issue
 
 
@@ -310,7 +312,7 @@ def _replace_lines(issue, line_inputs):
     requested_ids = {row["requirement_id"] for row in line_inputs}
     requirement_map, revision_hash = {}, ""
     if requested_ids - semi_balance_map.keys():
-        _, requirements, _, revision_hash = sync_order_requirements(issue.production_task_id)
+        _, requirements, _, revision_hash = sync_order_requirements(issue.production_task_id, allow_excess_issue=True)
         requirements += sync_selected_pipes(issue, requested_ids)
         requirement_map = {item.pk: item for item in requirements}
     seen = set()
@@ -396,6 +398,7 @@ def _replace_lines(issue, line_inputs):
     MaterialIssueLine.objects.bulk_create(created)
     issue.source_revision_hash = revision_hash
     issue.save(update_fields=["source_revision_hash", "updated_at"])
+    _validate_issue_quantities(issue)
 
 
 @stock_write_transaction
@@ -492,7 +495,7 @@ def update_issue(*, issue_id, validated_data, actor_employee, request):
     return issue
 
 
-def _validate_issue_quantities(issue, *, require_stock=True, include_pending=False):
+def _validate_issue_quantities(issue, *, require_stock=True, include_pending=True):
     if issue.stock_mode == "PUBLIC_V2":
         from .public_issue_services import validate_public_issue
         return validate_public_issue(issue, include_pending=include_pending)["lines"]
@@ -501,15 +504,10 @@ def _validate_issue_quantities(issue, *, require_stock=True, include_pending=Fal
     ).order_by("line_number", "id"))
     if not lines:
         raise ValidationError({"lines": "提交前至少选择一项领料明细。"})
-    errors = validate_pipe_lines(lines)
-    pending_raw = {}
-    pending_semi = {}
-    if include_pending:
-        pending_raw, pending_semi = pending_issue_quantities(
-            requirement_ids=[line.requirement_id for line in lines if line.requirement_id],
-            semi_balance_ids=[line.semi_finished_balance_id for line in lines if line.semi_finished_balance_id],
-            exclude_issue_id=issue.pk,
-        )
+    pending_stock = legacy_pending_stock(lines, exclude_issue_id=issue.pk) if include_pending else {
+        "ordinary": {}, "pipe": {}, "semi": {}}
+    errors = validate_pipe_lines(lines, pending=pending_stock["pipe"])
+    ordinary_requested, ordinary_free = defaultdict(Decimal), {}
     allowed_section_codes = material_section_codes_for_issue(issue)
     if allowed_section_codes is None:
         raise ValidationError({"workshop_id": "该车间暂未开放生产领料。"})
@@ -536,7 +534,7 @@ def _validate_issue_quantities(issue, *, require_stock=True, include_pending=Fal
             for code in _semi_quantity_errors(balance, line.requested_quantity):
                 errors.append({"line_id": str(line.pk), "code": code, "detail": "半成品库存身份、库区或整数数量不符。"})
             stock = line.semi_finished_balance.quantity
-            pending = pending_semi.get(line.semi_finished_balance_id, Decimal("0"))
+            pending = pending_stock["semi"].get(line.semi_finished_balance_id, Decimal("0"))
             available_after_pending = max(stock - pending, Decimal("0"))
             if include_pending and pending > 0 and line.requested_quantity > available_after_pending:
                 errors.append({
@@ -568,36 +566,18 @@ def _validate_issue_quantities(issue, *, require_stock=True, include_pending=Fal
                 "detail": "原料需求不属于当前生产订单和产品。",
             })
             continue
-        pending = pending_raw.get(requirement.pk, Decimal("0"))
-        remaining = (
-            requirement.required_quantity
-            - requirement.internal_issued_quantity
-            - requirement.outsourcing_issued_quantity
-            - pending
-        )
-        if line.requested_quantity > remaining:
-            errors.append(
-                {
-                    "code": "PENDING_ISSUE_CONFLICT" if pending > 0 else "ORDER_ALLOWANCE_EXCEEDED",
-                    "line_id": str(line.pk),
-                    "detail": "已有待仓库审核的领料占用额度。" if pending > 0 else "申请数量超过生产订单剩余可领额度。",
-                    "order_remaining": str(max(remaining, Decimal("0"))),
-                    "pending_issue_quantity": str(pending),
-                }
-            )
-        stock = line_stock(line)
-        if require_stock and line.requested_quantity > stock:
-            errors.append(
-                {
-                    "code": "STOCK_INSUFFICIENT",
-                    "line_id": str(line.pk),
-                    "detail": "申请数量超过合格公共可用库存。",
-                    "available_stock": str(stock),
-                }
-            )
+        if line.conversion_snapshot.get("kind") != "PIPE":
+            pool = (line.raw_material_id, line.unit_id)
+            ordinary_requested[pool] += line.requested_quantity
+            ordinary_free[pool] = legacy_line_stock_quantities(line, pending=pending_stock)
+    for pool, quantity in ordinary_requested.items():
+        values = ordinary_free[pool]
+        if require_stock and quantity > Decimal(values["max_issue_quantity"]):
+            errors.append({"code": "PENDING_ISSUE_CONFLICT" if Decimal(values["pending_stock_quantity"]) else "STOCK_INSUFFICIENT",
+                           "detail": "相同原料和单位的合计申请超过扣除其他占用后的合格库存。", **values})
     if errors:
         code = errors[0]["code"]
-        detail = "已有待仓库审核的领料占用额度，请刷新领料页面后重新填写。" if code == "PENDING_ISSUE_CONFLICT" else errors[0].get("detail", "领料明细校验未通过。")
+        detail = "已有其他申请或外发占用库存，请刷新领料页面后重新填写。" if code == "PENDING_ISSUE_CONFLICT" else errors[0].get("detail", "领料明细校验未通过。")
         raise MaterialIssueValidationError(
             {"detail": detail, "lines": errors},
             code=code,
@@ -621,7 +601,7 @@ def _sync_issue_sources(issue):
     raw_lines = list(issue.lines.filter(line_type="RAW").select_related("requirement"))
     if not raw_lines:
         return [], issue.source_revision_hash
-    _, _, blockers, revision = sync_order_requirements(issue.production_task_id)
+    _, _, blockers, revision = sync_order_requirements(issue.production_task_id, allow_excess_issue=True)
     requirements = sync_selected_pipes(issue, {line.requirement_id for line in raw_lines})
     by_id = {r.pk: r for r in requirements}
     for line in raw_lines:
@@ -670,6 +650,7 @@ def submit_issue(*, issue_id, actor_employee, request):
         from .public_issue_services import validate_public_issue
         validate_public_issue(issue, include_pending=True, lock=True)
     else:
+        lock_issue_stock(issue)
         _validate_issue_quantities(issue, include_pending=True)
     issue.status = MaterialIssueStatus.PENDING_REVIEW
     issue.submitted_by_employee = actor_employee
@@ -832,7 +813,8 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
                 "outsourcing_issued_quantity": "0",
                 "order_remaining": str(remaining_after),
                 "available_stock": str(remaining_after),
-                "max_issue_quantity": str(remaining_after),
+                "max_issue_quantity": str(max(remaining_after - Decimal(
+                    legacy_line_stock_quantities(line)["pending_stock_quantity"]), Decimal(0))),
             })
             continue
         requirement = line.requirement
@@ -849,7 +831,7 @@ def confirm_issue(*, issue_id, request_id, actor_employee, request):
             "internal_issued_quantity": str(requirement.internal_issued_quantity),
             "outsourcing_issued_quantity": str(requirement.outsourcing_issued_quantity),
             "order_remaining": str(max(remaining_after, Decimal(0))), "available_stock": str(stock_after),
-            "max_issue_quantity": str(max(min(remaining_after, stock_after), Decimal(0))), **line_flow_data(line),
+            "max_issue_quantity": legacy_line_stock_quantities(line)["max_issue_quantity"], **line_flow_data(line),
         })
     return _finish_issue(issue, actor_employee, request_id, request_hash, issued_line_snapshots)
 
@@ -863,6 +845,8 @@ def _finish_issue(issue, actor_employee, request_id, request_hash, issued_line_s
     issue.save()
     _record_event(issue, MaterialIssueAction.ISSUED, actor_employee, request_id=request_id, request_hash=request_hash,
         snapshot_extra={"issued_line_snapshots": issued_line_snapshots})
+    from .notification_events import issue_issued
+    issue_issued(issue, actor_employee)
     return issue
 
 
@@ -934,6 +918,7 @@ def preview_issue(issue):
             requirement = line.requirement
             remaining = requirement.required_quantity - requirement.internal_issued_quantity - requirement.outsourcing_issued_quantity
             stock = line_stock(line)
-        lines.append({"line_id": str(line.pk), "order_remaining": str(max(remaining, 0)), "available_stock": str(stock),
-            "max_issue_quantity": str(max(min(remaining, stock), 0)), "validation_errors": [e["code"] for e in errors], **line_flow_data(line)})
+        lines.append({"line_id": str(line.pk), "order_remaining": str(max(remaining, 0)),
+            **legacy_line_stock_quantities(line),
+            "validation_errors": [e["code"] for e in errors], **line_flow_data(line)})
     return {"can_confirm": bool(lines) and not errors, "lines": lines, "errors": errors}

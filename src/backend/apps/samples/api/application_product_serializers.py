@@ -3,6 +3,8 @@ from rest_framework import serializers
 
 from .form_serializers import SampleFormDetailSerializer, SampleFormProductSerializer
 from .application_serializers import SampleApplicationSerializer
+from apps.product_catalog.api.serializers import ProductSelectionOptionSerializer
+from ..application_fields import is_sample_salesperson, normalize_manual_request_number
 
 
 class SampleApplicationBasicSerializer(serializers.Serializer):
@@ -10,10 +12,11 @@ class SampleApplicationBasicSerializer(serializers.Serializer):
 
     def get_fields(self):
         fields = SampleApplicationSerializer().get_fields()
-        names = {'customer_account_id', 'customer_contact_id', 'owner_employee_id',
+        names = {'manual_request_number', 'customer_account_id', 'customer_contact_id', 'owner_employee_id',
                  'source_type', 'source_id', 'sample_type', 'shipping_method',
                  'delivery_batch', 'is_repeat_order', 'order_date', 'sample_due_date'}
         fields = {name: field for name, field in fields.items() if name in names}
+        fields['manual_request_number'].required = False
         request = self.context.get('request')
         if request is None or not request.user.is_authenticated:
             return fields
@@ -22,11 +25,17 @@ class SampleApplicationBasicSerializer(serializers.Serializer):
         customers = accessible_customers(request, 'samples.complete_sample_requirements').filter(archived_at__isnull=True)
         fields['customer_account_id'].queryset = customers
         fields['customer_contact_id'].queryset = CustomerContact.objects.filter(customer_account__in=customers, archived_at__isnull=True)
+        if not is_sample_salesperson(request):
+            fields.pop('customer_account_id')
+            fields.pop('customer_contact_id')
         return fields
 
+    def validate_manual_request_number(self, value):
+        return normalize_manual_request_number(value)
+
     def validate(self, attrs):
-        contact = attrs['customer_contact']
-        if contact and contact.customer_account_id != attrs['customer_account'].pk:
+        contact = attrs.get('customer_contact')
+        if contact and contact.customer_account_id != getattr(attrs.get('customer_account'), 'pk', None):
             raise serializers.ValidationError({'customer_contact_id': '联系人必须属于当前客户。'})
         if bool(attrs['source_type']) != bool(attrs['source_id']):
             raise serializers.ValidationError({'source_id': '来源类型和来源记录必须同时填写或清空。'})
@@ -91,11 +100,8 @@ class SampleApplicationProductsRequestSerializer(serializers.Serializer):
     reference_image = serializers.FileField(required=False)
 
 
-class SampleApplicationProductCandidateSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
+class SampleApplicationProductCandidateSerializer(ProductSelectionOptionSerializer):
     product_name = serializers.CharField()
-    specification = serializers.CharField()
-    category_id = serializers.UUIDField()
 
 
 class SampleApplicationProductOptionsSerializer(serializers.Serializer):

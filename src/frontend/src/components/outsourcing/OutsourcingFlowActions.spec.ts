@@ -17,9 +17,9 @@ const detail = {
   can_return_raw: true, can_reconcile: true, can_complete: true, dispatch: { id: 'dispatch-1' },
 } as OutsourcingOrderDetail
 const wrappers: ReturnType<typeof mount>[] = []
-function createView(overrides: Partial<OutsourcingOrderDetail> = {}) {
+function createView(overrides: Partial<OutsourcingOrderDetail> = {}, entry: { entryAction?: string; hideTriggers?: boolean } = {}) {
   const wrapper = mount(OutsourcingFlowActions, {
-    props: { detail: { ...detail, ...overrides }, etag: '"order-1"' },
+    props: { detail: { ...detail, ...overrides }, etag: '"order-1"', ...entry },
     global: { plugins: [ElementPlus], stubs: { AppWindowDialog: { props: ['modelValue'], template: '<section v-if="modelValue"><slot/><slot name="footer"/></section>' } } },
   })
   wrappers.push(wrapper)
@@ -192,5 +192,62 @@ describe('公共回货仅接收合格半成品', () => {
     expect(payload.lines).toEqual([{ allocation_id: 'allocation-1', good_quantity: '60',
       defective_quantity: isPublic ? '0' : '3', defect_reason: isPublic ? '' : '表面污损' }])
     expect(payload.raw_inputs).toEqual([expect.objectContaining({ dispatch_line_id: 'dispatch-line-1', kind: 'RAW_INPUT', quantity: '90' })])
+  })
+})
+
+it('列表入口直接打开同一普通旧单发料弹窗并隐藏页面按钮', async () => {
+  const wrapper = createView({}, { entryAction: 'dispatch', hideTriggers: true })
+  await flushPromises()
+  expect(wrapper.find('.flow-actions').exists()).toBe(false)
+  expect((wrapper.vm as any).visible).toBe(true)
+  expect((wrapper.vm as any).mode).toBe('dispatch')
+  expect(api.context).toHaveBeenCalledWith('order-1', true)
+  expect(api.dispatch).not.toHaveBeenCalled()
+})
+it('列表入口无法办理旧直接交接单时显示原因而不调用普通单接口', async () => {
+  const wrapper = createView({ direct_handoff: true, direct_handoff_lock_reason: '请核对金工原单' }, { entryAction: 'dispatch', hideTriggers: true })
+  await flushPromises()
+  expect((wrapper.vm as any).visible).toBe(true)
+  expect(wrapper.text()).toContain('请核对金工原单')
+  expect(api.context).not.toHaveBeenCalled()
+})
+
+describe('裁剪旧单的材料属性列', () => {
+  const material = (kind: 'FABRIC' | 'PIPE', id: string) => ({
+    material_item_id: id, factory_name: '原单加工厂', material_name: id, specification: '600D', unit: kind === 'PIPE' ? '支' : '米',
+    planned_issue_quantity: '20', max_issue_quantity: '12.5', internal_issued_quantity: '0', outsourcing_issued_quantity: '0',
+    order_remaining: '20', available_stock: '12.5', quota_error: '', procurement_unit: kind === 'PIPE' ? '根' : '米',
+    conversion_snapshot: { schema_version: 2, kind, cutting_length_mm: kind === 'PIPE' ? 650 : undefined, pieces_per_bar: 10, raw_bar_length_m: '6.5' },
+    bom_attributes: [{ key: 'material', value: kind === 'PIPE' ? 'Q195' : '涤纶' }], zones: [],
+  })
+  it.each([false, true])('发出表纯面料隐藏管材长度，混合管材保留：%s', async mixed => {
+    api.context.mockResolvedValue({ materials: [material('FABRIC', '裁剪面料'), ...(mixed ? [material('PIPE', '管材')] : [])] })
+    const wrapper = createView({}, { entryAction: 'dispatch', hideTriggers: true })
+    await flushPromises()
+    const table = wrapper.get('.dispatch-table')
+    const headers = table.findAll('th').map(cell => cell.text())
+    expect(headers.includes('切割长度 mm')).toBe(mixed)
+    expect(headers).toEqual(expect.arrayContaining(['材质', '规格', '本次可领']))
+    expect(table.text()).toContain('涤纶')
+    expect(table.text()).toContain('12.5')
+    expect(table.findAll('.el-table__body tbody tr')[0]!.findAll('td')[0]!.text()).toBe('原单加工厂')
+    expect(table.findAll('.el-table__body tbody tr')[0]!.findAll('td')[0]!.find('input').exists()).toBe(false)
+    expect(api.dispatch).not.toHaveBeenCalled()
+  })
+  it.each(['fabric-only', 'mixed', 'other-factory', 'unmatched-allocation'])('回货表只依据当前产物关联的管材判断长度列：%s', async scope => {
+    const outputs = [{ factory_id: 'factory-1', factory_name: '裁剪厂', allocation_id: 'fabric-allocation', component: '椅面裁片', unit: '套', remaining: '20', bom_attributes: [{ key: 'material', value: '涤纶' }] }]
+    const raw_materials = [{ factory_id: 'factory-1', factory_name: '裁剪厂', allocation_id: 'fabric-allocation', dispatch_line_id: 'fabric-dispatch', component: '面料', unit: '米', conversion_snapshot: { kind: 'FABRIC' } }]
+    if (scope !== 'fabric-only') {
+      const factoryId = scope === 'other-factory' ? 'factory-2' : 'factory-1'
+      if (scope !== 'unmatched-allocation') outputs.push({ factory_id: factoryId, factory_name: '管材厂', allocation_id: 'pipe-allocation', component: '支撑管', unit: '支', remaining: '20', bom_attributes: [{ key: 'material', value: 'Q195' }] })
+      raw_materials.push({ factory_id: factoryId, factory_name: '管材厂', allocation_id: 'pipe-allocation', dispatch_line_id: 'pipe-dispatch', component: '管材', unit: '根', conversion_snapshot: { kind: 'PIPE' } })
+    }
+    api.reconciliation.mockResolvedValue({ outputs, raw_materials })
+    const wrapper = createView({ stock_mode: 'PUBLIC_V2' }, { entryAction: 'return', hideTriggers: true })
+    await flushPromises()
+    const headers = wrapper.findAll('.el-table')[0]!.findAll('th').map(cell => cell.text())
+    expect(headers.includes('切割长度 mm')).toBe(scope === 'mixed')
+    expect(headers).toEqual(expect.arrayContaining(['材质', '规格', '合格数量']))
+    expect(api.returned).not.toHaveBeenCalled()
   })
 })

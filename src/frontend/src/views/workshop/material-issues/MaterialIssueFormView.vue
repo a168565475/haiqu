@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -314,7 +315,7 @@ onMounted(initialize)
             <h1>{{ editing ? '修改生产领料单' : '新增生产领料单' }}</h1>
             <span v-if="planContextActive" class="plan-label">{{ planCategoryLabels[planCategory] }}</span>
           </div>
-          <p><ElIcon><InfoFilled /></ElIcon>按生产订单限额领料，仓库确认出库后扣库存。</p>
+          <p><ElIcon><InfoFilled /></ElIcon>按扣除占用后的合格库存领料，可超过 BOM 建议量；仓库确认出库后扣库存。</p>
         </header>
 
         <section class="mi-surface form-basic basic-card">
@@ -329,7 +330,7 @@ onMounted(initialize)
               <ElSelect v-model="form.product_line_id" aria-label="选择产品" filterable :disabled="planContextActive || editing || !form.production_task_id" placeholder="仅显示当前订单产品" @change="loadRequirements()"><ElOption v-for="item in products" :key="item.id" :label="`${item.product_number} · ${item.product_name}`" :value="item.id" /></ElSelect>
             </div>
             <article v-if="currentProduct" class="product-preview">
-              <img :src="productImageUrl" :class="{ 'is-placeholder': !currentProduct.image_file_id }" :alt="`${currentProduct.product_name}图片`" @error="useProductImageFallback" />
+              <ProtectedImage :src="productImageUrl" :class="{ 'is-placeholder': !currentProduct.image_file_id }" :alt="`${currentProduct.product_name}图片`" @error="useProductImageFallback" />
               <div><strong>{{ currentProduct.product_number }}　{{ currentProduct.product_name }}</strong><p>{{ currentProduct.color || '—' }}　订单数量 {{ quantity(String(currentProduct.quantity || '0')) }} {{ currentProduct.unit || '套' }}</p></div>
             </article>
           </div>

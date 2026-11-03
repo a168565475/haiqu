@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { deleteOutsourcingOrder, fetchOutsourcingOrder, revokeDispatchedOutsourcingOrder } from '@/api/outsourcing'
 import { fetchUnifiedOutsourcingOptions, fetchUnifiedOutsourcingOrders, unifiedOutsourcingDetailPath } from '@/api/unifiedOutsourcing'
 import OutsourcingPrintDialog from '@/components/outsourcing/OutsourcingPrintDialog.vue'
+import WarehouseOutsourcingActionDialog from '@/components/outsourcing/WarehouseOutsourcingActionDialog.vue'
 import { vGlassSpotlight } from '@/directives/glassSpotlight'
 import MetalProcessingP4View from './MetalProcessingP4View.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -43,6 +44,7 @@ const pageSize = ref(50)
 const loading = ref(false)
 const actingOrderId = ref('')
 const printRequest = ref<{ row: UnifiedOutsourcingOrder; kind: OutsourcingPrintKind } | null>(null)
+const warehouseAction = ref<{ row: UnifiedOutsourcingOrder; action: 'dispatch' | 'return' } | null>(null)
 const loadError = ref('')
 const accessDenied = ref(false)
 const search = ref('')
@@ -158,13 +160,8 @@ function openDetail(row: UnifiedOutsourcingOrder): void {
 }
 
 function openWarehouseAction(row: UnifiedOutsourcingOrder, action: 'dispatch' | 'return'): void {
-  if (!warehouseWorkspace.value || loading.value || accessDenied.value || !row.warehouse_actions?.includes(action)) return
-  const target = unifiedOutsourcingDetailPath(row, true)
-  if (action === 'return' && row.record_type === 'TUBE') {
-    void router.push(`${target}/return`)
-    return
-  }
-  void router.push(`${target}${target.includes('?') ? '&' : '?'}action=${action}`)
+  if (!warehouseWorkspace.value || loading.value || accessDenied.value || warehouseAction.value || !row.warehouse_actions?.includes(action)) return
+  warehouseAction.value = { row, action }
 }
 
 function canPrintRow(row: UnifiedOutsourcingOrder): boolean {
@@ -264,7 +261,7 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
       <MetalProcessingP4View mode="sources" embedded @updated="load" />
     </section>
     <section v-else-if="canViewList" id="outsourcing-orders-panel" class="erp-list-data" :role="warehouseWorkspace ? undefined : 'tabpanel'" :aria-labelledby="warehouseWorkspace ? undefined : 'outsourcing-orders-tab'">
-    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">数量仅含所选加工厂 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
+    <div class="list-toolbar erp-list-toolbar"><div class="heading-actions"><RouterLink v-if="canViewFactories" class="secondary-action el-button erp-button-motion" to="/workshop/outsourcing/factories">加工厂管理</RouterLink><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate()">新建管材外发单</ElButton><ElButton class="erp-button-motion" v-if="canCreateOriginal" type="primary" :disabled="!canViewOrders || accessDenied" @click="openTubeCreate('cutting')">新建裁片外发单</ElButton></div><div class="list-description"><small v-if="appliedFactoryId">历史单数量仅含所选加工厂；委外总单显示全单累计 · 状态仍为整单</small></div><ElButton class="erp-button-motion" :icon="Refresh" :disabled="loading || !canViewOrders" @click="load">刷新</ElButton></div>
       <div class="d4-list-table-area erp-list-table-frame"><ElTable :data="rows" border height="100%" row-key="row_key" class="d4-list-table" @row-click="openDetail">
         <ElTableColumn prop="order_number" label="外发单号" width="170" show-overflow-tooltip><template #default="{ row }"><RouterLink class="order-number-link" :to="unifiedOutsourcingDetailPath(row, warehouseWorkspace)" @click.stop>{{ row.order_number }}</RouterLink></template></ElTableColumn>
         <ElTableColumn label="生产任务单" width="130" show-overflow-tooltip><template #default="{ row }">{{ row.production_task_number || '—' }}</template></ElTableColumn>
@@ -275,12 +272,14 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
         <ElTableColumn label="材料来源" width="150"><template #default="{ row }"><span class="unified-source-tag erp-list-tag" :class="row.source_kind === 'RAW' ? 'erp-list-tag--info' : row.source_kind === 'METAL' ? 'erp-list-tag--success' : 'erp-list-tag--warning'" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span></template></ElTableColumn>
         <ElTableColumn label="加工工艺" width="96"><template #default="{ row }"><span v-if="row.craft.name" class="craft-tag erp-list-tag" :class="[`craft-${craftTone(row.craft.name)}`, row.craft.name === '车缝' ? 'erp-list-tag--brand' : row.craft.name === '裁剪' ? 'erp-list-tag--info' : row.craft.name === '喷塑' ? 'erp-list-tag--success' : row.craft.name === '丝印' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.craft.name }}</span><span v-else>—</span></template></ElTableColumn>
         <ElTableColumn label="加工厂" width="135" show-overflow-tooltip><template #default="{ row }"><span :title="row.factory_names.join('、')">{{ factoryName(row) }}</span></template></ElTableColumn>
-        <ElTableColumn label="计划加工金额（元）" width="155" align="right" class-name="outsourcing-planned-amount num"><template #default="{ row }">{{ row.detail_access === 'METAL' ? '—' : formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
-        <ElTableColumn label="发出数量" width="95" align="right" class-name="num" show-overflow-tooltip><template #default="{ row }">{{ unifiedQuantityText(row, 'sent') }}</template></ElTableColumn>
-        <ElTableColumn label="回货数量" width="95" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="新管材按最终实收支数；其他外发沿用原合格回货口径。" placement="top"><span>回货数量</span></ElTooltip></template><template #default="{ row }"><ElTooltip v-if="row.receipt_state === 'MISSING'" content="已结束，但最终凭证尚无法核对；不当作0回货。" placement="top"><span>—</span></ElTooltip><span v-else>{{ unifiedQuantityText(row, 'received') }}</span></template></ElTableColumn>
-        <ElTableColumn label="管材差额" width="90" align="right" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示新管材最终登记后的实发减实收。面料等不同单位不相减。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>
+        <ElTableColumn v-if="!warehouseWorkspace" label="计划加工金额（元）" width="155" align="right" class-name="outsourcing-planned-amount num"><template #default="{ row }">{{ row.detail_access === 'METAL' ? '—' : formatOutsourcingMoney(row.planned_amount) }}</template></ElTableColumn>
+        <ElTableColumn align="center" header-align="center" label="BOM数量" width="100" class-name="num"><template #default="{ row }">{{ row.is_plan ? row.plan_summary?.bom_quantity ?? '—' : '—' }}</template></ElTableColumn>
+        <ElTableColumn align="center" header-align="center" label="发出数量" width="95" class-name="num" show-overflow-tooltip><template #default="{ row }">{{ unifiedQuantityText(row, 'sent') }}</template></ElTableColumn>
+        <ElTableColumn align="center" header-align="center" label="回货数量" width="95" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="委外总单按累计实际入库；历史管材按最终实收，其他外发沿用原合格回货口径。" placement="top"><span>回货数量</span></ElTooltip></template><template #default="{ row }"><ElTooltip v-if="row.receipt_state === 'MISSING'" content="已结束，但最终凭证尚无法核对；不当作0回货。" placement="top"><span>—</span></ElTooltip><span v-else>{{ unifiedQuantityText(row, 'received') }}</span></template></ElTableColumn>
+        <ElTableColumn label="入库进度" width="125"><template #default="{ row }"><ElProgress v-if="row.is_plan && row.plan_summary" :percentage="Math.round(Math.min(100, Math.max(0, Number(row.plan_summary.receipt_progress))) * 10) / 10" :stroke-width="5" /><span v-else>—</span></template></ElTableColumn>
+        <ElTableColumn align="center" header-align="center" label="管材差额" width="90" class-name="num" show-overflow-tooltip><template #header><ElTooltip content="只显示旧流程管材最终登记后的实发减实收。委外总单的收发差额不自动认定为损耗。" placement="top"><span>管材差额</span></ElTooltip></template><template #default="{ row }"><span :class="{ brand: hasShortage(row) }">{{ row.is_plan ? '—' : unifiedQuantityText(row, 'shortage') }}</span></template></ElTableColumn>
         <ElTableColumn label="预计回货日" width="110" show-overflow-tooltip><template #default="{ row }">{{ row.delivery_date || '—' }}</template></ElTableColumn>
-        <ElTableColumn label="状态" width="90"><template #default="{ row }"><span class="status-tag erp-list-tag" :class="[`status-${statusTone(row.status)}`, row.status === 'COMPLETED' ? 'erp-list-tag--success' : row.status === 'PROCESSING' ? 'erp-list-tag--info' : row.status === 'PARTIAL_RETURN' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.status_display }}</span></template></ElTableColumn>
+        <ElTableColumn label="状态" width="90" align="center" header-align="center" class-name="outsourcing-status-column"><template #default="{ row }"><span class="status-tag erp-list-tag" :class="[`status-${statusTone(row.status)}`, row.status === 'COMPLETED' ? 'erp-list-tag--success' : row.status === 'PROCESSING' ? 'erp-list-tag--info' : row.status === 'PARTIAL_RETURN' ? 'erp-list-tag--warning' : 'erp-list-tag--neutral']">{{ row.status_display }}</span></template></ElTableColumn>
         <ElTableColumn label="操作" width="72" fixed="right" align="center">
           <template #default="{ row }">
             <div class="row-actions" @click.stop>
@@ -289,8 +288,8 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
                 <template #dropdown>
                   <ElDropdownMenu>
                     <ElDropdownItem command="detail">查看详情</ElDropdownItem>
-                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('dispatch')" command="dispatch" :disabled="loading || accessDenied">确认外发</ElDropdownItem>
-                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" command="return" :disabled="loading || accessDenied">回货入库</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('dispatch')" command="dispatch" :disabled="loading || accessDenied || Boolean(warehouseAction)">材料发出</ElDropdownItem>
+                    <ElDropdownItem v-if="warehouseWorkspace && row.warehouse_actions?.includes('return')" command="return" :disabled="loading || accessDenied || Boolean(warehouseAction)">外发入库</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintRow(row)" command="print-processing" :aria-label="`${row.order_number} 加工单打印`" :disabled="loading || Boolean(printRequest)">加工单打印</ElDropdownItem>
                     <ElDropdownItem v-if="canPrintSpray(row)" command="print-spray" :aria-label="`${row.order_number} 管材喷塑打印`" :disabled="loading || Boolean(printRequest)">管材喷塑打印</ElDropdownItem>
                     <ElDropdownItem v-if="canRemoveRow(row)" command="remove" :disabled="loading || Boolean(actingOrderId)" divided>{{ warehouseWorkspace ? '撤销并退料' : '删除' }}</ElDropdownItem>
@@ -306,6 +305,7 @@ watch([activeTab, warehouseWorkspace], ([value]) => { page.value = 1; if (value 
     </section>
     <ElResult v-if="!canViewOrders" icon="warning" :title="warehouseWorkspace ? '暂无委外管理操作权限' : '暂无委外加工查看权限'" />
     <OutsourcingPrintDialog v-if="printRequest" :record="printRequest.row" :kind="printRequest.kind" :warehouse="warehouseWorkspace" @close="printRequest = null" />
+    <WarehouseOutsourcingActionDialog v-if="warehouseAction" :key="`${warehouseAction.row.row_key}:${warehouseAction.action}`" :record="warehouseAction.row" :action="warehouseAction.action" @closed="warehouseAction = null" @updated="load" />
   </section>
 </template>
 

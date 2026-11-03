@@ -2,6 +2,8 @@
 import { pipeMeters } from '@/utils/pipeQuantities'
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { isCancel } from 'axios'
+import { useIdentityOwnedStorage } from '@/composables/useIdentityOwnedStorage'
 import { Calendar, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { confirmMaterialQuality, fetchMaterialQualityBatch, fetchMaterialQualityBatches } from '@/api/inventory'
 import { router } from '@/router'
@@ -15,6 +17,8 @@ const canConfirm = computed(() => auth.user?.is_superuser === true || auth.hasPe
 const canViewInventory = computed(() => auth.user?.is_superuser === true || auth.hasPermission('inventory.view_materialinbound'))
 const batches = ref<MaterialInbound[]>([])
 const selectedBatchId = ref('')
+const owned = useIdentityOwnedStorage({ storage: 'local', key: uid => `material-quality-draft:v2:${selectedBatchId.value}:user:${uid}`, legacyKeys: () => [`material-quality-draft:v2:${selectedBatchId.value}`] })
+let draftRaw: string | null = null
 const batch = ref<MaterialInbound | null>(null)
 const rows = ref<QualityRow[]>([])
 const hoveredRowId = ref('')
@@ -28,7 +32,7 @@ let requestVersion = 0
 let disposed = false
 let dialogOpen = false
 const qualityDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
-const locked = computed(() => loading.value || confirming.value || confirmed.value || !canConfirm.value)
+const locked = computed(() => !owned.isCurrent() || loading.value || confirming.value || confirmed.value || !canConfirm.value)
 const selectedRows = computed(() => rows.value.filter(row => row.included))
 const allSelected = computed({
   get: () => rows.value.length > 0 && selectedRows.value.length === rows.value.length,
@@ -44,6 +48,7 @@ function receivedInput(row: QualityRow): string { return row.line.measurement_ki
 function validRow(row: QualityRow): boolean {
   if (row.line.measurement_kind === 'PIPE' && !/^\d{1,14}$/.test(row.returnQuantity)) return false
   const returned = scaled(row.returnQuantity), received = scaled(receivedInput(row))
+  if (row.line.material_catalog_id && ['根', '支', '套'].includes(row.line.source_unit_text_snapshot) && returned !== null && returned % 10000n !== 0n) return false
   return returned !== null && received !== null && received > 0n && returned <= received && row.qualityRemark.length <= 3000
 }
 const completeCount = computed(() => rows.value.filter(validRow).length)
@@ -80,18 +85,22 @@ function apiMessage(error: unknown, fallback: string): string {
   const data = (error as { response?: { data?: { error?: { message?: string }; detail?: string } } })?.response?.data
   return data?.error?.message || data?.detail || fallback
 }
-function draftKey(id: string) { return `material-quality-draft:v2:${id}` }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
-function readDraft(id: string): Record<string, unknown> {
-  try { return record(JSON.parse(localStorage.getItem(draftKey(id)) || '{}')) } catch { return {} }
+function readDraft(): Record<string, unknown> {
+  // 无主历史草稿不读取、不迁移、不删除；损坏的 owned 普通草稿也保持原文。
+  draftRaw = owned.read()
+  try { return record(JSON.parse(draftRaw || '{}')) } catch { return {} }
 }
 async function loadBatches() {
+  if (!owned.isCurrent()) { loadError.value = '身份尚未核验或已变化，请核验身份后重新打开本页。'; return }
   if (confirming.value || confirmed.value) return
   const version = ++requestVersion
   loading.value = true
   loadError.value = ''
   try {
+    owned.assertCurrent()
     const data = await fetchMaterialQualityBatches()
+    owned.assertCurrent()
     if (disposed || version !== requestVersion) return
     batches.value = data.filter(item => item.status === 'PENDING_QUALITY')
     const id = batches.value.some(item => item.id === selectedBatchId.value) ? selectedBatchId.value : batches.value[0]?.id || ''
@@ -100,10 +109,11 @@ async function loadBatches() {
     // 列表已经返回完整批次，直接使用本次响应，省去首个批次的重复读取。
     await selectBatch(preserve, batches.value.find(item => item.id === id))
   } catch (error) {
-    if (!disposed && version === requestVersion) { loadError.value = apiMessage(error, '待质检批次加载失败，请刷新重试。'); loading.value = false }
+    if (!isCancel(error) && owned.isCurrent() && !disposed && version === requestVersion) { loadError.value = apiMessage(error, '待质检批次加载失败，请刷新重试。'); loading.value = false }
   }
 }
 async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
+  if (!owned.isCurrent()) return
   if (confirming.value || confirmed.value) return
   const version = ++requestVersion, id = selectedBatchId.value
   const previous = preserve ? new Map(rows.value.map(row => [row.line.id, row])) : new Map<string, QualityRow>()
@@ -112,9 +122,11 @@ async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
   loading.value = Boolean(id)
   if (!id) return
   try {
+    owned.assertCurrent()
     const data = loadedBatch?.id === id ? loadedBatch : await fetchMaterialQualityBatch(id)
+    owned.assertCurrent()
     if (disposed || version !== requestVersion) return
-    const draft = readDraft(id)
+    const draft = readDraft()
     batch.value = data
     rows.value = data.lines.map(line => {
       const saved = previous.get(line.id) || record(draft[line.id])
@@ -124,8 +136,8 @@ async function selectBatch(preserve = false, loadedBatch?: MaterialInbound) {
     })
     if (data.status !== 'PENDING_QUALITY') loadError.value = '此批次已完成品质确认，请刷新选择其他批次。'
   } catch (error) {
-    if (!disposed && version === requestVersion) loadError.value = apiMessage(error, '待质检明细加载失败，请刷新重试。')
-  } finally { if (!disposed && version === requestVersion) loading.value = false }
+    if (!isCancel(error) && owned.isCurrent() && !disposed && version === requestVersion) loadError.value = apiMessage(error, '待质检明细或当前用户草稿无法读取，请刷新重试。')
+  } finally { if (owned.isCurrent() && !disposed && version === requestVersion) loading.value = false }
 }
 function applyBulk() {
   if (locked.value || loadError.value) return
@@ -137,13 +149,14 @@ function applyBulk() {
 function saveDraft() {
   if (!batch.value || locked.value) return
   try {
-    localStorage.setItem(draftKey(batch.value.id), JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, qualityRemark: row.qualityRemark }]))))
+    const raw = JSON.stringify(Object.fromEntries(rows.value.map(row => [row.line.id, { returnQuantity: row.returnQuantity, qualityRemark: row.qualityRemark }])))
+    owned.write(raw); draftRaw = raw
     ElMessage.success('质检草稿已保存在当前浏览器。')
   } catch { ElMessage.error('浏览器无法保存草稿，填写内容仍保留在页面中。') }
 }
 async function confirmInbound() {
-  if (!canSubmit.value || !batch.value) return
-  const id = batch.value.id
+  if (!owned.isCurrent() || !canSubmit.value || !batch.value) return
+  const id = batch.value.id, consumedDraftRaw = draftRaw
   // 勾选只控制批量设置；接口要求提交整个批次，并冻结确认框打开前的内容。
   const payload = { items: rows.value.map(row => ({ line_id: row.line.id, expected_received_quantity: row.line.received_quantity, ...(row.line.measurement_kind === 'PIPE' ? { return_bar_count: row.returnQuantity } : { return_quantity: row.returnQuantity }), quality_remark: row.qualityRemark })) }
   confirming.value = true
@@ -159,20 +172,23 @@ async function confirmInbound() {
         cancelButtonClass: 'quality-confirm-dialog__cancel',
       })
     } catch { return } finally { dialogOpen = false }
-    if (disposed || !canConfirm.value) return
+    owned.assertCurrent()
+    if (disposed || !canConfirm.value || selectedBatchId.value !== id) return
     await confirmMaterialQuality(id, payload)
+    owned.assertCurrent()
+    if (selectedBatchId.value !== id) return
     confirmed.value = true
-    try { localStorage.removeItem(draftKey(id)) } catch { ElMessage.warning('入库已成功，但本地草稿未能清除。') }
+    try { if (consumedDraftRaw !== null && !owned.removeIfUnchanged(consumedDraftRaw)) ElMessage.warning('入库已成功，但当前用户草稿已变化，已保留后写入内容。') } catch { if (!owned.isCurrent()) return; ElMessage.warning('入库已成功，但当前用户草稿未能清除。') }
     if (disposed) return
     ElMessage.success('品质确认完成，合格数量已计入库存，有退货的明细已生成退货单。')
     try { await router.push({ name: canViewInventory.value ? 'material-inventory' : 'purchase-inbounds' }) }
-    catch { ElMessage.warning('入库已成功，请从采购入库列表继续。') }
+    catch { if (owned.isCurrent()) ElMessage.warning('入库已成功，请从采购入库列表继续。') }
   } catch (error) {
-    if (!disposed) {
+    if (!isCancel(error) && owned.isCurrent() && !disposed) {
       ElMessage.error(apiMessage(error, '品质确认失败，填写内容已保留。'))
       if ((error as { response?: { status?: number } })?.response?.status === 409) loadError.value = '批次数据已变化，请刷新后重新核对。'
     }
-  } finally { confirming.value = false }
+  } finally { if (owned.isCurrent()) confirming.value = false }
 }
 onMounted(() => { if (canConfirm.value) void loadBatches() })
 onBeforeUnmount(() => { disposed = true; requestVersion++; if (dialogOpen) ElMessageBox.close() })

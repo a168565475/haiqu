@@ -16,7 +16,7 @@ export function sampleAllocationTotal(category: string, selections: SampleInvent
 
 // 十进制字符串运算避免 0.3 - 0.1 出现浮点尾数，与接口 Decimal(18,4) 一致。
 export function sampleSupplyResult(required: string, supply: string): SampleSupplyResult {
-  const pending = { valid: false, gap: null, result: 'pending', message: '请填写本次可供数量。' } as const
+  const pending = { valid: false, gap: null, result: 'pending', message: '请先点击“查询库存”核对供料；无库存自动回填 0，有库存请选择来源并应用供料。' } as const
   if (!supply.trim()) return pending
   const invalid = (message: string): SampleSupplyResult => ({ valid: false, gap: null, result: 'invalid', message })
   if (!/^\d{1,14}(\.\d{1,4})?$/.test(required.trim()) || !/^\d{1,14}(\.\d{1,4})?$/.test(supply.trim())) return invalid('数量格式不正确，最多 14 位整数、4 位小数。')

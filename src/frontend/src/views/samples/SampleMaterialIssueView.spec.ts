@@ -43,6 +43,23 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = '' })
 
 describe('样品全部领料页面', () => {
+  it.each([['公斤', '1.2500', '1.25 公斤'], ['根', '2.0000', '2 根'], ['米', '1.2500', '1.25 米']])('新目录非管材按保存单位%s显示', async (unit, quantity, expected) => {
+    const selected = { schema_version: 1, unit_name: unit }
+    mocks.issue.mockResolvedValueOnce({ data: { ...pending, lines: [{ ...line, category: 'hardware', material_catalog_id: 'catalog',
+      material_selection_snapshot: selected, unitLabel: unit, availableQuantity: quantity, barCount: 0, pipeBatches: [] }] }, etag: 'v1' })
+    const wrapper = await render()
+    expect(wrapper.find('[data-testid="readonly-issued-quantity"]').text()).toBe(expected)
+    expect(wrapper.findAll('.issue-table tbody td')[9]!.attributes('title')).toBe('')
+  })
+
+  it('已领非管材使用实领量及保存单位，不把当前单位标签当历史来源', async () => {
+    mocks.issue.mockResolvedValueOnce({ data: { ...pending, status: 'ISSUED', canConfirm: false, lines: [{ ...line,
+      category: 'hardware', material_catalog_id: 'catalog', material_selection_snapshot: { unit_name: '公斤' }, unitLabel: '目录后来单位',
+      availableQuantity: '9', issuedQuantity: '1.2500', barCount: 0, pipeBatches: [] }] }, etag: 'v1' })
+    const wrapper = await render()
+    expect(wrapper.find('[data-testid="readonly-issued-quantity"]').text()).toBe('1.25 公斤')
+  })
+
   it('保留原列并只读展示根米、仓库可供和冻结采购量', async () => {
     const wrapper = await render()
     const cells = wrapper.findAll('.issue-table tbody td')

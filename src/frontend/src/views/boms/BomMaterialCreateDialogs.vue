@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import AuxiliaryReferenceCreateDialog from '@/components/AuxiliaryReferenceCreateDialog.vue'
 import HardwareRawMaterialCreateDialog from '@/components/HardwareRawMaterialCreateDialog.vue'
-import type { BomAuxiliaryProductOption } from '@/types/bom'
 import type { RawMaterialInformation, RawMaterialInput } from '@/types/rawMaterial'
 
 type RawMaterialTarget = 'hardware' | 'plastic' | 'packaging' | 'cutting'
@@ -19,9 +17,7 @@ const props = defineProps<{
   plasticCreateVisible: boolean
   packagingCreateVisible: boolean
   cuttingCreateVisible: boolean
-  auxiliaryCreateVisible: boolean
   stageRawMaterial: StageRawMaterial
-  handleAuxiliaryCreated: (item: BomAuxiliaryProductOption) => void | Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -29,7 +25,6 @@ const emit = defineEmits<{
   (event: 'update:plasticCreateVisible', value: boolean): void
   (event: 'update:packagingCreateVisible', value: boolean): void
   (event: 'update:cuttingCreateVisible', value: boolean): void
-  (event: 'update:auxiliaryCreateVisible', value: boolean): void
 }>()
 
 const hardwareVisible = computed({
@@ -47,10 +42,6 @@ const packagingVisible = computed({
 const cuttingVisible = computed({
   get: () => props.cuttingCreateVisible,
   set: (value: boolean) => emit('update:cuttingCreateVisible', value),
-})
-const auxiliaryVisible = computed({
-  get: () => props.auxiliaryCreateVisible,
-  set: (value: boolean) => emit('update:auxiliaryCreateVisible', value),
 })
 
 const stageHardwareMaterial = (payload: RawMaterialInput, display: RawMaterialDisplay) => props.stageRawMaterial('hardware', payload, display)
@@ -97,8 +88,4 @@ const stageCuttingMaterial = (payload: RawMaterialInput, display: RawMaterialDis
     :stage-material="stageCuttingMaterial"
   />
 
-  <AuxiliaryReferenceCreateDialog
-    v-model="auxiliaryVisible"
-    @created="props.handleAuxiliaryCreated"
-  />
 </template>

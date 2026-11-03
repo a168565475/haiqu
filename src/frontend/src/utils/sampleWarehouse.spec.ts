@@ -3,6 +3,11 @@ import { sampleAllocationTotal, sampleShortageLines, sampleSupplyResult, validat
 import type { SampleWarehouseLine } from '@/types/sampleWarehouse'
 const line = (supplyQuantity: string): SampleWarehouseLine => ({ key: supplyQuantity, category: 'tube', name: '圆管', specification: 'Φ25', material: '', color: '', quantity: '12', unitId: 'meter', unitLabel: '米', notes: '', supplyQuantity })
 describe('仓库可供与采购缺口', () => {
+  it('R2新目录管材仍按整数根及保存批次原长折成供料米数', () => {
+    const selections = [{ balanceId: 'b', stockMode: 'PUBLIC_V2' as const, quantity: '1', rawBarLengthM: '3', materialNumber: '', warehouseName: '仓', zoneName: '区', unitLabel: '根', availableQuantity: '2', meterQuantity: '6' }]
+    expect(sampleAllocationTotal('tube', selections)).toBe('3')
+    expect(validateSampleWarehouse({ lines: [{ ...line('3'), material_catalog_id: 'catalog', inventoryAllocations: selections }], notes: '' })).toBe('')
+  })
   it('管材按整根精确折算小数米数，关联合计必须和供料一致', () => {
     const selections = [{ balanceId: 'b', stockMode: 'PUBLIC_V2' as const, quantity: '3', rawBarLengthM: '6.14', materialNumber: 'M1', warehouseName: '仓', zoneName: '区', unitLabel: '根', availableQuantity: '5', meterQuantity: '30.70' }]
     expect(sampleAllocationTotal('tube', selections)).toBe('18.42')

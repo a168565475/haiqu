@@ -1,0 +1,86 @@
+# Linux Docker 主机的显式叠加文件；不由默认 compose.yml 自动启动。
+# 与包含 backend/postgres 的已核验 ERP Compose 合并。先完成迁移和目录权限准备。
+services:
+  backend:
+    environment:
+      CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
+    group_add: ["10001"]
+    volumes:
+      - type: bind
+        source: ${CODEX_SOCKET_DIR:?set CODEX_SOCKET_DIR}
+        target: /run/haiqu-codex
+        read_only: true
+        bind:
+          create_host_path: false
+
+  codex-worker:
+    image: ${CODEX_ERP_IMAGE:?set the reviewed ERP image with unit02 code}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    env_file: ["${ERP_ENV_FILE:?set the existing ERP environment file}"]
+    environment:
+      CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
+      PYTHONDONTWRITEBYTECODE: "1"
+    group_add: ["10001"]
+    command: ["python", "manage.py", "process_codex_operations", "--watch"]
+    mem_limit: 512m
+    pids_limit: 64
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: ${CODEX_SOCKET_DIR:?set CODEX_SOCKET_DIR}
+        target: /run/haiqu-codex
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}
+
+  codex-runtime:
+    image: ${CODEX_RUNTIME_IMAGE:?set the reviewed isolated runtime image}
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    pids_limit: 64
+    stop_grace_period: 120s
+    environment:
+      CODEX_RUNTIME_SOCKET: /run/haiqu-codex/runtime.sock
+      HTTP_PROXY: ${CODEX_PROXY_URL:?set the dedicated internal proxy URL}
+      HTTPS_PROXY: ${CODEX_PROXY_URL:?set the dedicated internal proxy URL}
+      NO_PROXY: localhost,127.0.0.1,::1
+    networks: [codex-internal]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=700
+      - /work/current:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=700
+    volumes:
+      - type: bind
+        source: ${CODEX_SOCKET_DIR:?set CODEX_SOCKET_DIR}
+        target: /run/haiqu-codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CODEX_AUTH_DIR:?set the isolated Codex auth directory}
+        target: /state/codex
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CODEX_LOCK_FILE:?set the shared Codex lock file}
+        target: /state/login.lock
+        bind:
+          create_host_path: false
+    logging:
+      driver: local
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  codex-internal:
+    external: true
+    name: ${CODEX_INTERNAL_NETWORK:?set the verified isolated network}

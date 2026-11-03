@@ -90,7 +90,10 @@ class BomLoadingReadTests(APITestCase):
         with CaptureQueriesContext(connection) as queries:
             response = self.client.get('/api/v1/boms/options/', {'scope': 'filters'}, HTTP_HOST='localhost')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['data'], {'product_categories': full.data['data']['product_categories']})
+        self.assertEqual(response.data['data'], {
+            'product_categories': full.data['data']['product_categories'],
+            'product_catalog_categories': full.data['data']['product_catalog_categories'],
+        })
         self.assertEqual([row['category_name'] for row in response.data['data']['product_categories']], ['加载测试成品'])
         sql = '\n'.join(item['sql'] for item in queries)
         for table in ['bom', 'production_task', 'product_information', 'reference_currency']:

@@ -8,7 +8,7 @@ import MaterialPurchaseInboundView from './MaterialPurchaseInboundView.vue'
 const permissions = vi.hoisted(() => ({ receive: true }))
 vi.mock('@/router', () => ({ router: { push: vi.fn() } }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { purchaseOrderId: 'sample-order' } }), useRouter: () => router }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: (permission: string) => permission !== 'inventory.receive_material' || permissions.receive }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7 }, initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, hasPermission: (permission: string) => permission !== 'inventory.receive_material' || permissions.receive }) }))
 vi.mock('@/api/inventory', () => ({
   fetchMaterialReceivingOptions: vi.fn(), fetchEligibleMaterialPurchaseOrders: vi.fn(),
   fetchEligibleMaterialLinesWithVersion: vi.fn(), createMaterialReceiving: vi.fn(), createSampleMaterialReceiving: vi.fn(),
@@ -52,10 +52,13 @@ describe('样品采购全部入库', () => {
   it('忽略旧草稿的部分选择和数量，全部明细只读显示根米或原单位', async () => {
     localStorage.setItem('material-receiving-draft:v2:sample-order', JSON.stringify({ purchaseOrderId: 'sample-order',
       rows: { pipe: { included: false, receivedQuantity: '1', warehouseId: 'warehouse', zoneId: 'zone' } } }))
+    const legacy = localStorage.getItem('material-receiving-draft:v2:sample-order')
     const wrapper = mount(); await flushPromises()
     const vm = wrapper.vm as unknown as View
+    expect(localStorage.getItem('material-receiving-draft:v2:sample-order')).toBe(legacy)
+    expect(localStorage.getItem('material-receiving-draft:v2:sample-order:user:7')).toBeNull()
     expect(vm.rows.map(row => row.included)).toEqual([true, true])
-    expect(vm.rows.map(row => row.receivedQuantity)).toEqual(['2', '4.00'])
+    expect(vm.rows.map(row => row.receivedQuantity)).toEqual(['2', '4'])
     expect(wrapper.find('.quantity-input').exists()).toBe(false)
     expect(wrapper.findAll('[data-testid="sample-receiving-quantity"]').map(cell => cell.text())).toEqual(['2 根 × 6 米/根 = 12 米', '4 个'])
     expect(wrapper.findAllComponents({ name: 'ElCheckbox' }).every(input => input.props('disabled') === true)).toBe(true)
@@ -86,6 +89,31 @@ describe('样品采购全部入库', () => {
     expect(vm.readyToSubmit).toBe(false)
     await vm.submitReceiving()
     expect(api.createSampleMaterialReceiving).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('样品各行按加工状态带入建议仓区，仍全量提交且不携带数量', async () => {
+    vi.mocked(api.fetchMaterialReceivingOptions).mockResolvedValue({
+      warehouses: [
+        { id: 'raw', warehouse_number: 'CK01', warehouse_name: '原料仓', warehouse_type: 'MATERIAL' },
+        { id: 'semi', warehouse_number: 'CK02', warehouse_name: '半成品仓', warehouse_type: 'SEMI_FINISHED' },
+      ],
+      zones: [{ id: 'raw-zone', warehouse: 'raw', zone_name: '原料区' }, { id: 'semi-zone', warehouse: 'semi', zone_name: '半成品区' }],
+    })
+    vi.mocked(api.fetchEligibleMaterialLinesWithVersion).mockResolvedValue({ data: [
+      { ...lines[0], material_selection_snapshot: { processing_state: 'RAW' }, suggested_warehouse_id: 'raw' },
+      { ...lines[1], material_selection_snapshot: { processing_state: 'PROCESSED' }, suggested_warehouse_id: 'semi' },
+    ], etag: '"sample-v1"' } as never)
+    const wrapper = mount(); await flushPromises()
+    const vm = wrapper.vm as unknown as View
+    expect(vm.rows.map(row => [row.warehouseId, row.zoneId])).toEqual([['raw', 'raw-zone'], ['semi', 'semi-zone']])
+    expect(vm.readyToSubmit).toBe(true)
+    await vm.submitReceiving()
+    expect(vi.mocked(api.createSampleMaterialReceiving).mock.calls[0]![0].items).toEqual([
+      { purchase_order_line_id: 'pipe', zone_id: 'raw-zone', remark: '' },
+      { purchase_order_line_id: 'screw', zone_id: 'semi-zone', remark: '' },
+    ])
+    expect(api.createMaterialReceiving).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

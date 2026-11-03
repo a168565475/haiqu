@@ -9,9 +9,32 @@ from apps.inventory.models import MaterialStockBalance, PublicStockBalance
 from apps.inventory.public_stock_mode import public_flow_enabled
 from apps.inventory.stock_services import debit_material_stock
 from apps.inventory.tube_outsourcing_reservations import reserved_quantity_for_balance, tube_material_reserved_quantities
+from apps.material_catalog.saved_selection import validate_saved_material
 
 
 def stock_rows(demand, *, lock=False):
+    if demand.get('material_catalog_id'):
+        from apps.inventory.catalog_stock_queries import available_catalog_balances
+        from .catalog_materials import sample_saved_selection
+        selected = sample_saved_selection(demand)
+        pipe = demand.get('category') == 'tube'
+        if pipe and (selected['unit_name'] != '根' or demand.get('unitLabel') != '米' or demand.get('pipeInputMode') != 'TOTAL_METERS'):
+            raise Conflict('目录管材须保留根制原管来源及样品总米数需求，不能自动换算旧数量。')
+        candidates = available_catalog_balances(material_catalog_id=demand['material_catalog_id'],
+            material_selection_snapshot=selected)
+        rows = PublicStockBalance.objects.filter(pk__in=[row['balance_id'] for row in candidates if row['available_quantity'] > 0]
+        ).select_related('unit', 'zone__warehouse').order_by('zone_id', 'id')
+        if lock:
+            rows = rows.select_for_update(of=('self',))
+        result = []
+        for balance in rows:
+            if pipe and (not balance.raw_bar_length_m or balance.raw_bar_length_m <= 0
+                    or balance.quantity != balance.quantity.to_integral_value()):
+                raise Conflict('原管库存缺少有效的实际批次根数或单根长度，不能从目录属性猜测。')
+            free = max(balance.quantity - reserved_quantity_for_balance(balance), Decimal('0'))
+            if free > 0:
+                result.append((balance, free))
+        return 'PUBLIC_V2', result
     pipe = demand.get('category') == 'tube'
     public = pipe and public_flow_enabled()
     model = PublicStockBalance if public else MaterialStockBalance
@@ -44,11 +67,19 @@ def stock_rows(demand, *, lock=False):
 
 
 def candidate_payload(balance, available, stock_mode):
+    catalog_id = getattr(balance, 'material_catalog_id', None)
+    if catalog_id:
+        snapshot = balance.identity_snapshot
+        selected = validate_saved_material(snapshot.get('material_selection_snapshot') if isinstance(snapshot, dict) else None,
+            material_catalog_id=catalog_id)
+        unit_label = selected['unit_name']
+    else:
+        unit_label = balance.unit.unit_name
     return {
         'balanceId': str(balance.pk), 'stockMode': stock_mode,
-        'materialNumber': balance.raw_material.material_number,
+        'materialNumber': balance.raw_material.material_number if balance.raw_material_id else '',
         'warehouseName': balance.zone.warehouse.warehouse_name, 'zoneName': balance.zone.zone_name,
-        'unitLabel': balance.unit.unit_name, 'availableQuantity': str(available),
+        'unitLabel': unit_label, 'availableQuantity': str(available),
         'rawBarLengthM': str(balance.raw_bar_length_m) if balance.raw_bar_length_m else None,
         'meterQuantity': str(available * balance.raw_bar_length_m) if balance.raw_bar_length_m else None,
     }
@@ -78,6 +109,8 @@ def validate_allocations(demand, allocations, supply, *, planned=None, lock=Fals
             raise Conflict(f"{demand['name']}：关联库存已失效或不属于此需求原材料，请重新查询。")
         balance, free = by_id[key]
         quantity = quantity_value(selected['quantity'], positive=True)
+        if demand.get('material_catalog_id') and demand['material_selection_snapshot']['unit_name'] in {'根', '支', '套'} and quantity != quantity.to_integral_value():
+            raise ValidationError('根、支、套按整数供料，不自动换算。')
         if demand['category'] == 'tube' and quantity != quantity.to_integral_value():
             raise ValidationError('管材供料根数必须为正整数。')
         identity = (mode, key)

@@ -52,7 +52,7 @@ def available_material_version(sample):
         return None
     totals = {}
     for item in rows:
-        if item['row'].get('category') != 'tube':
+        if item['row'].get('category') != 'tube' and not item['row'].get('material_catalog_id'):
             key = (item['material'].pk, item['material'].unit_id)
             totals[key] = totals.get(key, Decimal('0')) + item['available']
     _, reserved = tube_material_reserved_quantities(raw_material_ids=[key[0] for key in totals])
@@ -63,13 +63,22 @@ def available_material_version(sample):
         free = sum((max(row.quantity - reserved.get((str(material_id), str(unit_id), str(row.zone_id)), Decimal('0')), Decimal('0')) for row in balances), Decimal('0'))
         if free < quantity:
             return None
-    facts = sorted((str(item['row']['key']), str(item['material'].pk), str(item['warehouse']), str(item['arrived'])) for item in rows)
+    facts = []
+    for item in rows:
+        if item['row'].get('material_catalog_id'):
+            from apps.material_catalog.snapshots import material_identity_key
+            # 通知版本标识保存材料，不创建某个实际根长的库存池身份。
+            identity = material_identity_key(item['row']['material_selection_snapshot'])
+        else:
+            identity = str(item['material'].pk)
+        facts.append((str(item['row']['key']), identity, str(item['warehouse']), str(item['arrived'])))
+    facts.sort()
     return hashlib.sha256(json.dumps(facts, separators=(',', ':')).encode()).hexdigest()
 
 
 def current_sample_object(code, object_id, version=None):
     sample, obj = sample_for_event(code, object_id)
-    if sample is None or not sample.application_payload_hash or sample.archived_at or sample.customer_account.archived_at:
+    if sample is None or not sample.application_payload_hash or sample.archived_at or (sample.customer_account_id and sample.customer_account.archived_at):
         return None
     actual = None
     if code in ACTION_EVENTS:
@@ -109,6 +118,7 @@ def _register(code, obj, sample, version, actor, occurred_at):
     if sample.requested_by_employee_id:
         context.update(submitter=sample.requested_by_employee.display_name, submitter_id=str(sample.requested_by_employee_id))
     return register_business_event(event_code=code, idempotency_key=f'{code}:{obj.pk}:{version}',
+        actor_employee=actor,
         object_type=obj._meta.label, object_id=obj.pk, object_version=version,
         context=context)
 

@@ -129,6 +129,16 @@ def normalize_sample_pipe(row, *, submit):
 
 def sample_pipe_snapshot(procurement, row, *, validate_current_material=True):
     from apps.procurement.pipe_purchase import pipe_meters
+    if row.get('material_catalog_id'):
+        from .material_identity import sample_material_snapshot
+        snapshot = sample_material_snapshot(procurement, row)
+        if (row.get('pipeInputMode') != 'TOTAL_METERS' or row.get('unitLabel') != '米'
+                or snapshot['material_selection_snapshot']['unit_name'] != '根'):
+            raise ValidationError({'lines': '目录管材须选择根制原管，样品需求保留总米数口径。'})
+        meters = sample_pipe_meter_snapshot(row)
+        meters.pop('raw_material_id')
+        snapshot.update(meters)
+        return snapshot
     if is_total_meter_pipe(row):
         if row.get('unitLabel') != '米':
             raise ValidationError({'lines': '新口径打样管材需求单位必须为米。'})
@@ -165,6 +175,17 @@ def sample_pipe_snapshot(procurement, row, *, validate_current_material=True):
 
 def sample_pipe_arrival_quantity(line, procurement, row):
     # 到货沿用采购时已冻结的身份和参数；基础资料改名不能改写历史合同。
+    if row.get('material_catalog_id'):
+        from .catalog_materials import sample_saved_selection
+        if str(line.material_catalog_id) != str(row['material_catalog_id']) or line.material_selection_snapshot != sample_saved_selection(row):
+            raise ValidationError({'lines': '样品管材到货与保存需求材料不一致。'})
+        snapshot = sample_pipe_snapshot(procurement, row, validate_current_material=False)
+        if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != '米'
+                or any(line.calculation_snapshot.get(key) != value for key, value in snapshot.items())
+                or line.accepted_bar_count is None or not line.raw_bar_length_m
+                or line.accepted_quantity != line.raw_bar_length_m * line.accepted_bar_count):
+            raise ValidationError({'lines': '样品管材到货须保留实际根数、单根长度及对应米数。'})
+        return Decimal(line.accepted_quantity)
     snapshot = sample_pipe_snapshot(procurement, row, validate_current_material=False)
     if (line.measurement_kind != 'PIPE' or line.source_unit_text_snapshot != '米'
             or str(line.raw_material_information_id) != snapshot['raw_material_id']

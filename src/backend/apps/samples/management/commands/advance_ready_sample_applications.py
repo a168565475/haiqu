@@ -11,7 +11,7 @@ from apps.customers.services import model_snapshot
 def eligible(sample):
     record = getattr(sample, 'material_request', None)
     if (not sample.application_payload_hash or sample.status != SampleRequestStatus.MATERIALS_READY
-            or sample.archived_at or sample.customer_account.archived_at or not record
+            or sample.archived_at or (sample.customer_account_id and sample.customer_account.archived_at) or not record
             or not record.submitted_at or not record.reviewed_at or not record.reviewed_by_id
             or getattr(record, 'procurement_request', None)):
         return False

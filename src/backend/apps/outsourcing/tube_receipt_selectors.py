@@ -52,7 +52,7 @@ def dispatch_evidence_blockers(order):
         try:
             identity = validate_public_identity(line.snapshot.get('public_output_identity') if isinstance(line.snapshot, dict) else None)
             codes = CUTTING_CRAFT_CODES if order.source_kind in CUTTING_SOURCES else {'POWDER_COATING'}
-            if (identity['stock_kind'] != 'SEMI' or identity['identity_snapshot']['unit_name'] != output_unit(order.source_kind)
+            if (identity['stock_kind'] not in {'SEMI', 'CATALOG_SEMI'} or identity['identity_snapshot']['unit_name'] != output_unit(order.source_kind)
                     or identity['identity_snapshot']['completed_craft']['code'] not in codes
                     or identity['identity_snapshot']['completed_craft']['id'] != str(order.craft_id)):
                 raise ValueError('加工身份不匹配')
@@ -79,7 +79,16 @@ def dispatch_evidence_blockers(order):
         if order.source_kind == 'RAW_PIPE':
             try:
                 meters = Decimal(str(line.snapshot.get('meters')))
-                matches = meters.is_finite() and meters > 0 and movement.meter_quantity == meters
+                if line.input_identity.get('stock_kind') == 'CATALOG_RAW':
+                    # 原长来自原单命中的实际库存；不能用目录文字或当前BOM补凭证。
+                    actual_length = Decimal(str(movement.balance.raw_bar_length_m))
+                    saved_length = Decimal(str(line.input_identity.get('raw_bar_length_m')))
+                    matches = (meters.is_finite() and meters > 0 and actual_length.is_finite()
+                        and actual_length > 0 and saved_length == actual_length
+                        and movement.meter_quantity == meters == movement.quantity * actual_length
+                        and Decimal(str(movement.snapshot.get('meters'))) == meters)
+                else:
+                    matches = meters.is_finite() and meters > 0 and movement.meter_quantity == meters
             except (InvalidOperation, TypeError, ValueError, ArithmeticError):
                 matches = False
             if not matches:
@@ -125,6 +134,9 @@ def receipt_data(receipt, *, created=False):
 
 
 def receipt_preview(order, request):
+    if order.is_plan:
+        from .plan_selectors import plan_receipt_preview
+        return plan_receipt_preview(order, request)
     from .warehouse_access import warehouse_stage
     warehouse = warehouse_stage(request)
     if warehouse or order.status == 'COMPLETED':
@@ -133,6 +145,8 @@ def receipt_preview(order, request):
         require_saved_order_access(request, order, RETURN_PERMISSION)
     receipt = receipt_queryset().filter(order=order).first()
     blockers = []
+    if order.plan_id:
+        blockers.append('该批次属于委外总单，请在总单登记独立入库。')
     if warehouse and not (module_policy.has_permission(request, RETURN_PERMISSION)
             and saved_orders_for_permission(request, RETURN_PERMISSION).filter(pk=order.pk).exists()):
         blockers.append('当前账号没有该外发单的回货确认权限。')
@@ -156,7 +170,7 @@ def receipt_preview(order, request):
 
 
 def receipt_candidates(request, data):
-    eligible = saved_orders_for_permission(request, RETURN_PERMISSION).filter(status='PROCESSING').annotate(
+    eligible = saved_orders_for_permission(request, RETURN_PERMISSION).filter(status='PROCESSING', is_plan=False, plan__isnull=True).annotate(
         has_dispatch=Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='DISPATCH')),
         has_cancel=Exists(TubeOutsourcingAction.objects.filter(order_id=OuterRef('pk'), kind='CANCEL')),
         has_receipt=Exists(TubeOutsourcingReceipt.objects.filter(order_id=OuterRef('pk'))),

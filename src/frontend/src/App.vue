@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import AccountSwitchControls from '@/components/auth/AccountSwitchControls.vue'
 import AppHeader from '@/components/navigation/AppHeader.vue'
 import AppSidebar from '@/components/navigation/AppSidebar.vue'
 import ErpLayout from '@/layouts/ErpLayout.vue'
 import PageContainer from '@/layouts/PageContainer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { installWeComRoleGuard } from '@/api/wecomSession'
-import { usePageTabsStore } from '@/stores/pageTabs'
+import { usePageTabsIdentitySync } from '@/composables/usePageTabsIdentitySync'
 import { useReferenceCacheSync } from '@/composables/useReferenceCacheSync'
+import { useRouteIdentityBoundary } from '@/composables/useRouteIdentityBoundary'
+import AccountSwitchTransitionView from '@/views/auth/AccountSwitchTransitionView.vue'
 import { pageInstanceKey } from '@/utils/pageInstanceKey'
 import { glassListRouteNames } from '@/config/glassListRoutes'
 import { glassDetailRouteNames } from '@/config/glassDetailRoutes'
@@ -18,37 +21,18 @@ import { glassFormRouteNames } from '@/config/glassFormRoutes'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const routeIdentityCurrent = useRouteIdentityBoundary(router, authStore)
+const accountSwitchControls = ref<InstanceType<typeof AccountSwitchControls>>()
+const accountSwitchBusy = computed(() => accountSwitchControls.value?.busy ?? false)
+const accountSwitchError = computed(() => accountSwitchControls.value?.flowError ?? '')
+const returnAccountAdmin = () => accountSwitchControls.value?.returnAdmin()
+const verifyAccountIdentity = () => accountSwitchControls.value?.verifyIdentity()
+const openAccountSwitch = () => accountSwitchControls.value?.openSwitchDialog()
 const removeWeComRoleGuard = installWeComRoleGuard(router, authStore)
-const pageTabs = usePageTabsStore()
-watch(() => [authStore.user?.id, JSON.stringify({
-  permissions: [...(authStore.user?.permissions || [])].sort(),
-  superuser: authStore.user?.is_superuser,
-  salesAccess: authStore.user?.sales_access_enabled,
-  moduleAccess: authStore.user?.module_access_enabled,
-  employee: authStore.user?.employee,
-  dataScope: authStore.user?.data_scope,
-  effectiveAccess: authStore.user?.effective_access,
-  waitingForRole: authStore.user?.waiting_for_role,
-})] as const, ([userId, permissionSignature]) => {
-  const previousAccount = pageTabs.accountId
-  const previousPermissions = pageTabs.permissionSignature
-  pageTabs.synchronizeAccount(userId, permissionSignature, router)
-  if (pageTabs.accountId && (pageTabs.accountId !== previousAccount || previousPermissions !== permissionSignature)) {
-    pageTabs.recordRoute(route)
-  }
-}, { immediate: true })
-watch(() => route.fullPath, () => pageTabs.recordRoute(route))
+usePageTabsIdentitySync()
 useReferenceCacheSync()
-const invalidateAuthenticationCheck = () => authStore.invalidateAuthenticationCheck()
-
-onMounted(() => {
-  window.addEventListener('focus', invalidateAuthenticationCheck)
-  document.addEventListener('visibilitychange', invalidateAuthenticationCheck)
-})
 onBeforeUnmount(() => {
   removeWeComRoleGuard()
-  window.removeEventListener('focus', invalidateAuthenticationCheck)
-  document.removeEventListener('visibilitychange', invalidateAuthenticationCheck)
 })
 
 const quotationRoutes = ['quotations', 'quotation-edit', 'quotation-preview', 'quotation-versions', 'quotation-packaging', 'quotation-price-history']
@@ -110,11 +94,14 @@ const contentScrollRoutes = [
   'workshop-outsourcing-rework-detail', 'workshop-outsourcing-detail', 'workshop-outsourcing-factory-detail',
   'warehouse-outsourcing-rework-detail', 'warehouse-outsourcing-detail',
   'purchase-order-detail', 'purchase-inbound-detail',
+  'purchase-group-detail', 'purchase-batch-create',
 ]
 const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(route.name || '')))
 </script>
 
 <template>
+  <AccountSwitchControls ref="accountSwitchControls" />
+  <div class="app-route-surface">
   <RouterView v-slot="{ Component, route }">
     <ErpLayout
       v-if="route.meta.layout === 'erp'"
@@ -145,23 +132,29 @@ const contentScrollRoute = computed(() => contentScrollRoutes.includes(String(ro
         <AppSidebar />
       </template>
       <template #header>
-        <AppHeader />
+        <AppHeader :switch-busy="accountSwitchBusy" :switch-error="accountSwitchError" @switch-account="openAccountSwitch" @return-admin="returnAccountAdmin" @verify-identity="verifyAccountIdentity" />
       </template>
       <PageContainer
-        :key="pageInstanceKey(route, authStore.user?.id)"
+        :key="pageInstanceKey(route, authStore.user?.id, authStore.identityGeneration)"
         :class="{ 'fast-read-loading': fastReadLoadingRoute }"
         :width="route.meta.pageWidth"
         :flush="route.meta.flushPage === true || route.name === 'inquiries'"
         :fit-viewport="viewportTableRoute"
       >
-        <component :is="Component" />
+        <component :is="Component" v-if="routeIdentityCurrent" />
+        <AccountSwitchTransitionView v-else />
       </PageContainer>
     </ErpLayout>
     <component :is="Component" v-else />
   </RouterView>
+  </div>
 </template>
 
 <style scoped lang="scss">
+.app-route-surface { min-width: 0; height: 100vh; height: 100dvh; overflow: auto; }
+.app-route-surface :deep(.wecom-auth-page),
+.app-route-surface :deep(.login-page) { min-height: 100%; }
+
 // 仅缩短读取完成后的遮罩退场；loading 状态仍由真实请求决定。
 .fast-read-loading :deep(.el-loading-mask) { transition-duration: 120ms; }
 .sample-library-layout :deep(#erp-main-content) { overflow: auto; }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { productEntryUnitName } from '@/utils/productEntryDraft'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Box, Coin, CopyDocument, Document, Tickets } from '@element-plus/icons-vue'
@@ -169,7 +170,7 @@ function versionQuantity(versionId: string) {
   const detail = versionDetail(versionId)
   if (!detail) return '—'
   const quantity = detail.lines.reduce((total, item) => total + Number(item.quantity || 0), 0)
-  const unit = detail.lines[0]?.unit_code || ''
+  const unit = productEntryUnitName(detail.lines[0])
   return `${quantity.toLocaleString('zh-CN')} ${unit}`.trim()
 }
 

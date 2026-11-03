@@ -13,6 +13,7 @@ from apps.core.numbering import next_business_number
 from apps.customers.services import model_snapshot, write_customer_timeline
 from apps.customers.models import CustomerContact
 from apps.inquiries.models import Inquiry, InquiryStatus
+from apps.product_catalog.selection import is_product_entry_snapshot
 from apps.quotations.models import QuotationOutcomeStatus, QuotationVersion, QuotationVersionStatus
 from apps.quotations.services import create_requotation_draft
 from apps.workflow.models import ApprovalRequest, ApprovalStatus, SlaPolicy, SlaTracking, SlaTrackingStatus
@@ -93,6 +94,9 @@ ITEM_FIELDS = [
 
 def sample_product_values_from_source(source):
     """复制询盘或报价的产品快照，样品仍保持自己的可编辑记录。"""
+    if getattr(source, "product_catalog_id", None) or is_product_entry_snapshot(getattr(source, "product_selection_snapshot", None)):
+        from .catalog_products import catalog_sample_values
+        return catalog_sample_values(source.product_catalog, source.product_selection_snapshot, product_image=getattr(source, "product_image", None))
     product = getattr(source, "product", None)
     if product is None and hasattr(source, "product_number") and hasattr(source, "product_item"):
         product = source
@@ -118,6 +122,8 @@ def sample_product_values_from_source(source):
     attributes = split_product_specification(source_specification)
     return {
         "product": product,
+        "product_catalog": None,
+        "product_selection_snapshot": {},
         "product_number_snapshot": product_number,
         "product_code_snapshot": product_code,
         "item_number_snapshot": item_number,
@@ -137,7 +143,7 @@ def _write_sample_records(*, sample_request, action, actor_employee, request, be
     audit = write_audit_log(
         object_type="SAMPLE_REQUEST",
         object_id=sample_request.pk,
-        context_type="CUSTOMER_ACCOUNT",
+        context_type="CUSTOMER_ACCOUNT" if sample_request.customer_account_id else "",
         context_id=sample_request.customer_account_id,
         action=action,
         actor_employee=actor_employee,
@@ -145,15 +151,16 @@ def _write_sample_records(*, sample_request, action, actor_employee, request, be
         after_data={**model_snapshot(sample_request, SAMPLE_FIELDS), "note": note},
         request=request,
     )
-    write_customer_timeline(
-        customer=sample_request.customer_account,
-        event_type=f"SAMPLE_{action}",
-        title=f"{sample_request.request_number} 样品申请",
-        summary=note,
-        source_type="SAMPLE_REQUEST",
-        source_id=sample_request.pk,
-        actor_employee=actor_employee,
-    )
+    if sample_request.customer_account_id:
+        write_customer_timeline(
+            customer=sample_request.customer_account,
+            event_type=f"SAMPLE_{action}",
+            title=f"{sample_request.request_number} 样品申请",
+            summary=note,
+            source_type="SAMPLE_REQUEST",
+            source_id=sample_request.pk,
+            actor_employee=actor_employee,
+        )
     if sample_request.application_payload_hash:
         from .notification_events import action_recorded
         action_recorded(sample_request, audit, actor_employee)
@@ -277,7 +284,8 @@ def _create_intake_products(*, sample_request, selections, source_type):
             inquiry_item = source.source_inquiry_item
             quotation_line = source
         product_values = sample_product_values_from_source(source)
-        source_color = (getattr(source, 'color', '') or getattr(source, 'color_snapshot', '')
+        source_color = (product_values.get('product_selection_snapshot', {}).get('color_name', '')
+                        or getattr(source, 'color', '') or getattr(source, 'color_snapshot', '')
                         or split_product_specification(specification)['color'])
         if len(source_color) > 200:
             raise ValidationError({'products': '产品颜色不能超过 200 字。'})
@@ -298,7 +306,7 @@ def _create_intake_products(*, sample_request, selections, source_type):
             specification_snapshot=product.specification,
             color_name_snapshot=source_color,
             requested_quantity=quantity,
-            unit_code="PCS",
+            unit_code=product.product_selection_snapshot.get("unit_code", "PCS"),
             sample_quantity=quantity,
         )
 
@@ -911,7 +919,7 @@ def upload_sample_parameters(
         raise Conflict("当前样品单不允许执行参数图片上传。")
     if sample_request.application_payload_hash:
         from .production_services import production_ready
-        if sample_request.archived_at or sample_request.customer_account.archived_at or not production_ready(sample_request):
+        if sample_request.archived_at or (sample_request.customer_account_id and sample_request.customer_account.archived_at) or not production_ready(sample_request):
             raise Conflict("材料尚未齐备或样品已归档，不能上传参数。")
 
     before_data = model_snapshot(sample_request, SAMPLE_FIELDS)

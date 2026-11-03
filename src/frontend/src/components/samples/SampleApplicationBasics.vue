@@ -20,6 +20,9 @@ const ownerLabels = ref<Record<string, { id: string; display_name: string }>>({}
 const sourceLabels = ref<Record<string, string>>({})
 const customersLoading = ref(false), contactsLoading = ref(false), sourcesLoading = ref(false), contextLoading = ref(false)
 const errorMessage = ref('')
+const showCustomer = computed(() => props.options?.is_salesperson === true)
+const numberPreview = computed(() => (props.modelValue.manual_request_number || '').trim() === (props.sample.manual_request_number || '').trim()
+  ? props.sample.request_number : `HTS${(props.modelValue.manual_request_number || '').trim().toUpperCase()}`)
 let customerRequest = 0, contactRequest = 0, sourceRequest = 0, contextRequest = 0
 
 const customers = computed(() => [...new Map([
@@ -52,7 +55,7 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : '选项加载失败，请重新搜索。'
 }
 watch(() => props.sample, sample => {
-  customerLabels.value[sample.customer_account] = { id: sample.customer_account, account_name: sample.customer_name, account_code: '' }
+  if (sample.customer_account) customerLabels.value[sample.customer_account] = { id: sample.customer_account, account_name: sample.customer_name, account_code: '' }
   if (sample.customer_contact) contactLabels.value[sample.customer_contact] = { id: sample.customer_contact, display_name: sample.customer_contact_name }
   if (sample.owner) ownerLabels.value[sample.owner.id] = sample.owner
   if (sample.source_inquiry) sourceLabels.value[`inquiry:${sample.source_inquiry}`] = sample.source_inquiry_number
@@ -66,7 +69,7 @@ watch(() => props.modelValue.source_type, () => {
 })
 watch(() => [props.modelValue.customer_account_id, props.options], () => {
   contactRequest++; contactsLoading.value = false; contactMatches.value = []
-  if (props.modelValue.customer_account_id && props.options) void searchContacts('')
+  if (props.modelValue.customer_account_id && showCustomer.value) void searchContacts('')
 }, { immediate: true })
 
 async function searchCustomers(query: string) {
@@ -148,10 +151,11 @@ onBeforeUnmount(() => { customerRequest++; contactRequest++; sourceRequest++; co
   <div class="sample-application-basics">
     <div v-if="errorMessage" class="basics-error" role="alert">{{ errorMessage }}</div>
     <div class="application-basic-grid">
+      <ElFormItem label="打样单号 *" class="sample-number-field"><div class="sample-number-input"><ElInput :model-value="modelValue.manual_request_number || ''" aria-label="打样单号后缀" maxlength="46" placeholder="请输入单号后缀" @update:model-value="update({ manual_request_number: $event })"><template #prepend>HTS</template></ElInput><ElInput :model-value="numberPreview" class="number-preview" aria-label="完整打样单号" readonly /></div></ElFormItem>
       <ElFormItem label="来源类型"><ElSelect :model-value="modelValue.source_type || ''" aria-label="来源类型" clearable placeholder="无来源" @update:model-value="changeSourceType"><ElOption value="inquiry" label="询盘" /><ElOption value="quotation" label="报价" /></ElSelect></ElFormItem>
       <ElFormItem :label="modelValue.source_type === 'quotation' ? '来源报价' : '来源询盘'"><ElSelect :model-value="modelValue.source_id || ''" aria-label="来源单据" filterable remote clearable :disabled="!modelValue.source_type" :remote-method="searchSources" :loading="sourcesLoading || contextLoading" placeholder="搜索来源单据" @update:model-value="changeSource" @visible-change="sourceVisibilityChanged"><ElOption v-for="source in sources" :key="source.id" :value="source.id" :label="source.label" /></ElSelect></ElFormItem>
-      <ElFormItem label="客户"><ElSelect :model-value="modelValue.customer_account_id" aria-label="客户" filterable remote :remote-method="searchCustomers" :loading="customersLoading" placeholder="请选择客户" @update:model-value="changeCustomer"><ElOption v-for="customer in customers" :key="customer.id" :value="customer.id" :label="customer.account_name" /></ElSelect></ElFormItem>
-      <ElFormItem label="联系人"><ElSelect :model-value="modelValue.customer_contact_id || ''" aria-label="联系人" filterable remote clearable :remote-method="searchContacts" :loading="contactsLoading" :disabled="!modelValue.customer_account_id" placeholder="请选择联系人" @update:model-value="changeContact"><ElOption v-for="contact in contacts" :key="contact.id" :value="contact.id" :label="contact.display_name" /></ElSelect></ElFormItem>
+      <ElFormItem v-if="showCustomer" label="客户"><ElSelect :model-value="modelValue.customer_account_id" aria-label="客户" filterable remote :remote-method="searchCustomers" :loading="customersLoading" placeholder="请选择客户" @update:model-value="changeCustomer"><ElOption v-for="customer in customers" :key="customer.id" :value="customer.id" :label="customer.account_name" /></ElSelect></ElFormItem>
+      <ElFormItem v-if="showCustomer" label="联系人"><ElSelect :model-value="modelValue.customer_contact_id || ''" aria-label="联系人" filterable remote clearable :remote-method="searchContacts" :loading="contactsLoading" :disabled="!modelValue.customer_account_id" placeholder="请选择联系人" @update:model-value="changeContact"><ElOption v-for="contact in contacts" :key="contact.id" :value="contact.id" :label="contact.display_name" /></ElSelect></ElFormItem>
       <ElFormItem label="业务员"><ElSelect :model-value="modelValue.owner_employee_id" aria-label="业务员" filterable placeholder="请选择业务员" @update:model-value="update({ owner_employee_id: $event })"><ElOption v-for="owner in owners" :key="owner.id" :value="owner.id" :label="owner.display_name" /></ElSelect></ElFormItem>
       <ElFormItem label="样品类型 *"><ElSelect :model-value="modelValue.sample_type" aria-label="样品类型" placeholder="请选择样品类型" @update:model-value="update({ sample_type: $event })"><ElOption v-if="!options && modelValue.sample_type" :value="modelValue.sample_type" :label="sample.sample_type_display" /><ElOption v-for="option in options?.sample_types" :key="option.value" :value="option.value" :label="option.label" /></ElSelect></ElFormItem>
       <ElFormItem label="寄送方式 *"><ElSelect :model-value="modelValue.shipping_method" aria-label="寄送方式" placeholder="请选择寄送方式" @update:model-value="update({ shipping_method: $event })"><ElOption v-if="!options && modelValue.shipping_method" :value="modelValue.shipping_method" :label="sample.shipping_method_display" /><ElOption v-for="option in options?.shipping_methods" :key="option.value" :value="option.value" :label="option.label" /></ElSelect></ElFormItem>
@@ -164,10 +168,12 @@ onBeforeUnmount(() => { customerRequest++; contactRequest++; sourceRequest++; co
 </template>
 
 <style scoped lang="scss">
-.application-basic-grid { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 20px; }
+.application-basic-grid { display: grid; min-width: 0; max-width: 1330px; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; }
 .application-basic-grid :deep(.el-form-item) { min-width: 0; margin-bottom: 0; }
-.application-basic-grid :deep(.el-select), .application-basic-grid :deep(.el-date-editor.el-input) { width: 100%; }
+.application-basic-grid :deep(.el-input), .application-basic-grid :deep(.el-select), .application-basic-grid :deep(.el-date-editor.el-input) { width: 250px; max-width: 100%; }
+.sample-number-field { grid-column: span 2; }
+.sample-number-input { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 20px; width: 100%; }
 .basics-error { margin-bottom: 12px; color: var(--el-color-danger); font-size: 13px; }
-@media (max-width: 900px) { .application-basic-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; } }
-@media (max-width: 600px) { .application-basic-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .application-basic-grid { grid-template-columns: repeat(3, minmax(0, 250px)); } }
+@media (max-width: 720px) { .application-basic-grid { grid-template-columns: minmax(0, 250px); } .sample-number-field { grid-column: auto; } .sample-number-input { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 </style>

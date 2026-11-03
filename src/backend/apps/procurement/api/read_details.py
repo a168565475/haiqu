@@ -2,10 +2,12 @@
 from decimal import Decimal
 
 from django.db.models import Prefetch
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.inventory.models import MaterialInbound, MaterialInboundLine, MaterialInboundStatus
-from ..models import PurchaseReturn, PurchaseReturnLine
+from ..group_selectors import purchase_batch_display_status
+from ..models import PurchaseOrderStatus, PurchaseReturn, PurchaseReturnLine
 from .serializers import PurchaseOrderDetailSerializer, PurchaseOrderLineSerializer
 from .return_views import PurchaseReturnSerializer
 
@@ -82,7 +84,7 @@ class ReadInboundLineSerializer(serializers.ModelSerializer):
         model = MaterialInboundLine
         fields = ["id", "purchase_order_line_id", "part_name_snapshot", "specification_snapshot",
                   "material_snapshot", "supplier_name_snapshot", "source_unit_text_snapshot",
-                  "material_attributes_snapshot",
+                  "material_attributes_snapshot", "material_catalog_id", "material_selection_snapshot",
                   "received_quantity", "accepted_quantity", "return_quantity", "quality_remark",
                   "warehouse_name", "zone_name", "location_number", "measurement_kind", "received_bar_count",
                   "accepted_bar_count", "return_bar_count", "raw_bar_length_m"]
@@ -103,10 +105,15 @@ class ReadInboundSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderReadDetailSerializer(PurchaseOrderDetailSerializer):
+    display_status = serializers.SerializerMethodField()
     lines = ReadDetailLineSerializer(many=True, read_only=True)
     completed_by_name = serializers.CharField(source="completed_by_employee.display_name", read_only=True, default="")
     inbounds = ReadInboundSerializer(source="material_inbounds", many=True, read_only=True)
     returns = PurchaseReturnSerializer(many=True, read_only=True)
 
     class Meta(PurchaseOrderDetailSerializer.Meta):
-        fields = PurchaseOrderDetailSerializer.Meta.fields + ["completed_by_name", "inbounds", "returns"]
+        fields = PurchaseOrderDetailSerializer.Meta.fields + ["display_status", "completed_by_name", "inbounds", "returns"]
+
+    @extend_schema_field(serializers.ChoiceField(choices=PurchaseOrderStatus.choices))
+    def get_display_status(self, instance):
+        return purchase_batch_display_status(instance)

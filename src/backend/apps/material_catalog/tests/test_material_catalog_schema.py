@@ -52,10 +52,34 @@ class MaterialCatalogSchemaTests(SimpleTestCase):
     def test_patch_documents_mandatory_boolean_and_structured_errors(self):
         operation = self.schema["paths"][f"{ROOT}{{id}}/"]["patch"]
         body = self.resolve(operation["requestBody"]["content"]["application/json"]["schema"])
-        self.assertEqual(body.get("required", []), ["spray_enabled"])
+        self.assertEqual(body["minProperties"], 1)
+        self.assertEqual(set(body["properties"]), {"spray_enabled", "base_warehouse_id", "semi_warehouse_id"})
         self.assertEqual(body["properties"]["spray_enabled"]["type"], "boolean")
         self.assertFalse(body["additionalProperties"])
         for code in ("400", "401", "403", "404", "412", "428"):
             with self.subTest(code=code):
                 error = self.resolve(operation["responses"][code]["content"]["application/json"]["schema"])
                 self.assertIn("error", error["properties"])
+
+    def test_unit_creation_documents_exclusive_id_or_name_and_required_scope(self):
+        operation = self.schema["paths"][f"{ROOT}{{id}}/units/"]["post"]
+        body = self.resolve(operation["requestBody"]["content"]["application/json"]["schema"])
+        self.assertEqual(body["required"], ["scope"])
+        self.assertEqual(body["oneOf"], [{"required": ["unit_id"]}, {"required": ["unit_name"]}])
+        self.assertEqual(set(body["properties"]), {"scope", "unit_id", "unit_name"})
+
+    def test_option_patch_documents_one_required_field_without_relationship_changes(self):
+        for suffix, field in (("values/{value_id}/", "value"), ("units/{option_id}/", "unit_id")):
+            with self.subTest(suffix=suffix):
+                operation = self.schema["paths"][f"{ROOT}{{id}}/{suffix}"]["patch"]
+                body = self.resolve(operation["requestBody"]["content"]["application/json"]["schema"])
+                self.assertEqual(set(body["properties"]), {field} if field == "value" else {"unit_id", "unit_name"})
+                if field == "value":
+                    self.assertEqual(body["required"], [field])
+                else:
+                    self.assertEqual(body["oneOf"], [{"required": ["unit_id"]}, {"required": ["unit_name"]}])
+                self.assertFalse(body["additionalProperties"])
+                if field == "value":
+                    self.assertEqual(body["properties"][field]["maxLength"], 300)
+                else:
+                    self.assertEqual(body["properties"][field]["format"], "uuid")

@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.samples",
     "apps.sales_orders",
     "apps.production_tasks",
+    "apps.production_task_imports",
     "apps.production_scheduling",
     "apps.outsourcing",
     "apps.boms",
@@ -67,7 +68,12 @@ INSTALLED_APPS = [
     "apps.wecom",
     "apps.attendance",
     "apps.finance",
+    "apps.codex_connection",
 ]
+
+# 只连接专属运行服务，不向 ERP 环境导入 Codex 认证文件或代理配置。
+CODEX_RUNTIME_SOCKET = os.getenv("CODEX_RUNTIME_SOCKET", "/run/haiqu-codex/runtime.sock")
+CODEX_RUNTIME_TIMEOUT = 5
 
 MIDDLEWARE = [
     "apps.wecom.middleware.WeComOAuthSensitiveMiddleware",
@@ -75,10 +81,12 @@ MIDDLEWARE = [
     "apps.core.middleware.RequestIdMiddleware",
     "apps.core.debug_timing.ProductionReadTimingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    "apps.core.middleware.IdentitySwitchSessionMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.middleware.IdentitySwitchGuardMiddleware",
     "apps.core.middleware.ErpSessionAccessMiddleware",
     "apps.inventory.cutover_middleware.PublicStockCutoverMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -151,6 +159,8 @@ ACCESS_MANAGEMENT_ENABLED = env_bool("ACCESS_MANAGEMENT_ENABLED", False)
 SALES_ACCESS_ENABLED = env_bool("SALES_ACCESS_ENABLED", False)
 MODULE_ACCESS_ENABLED = env_bool("MODULE_ACCESS_ENABLED", False)
 ACCESS_RESOURCE_SCOPES_ENABLED = env_bool("ACCESS_RESOURCE_SCOPES_ENABLED", False)
+CONFIRMED_ROLE_POLICY_ENABLED = env_bool("CONFIRMED_ROLE_POLICY_ENABLED", False)
+CONFIRMED_ADMIN_ROLE_CODE = os.getenv("CONFIRMED_ADMIN_ROLE_CODE", "ROLE_C13D18A990C54B1CB0561F0E3C1B09D4").strip()
 WORK_REPORT_DELETION_ENABLED = env_bool("WORK_REPORT_DELETION_ENABLED", False)
 WORK_REPORT_HISTORY_ENABLED = env_bool("WORK_REPORT_HISTORY_ENABLED", False)
 
@@ -161,6 +171,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_ROOT = BASE_DIR / "media"
+PRODUCTION_IMPORT_ROOT = Path(os.environ.get("PRODUCTION_IMPORT_ROOT", str(BASE_DIR / "private" / "production-task-imports")))
 MEDIA_URL = "/media/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -169,7 +180,7 @@ CORS_ALLOWED_ORIGINS = env_list(
     "http://localhost:8080,http://127.0.0.1:8080",
 )
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = (*default_headers, "if-match")
+CORS_ALLOW_HEADERS = (*default_headers, "if-match", "x-identity-version")
 CORS_EXPOSE_HEADERS = ["ETag", "X-Export-Count"]
 
 CSRF_TRUSTED_ORIGINS = env_list(

@@ -3,15 +3,17 @@ from collections import Counter, defaultdict
 from decimal import Decimal
 import hashlib
 import json
+from uuid import UUID
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import connection
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from rest_framework.exceptions import ValidationError
 
 from apps.boms.models import Bom, BomLine
 from apps.core.api.concurrency import PreconditionFailed
 from apps.material_issues.material_flow import allocation_plan, pipe_specs
+from apps.material_issues.catalog_requirements import catalog_requirement_specs, sync_catalog_requirements
 from apps.material_issues.models import MaterialIssue, MaterialIssueLine, OrderMaterialRequirement, MetalProcessingSource
 from apps.material_issues.public_issue_services import public_issue_quantity_context, _pool, _lock_public_issue_stock
 from apps.products.material_identity import lock_bom_line_material_identities
@@ -20,6 +22,8 @@ from apps.reference_data.models import ProductionUnit
 from apps.workshop_config.models import Craft
 from .models import WarehouseZone
 from .public_stock_identity import build_pipe_stock_identity, build_semi_finished_identity, profile_spray_color
+from .public_bom_snapshot import build_output_identity
+from .processing_material_snapshots import freeze_processing_materials, tube_processing_not_enabled, KILOGRAM_TUBE_PROCESSING_MESSAGE
 from .stock_services import InventoryStockValidationError
 from .tube_processing_quantities import whole_pieces, TubeQuantityError
 from .tube_processing_services import lock_tube_product_scope, metal_component_limits, assert_tube_quantity_available
@@ -57,14 +61,14 @@ def _zone(zone, source_kind):
 
 def _new_pending(product_id, *, exclude_order_id=None):
     from apps.outsourcing.models import TubeOutsourcingLine
-    rows = TubeOutsourcingLine.objects.filter(order__product_line_id=product_id, order__status='PENDING_DISPATCH')
+    rows = TubeOutsourcingLine.objects.filter(order__product_line_id=product_id, order__status='PENDING_DISPATCH', order__is_plan=False)
     if exclude_order_id:
         rows = rows.exclude(order_id=exclude_order_id)
     return {str(row['component_identity']): Decimal(row['quantity']) for row in
         rows.values('component_identity').annotate(quantity=Sum('quantity'))}
 
 
-def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id=None):
+def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id=None, plan_mode=False):
     if source_kind not in {'RAW_PIPE', 'PUBLIC_SEMI', 'METAL'}:
         _fail('请选择有效的管材来源。')
     plan = ProductionScheduleProduct.objects.select_related('schedule__production_task', 'product_line').get(pk=schedule_product.pk)
@@ -90,14 +94,21 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
     if any(value != 1 for value in counts.values()):
         blockers.append('BOM存在重复部位编号，请先修正。')
     specs, spec_errors = pipe_specs(task.pk, product.pk) if not blockers else ([], [])
+    if not blockers:
+        catalog_specs, catalog_errors = catalog_requirement_specs(task.pk, product.pk)
+        specs.extend({**spec, 'raw_material': None} for spec in catalog_specs
+                     if spec['section_code'] == 'PROFILE' and spec['snapshot']['kind'] == 'PIPE')
+        spec_errors.extend(catalog_errors)
     specs_by_line = {str(spec['line'].pk): spec for spec in specs}
     errors_by_line = {row['bom_line_id']: row['detail'] for row in spec_errors}
-    existing_requirements = list(OrderMaterialRequirement.objects.filter(product_line=product, measurement_kind='PIPE'))
+    existing_requirements = list(OrderMaterialRequirement.objects.filter(
+        Q(measurement_kind='PIPE') | Q(measurement_kind='CATALOG', conversion_snapshot__kind='PIPE'),
+        product_line=product))
     current = {row.pk: row for row in existing_requirements}
     requirements_by_component = defaultdict(list)
     for row in existing_requirements:
         requirements_by_component[str(row.component_identity)].append(row)
-    metal = metal_component_limits(product, exclude_tube_order_id=exclude_order_id) if source_kind == 'METAL' else None
+    metal = metal_component_limits(product, exclude_tube_order_id=exclude_order_id) if source_kind == 'METAL' and not plan_mode else None
     piece_unit = ProductionUnit.objects.filter(unit_name='支', status='ACTIVE', archived_at__isnull=True).first()
     metal_crafts = [row.craft for row in craft_links if row.craft_type_snapshot == 'INTERNAL'
                     and row.plan_category == 'METAL' and row.craft.status == 'ACTIVE']
@@ -108,7 +119,7 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
     all_pending = _new_pending(product.pk, exclude_order_id=exclude_order_id)
     from apps.outsourcing.models import TubeOutsourcingLine
     new_dispatched = TubeOutsourcingLine.objects.filter(order__product_line_id=product.pk,
-        order__status__in=['PROCESSING', 'COMPLETED'], order__source_kind__in=['METAL', 'PUBLIC_SEMI'])
+        order__status__in=['PROCESSING', 'COMPLETED'], order__source_kind__in=['METAL', 'PUBLIC_SEMI'], order__is_plan=False)
     if exclude_order_id:
         new_dispatched = new_dispatched.exclude(order_id=exclude_order_id)
     new_dispatched = {str(row['component_identity']): Decimal(row['quantity']) for row in
@@ -129,25 +140,74 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
             stock_quantity=None, stock_unit=None, max_quantity='0', pieces_per_bar=None,
             raw_bar_length_m=None, blockers=row_errors, input_identity={}, snapshot={})
         rows.append(row)
+        unavailable = tube_processing_not_enabled(line)
+        if unavailable:
+            row['processing_not_enabled_reason'] = unavailable
+            row_errors.append(unavailable)
+            continue
         try:
             row['order_required'] = str(whole_pieces(product.quantity * line.pieces_per_product, '部位净需求'))
-            if not spec:
+            catalog_semi = bool(line.material_catalog_id and source_kind in {'METAL', 'PUBLIC_SEMI'})
+            catalog_raw = bool(line.material_catalog_id and source_kind == 'RAW_PIPE')
+            if not spec and not catalog_semi:
                 _fail(errors_by_line.get(str(line.pk), '管材原料或BOM换算依据不完整。'))
-            previous = requirements_by_component[key]
-            if len(previous) > 1 or (previous and previous[0].pk != spec['id']):
+            previous = [value for value in requirements_by_component[key]
+                        if bool(value.material_catalog_id) == bool(line.material_catalog_id)]
+            if not catalog_semi and (len(previous) > 1 or (previous and previous[0].pk != spec['id'])):
                 _fail('该部位历史管材需求编号不一致，请核对后再外发，不能另建额度。')
-            raw, snapshot = spec['raw_material'], dict(spec['snapshot'])
-            row['raw_color'] = raw.color.color_name if raw.color_id else raw.color_snapshot
+            raw, snapshot = (None, {'allowance_pieces': row['order_required']}) if catalog_semi else (spec['raw_material'], dict(spec['snapshot']))
+            row['raw_color'] = (line.material_selection_snapshot.get('attributes', {}).get('color', '') if line.material_catalog_id
+                else raw.color.color_name if raw.color_id else raw.color_snapshot)
             if not piece_unit:
                 _fail('缺少有效的支单位。')
             # 即使发原料也冻结回来后的实物属性；不能凭空补颜色或规格。
-            output_identity = build_semi_finished_identity(bom_line=line, completed_craft=spray[0], unit=piece_unit)
-            snapshot.update(requirement_id=str(spec['id']), public_output_identity=_json(output_identity))
-            requirement = current.get(spec['id']) or OrderMaterialRequirement(id=spec['id'],
-                production_task=task, product_line=product, component_identity=line.component_identity,
-                raw_material=raw, unit=piece_unit, measurement_kind='PIPE')
-            requirement.required_quantity = Decimal(snapshot['allowance_pieces'])
-            if source_kind == 'METAL':
+            input_proofs = []
+            if line.material_catalog_id and source_kind == 'METAL' and not plan_mode:
+                basis = metal['components'].get(key)
+                input_proofs = basis.get('catalog_inputs', []) if basis else []
+                if not input_proofs:
+                    _fail('缺少新材料实际领料的冻结加工依据。')
+                outputs = [build_output_identity(proof['public_bom_snapshot'], spray[0], piece_unit) for proof in input_proofs]
+                if len({value['identity_key'] for value in outputs}) != 1:
+                    _fail('实际领料批次的加工产物不一致，不能合并外发。')
+                output_identity = outputs[0]
+                frozen_line = input_proofs[0]['public_bom_snapshot']['line']
+                frozen_attributes = output_identity['identity_snapshot']
+                row.update(part_name=frozen_line['part_name'], material=frozen_line['material'],
+                    specification=frozen_line['specification'], thickness=frozen_attributes.get('tube_thickness', ''),
+                    raw_color=input_proofs[0]['input_material_selection_snapshot']['attributes'].get('color', ''),
+                    spray_color=frozen_attributes.get('color', ''))
+            else:
+                output_identity = build_semi_finished_identity(bom_line=line, completed_craft=spray[0], unit=piece_unit)
+            snapshot.update(public_output_identity=_json(output_identity))
+            requirement = None
+            if not catalog_semi:
+                snapshot['requirement_id'] = str(spec['id'])
+                requirement = current.get(spec['id']) or OrderMaterialRequirement(id=spec['id'],
+                    production_task=task, product_line=product, component_identity=line.component_identity,
+                    raw_material=raw, unit=piece_unit, measurement_kind='CATALOG' if catalog_raw else 'PIPE',
+                    material_catalog_id=line.material_catalog_id if catalog_raw else None,
+                    material_selection_snapshot=line.material_selection_snapshot if catalog_raw else {})
+                requirement.required_quantity = Decimal(snapshot['allowance_pieces'])
+            if line.material_catalog_id:
+                if catalog_semi and len(metal_crafts) != 1:
+                    _fail('未喷塑来源缺少唯一有效的金工完成工艺。')
+                input_identity = (snapshot['public_identity'] if catalog_raw else
+                    build_output_identity(input_proofs[0]['public_bom_snapshot'], metal_crafts[0], piece_unit) if input_proofs else
+                    build_semi_finished_identity(bom_line=line, completed_craft=metal_crafts[0], unit=piece_unit))
+                if input_proofs:
+                    snapshot['catalog_inputs'] = input_proofs
+                pair = freeze_processing_materials(
+                    input_snapshot=input_identity['identity_snapshot']['material_selection_snapshot'],
+                    output_snapshot=output_identity['identity_snapshot']['material_selection_snapshot'],
+                    input_catalog_id=line.material_catalog_id, output_catalog_id=line.material_catalog_id,
+                    completed_craft=spray[0], semi_kind='PIPE')
+                snapshot.update(pair)
+                row.update(pair)
+                row['input_identity'] = _json(input_identity)
+            if source_kind == 'METAL' and plan_mode:
+                row['max_quantity'] = '99999999999999'
+            elif source_kind == 'METAL':
                 basis = metal['components'].get(key)
                 if not basis or not basis['basis_ready']:
                     _fail('；'.join(basis['blockers']) if basis else '部位缺少有效的金工报工依据。')
@@ -157,7 +217,7 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
                 snapshot.update(metal_basis_revision=metal['revision'], operations=basis['operations'], allowance=basis['allowance'])
             else:
                 if source_kind == 'RAW_PIPE':
-                    identity = build_pipe_stock_identity(raw_material=raw,
+                    identity = snapshot['public_identity'] if catalog_raw else build_pipe_stock_identity(raw_material=raw,
                         raw_bar_length_m=Decimal(snapshot['raw_bar_length_m']), unit=raw.unit)
                     row.update(pieces_per_bar=str(snapshot['pieces_per_bar']), raw_bar_length_m=str(snapshot['raw_bar_length_m']), stock_unit='根')
                     requested = Decimal(snapshot['pieces_per_bar'])
@@ -169,16 +229,19 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
                     requested = Decimal(1)
                 row['input_identity'] = _json(identity)
                 stock_line = MaterialIssueLine(issue=issue, requirement=requirement, raw_material=raw,
+                    material_catalog_id=line.material_catalog_id if catalog_raw else None,
+                    material_selection_snapshot=line.material_selection_snapshot if catalog_raw else {},
+                    line_type='SEMI' if catalog_semi else 'RAW',
                     unit=piece_unit, requested_quantity=requested,
-                    conversion_snapshot={**snapshot, 'kind': 'PIPE' if source_kind == 'RAW_PIPE' else 'TUBE_SEMI',
+                    conversion_snapshot={**snapshot, 'kind': 'PUBLIC_SEMI' if catalog_semi else 'PIPE' if source_kind == 'RAW_PIPE' else 'TUBE_SEMI',
                                          'public_identity': _json(identity)})
                 stock_lines.append(stock_line)
                 row['_line'] = stock_line
             row['snapshot'] = _json(snapshot)
-            row['_external_used'] = (requirement.outsourcing_issued_quantity + metal_dispatched.get(key, ZERO)
+            row['_external_used'] = ((requirement.outsourcing_issued_quantity if requirement else ZERO) + metal_dispatched.get(key, ZERO)
                                      + new_dispatched.get(key, ZERO))
             shared_cap = Decimal(snapshot['allowance_pieces']) if source_kind == 'RAW_PIPE' else Decimal(row['order_required'])
-            shared_remaining = max(shared_cap - row['_external_used'] - all_pending.get(key, ZERO), ZERO)
+            shared_remaining = Decimal('99999999999999') if plan_mode else max(shared_cap - row['_external_used'] - all_pending.get(key, ZERO), ZERO)
             row['snapshot'].update(shared_remaining=str(shared_remaining),
                 pending_all_sources=str(all_pending.get(key, ZERO)), external_used=str(row['_external_used']))
             if source_kind == 'METAL':
@@ -206,7 +269,7 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
             pending = stock_context['pending_raw'].get(req.pk, ZERO)
             remaining = max(req.required_quantity - req.internal_issued_quantity - req.outsourcing_issued_quantity - pending, ZERO)
             factor = Decimal(row['pieces_per_bar'])
-            maximum = min(remaining, available * factor, Decimal(row['snapshot']['shared_remaining']))
+            maximum = available * factor if plan_mode else min(remaining, available * factor, Decimal(row['snapshot']['shared_remaining']))
             # 显示可申请的整根支数，不向上抹掉订单/库存边界。
             maximum = (maximum // factor) * factor
             row['snapshot'].update(order_remaining=str(remaining), internal_issued=str(req.internal_issued_quantity),
@@ -237,12 +300,12 @@ def _build_context(*, schedule_product, source_kind, zone=None, exclude_order_id
     return context, issue, stock_lines
 
 
-def tube_source_context(*, schedule_product, source_kind, zone=None):
-    return _build_context(schedule_product=schedule_product, source_kind=source_kind, zone=zone)[0]
+def tube_source_context(*, schedule_product, source_kind, zone=None, plan_mode=False):
+    return _build_context(schedule_product=schedule_product, source_kind=source_kind, zone=zone, plan_mode=plan_mode)[0]
 
 
 def prepare_tube_source(*, schedule_product, source_kind, zone, requested, expected_revision,
-                        exclude_order_id=None, require_revision=True, additional_stock_lines=()):
+                        exclude_order_id=None, require_revision=True, additional_stock_lines=(), plan_mode=False):
     if not connection.in_atomic_block:
         raise RuntimeError('外发预留必须在同一数据库事务内保存。')
     product = lock_tube_product_scope(schedule_product.product_line_id)
@@ -251,23 +314,29 @@ def prepare_tube_source(*, schedule_product, source_kind, zone, requested, expec
     lock_bom_line_material_identities(lines)
     list(OrderMaterialRequirement.objects.filter(product_line=product).order_by('pk').select_for_update(of=('self',)))
     context, issue, stock_lines = _build_context(schedule_product=schedule_product, source_kind=source_kind,
-                                               zone=zone, exclude_order_id=exclude_order_id)
+                                               zone=zone, exclude_order_id=exclude_order_id, plan_mode=plan_mode)
     if source_kind == 'RAW_PIPE' and isinstance(requested, dict):
         from apps.material_issues.pipe_requirements import sync_pipe_requirement
         selected = {str(key) for key in requested}
         for row in context['rows']:
             if row['component_identity'] in selected and not row['blockers']:
-                sync_pipe_requirement(row['bom_line_id'])
+                if row['input_identity']['stock_kind'] == 'CATALOG_RAW':
+                    sync_catalog_requirements(issue, {UUID(row['snapshot']['requirement_id'])})
+                else:
+                    sync_pipe_requirement(row['bom_line_id'])
         context, issue, stock_lines = _build_context(schedule_product=schedule_product, source_kind=source_kind,
-                                                   zone=zone, exclude_order_id=exclude_order_id)
+                                                   zone=zone, exclude_order_id=exclude_order_id, plan_mode=plan_mode)
     if stock_lines or additional_stock_lines:
         # 附带五金与管材整单按同一池/库区/余额顺序取锁，避免两个库存体系反序。
         _lock_public_issue_stock(issue, [*stock_lines, *additional_stock_lines])
         # 等锁期间库存或其他订单预留可能已改变，必须重新读取。
         context, _, stock_lines = _build_context(schedule_product=schedule_product, source_kind=source_kind,
-                                                zone=zone, exclude_order_id=exclude_order_id)
+                                                zone=zone, exclude_order_id=exclude_order_id, plan_mode=plan_mode)
     if require_revision and (not expected_revision or context['source_revision'] != expected_revision):
         raise PreconditionFailed('BOM、报工、库存或预留已变化，请刷新后重新确认。')
+    if isinstance(requested, dict) and any(row['component_identity'] in requested and KILOGRAM_TUBE_PROCESSING_MESSAGE in row['blockers']
+           for row in context['rows']):
+        _fail(KILOGRAM_TUBE_PROCESSING_MESSAGE)
     if not context['ready']:
         _fail('；'.join(context['blockers']) or '当前来源尚不具备外发条件。')
     if not isinstance(requested, dict) or not requested:
@@ -302,7 +371,7 @@ def prepare_tube_source(*, schedule_product, source_kind, zone, requested, expec
     for pool, quantity in stock_totals.items():
         if quantity > pool_available[pool]:
             _fail('本单多个部位使用同一种公共库存，合计数量超过可用库存。')
-    if source_kind == 'METAL':
+    if source_kind == 'METAL' and not plan_mode:
         assert_tube_quantity_available(product_line_id=product.pk, requested=normalized,
             expected_revision=context['metal_basis_revision'], exclude_tube_order_id=exclude_order_id)
     return context

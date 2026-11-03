@@ -4,18 +4,20 @@ import { computed, ref } from 'vue'
 import { Document, Refresh } from '@element-plus/icons-vue'
 import AppWindowDialog from '@/components/common/AppWindowDialog.vue'
 import TubeOutsourcingDetailTable from './TubeOutsourcingDetailTable.vue'
+import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import type { TubeOrderDetail } from '@/types/tubeOutsourcing'
 import type { TubeReceipt } from '@/types/tubeReceipts'
 import { buildTubeEndedResult } from '@/utils/tubeEndedReceipt'
 import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
-import { isCuttingSource, isDirectSource, tubeSourceLabels } from '@/utils/tubeOutsourcing'
+import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeSourceLabels } from '@/utils/tubeOutsourcing'
 import '@/styles/tubeOutsourcingEnded.scss'
 
-const props = defineProps<{ order: TubeOrderDetail; receipt: TubeReceipt | null }>()
+const props = defineProps<{ order: TubeOrderDetail; receipt: TubeReceipt | null; warehouse?: boolean }>()
 const emit = defineEmits<{ refresh: [] }>()
 const dialog = ref(false)
 const result = computed(() => buildTubeEndedResult(props.order, props.receipt))
 const rows = computed(() => result.value.rows)
+const orderLinesById = computed(() => new Map(props.order.lines.map(line => [line.id, line])))
 const sourceLabels = tubeSourceLabels
 const cutting = computed(() => isCuttingSource(props.order.source_kind))
 const quantityUnit = computed(() => cutting.value ? '套' : '支')
@@ -44,21 +46,22 @@ const columns = computed(() => {
     { key: 'pieces_per_set', label: '每套片数', width: 90, num: true }, { key: 'factory_name', label: '加工厂', width: 130 },
     { key: 'dispatched_quantity', label: '实发（套）', width: 100, num: true }, { key: 'received_quantity', label: '实收（套）', width: 100, num: true },
     { key: 'shortage_quantity', label: '差额（套）', width: 100, num: true }, { key: 'shortage_reason', label: '差额原因', width: 230 },
-    { key: 'zone_name', label: '入库库区', width: 150 }, { key: 'unit_price', label: '加工单价（元/套）', width: 145, num: true },
-    { key: 'planned_amount', label: '计划金额（元）', width: 135, num: true },
+    { key: 'zone_name', label: '入库库区', width: 150 },
+    ...(!props.warehouse ? [{ key: 'unit_price', label: '加工单价（元/套）', width: 145, num: true },
+      { key: 'planned_amount', label: '计划金额（元）', width: 135, num: true }] : []),
   ]
   const raw = props.order.source_kind === 'RAW_PIPE'
-  const widths = raw ? [85, 60, 100, 65, 90, 65, 65, 100, 115, 115, 85, 75, 85, 85, 85, 170, 105] : [95, 65, 125, 75, 100, 85, 85, 120, 100, 100, 95, 230, 150]
+  const widths = raw ? [85, 60, 80, 100, 65, 90, 65, 65, 100, 115, 115, 85, 75, 85, 85, 85, 170, 105] : [95, 65, 80, 125, 75, 100, 85, 85, 120, 100, 100, 95, 230, 150]
   const definitions: [string, string, boolean?][] = [
-    ['part_name', '部位'], ['material', '材质'], ['specification', '规格'], ['thickness', '厚度 mm'], ['cutting_length_mm', '切割长度 mm'], ['raw_color', '原料颜色'], ['spray_color', '喷塑颜色'], ['factory_name', '加工厂'],
+    ['part_name', '部位'], ['material', '材质'], ['shape', '形状'], ['specification', '规格'], ['thickness', '厚度 mm'], ['cutting_length_mm', '切割长度 mm'], ['raw_color', '原料颜色'], ['spray_color', '喷塑颜色'], ['factory_name', '加工厂'],
     ...(raw ? [['pieces_per_bar', '切割支数 支/根', true], ['raw_bar_length_m', '原材料长度 米/根', true]] as [string, string, boolean][] : []),
     ['dispatched_quantity', '实发（支）', true], ...(raw ? [['stock_quantity', '发出扣根', true], ['meters', '发出扣米', true]] as [string, string, boolean][] : []),
     ['received_quantity', '实收（支）', true], ['shortage_quantity', '差额（支）', true], ['shortage_reason', '差额原因'], ['zone_name', '入库库区'],
   ]
   return [
     ...definitions.map(([key, label, num], index) => ({ key, label, num: Boolean(num), width: widths[index]! })),
-    { key: 'unit_price', label: '加工单价（元/支）', num: true, width: 145 },
-    { key: 'planned_amount', label: '计划金额（元）', num: true, width: 135 },
+    ...(!props.warehouse ? [{ key: 'unit_price', label: '加工单价（元/支）', num: true, width: 145 },
+      { key: 'planned_amount', label: '计划金额（元）', num: true, width: 135 }] : []),
   ]
 })
 const statusNote = computed(() => receivedAny.value === null ? '已结束 · 最终凭证待核对' : receivedAny.value ? `已结束 · 实收已入${receivedStage.value}公共库存` : `已结束 · 整单实收0${quantityUnit.value}，未新增库存`)
@@ -88,7 +91,8 @@ function dateTime(value: string | null | undefined): string {
       <div class="d4-ended-meta info-grid"><div v-for="[label, value] in meta" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div>
       <ElAlert v-if="!result.complete" type="warning" :closable="false" show-icon :title="result.issues.join('；')" />
       <TubeOutsourcingDetailTable :columns="columns" :rows="rows" class="d4-ended-lines">
-        <template #cell-part_name="{ row }"><strong>{{ row.part_name }}</strong></template>
+        <template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="orderLinesById.get(row.order_line_id) || {}"><strong>{{ row.part_name }}</strong></ProcessingMaterialDetails></template>
+        <template #cell-shape="{ row }">{{ tubeMaterialColumn(orderLinesById.get(row.order_line_id) || {}, 'shape') }}</template>
         <template #cell-pieces_per_bar="{ row }">{{ format(row.pieces_per_bar) }}</template>
         <template #cell-raw_bar_length_m="{ row }">{{ meters(row.raw_bar_length_m) }}</template>
         <template #cell-stock_quantity="{ row }">{{ format(row.stock_quantity) }}</template>
@@ -105,12 +109,14 @@ function dateTime(value: string | null | undefined): string {
     </div>
   </template>
   <div v-else class="panel d4-ended-fallback"><ElEmpty :description="result.issues.join('；')" /><ElButton :icon="Refresh" @click="emit('refresh')">重新加载</ElButton></div>
-  <footer class="footer-bar d4-ended-footer"><div class="totals"><span>实发 <strong>{{ format(result.dispatched) }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ format(result.received) }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ format(result.shortage) }}</strong> {{ quantityUnit }}</span><span class="d4-planned-amount">计划加工金额 <strong>{{ formatOutsourcingMoney(order.planned_amount) }}</strong> 元</span><small>{{ statusNote }}</small></div><ElButton type="primary" :icon="Document" :disabled="!result.complete" @click="dialog = true">查看入库凭证</ElButton></footer>
+  <footer class="footer-bar d4-ended-footer"><div class="totals"><span>实发 <strong>{{ format(result.dispatched) }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ format(result.received) }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ format(result.shortage) }}</strong> {{ quantityUnit }}</span><span v-if="!props.warehouse" class="d4-planned-amount">计划加工金额 <strong>{{ formatOutsourcingMoney(order.planned_amount) }}</strong> 元</span><small>{{ statusNote }}</small></div><ElButton type="primary" :icon="Document" :disabled="!result.complete" @click="dialog = true">查看入库凭证</ElButton></footer>
 
-  <AppWindowDialog :model-value="dialog && result.complete" :title="`${cutting ? '裁片' : '喷塑'}入库凭证 · 只读`" :width="1640" class="tube-outsourcing-detail-dialog d4-ended-dialog" @update:model-value="dialog = $event">
+  <AppWindowDialog :model-value="dialog && result.complete" :title="`${cutting ? '裁片' : '喷塑'}入库凭证 · 只读`" :width="props.warehouse ? 1800 : 1640" class="tube-outsourcing-detail-dialog d4-ended-dialog" @update:model-value="dialog = $event">
     <div class="d4-ended-receipt"><div class="info-grid d4-ended-receipt-context"><div v-for="[label, value] in receiptInfo" :key="label" class="info-cell"><span>{{ label }}</span><strong :title="value || '—'">{{ value || '—' }}</strong></div></div>
       <div class="d4-ended-receipt-heading"><h2>全部部位入库结果</h2><span class="muted">{{ receivedAny ? receivedStage : `实收0${quantityUnit} · 未新增库存` }}</span></div>
       <TubeOutsourcingDetailTable :columns="columns" :rows="rows" class="d4-ended-receipt-lines">
+        <template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="orderLinesById.get(row.order_line_id) || {}"><strong>{{ row.part_name }}</strong></ProcessingMaterialDetails></template>
+        <template #cell-shape="{ row }">{{ tubeMaterialColumn(orderLinesById.get(row.order_line_id) || {}, 'shape') }}</template>
         <template #cell-pieces_per_bar="{ row }">{{ format(row.pieces_per_bar) }}</template>
         <template #cell-raw_bar_length_m="{ row }">{{ meters(row.raw_bar_length_m) }}</template>
         <template #cell-stock_quantity="{ row }">{{ format(row.stock_quantity) }}</template>
@@ -125,6 +131,6 @@ function dateTime(value: string | null | undefined): string {
       </TubeOutsourcingDetailTable>
       <div class="d4-ended-receipt-remark"><span class="muted">入库备注</span><p>{{ receipt?.remark || '—' }}</p></div>
     </div>
-    <template #footer><div class="d4-ended-receipt-footer"><span>实发 <strong>{{ format(result.dispatched) }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ format(result.received) }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ format(result.shortage) }}</strong> {{ quantityUnit }}</span><span>计划加工金额 <strong>{{ formatOutsourcingMoney(order.planned_amount) }}</strong> 元</span><ElButton type="primary" @click="dialog = false">关闭</ElButton></div></template>
+    <template #footer><div class="d4-ended-receipt-footer"><span>实发 <strong>{{ format(result.dispatched) }}</strong> {{ quantityUnit }}</span><span>实收 <strong>{{ format(result.received) }}</strong> {{ quantityUnit }}</span><span>差额 <strong>{{ format(result.shortage) }}</strong> {{ quantityUnit }}</span><span v-if="!props.warehouse">计划加工金额 <strong>{{ formatOutsourcingMoney(order.planned_amount) }}</strong> 元</span><ElButton type="primary" @click="dialog = false">关闭</ElButton></div></template>
   </AppWindowDialog>
 </template>

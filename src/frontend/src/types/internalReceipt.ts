@@ -1,8 +1,11 @@
+import type { ProcessingMaterialPair } from './processingMaterial'
+
 export interface ReceiptAttributes {
   part_name: string; category: string; material: string; color: string; unit_name: string
   specification?: string; tube_diameter?: string; tube_thickness?: string; cutting_length_mm?: number; thickness?: string
 }
-export interface ReceiptPreviewLine {
+export interface ReceiptPreviewLine extends ProcessingMaterialPair {
+  processing_not_enabled_reason?: string
   bom_line_id: string; component_key: string; usage: string; attributes: ReceiptAttributes; stage: string
   required: string; received: string; can_receive: string; input_remaining: string | null; input_supported: string | null
 }
@@ -15,11 +18,11 @@ export interface ReceiptPayload {
   request_id: string; schedule_product_id: string; plan_category: 'METAL' | 'SEWING'; zone_id: string
   receipt_date: string; remark: string; lines: { bom_line_id: string; quantity: string }[]
 }
-export interface SemiReceiptRecord {
+export interface SemiReceiptRecord extends ProcessingMaterialPair {
   id: string; receipt_number: string; source: 'INTERNAL' | 'EXTERNAL'; source_display: string
   production_order: string; product: string; attributes: ReceiptAttributes; stage: string
   quantity: string; unit: string; receipt_date: string; status: string; warehouse: string; zone: string; actor: string; remark: string
-  source_detail?: Record<string, string | null>
+  source_detail?: { is_plan?: boolean } & Partial<Record<'workshop' | 'factory' | 'source_number' | 'source_type' | 'source_kind_label' | 'receipt_number' | 'raw_color' | 'spray_color' | 'dispatched_quantity' | 'received_quantity' | 'shortage_quantity' | 'shortage_reason' | 'required' | 'received_before' | 'received_after' | 'input_quantity' | 'input_unit' | 'before_quantity' | 'after_quantity' | 'remark' | 'order_id' | 'output_unit', string | null>>
   submitted_by?: string; submitted_at?: string | null; confirmed_by?: string; confirmed_at?: string | null
   stock_movement_id?: string | null
   receipt_id?: string; etag?: string; can_delete?: boolean

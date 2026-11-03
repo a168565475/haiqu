@@ -2,6 +2,8 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from urllib.parse import urlencode
 
+from django.db.models import Q
+
 from apps.outsourcing.models import OutsourcingFactoryAllocation
 from apps.outsourcing.tube_models import TubeOutsourcingLine
 from apps.procurement.models import PurchaseOrder, PurchaseRequestAllocation, SupplierPurchaseSheet
@@ -50,8 +52,10 @@ def _cost_sources(task):
             processing_item__order_product__order__schedule__production_task=task
         ).exclude(processing_item__order_product__order__status='CANCELLED').select_related(
             'processing_item__order_product__order'),
-        'tube': TubeOutsourcingLine.objects.filter(order__product_line__production_task=task).exclude(
-            order__status='CANCELLED').select_related('order'),
+        # 总单是计划，不计实际成本；新子单只计确认发出，旧单保留原记录成本口径。
+        'tube': TubeOutsourcingLine.objects.filter(order__product_line__production_task=task, order__is_plan=False).filter(
+            Q(order__plan__isnull=True) | Q(order__status__in=['PROCESSING', 'COMPLETED'], order__actions__kind='DISPATCH')
+        ).exclude(order__status='CANCELLED').select_related('order'),
         'expenses': task.cost_expenses.filter(voided_at__isnull=True),
     }
 

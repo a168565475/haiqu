@@ -38,7 +38,7 @@
   h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
   .muted { color: var(--erp-color-text-muted); }
   .brand { color: crm.$crm-primary; }
-  .num { text-align: right !important; font-variant-numeric: tabular-nums; }
+  .num { text-align: center !important; font-variant-numeric: tabular-nums; }
   .actions, .title-row { display: flex; align-items: center; gap: 12px; }
   .info-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; }
   .info-cell { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
@@ -68,7 +68,7 @@
   .tube-detail-table td.empty-cell { height: 140px; text-align: center; color: var(--erp-color-text-muted); }
   .tube-detail-table strong { font-weight: 500; }
   .tube-detail-table .el-input__wrapper { padding-left: 8px; padding-right: 8px; }
-  .tube-detail-table .el-input__inner { text-align: right; }
+  .tube-detail-table .el-input__inner { text-align: center; }
   .tube-detail-table .reason .el-input__inner { text-align: left; }
   .tube-detail-table .el-button.is-link { padding: 0; height: 32px; min-height: 32px; color: var(--erp-color-info); }
   .el-button { height: 32px; min-height: 32px; font: 500 12px/18px var(--el-font-family); padding: 0 14px; border-radius: 5px; }

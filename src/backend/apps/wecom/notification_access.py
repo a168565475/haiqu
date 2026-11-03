@@ -45,6 +45,9 @@ EVENT_OBJECT_PERMISSIONS = {
 
 UNAVAILABLE_EVENT_OBJECTS = {}
 
+from .notification_plan_catalog import PLAN_EVENTS
+EVENT_OBJECT_PERMISSIONS.update({code: (permission,) for code, (_, permission) in PLAN_EVENTS.items()})
+
 
 def plan_workshop_ids(object_id):
     """多车间计划从已保存的有效厂内工艺取关系，不相信单个上下文车间。"""

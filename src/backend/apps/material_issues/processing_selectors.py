@@ -18,6 +18,7 @@ MAX_PIECES = 99_999_999_999_999  # 已有领料 Decimal(18,4) 的整数上限。
 
 def readable_processing_lines(request):
     from apps.access_control.resource_scopes import resource_ids, has_legacy_permission
+    from apps.access_control.role_policy import filter_task_scope
     queryset = processing_lines(request)
     permission = 'material_issues.view_metalprocessingsource'
     ids = resource_ids(request, permission, 'CRAFT', include_legacy=False)
@@ -28,6 +29,7 @@ def readable_processing_lines(request):
         Q(processing_source__original_handoffs__original_order__craft_id__in=ids)
         | Q(processing_source__p4_external_orders__craft_id__in=ids)
     ).distinct()
+    selected = selected | filter_task_scope(request, queryset, permission, 'issue__production_task').distinct()
     if has_legacy_permission(request, permission):
         selected = selected | processing_lines(request, scoped=False).distinct()
     return selected
@@ -50,12 +52,12 @@ def processing_lines(request, *, scoped=True, permission=None):
               else accessible_material_issues(request, permission=permission))
     if scoped and has_resource_grant(request, permission, 'CRAFT'):
         products = filter_crafts(OutsourcingOrderProduct.objects.all(), request, permission, 'order__craft_id', include_legacy=False)
-        issues = issues | MaterialIssue.objects.filter(
+        issues = issues.distinct() | MaterialIssue.objects.filter(
             Q(product_line_id__in=products.values('schedule_product__product_line_id'))
             | Q(lines__processing_source__p4_external_orders__in=filter_crafts(
                 MetalProcessingExternalOrder.objects.all(),
                 request, permission, include_legacy=False))
-        )
+        ).distinct()
     metal_origin = MaterialIssueAuditEvent.objects.filter(
         issue_id=OuterRef("issue_id"), action="CREATED", snapshot__plan_source__plan_category="METAL",
     )

@@ -53,6 +53,8 @@ class ProductCatalog(ArchivableModel):
     specification = models.CharField(max_length=300, blank=True)
     unit = models.CharField(max_length=80, blank=True)
     scale = models.CharField(max_length=100, blank=True)
+    materials = models.JSONField(default=list, blank=True)
+    thicknesses = models.JSONField(default=list, blank=True)
     source_import = models.ForeignKey(ProductCatalogImport, null=True, blank=True, on_delete=models.PROTECT, related_name="products")
     source_filename = models.CharField(max_length=255, blank=True)
     source_sha256 = models.CharField(max_length=64, blank=True)

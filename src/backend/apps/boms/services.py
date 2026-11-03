@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from uuid import uuid4
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.db.models.deletion import ProtectedError
 from django.db.models import Max, Sum
 from django.utils import timezone
@@ -19,6 +19,8 @@ from apps.sales_orders.models import SalesOrder, SalesOrderLine
 from apps.quotations.product_writeback import save_bom_product_information
 from apps.products.material_identity import lock_bom_line_material_identities
 from apps.products.lineage import resolve_production_task_product_lineage
+from apps.product_catalog.selection import is_product_entry_snapshot
+from apps.product_catalog.finalization import finalize_product_entry
 from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, validate_fabric_links, validate_used_components
 from .material_flow_calculations import CUTTING_QUANTITY_FIELDS, pipe_plan, MaterialFlowValueError
 from .duplicate_lines import validate_duplicate_material_lines
@@ -44,6 +46,7 @@ from .workbook_import import BomWorkbookError, parse_bom_workbook, validate_work
 
 
 EDITABLE_LINE_FIELDS = [
+    "material_quantity",
     "category",
     "material",
     "part_name",
@@ -157,7 +160,6 @@ REFERENCE_ID_FIELDS = {
 CALCULATION_PRECISION = Decimal("0.0001")
 CUT_LENGTH_PRECISION = Decimal("0.01")
 WHOLE_NUMBER_PRECISION = Decimal("1")
-TUBE_WEIGHT_COEFFICIENT = Decimal("0.464")
 TUBE_LOSS_FACTOR = Decimal("1.01")
 
 
@@ -212,8 +214,6 @@ def _calculation_text(value, precision=CALCULATION_PRECISION, keep_trailing_zero
 
 
 def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
-    length = _decimal_value(line_data.get("length_value"))
-    unit_consumption = _decimal_value(line_data.get("unit_consumption"))
     total_consumption = cut_length = branch_count = None
     try:
         plan = pipe_plan(cutting_length_mm=line_data.get("length_value"),
@@ -225,15 +225,7 @@ def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
         branch_count = Decimal(plan["suggested_bar_count"])
     except MaterialFlowValueError:
         # 导入/旧草稿缺参时留空，保存和确认由统一校验报告具体错误。
-        length = unit_consumption = None
-
-    long_material_unit_weight = cut_length * TUBE_WEIGHT_COEFFICIENT if cut_length is not None else None
-    unit_weight = None
-    if length is not None and unit_consumption is not None:
-        unit_weight = TUBE_WEIGHT_COEFFICIENT * length * unit_consumption / Decimal("1000")
-    long_material_total_weight = None
-    if branch_count is not None and long_material_unit_weight is not None:
-        long_material_total_weight = branch_count * long_material_unit_weight
+        total_consumption = cut_length = branch_count = None
 
     return {
         "total_consumption": _calculation_text(total_consumption),
@@ -244,9 +236,6 @@ def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
             precision=CUT_LENGTH_PRECISION,
             keep_trailing_zeros=True,
         ),
-        "long_material_unit_weight_kg": _calculation_text(long_material_unit_weight),
-        "tube_unit_weight_kg": _calculation_text(unit_weight),
-        "long_material_total_weight_kg": _calculation_text(long_material_total_weight),
     }
 
 
@@ -276,9 +265,16 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
         source_id = line_data["source_inventory_material_id"]
         values["source_inventory_material_id"] = str(source_id) if source_id else ""
     if section_type == "PROFILE":
+        from .tube_metrics import supports_tube_metrics
+        if "manual_tube_metrics" in line_data:
+            values["tube_metrics_manual"] = line_data["manual_tube_metrics"]
+        tube_shape = line_data.get("tube_shape", values.get("tube_shape", values.get("E", "")))
+        automatic_metrics = supports_tube_metrics(tube_shape) and values.get("tube_metrics_manual") is not True
         if line_data.get("pipe_source_sync_pending"):
             values["pipe_source_sync_pending"] = True
         for field in TUBE_DETAIL_FIELDS:
+            if automatic_metrics and field in {"coating_unit_area_sqm", "purchase_unit_weight_kg"}:
+                continue
             if field in line_data:
                 values[field] = (
                     str(line_data[field]).strip()
@@ -286,7 +282,8 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
                     else line_data[field]
                 )
         for field in TUBE_CALCULATED_FIELDS:
-            values[field] = calculated_values.get(field, "")
+            if field in calculated_values:
+                values[field] = calculated_values[field]
     if section_type == BomSectionType.ACCESSORY and section_title.strip() == "五金件":
         for field in HARDWARE_DETAIL_FIELDS:
             if field in line_data:
@@ -476,11 +473,12 @@ def _create_sections(bom, plan):
     for line in BomLine.objects.filter(section__bom=bom).select_related("section"):
         if is_meter_fabric_section(line.section) and not line.unit_consumption:
             line.unit_consumption = line.purchase_consumption
-        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True)
+        apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
+                              recalculate_tube_metrics=True)
         line.save()
 
 
-def _copy_sections(bom, source_bom):
+def _copy_sections(bom, source_bom, *, preserve_tube_formula=False):
     copied_by_source = {}
     links = []
     for section_data in source_bom.sections.prefetch_related("lines__images").all():
@@ -506,7 +504,8 @@ def _copy_sections(bom, source_bom):
         for source_line, copied_line in zip(source_lines, copied_lines):
             copied_by_source[source_line.pk] = copied_line
             links.append((source_line.fabric_source_line_id, copied_line))
-            apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True)
+            apply_line_quantities(copied_line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
+                                  recalculate_tube_metrics=not preserve_tube_formula)
             copied_line.save()
         BomLineImage.objects.bulk_create(
             [
@@ -539,6 +538,7 @@ def create_bom(
     quantity_difference_reason="",
     request=None,
     link_source=False,
+    preserve_tube_formula=False,
 ):
     prepared = None
     persisted_path = None
@@ -596,14 +596,16 @@ def create_bom(
                 status=BomStatus.PENDING_CONFIRMATION,
                 copied_from=source_bom if creation_method == BomCreationMethod.COPY or link_source else None,
                 product=locked_product_line.product,
+                product_catalog_id=locked_product_line.product_catalog_id,
+                product_selection_snapshot=locked_product_line.product_selection_snapshot,
                 product_category=(
                     locked_product_line.product_category
                     or (locked_product_line.product.category if locked_product_line.product_id else None)
                 ),
                 product_unit=locked_product_line.unit,
                 product_color=locked_product_line.product_color,
-                product_unit_code_snapshot=locked_product_line.unit.unit_code,
-                product_unit_name_snapshot=locked_product_line.unit.unit_name,
+                product_unit_code_snapshot=locked_product_line.unit_code,
+                product_unit_name_snapshot=locked_product_line.unit_name,
                 product_color_name_snapshot=locked_product_line.color_name_snapshot,
                 product_color_code_snapshot=locked_product_line.color_code_snapshot,
                 product_color_card_snapshot=locked_product_line.color_card_snapshot,
@@ -614,6 +616,8 @@ def create_bom(
                 specification_snapshot=locked_product_line.specification_snapshot,
                 material_snapshot=locked_product_line.material_snapshot,
                 product_category_snapshot=(
+                    locked_product_line.product_selection_snapshot.get("category_name", "")
+                    if locked_product_line.product_catalog_id or is_product_entry_snapshot(locked_product_line.product_selection_snapshot) else
                     locked_product_line.product.category.category_name
                     if locked_product_line.product_id and locked_product_line.product and locked_product_line.product.category_id
                     else ""
@@ -640,7 +644,7 @@ def create_bom(
             if plan:
                 _create_sections(bom, plan)
             elif source_bom:
-                _copy_sections(bom, source_bom)
+                _copy_sections(bom, source_bom, preserve_tube_formula=preserve_tube_formula)
             else:
                 BomSection.objects.create(
                     bom=bom,
@@ -692,7 +696,7 @@ def _product_writeback_snapshot(instance, fields):
 def _reuse_confirmed_product_review(bom, *, actor_employee, request):
     """同一销售明细的后续批次只复用完全一致的首次确认信息，不按产品 ID 跨单匹配。"""
     line = bom.product_line
-    if not line.sales_order_delivery_batch_line_id or not bom.product_id or not bom.product_color_id:
+    if not line.sales_order_delivery_batch_line_id or not (bom.product_catalog_id or (bom.product_id and bom.product_color_id)):
         return
     sales_line_id = line.sales_order_delivery_batch_line.sales_order_line_id
     previous = AuditLog.objects.filter(
@@ -704,6 +708,7 @@ def _reuse_confirmed_product_review(bom, *, actor_employee, request):
         return
     confirmed = previous.after_data.get("targets", {}).get("sales_order_line", {})
     fields = {
+        "product_catalog_id": "product_catalog_id", "product_selection_snapshot": "product_selection_snapshot",
         "product_id": "product_id", "product_category_id": "product_category_id",
         "product_unit_id": "product_unit_id", "product_color_id": "product_color_id",
         "product_number_snapshot": "product_number_snapshot", "product_code_snapshot": "product_code_snapshot",
@@ -727,7 +732,7 @@ def _reuse_confirmed_product_review(bom, *, actor_employee, request):
 
 
 @transaction.atomic
-def confirm_bom_product(*, bom, product, product_color, color_code, actor_employee, material=None, new_product=None, request=None):
+def confirm_bom_product(*, bom, product, product_color, color_code, actor_employee, material=None, new_product=None, product_catalog_id=None, product_selection=None, request=None):
     """保存当前 BOM 的产品核对；上游回写只由确认 BOM 触发。"""
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked_bom = (
@@ -736,51 +741,23 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
     )
     if request is not None:
         require_matching_etag(request, locked_bom)
+    has_entry = product_selection is not None and "draft" in product_selection
+    if (product_catalog_id or has_entry) and (product is not None or new_product is not None):
+        raise ValidationError({"product_catalog_id": "新产品与旧产品不能同时关联。"})
     if new_product is not None:
-        if product is not None:
-            raise ValidationError({"product": "选择已有产品与新建产品不能同时提交。"})
-        if request is None or not request.user.has_perm("products.add_productinformation"):
-            raise PermissionDenied("当前账号没有新增产品信息的权限。")
-        from apps.products.models import ProductInformation
+        raise ValidationError({"new_product": "请使用逐项选填的产品信息；新产品仅在最终确认 BOM 时建档。"})
+    if product_catalog_id or has_entry:
+        from apps.product_catalog.selection import resolve_product_selection
 
-        try:
-            with transaction.atomic():
-                product = ProductInformation.objects.create(**new_product)
-        except IntegrityError as exc:
-            if getattr(exc.__cause__, "sqlstate", None) != "23505":
-                raise
-            raise ValidationError({"new_product": "品号或产品编码已存在，请核对后重新提交。"}) from exc
-        write_audit_log(
-            object_type="PRODUCT_INFORMATION", object_id=product.pk, action="CREATED",
-            actor_employee=actor_employee,
-            after_data={"bom_id": str(locked_bom.pk), "product_number": product.product_number,
-                        "product_name": product.product_name, "specification": product.specification},
-            request=request,
+        catalog, snapshot = resolve_product_selection(
+            product_catalog_id, product_selection,
+            existing_catalog_id=locked_bom.product_catalog_id,
+            existing_snapshot=locked_bom.product_selection_snapshot,
         )
-    if not product or not product_color:
-        raise ValidationError({"product": "必须选择正式产品和颜色。"})
-    if product.status != "ACTIVE" or product.archived_at or product_color.status != "ACTIVE" or product_color.archived_at:
-        raise ValidationError({"product": "产品和颜色必须为有效的维护记录。"})
-    normalized_color_code = str(color_code or product_color.color_code or "").strip()
-    if normalized_color_code != str(product_color.color_code or "").strip():
-        raise ValidationError({"color_code": "颜色色号与所选颜色主数据不一致。"})
-    values = {
-        "product": product, "product_category": product.category,
-        "product_unit": product.unit, "product_color": product_color,
-        "product_number_snapshot": product.product_number,
-        "product_code_snapshot": product.product_code,
-        "item_number_snapshot": product.product_item.item_number,
-        "product_name_snapshot": product.product_name,
-        "specification_snapshot": product.specification,
-        "product_category_snapshot": product.category.category_name,
-        "material_snapshot": locked_bom.material_snapshot if material is None else material,
-        "product_unit_code_snapshot": product.unit.unit_code,
-        "product_unit_name_snapshot": product.unit.unit_name,
-        "product_color_name_snapshot": product_color.color_name,
-        "product_color_code_snapshot": normalized_color_code,
-        "product_color_card_snapshot": product_color.color_card,
-    }
-    snapshot_fields = [f"{key}_id" if key in {"product", "product_category", "product_unit", "product_color"} else key for key in values]
+        values = _catalog_product_values(catalog, snapshot)
+    else:
+        values = _legacy_confirmed_product_values(locked_bom, product, product_color, color_code, material)
+    snapshot_fields = [f"{key}_id" if key in {"product", "product_catalog", "product_category", "product_unit", "product_color"} else key for key in values]
     before = _product_writeback_snapshot(locked_bom, snapshot_fields)
     for key, value in values.items():
         setattr(locked_bom, key, value)
@@ -797,6 +774,47 @@ def confirm_bom_product(*, bom, product, product_color, color_code, actor_employ
     if before != _product_writeback_snapshot(locked_bom, snapshot_fields):
         expire_task_bom_events(locked_bom.production_task_id, force=True)
     return locked_bom
+
+
+def _catalog_product_values(catalog, snapshot):
+    return {
+        "product": None, "product_catalog": catalog, "product_selection_snapshot": snapshot,
+        "product_category": None, "product_color": None,
+        "product_unit_id": snapshot["unit_id"], "product_number_snapshot": "",
+        "product_code_snapshot": snapshot["product_code"], "item_number_snapshot": snapshot["item_number"],
+        "product_name_snapshot": snapshot["name"], "specification_snapshot": snapshot["specification"],
+        "product_category_snapshot": snapshot["category_name"], "material_snapshot": snapshot["material"],
+        "product_unit_code_snapshot": snapshot["unit_code"], "product_unit_name_snapshot": snapshot["unit_name"],
+        "product_color_name_snapshot": snapshot["color_name"],
+        "product_color_code_snapshot": "", "product_color_card_snapshot": "",
+    }
+
+
+def _legacy_confirmed_product_values(locked_bom, product, product_color, color_code, material):
+    if not product or not product_color:
+        raise ValidationError({"product": "必须选择正式产品和颜色。"})
+    if product.status != "ACTIVE" or product.archived_at or product_color.status != "ACTIVE" or product_color.archived_at:
+        raise ValidationError({"product": "产品和颜色必须为有效的维护记录。"})
+    normalized_color_code = str(color_code or product_color.color_code or "").strip()
+    if normalized_color_code != str(product_color.color_code or "").strip():
+        raise ValidationError({"color_code": "颜色色号与所选颜色主数据不一致。"})
+    return {
+        "product_catalog": None, "product_selection_snapshot": {},
+        "product": product, "product_category": product.category,
+        "product_unit": product.unit, "product_color": product_color,
+        "product_number_snapshot": product.product_number,
+        "product_code_snapshot": product.product_code,
+        "item_number_snapshot": product.product_item.item_number,
+        "product_name_snapshot": product.product_name,
+        "specification_snapshot": product.specification,
+        "product_category_snapshot": product.category.category_name,
+        "material_snapshot": locked_bom.material_snapshot if material is None else material,
+        "product_unit_code_snapshot": product.unit.unit_code,
+        "product_unit_name_snapshot": product.unit.unit_name,
+        "product_color_name_snapshot": product_color.color_name,
+        "product_color_code_snapshot": normalized_color_code,
+        "product_color_card_snapshot": product_color.color_card,
+    }
 
 
 def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
@@ -848,6 +866,7 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
     before_targets = {}
     after_targets = {}
     identity_fields = [
+        "product_catalog_id", "product_selection_snapshot",
         "product_id", "product_category_id", "product_color_id", "product_number_snapshot",
         "product_code_snapshot", "item_number_snapshot", "product_name_snapshot",
         "specification_snapshot", "material_snapshot",
@@ -861,11 +880,13 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
         "customer_specification_snapshot", "customer_color_snapshot",
     ]
     quotation_fields = [
+        "product_catalog_id", "product_selection_snapshot",
         "product_id", "product_category_id", "product_unit_id", "product_color_id",
         "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
         "product_description_snapshot", "specification_snapshot", "color_snapshot", "material_snapshot", "unit_code",
     ]
     inquiry_fields = [
+        "product_catalog_id", "product_selection_snapshot",
         "product_id", "product_category_id", "product_unit_id", "product_color_id",
         "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
         "product_description", "specification", "color", "material", "unit_code",
@@ -919,6 +940,8 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
                     if write_inquiry:
                         before_targets["inquiry_item"] = _product_writeback_snapshot(inquiry_item, inquiry_fields)
         sales_line.product = product
+        sales_line.product_catalog_id = locked_bom.product_catalog_id
+        sales_line.product_selection_snapshot = locked_bom.product_selection_snapshot
         sales_line.product_category = locked_bom.product_category
         sales_line.product_unit = locked_bom.product_unit
         sales_line.product_color = product_color
@@ -934,6 +957,7 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
         sales_line.customer_color_snapshot = locked_bom.product_color_name_snapshot
         sales_line.full_clean()
         sales_line.save(update_fields=[
+            "product_catalog", "product_selection_snapshot",
             "product", "product_category", "product_unit", "product_color", "product_number_snapshot",
             "product_code_snapshot", "item_number_snapshot", "product_name_snapshot", "specification_snapshot",
             "material_snapshot", "unit_code_snapshot",
@@ -945,6 +969,8 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
         locked_line.sales_order_delivery_batch_line.sales_order_line = sales_line
 
     line_values = {
+        "product_catalog_id": locked_bom.product_catalog_id,
+        "product_selection_snapshot": locked_bom.product_selection_snapshot,
         "product": product,
         "product_category": locked_bom.product_category,
         "unit": locked_bom.product_unit,
@@ -975,6 +1001,8 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
 
     if write_quotation:
         quotation_line.product = product
+        quotation_line.product_catalog_id = locked_bom.product_catalog_id
+        quotation_line.product_selection_snapshot = locked_bom.product_selection_snapshot
         quotation_line.product_category = locked_bom.product_category
         quotation_line.product_unit = locked_bom.product_unit
         quotation_line.product_color = product_color
@@ -992,6 +1020,8 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
 
         if write_inquiry:
             inquiry_item.product = product
+            inquiry_item.product_catalog_id = locked_bom.product_catalog_id
+            inquiry_item.product_selection_snapshot = locked_bom.product_selection_snapshot
             inquiry_item.product_category = locked_bom.product_category
             inquiry_item.product_unit = locked_bom.product_unit
             inquiry_item.product_color = product_color
@@ -1004,6 +1034,7 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
             inquiry_item.material = locked_bom.material_snapshot
             inquiry_item.unit_code = locked_bom.product_unit_code_snapshot
             inquiry_item.save(update_fields=[
+                "product_catalog", "product_selection_snapshot",
                 "product", "product_category", "product_unit", "product_color", "product_number_snapshot",
                 "product_code_snapshot", "item_number_snapshot", "product_description", "specification",
                 "color", "material", "unit_code", "updated_at",
@@ -1021,7 +1052,8 @@ def _writeback_confirmed_bom_product(*, locked_bom, actor_employee, request):
         actor_employee=actor_employee,
         before_data={**before, "targets": before_targets},
         after_data={
-            "product_id": str(product.pk),
+            "product_id": str(product.pk) if product else None,
+            "product_catalog_id": str(locked_bom.product_catalog_id) if locked_bom.product_catalog_id else None,
             "bom_id": str(locked_bom.pk),
             "bom_version": locked_bom.version_number,
             "product_line_id": str(locked_line.pk),
@@ -1086,6 +1118,7 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
                 actor_employee=actor_employee,
                 request=request,
                 link_source=True,
+                preserve_tube_formula=True,
             )
         else:
             target = latest
@@ -1101,6 +1134,8 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
         )
         previous_order_quantity = Decimal(target.order_quantity)
         product_values = {
+            "product_catalog_id": product_line.product_catalog_id,
+            "product_selection_snapshot": product_line.product_selection_snapshot,
             "product_id": product_line.product_id,
             "product_category_id": product_line.product_category_id,
             "product_unit_id": product_line.unit_id,
@@ -1111,9 +1146,10 @@ def sync_latest_boms_from_order(*, product_line_ids, actor_employee, request):
             "product_name_snapshot": product_line.product_name_snapshot,
             "specification_snapshot": product_line.specification_snapshot,
             "material_snapshot": product_line.material_snapshot,
-            "product_category_snapshot": product_line.product_category.category_name if product_line.product_category_id else "",
-            "product_unit_code_snapshot": product_line.unit.unit_code,
-            "product_unit_name_snapshot": product_line.unit.unit_name,
+            "product_category_snapshot": (product_line.product_selection_snapshot.get("category_name", "") if product_line.product_catalog_id or is_product_entry_snapshot(product_line.product_selection_snapshot)
+                                          else product_line.product_category.category_name if product_line.product_category_id else ""),
+            "product_unit_code_snapshot": product_line.unit_code,
+            "product_unit_name_snapshot": product_line.unit_name,
             "product_color_name_snapshot": product_line.color_name_snapshot,
             "product_color_code_snapshot": product_line.color_code_snapshot,
             "product_color_card_snapshot": product_line.color_card_snapshot,
@@ -1393,6 +1429,11 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
             if was_piece_usage and all(getattr(line, field) is None for field in CUTTING_QUANTITY_FIELDS):
                 raise ValidationError({"sections": "已填写裁片数量的明细不能清空每套片数和每成品套数退回旧口径。"})
             planned_line = material_plan["lines"][(section_number - 1, line_number)]
+            line.material_catalog_id = planned_line.material_catalog_id
+            line.material_selection_snapshot = planned_line.material_selection_snapshot
+            line.material_quantity = planned_line.material_quantity
+            if planned_line.material_catalog_id:
+                line.part_name = planned_line.part_name
             line.raw_values = planned_line.raw_values
             line.raw_material, line.category, line.unit = planned_line.raw_material, planned_line.category, planned_line.unit
             line.specification = planned_line.specification
@@ -1437,7 +1478,7 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
         if line.section.title.strip() != "裁剪明细":
             continue
         inherit_cutting_fabric_attributes(line)
-        line.save(update_fields=["material", "raw_values"])
+        line.save(update_fields=["material", "raw_values", "specification", "material_selection_snapshot"])
     stale_line_ids = set(existing_lines) - kept_line_ids
     stale_image_file_ids = []
     if stale_line_ids:
@@ -1509,7 +1550,8 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
     """仅由已锁定并完成 ETag 校验的事务入口调用，避免保存后二次使用旧 ETag。"""
     if locked.status == BomStatus.VERIFIED:
         raise Conflict("该 BOM 版本已经确认。")
-    if not locked.product_information_confirmed_at or not locked.product_id or not locked.product_color_id:
+    has_entry = is_product_entry_snapshot(locked.product_selection_snapshot)
+    if not locked.product_information_confirmed_at or not (has_entry or locked.product_catalog_id or (locked.product_id and locked.product_color_id)):
         raise ValidationError({"product": "请先核对并保存本 BOM 的产品信息，再确认 BOM。"})
     if locked.line_count <= 0:
         raise ValidationError({"sections": "至少需要一条用料明细才能提交校验。"})
@@ -1552,10 +1594,17 @@ def _verify_locked_bom(*, locked, quantity_confirmation_reason, actor_employee, 
     for line in lines:
         if line.section.title.strip() == "裁剪明细":
             inherit_cutting_fabric_attributes(line)
-            line.save(update_fields=["material", "raw_values"])
+            line.save(update_fields=["material", "raw_values", "specification", "material_selection_snapshot"])
     validate_duplicate_material_lines(lines)
     validate_used_components(locked, lines)
 
+    if has_entry:
+        catalog, snapshot = finalize_product_entry(snapshot=locked.product_selection_snapshot,
+            catalog_id=locked.product_catalog_id, request=request, actor_employee=actor_employee)
+        values = _catalog_product_values(catalog, snapshot)
+        for field, value in values.items():
+            setattr(locked, field, value)
+        locked.save(update_fields=[*values, "updated_at"])
     _writeback_confirmed_bom_product(locked_bom=locked, actor_employee=actor_employee, request=request)
     before_status = locked.status
     locked.status = BomStatus.VERIFIED

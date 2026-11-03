@@ -6,10 +6,17 @@ from apps.customers.models import CustomerAccount, CustomerContact
 from apps.customers.selectors import accessible_customers
 from apps.organizations.models import Employee
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
+from apps.reference_data.models import ProductColor, ReferenceStatus
+from ..application_fields import is_sample_salesperson, normalize_manual_request_number
 from ..models import SampleDeliveryBatch, SampleShippingMethod, SampleType
 
 
 class SampleApplicationSerializer(serializers.Serializer):
+    manual_request_number = serializers.CharField(max_length=46)
+    product_color_id = serializers.PrimaryKeyRelatedField(source='product_color', queryset=ProductColor.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True))
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, allow_null=True)
     customer_account_id = serializers.PrimaryKeyRelatedField(source="customer_account", queryset=CustomerAccount.objects.none())
     customer_contact_id = serializers.PrimaryKeyRelatedField(source="customer_contact", queryset=CustomerContact.objects.none(), allow_null=True)
     owner_employee_id = serializers.PrimaryKeyRelatedField(source="owner_employee", queryset=active_department_employees("DEPT_BUSINESS"))
@@ -49,10 +56,19 @@ class SampleApplicationSerializer(serializers.Serializer):
         customers = accessible_customers(request, 'add_samplerequest').filter(archived_at__isnull=True)
         self.fields['customer_account_id'].queryset = customers
         self.fields['customer_contact_id'].queryset = CustomerContact.objects.filter(customer_account__in=customers, archived_at__isnull=True)
+        if not is_sample_salesperson(request):
+            # 隐藏字段不接受客户端改写，编辑时由服务端保留原关联。
+            self.fields.pop('customer_account_id')
+            self.fields.pop('customer_contact_id')
+
+    def validate_manual_request_number(self, value):
+        return normalize_manual_request_number(value)
 
     def validate(self, attrs):
+        if (attrs.get('product_catalog_id') or (attrs.get('product_selection') or {}).get('draft')) and attrs.get('product'):
+            raise serializers.ValidationError({'product_catalog_id': '新旧产品不能同时选择。'})
         contact = attrs.get('customer_contact')
-        if contact and contact.customer_account_id != attrs['customer_account'].pk:
+        if contact and contact.customer_account_id != getattr(attrs.get('customer_account'), 'pk', None):
             raise serializers.ValidationError({'customer_contact_id': '联系人必须属于当前客户。'})
         if bool(attrs['source_type']) != bool(attrs['source_id']) or bool(attrs['source_id']) != bool(attrs['source_product_id']):
             raise serializers.ValidationError({'source_id': '来源类型、来源记录和来源产品必须同时填写。'})

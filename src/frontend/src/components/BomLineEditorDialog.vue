@@ -12,6 +12,7 @@ defineEmits<{ 'update:modelValue': [value: boolean]; closed: [] }>()
     class="bom-line-editor-dialog hardware-picker-dialog"
     :width="1000"
     height="auto"
+    :auto-max-height-ratio="1"
     destroy-on-close
     :close-on-click-modal="false"
     :before-close="beforeClose"

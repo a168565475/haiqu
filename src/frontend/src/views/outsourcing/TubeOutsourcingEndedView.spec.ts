@@ -9,10 +9,10 @@ import type { TubeDetailLine, TubeOrderDetail, TubeSourceKind } from '@/types/tu
 import type { TubeReceipt, TubeReceiptPreview } from '@/types/tubeReceipts'
 import TubeOutsourcingDetailView from './TubeOutsourcingDetailView.vue'
 
-const routing = vi.hoisted(() => ({ push: vi.fn() }))
+const routing = vi.hoisted(() => ({ push: vi.fn(), workspace: 'warehouse' }))
 const permission = vi.hoisted(() => ({ canReceive: true }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: 'order-1' }, query: {}, meta: { outsourcingWorkspace: 'warehouse' } }), useRouter: () => routing }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { id: 7, is_superuser: false }, hasPermission: (name: string) => name === 'outsourcing.confirm_return_outsourcingorder' ? permission.canReceive : true }) }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: 'order-1' }, query: {}, meta: { outsourcingWorkspace: routing.workspace } }), useRouter: () => routing }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ initialized: true, identityReady: true, identityGeneration: 0, identityRequestGeneration: 0, user: { id: 7, is_superuser: false }, hasPermission: (name: string) => name === 'outsourcing.confirm_return_outsourcingorder' ? permission.canReceive : true }) }))
 vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), createTubeOrder: vi.fn(), dispatchTubeOrder: vi.fn(), cancelTubeOrder: vi.fn(), findTubeAction: vi.fn(), fetchTubeSource: vi.fn(), fetchTubeOptions: vi.fn() }))
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn(), fetchTubeReceipt: vi.fn(), fetchTubeReceiptCandidates: vi.fn(), confirmTubeReceipt: vi.fn(), findTubeReceipt: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { closeAll: vi.fn(), warning: vi.fn(), success: vi.fn() } }))
@@ -102,7 +102,7 @@ function assertReceiptUnavailable(wrapper: VueWrapper) {
   expect(wrapper.find('.d4-ended-receipt').exists()).toBe(false)
 }
 beforeEach(() => {
-  vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true
+  routing.workspace = 'warehouse'; vi.resetAllMocks(); localStorage.clear(); permission.canReceive = true
   vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(makePreview())
   vi.mocked(orderApi.fetchTubeOrder).mockResolvedValue(structuredClone(order))
 })
@@ -127,7 +127,8 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     await button.trigger('click'); await flushPromises()
     expect(wrapper.find('[aria-label="裁片入库凭证 · 只读"]').exists()).toBe(true)
   })
-  it('结束态按原单外发量显示计划价款，不按实收量重算；未知旧价不补0', async () => {
+  it('车间结束态保留原单计划价款，未知旧价不补0', async () => {
+    routing.workspace = 'workshop'
     const { wrapper, vm } = await mountPage()
     expect(records(wrapper)[0]).toMatchObject({ '加工单价（元/支）': '0.25', '计划金额（元）': '5' })
     expect(wrapper.get('.d4-ended-footer').text()).toContain('计划加工金额 8.75 元')
@@ -141,9 +142,10 @@ describe('D4已结束原单详情与只读入库凭证', () => {
   it.each(['RAW_PIPE', 'PUBLIC_SEMI', 'METAL'] as const)('%s按批准列显示全部结果，凭证使用同一列且仅能关闭', async source => {
     vi.mocked(receiptApi.fetchTubeReceiptPreview).mockResolvedValue(makePreview(source))
     const { wrapper, vm } = await mountPage()
-    const expected = ['部位', '材质', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂',
-      ...(source === 'RAW_PIPE' ? ['切割支数 支/根', '原材料长度 米/根'] : []), '实发（支）', ...(source === 'RAW_PIPE' ? ['发出扣根', '发出扣米'] : []), '实收（支）', '差额（支）', '差额原因', '入库库区', '加工单价（元/支）', '计划金额（元）']
+    const expected = ['部位', '材质', '形状', '规格', '厚度 mm', '切割长度 mm', '原料颜色', '喷塑颜色', '加工厂',
+      ...(source === 'RAW_PIPE' ? ['切割支数 支/根', '原材料长度 米/根'] : []), '实发（支）', ...(source === 'RAW_PIPE' ? ['发出扣根', '发出扣米'] : []), '实收（支）', '差额（支）', '差额原因', '入库库区']
     expect(wrapper.findAll('.d4-ended-lines th').map(item => item.text())).toEqual(expected)
+    expect(wrapper.get('.d4-ended-footer').text()).not.toContain('计划加工金额')
     expect(wrapper.text()).toContain(labels[source]); expect(wrapper.text()).toContain('当前订单量')
     expect(wrapper.findAll('.d4-ended-context .info-cell')).toHaveLength(12)
     expect(wrapper.findAll('.d4-ended-meta .info-cell')).toHaveLength(8)
@@ -152,7 +154,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(vm.canDispatch).toBe(false); expect(vm.canCancel).toBe(false)
     expect(wrapper.findAll('button').some(item => ['喷塑入库', '确认实际发出', '取消外发单', '退回', '重新加工', '结清'].includes(item.text()))).toBe(false)
     await button(wrapper, '查看入库凭证').trigger('click')
-    expect(wrapper.get('[aria-label="喷塑入库凭证 · 只读"]').attributes('data-width')).toBe('1640')
+    expect(wrapper.get('[aria-label="喷塑入库凭证 · 只读"]').attributes('data-width')).toBe('1800')
     expect(wrapper.findAll('.d4-ended-receipt-lines th').map(item => item.text())).toEqual(expected)
     expect(records(wrapper, '.d4-ended-receipt-lines')).toEqual(records(wrapper))
     expect(wrapper.find('.d4-ended-receipt input').exists()).toBe(false)
@@ -264,7 +266,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(wrapper.text()).toContain('原单历史明细结构不完整')
     expect(wrapper.find('.d4-ended-lines').exists()).toBe(false)
     expect(footerQuantities(wrapper)).toEqual({ 实发: '—', 实收: '—', 差额: '—' })
-    expect(wrapper.get('.d4-ended-footer .d4-planned-amount strong').text()).toBe('8.75')
+    expect(wrapper.find('.d4-ended-footer .d4-planned-amount').exists()).toBe(false)
     assertReceiptUnavailable(wrapper)
     expect(orderApi.fetchTubeOrder).not.toHaveBeenCalled()
     assertNoWriteRequests()
@@ -279,7 +281,7 @@ describe('D4已结束原单详情与只读入库凭证', () => {
     expect(displayed[0]).toEqual(expect.objectContaining({ '实发（支）': '—', '实收（支）': '—', '差额（支）': '—', 入库库区: '—' }))
     expect(displayed[2]).toEqual(expect.objectContaining({ '实收（支）': '0', '差额（支）': '5', 入库库区: '未入库' }))
     expect(footerQuantities(wrapper)).toEqual({ 实发: '—', 实收: '—', 差额: '—' })
-    expect(wrapper.get('.d4-ended-footer .d4-planned-amount strong').text()).toBe('8.75')
+    expect(wrapper.find('.d4-ended-footer .d4-planned-amount').exists()).toBe(false)
     assertReceiptUnavailable(wrapper)
     assertNoWriteRequests()
   })

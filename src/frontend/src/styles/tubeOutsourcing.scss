@@ -29,7 +29,7 @@
   h2 { margin: 0; color: var(--erp-color-text-primary); font-size: 16px; line-height: 24px; font-weight: 600; }
   .muted { color: var(--erp-color-text-muted); }
   .brand { color: crm.$crm-primary; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .num { text-align: center; font-variant-numeric: tabular-nums; }
   .title-row { display: flex; align-items: center; gap: 12px; }
   .info-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px 20px; }
   .info-cell { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: baseline; gap: 8px; min-width: 0; }
@@ -46,7 +46,7 @@
   .tube-table th:last-child, .tube-table td:last-child { border-right: 0; }
   .tube-table tbody tr:last-child td { border-bottom: 0; }
   .tube-table tr:hover td { background: var(--erp-color-hover); }
-  .tube-table .num { text-align: right; }
+  .tube-table .num { text-align: center; }
   .tube-table .cell-text { display: block; overflow: hidden; text-overflow: ellipsis; }
   .tube-table td.empty-cell { height: 140px; text-align: center; color: var(--erp-color-text-muted); }
   .el-button { height: 32px; min-height: 32px; font-family: inherit; font-size: 12px; line-height: 18px; font-weight: 500; padding: 0 14px; border-radius: 5px; }
@@ -60,7 +60,7 @@
   .el-input.is-disabled .el-input__wrapper, .el-select__wrapper.is-disabled { background: var(--erp-input-disabled-background); }
   .el-textarea__inner { border-radius: var(--erp-radius-control); min-height: 74px !important; font: 12px/22px 'Noto Sans SC Variable', 'Microsoft YaHei', sans-serif; padding: 8px 12px; resize: vertical; box-shadow: var(--erp-input-shadow), 0 0 0 1px var(--erp-input-border) inset; }
   .tube-table .el-input__wrapper { padding: 1px 8px; }
-  .tube-table .el-input__inner { text-align: right; }
+  .tube-table .el-input__inner { text-align: center; }
 }
 
 .tube-outsourcing-page {

@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from apps.core.api.concurrency import etag_for_instance
 from apps.core.api.permissions import BusinessActionPermission, HasActiveEmployee
 from .statement_models import ReceivableStatement
-from .statement_selectors import statements
+from .statement_selectors import accessible_statements
 from .statement_serializers import StatementQuerySerializer, StatementResponseSerializer, StatementSerializer, StatementVoidSerializer, StatementWriteSerializer
 from . import statement_services
 
@@ -30,11 +30,11 @@ class ReceivableStatementViewSet(viewsets.GenericViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return ReceivableStatement.objects.none()
-        return statements(detail=self.action != "list")
+        return accessible_statements(self.request, detail=self.action != "list")
 
     def statement_response(self, statement, status=200, changed=None):
         from .settlement_selectors import settlement_totals_for_statements
-        current = get_object_or_404(statements(detail=True), pk=statement.pk)
+        current = get_object_or_404(accessible_statements(self.request, detail=True), pk=statement.pk)
         data = StatementSerializer(current, context={"totals": settlement_totals_for_statements([current])}).data
         if changed is not None:
             data["changed"] = changed
@@ -45,12 +45,12 @@ class ReceivableStatementViewSet(viewsets.GenericViewSet):
         from .settlement_selectors import settlement_totals_for_statements
         query = StatementQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
-        page = self.paginate_queryset(statements(query.validated_data))
+        page = self.paginate_queryset(accessible_statements(request, query.validated_data))
         return self.get_paginated_response(StatementSerializer(page, many=True, context={"totals": settlement_totals_for_statements(page)}).data)
 
     @extend_schema(responses=StatementResponseSerializer)
     def retrieve(self, request, pk=None):
-        return self.statement_response(get_object_or_404(ReceivableStatement, pk=pk))
+        return self.statement_response(self.get_object())
 
     @extend_schema(request=StatementWriteSerializer, responses={201: StatementResponseSerializer, 200: StatementResponseSerializer},
                    parameters=[OpenApiParameter("Idempotency-Key", str, OpenApiParameter.HEADER, required=True)])

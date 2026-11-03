@@ -5,6 +5,8 @@ import { AxiosError } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { fetchFinishedGoodsOutbound } from '@/api/inventory'
+import ProtectedImage from '@/components/common/ProtectedImage.vue'
+import ProtectedAttachmentLink from '@/components/common/ProtectedAttachmentLink.vue'
 import type { FinishedGoodsOutboundDetail } from '@/types/inventory'
 const route = useRoute(); const router = useRouter(); const detail = ref<FinishedGoodsOutboundDetail | null>(null); const loading = ref(false); const errorMessage = ref('')
 const message = (error: unknown) => error instanceof AxiosError ? (error.response?.data as { error?: { message?: string } })?.error?.message || '出货单读取失败，请重试。' : '出货单读取失败，请重试。'
@@ -57,7 +59,7 @@ watch(() => route.params.outboundId, () => { void load() }, { immediate: true })
       </section>
       <section v-if="detail.loading_images?.length" class="images-card">
         <h2>装卸图片</h2>
-        <div class="images"><a v-for="image in detail.loading_images" :key="image.id || image.url" :href="image.url" target="_blank" rel="noreferrer"><img :src="image.url" :alt="image.name || '装卸图片'" /></a></div>
+        <div class="images"><ProtectedAttachmentLink v-for="image in detail.loading_images" :key="image.id || image.url" :src="image.url" :filename="image.name || '装卸图片'"><ProtectedImage :src="image.url" :alt="image.name || '装卸图片'" /></ProtectedAttachmentLink></div>
       </section>
     </template>
   </section>

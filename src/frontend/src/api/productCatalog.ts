@@ -3,6 +3,8 @@ import { apiClient } from './request'
 import type {
   ProductCatalog, ProductCatalogFields, ProductCatalogInput, ProductCatalogList, ProductCatalogName,
   ProductCatalogNameInput, ProductCatalogOptions, ProductCatalogQuery, VersionedProductCatalog, VersionedProductCatalogName,
+  ProductCatalogEditor, ProductCatalogEditorInput, ProductCatalogEditorCreateInput, VersionedProductCatalogEditor,
+  ProductCatalogSelectionOptions,
 } from '@/types/productCatalog'
 
 const base = '/api/v1/product-catalog/'
@@ -45,6 +47,21 @@ export async function addProductCatalogColor(id: string, input: { value: string 
 }
 export async function deleteProductCatalogColor(id: string, colorId: string, etag: string): Promise<VersionedProductCatalog> {
   return versioned(await apiClient.delete<Data<ProductCatalog>>(`${path(id)}colors/${encodeURIComponent(colorId)}/`, headers(etag)))
+}
+export async function fetchProductCatalogEditor(id: string): Promise<VersionedProductCatalogEditor> {
+  return versioned(await apiClient.get<Data<ProductCatalogEditor>>(`${namePath(id)}editor/`))
+}
+export async function createProductCatalogEditor(input: ProductCatalogEditorCreateInput): Promise<VersionedProductCatalogEditor> {
+  return versioned(await apiClient.post<Data<ProductCatalogEditor>>(`${base}names/editor/`, input))
+}
+export async function saveProductCatalogEditor(id: string, input: ProductCatalogEditorInput, etag: string): Promise<VersionedProductCatalogEditor> {
+  return versioned(await apiClient.patch<Data<ProductCatalogEditor>>(`${namePath(id)}editor/`, input, headers(etag)))
+}
+export async function deleteProductCatalogName(id: string, etag: string): Promise<void> {
+  await apiClient.delete(namePath(id), headers(etag))
+}
+export async function fetchProductCatalogSelectionOptions(): Promise<ProductCatalogSelectionOptions> {
+  return (await apiClient.get<Data<ProductCatalogSelectionOptions>>(`${base}selection-options/`)).data.data
 }
 type ApiError = { response?: { status?: number; data?: { error?: { message?: string; field_errors?: Record<string, unknown> }; detail?: string } }; message?: string }
 export function productCatalogErrorStatus(error: unknown): number | undefined { return (error as ApiError | null)?.response?.status }

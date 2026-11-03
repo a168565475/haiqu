@@ -10,6 +10,8 @@ from apps.audit.models import AuditLog
 from apps.inquiries.rich_text import sanitize_rich_text
 from apps.organizations.models import Employee, EmployeeStatus
 from apps.products.models import ProductInformation, ProductStatus
+from apps.product_catalog.api.serializers import ProductSelectionSerializer
+from apps.product_catalog.selection import is_product_entry_snapshot
 from apps.reference_data.models import Currency, ProductCategory, ProductColor, ProductionUnit, ReferenceStatus
 
 from apps.sales_orders.models import SalesOrder, SalesOrderDeliveryBatch, SalesOrderDeliveryBatchLine
@@ -38,6 +40,8 @@ class ProductionTaskDetailInputSerializer(serializers.Serializer):
     description = serializers.CharField(max_length=2000, required=False, allow_blank=True, trim_whitespace=True)
 
 class ProductionTaskProductInputSerializer(serializers.Serializer):
+    product_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+    product_selection = ProductSelectionSerializer(required=False, allow_null=True)
     client_key = serializers.RegexField(r"^[A-Za-z0-9_-]{1,64}$")
     product_id = serializers.PrimaryKeyRelatedField(
         source="product",
@@ -81,6 +85,8 @@ class ProductionTaskProductInputSerializer(serializers.Serializer):
     unit_id = serializers.PrimaryKeyRelatedField(
         source="unit",
         queryset=ProductionUnit.objects.filter(status=ReferenceStatus.ACTIVE, archived_at__isnull=True),
+        required=False,
+        allow_null=True,
     )
     currency_id = serializers.PrimaryKeyRelatedField(
         source="currency",
@@ -279,6 +285,7 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             raise serializers.ValidationError({"products": "产品临时编号不能重复。"})
         detail_keys = []
         currency = attrs.get("currency", getattr(current_task, "currency", None))
+        existing_products = {str(row.pk): row for row in current_task.products.all()} if current_task else {}
         for index, item in enumerate(products or [], start=1):
             if current_task is None and "replace_primary_image" in item:
                 raise serializers.ValidationError({"products": "主图替换标记仅用于编辑已有产品行。"})
@@ -286,7 +293,10 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             color = item.get("product_color")
             customer_product_name = str(item.get("customer_product_name") or "").strip()
             customer_specification = str(item.get("customer_specification") or "").strip()
-            if product is None:
+            draft = (item.get("product_selection") or {}).get("draft")
+            existing_product = existing_products.get(str(item["client_key"]))
+            uses_draft = bool(draft or is_product_entry_snapshot(getattr(existing_product, "product_selection_snapshot", None)))
+            if product is None and not item.get("product_catalog_id") and not uses_draft:
                 if not customer_product_name:
                     raise serializers.ValidationError(
                         {"products": f"第 {index} 条未关联产品时必须填写客户产品名称。"}
@@ -302,7 +312,9 @@ class ProductionTaskWriteSerializer(serializers.Serializer):
             detail_keys.extend(
                 detail["client_key"] for detail in item.get("details", []) if detail.get("client_key")
             )
-            if product is not None and item["unit"].pk != product.unit_id:
+            if item.get("unit") is None and not uses_draft:
+                raise serializers.ValidationError({"products": f"第 {index} 条明细必须选择单位。"})
+            if product is not None and getattr(item.get("unit"), "pk", None) != product.unit_id:
                 raise serializers.ValidationError(
                     {"products": f"第 {index} 条明细的单位必须使用产品生产维护单位。"}
                 )
@@ -446,11 +458,11 @@ class ProductionSalesSourceLineSerializer(SalesOrderLineReadSerializer):
 
     def get_unit_name(self, instance):
         unit = self._unit(instance)
-        return unit.unit_name if unit else ""
+        return unit.unit_name if unit else instance.product_selection_snapshot.get("unit_name", "")
 
     class Meta(SalesOrderLineReadSerializer.Meta):
         fields = [
-            "id", "line_number", "product_id", "product_category_id", "product_unit_id", "product_color_id",
+            "id", "line_number", "product_id", "product_catalog_id", "product_selection_snapshot", "product_category_id", "product_unit_id", "product_color_id",
             "product_image_id", "product_number_snapshot", "product_code_snapshot", "item_number_snapshot",
             "product_name_snapshot", "specification_snapshot", "customer_product_name_snapshot",
             "specification_display", "unit_price_cny", "line_total_cny",
@@ -560,6 +572,8 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     line_number = serializers.IntegerField()
     product_id = serializers.UUIDField(allow_null=True)
+    product_catalog_id = serializers.UUIDField(allow_null=True)
+    product_selection_snapshot = serializers.JSONField()
     product_category_id = serializers.UUIDField(allow_null=True)
     source_delivery_batch_line_id = serializers.UUIDField(
         source="sales_order_delivery_batch_line_id", allow_null=True
@@ -584,9 +598,9 @@ class ProductionTaskProductReadSerializer(serializers.Serializer):
     color_name = serializers.CharField(source="color_name_snapshot")
     color_code = serializers.CharField(source="color_code_snapshot")
     quantity = serializers.IntegerField()
-    unit_id = serializers.UUIDField()
-    unit_code = serializers.CharField(source="unit.unit_code")
-    unit_name = serializers.CharField(source="unit.unit_name")
+    unit_id = serializers.UUIDField(allow_null=True)
+    unit_code = serializers.CharField()
+    unit_name = serializers.CharField()
     currency_id = serializers.UUIDField()
     currency_code = serializers.CharField(source="currency.code")
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4)
@@ -657,6 +671,8 @@ class ProductionRunBatchReadSerializer(serializers.ModelSerializer):
 
 
 class ProductionTaskReadSerializer(serializers.ModelSerializer):
+    allowed_permissions = serializers.SerializerMethodField()
+    allowed_update_fields = serializers.SerializerMethodField()
     tax_rate = serializers.IntegerField(allow_null=True, read_only=True, default=None)
     special_requirements_html = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display")
@@ -718,7 +734,25 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             "actual_good_quantity", "excess_quantity", "run_batches", "current_boms",
             "pmc_confirmation", "audit_timeline",
             "bom_status", "bom_status_display", "purchase_status", "purchase_status_display",
+            "allowed_permissions", "allowed_update_fields",
         ]
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_allowed_permissions(self, instance):
+        request = self.context.get('request')
+        if request is None:
+            return []
+        from ..access import task_allowed_permissions
+        return task_allowed_permissions(request, instance)
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_allowed_update_fields(self, instance):
+        request = self.context.get('request')
+        if request is None or instance.status in {'COMPLETED', 'CANCELLED'}:
+            return []
+        from apps.access_control.role_policy import allowed_task_update_fields
+        allowed = allowed_task_update_fields(request)
+        return sorted(ProductionTaskPatchSerializer.allowed_field_names) if allowed is None else list(allowed)
 
     @extend_schema_field(serializers.CharField())
     def get_special_requirements_html(self, instance):
@@ -811,6 +845,8 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             "SCHEDULED": "完成计划排产",
             "SCHEDULE_VOIDED": "排产作废",
             "STARTED": "开始生产（历史）",
+            "PAUSED": "暂停生产",
+            "RESUMED": "恢复生产",
             "COMPLETED": "完成生产",
             "COMPLETED_EXCEPTION": "异常完成生产",
             "CANCELLED": "取消生产任务单",
@@ -951,17 +987,47 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
         return self._purchase_status_summary(instance)[1]
 
 
+class ProductionTaskListEmployeeSerializer(EmployeeBriefSerializer):
+    class Meta(EmployeeBriefSerializer.Meta):
+        fields = ["display_name"]
+
+
+class ProductionTaskProductListSerializer(ProductionTaskProductReadSerializer):
+    unit_name = serializers.SerializerMethodField()
+    unit_code = serializers.SerializerMethodField()
+    product_selection_snapshot = serializers.SerializerMethodField()
+
+    def get_fields(self):
+        fields = super().get_fields()
+        return {name: fields[name] for name in (
+            "id", "customer_product_name", "product_name", "item_number", "specification_display",
+            "customer_specification", "specification", "material", "customer_color", "color_name", "color_code",
+            "quantity", "unit_id", "unit_name", "unit_code", "product_selection_snapshot", "local_total_amount",
+        )}
+
+    @extend_schema_field(serializers.CharField())
+    def get_unit_name(self, instance):
+        return instance._list_unit_name or (instance.unit.unit_name if instance.unit_id else "")
+
+    @extend_schema_field(serializers.CharField())
+    def get_unit_code(self, instance):
+        return instance._list_unit_code or (instance.unit.unit_code if instance.unit_id else "")
+
+    @extend_schema_field(serializers.DictField(child=serializers.CharField(allow_null=True)))
+    def get_product_selection_snapshot(self, instance):
+        return {"unit_name": instance._list_unit_name} if instance._list_unit_name is not None else {}
+
+
 class ProductionTaskListSerializer(ProductionTaskReadSerializer):
+    products = ProductionTaskProductListSerializer(many=True)
+    salesperson = ProductionTaskListEmployeeSerializer()
+    followers = ProductionTaskListEmployeeSerializer(many=True)
+
     class Meta(ProductionTaskReadSerializer.Meta):
         fields = [
-            "id", "task_number", "contract_number", "order_source", "order_source_display", "order_number",
-            "customer_id", "customer_code", "customer_name", "order_date", "delivery_date", "salesperson",
-            "followers", "currency_code", "delivery_method", "delivery_method_display", "status", "status_display", "status_reason",
-            "total_quantity", "total_amount", "batch_total_quantity", "quantity_difference", "products", "created_at", "updated_at",
-            "sales_order_id", "source_sales_order_number", "source_delivery_batch_number", "is_historical_unlinked",
-            "planned_start_date", "planned_end_date", "production_priority", "production_priority_display",
-            "actual_good_quantity", "bom_status", "bom_status_display", "purchase_status",
-            "purchase_status_display",
+            "id", "task_number", "source_sales_order_number", "delivery_date", "salesperson", "followers",
+            "status", "status_display", "sales_order_id", "products", "bom_status", "bom_status_display", "purchase_status",
+            "purchase_status_display", "allowed_permissions",
         ]
 
 

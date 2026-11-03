@@ -1,4 +1,5 @@
 from apps.procurement.source_access import purchase_order_access
+from ..selectors import scoped_finished_receipts, scoped_finished_outbounds, scoped_inventory_records, require_inventory_overview
 from uuid import UUID
 from collections.abc import Mapping
 from pathlib import Path
@@ -49,6 +50,7 @@ from ..models import (
     MaterialStockDirection,
     MaterialStockMovement,
     MaterialStockQuality,
+    PublicStockBalance,
     RecordStatus,
     Warehouse,
     WarehouseLocation,
@@ -65,6 +67,7 @@ from ..selectors import (
     material_inbound_order_totals,
     material_inventory_rows,
     material_received_totals,
+    material_receiving_warehouse_suggestions,
     procurement_inbound_product_summaries,
     procurement_inbound_supplier_summaries,
     receipt_batches,
@@ -294,6 +297,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
             zone_id = str(uuid_value(zone_id, "zone_id"))
         production_task_id = scope.validated_data.get("production_task_id")
         rows = finished_goods_inventory_rows(
+            request=request,
             keyword=request.query_params.get("q", "").strip(),
             warehouse_id=warehouse_id,
             zone_id=zone_id,
@@ -311,10 +315,13 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
     def _inventory_payload(item):
         return {
             "inventory_key": "|".join(str(item[key]) for key in (
+                "production_task_product__product_catalog_id", "product_selection_key",
                 "production_task_product__product_id", "task_number_snapshot", "category_snapshot", "product_number_snapshot", "product_code_snapshot", "product_name_snapshot", "item_number_snapshot",
                 "specification_snapshot", "actual_color", "unit_id", "location__zone__warehouse_id", "location__zone_id"
             )),
             "product_id": item["production_task_product__product_id"],
+            "product_catalog_id": item["production_task_product__product_catalog_id"],
+            "product_selection_key": item["product_selection_key"],
             "task_number": item["task_number_snapshot"],
             "category": item["category_snapshot"],
             "product_number": item["product_number_snapshot"],
@@ -346,6 +353,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                     warehouse__warehouse_type=WarehouseType.FINISHED).order_by("warehouse__warehouse_number", "zone_name", "id")
                     .values("id", "warehouse", "zone_name")),
             }})
+        require_inventory_overview(request, 'inventory.view_finishedgoodsreceipt')
         warehouses = warehouses_with_usage(
             Warehouse.objects.filter(status=RecordStatus.ACTIVE, warehouse_type=WarehouseType.FINISHED)
         ).order_by("warehouse_number", "id")
@@ -369,7 +377,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
             archived_at__isnull=True,
             status=ReferenceStatus.ACTIVE,
         ).order_by("sort_order", "color_card", "color_code", "color_name", "id")
-        production_orders = ProductionTask.objects.filter(archived_at__isnull=True).exclude(status=ProductionTaskStatus.CANCELLED).order_by("-updated_at").values("id", "task_number", "order_number")[:500]
+        production_orders = accessible_production_tasks(request, permission='inventory.view_finishedgoodsreceipt').filter(archived_at__isnull=True).exclude(status=ProductionTaskStatus.CANCELLED).order_by("-updated_at").values("id", "task_number", "order_number")[:500]
         return Response({"data": {
             "warehouses": WarehouseSerializer(warehouses, many=True).data,
             "zones": WarehouseZoneSerializer(zones, many=True).data,
@@ -391,7 +399,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def receipts(self, request):
-        queryset = receipt_batches()
+        queryset = scoped_finished_receipts(receipt_batches(), request)
         receipt_ids = request.query_params.get("receipt_ids", "").strip()
         if receipt_ids:
             queryset = queryset.filter(pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids.split(",") if item])
@@ -402,11 +410,11 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
         receipt_ids = [item for item in request.query_params.get("receipt_ids", "").split(",") if item]
         if not receipt_ids:
             raise ValidationError({"receipt_ids": "请至少选择一条库存。"})
-        queryset = receipt_batches(FinishedGoodsReceipt.objects.filter(
+        queryset = scoped_finished_receipts(receipt_batches(FinishedGoodsReceipt.objects.filter(
             pk__in=[uuid_value(item, "receipt_ids") for item in receipt_ids],
             status=FinishedGoodsReceiptStatus.CONFIRMED,
             remaining_quantity__gt=0,
-        ))
+        )), request, 'inventory.add_finishedgoodsoutbound')
         return Response({"data": FinishedGoodsReceiptSerializer(queryset, many=True).data})
 
     @extend_schema(methods=["GET"], operation_id="finished_goods_outbounds_list",
@@ -432,6 +440,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
                 product_line_id=uuid_value(product_line_id, "product_line_id") if product_line_id else None,
                 warehouse_id=uuid_value(warehouse_id, "warehouse_id") if warehouse_id else None,
             )
+            queryset = scoped_finished_outbounds(queryset, request)
             page = positive_int(request.query_params.get("page"), "page", 1)
             page_size = min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100)
             start = (page - 1) * page_size
@@ -483,7 +492,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
         parameters=[OpenApiParameter("outbound_id", UUID, location=OpenApiParameter.PATH)])
     @action(detail=False, methods=["get"], url_path=r"outbounds/(?P<outbound_id>[^/.]+)")
     def outbound_detail(self, request, outbound_id=None):
-        outbound = finished_goods_outbounds().filter(pk=uuid_value(outbound_id, "outbound_id")).first()
+        outbound = scoped_finished_outbounds(finished_goods_outbounds(), request).filter(pk=uuid_value(outbound_id, "outbound_id")).first()
         if outbound is None:
             raise NotFound("出库单不存在。")
         return Response({"data": FinishedGoodsOutboundSerializer(outbound).data})
@@ -493,7 +502,7 @@ class FinishedGoodsInventoryViewSet(viewsets.ViewSet):
         OpenApiParameter("file_id", UUID, location=OpenApiParameter.PATH)])
     @action(detail=False, methods=["get"], url_path=r"outbounds/(?P<outbound_id>[^/.]+)/attachments/(?P<file_id>[^/.]+)")
     def outbound_attachment(self, request, outbound_id=None, file_id=None):
-        outbound = FinishedGoodsOutbound.objects.filter(pk=uuid_value(outbound_id, "outbound_id")).first()
+        outbound = scoped_finished_outbounds(FinishedGoodsOutbound.objects.all(), request).filter(pk=uuid_value(outbound_id, "outbound_id")).first()
         if outbound is None:
             raise NotFound("出库单不存在。")
         link = outbound.attachments.select_related("business_file").filter(business_file_id=uuid_value(file_id, "file_id")).first()
@@ -540,6 +549,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         return accessible_production_tasks(request).order_by().values_list("id", flat=True)
 
     def list(self, request):
+        require_inventory_overview(request)
         kind = request.query_params.get('stock_kind', 'RAW')
         if kind not in ('RAW', 'SEMI'):
             raise ValidationError({'stock_kind': '请选择原材料或半成品。'})
@@ -555,21 +565,17 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         )
         page = positive_int(request.query_params.get("page"), "page", 1)
         page_size = min(positive_int(request.query_params.get("page_size"), "page_size", 20), 100)
-        if public_enabled:
-            count, rows = public_raw_inventory_page(page=page, page_size=page_size, **filters)
-        else:
-            rows = list(material_inventory_rows(**filters).filter(inventory_quantity__gt=0))
-            count = len(rows)
-            start = (page - 1) * page_size
-            rows = rows[start:start + page_size]
+        count, rows = public_raw_inventory_page(page=page, page_size=page_size, legacy=not public_enabled, **filters)
         results = []
         for row in rows:
             identity = f"{row['raw_material_id']}|{row['unit__unit_name']}|{row['zone_id']}|{row['measurement_kind']}|{row['raw_bar_length_m']}"
             color = row["raw_material__color__color_name"] or row["raw_material__color_snapshot"]
             results.append({
-                "inventory_key": identity,
+                "inventory_key": row.get("inventory_key", identity),
+                **({"material_catalog_id": row["material_catalog_id"], "material_selection_snapshot": row["material_selection_snapshot"],
+                    "balance_id": row["_balance_id"], "identity_key": row["identity_key"]} if row.get("material_catalog_id") else {}),
                 'stock_kind': 'RAW',
-                'stock_mode': 'PUBLIC_V2' if public_enabled else 'LEGACY',
+                'stock_mode': 'PUBLIC_V2' if public_enabled or row.get("material_catalog_id") else 'LEGACY',
                 'measurement_kind': row['measurement_kind'],
                 'raw_bar_length_m': row['raw_bar_length_m'],
                 'meter_quantity': row['meter_quantity'],
@@ -633,8 +639,9 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         page_size = min(positive_int(request.query_params.get('page_size'), 'page_size', 20), 100)
         count = queryset.count()
         results = []
-        for item in queryset.order_by('-updated_at', 'id')[(page - 1) * page_size:page * page_size]:
+        for item in queryset.order_by('-updated_at', 'id')[:page * page_size]:
             results.append({
+                '_sort_updated_at': item.updated_at, '_sort_id': str(item.pk), 'stock_mode': 'LEGACY',
                 'inventory_key': f'SEMI|{item.pk}', 'stock_kind': 'SEMI', 'stock_item_id': '',
                 'section_type': item.bom_line.section.section_type, 'section_title': item.bom_line.section.title,
                 'category': item.completed_craft.name, 'material_number': item.production_task.task_number,
@@ -648,15 +655,43 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 'inbound_count': None, 'latest_inbound_date': None, 'latest_inbound_time': None,
                 'production_task_number': item.production_task.task_number, 'product_name': item.product_line.product_name_snapshot,
             })
-        return Response({'count': count, 'next': None, 'previous': None, 'results': results})
+        catalog = public_semi_inventory_page(page=1, page_size=page * page_size, legacy=True,
+            keyword=keyword, section_title=section,
+            processing_status=request.query_params.get('processing_status', '').strip().upper(),
+            warehouse_id=self._optional_uuid(request, 'warehouse_id'), zone_id=self._optional_uuid(request, 'zone_id'),
+            location_id=self._optional_uuid(request, 'location_id'))
+        results.extend(catalog['results'])
+        results.sort(key=lambda row: (-row['_sort_updated_at'].timestamp(), row['_sort_id']))
+        results = results[(page - 1) * page_size:page * page_size]
+        for row in results:
+            row.pop('_sort_updated_at')
+            row.pop('_sort_id')
+        return Response({'count': count + catalog['count'], 'next': None, 'previous': None, 'results': results})
 
     def _stock_material(self, pk):
         return RawMaterialInformation.objects.select_related("category", "unit", "color").filter(
             pk=uuid_value(pk, "stock_item_id"), archived_at__isnull=True
         ).first()
 
+    def _catalog_stock(self, request, pk):
+        key = request.query_params.get("identity_key", "").strip()
+        if not key:
+            return None
+        if len(key) != 64 or any(char not in "0123456789abcdef" for char in key):
+            raise ValidationError({"identity_key": "材料身份索引无效。"})
+        balance = PublicStockBalance.objects.filter(material_catalog_id=uuid_value(pk, "stock_item_id"), identity_key=key,
+            stock_kind__in=["CATALOG_RAW", "CATALOG_SEMI"]).order_by("id").first()
+        if balance is None:
+            raise NotFound("所选保存材料的库存身份不存在。")
+        return balance
+
     @action(detail=True, methods=["get"])
     def summary(self, request, pk=None):
+        require_inventory_overview(request)
+        catalog = self._catalog_stock(request, pk)
+        if catalog is not None:
+            from ..catalog_stock_queries import catalog_stock_summary
+            return Response({"data": catalog_stock_summary(catalog)})
         material = self._stock_material(pk)
         if material is None:
             raise NotFound("材料库存项不存在。")
@@ -707,6 +742,25 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"], url_path="order-purchases")
     def order_purchases(self, request, pk=None):
+        catalog = self._catalog_stock(request, pk)
+        if catalog is not None:
+            from ..catalog_stock_identity import build_catalog_stock_identity
+            candidates = PurchaseOrderLine.objects.filter(
+                purchase_order_access(self._accessible_task_ids(request), request, "purchase_order__"),
+                material_catalog_id=catalog.material_catalog_id,
+                material_selection_snapshot__unit_id=str(catalog.unit_id),
+            ).select_related("purchase_order").order_by("purchase_order__order_number", "line_number", "id")
+            lines = [line for line in candidates if build_catalog_stock_identity(material_catalog_id=line.material_catalog_id,
+                material_selection_snapshot=line.material_selection_snapshot, raw_bar_length_m=line.raw_bar_length_m)["identity_key"] == catalog.identity_key]
+            totals = dict(MaterialInboundLine.objects.filter(purchase_order_line_id__in=[line.pk for line in lines],
+                inbound__status=MaterialInboundStatus.CONFIRMED).values("purchase_order_line_id").annotate(total=Sum("accepted_quantity"))
+                .values_list("purchase_order_line_id", "total"))
+            return Response({"data": [{"purchase_order_id": str(line.purchase_order_id), "purchase_order_number": line.purchase_order.order_number,
+                "production_task_id": str(line.purchase_order.production_task_id) if line.purchase_order.production_task_id else None,
+                "production_task_number": line.purchase_order.production_task_number_snapshot,
+                "purchase_quantity": str(line.actual_purchase_quantity or 0), "actual_inbound_quantity": str(totals.get(line.pk, 0)),
+                "pending_inbound_quantity": str(max((line.actual_purchase_quantity or 0) - totals.get(line.pk, 0), 0)),
+                "unit": line.source_unit_text, "can_view_purchase_detail": request.user.has_perm("procurement.view_purchaseorder")} for line in lines]})
         material = self._stock_material(pk)
         if material is None:
             raise NotFound("材料库存项不存在。")
@@ -785,13 +839,14 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["get"], url_path="order-issues")
     def order_issues(self, request, pk=None):
-        material = self._stock_material(pk)
-        if material is None:
+        catalog = self._catalog_stock(request, pk)
+        material = None if catalog is not None else self._stock_material(pk)
+        if material is None and catalog is None:
             raise NotFound("材料库存项不存在。")
         from apps.material_issues.models import MaterialIssueLine, MaterialIssueStatus
 
         lines = MaterialIssueLine.objects.filter(
-            raw_material=material,
+            **({"material_catalog_id": catalog.material_catalog_id, "conversion_snapshot__public_identity__identity_key": catalog.identity_key} if catalog is not None else {"raw_material": material}),
             issue__status=MaterialIssueStatus.ISSUED,
             issue__production_task_id__in=self._accessible_task_ids(request),
         ).select_related(
@@ -821,14 +876,19 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
     @extend_schema(parameters=[OpenApiParameter(
         name="scope", type=str, enum=["full", "receiving", "filters"],
         description="默认 full 为完整库存选项；receiving 返回材料仓和库区；filters 增加库存分类。",
-    )])
+    ), OpenApiParameter(name="include_catalog_semi", type=bool,
+        description="receiving 显式包含新目录半成品仓；默认仍只返回材料仓。")])
     @action(detail=False, methods=["get"])
     def options(self, request):
         scope = request.query_params.get("scope", "full")
         if scope not in {"full", "receiving", "filters"}:
             raise ValidationError({"scope": "选项范围必须为 full、receiving 或 filters。"})
+        require_inventory_overview(request)
+        catalog_semi = request.query_params.get("include_catalog_semi", "false")
+        if catalog_semi not in {"true", "false"}:
+            raise ValidationError({"include_catalog_semi": "请选择 true 或 false。"})
         warehouse_types = [WarehouseType.MATERIAL]
-        if public_flow_enabled() and scope == "filters":
+        if scope == "filters" or (scope == "receiving" and catalog_semi == "true"):
             warehouse_types.append(WarehouseType.SEMI_FINISHED)
         warehouses = Warehouse.objects.filter(status=RecordStatus.ACTIVE, warehouse_type__in=warehouse_types).order_by("warehouse_number")
         zones = WarehouseZone.objects.filter(
@@ -845,7 +905,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             if scope == "filters":
                 data["sections"] = list(MaterialInboundLine.objects.values_list("section_title_snapshot", flat=True)
                     .distinct().order_by("section_title_snapshot"))
-                if public_flow_enabled():
+                if public_flow_enabled() or PublicStockBalance.objects.filter(stock_kind="CATALOG_SEMI").exists():
                     data["sections"] = sorted(set(data["sections"]) | {"型材明细", "裁剪明细", "五金件"})
             return Response({"data": data})
         locations = WarehouseLocation.objects.filter(
@@ -916,6 +976,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "id": order.pk,
                 "order_number": order.order_number,
                 "production_task_id": order.production_task_id,
+                "batch_number": order.batch_number,
                 "production_task_number": order.production_task_number_snapshot,
                 "source_type": order.source_type,
                 "source_number": order.sample_number_snapshot if order.source_type == "SAMPLE" else order.production_task_number_snapshot,
@@ -992,6 +1053,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "id": order.pk,
                 "order_number": order.order_number,
                 "source_type": order.source_type,
+                "batch_number": order.batch_number,
                 "source_number": order.sample_number_snapshot if order.source_type == "SAMPLE" else order.production_task_number_snapshot,
                 "sales_order_number": order.sales_order_number_snapshot,
                 "product_summary": product_summaries.get(order.pk, []),
@@ -1080,8 +1142,10 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
         order = PurchaseOrder.objects.filter(purchase_order_access(self._accessible_task_ids(request), request), pk=order_id).first()
         if order is None:
             raise NotFound("采购单不存在或无权访问。")
+        lines = eligible_material_lines(order_id, read_optimized=True)
+        warehouse_suggestions = material_receiving_warehouse_suggestions([line for line, _remaining in lines])
         rows = []
-        for line, remaining in eligible_material_lines(order_id, read_optimized=True):
+        for line, remaining in lines:
             text = " ".join(filter(None, [
                 line.section_title_snapshot, line.category_snapshot, line.material_snapshot,
                 line.part_name_snapshot, line.specification_snapshot, line.raw_material_snapshot,
@@ -1097,6 +1161,9 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
                 "specification": line.specification_snapshot,
                 "raw_material": line.raw_material_snapshot,
                 "material_attributes_snapshot": line.material_attributes_snapshot,
+                "material_catalog_id": line.material_catalog_id,
+                "material_selection_snapshot": line.material_selection_snapshot,
+                "suggested_warehouse_id": warehouse_suggestions.get(line.pk),
                 "unit": line.source_unit_text,
                 "supplier_name": line.supplier_name_snapshot,
                 "purchased_quantity": f"{line.actual_purchase_quantity:.4f}",
@@ -1125,6 +1192,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             | purchase_order_access(self._accessible_task_ids(request), request, "purchase_order__"),
             status=MaterialInboundStatus.CONFIRMED,
         ))
+        queryset = scoped_inventory_records(queryset, request, 'inventory.view_material_receipt', task_lookup='purchase_order__production_task')
         purchase_order_id = request.query_params.get("purchase_order_id", "").strip()
         if purchase_order_id:
             queryset = queryset.filter(lines__purchase_order_line__purchase_order_id=uuid_value(purchase_order_id, "purchase_order_id"))
@@ -1217,6 +1285,7 @@ class MaterialInventoryViewSet(viewsets.ViewSet):
             | purchase_order_access(self._accessible_task_ids(request), request, "purchase_order__"),
             status=MaterialInboundStatus.CONFIRMED,
         ), read_optimized=True)
+        queryset = scoped_inventory_records(queryset, request, 'inventory.view_material_receipt', task_lookup='purchase_order__production_task')
         inbound_date = request.query_params.get("inbound_date", "").strip()
         if inbound_date:
             queryset = queryset.filter(inbound_date=serializers.DateField().run_validation(inbound_date))

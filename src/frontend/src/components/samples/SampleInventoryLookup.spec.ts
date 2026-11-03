@@ -8,8 +8,9 @@ vi.mock('@/api/sampleWarehouse', () => ({ fetchSampleInventoryCandidates: vi.fn(
 const candidate = { balanceId: 'stock-1', stockMode: 'PUBLIC_V2' as const, materialNumber: 'M01', warehouseName: '原料管材仓', zoneName: '一楼', availableQuantity: '2.0000', unitLabel: '根', rawBarLengthM: '6.00', meterQuantity: '12.00' }
 const line = { key: 'demand-1', category: 'tube' as const, rawMaterialId: 'raw-1', name: '铁管', specification: '20*28*0.8*6140', material: '铁', color: '/', quantity: '12', unitId: '', unitLabel: '米', notes: '', supplyQuantity: '', inventoryAllocations: [] }
 const wrappers: ReturnType<typeof mount>[] = []
+const tooltipStub = { props: ['visible'], template: '<div><slot /><div v-if="visible"><slot name="content" /></div></div>' }
 async function render() {
-  const wrapper = mount(Lookup, { props: { modelValue: true, sampleId: 'sample-1', activeLineKey: '', lines: [line] }, global: { plugins: [ElementPlus], stubs: { AppWindowDialog: { template: '<div><slot /><slot name="footer" /></div>' } } } })
+  const wrapper = mount(Lookup, { props: { modelValue: true, sampleId: 'sample-1', activeLineKey: '', lines: [line] }, global: { plugins: [ElementPlus], stubs: { ElTooltip: tooltipStub, AppWindowDialog: { template: '<div><slot /><slot name="footer" /></div>' } } } })
   wrappers.push(wrapper); await flushPromises(); return wrapper
 }
 const apply = async (wrapper: Awaited<ReturnType<typeof render>>) => { await wrapper.findAll('button').find(button => button.text() === '应用关联')!.trigger('click'); await flushPromises() }
@@ -62,10 +63,11 @@ it('单项查询应用不会把其他未核对需求默认为零', async () => {
     expect.objectContaining({ key: 'untouched', supplyQuantity: '' }),
   ])
 })
-it('失败可重试，空库存可明确应用零供料', async () => {
+it('查询失败不回填，重试查到空库存自动回填零并关闭，无需应用关联', async () => {
   vi.mocked(fetchSampleInventoryCandidates).mockRejectedValueOnce(new Error('403'))
   const wrapper = await render()
   expect(wrapper.text()).toContain('查询失败或没有核对权限')
+  expect(wrapper.emitted('apply')).toBeUndefined()
   vi.mocked(fetchSampleInventoryCandidates).mockResolvedValue({ lines: [{ lineKey: line.key, candidates: [] }] })
   await wrapper.findAll('button').find(button => button.text() === '重新查询')!.trigger('click'); await flushPromises()
   expect(wrapper.text()).toContain('暂无库存')
@@ -77,8 +79,57 @@ it('失败可重试，空库存可明确应用零供料', async () => {
   const cells = row.findAll('td')
   expect(cells[headers.indexOf('可用库存')]!.text()).toMatch(/^0(?:\s|根|米|$)/)
   expect(row.get('input[type="checkbox"]').attributes('disabled')).toBeDefined()
-  await apply(wrapper)
   expect(wrapper.emitted('apply')?.[0]?.[0]).toEqual([expect.objectContaining({ supplyQuantity: '0', inventoryAllocations: [] })])
+  expect(wrapper.emitted('update:modelValue')).toEqual([[false]])
+})
+it('混合库存只自动回填空库存项，已有库存继续选择供料', async () => {
+  const wrapper = await render()
+  await wrapper.setProps({ modelValue: false })
+  vi.mocked(fetchSampleInventoryCandidates).mockResolvedValue({ lines: [
+    { lineKey: line.key, candidates: [] }, { lineKey: 'in-stock', candidates: [candidate] },
+  ] })
+  await wrapper.setProps({ modelValue: true, lines: [line, { ...line, key: 'in-stock' }] }); await flushPromises()
+  expect(wrapper.emitted('apply')?.[0]?.[0]).toEqual([
+    expect.objectContaining({ key: line.key, supplyQuantity: '0', inventoryAllocations: [] }),
+    expect.objectContaining({ key: 'in-stock', supplyQuantity: '' }),
+  ])
+  expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  await wrapper.findAll('input[type="checkbox"]')[1]!.setValue(true)
+  await wrapper.get('input[aria-label^="供料数量"]').setValue('1')
+  await apply(wrapper)
+  expect(wrapper.emitted('apply')?.at(-1)?.[0]).toEqual([
+    expect.objectContaining({ key: line.key, supplyQuantity: '0' }),
+    expect.objectContaining({ key: 'in-stock', supplyQuantity: '6', inventoryAllocations: [expect.objectContaining({ quantity: '1' })] }),
+  ])
+})
+it('单项空库存查询仅回填当前项，不推断未返回项的库存', async () => {
+  const wrapper = await render()
+  await wrapper.setProps({ modelValue: false })
+  vi.mocked(fetchSampleInventoryCandidates).mockResolvedValue({ lines: [{ lineKey: line.key, candidates: [] }] })
+  await wrapper.setProps({ modelValue: true, activeLineKey: line.key, lines: [line, { ...line, key: 'unqueried' }] }); await flushPromises()
+  expect(wrapper.emitted('apply')?.[0]?.[0]).toEqual([
+    expect.objectContaining({ key: line.key, supplyQuantity: '0' }),
+    expect.objectContaining({ key: 'unqueried', supplyQuantity: '' }),
+  ])
+})
+it('整行鼠标经过显示需求属性快照，切换库存行和移出时更新浮层', async () => {
+  const wrapper = await render()
+  await wrapper.setProps({ lines: [{ ...line, material_selection_snapshot: {
+    schema_version: 1, name: '测试管', template_key: 'TUBE', unit_name: '米',
+    color_card: '色卡A', color_code: 'B1', attributes: { section_size: '20*20', thickness: '2.0', material: '铁', color: '蓝色' },
+  } } as never, { ...line, key: 'old', specification: '10*10', color: '红色' }] })
+  const rows = wrapper.findAll('.el-table__body tbody tr')
+  await rows[0]!.findAll('td')[5]!.trigger('mouseenter')
+  expect(wrapper.get('.material-attribute-tooltip').text()).toContain('厚度2.0')
+  expect(wrapper.get('.material-attribute-tooltip').text()).toContain('色卡色卡A')
+  expect(wrapper.get('.material-attribute-tooltip').text()).toContain('色号B1')
+  await rows[1]!.findAll('td')[5]!.trigger('mouseenter')
+  expect(wrapper.findAll('.material-attribute-tooltip')).toHaveLength(1)
+  expect(wrapper.get('.material-attribute-tooltip').text()).toContain('规格10*10')
+  expect(wrapper.get('.material-attribute-tooltip').text()).toContain('颜色红色')
+  expect(wrapper.get('.material-attribute-tooltip').text()).not.toContain('厚度')
+  await wrapper.get('.el-table').trigger('mouseleave')
+  expect(wrapper.find('.material-attribute-tooltip').exists()).toBe(false)
 })
 it('关闭后迟到响应不覆盖重新打开的结果', async () => {
   let resolve!: (value: never) => void

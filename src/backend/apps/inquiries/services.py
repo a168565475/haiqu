@@ -14,6 +14,8 @@ from apps.core.audit import write_audit_log
 from apps.core.numbering import next_business_number
 from apps.customers.services import model_snapshot, write_customer_timeline
 from apps.workflow.models import SlaPolicy, SlaTracking, SlaTrackingStatus
+from apps.product_catalog.selection import is_product_entry_snapshot, resolve_product_selection
+from apps.reference_data.models import ProductionUnit
 
 from .models import (
     Inquiry,
@@ -74,6 +76,8 @@ ITEM_FIELDS = [
     "product_match_status",
     "notes",
     "product",
+    "product_catalog",
+    "product_selection_snapshot",
     "product_category",
     "product_unit",
     "product_color",
@@ -92,8 +96,33 @@ ITEM_FIELDS = [
 def prepare_inquiry_item_data(item_data, *, existing=None):
     """保存询盘产品时装配主档快照，同时保留客户原始文字。"""
     data = dict(item_data)
+    selection = data.pop("product_selection", None)
+    catalog_id = data.pop("product_catalog_id", getattr(existing, "product_catalog_id", None))
+    if data.get("product") is not None:
+        if catalog_id:
+            raise ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+    uses_entry = bool(catalog_id or selection is not None or is_product_entry_snapshot(getattr(existing, "product_selection_snapshot", None)))
+    if uses_entry:
+        if data.get("product") is not None:
+            raise ValidationError({"product_catalog_id": "不能同时选择新旧两种产品。"})
+        catalog, snapshot = resolve_product_selection(
+            catalog_id, selection,
+            existing_catalog_id=getattr(existing, "product_catalog_id", None),
+            existing_snapshot=getattr(existing, "product_selection_snapshot", None),
+        )
+        data.update({
+            "product_catalog": catalog, "product_selection_snapshot": snapshot,
+            "product": None, "product_category": None, "product_color": None,
+            "product_unit": ProductionUnit.objects.get(pk=snapshot["unit_id"]) if snapshot["unit_id"] else None,
+            "product_description": snapshot["name"], "specification": snapshot["specification"],
+            "color": snapshot["color_name"], "material": snapshot["material"],
+            "unit_code": snapshot["unit_code"], "product_number_snapshot": "",
+            "product_code_snapshot": snapshot["product_code"], "item_number_snapshot": snapshot["item_number"],
+        })
+    elif "product_catalog_id" in item_data:
+        data.update(product_catalog=None, product_selection_snapshot={})
     product = data.get("product")
-    if product is not None:
+    if not uses_entry and product is not None:
         # 同一关联的编辑继续使用单据快照，不重新套用后来变过的产品库默认值。
         if existing is not None and existing.product_id == product.pk:
             data["product_number_snapshot"] = existing.product_number_snapshot
@@ -105,7 +134,7 @@ def prepare_inquiry_item_data(item_data, *, existing=None):
             data["product_number_snapshot"] = product.product_number
             data["product_code_snapshot"] = product.product_code
             data["item_number_snapshot"] = product.product_item.item_number
-    elif "product" in data:
+    elif not uses_entry and "product" in data:
         data["product_number_snapshot"] = ""
         data["product_code_snapshot"] = ""
         data["item_number_snapshot"] = ""

@@ -4,6 +4,14 @@ import PermissionCell from './PermissionCell.vue'
 import type { CatalogEntry } from '@/types/access'
 
 describe('可配置资源范围', () => {
+  it('任务跟单范围由目录提供并正确提交', async () => {
+    const task = { code: 'production_tasks.view_productiontask', label: '读取生产任务', available: true, scopes: ['MODULE', 'FOLLOWED'] } as CatalogEntry
+    const wrapper = mount(PermissionCell, { props: { entry: task, grants: [{ permission: task.code, scope: 'MODULE' }] } })
+    expect(wrapper.text()).toContain('本人跟单任务')
+    await wrapper.get('select').setValue('FOLLOWED')
+    expect(wrapper.emitted('change')?.[0]).toEqual([task.code, ['FOLLOWED']])
+    wrapper.unmount()
+  })
   const entry = { code: 'workshop_reporting.change_workreport', label: '编辑报工', available: true, scopes: ['MODULE', 'WORKSHOP'] } as CatalogEntry
   it('选择指定车间并打开已有选择，不混入客户范围', async () => {
     const wrapper = mount(PermissionCell, { props: { entry, grants: [{ permission: entry.code, scope: 'MODULE' }] } })

@@ -10,9 +10,9 @@ vi.mock('@/api/customers', () => ({ fetchCustomers: api.customers }))
 vi.mock('@/api/inquiries', () => ({ fetchInquiries: api.inquiries }))
 vi.mock('@/api/quotations', () => ({ fetchQuotations: api.quotations }))
 vi.mock('@/api/sampleApplication', () => ({ fetchSampleApplicationSourceContext: api.context }))
-const baseline = { source_type: 'inquiry', source_id: 'source1', customer_account_id: 'customer1', customer_contact_id: 'contact1', owner_employee_id: 'owner1', sample_type: 'PRE_SALES', shipping_method: 'MAIL', delivery_batch: 'SINGLE', is_repeat_order: false, order_date: null, sample_due_date: null }
-const options = { customers: [{ id: 'customer2', account_name: '第二客户' }], salespeople: [], sample_types: [], shipping_methods: [], delivery_batches: [], repeat_options: [] }
-const sample = { id: 'sample1', customer_account: 'customer1', customer_name: '当前客户', customer_contact: 'contact1', customer_contact_name: '当前联系人', owner: { id: 'owner1', display_name: '当前业务员' }, source_inquiry: 'source1', source_inquiry_number: 'INQ-1' }
+const baseline = { manual_request_number: '123', source_type: 'inquiry', source_id: 'source1', customer_account_id: 'customer1', customer_contact_id: 'contact1', owner_employee_id: 'owner1', sample_type: 'PRE_SALES', shipping_method: 'MAIL', delivery_batch: 'SINGLE', is_repeat_order: false, order_date: null, sample_due_date: null }
+const options = { is_salesperson: true, customers: [{ id: 'customer2', account_name: '第二客户' }], salespeople: [], sample_types: [], shipping_methods: [], delivery_batches: [], repeat_options: [] }
+const sample = { manual_request_number: '123', request_number: 'HTS-123', id: 'sample1', customer_account: 'customer1', customer_name: '当前客户', customer_contact: 'contact1', customer_contact_name: '当前联系人', owner: { id: 'owner1', display_name: '当前业务员' }, source_inquiry: 'source1', source_inquiry_number: 'INQ-1' }
 const mounted: ReturnType<typeof mount>[] = []
 async function render(readonly = false) {
   const wrapper = mount(defineComponent({ components: { SampleApplicationBasics }, setup() { return { value: ref({ ...baseline }), options: readonly ? null : options, sample, readonly } }, template: '<ElForm :disabled="readonly"><SampleApplicationBasics v-model="value" :options="options" :sample="sample" /></ElForm>' }), { global: { plugins: [ElementPlus] } })
@@ -30,7 +30,14 @@ describe('样品基础信息组件契约（模拟接口）', () => {
     expect(wrapper.text()).toContain('当前业务员')
     expect(wrapper.text()).toContain('INQ-1')
     expect(select(wrapper, '客户').find('input').attributes('disabled')).toBeUndefined()
-    expect(wrapper.findAll('.el-form-item')).toHaveLength(11)
+    expect(wrapper.findAll('.el-form-item')).toHaveLength(12)
+  })
+  it('历史编号未改保留原格式，修改后预览HTS新编号', async () => {
+    const wrapper = await render()
+    expect((wrapper.get('input[aria-label="完整打样单号"]').element as HTMLInputElement).value).toBe('HTS-123')
+    expect(wrapper.get('input[aria-label="完整打样单号"]').attributes('readonly')).toBeDefined()
+    await wrapper.get('input[aria-label="打样单号后缀"]').setValue('456')
+    expect((wrapper.get('input[aria-label="完整打样单号"]').element as HTMLInputElement).value).toBe('HTS456')
   })
   it('切换客户清除旧来源和联系人，切换后加载新客户联系人', async () => {
     const wrapper = await render()
@@ -54,10 +61,10 @@ describe('样品基础信息组件契约（模拟接口）', () => {
     expect(wrapper.findComponent(SampleApplicationBasics).props('modelValue')).toEqual(baseline)
     expect(wrapper.get('[role="alert"]').text()).toBe('来源读取失败')
   })
-  it('只读页没有选项仍显示原信息，不额外读取联系人', async () => {
+  it('没有岗位选项时隐藏客户且保留原值，不额外读取联系人', async () => {
     const wrapper = await render(true)
-    expect(wrapper.text()).toContain('当前客户')
-    expect(select(wrapper, '客户').find('input').attributes('disabled')).toBeDefined()
+    expect(select(wrapper, '客户')).toBeUndefined()
+    expect(wrapper.findComponent(SampleApplicationBasics).props('modelValue').customer_account_id).toBe('customer1')
     expect(api.contacts).not.toHaveBeenCalled()
   })
 })

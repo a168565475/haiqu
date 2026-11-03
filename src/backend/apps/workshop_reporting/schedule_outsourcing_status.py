@@ -2,6 +2,7 @@
 from collections import defaultdict
 from decimal import Decimal
 
+from apps.outsourcing.models import TubeOutsourcingOrder
 from apps.production_scheduling.detail_related import (
     METAL_PERMISSION, OUTSOURCING_PERMISSION, _p4_records, _projected_records,
     _regular_records, _sources_for_tasks, _tube_records,
@@ -12,8 +13,28 @@ RISK_RANK = {"none": -1, "normal": 0, "unknown": 1, "attention": 2, "slow": 3, "
 FABRIC_CRAFTS = {"CUTTING", "SEWING", "SCREEN_PRINTING", "EMBROIDERY"}
 
 
+def _plan_progress(records):
+    plans = [row for row in records if row.get("is_plan")]
+    if not plans:
+        return {}
+    result = {"is_plan": True, "progress_percent": None, "bom_quantity": None,
+              "received_quantity": None, "covered_quantity": None}
+    if len({row["quantity_unit"] for row in plans}) != 1 or any(
+        row.get(key) is None for row in plans for key in ("bom_quantity", "received_quantity", "covered_quantity")
+    ):
+        return result
+    target = sum((Decimal(row["bom_quantity"]) for row in plans), Decimal(0))
+    received = sum((Decimal(row["received_quantity"]) for row in plans), Decimal(0))
+    covered = sum((Decimal(row["covered_quantity"]) for row in plans), Decimal(0))
+    result.update(bom_quantity=format(target, "f"), received_quantity=format(received, "f"),
+                  covered_quantity=format(covered, "f"),
+                  progress_percent=float(covered * 100 / target) if target > 0 else None)
+    return result
+
+
 def outsourcing_record_status(record, as_of_date):
-    planned = Decimal(record["planned_quantity"]) if record["planned_quantity"] is not None else None
+    target = record.get("bom_quantity") if record.get("is_plan") else record["planned_quantity"]
+    planned = Decimal(target) if target is not None else None
     received = Decimal(record["received_quantity"]) if record["received_quantity"] is not None else None
     remaining = max(Decimal(0), planned - received) if planned is not None and received is not None else None
     due = record["expected_return_date"]
@@ -21,13 +42,17 @@ def outsourcing_record_status(record, as_of_date):
     result.update(expected_return_date=due.isoformat() if due else None,
                   remaining_quantity=format(remaining, "f") if remaining is not None else None,
                   state="UNKNOWN", risk="unknown", description="回货数量或交期暂不可核对")
+    if record.get("is_plan"):
+        result.update(is_plan=True, bom_quantity=target, received_quantity=record["received_quantity"],
+                      covered_quantity=format(min(planned, received), "f")
+                      if planned is not None and received is not None else None)
     if remaining is None or planned <= 0:
         return result
     if remaining == 0:
-        result.update(state="RETURNED", risk="normal", description="已全部回齐")
+        result.update(state="RETURNED", risk="normal", description="入库达标" if record.get("is_plan") else "已全部回齐")
         return result
     # 已结束但短缺的单据不能显示回齐，也不再假设加工厂还会继续回货。
-    if record["status"] in {"COMPLETED", "CLOSED"}:
+    if not record.get("is_plan") and record["status"] in {"COMPLETED", "CLOSED"}:
         result.update(state="SHORTAGE", risk="slow", description="已结束但仍有短缺，请核对后续生产用量")
         return result
     pending = record["status"] in {"PENDING_DISPATCH", "PENDING_HANDOFF"}
@@ -38,7 +63,7 @@ def outsourcing_record_status(record, as_of_date):
     days = (due - as_of_date).days
     risk = "urgent" if days <= 1 else "slow" if days <= 3 else "attention" if days <= 7 else "normal"
     deadline = f"逾期 {-days} 天" if days < 0 else "今日交期" if days == 0 else f"距交期 {days} 天"
-    state = "尚未发出" if pending else "尚未回齐"
+    state = "尚未发出" if pending else "尚未入库达标" if record.get("is_plan") else "尚未回齐"
     result.update(risk=risk, description=f"{deadline}，{state}" + ("，后续工序有阻塞风险" if risk == "urgent" else ""))
     return result
 
@@ -50,11 +75,14 @@ def outsourcing_stage_status(records, *, allowed=True, complete_scope=True):
         return {"state": "NONE", "risk": "none", "description": "暂无可查看的有效外发单", "records": []}
     pending = [record for record in records if record["state"] != "RETURNED"]
     if not pending:
-        return {"state": "RETURNED", "risk": "normal", "description": "关联外发已全部回齐", "records": records}
+        return {"state": "RETURNED", "risk": "normal", "description": "关联总单已入库达标" if any(
+            row.get("is_plan") for row in records) else "关联外发已全部回齐", "records": records,
+            **_plan_progress(records)}
     pending.sort(key=lambda row: (-RISK_RANK[row["risk"]], row["expected_return_date"] or "9999-12-31", row["id"]))
     worst = pending[0]
     ordered = pending + [record for record in records if record["state"] == "RETURNED"]
-    return {"state": worst["state"], "risk": worst["risk"], "description": worst["description"], "records": ordered}
+    return {"state": worst["state"], "risk": worst["risk"], "description": worst["description"], "records": ordered,
+            **_plan_progress(records)}
 
 
 def outsourcing_order_statuses(records):
@@ -85,6 +113,7 @@ def outsourcing_order_statuses(records):
             "remaining_display": " / ".join(f"{quantity if quantity is not None else '—'} {unit}".strip()
                                              for unit, quantity in remaining.items()),
             "state": status["state"], "risk": status["risk"], "description": status["description"],
+            **_plan_progress(lines),
         })
     return result
 
@@ -96,10 +125,19 @@ def schedule_outsourcing_statuses(schedules, *, request, as_of_date):
     regular_allowed = request.user.has_perm(OUTSOURCING_PERMISSION)
     metal_allowed = request.user.has_perm(METAL_PERMISSION)
     rows = []
+    incomplete_stages = set()
     if products and (regular_allowed or metal_allowed):
         originals, reworks, tubes, metal_request = _sources_for_tasks(request, task_ids, by_product)
         originals = originals.exclude(status="CANCELLED")
         tubes = tubes.exclude(status="CANCELLED")
+        # 产品可见不代表其所有委外工艺可见；仅判断范围，绝不返回隐藏单的数量或明细。
+        hidden_plans = TubeOutsourcingOrder.objects.filter(is_plan=True, product_line_id__in=by_product).exclude(
+            status="CANCELLED").exclude(pk__in=tubes.values("pk")).values_list(
+            "product_line_id", "craft__outsourcing_code").distinct()
+        for product_id, craft_code in hidden_plans:
+            stage = "METAL" if craft_code == "POWDER_COATING" else "SEWING" if craft_code in FABRIC_CRAFTS else None
+            if stage:
+                incomplete_stages.add((by_product[product_id].schedule_id, stage))
         rows = [*_regular_records(originals, by_product), *_tube_records(tubes, by_product), *_p4_records(reworks, by_product)]
         if metal_allowed:
             rows.extend(_projected_records(metal_request, originals, task_ids, by_product))
@@ -116,6 +154,7 @@ def schedule_outsourcing_statuses(schedules, *, request, as_of_date):
     return {str(schedule.pk): {
         stage: outsourcing_stage_status(outsourcing_order_statuses(grouped[(schedule.pk, stage)]),
             allowed=regular_allowed or (stage == "METAL" and metal_allowed),
-            complete_scope=len(schedule.active_products) == schedule.stage_product_count)
+            complete_scope=len(schedule.active_products) == schedule.stage_product_count
+                and (schedule.pk, stage) not in incomplete_stages)
         for stage in ("METAL", "SEWING")
     } for schedule in schedules}

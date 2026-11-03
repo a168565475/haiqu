@@ -10,6 +10,9 @@ const props = withDefaults(defineProps<{
   placeholder?: string
   disabled?: boolean
   invalid?: boolean
+  filterable?: boolean
+  allowCreate?: boolean
+  clearable?: boolean
   ariaLabel: string
 }>(), { placeholder: '请选择', disabled: false, invalid: false })
 
@@ -41,6 +44,9 @@ function updateValue(value: unknown) {
 function changeValue(value: unknown) {
   if (typeof value === 'string') emit('change', value)
 }
+function inputValue(event: Event) {
+  if (props.allowCreate && event.target instanceof HTMLInputElement) updateValue(event.target.value)
+}
 function focus() {
   if (!props.disabled) select.value?.focus()
 }
@@ -57,6 +63,10 @@ defineExpose({ focus })
     :aria-label="ariaLabel"
     :placeholder="placeholder"
     :disabled="disabled"
+    :filterable="filterable || allowCreate"
+    :allow-create="allowCreate"
+    :default-first-option="allowCreate"
+    :clearable="clearable"
     :tabindex="disabled ? -1 : 0"
     :show-arrow="false"
     :offset="4"
@@ -67,6 +77,7 @@ defineExpose({ focus })
     no-data-text="暂无可选项"
     @update:model-value="updateValue"
     @change="changeValue"
+    @input="inputValue"
   >
     <ElOption
       v-for="option in options"

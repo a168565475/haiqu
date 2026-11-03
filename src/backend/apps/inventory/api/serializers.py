@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 from django.utils import timezone
+from apps.boms.api.serializers import BomCatalogSelectionSerializer
 
 
 from ..models import (
@@ -308,7 +309,9 @@ class SampleMaterialInboundInputSerializer(serializers.Serializer):
 
 
 class ManualMaterialInboundLineInputSerializer(serializers.Serializer):
-    raw_material_id = serializers.UUIDField()
+    raw_material_id = serializers.UUIDField(required=False)
+    material_catalog_id = serializers.UUIDField(required=False)
+    material_selection = BomCatalogSelectionSerializer(required=False)
     received_bar_count = serializers.IntegerField(min_value=1, max_value=99999999999999, required=False)
     raw_bar_length_m = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal('0.01'), required=False)
     zone_id = serializers.UUIDField()
@@ -326,6 +329,13 @@ class ManualMaterialInboundLineInputSerializer(serializers.Serializer):
         trim_whitespace=True,
         default="",
     )
+
+    def validate(self, attrs):
+        if bool(attrs.get("raw_material_id")) == bool(attrs.get("material_catalog_id")):
+            raise serializers.ValidationError("旧原料与新目录选料必须二选一。")
+        if bool(attrs.get("material_catalog_id")) != bool(attrs.get("material_selection")):
+            raise serializers.ValidationError("新原料品名与具体选料必须同时提交。")
+        return attrs
 
 
 class ManualMaterialInboundInputSerializer(serializers.Serializer):
@@ -350,7 +360,7 @@ class MaterialInboundLineSerializer(serializers.ModelSerializer):
         model = MaterialInboundLine
         fields = [
             "measurement_kind", "raw_bar_length_m", "received_bar_count", "accepted_bar_count", "return_bar_count", "calculation_snapshot",
-            "id", "purchase_order_line_id", "raw_material_information_id", "zone_id", "location_id", "received_quantity",
+            "id", "purchase_order_line_id", "raw_material_information_id", "material_catalog_id", "material_selection_snapshot", "zone_id", "location_id", "received_quantity",
             "return_quantity", "accepted_quantity", "remark", "quality_remark",
             "purchase_order_number_snapshot", "production_task_number_snapshot", "sales_order_number_snapshot",
             "supplier_number_snapshot", "supplier_name_snapshot", "bom_number_snapshot", "product_name_snapshot",
@@ -381,6 +391,7 @@ class ProcurementInboundSupplierSerializer(serializers.Serializer):
 class ProcurementInboundOrderSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     order_number = serializers.CharField()
+    batch_number = serializers.IntegerField(allow_null=True, min_value=1)
     source_type = serializers.ChoiceField(choices=["PRODUCTION", "SAMPLE"])
     source_number = serializers.CharField(allow_blank=True)
     sales_order_number = serializers.CharField(allow_blank=True)

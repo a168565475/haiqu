@@ -43,12 +43,19 @@ def assert_managed_projection(role):
         raise Conflict("此角色组仍有原生账号成员，请先审阅成员来源，不能直接修改或复制。")
 
 
-def locked_role(pk, request):
+def locked_role(pk, request, *, reviewed_group_permission_ids=None):
     role = get_object_or_404(RoleProfile.objects.select_for_update(), pk=pk)
     if role.archive_reason == "管理页面删除（保留历史）":
         raise Conflict("角色已删除，请刷新列表。")
     require_matching_etag(request, role)
-    assert_managed_projection(role)
+    if reviewed_group_permission_ids is None:
+        assert_managed_projection(role)
+    else:
+        # 仅精确配置命令传入已由预览摘要锁定的旧组权限，普通API继续拒绝历史差异。
+        if set(role.auth_group.permissions.values_list('pk', flat=True)) != set(reviewed_group_permission_ids):
+            raise PreconditionFailed()
+        if role.auth_group.user_set.exists():
+            raise Conflict('角色组仍有原生账号成员，不能在未审阅成员来源时重写权限。')
     return role
 
 
@@ -86,20 +93,25 @@ def update_role(request, pk, data):
         role.archived_by_employee = actor if data["archived"] else None
         role.archive_reason = "管理员停用角色" if data["archived"] else ""
     role.save()
+    if "archived" in data:
+        from .superuser_services import sync_role_members
+        sync_role_members(role, request=request)
     audit(request, role, "ROLE_UPDATE", before, role_snapshot(role))
     return role
 
 
 @transaction.atomic
-def replace_grants(request, pk, rows):
+def replace_grants(request, pk, rows, *, reviewed_group_permission_ids=None):
     require_manager(request)
-    role = locked_role(pk, request)
+    role = locked_role(pk, request, reviewed_group_permission_ids=reviewed_group_permission_ids)
     if role.archived_at:
         raise Conflict("请先启用角色，再修改授权。")
     grants = validate_grants(rows)
     from .resource_scopes import validate_resources, save_resources
     selections = validate_resources(rows)
     before = role_snapshot(role)
+    if reviewed_group_permission_ids is not None:
+        before['reviewed_group_permission_ids'] = sorted(reviewed_group_permission_ids)
     permission_ids = projected_permission_ids(grants)
     from .resource_scopes import configured
     if configured():
@@ -195,6 +207,9 @@ def replace_employee_roles(request, pk, role_ids, *, expected_etag=None):
         if role.pk not in current:
             EmployeeRoleAssignment.objects.create(employee=employee, role_profile=role, effective_from=now, assigned_by_employee=actor)
     employee.save(update_fields=["updated_at"])
+    if employee.user_id:
+        from .superuser_services import sync_role_superuser
+        sync_role_superuser(employee.user, request=request)
     audit(request, employee, "EMPLOYEE_ROLES_REPLACE", before, {"role_ids": sorted(str(pk) for pk in wanted)}, "ACCESS_EMPLOYEE")
     return employee
 

@@ -4,6 +4,8 @@ RESOURCE_NAMES = dict(item.split(":", 1) for item in (
     "accountingsubject:会计科目",
     "receivablestatement:应收对账单",
     "receipt:收款确认单",
+    "productionplan:生产计划",
+    "productiontaskexpense:生产零星费用",
     "workshop:车间",
     "productcatalog:产品管理",
     "materialcatalog:原料管理",
@@ -34,6 +36,9 @@ ACTION_NAMES = {
 
 
 def presentation(code, permission, module):
+    if code == 'production_task_imports.import_production_task':
+        return {'resource': 'production_tasks.productiontask', 'resource_name': '生产任务单',
+                'action': 'special', 'action_name': 'AI 导入任务单', 'label': '生产任务单 · AI 导入任务单'}
     if code in {'production_tasks.view_productiontaskcost', 'production_tasks.manage_productiontaskexpense'}:
         viewing = code == 'production_tasks.view_productiontaskcost'
         name = '查看订单成本' if viewing else '维护订单零星费用'
@@ -82,7 +87,8 @@ def presentation(code, permission, module):
     if not name:
         original = permission.name if permission else ""
         name = original if any('\u4e00' <= c <= '\u9fff' for c in original) else (
-            {"manage_sla_policy": "管理处理时限", "approve_customer_transfer": "审批客户转移", "transfer_customer": "转移客户", "merge_customer": "合并客户",
+            {"edit_productionplan": "修改生产计划日期、优先级和跟单员", "pause_productiontask": "暂停生产任务", "resume_productiontask": "恢复生产任务",
+             "manage_sla_policy": "管理处理时限", "approve_customer_transfer": "审批客户转移", "transfer_customer": "转移客户", "merge_customer": "合并客户",
              "process_customer_complaint": "处理客诉", "decide_sample_fee": "审批样品费用", "edit_sample_materials": "编辑样品材料",
              "review_sample_application": "审核打样申请", "review_sample_materials": "审核样品材料", "ship_sample": "样品发货",
              "receive_material": "材料收货", "view_material_receipt": "查看材料收货", "quality_confirm_material": "材料品质确认",

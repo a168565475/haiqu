@@ -51,8 +51,12 @@ export function issueSelectedQuantityError(value: string, row: MaterialRequireme
   const cuts = isPipe ? BigInt(row.conversion_snapshot?.pieces_per_bar || 0) : 1n
   const maximum = decimalUnits(row.max_issue_quantity)
   if (maximum === null || cuts <= 0n) return '可用库存或换算规则缺失，请刷新后重试。'
+  const identity = row.stock_mode === 'PUBLIC_V2' ? row.conversion_snapshot?.public_identity?.identity_key : undefined
   const requested = requirements.filter(item => item.line_type === row.line_type
-    && item.stock_item_id === row.stock_item_id && item.unit === row.unit
+    // 公共物料档案可有多种规格，合计必须使用服务端返回的实物库存身份。
+    && (identity && item.conversion_snapshot?.public_identity?.identity_key
+      ? item.conversion_snapshot.public_identity.identity_key === identity
+      : item.stock_item_id === row.stock_item_id) && item.unit === row.unit
     && item.stock_mode === row.stock_mode
     && (!isPipe || item.conversion_snapshot?.raw_bar_length_m === row.conversion_snapshot?.raw_bar_length_m))
     .reduce((total, item) => {

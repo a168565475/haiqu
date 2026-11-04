@@ -30,6 +30,7 @@ export interface MaterialRequirement {
     whole_bar_required?: boolean; integer_required?: boolean; issued_pieces?: number | string
     raw_deducted_bar_count?: string; raw_deducted_meters?: string
     component_identity?: string
+    public_identity?: { identity_key: string }
     public_bom_snapshot?: { line?: { part_name?: string } }
     physical_issued_quantity?: string
     manufacturing_issued_pieces?: string | null

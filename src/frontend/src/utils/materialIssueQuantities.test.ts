@@ -5,6 +5,23 @@ import type { MaterialRequirement } from '@/types/materialIssue'
 const pipe = { line_type: 'RAW', unit: '支', max_issue_quantity: '99999999999999',
   conversion_snapshot: { kind: 'PIPE', pieces_per_bar: 6, raw_bar_length_m: '3.05' } } as MaterialRequirement
 describe('生产领料计量', () => {
+  it('公共原料同档案不同库存身份分别校验，不能合并不同规格铆钉', () => {
+    const row = { requirement_id: 'one', stock_item_id: 'rivet-catalog', line_type: 'RAW', unit: '个',
+      stock_mode: 'PUBLIC_V2', max_issue_quantity: '48',
+      conversion_snapshot: { kind: 'CATALOG', public_identity: { identity_key: 'rivet-4x35' } } } as MaterialRequirement
+    const other = { ...row, requirement_id: 'two', max_issue_quantity: '192',
+      conversion_snapshot: { kind: 'CATALOG', public_identity: { identity_key: 'rivet-4x25' } } } as MaterialRequirement
+    expect(issueSelectedQuantityError('48', row, [row, other], { one: '48', two: '192' })).toBe('')
+    expect(issueSelectedQuantityError('192', other, [row, other], { one: '48', two: '192' })).toBe('')
+  })
+  it('公共原料同库存身份仍合计，不能借不同部位超领', () => {
+    const row = { requirement_id: 'one', stock_item_id: 'catalog-one', line_type: 'RAW', unit: '个',
+      stock_mode: 'PUBLIC_V2', max_issue_quantity: '48',
+      conversion_snapshot: { kind: 'CATALOG', public_identity: { identity_key: 'same-stock' } } } as MaterialRequirement
+    const other = { ...row, requirement_id: 'two' }
+    expect(issueSelectedQuantityError('30', row, [row, other], { one: '30', two: '19' })).toContain('合计申请数量')
+    expect(issueSelectedQuantityError('30', row, [row, other], { one: '30', two: '18' })).toBe('')
+  })
   it('超过BOM剩余但未超过可用库存时允许普通材料和半成品领用', () => {
     for (const line_type of ['RAW', 'SEMI'] as const) {
       const row = { requirement_id: 'one', stock_item_id: 'stock', line_type, unit: '支',

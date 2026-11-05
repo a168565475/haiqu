@@ -167,7 +167,7 @@ const {
             <label class="drawer-field">
               <span>喷塑颜色</span>
               <strong v-if="catalogMode" class="drawer-readonly-value">{{ editingLineDraft.tube_coating_color || '—' }}</strong>
-              <ElSelect v-else v-model="editingLineDraft.tube_coating_color" clearable :value-on-clear="''" :loading="tubeOptionsLoading" :placeholder="coatingPlaceholder" no-data-text="暂无喷塑颜色，请到分区的维护配置新增" aria-label="喷塑颜色">
+              <ElSelect v-else v-model="editingLineDraft.tube_coating_color" filterable clearable :value-on-clear="''" :loading="tubeOptionsLoading" :placeholder="coatingPlaceholder" no-data-text="暂无喷塑颜色，请到分区的维护配置新增" aria-label="喷塑颜色">
                 <ElOption v-for="item in coatingOptions" :key="item.id" :label="item.color_name" :value="item.color_name" />
               </ElSelect>
             </label>
@@ -275,8 +275,8 @@ const {
             <label class="drawer-field"><span>颜色</span><strong class="drawer-readonly-value">{{ catalogMode ? selectedAttribute('color', editingLineDraft.packaging_color) : formatHardwareColor(editingLineDraft.packaging_color) }}</strong></label>
             <label class="drawer-field"><span>规格</span><strong class="drawer-readonly-value">{{ selectedSpecification }}</strong></label>
             <label class="drawer-field"><span>单位</span><strong class="drawer-readonly-value">{{ editingLineDraft.unit || '—' }}</strong></label>
-            <label class="drawer-field"><span>*箱数（多少一箱）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="numeric" placeholder="填写正整数" aria-label="箱数（多少一箱）" /></label>
-            <label class="drawer-field"><span>需求数量</span><strong class="drawer-readonly-value">{{ packagingQuantity(editingLineDraft.units_per_box, bom?.order_quantity) || '待填写每箱数量' }}</strong><small>订单数量 ÷ 每箱数量，向上取整</small></label>
+            <label class="drawer-field"><span>*用量（多少成品用一份）</span><ElInput v-model="editingLineDraft.units_per_box" inputmode="numeric" placeholder="填写正整数" aria-label="用量（多少成品用一份）" /></label>
+            <label class="drawer-field"><span>需求数量</span><strong class="drawer-readonly-value">{{ packagingQuantity(editingLineDraft.units_per_box, bom?.order_quantity) || '待填写' }}</strong></label>
           </template>
 
           <template v-else-if="editingSection?.title === '裁剪明细'">

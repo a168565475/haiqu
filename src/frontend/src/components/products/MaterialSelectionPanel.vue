@@ -8,6 +8,7 @@ import { fetchBomCatalogSelectionOptions } from '@/api/boms'
 import { fetchSampleMaterial, fetchSampleMaterialCrafts, fetchSampleMaterialOptions, fetchSampleMaterials, fetchSamplePublicOptions } from '@/api/sampleMaterialSources'
 import type { BomLineInput } from '@/types/bom'
 import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogOptions, MaterialCatalogSummary, MaterialSelectionInput, PublicMaterialOptions } from '@/types/materialCatalog'
+import { matchesPinyinSearch } from '@/utils/pinyinSearch'
 import { applyMaterialSelection, bomCatalogCategories } from './materialSelection'
 
 const props = withDefaults(defineProps<{
@@ -21,6 +22,10 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ maintain: []; loaded: [catalog: MaterialCatalog]; 'public-options': [options: PublicMaterialOptions | undefined] }>()
 const names = ref<MaterialCatalogSummary[]>([])
 const keyword = ref('')
+const attributeKeywords = ref<Record<string, string>>({})
+const sprayKeyword = ref('')
+const namesLoading = ref(false)
+const namesError = ref('')
 const page = ref(1)
 const pages = ref(1)
 const catalog = ref<MaterialCatalog>()
@@ -37,6 +42,7 @@ const craftId = ref('')
 const dropdownOpen = ref(false)
 const selectionId = useId()
 const isDropdown = computed(() => props.presentation === 'dropdown')
+const isBomDropdown = computed(() => isDropdown.value && props.source === 'catalog')
 const colorAsList = computed(() => isDropdown.value || props.source === 'sample')
 const selectedName = computed(() => {
   const id = props.line.material_catalog_id
@@ -61,12 +67,15 @@ const dropdownProps: Partial<PopoverProps> = {
 }
 let requestId = 0
 let namesRequestId = 0
+let namesSearchTimer: ReturnType<typeof setTimeout> | undefined
+let nameComposing = false
 let disposed = false
 const templateDefinition = computed(() => definitions.value?.categories.flatMap(item => item.templates).find(item => item.key === catalog.value?.template_key))
 const fields = computed(() => {
   const selectedFields = (templateDefinition.value?.fields || []).filter(field =>
     (!props.fixedUnit || field.key !== 'unit') && !((isDropdown.value || props.source === 'sample') && catalog.value?.category_key === 'TUBE' && field.key === 'length') &&
-    !(isDropdown.value && catalog.value?.category_key === 'PACKAGING' && ['layers', 'printing'].includes(field.key)),
+    !(isDropdown.value && catalog.value?.category_key === 'PACKAGING' && ['layers', 'printing'].includes(field.key)) &&
+    !(isBomDropdown.value && catalog.value?.category_key === 'PACKAGING' && field.key === 'model'),
   ).filter(field => props.source !== 'sample' || options(field.key).length || drafts.value[field.key] ||
     (field.key === 'section_size' && !drafts.value.shape))
   if (props.source === 'sample' && catalog.value?.category_key === 'TUBE') {
@@ -89,9 +98,13 @@ const fields = computed(() => {
 const category = computed(() => bomCatalogCategories[props.sectionTitle])
 const showSprayColors = computed(() => isDropdown.value && !!catalog.value?.spray_enabled && !!templateDefinition.value?.supports_spray && ['TUBE', 'HARDWARE'].includes(catalog.value?.category_key || ''))
 const sprayColors = computed(() => (publicSprayOptions.value?.values || []).filter(value => value.field_key === 'color' && value.value.trim() && !['/', '-', '—'].includes(value.value.trim())).map(value => value.value))
+const filteredSprayColors = computed(() => sprayColors.value.filter(value => matchesPinyinSearch(value, '', sprayKeyword.value)))
 const selectedSprayColor = computed(() => catalog.value?.category_key === 'TUBE' ? props.line.tube_coating_color : props.line.powder_coating_color)
 const usesProductColors = computed(() => catalog.value?.category_key === 'FABRIC' && (publicOptions.value?.fields.some(field => field.key === 'color' && field.source === 'product-colors') ?? false))
 const colorRows = computed(() => (publicOptions.value?.values || []).filter(item => item.field_key === 'color' && item.value.trim() && !['/', '-', '—'].includes(item.value.trim())))
+const filteredColorRows = computed(() => colorRows.value.filter(row => matchesPinyinSearch(
+  [row.color_card, row.color_code, row.color_name, row.value].filter(Boolean).join(' '), '', attributeKeywords.value.color,
+)))
 const selectedColorRow = computed(() => {
   const saved = props.line.material_selection ?? props.line.material_selection_snapshot
   if (saved?.product_color_id) return colorRows.value.find(item => (item.product_color_id || item.id) === saved.product_color_id)
@@ -116,19 +129,67 @@ const fieldOptions = computed(() => {
   return grouped
 })
 
+function searchableField(key: string) {
+  if (!isBomDropdown.value) return false
+  const categoryFields: Record<string, string[]> = {
+    TUBE: ['color'], HARDWARE: ['color', 'specification'], PLASTIC: ['color', 'specification'],
+    FABRIC: ['color'], AUXILIARY: ['color', 'specification', 'material'], PACKAGING: ['color', 'size', 'specification'],
+  }
+  return categoryFields[catalog.value?.category_key || '']?.includes(key) ?? false
+}
+function filteredOptions(key: string) {
+  return options(key).filter(value => matchesPinyinSearch(value, '', attributeKeywords.value[key]))
+}
+function cancelNameSearch() {
+  if (namesSearchTimer !== undefined) clearTimeout(namesSearchTimer)
+  namesSearchTimer = undefined
+}
+function scheduleNameSearch() {
+  if (!isBomDropdown.value || disposed) return
+  cancelNameSearch()
+  // 输入变化即废弃旧请求，不能等防抖计时结束后才阻止旧结果回写。
+  ++namesRequestId
+  namesError.value = ''
+  namesLoading.value = true
+  page.value = 1
+  if (!nameComposing) namesSearchTimer = setTimeout(() => { void loadNames(true) }, 280)
+}
+function beginNameComposition() {
+  nameComposing = true
+  scheduleNameSearch()
+}
+function endNameComposition(event: CompositionEvent) {
+  nameComposing = false
+  keyword.value = (event.target as HTMLInputElement).value
+  scheduleNameSearch()
+}
+function submitNameSearch() {
+  if (nameComposing) return
+  void loadNames(true)
+}
 async function loadNames(reset = false) {
   if (disposed) return
+  cancelNameSearch()
   const token = ++namesRequestId
   if (reset) page.value = 1
+  namesLoading.value = true
+  namesError.value = ''
   try {
     const result = await (props.source === 'sample' ? fetchSampleMaterials : fetchMaterialCatalogs)({ category: category.value, q: keyword.value, page: page.value, page_size: 50 })
     if (token !== namesRequestId) return
     names.value = result.data
     pages.value = result.meta.total_pages
-  } catch (issue) { if (token === namesRequestId) error.value = materialCatalogError(issue) }
+  } catch (issue) {
+    if (token === namesRequestId) {
+      if (isBomDropdown.value) namesError.value = materialCatalogError(issue)
+      else error.value = materialCatalogError(issue)
+    }
+  } finally { if (token === namesRequestId) namesLoading.value = false }
 }
 async function pickName(id: string, preserve = false) {
   if (disposed) return
+  attributeKeywords.value = {}
+  sprayKeyword.value = ''
   const token = ++requestId
   loading.value = true
   error.value = ''
@@ -275,7 +336,8 @@ async function reloadCurrent() {
   }
 }
 watch(() => props.refreshKey, reloadCurrent)
-onBeforeUnmount(() => { disposed = true; ++requestId; ++namesRequestId })
+watch(keyword, scheduleNameSearch, { flush: 'sync' })
+onBeforeUnmount(() => { disposed = true; cancelNameSearch(); ++requestId; ++namesRequestId })
 onMounted(async () => {
   loading.value = true
   try {
@@ -302,24 +364,28 @@ onMounted(async () => {
   <section class="material-selection" :class="{ 'material-selection--dropdown': isDropdown }" aria-label="品名及公共属性选择" :aria-busy="loading" @keydown.esc="closeOnEscape">
     <div v-if="error" class="selection-error" role="alert">{{ error }} <button type="button" @click="reloadCurrent">重新读取</button></div>
     <aside class="catalog-names">
-      <header><strong>品名</strong><form @submit.prevent="loadNames(true)"><input v-model="keyword" class="group-input" aria-label="筛选品名" placeholder="中文/拼音/首字母，回车筛选" /></form></header>
+      <header><strong>品名</strong><form @submit.prevent="submitNameSearch"><input v-model="keyword" class="group-input" aria-label="筛选品名" :placeholder="isBomDropdown ? '中文/拼音/首字母搜索' : '中文/拼音/首字母，回车筛选'" @compositionstart="beginNameComposition" @compositionend="endNameComposition" /></form></header>
       <div class="catalog-name-list">
-        <p v-if="!names.length && !loading">暂无品名，请到分区维护配置中补充。</p>
-        <button v-for="item in names" :key="item.id" type="button" class="name-option" :class="{ selected: line.material_catalog_id === item.id }" :disabled="loading" @click="pickName(item.id)">{{ item.name }}</button>
+        <p v-if="namesError" role="alert">{{ namesError }} <button type="button" @click="submitNameSearch">重新搜索</button></p>
+        <p v-else-if="isBomDropdown && namesLoading" role="status">正在搜索品名…</p>
+        <p v-else-if="!names.length && !loading">{{ isBomDropdown && keyword.trim() ? '无匹配品名，请调整搜索内容。' : '暂无品名，请到分区维护配置中补充。' }}</p>
+        <button v-for="item in names" :key="item.id" type="button" class="name-option" :class="{ selected: line.material_catalog_id === item.id }" :disabled="loading || (isBomDropdown && (namesLoading || !!namesError))" @click="pickName(item.id)">{{ item.name }}</button>
       </div>
-      <nav v-if="pages > 1" class="catalog-pages" aria-label="品名分页"><button type="button" aria-label="上一页" :disabled="page <= 1" @click="page--; loadNames()"><ArrowLeft aria-hidden="true" /></button><span>{{ page }}/{{ pages }}</span><button type="button" aria-label="下一页" :disabled="page >= pages" @click="page++; loadNames()"><ArrowRight aria-hidden="true" /></button></nav>
+      <nav v-if="pages > 1" class="catalog-pages" aria-label="品名分页"><button type="button" aria-label="上一页" :disabled="page <= 1 || (isBomDropdown && namesLoading)" @click="page--; loadNames()"><ArrowLeft aria-hidden="true" /></button><span>{{ page }}/{{ pages }}</span><button type="button" aria-label="下一页" :disabled="page >= pages || (isBomDropdown && namesLoading)" @click="page++; loadNames()"><ArrowRight aria-hidden="true" /></button></nav>
       <button v-if="!isDropdown && source === 'catalog'" type="button" class="maintain-link" @click="openMaintenance">生产维护</button>
     </aside>
     <div v-if="catalog" class="attribute-groups" :class="{ 'attribute-groups--four-columns': attributeGroupCount > 6, 'attribute-groups--seven': attributeGroupCount === 7, 'attribute-groups--fabric-colors': usesProductColors && source !== 'sample' }" :style="{ '--material-attribute-rows': attributeRows }">
       <fieldset v-for="field in fields" :key="field.key" class="attribute-group" :class="{ 'attribute-group--color': field.key === 'color' && usesProductColors }" :disabled="loading || (field.key === 'section_size' && !drafts.shape)">
         <legend>{{ field.label === '可用单位' ? '本次数量单位' : field.label }}</legend>
+        <input v-if="searchableField(field.key)" v-model="attributeKeywords[field.key]" type="search" class="group-input attribute-search" :aria-label="`搜索${field.label}`" :placeholder="field.key === 'color' && usesProductColors ? '搜索色卡 / 色号 / 颜色' : `搜索${field.label}`" />
         <div v-if="field.key === 'color' && usesProductColors" :class="colorAsList ? 'group-values' : 'color-table-scroll'">
           <template v-if="colorAsList">
-            <label v-for="row in colorRows" :key="row.product_color_id || row.id" class="attribute-value" :class="{ selected: selectedColorRow?.id === row.id }">
+            <label v-for="row in filteredColorRows" :key="row.product_color_id || row.id" class="attribute-value" :class="{ selected: selectedColorRow?.id === row.id }">
               <input type="radio" :name="`${selectionId}-color`" :checked="selectedColorRow?.id === row.id" @change="chooseColor(row)" />
               <span>{{ [row.color_card, row.color_code, row.color_name || row.value].filter(value => value && !['/', '-', '—'].includes(value.trim())).join('-') }}</span>
             </label>
             <p v-if="!colorRows.length">暂无已有选项，请到分区维护配置中补充。</p>
+            <p v-else-if="!filteredColorRows.length">无匹配选项，请调整搜索内容。</p>
           </template>
           <table v-else class="color-options-table" aria-label="普通颜色选择">
             <thead><tr><th scope="col" class="color-choice-column"><span class="color-choice-label">选择</span></th><th scope="col">色卡</th><th scope="col">色号</th><th scope="col">颜色</th></tr></thead>
@@ -334,19 +400,22 @@ onMounted(async () => {
           <p v-if="drafts.color && !selectedColorRow" class="historical-value">{{ [line.material_selection?.color_card, line.material_selection?.color_code, drafts.color].filter(Boolean).join(' / ') }}（历史值，待重选）</p>
         </div>
         <div v-else class="group-values">
-          <label v-for="value in options(field.key)" :key="value" class="attribute-value" :class="{ selected: drafts[field.key] === value }"><input type="radio" :name="`${selectionId}-${field.key}`" :checked="drafts[field.key] === value" @change="choose(field.key, value)" /><span>{{ value }}</span></label>
+          <label v-for="value in filteredOptions(field.key)" :key="value" class="attribute-value" :class="{ selected: drafts[field.key] === value }"><input type="radio" :name="`${selectionId}-${field.key}`" :checked="drafts[field.key] === value" @change="choose(field.key, value)" /><span>{{ value }}</span></label>
           <span v-if="drafts[field.key] && !options(field.key).includes(drafts[field.key]!)" class="historical-value">{{ drafts[field.key] }}（历史值，待重选）</span>
           <p v-if="field.key === 'section_size' && !drafts.shape">请先选择截面形状</p>
           <p v-else-if="!options(field.key).length">暂无已有选项，请到分区维护配置中补充。</p>
+          <p v-else-if="!filteredOptions(field.key).length">无匹配选项，请调整搜索内容。</p>
         </div>
       </fieldset>
       <fieldset v-if="showSprayColors" class="attribute-group spray-color-group" :disabled="loading || !catalog.spray_enabled">
         <legend>喷塑颜色</legend>
+        <input v-if="isBomDropdown" v-model="sprayKeyword" type="search" class="group-input attribute-search" aria-label="搜索喷塑颜色" placeholder="搜索喷塑颜色" />
         <div class="group-values">
-          <label v-for="value in sprayColors" :key="value" class="attribute-value" :class="{ selected: selectedSprayColor === value }"><input type="radio" :name="`${selectionId}-spray-color`" :checked="selectedSprayColor === value" @change="chooseSprayColor(value)" /><span>{{ value }}</span></label>
+          <label v-for="value in filteredSprayColors" :key="value" class="attribute-value" :class="{ selected: selectedSprayColor === value }"><input type="radio" :name="`${selectionId}-spray-color`" :checked="selectedSprayColor === value" @change="chooseSprayColor(value)" /><span>{{ value }}</span></label>
           <span v-if="selectedSprayColor && !sprayColors.includes(selectedSprayColor)" class="historical-value">{{ selectedSprayColor }}（历史值，待重选）</span>
           <p v-if="!catalog.spray_enabled">该品名未启用半成品</p>
           <p v-else-if="!sprayColors.length">暂无喷塑颜色，请到分区维护配置中补充。</p>
+          <p v-else-if="!filteredSprayColors.length">无匹配选项，请调整搜索内容。</p>
         </div>
       </fieldset>
       <label v-if="category === 'FABRIC_SEMI'" class="craft-field"><span>已完成工艺</span><ElSelect v-model="craftId" :teleported="!isDropdown" aria-label="裁片已完成工艺" placeholder="选择既有工艺" @change="syncLine"><ElOption v-for="craft in crafts" :key="craft.id" :value="craft.id" :label="craft.name" /></ElSelect></label>
@@ -372,6 +441,7 @@ onMounted(async () => {
 .catalog-names { padding: 12px; border-right: 1px solid var(--erp-color-border); min-width: 0; }
 .catalog-names strong { display: block; margin-bottom: 8px; }
 .group-input { box-sizing: border-box; width: 100%; height: 28px; padding: 0 8px; border: 1px solid var(--erp-color-border); border-radius: 5px; font: inherit; font-size: 12px; color: var(--erp-color-text-primary); background: var(--erp-input-background); }
+.attribute-search { flex-shrink: 0; }
 .name-option { display: block; width: 100%; margin-top: 5px; padding: 6px 8px; text-align: left; overflow-wrap: anywhere; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
 .selected { background: var(--erp-color-selected); border-color: var(--erp-color-brand); }
 .attribute-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; padding: 12px 12px 12px 0; min-width: 0; }

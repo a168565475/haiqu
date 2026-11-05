@@ -37,7 +37,7 @@ export function bomPreviewColumns(section: BomPreviewSection): BomPreviewColumn[
     column('part_name', '裁片', 120), unit, notes, images,
   ]
   if (/辅料/.test(section.title)) return [serial, name, specification, column('accessory_color', '颜色'), material, unit, consumption, notes, images]
-  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '箱数（多少一箱）', 140), column('total_consumption', '需求数量'), images]
+  if (/包材|包装/.test(section.title)) return [serial, name, material, column('packaging_color', '颜色'), specification, unit, column('units_per_box', '用量（多少成品用一份）', 170), column('total_consumption', '需求数量'), images]
   if (/裁剪|裁片/.test(section.title)) return [
     serial, column('part_name', '裁剪名称', 140), specification,
     column('cutting_pieces_per_set', '裁片量（片/套）', 130),

@@ -809,7 +809,7 @@ function confirmPackagingSelection() {
   if (!selection) return
   const { newLines, skippedCount } = selection
 
-  ElMessage.success(`已添加 ${newLines.length} 条包材数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}，请填写每箱数量，需求数量自动计算。`)
+  ElMessage.success(`已添加 ${newLines.length} 条包材数据${skippedCount ? `，跳过 ${skippedCount} 条重复数据` : ''}，请填写用量，需求数量自动计算。`)
 }
 
 
@@ -1615,7 +1615,7 @@ function lineFieldError(section: BomSectionInput, line: BomLineInput, lineIndex:
   if (section.title === '包材类') {
     const unitsPerBox = decimalFraction(line.units_per_box)
     if (!unitsPerBox || unitsPerBox.numerator <= 0n || unitsPerBox.numerator % unitsPerBox.denominator !== 0n) {
-      return `${prefix}的箱数（多少一箱）必须是正整数。`
+      return `${prefix}的用量（多少成品用一份）必须是正整数。`
     }
   }
   if (section.title === '裁剪明细' && cuttingQuantities(line).mode === 'legacy') {

@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, reactive } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import MaterialSelectionPanel from './MaterialSelectionPanel.vue'
 import { blankLine } from '@/views/boms/bomEditorHelpers'
 import type { MaterialCatalog } from '@/types/materialCatalog'
@@ -336,7 +336,7 @@ describe('普通颜色三字段选择', () => {
     expect(wrapper.find('.attribute-groups--fabric-colors').exists()).toBe(true)
     const options = colors.findAll('.group-values > label.attribute-value')
     expect(options.map(option => option.text())).toEqual(['A色卡-101-米白', 'B色卡-102-米白', '黑色'])
-    expect(colors.findAll('input:not([type="radio"])')).toHaveLength(0)
+    expect(colors.findAll('input[type="search"]')).toHaveLength(1)
     for (const [index, id, card, code] of [[0, 'color-a', 'A色卡', '101'], [1, 'color-b', 'B色卡', '102']] as const) {
       await options[index]!.get('input[type="radio"]').setValue(true)
       expect(colors.findAll('input:checked')).toHaveLength(1)
@@ -364,6 +364,27 @@ describe('普通颜色三字段选择', () => {
     await colors.findAll('.attribute-value')[0]!.get('input[type="radio"]').setValue(true)
     expect(line.material_selection?.product_color_id).toBe('color-a')
     expect(JSON.stringify(line.material_selection_snapshot)).toBe(snapshot)
+    wrapper.unmount()
+  })
+  it('BOM面料搜索色卡、色号和颜色，过滤不丢已选身份及历史快照', async () => {
+    prepare()
+    const { wrapper, colors, line } = await openColorDropdown()
+    await colors.findAll('.attribute-value')[1]!.get('input[type="radio"]').setValue(true)
+    const selection = JSON.stringify(line.material_selection)
+    const search = colors.get('input[type="search"]')
+    for (const query of ['A色卡', '101']) {
+      await search.setValue(query)
+      expect(colors.findAll('.attribute-value').map(item => item.text())).toEqual(['A色卡-101-米白'])
+      expect(JSON.stringify(line.material_selection)).toBe(selection)
+    }
+    await search.setValue('米白')
+    expect(colors.findAll('.attribute-value')).toHaveLength(2)
+    await search.setValue('不存在')
+    expect(colors.text()).toContain('无匹配选项')
+    expect(colors.text()).not.toContain('暂无已有选项')
+    expect(JSON.stringify(line.material_selection)).toBe(selection)
+    await search.setValue('')
+    expect(colors.get('.attribute-value.selected').text()).toBe('B色卡-102-米白')
     wrapper.unmount()
   })
   it('BOM面料颜色单选不猜历史同名色卡，缺身份时待重选且不新增候选', async () => {
@@ -899,7 +920,7 @@ describe('BOM包材精简选择属性', () => {
     ['CARTON', ['material', 'layers', 'size', 'box_type', 'model', 'color', 'printing', 'unit']],
     ['BAG', ['material', 'color', 'size', 'box_type', 'model', 'thickness', 'bag_type', 'printing', 'unit']],
     ['PACKAGING_GENERAL', ['material', 'color', 'specification', 'box_type', 'model', 'unit']],
-  ] as const)('%s不展示层数和印刷选项，保留纸质、箱型、型号及历史值', async (templateKey, keys) => {
+  ] as const)('%s不展示层数、印刷和型号选项，保留纸质、箱型及历史值', async (templateKey, keys) => {
     const labels: Record<string, string> = { material: '纸质/材质', box_type: '箱子形状', model: '型号', layers: '层数', printing: '印刷版本/唛头', unit: '可用单位' }
     api.options.mockResolvedValue({ categories: [{ key: 'PACKAGING', templates: [{ key: templateKey,
       fields: keys.map(key => ({ key, label: labels[key] || key, kind: key === 'unit' ? 'unit' : 'text' })),
@@ -907,7 +928,7 @@ describe('BOM包材精简选择属性', () => {
     api.detail.mockResolvedValue({ data: { ...catalog, category_key: 'PACKAGING', template_key: templateKey }, etag: 'v1' })
     api.publicOptions.mockResolvedValue({ category_key: 'PACKAGING', template_key: templateKey, scope: 'BASE',
       fields: [], values: [{ id: 'material', field_key: 'material', value: '新纸质' }], units: [] })
-    const hidden = Object.fromEntries(keys.filter(key => ['layers', 'printing'].includes(key)).map(key => [key, '历史原文']))
+    const hidden = Object.fromEntries(keys.filter(key => ['layers', 'printing', 'model'].includes(key)).map(key => [key, '历史原文']))
     const line = reactive({ ...blankLine(), material_catalog_id: 'A', material_selection: {
       catalog_version: catalog.updated_at, scope: 'BASE' as const, processing_state: 'RAW' as const, attributes: { ...hidden },
     } })
@@ -916,8 +937,8 @@ describe('BOM包材精简选择属性', () => {
     await flushPromises()
     await wrapper.get('.material-name-trigger').trigger('click')
     const shown = wrapper.findAll('legend').map(field => field.text())
-    expect(shown).toEqual(expect.arrayContaining(['纸质/材质', '箱子形状', '型号', '本次数量单位']))
-    expect(shown.some(label => /层数|印刷/.test(label))).toBe(false)
+    expect(shown).toEqual(expect.arrayContaining(['纸质/材质', '箱子形状', '本次数量单位']))
+    expect(shown.some(label => /层数|印刷|型号/.test(label))).toBe(false)
     await choose(wrapper, '新纸质')
     expect(line.material_selection.attributes).toMatchObject({ ...hidden, material: '新纸质' })
     wrapper.unmount()
@@ -1035,6 +1056,237 @@ describe('BOM弹层独立喷塑颜色', () => {
     await wrapper.get('.catalog-names form').trigger('submit')
     await flushPromises()
     expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'uxzcg', page: 1 }))
+    wrapper.unmount()
+  })
+})
+
+describe('BOM品名自动搜索', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('输入停止后自动查找，连续输入合并请求、回到第一页，清空恢复全部候选', async () => {
+    api.list.mockResolvedValue({ data: [catalog], meta: { total_pages: 3 } })
+    const { wrapper } = await openTubePicker()
+    await wrapper.get('[aria-label="下一页"]').trigger('click')
+    await flushPromises()
+    api.list.mockClear()
+    vi.useFakeTimers()
+    const input = wrapper.get('[aria-label="筛选品名"]')
+    await input.setValue('铁')
+    await vi.advanceTimersByTimeAsync(180)
+    await input.setValue('铁管')
+    await vi.advanceTimersByTimeAsync(249)
+    expect(api.list).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(51)
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ q: '铁管', page: 1 }))
+    await input.setValue('')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ q: '', page: 1 }))
+    wrapper.unmount()
+  })
+
+  it('中文组词不查找，组词结束自动查询；回车立即查询且取消待发计时器', async () => {
+    const { wrapper } = await openTubePicker()
+    api.list.mockClear()
+    vi.useFakeTimers()
+    const input = wrapper.get('[aria-label="筛选品名"]')
+    await input.trigger('compositionstart')
+    ;(input.element as HTMLInputElement).value = '铁管'
+    await input.trigger('input')
+    await vi.advanceTimersByTimeAsync(600)
+    expect(api.list).not.toHaveBeenCalled()
+    await input.trigger('compositionend')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ q: '铁管' }))
+    api.list.mockClear()
+    await input.setValue('圆管')
+    await wrapper.get('.catalog-names form').trigger('submit')
+    await flushPromises()
+    expect(api.list).toHaveBeenCalledTimes(1)
+    expect(api.list).toHaveBeenLastCalledWith(expect.objectContaining({ q: '圆管' }))
+    await vi.advanceTimersByTimeAsync(300)
+    expect(api.list).toHaveBeenCalledTimes(1)
+    await input.setValue('卸载前输入')
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(api.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('新输入立即使旧响应失效，未匹配和未配置使用不同提示', async () => {
+    const { wrapper } = await openTubePicker()
+    let finishOld!: (value: unknown) => void
+    api.list.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    vi.useFakeTimers()
+    const input = wrapper.get('[aria-label="筛选品名"]')
+    await input.setValue('旧')
+    await wrapper.get('.catalog-names form').trigger('submit')
+    await input.setValue('新')
+    finishOld({ data: [{ ...catalog, name: '迟到的旧结果' }], meta: { total_pages: 9 } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('迟到的旧结果')
+    api.list.mockResolvedValueOnce({ data: [{ ...catalog, name: '新结果' }], meta: { total_pages: 1 } })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.get('.name-option').text()).toBe('新结果')
+    await input.setValue('无结果')
+    api.list.mockResolvedValueOnce({ data: [], meta: { total_pages: 1 } })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.text()).toContain('无匹配品名')
+    expect(wrapper.text()).not.toContain('暂无品名，请到')
+    wrapper.unmount()
+  })
+
+  it('后发搜索完成后才返回的旧响应不能覆盖列表或错误状态', async () => {
+    const { wrapper } = await openTubePicker()
+    let finishOld!: (value: unknown) => void
+    api.list.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+    vi.useFakeTimers()
+    const input = wrapper.get('[aria-label="筛选品名"]')
+    await input.setValue('旧')
+    await vi.advanceTimersByTimeAsync(300)
+    api.list.mockResolvedValueOnce({ data: [{ ...catalog, name: '新结果' }], meta: { total_pages: 1 } })
+    await input.setValue('新')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.get('.name-option').text()).toBe('新结果')
+    finishOld({ data: [{ ...catalog, name: '迟到旧结果' }], meta: { total_pages: 8 } })
+    await flushPromises()
+    expect(wrapper.get('.name-option').text()).toBe('新结果')
+    expect(wrapper.find('.catalog-pages').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('搜索失败后能重试且不锁死已选属性，成功搜索不能清除详情读取错误', async () => {
+    mockTubeChoices()
+    const { wrapper, line } = await openTubePicker()
+    await wrapper.findAll('.name-option')[0]!.trigger('click')
+    await flushPromises()
+    api.list.mockRejectedValueOnce(new Error('品名搜索失败'))
+    vi.useFakeTimers()
+    const input = wrapper.get('[aria-label="筛选品名"]')
+    await input.setValue('铁')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.get('[role="alert"]').text()).toContain('品名搜索失败')
+    await choose(wrapper, '普通白')
+    expect(line.material_selection?.attributes.color).toBe('普通白')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    api.detail.mockRejectedValueOnce(new Error('品名详情读取失败'))
+    await wrapper.findAll('.name-option')[1]!.trigger('click')
+    await flushPromises()
+    await input.setValue('管')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(wrapper.get('[role="alert"]').text()).toContain('品名详情读取失败')
+    expect(line.material_selection?.attributes.color).toBe('普通白')
+    wrapper.unmount()
+  })
+
+  it.each(['catalog', 'sample'] as const)('%s普通面板仍使用原回车查询方式', async source => {
+    sampleApi.options.mockImplementation(api.options.getMockImplementation()!)
+    sampleApi.list.mockImplementation(api.list.getMockImplementation()!)
+    const wrapper = mount(MaterialSelectionPanel, { props: { line: reactive(blankLine()), sectionTitle: '管材类', source } })
+    await flushPromises()
+    const list = source === 'sample' ? sampleApi.list : api.list
+    list.mockClear()
+    vi.useFakeTimers()
+    await wrapper.get('[aria-label="筛选品名"]').setValue('铁管')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(list).not.toHaveBeenCalled()
+    await wrapper.get('.catalog-names form').trigger('submit')
+    await flushPromises()
+    expect(list).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+})
+
+describe('BOM属性输入筛选', () => {
+  it.each(['catalog', 'sample'] as const)('%s普通包材面板仍保留型号且不增加属性搜索', async source => {
+    const definitions = { categories: [{ key: 'PACKAGING', templates: [{ key: 'CARTON', fields: [
+      { key: 'model', label: '型号', kind: 'text' }, { key: 'color', label: '颜色', kind: 'text' },
+    ] }] }] }
+    const detail = { data: { ...catalog, category_key: 'PACKAGING', template_key: 'CARTON' } }
+    const options = { category_key: 'PACKAGING', template_key: 'CARTON', scope: 'BASE', fields: [], units: [], values: [
+      { id: 'model', field_key: 'model', value: '旧型号' }, { id: 'color', field_key: 'color', value: '白' },
+    ] }
+    api.options.mockResolvedValue(definitions)
+    api.detail.mockResolvedValue(detail)
+    api.publicOptions.mockResolvedValue(options)
+    sampleApi.options.mockResolvedValue(definitions)
+    sampleApi.detail.mockResolvedValue(detail)
+    sampleApi.publicOptions.mockResolvedValue(options)
+    sampleApi.list.mockImplementation(api.list.getMockImplementation()!)
+    const wrapper = mount(MaterialSelectionPanel, { props: { line: reactive(blankLine()), sectionTitle: '包材类', source } })
+    await flushPromises()
+    await wrapper.findAll('.name-option')[0]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('legend').map(item => item.text())).toEqual(['型号', '颜色'])
+    expect(wrapper.find('input[type="search"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['HARDWARE', '五金件', 'HARDWARE', ['color', 'specification']],
+    ['PLASTIC', '塑料件类', 'PLASTIC', ['color', 'specification']],
+    ['AUXILIARY', '辅料类', 'AUXILIARY', ['color', 'specification', 'material']],
+    ['PACKAGING', '包材类', 'CARTON', ['color', 'size']],
+    ['PACKAGING', '包材类', 'BAG', ['color', 'size']],
+    ['PACKAGING', '包材类', 'PACKAGING_GENERAL', ['color', 'specification']],
+  ] as const)('%s / %s / %s各指定属性独立匹配且不写入搜索文本', async (categoryKey, sectionTitle, templateKey, keys) => {
+    api.options.mockResolvedValue({ categories: [{ key: categoryKey, templates: [{ key: templateKey,
+      fields: keys.map(key => ({ key, label: key, kind: 'text' })),
+    }] }] })
+    api.detail.mockImplementation(async (id: string) => ({ data: { ...catalog, id, category_key: categoryKey, template_key: templateKey } }))
+    api.publicOptions.mockResolvedValue({ category_key: categoryKey, template_key: templateKey, scope: 'BASE', fields: [], units: [],
+      values: keys.flatMap(key => ['ABC-10', '其他20'].map(value => ({ id: `${key}-${value}`, field_key: key, value }))),
+    })
+    const line = reactive(blankLine())
+    const wrapper = mount(MaterialSelectionPanel, { props: { line, sectionTitle, presentation: 'dropdown' },
+      global: { stubs: { ElPopover: PopoverStub } } })
+    await flushPromises()
+    await wrapper.get('.material-name-trigger').trigger('click')
+    await wrapper.findAll('.name-option')[0]!.trigger('click')
+    await flushPromises()
+    const groups = wrapper.findAll('.attribute-group')
+    for (const group of groups) {
+      await group.findAll('.attribute-value')[0]!.get('input[type="radio"]').setValue(true)
+      const selection = JSON.stringify(line.material_selection)
+      await group.get('input[type="search"]').setValue('abc10')
+      expect(group.findAll('.attribute-value').map(item => item.text())).toEqual(['ABC-10'])
+      await group.get('input[type="search"]').setValue('不存在')
+      expect(group.findAll('.attribute-value')).toHaveLength(0)
+      expect(group.text()).toContain('无匹配选项')
+      expect(group.text()).not.toContain('暂无已有选项')
+      expect(JSON.stringify(line.material_selection)).toBe(selection)
+      await group.get('input[type="search"]').setValue('')
+      expect(group.get('.attribute-value.selected').text()).toBe('ABC-10')
+    }
+    await groups[0]!.get('input[type="search"]').setValue('不存在')
+    await wrapper.findAll('.name-option')[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('input[type="search"]').every(input => !(input.element as HTMLInputElement).value)).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('管材普通颜色与喷塑颜色独立搜索，过滤期间保留两种已选颜色', async () => {
+    mockSprayCatalog('TUBE')
+    const { wrapper, line } = await openTubePicker()
+    await wrapper.findAll('.name-option')[0]!.trigger('click')
+    await flushPromises()
+    await choose(wrapper, '普通白')
+    await choose(wrapper, '喷塑黑')
+    const colors = wrapper.findAll('.attribute-group')[0]!
+    const spray = wrapper.get('.spray-color-group')
+    await colors.get('input[type="search"]').setValue('不存在')
+    expect(colors.findAll('.attribute-value')).toHaveLength(0)
+    expect(spray.findAll('.attribute-value')).toHaveLength(2)
+    await spray.get('input[type="search"]').setValue('白')
+    expect(spray.findAll('.attribute-value').map(item => item.text())).toEqual(['喷塑白'])
+    expect(line.material_selection?.attributes.color).toBe('普通白')
+    expect(line.tube_coating_color).toBe('喷塑黑')
+    await colors.get('input[type="search"]').setValue('')
+    await spray.get('input[type="search"]').setValue('')
+    expect(colors.get('.attribute-value.selected').text()).toBe('普通白')
+    expect(spray.get('.attribute-value.selected').text()).toBe('喷塑黑')
     wrapper.unmount()
   })
 })

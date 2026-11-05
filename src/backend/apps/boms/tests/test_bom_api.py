@@ -2212,7 +2212,7 @@ class BomApiTests(APITestCase):
             HTTP_IF_MATCH=created.headers["ETag"],
         )
         self.assertEqual(missing_box_quantity.status_code, 400, missing_box_quantity.data)
-        self.assertIn("多少一箱", str(missing_box_quantity.data))
+        self.assertIn("多少成品用一份", str(missing_box_quantity.data))
 
         packaging_line = self.section_by_title(sections, "包材类")["lines"][0]
         packaging_line["units_per_box"] = "12"

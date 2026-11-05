@@ -309,7 +309,7 @@ const {
               <ElTableColumn label="颜色" min-width="130" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ formatHardwareColor(scope.row.packaging_color) }}</span></template></ElTableColumn>
               <ElTableColumn label="规格" min-width="155" show-overflow-tooltip><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.specification || '—' }}</span></template></ElTableColumn>
               <ElTableColumn label="单位" width="76"><template #default="scope"><span class="hardware-readonly-cell">{{ scope.row.unit || '—' }}</span></template></ElTableColumn>
-              <ElTableColumn label="*箱数（多少一箱）" width="170"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="numeric" :disabled="!canEdit" placeholder="填写正整数" /></template></ElTableColumn>
+              <ElTableColumn label="*用量（多少成品用一份）" width="190"><template #default="scope"><ElInput v-model="scope.row.units_per_box" inputmode="numeric" :disabled="!canEdit" placeholder="填写正整数" /></template></ElTableColumn>
               <ElTableColumn label="需求数量" width="125"><template #default="scope">{{ packagingQuantity(scope.row.units_per_box, props.orderQuantity) || '—' }}</template></ElTableColumn>
               <ElTableColumn label="图片" width="210"><template #default="scope"><BomLineImageSummary :line="scope.row" :editable="canEdit" @open="openLineImageManager(scope.$index)" /></template></ElTableColumn>
             </ElTable>

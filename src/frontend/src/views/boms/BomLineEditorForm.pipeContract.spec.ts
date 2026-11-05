@@ -11,7 +11,7 @@ vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 
 describe('BOM管材沿原根米支输入流程', () => {
-  it('包材行编辑不再输入单个用量，按当前订单与装箱量显示需求', () => {
+  it('包材行编辑按当前订单与用量显示需求，缺少用量提示待填写', async () => {
     const line = { ...blankLine('个'), units_per_box: '10', unit_consumption: '999', packaging_material_number: 'PK-001', raw_material: 'PK-OLD' }
     const wrapper = shallowMount(BomLineEditorForm, { props: {
       displayLineImages: () => [], formatHardwareColor: String,
@@ -21,9 +21,14 @@ describe('BOM管材沿原根米支输入流程', () => {
     } as never })
     expect(wrapper.find('[aria-label="单个用量"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('需求数量3')
+    expect(wrapper.find('[aria-label="用量（多少成品用一份）"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('订单数量 ÷')
+    expect(wrapper.text()).not.toContain('每箱')
     expect(wrapper.text()).not.toContain('品号')
     expect(wrapper.text()).not.toContain('PK-001')
     expect(line.packaging_material_number).toBe('PK-001')
+    await wrapper.setProps({ editingLineDraft: { ...line, units_per_box: '' } })
+    expect(wrapper.text()).toContain('需求数量待填写')
     wrapper.unmount()
   })
 

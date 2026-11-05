@@ -160,7 +160,7 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                     quantity = packaging_quantity(units_per_box=units_per_box, order_quantity=order_quantity)
                     line.total_consumption = line.total_purchase_quantity = str(quantity)
                 elif require_complete or not tolerate_legacy:
-                    raise ValidationError({"sections": f"{label}请填写箱数（多少一箱）。"})
+                    raise ValidationError({"sections": f"{label}请填写用量（多少成品用一份）。"})
                 else:
                     line.total_consumption = line.total_purchase_quantity = ""
     except MaterialFlowValueError as error:

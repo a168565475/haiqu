@@ -1112,9 +1112,9 @@ class BomLineWriteSerializer(serializers.Serializer):
         try:
             parsed = Decimal(value)
         except (InvalidOperation, ValueError) as exc:
-            raise serializers.ValidationError("箱数（多少一箱）必须是正整数。") from exc
+            raise serializers.ValidationError("用量（多少成品用一份）必须是正整数。") from exc
         if not parsed.is_finite() or parsed <= 0 or parsed != parsed.to_integral_value():
-            raise serializers.ValidationError("箱数（多少一箱）必须是正整数。")
+            raise serializers.ValidationError("用量（多少成品用一份）必须是正整数。")
         return format(parsed.to_integral_value(), "f")
 
 
@@ -1942,7 +1942,7 @@ class BomUpdateInputSerializer(serializers.Serializer):
             units_per_box = str(line.get("units_per_box", "")).strip()
             if not units_per_box:
                 raise serializers.ValidationError(
-                    f"“包材类”第 {line_number} 行请填写箱数（多少一箱）。"
+                    f"“包材类”第 {line_number} 行请填写用量（多少成品用一份）。"
                 )
             if not source_id:
                 continue

@@ -121,8 +121,15 @@ const columns = computed<Column[]>(() => [
     { key: 'stock_quantity', label: hasDispatched.value ? '已扣（根）' : state.value === 'CANCELLED' ? '原单折算（根）' : '待扣（根）', width: 105, num: true },
     { key: 'meters', label: hasDispatched.value ? '已扣（米）' : state.value === 'CANCELLED' ? '原单折算（米）' : '待扣（米）', width: 115, num: true },
   ] : []),
-  ...(!warehouseWorkspace.value ? [{ key: 'unit_price', label: `加工单价（元/${quantityUnit.value}）`, width: 145, num: true },
-    { key: 'planned_amount', label: '计划金额（元）', width: 135, num: true }] : []),
+  ...(!warehouseWorkspace.value ? [
+    ...(!cutting.value ? [
+      { key: 'unit_area_sqm', label: '单支面积（㎡）', width: 120, num: true },
+      { key: 'line_area_sqm', label: '本行面积（㎡）', width: 120, num: true },
+      { key: 'price_unit', label: '计价方式', width: 95 },
+    ] : []),
+    { key: 'unit_price', label: cutting.value ? `加工单价（元/${quantityUnit.value}）` : '加工单价', width: 145, num: true },
+    { key: 'planned_amount', label: '计划金额（元）', width: 135, num: true },
+  ] : []),
 ])
 const warehouseDispatchWidths: Record<string, number> = { part_name: 90, material: 65, shape: 60, specification: 100, thickness: 60, cutting_length_mm: 90, raw_color: 70, spray_color: 70, factory_name: 115, pieces_per_bar: 90, raw_bar_length_m: 105, quantity: 90, stock_quantity: 85, meters: 85 }
 const dispatchColumns = computed(() => columns.value.filter(column => column.key !== 'current_reported_minimum').map(column => ({ ...column, width: warehouseWorkspace.value ? warehouseDispatchWidths[column.key] ?? column.width : column.width, label: column.key === 'quantity' ? `发出${quantityUnit.value}数（${quantityUnit.value}）` : column.key === 'stock_quantity' ? '本次扣（根）' : column.key === 'meters' ? '本次扣（米）' : column.label })))
@@ -413,7 +420,10 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
           <template #cell-raw_bar_length_m="{ row }">{{ meters(row.raw_bar_length_m) }}</template>
           <template #cell-stock_quantity="{ row }">{{ format(row.stock_quantity) }}</template>
           <template #cell-meters="{ row }">{{ meters(row.meters) }}</template>
-          <template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}</template>
+          <template #cell-unit_area_sqm="{ row }">{{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}</template>
+          <template #cell-line_area_sqm="{ row }">{{ formatOutsourcingMoney(row.line_area_sqm, '—') }}</template>
+          <template #cell-price_unit="{ row }">{{ row.price_unit === 'SQUARE_METER' ? '按㎡' : '按支' }}</template>
+          <template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="!cutting"> 元/{{ row.price_unit === 'SQUARE_METER' ? '㎡' : '支' }}</template></template>
           <template #cell-planned_amount="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template>
         </TubeOutsourcingDetailTable>
         <section v-if="materialRows.length" class="d4-material-panel" :aria-label="`附带${materialName}`">
@@ -429,7 +439,7 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
     <div v-else-if="!showDetails" class="panel d4-fallback"><ElSkeleton v-if="loading" :rows="9" animated /><template v-else><ElEmpty :description="readError || '此外发单暂无可查看的详情'" /><ElButton v-if="![401, 403, 404].includes(readStatus || 0) && !pending && !storageError" :icon="Refresh" @click="loadDetail">重新加载</ElButton></template></div>
     <footer v-if="!showDetails && endedPresentation && !pending && !storageError" class="footer-bar d4-ended-footer"><div class="totals"><span>实发 <strong>—</strong> {{ quantityUnit }}</span><span>实收 <strong>—</strong> {{ quantityUnit }}</span><span>差额 <strong>—</strong> {{ quantityUnit }}</span><small>仅读取历史结果，不办理入库</small></div><ElButton type="primary" :icon="Document" disabled>查看入库凭证</ElButton></footer>
     <footer v-else-if="!detail?.is_plan && !(showDetails && state === 'COMPLETED' && !pending)" class="footer-bar d4-footer">
-      <div>{{ footerLabel }} <strong>{{ showDetails ? format(detail?.total_quantity) : '—' }}</strong> {{ quantityUnit }} <span v-if="showDetails" class="muted"> · {{ rows.length }} 个部位<span v-if="source === 'RAW_PIPE'"> · {{ format(detail?.total_stock_quantity) }} 根 / {{ meters(detail?.total_meters) }} 米</span></span><span v-if="showDetails && !warehouseWorkspace" class="d4-planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(detail?.planned_amount) }}</strong> 元</span><small>{{ state === 'CANCELLED' ? '已取消 · 仓库库存未扣减' : state === 'COMPLETED' ? '整单回货已登记结束' : state === 'PROCESSING' ? '已按整单数量完成发出' : stockImpact }}</small></div>
+      <div>{{ footerLabel }} <strong>{{ showDetails ? format(detail?.total_quantity) : '—' }}</strong> {{ quantityUnit }} <span v-if="showDetails" class="muted"> · {{ rows.length }} 个部位<span v-if="source === 'RAW_PIPE'"> · {{ format(detail?.total_stock_quantity) }} 根 / {{ meters(detail?.total_meters) }} 米</span></span><span v-if="showDetails && !warehouseWorkspace && !cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(detail?.total_area_sqm, '—') }}</strong> ㎡</span><span v-if="showDetails && !warehouseWorkspace" class="d4-planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(detail?.planned_amount) }}</strong> 元</span><small>{{ state === 'CANCELLED' ? '已取消 · 仓库库存未扣减' : state === 'COMPLETED' ? '整单回货已登记结束' : state === 'PROCESSING' ? '已按整单数量完成发出' : stockImpact }}</small></div>
       <ElButton v-if="pending" type="primary" :loading="saving" :disabled="storageError" @click="recoverPending(true)">核对本次提交</ElButton>
       <template v-else-if="state === 'PENDING_DISPATCH'"><ElTooltip v-if="!warehouseWorkspace" :disabled="detail?.permissions.can_cancel !== false" content="当前账号没有取消权限"><span><ElButton :disabled="!canCancel" @click="openCancel">取消外发单</ElButton></span></ElTooltip><ElTooltip v-if="dispatchWorkspace" :disabled="detail?.permissions.can_dispatch !== false" content="当前账号没有实际发出权限"><span><ElButton type="primary" :disabled="!canDispatch" @click="openDispatch">确认实际发出</ElButton></span></ElTooltip></template>
       <ElButton v-else-if="state === 'PROCESSING' && warehouseWorkspace" type="primary" :disabled="!canReceive" @click="canReceive && router.push({ name: 'warehouse-outsourcing-tube-return', params: { id: orderId } })">{{ receiptTitle }}</ElButton>
@@ -457,7 +467,10 @@ onBeforeUnmount(() => { disposed = true; readSequence += 1 })
         <template #cell-raw_bar_length_m="{ row }">{{ meters(row.raw_bar_length_m) }}</template>
         <template #cell-stock_quantity="{ row }">{{ format(row.stock_quantity) }}</template>
         <template #cell-meters="{ row }">{{ meters(row.meters) }}</template>
-          <template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}</template>
+          <template #cell-unit_area_sqm="{ row }">{{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}</template>
+          <template #cell-line_area_sqm="{ row }">{{ formatOutsourcingMoney(row.line_area_sqm, '—') }}</template>
+          <template #cell-price_unit="{ row }">{{ row.price_unit === 'SQUARE_METER' ? '按㎡' : '按支' }}</template>
+          <template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="!cutting"> 元/{{ row.price_unit === 'SQUARE_METER' ? '㎡' : '支' }}</template></template>
           <template #cell-planned_amount="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template>
       </TubeOutsourcingDetailTable>
       <template v-if="materialRows.length">

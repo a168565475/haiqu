@@ -21,10 +21,10 @@ vi.mock('@/api/tubeOutsourcing', () => ({ fetchTubeOrder: vi.fn(), fetchTubeSour
 vi.mock('@/api/tubeReceipts', () => ({ fetchTubeReceiptPreview: vi.fn() }))
 vi.mock('element-plus', async original => ({ ...await original<typeof import('element-plus')>(), ElMessage: { success: vi.fn() } }))
 
-const line = { id: 'line-1', component_identity: 'part-1', part_name: '横管', factory_id: 'factory-1', factory_name: '加工厂', quantity: '900', unit_price: '0.25', planned_amount: '225', stock_quantity: null, meters: null, material: '钢', specification: 'Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '黑', pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [], bom_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', receivable_quantity: '400' }
+const line = { id: 'line-1', component_identity: 'part-1', part_name: '横管', factory_id: 'factory-1', factory_name: '加工厂', quantity: '900', price_unit: 'PIECE' as const, unit_area_sqm: null, line_area_sqm: null, unit_price: '0.25', planned_amount: '225', stock_quantity: null, meters: null, material: '钢', specification: 'Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '黑', pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [], bom_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', receivable_quantity: '400' }
 const order: TubeOrderDetail = {
   id: 'plan-1', is_plan: true, order_number: 'WF-test', status: 'PROCESSING', version: 1, etag: 'v1', created: false, client_request_id: 'create-1', source_kind: 'PUBLIC_SEMI', source_label: '未喷塑半成品', schedule_product_id: 'schedule-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-10-29', expected_return_date: '2026-11-05', total_quantity: '900', total_stock_quantity: null, total_meters: null, planned_amount: '225', task_order_number: 'DD-test', task_number: 'SC-test', schedule_number: 'PC-test', product_number: 'CP-test', item_number: '', product_name: '测试产品', quantity: '500', unit: '把', color: '黑', zone_id: 'zone-1', zone_name: '未喷塑区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '', created_at: '', created_by_name: '', actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
+  planned_dispatch_date: '2026-10-29', expected_return_date: '2026-11-05', total_quantity: '900', total_stock_quantity: null, total_meters: null, total_area_sqm: null, planned_amount: '225', task_order_number: 'DD-test', task_number: 'SC-test', schedule_number: 'PC-test', product_number: 'CP-test', item_number: '', product_name: '测试产品', quantity: '500', unit: '把', color: '黑', zone_id: 'zone-1', zone_name: '未喷塑区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '', created_at: '', created_by_name: '', actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: true, can_receive: true, can_cancel: false }, lines: [line, { ...line, id: 'line-2', component_identity: 'part-2', part_name: '竖管', quantity: '100', bom_quantity: '100', dispatched_quantity: '0', received_quantity: '0', receivable_quantity: '0' }],
   plan_summary: { bom_quantity: '1100', planned_quantity: '1000', dispatched_quantity: '1200', received_quantity: '800', dispatch_progress: 109.1, receipt_progress: 72.7 }, dispatch_records: [], receipt_records: [],
   plan_options: { source_kinds: [{ value: 'PUBLIC_SEMI', label: '未喷塑半成品' }, { value: 'METAL', label: '金工直发' }], factories: [{ id: 'factory-1', name: '加工厂' }], zones: [{ id: 'zone-1', name: '未喷塑区', warehouse_id: 'warehouse-1', warehouse_name: '半成品仓', warehouse_type: 'SEMI_FINISHED' }] },
@@ -44,7 +44,7 @@ function receivedResult(requestId: string): TubeOrderDetail {
   return { ...structuredClone(order), etag: 'v2', receipt_records: [{ id: 'receipt-1', client_request_id: requestId, receipt_number: 'RK-test', receipt_date: '2026-10-29', created_at: '', actor_name: '经办人', warehouse_id: 'warehouse-1', warehouse_name: '半成品仓', total_received_quantity: '200', lines: [{ order_line_id: 'line-1', component_identity: 'part-1', received_quantity: '200', zone_id: 'received-zone', zone_name: '喷塑区' }] }] }
 }
 interface ViewModel {
-  entries: Array<{ quantity: string; zone: string; factory: string; price: string }>
+  entries: Array<{ quantity: string; zone: string; factory: string }>
   materialEntries: Array<{ id: string; quantity: string; zone: string; factory: string }>
   mode: string; pending: TubePlanPendingAction | null; message: string; canReceive: boolean
   open: (kind: 'DISPATCH' | 'RECEIPT') => Promise<void>; submit: () => Promise<void>; postPending: () => Promise<void>
@@ -144,6 +144,20 @@ describe('车间编辑委外总单计划数量', () => {
 })
 
 describe('委外总单分次收发', () => {
+  it('车间总单显示冻结面积、逐行计价单位和金额，仓库隐藏', async () => {
+    const value = structuredClone(order)
+    value.total_area_sqm = '112.5000'; value.planned_amount = '281.25'
+    Object.assign(value.lines[0]!, { price_unit: 'SQUARE_METER', unit_area_sqm: '0.1250', line_area_sqm: '112.5000', unit_price: '2.50', planned_amount: '281.25' })
+    const workshop = await mountPage(value, false, {}, true)
+    expect(workshop.wrapper.text()).toContain('喷塑总面积')
+    expect(workshop.wrapper.text()).toContain('112.5 ㎡')
+    expect(workshop.wrapper.text()).toContain('按㎡')
+    expect(workshop.wrapper.text()).toContain('2.5 元/㎡')
+    const warehouse = await mountPage(value, true, {}, true)
+    expect(warehouse.wrapper.text()).not.toContain('喷塑总面积')
+    expect(warehouse.wrapper.text()).not.toContain('计价方式')
+    expect(warehouse.wrapper.text()).not.toContain('计划加工金额')
+  })
   it('列表直接打开材料发出，沿用总单厂家单价但不提供编辑或金额展示', async () => {
     const value = structuredClone(order); value.source_kind = 'METAL'; value.zone_id = null
     value.lines[0]!.quantity = '2700'
@@ -161,7 +175,7 @@ describe('委外总单分次收发', () => {
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('Φ22')
     expect(wrapper.findAll('.plan-entry-table tbody tr')[0]!.text()).toContain('400')
     vm.entries[0]!.quantity = '1500'; await vm.submit()
-    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1', unit_price: '0.25' }] }), 'v1')
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(wrapper.emitted('closed')).toHaveLength(1)
   })
   it('列表外发入库保留真实可入数量、材料属性和只读计划厂家', async () => {
@@ -427,7 +441,7 @@ describe('委外总单分次收发', () => {
     const { vm } = await mountPage(value)
     await vm.open('DISPATCH'); vm.entries[0]!.quantity = '1500'; await vm.submit()
     expect(api.fetchTubeSource).toHaveBeenCalledWith(expect.objectContaining({ plan_id: 'plan-1', source_kind: 'PUBLIC_SEMI' }))
-    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1', unit_price: '0.25' }] }), 'v1')
+    expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(localStorage.getItem(key)).toBeNull()
   })
   it.each(['METAL', 'SEWING', 'PUBLIC_SEMI', 'PUBLIC_CUTTING'] as const)('%s按总单数量减累计已发限制本次外发', async sourceKind => {

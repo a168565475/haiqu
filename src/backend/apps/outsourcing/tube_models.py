@@ -14,6 +14,11 @@ class TubeSourceKind(models.TextChoices):
     SEWING = 'SEWING', '未入库车缝完成件'
 
 
+class PriceUnit(models.TextChoices):
+    PIECE = 'PIECE', '按支'
+    SQUARE_METER = 'SQUARE_METER', '按平方米'
+
+
 class TubeOutsourcingOrder(TimeStampedModel):
     order_number = models.CharField(max_length=50, unique=True)
     is_plan = models.BooleanField(default=False)
@@ -70,6 +75,13 @@ class TubeOutsourcingLine(TimeStampedModel):
     factory = models.ForeignKey('outsourcing.OutsourcingFactory', on_delete=models.PROTECT,
                                 related_name='tube_outsourcing_lines')
     quantity = models.PositiveBigIntegerField()
+    price_unit = models.CharField(
+        max_length=20,
+        choices=PriceUnit.choices,
+        default=PriceUnit.PIECE,
+        db_default=PriceUnit.PIECE,
+    )
+    unit_area_sqm = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     stock_quantity = models.PositiveBigIntegerField(null=True, blank=True)
     input_identity = models.JSONField(default=dict, blank=True)
@@ -92,6 +104,10 @@ class TubeOutsourcingLine(TimeStampedModel):
                                    name='tube_line_stock_positive'),
             models.CheckConstraint(condition=Q(unit_price__isnull=True) | Q(unit_price__gte=0),
                                    name='tube_line_price_nonnegative'),
+            models.CheckConstraint(condition=Q(price_unit__in=PriceUnit.values),
+                                   name='tube_line_price_unit_valid'),
+            models.CheckConstraint(condition=Q(unit_area_sqm__isnull=True) | Q(unit_area_sqm__gte=0),
+                                   name='tube_line_area_nonnegative'),
         ]
         indexes = [models.Index(fields=['component_identity', 'order'], name='tube_line_component_idx')]
 

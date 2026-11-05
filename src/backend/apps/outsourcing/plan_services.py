@@ -14,7 +14,8 @@ from apps.inventory.public_stock_identity import validate_public_identity
 from apps.inventory.public_stock_services import credit_public_stock
 
 from .material_flow import lock_request
-from .models import OutsourcingFactory, TubeOutsourcingOrder, TubeOutsourcingLine, TubePlanReceipt, TubePlanReceiptLine
+from .models import (OutsourcingFactory, PriceUnit, TubeOutsourcingOrder, TubeOutsourcingLine,
+                     TubePlanReceipt, TubePlanReceiptLine)
 from .plan_selectors import plan_quantities
 from .services import _json_hash
 from .processing_materials import processing_line_fields, require_saved_processing_materials
@@ -23,6 +24,7 @@ from .tube_kinds import CUTTING_FIELDS, CUTTING_SOURCES, lock_source_product, ou
 from .tube_selectors import (CREATE_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION,
     require_saved_order_access, require_tube_feature, source_factories, source_product, source_zone)
 from .tube_services import _json
+from .tube_prices import parse_unit_area
 
 
 def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False):
@@ -41,6 +43,7 @@ def plan_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
             'source_kind': source_kind, 'craft_id': craft.pk,
             'rows': [{'component_identity': row['component_identity'], 'bom_line_id': row['bom_line_id'],
                 'order_required': row['order_required'], 'output': row['snapshot'].get('public_output_identity'),
+                'unit_area_sqm': row.get('unit_area_sqm'),
                 'blockers': row['blockers']} for row in context['rows']]}))
     return context
 
@@ -108,9 +111,17 @@ def create_plan(*, data, request):
             'part_name', 'material', 'specification', 'thickness', 'cutting_length_mm', 'raw_color',
             'spray_color', 'order_required', 'pieces_per_bar', 'raw_bar_length_m', *CUTTING_FIELDS)},
             'factory_name': factories[entered['factory_id']].name}
+        price_unit = entered.get('price_unit', PriceUnit.PIECE)
+        explicit_price_unit = 'price_unit' in entered
+        bom_line = bom_lines[row['bom_line_id']]
+        unit_area = (parse_unit_area((bom_line.raw_values or {}).get('coating_unit_area_sqm'))
+                     if explicit_price_unit and data['source_kind'] not in CUTTING_SOURCES else None)
+        if price_unit == PriceUnit.SQUARE_METER and unit_area is None:
+            raise ValidationError({'lines': f'“{row.get("part_name", "管材")}”缺少有效的单支喷塑面积，不能按平方米计价。'})
         lines.append(TubeOutsourcingLine(bom_line_id=row['bom_line_id'], component_identity=entered['component_identity'],
-            **processing_line_fields(bom_line=bom_lines[row['bom_line_id']], row=row, craft=craft),
-            factory_id=entered['factory_id'], quantity=entered['quantity'], unit_price=entered['unit_price'],
+            **processing_line_fields(bom_line=bom_line, row=row, craft=craft),
+            factory_id=entered['factory_id'], quantity=entered['quantity'], price_unit=price_unit,
+            unit_area_sqm=unit_area, unit_price=entered['unit_price'],
             stock_quantity=None, input_identity=_json(row['input_identity']), snapshot=_json(snapshot)))
     order = TubeOutsourcingOrder.objects.create(is_plan=True, order_number=next_business_number('OUTSOURCING_ORDER'),
         schedule_product=product, product_line=product.product_line, bom_id=context['bom_id'], craft=craft,
@@ -124,7 +135,11 @@ def create_plan(*, data, request):
     TubeOutsourcingLine.objects.bulk_create(lines)
     write_audit_log(object_type='TUBE_OUTSOURCING_ORDER', object_id=order.pk, action='PLAN_CREATED',
         actor_employee=request.employee, after_data={'order_number': order.order_number,
-            'planned_quantity': sum(line.quantity for line in lines), 'is_plan': True},
+            'planned_quantity': sum(line.quantity for line in lines), 'is_plan': True,
+            'lines': [{'component_identity': str(line.component_identity), 'quantity': line.quantity,
+                       'price_unit': line.price_unit,
+                       'unit_area_sqm': str(line.unit_area_sqm) if line.unit_area_sqm is not None else None,
+                       'unit_price': str(line.unit_price)} for line in lines]},
         context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)
     from apps.wecom.workshop_notifications import outsourcing_created
     outsourcing_created(order, request.employee, tube=True)
@@ -217,7 +232,7 @@ def dispatch_plan(*, order_id, data, request):
     batch_data = {**data, 'is_plan': False, 'schedule_product_id': order.schedule_product_id,
         'craft_id': order.craft_id, 'source_revision': '', 'planned_dispatch_date': data['actual_dispatch_date'],
         'expected_return_date': max(order.expected_return_date, data['actual_dispatch_date'])}
-    batch, _ = create_tube_order(data=batch_data, request=request, plan=order)
+    batch, _ = create_tube_order(data=batch_data, request=request, plan=order, frozen_plan_lines=expected)
     planned_materials = {row['bom_line_id']: row for row in order.source_snapshot.get('planned_materials', [])}
     for material in batch.materials.all():
         planned = planned_materials.get(str(material.bom_line_id))

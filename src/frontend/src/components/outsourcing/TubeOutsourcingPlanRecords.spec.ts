@@ -31,16 +31,16 @@ const actualAuxiliarySnapshot: MaterialSelectionSnapshot = {
 }
 const planLine: TubeDetailLine = {
   id: 'plan-line-1', component_identity: 'component-1', part_name: '总单横管', factory_id: 'planned-factory', factory_name: '计划加工厂',
-  quantity: '8000', unit_price: '0.25', planned_amount: '2000', stock_quantity: null, meters: null,
+  quantity: '8000', price_unit: 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: '1000', unit_price: '0.25', planned_amount: '250', stock_quantity: null, meters: null,
   material: '总单钢', specification: '总单Φ22', thickness: '1', cutting_length_mm: '400', raw_color: '本色', spray_color: '总单黑',
   pieces_per_bar: '10', raw_bar_length_m: '6', current_reported_minimum: null, operations: [], basis_blockers: [],
   bom_quantity: '8000', dispatched_quantity: '160', received_quantity: '110', receivable_quantity: '50',
 }
 const dispatchRecords: TubePlanDispatchRecord[] = [
   { id: 'batch-1', client_request_id: 'dispatch-request-1', order_number: 'WF-BATCH-001', actual_dispatch_date: '2026-11-01', created_at: '2026-11-01T08:00:00+08:00', actor_name: '发出经办甲', source_kind: 'RAW_PIPE', zone_name: '原料一区', total_quantity: '100',
-    lines: [{ component_identity: 'component-1', quantity: '100', factory_id: 'batch-factory-1', factory_name: '实际加工厂甲', unit_price: '0.75' }] },
+    lines: [{ component_identity: 'component-1', quantity: '100', factory_id: 'batch-factory-1', factory_name: '实际加工厂甲', price_unit: 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: '12.5', unit_price: '0.75', planned_amount: '9.38' }] },
   { id: 'batch-2', client_request_id: 'dispatch-request-2', order_number: 'WF-BATCH-002', actual_dispatch_date: '2026-11-02', created_at: '2026-11-02T08:00:00+08:00', actor_name: '发出经办乙', source_kind: 'PUBLIC_SEMI', zone_name: '半成品二区', total_quantity: '60',
-    lines: [{ component_identity: 'component-1', quantity: '60', factory_id: 'batch-factory-2', factory_name: '实际加工厂乙', unit_price: '0.95' }] },
+    lines: [{ component_identity: 'component-1', quantity: '60', factory_id: 'batch-factory-2', factory_name: '实际加工厂乙', price_unit: 'PIECE', unit_area_sqm: '0.125', line_area_sqm: '7.5', unit_price: '0.95', planned_amount: '57' }] },
 ]
 const receiptRecords: TubePlanReceiptRecord[] = [
   { id: 'receipt-1', client_request_id: 'receipt-request-1', receipt_number: 'RK-001', receipt_date: '2026-11-02', created_at: '2026-11-02T09:00:00+08:00', actor_name: '入库经办甲', warehouse_id: 'receipt-warehouse', warehouse_name: '已加工仓', total_received_quantity: '90',
@@ -51,7 +51,7 @@ const receiptRecords: TubePlanReceiptRecord[] = [
 const plan: TubeOrderDetail = {
   id: 'plan-1', is_plan: true, order_number: 'WF-PLAN', status: 'PROCESSING', version: 1, etag: '"plan-v1"', created: false,
   client_request_id: 'plan-request', source_kind: 'PUBLIC_SEMI', source_label: '未喷塑半成品', schedule_product_id: 'schedule-product', product_line_id: 'product-line',
-  planned_dispatch_date: '2026-11-01', expected_return_date: '2026-11-10', total_quantity: '8000', planned_amount: '2000', total_stock_quantity: null, total_meters: null,
+  planned_dispatch_date: '2026-11-01', expected_return_date: '2026-11-10', total_quantity: '8000', total_area_sqm: '1000', planned_amount: '250', total_stock_quantity: null, total_meters: null,
   task_order_number: 'DD-PLAN', task_number: 'SC-PLAN', schedule_number: 'PC-PLAN', product_number: 'CP-PLAN', item_number: '', product_name: '测试产品', quantity: '4000', unit: '把', color: '黑',
   zone_id: 'planned-zone', zone_name: '总单库区', warehouse_name: '半成品仓', craft_name: '喷塑', remark: '总单备注', created_at: '', created_by_name: '制单人',
   actual_dispatch_date: null, dispatched_at: null, dispatched_by_name: '', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
@@ -67,12 +67,13 @@ function batch(id = 'batch-1'): TubeOrderDetail {
   return { ...value, id, plan_id: plan.id, is_plan: false, order_number: second ? 'WF-BATCH-002' : 'WF-BATCH-001',
     source_kind: second ? 'PUBLIC_SEMI' : 'RAW_PIPE', source_label: second ? '未喷塑半成品' : '原材料',
     actual_dispatch_date: second ? '2026-11-02' : '2026-11-01', dispatched_by_name: second ? '发出经办乙' : '发出经办甲',
-    zone_name: second ? '半成品二区' : '原料一区', total_quantity: second ? '60' : '100', planned_amount: second ? '57' : '75',
+    zone_name: second ? '半成品二区' : '原料一区', total_quantity: second ? '60' : '100', total_area_sqm: second ? '7.5' : '12.5', planned_amount: second ? '57' : '9.38',
     total_stock_quantity: second ? null : '10', total_meters: second ? null : '60', remark: '本批交接备注',
     lines: [{ ...value.lines[0]!, id: `${id}-line`, part_name: second ? '批次乙横管' : '批次甲横管', material: '批次钢',
       specification: second ? '批次Φ32' : '批次Φ28', cutting_length_mm: second ? '700' : '600', thickness: '1.5', spray_color: second ? '批次蓝' : '批次红',
       quantity: second ? '60' : '100', factory_id: second ? 'batch-factory-2' : 'batch-factory-1', factory_name: second ? '实际加工厂乙' : '实际加工厂甲',
-      unit_price: second ? '0.95' : '0.75', planned_amount: second ? '57' : '75', stock_quantity: second ? null : '10', meters: second ? null : '60',
+      price_unit: second ? 'PIECE' : 'SQUARE_METER', unit_area_sqm: '0.125', line_area_sqm: second ? '7.5' : '12.5',
+      unit_price: second ? '0.95' : '0.75', planned_amount: second ? '57' : '9.38', stock_quantity: second ? null : '10', meters: second ? null : '60',
       input_material_selection_snapshot: savedMaterial,
     }], dispatch_records: [], receipt_records: [],
     materials: [{ id: 'attached-1', bom_line_id: 'bom-attached', component_identity: null, order_line_id: null, part_name: '',
@@ -159,7 +160,7 @@ describe('委外总单历史收发表格', () => {
     for (const text of ['批次甲横管', '批次钢', '批次Φ28', '方管', '1.5', '批次红', '600', '100', '实际加工厂甲']) expect(table.text()).toContain(text)
     for (const text of ['总单Φ22', '总单钢', '总单黑', '计划加工厂']) expect(table.text()).not.toContain(text)
     expect(table.findAll('th').some(cell => cell.text().includes('支'))).toBe(true)
-    expect(table.findAll('th').some(cell => /单价|金额/.test(cell.text()))).toBe(false)
+    expect(table.findAll('th').some(cell => /喷塑面积|计价方式|单价|金额/.test(cell.text()))).toBe(false)
     const materials = wrapper.get('.dispatch-record-materials')
     for (const text of ['本批保存织带', '12.5', '米', '实际加工厂甲', '辅料一区']) expect(materials.text()).toContain(text)
     expect(materials.text()).not.toContain('计划用织带')
@@ -185,13 +186,14 @@ describe('委外总单历史收发表格', () => {
     expect(records(wrapper, '.dispatch-record-lines')[0]).toMatchObject({ 材质: '本批涤纶', 规格: '本批45×60', 颜色: '本批红', 每套片数: '4' })
     expect(table.text()).not.toContain('总单40×50')
   })
-  it('车间外发明细保留批次真实单价，仓库不同价款规则不影响只读查询', async () => {
+  it('车间外发明细显示批次冻结面积、计价方式、动态单价和金额，仓库不同价款规则不影响只读查询', async () => {
     const wrapper = await mountRecords(structuredClone(plan), false)
     await openDispatch(wrapper)
     expect(api.fetchTubeOrder).toHaveBeenCalledWith('batch-1', false)
-    expect(wrapper.get('.dispatch-record-lines').findAll('th').some(cell => cell.text().includes('单价'))).toBe(true)
-    expect(wrapper.get('.dispatch-record-lines').text()).toContain('0.75')
-    expect(wrapper.get('.dispatch-record-lines').text()).not.toContain('0.25')
+    const table = wrapper.get('.dispatch-record-lines')
+    expect(table.findAll('th').map(cell => cell.text())).toEqual(expect.arrayContaining(['单支喷塑面积（㎡）', '本批喷塑面积（㎡）', '计价方式', '单价', '金额']))
+    for (const text of ['0.125', '12.5', '按㎡', '0.75 元/㎡', '9.38']) expect(table.text()).toContain(text)
+    expect(table.text()).not.toContain('0.25')
   })
   it('每次外发独立读取，第二批不遗留第一批厂家规格数量', async () => {
     const wrapper = await mountRecords()

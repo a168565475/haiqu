@@ -4,6 +4,7 @@ import uuid
 from decimal import Decimal
 
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.boms.models import BomLine
@@ -11,6 +12,7 @@ from ..api.tube_serializers import TubeOrderWriteSerializer
 from ..models import TubeOutsourcingLine, TubeOutsourcingOrder
 from ..services import _json_hash
 from .test_tube_materials_api import TubeMaterialFixture
+from .test_plan_orders_api import PlanApiFixture
 from .test_tube_receipts_api import TubeReceiptFixture
 
 
@@ -19,6 +21,15 @@ UNIFIED_URL = '/api/v1/unified-outsourcing-orders/'
 
 @override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
 class TubePricesApiTests(TubeReceiptFixture, APITestCase):
+    def set_unit_area(self, value):
+        values = dict(self.metal_bom_line.raw_values or {})
+        if value is None:
+            values.pop('coating_unit_area_sqm', None)
+        else:
+            values['coating_unit_area_sqm'] = value
+        self.metal_bom_line.raw_values = values
+        self.metal_bom_line.save(update_fields=['raw_values'])
+
     def priced_payload(self, price='2.50'):
         payload = self.order_payload()
         payload['lines'][0]['unit_price'] = price
@@ -42,6 +53,110 @@ class TubePricesApiTests(TubeReceiptFixture, APITestCase):
         self.assert_price(dispatched)
         self.assertEqual(dispatched['status'], 'PROCESSING')
         self.assert_price(self.preview(dispatched)['order'])
+
+    def test_source_context_exposes_positive_bom_unit_area(self):
+        self.set_unit_area('0.1250')
+        row = self.context()['rows'][0]
+        self.assertEqual(row['unit_area_sqm'], '0.1250')
+
+    def test_square_meter_price_freezes_area_and_calculates_amount(self):
+        self.set_unit_area('0.1250')
+        payload = self.priced_payload()
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        order = self.post_order(payload).data['data']
+        line = TubeOutsourcingLine.objects.get(order_id=order['id'])
+        self.assertEqual(line.price_unit, 'SQUARE_METER')
+        self.assertEqual(line.unit_area_sqm, Decimal('0.1250'))
+        self.assertEqual(order['lines'][0]['line_area_sqm'], '2.5000')
+        self.assertEqual(order['lines'][0]['planned_amount'], '6.25')
+        self.assertEqual(order['total_area_sqm'], '2.5000')
+        self.assertEqual(order['planned_amount'], '6.25')
+
+    def test_mixed_piece_and_square_meter_lines_sum_amount_and_area(self):
+        self.set_unit_area('0.1250')
+        second = BomLine.objects.get(pk=self.metal_bom_line.pk)
+        second.pk, second.component_identity, second.line_number = uuid.uuid4(), uuid.uuid4(), 2
+        second.part_name = '按支后脚管'
+        second.raw_values = {**(second.raw_values or {}), 'coating_unit_area_sqm': '0.2500'}
+        second.save(force_insert=True)
+        payload = self.priced_payload()
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        payload['lines'].append({'component_identity': str(second.component_identity), 'quantity': '10',
+                                 'factory_id': str(self.factory.pk), 'price_unit': 'PIECE',
+                                 'unit_price': '3.00'})
+        order = self.post_order(payload).data['data']
+        rows = {row['component_identity']: row for row in order['lines']}
+        self.assertEqual(rows[self.component]['planned_amount'], '6.25')
+        self.assertEqual(rows[str(second.component_identity)]['planned_amount'], '30.00')
+        self.assertEqual(order['total_area_sqm'], '5.0000')
+        self.assertEqual(order['planned_amount'], '36.25')
+
+    def test_missing_zero_or_invalid_area_rejects_square_meter_but_allows_piece(self):
+        for value in [None, '0', '-0.1', 'abc', True]:
+            with self.subTest(value=value):
+                self.set_unit_area(value)
+                payload = self.priced_payload()
+                payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+                self.post_order(payload, 400)
+        self.set_unit_area('abc')
+        payload = self.priced_payload()
+        payload['lines'][0]['price_unit'] = 'PIECE'
+        order = self.post_order(payload).data['data']
+        self.assertEqual(order['lines'][0]['price_unit'], 'PIECE')
+        self.assertIsNone(order['lines'][0]['unit_area_sqm'])
+        self.assertIsNone(order['total_area_sqm'])
+
+    def test_legacy_missing_price_unit_remains_piece_and_area_unknown(self):
+        self.set_unit_area('0.1250')
+        order = self.post_order(self.priced_payload()).data['data']
+        line = TubeOutsourcingLine.objects.get(order_id=order['id'])
+        self.assertEqual(line.price_unit, 'PIECE')
+        self.assertIsNone(line.unit_area_sqm)
+        self.assertEqual(order['lines'][0]['price_unit'], 'PIECE')
+        self.assertIsNone(order['lines'][0]['unit_area_sqm'])
+        self.assertIsNone(order['total_area_sqm'])
+
+    def test_changed_area_or_price_unit_conflicts_for_same_client_request(self):
+        self.set_unit_area('0.1250')
+        payload = self.priced_payload()
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        order = self.post_order(payload).data['data']
+        changed = copy.deepcopy(payload)
+        changed['lines'][0]['price_unit'] = 'PIECE'
+        self.post_order(changed, 409)
+        self.set_unit_area('0.2500')
+        replay = self.post_order(payload, 200).data['data']
+        self.assertEqual(replay['id'], order['id'])
+        self.assertEqual(replay['lines'][0]['unit_area_sqm'], '0.1250')
+
+    def test_saved_area_does_not_change_after_bom_edit(self):
+        self.set_unit_area('0.1250')
+        payload = self.priced_payload()
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        order = self.post_order(payload).data['data']
+        self.set_unit_area('0.2500')
+        detail = self.detail(order).data['data']
+        self.assertEqual(detail['lines'][0]['unit_area_sqm'], '0.1250')
+        self.assertEqual(detail['total_area_sqm'], '2.5000')
+
+    def test_square_meter_rounding_matches_decimal_half_even(self):
+        self.set_unit_area('0.0005')
+        payload = self.order_payload('METAL', '10')
+        payload['lines'][0]['unit_price'] = '1.00'
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        order = self.post_order(payload).data['data']
+        self.assertEqual(order['lines'][0]['line_area_sqm'], '0.0050')
+        self.assertEqual(order['lines'][0]['planned_amount'], '0.00')
+        self.assertEqual(order['planned_amount'], '0.00')
+
+    def test_cutting_source_rejects_square_meter_price_unit(self):
+        payload = self.priced_payload()
+        payload['source_kind'] = 'PUBLIC_CUTTING'
+        payload['craft_id'] = str(uuid.uuid4())
+        payload['lines'][0]['price_unit'] = 'SQUARE_METER'
+        serializer = TubeOrderWriteSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('lines', serializer.errors)
 
     def test_receipt_keeps_planned_amount_from_dispatched_quantity(self):
         order = self.post_order(self.priced_payload()).data['data']
@@ -161,3 +276,34 @@ class TubeHardwareFactoryListTests(TubeMaterialFixture, APITestCase):
         response = self.client.get(UNIFIED_URL, {'factory_id': str(uuid.uuid4())}, HTTP_HOST='localhost')
         self.assertEqual(response.status_code, 200, response.data)
         self.assertNotIn(order['id'], [row['id'] for row in response.data['data']])
+
+
+@override_settings(TUBE_OUTSOURCING_ENABLED=True, PUBLIC_STOCK_FLOW_ENABLED=True)
+class TubePlanPriceApiTests(PlanApiFixture, APITestCase):
+    def test_plan_dispatch_inherits_frozen_area_price_without_warehouse_override(self):
+        values = dict(self.metal_bom_line.raw_values or {})
+        values['coating_unit_area_sqm'] = '0.1250'
+        self.metal_bom_line.raw_values = values
+        self.metal_bom_line.save(update_fields=['raw_values'])
+        context = self.plan_context('METAL')
+        payload = {'is_plan': True, 'client_request_id': str(uuid.uuid4()),
+            'source_revision': context['source_revision'], 'schedule_product_id': str(self.schedule_product.pk),
+            'source_kind': 'METAL', 'zone_id': None,
+            'planned_dispatch_date': str(timezone.localdate()), 'expected_return_date': str(timezone.localdate()),
+            'lines': [{'component_identity': self.component, 'quantity': '200',
+                'factory_id': str(self.factory.pk), 'price_unit': 'SQUARE_METER', 'unit_price': '1.25'}]}
+        plan = self.post_order(payload).data['data']
+        dispatch = self.dispatch_payload('METAL', '100')
+        dispatch['lines'][0].pop('unit_price')
+        saved = self.write_plan(plan, 'dispatch', dispatch)
+        batch = TubeOutsourcingOrder.objects.get(plan_id=plan['id'])
+        line = batch.lines.get()
+        self.assertEqual(line.price_unit, 'SQUARE_METER')
+        self.assertEqual(line.unit_area_sqm, Decimal('0.1250'))
+        self.assertEqual(line.unit_price, Decimal('1.25'))
+        record_line = saved['dispatch_records'][0]['lines'][0]
+        self.assertEqual(record_line['price_unit'], 'SQUARE_METER')
+        self.assertEqual(record_line['unit_area_sqm'], '0.1250')
+        self.assertEqual(record_line['line_area_sqm'], '12.5000')
+        self.assertEqual(record_line['unit_price'], '1.25')
+        self.assertEqual(record_line['planned_amount'], '15.62')

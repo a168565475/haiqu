@@ -13,7 +13,7 @@ import { fetchTubeReceiptPreview } from '@/api/tubeReceipts'
 import type { TubeDetailLine, TubeOrderDetail, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
 import type { TubeReceiptPreview } from '@/types/tubeReceipts'
 import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeQuantityError, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
-import { formatOutsourcingMoney, outsourcingPriceError } from '@/utils/outsourcingPrices'
+import { formatOutsourcingMoney } from '@/utils/outsourcingPrices'
 import { createClientUuid } from '@/utils/clientUuid'
 import '@/styles/tubeOutsourcingDetail.scss'
 
@@ -33,7 +33,7 @@ const zone = ref(props.order.zone_id || ''), warehouseId = ref(''), remark = ref
 const date = ref('')
 const context = ref<TubeSourceContext | null>(null)
 const receiptPreview = ref<TubeReceiptPreview | null>(null)
-const entries = ref<Array<{ id: string; component: string; name: string; quantity: string; factory: string; price: string; zone: string }>>([])
+const entries = ref<Array<{ id: string; component: string; name: string; quantity: string; factory: string; zone: string }>>([])
 const materialEntries = ref<Array<{ id: string; name: string; quantity: string; factory: string; zone: string }>>([])
 const ownedOrderId = props.order.id
 const ownedWarehouse = props.warehouse
@@ -89,7 +89,15 @@ const columns = computed(() => [
   { key: 'quantity', label: `计划数量（${unit.value}）`, width: 120, num: true },
   { key: 'dispatched_quantity', label: '累计实发', width: 110, num: true },
   { key: 'received_quantity', label: '累计入库', width: 110, num: true },
-  ...(!props.warehouse ? [{ key: 'unit_price', label: `计划单价（元/${unit.value}）`, width: 145, num: true }] : []),
+  ...(!props.warehouse ? [
+    ...(!cutting.value ? [
+      { key: 'unit_area_sqm', label: '单支面积（㎡）', width: 120, num: true },
+      { key: 'line_area_sqm', label: '计划面积（㎡）', width: 120, num: true },
+      { key: 'price_unit', label: '计价方式', width: 95 },
+    ] : []),
+    { key: 'unit_price', label: cutting.value ? `计划单价（元/${unit.value}）` : '计划单价', width: 145, num: true },
+    { key: 'planned_amount', label: '计划金额（元）', width: 130, num: true },
+  ] : []),
 ])
 const quantityColumns = computed(() => [
   ...columns.value.filter(column => ['part_name', 'material', 'fabric_material', 'shape', 'specification', 'fabric_color', 'pieces_per_set', 'thickness', 'spray_color'].includes(column.key)),
@@ -220,7 +228,7 @@ async function open(kind: 'DISPATCH' | 'RECEIPT') {
   if (kind === 'DISPATCH' ? !canDispatch.value : !canReceive.value) return
   mode.value = kind; message.value = ''; date.value = today(); remark.value = ''; receiptPreview.value = null
   materialEntries.value = []
-  entries.value = props.order.lines.map(line => ({ id: line.id, component: line.component_identity, name: line.part_name, quantity: '', factory: line.factory_id, price: line.unit_price || '', zone: '' }))
+  entries.value = props.order.lines.map(line => ({ id: line.id, component: line.component_identity, name: line.part_name, quantity: '', factory: line.factory_id, zone: '' }))
   if (kind === 'DISPATCH') {
     source.value = props.order.source_kind
     zone.value = props.order.zone_id || ''
@@ -437,8 +445,6 @@ async function submit() {
       if (issue) { message.value = issue; return }
       if (Number(row.quantity) > dispatchRemaining(row.id)) { message.value = `${row.name}：本次最多可发 ${number(dispatchRemaining(row.id))} ${unit.value}，累计外发不能超过总单填写数量。`; return }
       if (!context.value.factories.some(factory => factory.id === row.factory)) { message.value = `${row.name}：总单指定的加工厂当前不可用，请核对总单。`; return }
-      const priceIssue = outsourcingPriceError(row.price)
-      if (priceIssue) { message.value = `${row.name}：${props.warehouse ? '总单加工资料不完整，请联系制单人核对。' : priceIssue}`; return }
     }
     const materials = materialEntries.value.filter(row => row.quantity.trim() && Number(row.quantity) !== 0)
     for (const row of materials) {
@@ -450,7 +456,7 @@ async function submit() {
     }
     action = { kind: 'DISPATCH', order_id: props.order.id, etag: props.order.etag, payload: {
       client_request_id: createClientUuid(), source_kind: source.value, zone_id: direct.value ? null : zone.value, actual_dispatch_date: date.value, remark: remark.value.trim(),
-      lines: positive.map(row => ({ component_identity: row.component, quantity: row.quantity.trim(), factory_id: row.factory, unit_price: row.price.trim() })),
+      lines: positive.map(row => ({ component_identity: row.component, quantity: row.quantity.trim(), factory_id: row.factory })),
       ...(materials.length ? { material_source_revision: context.value.material_source_revision, materials: materials.map(row => ({ bom_line_id: row.id, quantity: row.quantity.trim(), factory_id: row.factory, zone_id: row.zone })) } : {}),
     } }
   } else {
@@ -526,9 +532,11 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
         <div><span>累计实际外发</span><strong>{{ number(summary?.dispatched_quantity) }} {{ unit }}</strong><small>外发进度 {{ number(summary?.dispatch_progress) }}%</small></div>
         <div><span>累计入库</span><strong>{{ number(summary?.received_quantity) }} {{ unit }}</strong></div>
         <div><span>入库进度</span><strong>{{ number(summary?.receipt_progress) }}%</strong><ElProgress :percentage="progress" :show-text="false" :stroke-width="6" /></div>
+        <div v-if="!warehouse && !cutting"><span>喷塑总面积</span><strong>{{ formatOutsourcingMoney(order.total_area_sqm, '—') }} ㎡</strong></div>
+        <div v-if="!warehouse"><span>计划加工金额</span><strong>{{ formatOutsourcingMoney(order.planned_amount) }} 元</strong></div>
       </div>
     </section>
-    <section class="panel"><div class="section-heading"><h2>委外部件</h2><span class="muted">按 BOM 数量计算进度，实际数量如实累计</span></div><TubeOutsourcingDetailTable :columns="columns" :rows="order.lines"><template #cell-purchase_reference="{ row }"><span :title="row.purchase_reference?.conversion_note">{{ quantityReferenceKnown(row) ? number(row.purchase_reference?.quantity) : '—' }}</span></template><template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template><template #cell-shape="{ row }">{{ tubeMaterialColumn(row, 'shape') }}</template><template #cell-thickness="{ row }">{{ tubeMaterialColumn(row, 'thickness') }}</template><template #cell-spray_color="{ row }">{{ tubeMaterialColumn(row, 'spray_color') }}</template><template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}</template></TubeOutsourcingDetailTable><p v-if="cutting && order.planned_materials?.length" class="muted">计划附带辅料：<template v-for="(material, index) in order.planned_materials" :key="material.bom_line_id">{{ index ? '、' : '' }}<ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: material.material_selection_snapshot }">{{ material.name }}</ProcessingMaterialDetails> {{ number(material.quantity) }} {{ material.unit }}</template>；每次实际发货时填写本次数量。</p><p class="muted">{{ order.remark || '无备注' }}</p></section>
+    <section class="panel"><div class="section-heading"><h2>委外部件</h2><span class="muted">按 BOM 数量计算进度，实际数量如实累计</span></div><TubeOutsourcingDetailTable :columns="columns" :rows="order.lines"><template #cell-purchase_reference="{ row }"><span :title="row.purchase_reference?.conversion_note">{{ quantityReferenceKnown(row) ? number(row.purchase_reference?.quantity) : '—' }}</span></template><template #cell-part_name="{ row }"><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></template><template #cell-shape="{ row }">{{ tubeMaterialColumn(row, 'shape') }}</template><template #cell-thickness="{ row }">{{ tubeMaterialColumn(row, 'thickness') }}</template><template #cell-spray_color="{ row }">{{ tubeMaterialColumn(row, 'spray_color') }}</template><template #cell-unit_area_sqm="{ row }">{{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}</template><template #cell-line_area_sqm="{ row }">{{ formatOutsourcingMoney(row.line_area_sqm, '—') }}</template><template #cell-price_unit="{ row }">{{ row.price_unit === 'SQUARE_METER' ? '按㎡' : '按支' }}</template><template #cell-unit_price="{ row }">{{ formatOutsourcingMoney(row.unit_price) }}<template v-if="!cutting"> 元/{{ row.price_unit === 'SQUARE_METER' ? '㎡' : '支' }}</template></template><template #cell-planned_amount="{ row }">{{ formatOutsourcingMoney(row.planned_amount) }}</template></TubeOutsourcingDetailTable><p v-if="cutting && order.planned_materials?.length" class="muted">计划附带辅料：<template v-for="(material, index) in order.planned_materials" :key="material.bom_line_id">{{ index ? '、' : '' }}<ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: material.material_selection_snapshot }">{{ material.name }}</ProcessingMaterialDetails> {{ number(material.quantity) }} {{ material.unit }}</template>；每次实际发货时填写本次数量。</p><p class="muted">{{ order.remark || '无备注' }}</p></section>
     <TubeOutsourcingPlanRecords ref="records" :order="order" :warehouse="warehouse" :blocked="Boolean(blocked || identityBlocked || mode || quantityEditing)"
       :busy="saving || checkingPending" :pending="pending?.kind === 'CORRECTION'" :write-blocked="Boolean(storageError || loading || (pending && pending.kind !== 'CORRECTION'))"
       :request-conflict="pending?.kind === 'CORRECTION' && pending.request_conflict"

@@ -35,7 +35,7 @@ const options: TubeOptions = {
   ],
   source_kinds: [{ value: 'RAW_PIPE', label: '公共原管材' }, { value: 'PUBLIC_SEMI', label: '公共未喷塑半成品' }, { value: 'METAL', label: '厂内已加工件' }],
 }
-const row: TubeSourceRow = { component_identity: 'front', bom_line_id: 'bom-front', part_name: '前腿管', material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '原料本色', spray_color: '黑色', order_required: '2000', stock_quantity: '200', stock_unit: '根', max_quantity: '1200', pieces_per_bar: '6', raw_bar_length_m: '3.95', blockers: [], purchase_reference: { quantity: '3000', unit: '支', purchased_quantity: '500', purchase_unit: '根', conversion_note: '采购实际入库500根 × BOM每根6支 = 3000支。' } }
+const row: TubeSourceRow = { component_identity: 'front', bom_line_id: 'bom-front', part_name: '前腿管', material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '原料本色', spray_color: '黑色', unit_area_sqm: '0.1250', order_required: '2000', stock_quantity: '200', stock_unit: '根', max_quantity: '1200', pieces_per_bar: '6', raw_bar_length_m: '3.95', blockers: [], purchase_reference: { quantity: '3000', unit: '支', purchased_quantity: '500', purchase_unit: '根', conversion_note: '采购实际入库500根 × BOM每根6支 = 3000支。' } }
 const context: TubeSourceContext = { source_revision: 'revision-1', source_kind: 'RAW_PIPE', schedule_product_id: 'schedule-product', product_line_id: 'product', task_id: 'task', task_number: 'SC-test', order_number: 'DD-test', schedule_number: 'PC-test', product_number: 'CP-test', item_number: 'HT-test', product_name: '测试椅', quantity: '1000', unit: '把', color: '黑色', ...productDisplay, craft_name: '喷塑', zone_id: 'zone', ready: true, blockers: [], tasks: options.tasks, factories: options.factories, zones: options.zones, rows: [row] }
 const hardware = { bom_line_id: 'hardware', material_number: 'WJ-test', name: '铁垫片', specification: 'M8', material: '铁', color: '黑色', unit: 'kg', required_quantity: '50', order_remaining: '30', available_stock: '20', max_quantity: '20', blockers: [], zones: [{ zone_id: 'hardware-zone', zone_name: '五金区', warehouse_id: 'hardware-warehouse', warehouse_name: '五金仓', available_quantity: '20' }] }
 const auxiliarySnapshot: MaterialSelectionSnapshot = {
@@ -43,14 +43,14 @@ const auxiliarySnapshot: MaterialSelectionSnapshot = {
   category_key: 'AUXILIARY', template_key: 'AUXILIARY', scope: 'BASE', processing_state: 'RAW', processing_stage: 'RAW',
   unit_id: 'meter', unit_name: '米', attributes: { material: '涤纶', color: '黑色' }, display_name: '保存织带',
 }
-const result = (payload: TubePendingOrderInput): TubeOrderResult => ({ ...payload, id: 'saved-order', order_number: 'WF-real-response', status: 'PENDING_DISPATCH', version: 1, etag: 'saved', created: true, product_line_id: 'product', total_quantity: '600', total_stock_quantity: '100', total_meters: '395.00', planned_amount: '90.00' })
+const result = (payload: TubePendingOrderInput): TubeOrderResult => ({ ...payload, id: 'saved-order', order_number: 'WF-real-response', status: 'PENDING_DISPATCH', version: 1, etag: 'saved', created: true, product_line_id: 'product', total_quantity: '600', total_stock_quantity: '100', total_meters: '395.00', total_area_sqm: '75.0000', planned_amount: '11.25' })
 const httpError = (status: number) => Object.assign(new AxiosError('接口错误'), { response: { status, data: { error: { message: `状态 ${status}` } } } })
 interface ViewModel {
-  rows: Array<TubeSourceRow & { quantity: string; factoryId: string; unitPrice: string }>; returnDate: string
+  rows: Array<TubeSourceRow & { quantity: string; factoryId: string; priceUnit: 'PIECE' | 'SQUARE_METER'; unitPrice: string }>; returnDate: string
   dialog: string; pending: TubePendingOrderInput | null; error: string; sourceHint: string; warehouseId: string; zoneId: string
   context: TubeSourceContext | null
   materialRows: Array<typeof hardware & { quantity: string; factoryId: string; zoneId: string }>
-  plannedAmount: string | null
+  plannedAmount: string | null; totalArea: string | null
   checkDispatch: () => void; save: () => Promise<void>; loadSource: (preserve?: boolean) => Promise<void>
   requestChange: (kind: string, value: string) => void; applyChange: () => Promise<void>
 }
@@ -196,7 +196,7 @@ describe('管材建单与异常恢复', () => {
     expect(wrapper.find('[aria-controls="hardware-items"]').exists()).toBe(false)
     expect(wrapper.find('#hardware-items').exists()).toBe(false)
     fill(vm); await vm.save()
-    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ is_plan: true, lines: [{ component_identity: 'front', quantity: '600', factory_id: 'factory', unit_price: '0.15' }] }))
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ is_plan: true, lines: [{ component_identity: 'front', quantity: '600', factory_id: 'factory', price_unit: 'SQUARE_METER', unit_price: '0.15' }] }))
     expect(vi.mocked(api.createTubeOrder).mock.calls[0]![0]).not.toHaveProperty('materials')
     wrapper.unmount()
   })
@@ -223,7 +223,7 @@ describe('管材建单与异常恢复', () => {
     fill(vm); vm.rows[0]!.quantity = '2501'
     vm.checkDispatch(); expect(vm.dialog).toBe('confirm')
     await vm.save()
-    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ lines: [{ component_identity: 'front', quantity: '2501', factory_id: 'factory', unit_price: '0.15' }] }))
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({ lines: [{ component_identity: 'front', quantity: '2501', factory_id: 'factory', price_unit: 'SQUARE_METER', unit_price: '0.15' }] }))
     wrapper.unmount()
   })
   it.each(['600', '0', null])('管材采购入库参考%s支不限制需求计划，数量可填写并超过参考保存', async quantity => {
@@ -394,22 +394,57 @@ describe('管材建单与异常恢复', () => {
     localStorage.setItem(key, JSON.stringify(payload))
     const { wrapper, vm } = await mountPage()
     expect(vm.pending).toEqual(payload); expect(vm.warehouseId).toBe('other'); expect(vm.zoneId).toBe('zone-other')
+    expect(vm.rows[0]!.priceUnit).toBe('PIECE')
     expect(api.createTubeOrder).not.toHaveBeenCalled(); expect(api.findTubeOrder).toHaveBeenCalledWith('existing-request')
     wrapper.unmount()
   })
-  it('加工单价缺失或不合法阻止保存，真实0有效，金额按支数计算并去尾零', async () => {
+  it('管材默认按平方米显示面积并精确计算金额，切换按支后保留选择', async () => {
     const { wrapper, vm } = await mountPage(); fill(vm)
+    await flushPromises()
+    expect(vm.rows[0]!.priceUnit).toBe('SQUARE_METER')
+    expect(vm.totalArea).toBe('75.0000')
+    expect(wrapper.get('#tube-items').text()).toContain('单支 0.125㎡')
+    expect(wrapper.get('#tube-items').text()).toContain('合计 75㎡')
     for (const value of ['', '-1', '1e2', '0.151']) {
       vm.rows[0]!.unitPrice = value; vm.checkDispatch(); expect(vm.dialog).toBe('')
     }
     expect(api.createTubeOrder).not.toHaveBeenCalled()
     vm.rows[0]!.unitPrice = '0'; vm.checkDispatch(); expect(vm.dialog).toBe('confirm')
     vm.rows[0]!.unitPrice = '0.15'; await flushPromises()
+    expect(vm.plannedAmount).toBe('11.25')
+    expect(wrapper.get('.planned-amount').text()).toContain('11.25 元')
+    expect(wrapper.get('#tube-items').text()).toContain('计价方式')
+    vm.rows[0]!.priceUnit = 'PIECE'; await flushPromises()
     expect(vm.plannedAmount).toBe('90.00')
-    expect(wrapper.get('.planned-amount').text()).toContain('90 元')
-    expect(wrapper.get('#tube-items').text()).toContain('加工单价（元/支）')
     await vm.loadSource(true)
-    expect(vm.rows[0]!.unitPrice).toBe('0.15')
+    expect(vm.rows[0]!.unitPrice).toBe('0.15'); expect(vm.rows[0]!.priceUnit).toBe('PIECE')
+    wrapper.unmount()
+  })
+  it('各部位可独立选择按支或按平方米计价', async () => {
+    const second = { ...structuredClone(row), component_identity: 'back', bom_line_id: 'bom-back', part_name: '后腿管', unit_area_sqm: '0.2500' }
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), rows: [structuredClone(row), second] })
+    const { wrapper, vm } = await mountPage()
+    Object.assign(vm.rows[0]!, { quantity: '600', factoryId: 'factory', unitPrice: '0.15', priceUnit: 'PIECE' })
+    Object.assign(vm.rows[1]!, { quantity: '20', factoryId: 'factory', unitPrice: '2.00', priceUnit: 'SQUARE_METER' })
+    await flushPromises()
+    expect(vm.plannedAmount).toBe('100.00')
+    wrapper.unmount()
+  })
+  it('缺少有效面积时默认按平方米并阻止保存，改按支后可继续', async () => {
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), rows: [{ ...structuredClone(row), unit_area_sqm: null }] })
+    const { wrapper, vm } = await mountPage(); fill(vm)
+    expect(vm.rows[0]!.priceUnit).toBe('SQUARE_METER')
+    vm.checkDispatch(); expect(vm.dialog).toBe('')
+    expect(ElMessage.warning).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('改为按支') }))
+    vm.rows[0]!.priceUnit = 'PIECE'; vm.checkDispatch(); expect(vm.dialog).toBe('confirm')
+    wrapper.unmount()
+  })
+  it('管材新请求提交逐部位计价方式', async () => {
+    const { wrapper, vm } = await mountPage(); fill(vm)
+    await vm.save()
+    expect(api.createTubeOrder).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [expect.objectContaining({ component_identity: 'front', price_unit: 'SQUARE_METER', unit_price: '0.15' })],
+    }))
     wrapper.unmount()
   })
   it('旧缺价和绑定部位请求恢复后只重放原始内容，不补价或改五金工厂字段', async () => {
@@ -529,6 +564,7 @@ describe('原管材表单复用裁片模式', () => {
     expect(api.fetchTubeSource).toHaveBeenCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'PUBLIC_CUTTING', zone_id: 'semi-empty', craft_id: 'embroidery', is_plan: true })
     expect(wrapper.text()).toContain('新建裁片委外加工单')
     expect(wrapper.text()).toContain('加工单价（元/套）')
+    expect(wrapper.text()).not.toContain('计价方式')
     expect(wrapper.text()).toContain('420×380')
     expect(wrapper.text()).not.toContain('600D')
     expect(wrapper.text()).not.toContain('切割长度 mm')

@@ -12,12 +12,12 @@ import ProductImage from '@/components/products/ProductImage.vue'
 import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterialDetails.vue'
 import { createTubeOrder, fetchTubeOptions, fetchTubeSource, findTubeOrder } from '@/api/tubeOutsourcing'
 import { useAuthStore } from '@/stores/auth'
-import type { TubeMaterialRow, TubeOptions, TubeOrderInput, TubePendingOrderInput, TubeOrderResult, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { OutsourcingPriceUnit, TubeMaterialRow, TubeOptions, TubeOrderInput, TubePendingOrderInput, TubeOrderResult, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
 import { isCuttingSource, isDirectSource, tubeSourceLabels, tubeMeters, tubeQuantityError, tubeRoots, wholeTubeQuantity, tubeMaterialColumn } from '@/utils/tubeOutsourcing'
-import { formatOutsourcingMoney, outsourcingLineAmount, outsourcingPriceError, sumOutsourcingAmounts } from '@/utils/outsourcingPrices'
+import { formatOutsourcingMoney, outsourcingLineAmount, outsourcingLineArea, outsourcingPriceError, sumOutsourcingAmounts, sumOutsourcingAreas } from '@/utils/outsourcingPrices'
 import '@/styles/tubeOutsourcing.scss'
 
-interface Entry extends TubeSourceRow { quantity: string; factoryId: string; unitPrice: string }
+interface Entry extends TubeSourceRow { quantity: string; factoryId: string; priceUnit: OutsourcingPriceUnit; unitPrice: string }
 interface MaterialEntry extends TubeMaterialRow { quantity: string; factoryId: string; zoneId: string }
 interface Column { key: string; label: string; width: number; num?: boolean }
 type ChangeKind = 'task' | 'product' | 'source' | 'warehouse' | 'zone' | 'craft'
@@ -80,7 +80,9 @@ const locked = computed(() => identityBlocked.value || loading.value || sourceLo
 const entered = computed(() => rows.value.filter(row => (wholeTubeQuantity(row.quantity) || 0) > 0))
 const enteredMaterials = computed(() => materialRows.value.filter(row => Number(row.quantity) > 0))
 const total = computed(() => entered.value.reduce((sum, row) => sum + (wholeTubeQuantity(row.quantity) || 0), 0))
-const plannedAmount = computed(() => sumOutsourcingAmounts(entered.value.map(row => outsourcingLineAmount(row.quantity, row.unitPrice))))
+const totalArea = computed(() => cutting ? null : sumOutsourcingAreas(entered.value.map(row => outsourcingLineArea(row.quantity, row.unit_area_sqm))))
+const plannedAmount = computed(() => sumOutsourcingAmounts(entered.value.map(row =>
+  outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm))))
 const factoryCount = computed(() => new Set([...entered.value, ...enteredMaterials.value].map(row => row.factoryId).filter(Boolean)).size)
 const emptyMessage = computed(() => {
   if (loading.value || sourceLoading.value) return `正在加载${categoryName}${planMode.value ? 'BOM' : '及额度'}…`
@@ -115,7 +117,9 @@ const columns = computed<Column[]>(() => cutting ? [
   { key: 'quantity', label: planMode.value ? '计划委外（支）' : '本次外发（支）', width: 124, num: true },
   ...(source.value === 'RAW_PIPE' ? [{ key: 'roots', label: '折合（根）', width: 82, num: true }, { key: 'meters', label: '折合（米）', width: 99, num: true }] : []),
   { key: 'factory', label: '加工厂', width: 160 },
-  { key: 'unit_price', label: '加工单价（元/支）', width: 145, num: true }, { key: 'planned_amount', label: '计划金额（元）', width: 130, num: true },
+  { key: 'unit_area_sqm', label: '喷塑面积', width: 145, num: true },
+  { key: 'price_unit', label: '计价方式', width: 105 },
+  { key: 'unit_price', label: '加工单价', width: 145, num: true }, { key: 'planned_amount', label: '计划金额（元）', width: 130, num: true },
   { key: 'spray_color', label: '喷塑颜色', width: 85 },
 ])
 const tableWidth = computed(() => columns.value.reduce((sum, column) => sum + column.width, 0))
@@ -156,7 +160,7 @@ function sourceZoneCandidates(): string[] {
   return [...new Set([...preferred, ...zoneIds])]
 }
 function clearRows() {
-  rows.value.forEach(row => { row.quantity = ''; row.factoryId = ''; row.unitPrice = '' })
+  rows.value.forEach(row => { row.quantity = ''; row.factoryId = ''; row.priceUnit = cutting ? 'PIECE' : 'SQUARE_METER'; row.unitPrice = '' })
   materialRows.value.forEach(row => { row.quantity = ''; row.factoryId = '' })
 }
 
@@ -204,7 +208,12 @@ async function loadSource(preserve = true) {
     sourceHint.value = !planMode.value && publicSemi.value && !hasAvailableQuantity(selected.result)
       ? `当前半成品库各库区可用数量均为 0 ${quantityUnit}，请确认半成品已入库到正确库区。`
       : ''
-    rows.value = selected.result.rows.map(row => ({ ...row, quantity: preserve && previous.has(row.component_identity) ? previous.get(row.component_identity)!.quantity : planMode.value ? row.order_required : '', factoryId: preserve ? previous.get(row.component_identity)?.factoryId || '' : '', unitPrice: preserve ? previous.get(row.component_identity)?.unitPrice || '' : '' }))
+    rows.value = selected.result.rows.map(row => ({ ...row,
+      quantity: preserve && previous.has(row.component_identity) ? previous.get(row.component_identity)!.quantity : planMode.value ? row.order_required : '',
+      factoryId: preserve ? previous.get(row.component_identity)?.factoryId || '' : '',
+      priceUnit: preserve ? previous.get(row.component_identity)?.priceUnit || (cutting ? 'PIECE' : 'SQUARE_METER') : cutting ? 'PIECE' : 'SQUARE_METER',
+      unitPrice: preserve ? previous.get(row.component_identity)?.unitPrice || '' : '',
+    }))
     materialRows.value = (cutting || !planMode.value ? selected.result.material_rows || [] : []).map(row => {
       const previous = preserve ? previousMaterials.get(row.bom_line_id) : undefined
       return { ...row, quantity: previous?.quantity || '', factoryId: previous?.factoryId || '',
@@ -253,6 +262,10 @@ function validate(): boolean {
     if (issue) { warn(issue); return false }
     if ((wholeTubeQuantity(row.quantity) || 0) > 0 && !factories.value.some(factory => factory.id === row.factoryId)) { warn(`${row.part_name}：请选择一家加工厂。`); return false }
     if ((wholeTubeQuantity(row.quantity) || 0) > 0 && outsourcingPriceError(row.unitPrice)) { warn(`${row.part_name}：${outsourcingPriceError(row.unitPrice)}`); return false }
+    if (!cutting && (wholeTubeQuantity(row.quantity) || 0) > 0 && row.priceUnit === 'SQUARE_METER'
+        && outsourcingLineArea(row.quantity, row.unit_area_sqm) === null) {
+      warn(`${row.part_name}：BOM缺少有效的单支喷塑面积，请完善BOM或改为按支计价。`); return false
+    }
   }
   if (!entered.value.length) { warn(planMode.value ? '请至少填写一项大于0的计划数量。' : '请至少填写一项大于0的外发数量。'); return false }
   for (const row of materialRows.value) {
@@ -310,7 +323,7 @@ async function postPending(freshRequest = false) {
       warn(error.value); return
     }
     if (status && [400, 403, 404, 412, 428].includes(status)) {
-      const legacyRequest = request.lines.some(line => line.unit_price === undefined)
+      const legacyRequest = request.lines.some(line => line.unit_price === undefined || (!cutting && line.price_unit === undefined))
         || request.materials?.some(line => 'component_identity' in line)
       if (!clearPending()) return
       dialog.value = ''
@@ -364,7 +377,8 @@ async function save() {
       zone_id: direct.value ? null : zoneId.value,
       ...(cutting ? { craft_id: craftId.value } : {}),
       planned_dispatch_date: sendDate.value, expected_return_date: returnDate.value, remark: remark.value.trim(),
-      lines: entered.value.map(row => ({ component_identity: row.component_identity, quantity: String(wholeTubeQuantity(row.quantity)), factory_id: row.factoryId, unit_price: row.unitPrice.trim() })),
+      lines: entered.value.map(row => ({ component_identity: row.component_identity, quantity: String(wholeTubeQuantity(row.quantity)), factory_id: row.factoryId,
+        ...(!cutting ? { price_unit: row.priceUnit } : {}), unit_price: row.unitPrice.trim() })),
       ...(enteredMaterials.value.length ? { material_source_revision: context.value.material_source_revision,
         materials: enteredMaterials.value.map(row => ({ bom_line_id: row.bom_line_id, factory_id: row.factoryId, quantity: row.quantity.trim(), zone_id: row.zoneId })) } : {}),
     }
@@ -404,7 +418,7 @@ async function initialize() {
     if (pending.value) {
       for (const row of rows.value) {
         const line = pending.value.lines.find(item => item.component_identity === row.component_identity)
-        if (line) { row.quantity = line.quantity; row.factoryId = line.factory_id; row.unitPrice = line.unit_price ?? '' }
+        if (line) { row.quantity = line.quantity; row.factoryId = line.factory_id; row.priceUnit = line.price_unit || 'PIECE'; row.unitPrice = line.unit_price ?? '' }
       }
       for (const row of materialRows.value) {
         const line = pending.value.materials?.find(item => item.bom_line_id === row.bom_line_id)
@@ -430,6 +444,7 @@ onMounted(async () => {
         || (value.zone_id !== null && typeof value.zone_id !== 'string')
         || !Array.isArray(value.lines) || !value.lines.length
         || !value.lines.every(line => line && typeof line.component_identity === 'string' && typeof line.factory_id === 'string' && typeof line.quantity === 'string' && (wholeTubeQuantity(line.quantity) || 0) > 0
+          && (line.price_unit === undefined || line.price_unit === 'PIECE' || line.price_unit === 'SQUARE_METER')
           && (line.unit_price === undefined || (typeof line.unit_price === 'string' && !outsourcingPriceError(line.unit_price))))
         || (value.materials !== undefined && (!Array.isArray(value.materials) || !value.materials.every(line => line
           && typeof line.bom_line_id === 'string' && typeof line.zone_id === 'string'
@@ -495,8 +510,10 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         <tr v-for="row in rows" :key="row.component_identity"><td v-for="column in columns" :key="column.key" :class="{ num: column.num }" :title="column.key === 'max_quantity' && row.blockers.length ? row.blockers.join('；') : undefined">
           <ElInput v-if="column.key === 'quantity'" v-model="row.quantity" :aria-label="`${row.part_name}外发${quantityUnit}数`" inputmode="numeric" :disabled="rowDisabled(row)" :placeholder="planMode || Number(row.max_quantity) ? '0' : '暂无可发'"><template v-if="Number(row.max_quantity)" #suffix>{{ quantityUnit }}</template></ElInput>
           <ElSelect v-else-if="column.key === 'factory'" v-model="row.factoryId" :aria-label="`${row.part_name}加工厂`" :disabled="rowDisabled(row)" filterable clearable placeholder="选择加工厂" no-data-text="该工艺暂无加工厂，请先添加加工厂并关联该工艺"><ElOption v-for="factory in factories" :key="factory.id" :label="factory.name" :value="factory.id" /></ElSelect>
-          <ElInput v-else-if="column.key === 'unit_price'" v-model="row.unitPrice" :aria-label="`${row.part_name}加工单价`" :disabled="rowDisabled(row)" inputmode="decimal" placeholder="填写单价" />
-          <template v-else-if="column.key === 'planned_amount'">{{ row.quantity.trim() ? formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice)) : '—' }}</template>
+          <template v-else-if="column.key === 'unit_area_sqm'"><span>单支 {{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}㎡</span><br /><small>合计 {{ formatOutsourcingMoney(outsourcingLineArea(row.quantity, row.unit_area_sqm), '—') }}㎡</small></template>
+          <ElSelect v-else-if="column.key === 'price_unit'" v-model="row.priceUnit" :aria-label="`${row.part_name}计价方式`" :disabled="rowDisabled(row)"><ElOption label="按㎡" value="SQUARE_METER" /><ElOption label="按支" value="PIECE" /></ElSelect>
+          <ElInput v-else-if="column.key === 'unit_price'" v-model="row.unitPrice" :aria-label="`${row.part_name}加工单价`" :disabled="rowDisabled(row)" inputmode="decimal" placeholder="填写单价"><template #suffix>元/{{ row.priceUnit === 'SQUARE_METER' ? '㎡' : quantityUnit }}</template></ElInput>
+          <template v-else-if="column.key === 'planned_amount'">{{ row.quantity.trim() ? formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm)) : '—' }}</template>
           <b v-else-if="column.key === 'max_quantity'" :class="Number(row.max_quantity) ? 'brand' : 'muted'">{{ number(row.max_quantity) }}</b>
           <span v-else-if="column.key === 'purchase_reference'" class="purchase-reference" :title="row.purchase_reference?.conversion_note || '暂无采购入库参考数据'">
             <b>{{ number(row.purchase_reference?.quantity) }}</b>
@@ -521,12 +538,12 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
       </div>
       <label class="form-field dispatch-remark"><span>外发备注 <span class="muted">选填</span></span><ElInput v-model="remark" :disabled="locked || !canCreate" type="textarea" :rows="2" :maxlength="2000" placeholder="填写加工、交接或送货说明" /></label>
     </section>
-    <footer class="footer-bar"><div>本单计划外发 <strong>{{ number(total) }}</strong> {{ quantityUnit }}<span v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</span><span class="planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(plannedAmount) }}</strong> 元</span><small>{{ planMode ? '计划默认取BOM数量，可手填；进度仍按BOM计算。保存总单不预留库存，实际发出时才交接或扣库。' : '保存后预留数量，实物尚未发出；确认发出时才交接或扣库。' }}</small></div><ElButton :disabled="saving" @click="router.push({ name: 'workshop-outsourcing' })">返回</ElButton><ElButton :disabled="locked" @click="clearRows">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || (!pending && (locked || !canCreate))" @click="pending ? save() : checkDispatch()">{{ pending ? '核对本次提交' : '保存委外加工单' }}</ElButton></footer>
+    <footer class="footer-bar"><div>本单计划外发 <strong>{{ number(total) }}</strong> {{ quantityUnit }}<span v-if="!cutting"> · 喷塑总面积 <strong>{{ formatOutsourcingMoney(totalArea, '—') }}</strong> ㎡</span><span v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</span><span class="planned-amount"> · 计划加工金额 <strong>{{ formatOutsourcingMoney(plannedAmount) }}</strong> 元</span><small>{{ planMode ? '计划默认取BOM数量，可手填；进度仍按BOM计算。保存总单不预留库存，实际发出时才交接或扣库。' : '保存后预留数量，实物尚未发出；确认发出时才交接或扣库。' }}</small></div><ElButton :disabled="saving" @click="router.push({ name: 'workshop-outsourcing' })">返回</ElButton><ElButton :disabled="locked" @click="clearRows">重填</ElButton><ElButton type="primary" :loading="saving" :disabled="storageError || (!pending && (locked || !canCreate))" @click="pending ? save() : checkDispatch()">{{ pending ? '核对本次提交' : '保存委外加工单' }}</ElButton></footer>
   </section>
   <AppWindowDialog :model-value="dialog === 'change'" @update:model-value="dialog = ''; pendingChange = null" modal-class="tube-outsourcing-dialog" title="更换来源信息" :width="700"><p>更换后将清空当前填写的{{ categoryName }}<template v-if="cutting || !planMode">、附带{{ materialName }}</template>数量和加工厂，并重新核对{{ planMode ? 'BOM' : '材料及额度' }}。</p><p>更换生产任务单还需要重新选择产品。本次尚未保存，不会改变库存。</p><template #footer><ElButton @click="dialog = ''; pendingChange = null">保留当前填写</ElButton><ElButton type="primary" @click="applyChange">确认更换</ElButton></template></AppWindowDialog>
   <AppWindowDialog :model-value="dialog === 'confirm'" @update:model-value="dialog = ''" modal-class="tube-outsourcing-dialog" :title="`核对并保存${categoryName}${planMode ? '委外加工单' : '外发单'}`" :width="1050" :show-close="!saving" :close-on-click-modal="!saving" :close-on-press-escape="!saving"><div class="info-grid"><div class="info-cell"><span>生产任务单</span><b>{{ task?.task_number }}</b></div><div class="info-cell"><span>产品</span><b>{{ product?.product_name }}</b></div><div class="info-cell"><span>材料来源</span><b>{{ labels[source] }}</b></div></div>
-    <div class="tube-table-wrap"><table class="tube-table confirm-table"><colgroup><col style="width:160px" /><col style="width:100px" /><template v-if="!cutting"><col style="width:90px" /><col style="width:90px" /><col style="width:110px" /></template><col style="width:200px" /><col style="width:160px" /><col style="width:150px" /><col style="width:150px" /><template v-if="source === 'RAW_PIPE'"><col style="width:150px" /><col style="width:170px" /></template></colgroup><thead><tr><th>部位</th><th>材质</th><template v-if="!cutting"><th>形状</th><th>厚度 mm</th><th>喷塑颜色</th></template><th>加工厂</th><th class="num">{{ planMode ? '计划委外' : '本次外发' }}（{{ quantityUnit }}）</th><th class="num">加工单价（元/{{ quantityUnit }}）</th><th class="num">计划金额（元）</th><template v-if="source === 'RAW_PIPE'"><th class="num">{{ planMode ? '折合' : '扣除' }}（根）</th><th class="num">{{ planMode ? '折合' : '扣除' }}（米）</th></template></tr></thead><tbody><tr v-for="row in entered" :key="row.component_identity"><td><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></td><td :title="cutting ? row.fabric_material : row.material">{{ (cutting ? row.fabric_material : row.material) || '—' }}</td><template v-if="!cutting"><td>{{ tubeMaterialColumn(row, 'shape') }}</td><td>{{ tubeMaterialColumn(row, 'thickness') }}</td><td>{{ tubeMaterialColumn(row, 'spray_color') }}</td></template><td>{{ factoryName(row.factoryId) }}</td><td class="num">{{ number(row.quantity) }}</td><td class="num">{{ formatOutsourcingMoney(row.unitPrice) }}</td><td class="num">{{ formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice)) }}</td><template v-if="source === 'RAW_PIPE'"><td class="num">{{ rootsText(row) }}</td><td class="num">{{ metersText(row) }}</td></template></tr></tbody></table></div>
+    <div class="tube-table-wrap"><table class="tube-table confirm-table"><colgroup><col style="width:160px" /><col style="width:100px" /><template v-if="!cutting"><col style="width:90px" /><col style="width:90px" /><col style="width:110px" /></template><col style="width:200px" /><col style="width:160px" /><template v-if="!cutting"><col style="width:150px" /><col style="width:100px" /></template><col style="width:150px" /><col style="width:150px" /><template v-if="source === 'RAW_PIPE'"><col style="width:150px" /><col style="width:170px" /></template></colgroup><thead><tr><th>部位</th><th>材质</th><template v-if="!cutting"><th>形状</th><th>厚度 mm</th><th>喷塑颜色</th></template><th>加工厂</th><th class="num">{{ planMode ? '计划委外' : '本次外发' }}（{{ quantityUnit }}）</th><template v-if="!cutting"><th class="num">喷塑面积（㎡）</th><th>计价方式</th></template><th class="num">加工单价</th><th class="num">计划金额（元）</th><template v-if="source === 'RAW_PIPE'"><th class="num">{{ planMode ? '折合' : '扣除' }}（根）</th><th class="num">{{ planMode ? '折合' : '扣除' }}（米）</th></template></tr></thead><tbody><tr v-for="row in entered" :key="row.component_identity"><td><ProcessingMaterialDetails :materials="row">{{ row.part_name }}</ProcessingMaterialDetails></td><td :title="cutting ? row.fabric_material : row.material">{{ (cutting ? row.fabric_material : row.material) || '—' }}</td><template v-if="!cutting"><td>{{ tubeMaterialColumn(row, 'shape') }}</td><td>{{ tubeMaterialColumn(row, 'thickness') }}</td><td>{{ tubeMaterialColumn(row, 'spray_color') }}</td></template><td>{{ factoryName(row.factoryId) }}</td><td class="num">{{ number(row.quantity) }}</td><template v-if="!cutting"><td class="num">{{ formatOutsourcingMoney(outsourcingLineArea(row.quantity, row.unit_area_sqm), '—') }}</td><td>{{ row.priceUnit === 'SQUARE_METER' ? '按㎡' : '按支' }}</td></template><td class="num">{{ formatOutsourcingMoney(row.unitPrice) }} 元/{{ row.priceUnit === 'SQUARE_METER' ? '㎡' : quantityUnit }}</td><td class="num">{{ formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm)) }}</td><template v-if="source === 'RAW_PIPE'"><td class="num">{{ rootsText(row) }}</td><td class="num">{{ metersText(row) }}</td></template></tr></tbody></table></div>
     <template v-if="enteredMaterials.length"><h2>同单附带{{ materialName }}</h2><div class="tube-table-wrap"><table class="tube-table"><thead><tr><th>{{ materialName }}名称</th><th>材质</th><th>加工厂</th><th class="num">{{ planMode ? '计划数量' : '外发数量' }}</th><th>来源仓库 / 库区</th></tr></thead><tbody><tr v-for="row in enteredMaterials" :key="row.bom_line_id"><td><ProcessingMaterialDetails :materials="{ input_material_selection_snapshot: row.material_selection_snapshot }">{{ row.name }}</ProcessingMaterialDetails></td><td :title="row.material">{{ row.material || '—' }}</td><td>{{ factoryName(row.factoryId) }}</td><td class="num">{{ materialNumber(row.quantity) }} {{ row.unit }}</td><td>{{ materialZoneName(row) }}</td></tr></tbody></table></div></template>
-    <p>本次 {{ entered.length }} 个部位、{{ factoryCount }} 家加工厂，共 <b>{{ number(total) }} {{ quantityUnit }}</b><template v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</template>。计划加工金额 <b>{{ formatOutsourcingMoney(plannedAmount) }} 元</b>。每个部位只对应一家加工厂。</p><div class="notice">{{ planMode ? '保存后建立委外总单，计划量不等于实际发出数量。' : '保存后预留上述数量，实物尚未发出；请在外发单详情确认发出。' }}<br />{{ planMode ? '后续可分次外发、独立分次入库，回货不选择外发批次。' : '本单所有部位、所有厂家须统一一次登记回货并结束。' }}</div><template #footer><ElButton :disabled="saving" @click="dialog = ''">返回检查</ElButton><ElButton type="primary" :loading="saving" @click="save">{{ pending ? '核对本次提交' : '确认保存' }}</ElButton></template>
+    <p>本次 {{ entered.length }} 个部位、{{ factoryCount }} 家加工厂，共 <b>{{ number(total) }} {{ quantityUnit }}</b><template v-if="!cutting">，喷塑总面积 <b>{{ formatOutsourcingMoney(totalArea, '—') }} ㎡</b></template><template v-if="enteredMaterials.length">，附带{{ materialName }} {{ enteredMaterials.length }} 项</template>。计划加工金额 <b>{{ formatOutsourcingMoney(plannedAmount) }} 元</b>。每个部位只对应一家加工厂。</p><div class="notice">{{ planMode ? '保存后建立委外总单，计划量不等于实际发出数量。' : '保存后预留上述数量，实物尚未发出；请在外发单详情确认发出。' }}<br />{{ planMode ? '后续可分次外发、独立分次入库，回货不选择外发批次。' : '本单所有部位、所有厂家须统一一次登记回货并结束。' }}</div><template #footer><ElButton :disabled="saving" @click="dialog = ''">返回检查</ElButton><ElButton type="primary" :loading="saving" @click="save">{{ pending ? '核对本次提交' : '确认保存' }}</ElButton></template>
   </AppWindowDialog>
 </template>

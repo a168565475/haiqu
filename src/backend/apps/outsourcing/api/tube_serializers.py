@@ -5,7 +5,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
-from ..models import TubeSourceKind
+from ..models import PriceUnit, TubeSourceKind
 from ..tube_kinds import CUTTING_SOURCES
 
 
@@ -118,6 +118,7 @@ class TubeLineWriteSerializer(serializers.Serializer):
     component_identity = serializers.UUIDField()
     quantity = TubeQuantityField(allow_null=True)
     factory_id = serializers.UUIDField(required=False, allow_null=True)
+    price_unit = serializers.ChoiceField(choices=PriceUnit.choices, required=False)
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal('0'),
                                          required=False, allow_null=True)
 
@@ -164,6 +165,9 @@ class TubeOrderWriteSerializer(TubeSourceQuerySerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
         attrs.pop('plan_id', None)
+        if attrs['source_kind'] in CUTTING_SOURCES and any(
+                line.get('price_unit', PriceUnit.PIECE) != PriceUnit.PIECE for line in attrs['lines']):
+            raise serializers.ValidationError({'lines': '裁片委外只支持按支计价。'})
         if attrs.get('is_plan') and any(line.get('unit_price') is None for line in attrs['lines']):
             raise serializers.ValidationError({'lines': '每个委外计划部件都须填写加工单价。'})
         if attrs['expected_return_date'] < attrs['planned_dispatch_date']:
@@ -227,15 +231,15 @@ class TubePlanDispatchSerializer(TubeActionWriteSerializer):
     material_source_revision = serializers.CharField(min_length=64, max_length=64, required=False)
 
     def validate_lines(self, rows):
-        rows = TubeOrderWriteSerializer().validate_lines(rows)
-        if any(row.get('unit_price') is None for row in rows):
-            raise serializers.ValidationError('实际外发须填写每个部件的加工单价。')
-        return rows
+        return TubeOrderWriteSerializer().validate_lines(rows)
 
     def validate_materials(self, rows):
         return TubeOrderWriteSerializer().validate_materials(rows)
 
     def validate(self, attrs):
+        if attrs['source_kind'] in CUTTING_SOURCES and any(
+                line.get('price_unit', PriceUnit.PIECE) != PriceUnit.PIECE for line in attrs['lines']):
+            raise serializers.ValidationError({'lines': '裁片委外只支持按支计价。'})
         if attrs.get('materials') and attrs['source_kind'] not in CUTTING_SOURCES:
             raise serializers.ValidationError({'materials': '管材委外总单不再附带五金。'})
         if attrs.get('materials') and not attrs.get('material_source_revision'):

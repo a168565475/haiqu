@@ -70,7 +70,15 @@ const detailColumns = computed(() => [
   ...(mode.value === 'dispatch' ? [
     { key: 'factory_name', label: '加工厂', width: 150 },
     { key: 'quantity', label: `实际外发（${detailUnit.value}）`, width: 120, num: true },
-    ...(!props.warehouse ? [{ key: 'unit_price', label: `单价（元/${detailUnit.value}）`, width: 120, num: true }] : []),
+    ...(!props.warehouse ? (detailCutting.value ? [
+      { key: 'unit_price', label: '单价', width: 120, num: true },
+    ] : [
+      { key: 'unit_area_sqm', label: '单支喷塑面积（㎡）', width: 145, num: true },
+      { key: 'line_area_sqm', label: '本批喷塑面积（㎡）', width: 145, num: true },
+      { key: 'price_unit', label: '计价方式', width: 90 },
+      { key: 'unit_price', label: '单价', width: 125, num: true },
+      { key: 'planned_amount', label: '金额', width: 120, num: true },
+    ]) : []),
   ] : [
     { key: 'received_quantity', label: `实际入库（${detailUnit.value}）`, width: 120, num: true },
     { key: 'zone_name', label: '入库库区', width: 150 },
@@ -275,7 +283,11 @@ onBeforeUnmount(reset)
         <template #cell-cutting_length_mm="{ value }">{{ number(value) }}</template>
         <template #cell-pieces_per_set="{ value }">{{ number(value) }}</template>
         <template #cell-quantity="{ row, value }"><ElInput v-if="editing === 'UPDATE'" v-model="editQuantities[row.component_identity]" inputmode="numeric" :disabled="correctionLocked" :aria-label="`${row.part_name}调整数量`" /><template v-else>{{ number(value) }}</template></template>
-        <template #cell-unit_price="{ value }">{{ formatOutsourcingMoney(value) }}</template>
+        <template #cell-unit_area_sqm="{ value }">{{ number(value) }}</template>
+        <template #cell-line_area_sqm="{ value }">{{ number(value) }}</template>
+        <template #cell-price_unit="{ value }">{{ value === 'SQUARE_METER' ? '按㎡' : '按支' }}</template>
+        <template #cell-unit_price="{ row, value }">{{ formatOutsourcingMoney(value) }} 元/{{ detailCutting || row.price_unit !== 'SQUARE_METER' ? detailUnit : '㎡' }}</template>
+        <template #cell-planned_amount="{ value }">{{ formatOutsourcingMoney(value, '—') }}</template>
       </TubeOutsourcingDetailTable>
       <h2 class="record-subheading">本次外发辅料</h2>
       <TubeOutsourcingDetailTable class="dispatch-record-materials" :columns="materialColumns" :rows="batch.materials || []" empty="本次未外发辅料">

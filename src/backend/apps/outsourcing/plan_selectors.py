@@ -11,6 +11,7 @@ from apps.inventory.models import WarehouseZone
 
 from .models import TubeOutsourcingLine, TubePlanReceiptLine
 from .tube_kinds import CUTTING_SOURCES
+from .tube_prices import line_area_data, line_price_data
 from .tube_selectors import (CANCEL_PERMISSION, DISPATCH_PERMISSION, RETURN_PERMISSION,
                             require_saved_order_access, source_factories)
 
@@ -78,15 +79,16 @@ def plan_detail_data(order, data, request):
     data['dispatch_records'] = []
     for batch in batches:
         dispatch = next(record for record in batch.actions.all() if record.kind == 'DISPATCH')
+        batch_lines = list(batch.lines.all())
         data['dispatch_records'].append({'id': str(batch.pk), 'order_number': batch.order_number,
             'client_request_id': str(batch.client_request_id), 'actual_dispatch_date': str(dispatch.actual_dispatch_date),
             'created_at': dispatch.created_at.isoformat(), 'actor_name': dispatch.actor_employee.display_name,
             'source_kind': batch.source_kind, 'zone_name': batch.zone.zone_name if batch.zone else '',
-            'total_quantity': str(sum(line.quantity for line in batch.lines.all())),
+            'total_quantity': str(sum(line.quantity for line in batch_lines)),
             'materials': [material_data(value) for value in batch.materials.all()],
             'lines': [{'component_identity': str(line.component_identity), 'quantity': str(line.quantity),
                 'factory_id': str(line.factory_id), 'factory_name': line.snapshot.get('factory_name', ''),
-                'unit_price': str(line.unit_price) if line.unit_price is not None else None} for line in batch.lines.all()]})
+                **line_area_data(line), **line_price_data(line)} for line in batch_lines]})
     data['receipt_records'] = []
     for receipt in order.plan_receipts.filter(voided_at__isnull=True).select_related('warehouse', 'actor_employee').prefetch_related('lines__order_line', 'lines__zone'):
         data['receipt_records'].append({'id': str(receipt.pk), 'receipt_number': receipt.receipt_number,

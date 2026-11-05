@@ -18,7 +18,7 @@ from apps.workshop_config.models import Craft
 
 from .models import OutsourcingFactory, TubeSourceKind
 from .selectors import outsourcing_source_schedules
-from .tube_prices import line_price_data, planned_amount
+from .tube_prices import line_area_data, line_price_data, planned_amount, total_area
 from .tube_kinds import CUTTING_SOURCES, CUTTING_CRAFT_CODES, CUTTING_FIELDS, DIRECT_SOURCES, output_unit, source_category, display_operations
 
 
@@ -215,7 +215,8 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
                     continue
                 permissions[field] = True
     lines, total_quantity, total_stock, total_meters = [], 0, 0, Decimal('0')
-    for line in order.lines.all():
+    order_lines = list(order.lines.all())
+    for line in order_lines:
         snapshot = line.snapshot if isinstance(line.snapshot, dict) else {}
         output_identity = snapshot.get('public_output_identity')
         output_snapshot = output_identity.get('identity_snapshot') if isinstance(output_identity, dict) else None
@@ -228,6 +229,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
             'output_material_catalog_id': str(line.output_material_catalog_id) if line.output_material_catalog_id else None,
             'input_material_selection_snapshot': line.input_material_selection_snapshot,
             'output_material_selection_snapshot': line.output_material_selection_snapshot,
+            **line_area_data(line),
             **line_price_data(line),
             **{key: snapshot.get(key) for key in CUTTING_FIELDS},
             'part_name': snapshot.get('part_name', ''), 'factory_id': str(line.factory_id),
@@ -279,7 +281,7 @@ def saved_order_data(order, *, created=False, request=None, action_record=None, 
         'planned_dispatch_date': str(order.planned_dispatch_date), 'expected_return_date': str(order.expected_return_date),
         'total_quantity': str(total_quantity), 'total_stock_quantity': None if order.source_kind in DIRECT_SOURCES else str(total_stock),
         'total_meters': format(total_meters, '.2f') if order.source_kind == 'RAW_PIPE' else None, 'lines': lines,
-        'planned_amount': planned_amount(order.lines.all()),
+        'total_area_sqm': total_area(order_lines), 'planned_amount': planned_amount(order_lines),
         'materials': [{**material_data(value), 'unit_consumption': None} for value in order.materials.all()]}
     if action_record:
         result['action'] = {'id': str(action_record.pk), 'kind': action_record.kind,

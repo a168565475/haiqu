@@ -25,12 +25,12 @@ const key = 'tube-coating-receipt:v1:7:order-1'
 const order: TubeOrderDetail = {
   id: 'order-1', order_number: 'WF-real', status: 'PROCESSING', version: 2, etag: '"order-1:v2"', created: false,
   client_request_id: 'creation-id', source_kind: 'RAW_PIPE', source_label: '原材料', schedule_product_id: 'plan-1', product_line_id: 'product-1',
-  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
+  planned_dispatch_date: '2026-09-30', expected_return_date: '2026-10-15', total_quantity: '20', total_area_sqm: '2.5000', planned_amount: '5.00', total_stock_quantity: '2', total_meters: '13.10',
   task_order_number: 'DD-real', task_number: 'SC-real', schedule_number: 'PC-real', product_number: 'CP-real', item_number: 'HT-real', product_name: '真实测试产品', quantity: '1000', unit: '把', color: '黑色',
   zone_id: 'raw-zone', zone_name: '原料区', warehouse_name: '原料仓', craft_name: '喷塑', remark: '', created_at: '2026-09-30T08:00:00+08:00', created_by_name: '建单员工',
   actual_dispatch_date: '2026-09-30', dispatched_at: '2026-09-30T09:00:00+08:00', dispatched_by_name: '发出员工', cancelled_at: null, cancelled_by_name: '', cancel_remark: '',
   permissions: { can_dispatch: false, can_cancel: false },
-  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
+  lines: [{ id: 'line-1', component_identity: 'component-1', part_name: '前腿管', factory_id: 'factory-1', factory_name: '加工厂甲', quantity: '20', price_unit: 'PIECE', unit_area_sqm: '0.1250', line_area_sqm: '2.5000', unit_price: '0.25', planned_amount: '5.00', stock_quantity: '2', meters: '13.10',
     material: 'Q195', specification: 'Φ22', thickness: '0.8', cutting_length_mm: '650', raw_color: '本色', spray_color: '黑色', pieces_per_bar: '10', raw_bar_length_m: '6.55', current_reported_minimum: null, operations: [], basis_blockers: [] }],
 }
 const base: TubeReceiptPreview = { order, etag: order.etag, can_receive: true, blockers: [], actor_name: '真实收货经办人', today: '2026-09-30',

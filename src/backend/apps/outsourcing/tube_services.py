@@ -13,10 +13,11 @@ from apps.core.numbering import next_business_number
 from apps.inventory.public_stock_cutover import stock_write_transaction
 
 from .material_flow import lock_request
-from .models import OutsourcingFactory, TubeOutsourcingLine, TubeOutsourcingOrder
+from .models import OutsourcingFactory, PriceUnit, TubeOutsourcingLine, TubeOutsourcingOrder
 from .services import _json_hash
 from .processing_materials import processing_line_fields
 from .tube_kinds import CUTTING_SOURCES, DIRECT_SOURCES, CUTTING_FIELDS
+from .tube_prices import parse_unit_area
 from .tube_selectors import (CREATE_PERMISSION, require_saved_order_access, require_tube_feature,
                              source_factories, source_product, source_zone)
 
@@ -44,7 +45,7 @@ def _stock_amount(source_kind, quantity, row):
 
 
 @stock_write_transaction
-def create_tube_order(*, data, request, plan=None):
+def create_tube_order(*, data, request, plan=None, frozen_plan_lines=None):
     if data.get('is_plan'):
         from .plan_services import create_plan
         return create_plan(data=data, request=request)
@@ -110,7 +111,8 @@ def create_tube_order(*, data, request, plan=None):
         if row is None:
             raise Conflict('当前BOM已不包含所选部位，请刷新后重试。')
         try:
-            line_query = BomLine.objects.filter(pk=UUID(str(row['bom_line_id'])), section__bom=bom,
+            line_query = BomLine.objects.select_for_update(of=('self',)).filter(
+                pk=UUID(str(row['bom_line_id'])), section__bom=bom,
                 component_identity=entered['component_identity'])
             if data['source_kind'] in CUTTING_SOURCES:
                 line_query = line_query.filter(section__section_type='FABRIC', section__title='裁剪明细')
@@ -132,10 +134,26 @@ def create_tube_order(*, data, request, plan=None):
             'order_required', 'pieces_per_bar', 'raw_bar_length_m')},
             **{key: row.get(key) for key in CUTTING_FIELDS},
             'factory_name': factories[entered['factory_id']].name, 'meters': meters}
+        frozen = frozen_plan_lines.get(key) if frozen_plan_lines is not None else None
+        if frozen_plan_lines is not None and frozen is None:
+            raise Conflict('委外总单已不包含所选部件，请刷新后重试。')
+        if frozen is not None:
+            price_unit = frozen.price_unit
+            unit_area = frozen.unit_area_sqm
+            unit_price = frozen.unit_price
+        else:
+            price_unit = entered.get('price_unit', PriceUnit.PIECE)
+            explicit_price_unit = 'price_unit' in entered
+            unit_area = (parse_unit_area((bom_line.raw_values or {}).get('coating_unit_area_sqm'))
+                         if explicit_price_unit and data['source_kind'] not in CUTTING_SOURCES else None)
+            unit_price = entered.get('unit_price')
+            if price_unit == PriceUnit.SQUARE_METER and unit_area is None:
+                raise ValidationError({'lines': f'“{row.get("part_name", "管材")}”缺少有效的单支喷塑面积，不能按平方米计价。'})
         lines.append(TubeOutsourcingLine(bom_line=bom_line, component_identity=entered['component_identity'],
             **processing_line_fields(bom_line=bom_line, row=row, craft=craft),
             factory=factories[entered['factory_id']], quantity=entered['quantity'], stock_quantity=stock_quantity,
-            unit_price=entered.get('unit_price'), input_identity=_json(input_identity), snapshot=_json(snapshot)))
+            price_unit=price_unit, unit_area_sqm=unit_area, unit_price=unit_price,
+            input_identity=_json(input_identity), snapshot=_json(snapshot)))
     order = TubeOutsourcingOrder.objects.create(
         plan=plan,
         order_number=next_business_number('OUTSOURCING_ORDER'),
@@ -156,6 +174,8 @@ def create_tube_order(*, data, request, plan=None):
             'quantity': sum(line.quantity for line in lines), 'source_revision': order.source_revision_hash,
             'lines': [{'component_identity': str(line.component_identity), 'quantity': line.quantity,
                        'factory_id': str(line.factory_id), 'stock_quantity': line.stock_quantity,
+                       'price_unit': line.price_unit,
+                       'unit_area_sqm': str(line.unit_area_sqm) if line.unit_area_sqm is not None else None,
                        'unit_price': str(line.unit_price) if line.unit_price is not None else None} for line in lines],
             'materials': [material_data(value) for value in materials]},
         context_type='PRODUCTION_SCHEDULE', context_id=product.schedule_id, request=request)

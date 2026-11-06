@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { exportSamples, fetchSamples, fetchSampleStats, patchSampleForm, fetchSampleInventoryEligible, fetchSampleOutboundEligible, fetchSampleLoanEligible } from './samples'
+import { exportSamples, fetchSamples, fetchSampleStats, fetchSampleOptions, fetchSampleFilterOptions, patchSampleForm, fetchSampleInventoryEligible, fetchSampleOutboundEligible, fetchSampleLoanEligible } from './samples'
 import type { SampleRequestFormInput } from '@/types/sample'
 
 const get = vi.hoisted(() => vi.fn())
@@ -21,6 +21,15 @@ describe('打样列表 API 契约', () => {
     get.mockResolvedValueOnce({ data: { data: { all: 3 } } })
     await fetchSampleStats({ owner_employee_id: 'me' })
     expect(get).toHaveBeenLastCalledWith('/api/v1/sample-requests/summary/', { params: { owner_employee_id: 'me' } })
+  })
+
+  it('列表读取轻量筛选，费用和客户页继续读取完整选项', async () => {
+    const filters = { sample_types: [], statuses: [], owner_filters: [{ id: 'owner', display_name: '业务员' }] }
+    get.mockResolvedValueOnce({ data: { data: filters } })
+    expect(await fetchSampleFilterOptions()).toEqual(filters)
+    expect(get).toHaveBeenLastCalledWith('/api/v1/sample-requests/options/', { params: { scope: 'filters' } })
+    await fetchSampleOptions()
+    expect(get).toHaveBeenLastCalledWith('/api/v1/sample-requests/options/')
   })
 })
 

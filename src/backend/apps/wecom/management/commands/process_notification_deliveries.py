@@ -5,6 +5,7 @@ from datetime import timedelta
 from uuid import UUID
 
 from django.core.management.base import BaseCommand, CommandError
+from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
 
@@ -87,6 +88,15 @@ class Command(BaseCommand):
         candidates = NotificationDelivery.objects.filter(
             channel=NotificationDelivery.Channel.WECOM, status__in=statuses,
         ).order_by("created_at", "pk")
+        if not delivery_ids:
+            from apps.wecom.models import NotificationRule
+            tracking_codes = {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}
+            enabled_codes = set(NotificationRule.objects.filter(event_code__in=tracking_codes,
+                enabled=True).values_list('event_code', flat=True)) if (
+                    getattr(settings, 'PURCHASE_TRACKING_ENABLED', False)
+                    and getattr(settings, 'PURCHASE_TRACKING_WECOM_ENABLED', False)) else set()
+            # 停用的采购队列暂缓处理，不占满前limit条而阻塞其他业务通知。
+            candidates = candidates.exclude(recipient__event__event_code__in=tracking_codes - enabled_codes)
         if delivery_ids:
             candidates = candidates.filter(pk__in=delivery_ids)
             eligible_ids = set(candidates.values_list("pk", flat=True))

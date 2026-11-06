@@ -17,12 +17,12 @@ import { useAuthStore } from '@/stores/auth'
 import type { CustomerDetail } from '@/types/customer'
 import type { InquiryMetrics, InquiryOptions, InquiryRow } from '@/types/inquiry'
 import type { QuotationListItem, QuotationListOptions, QuotationSummary } from '@/types/quotation'
-import type { SampleListItem, SampleOptions, SampleStats } from '@/types/sample'
+import type { SampleListSummary, SampleOptions, SampleStats } from '@/types/sample'
 import type { SalesOrderListItem, SalesOrderOptions } from '@/types/salesOrder'
 import type { SavedView, SavedViewCreateInput } from '@/types/savedView'
 
 type RecordKind = 'inquiries' | 'quotations' | 'samples' | 'orders'
-type Row = InquiryRow | QuotationListItem | SampleListItem | SalesOrderListItem
+type Row = InquiryRow | QuotationListItem | SampleListSummary | SalesOrderListItem
 
 const props = defineProps<{
   kind: RecordKind
@@ -154,7 +154,7 @@ const metrics = computed<CustomerDetailMetric[]>(() => {
 
 const inquiryRows = computed(() => rows.value as InquiryRow[])
 const quotationRows = computed(() => rows.value as QuotationListItem[])
-const sampleRows = computed(() => rows.value as SampleListItem[])
+const sampleRows = computed(() => rows.value as SampleListSummary[])
 const orderRows = computed(() => rows.value as SalesOrderListItem[])
 
 function resetColumns() {

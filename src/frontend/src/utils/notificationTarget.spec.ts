@@ -4,6 +4,34 @@ import { notificationRoute } from './notificationTarget'
 const id = '12345678-1234-1234-1234-123456789abc'
 const target = { object_id: id, target_key: 'bom-detail', route_name: 'bom-preview', params: { bomId: id } }
 describe('通知命名路由白名单', () => {
+  it.each(['PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'])('采购跟踪事件 %s 支持单行定位、历史和汇总入口', code => {
+    const tracking = { ...target, target_key: 'purchase-tracking', route_name: 'purchase-tracking', params: {} }
+    for (const tab of ['arrival', 'coverage']) {
+      const query = { tab, production_task_id: id, row_key: `${tab}:${id}`, include_history: 'true' }
+      const { tab: _tab, ...pageQuery } = query
+      expect(notificationRoute(code, { ...tracking, query })).toEqual({ name: tab === 'coverage' ? 'purchase-alerts' : 'purchase-tracking', params: {}, query: pageQuery })
+    }
+    expect(notificationRoute(code, { ...tracking, query: {} })).toEqual({ name: 'purchase-tracking', params: {}, query: {} })
+    for (const query of [{ tab: 'coverage' }, { tab: 'arrival', include_history: 'true' }, { include_history: 'true' }] as Record<string, string>[]) {
+      const { tab: _tab, ...pageQuery } = query
+      expect(notificationRoute(code, { ...tracking, query })).toEqual({ name: query.tab === 'coverage' ? 'purchase-alerts' : 'purchase-tracking', params: {}, query: pageQuery })
+    }
+  })
+  it('采购跟踪不接受任意路由、附加参数或非法查询值', () => {
+    const tracking = { ...target, target_key: 'purchase-tracking', route_name: 'purchase-tracking', params: {}, query: { tab: 'coverage', production_task_id: id, row_key: `coverage:${id}` } }
+    const invalidTargets = [
+      { ...tracking, target_key: 'role-policy' }, { ...tracking, route_name: 'settings-access' },
+      { ...tracking, object_id: 'not-a-uuid' }, { ...tracking, params: { id } },
+      { ...tracking, query: { ...tracking.query, redirect: '//evil.test' } },
+      { ...tracking, query: { ...tracking.query, tab: 'unknown' } },
+      { ...tracking, query: { ...tracking.query, production_task_id: 'not-a-uuid' } },
+      { ...tracking, query: { ...tracking.query, row_key: '../outside' } },
+      { ...tracking, query: { ...tracking.query, row_key: 'a'.repeat(241) } },
+      { ...tracking, query: { ...tracking.query, include_history: 'false' } },
+    ]
+    for (const value of invalidTargets) expect(() => notificationRoute('PURCHASE_TRACKING_RISK', value)).toThrow()
+    expect(() => notificationRoute('BOM_CONFIRMED', tracking)).toThrow()
+  })
   it('岗位策略按服务端目标进入采购来源、当前跟单任务及财务列表', () => {
     const policy = { ...target, target_key: 'role-policy' }
     expect(notificationRoute('PRODUCTION_TASK_BOMS_CONFIRMED', { ...policy, route_name: 'purchase-order-create', params: {} })).toEqual({ name: 'purchase-order-create', params: {} })

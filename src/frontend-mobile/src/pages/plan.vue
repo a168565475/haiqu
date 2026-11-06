@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { isCancel } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import WorkPage from '@/components/WorkPage.vue'
@@ -11,6 +11,12 @@ import { errorMessage } from '@/utils/errors'
 
 const route = useRoute()
 const router = useRouter()
+const section = computed(() => {
+  const value = route.query.section
+  if (value === 'issue' || value === 'report' || value === 'receipt') return value
+  return route.query.action === 'report' ? 'report' : 'issue'
+})
+const backTo = computed(() => section.value === 'receipt' ? '/production-receipt' : section.value === 'report' ? '/production-report' : '/')
 const plan = ref<MobilePlan | null>(null)
 const busy = ref(false)
 const message = ref('')
@@ -35,14 +41,14 @@ async function load() {
   finally { if (controller === current) busy.value = false }
 }
 function navigate(path: string, craftId?: string) {
-  if (plan.value) void router.push({ path, query: { ...planQuery(plan.value), ...(craftId ? { craft_id: craftId } : {}) } })
+  if (plan.value) void router.push({ path, query: { ...planQuery(plan.value), section: section.value, ...(craftId ? { craft_id: craftId } : {}) } })
 }
 watch(() => [route.query.schedule_product_id, route.query.plan_category, route.query.workshop_id], load, { immediate: true })
 onUnmounted(() => { controller?.abort(); controller = undefined })
 </script>
 
 <template>
-  <WorkPage :title="route.query.action === 'report' ? '选择报工工艺' : '生产计划详情'" :subtitle="plan?.task_number">
+  <WorkPage :title="section === 'report' && route.query.action === 'report' ? '选择报工工艺' : '生产计划详情'" :subtitle="plan?.task_number" :section="section" :back-to="backTo">
     <van-loading v-if="busy" vertical class="detail-loading">正在读取计划</van-loading>
     <div v-if="message" class="error-panel" role="alert"><p>{{ message }}</p><van-button class="detail-retry" size="small" @click="load">重新加载</van-button></div>
     <div v-if="plan" class="page-stack plan-details">
@@ -57,7 +63,7 @@ onUnmounted(() => { controller?.abort(); controller = undefined })
           <div><dt>生产单号</dt><dd>{{ plan.task_number }}</dd></div>
           <div><dt>车间</dt><dd>{{ plan.workshop.name }}</dd></div>
           <div><dt>计划日期</dt><dd>{{ plan.plan_date || '未安排' }}</dd></div>
-          <div><dt>报工进度</dt><dd>{{ progressLabel(plan) }}</dd></div>
+          <div v-if="section === 'report'"><dt>报工进度</dt><dd>{{ progressLabel(plan) }}</dd></div>
         </dl>
         <dl class="product-attributes">
           <div><dt>规格</dt><dd>{{ plan.product.specification || '—' }}</dd></div>
@@ -65,23 +71,24 @@ onUnmounted(() => { controller?.abort(); controller = undefined })
           <div><dt>材质</dt><dd>{{ plan.product.material || '—' }}</dd></div>
         </dl>
       </section>
-      <section class="section-card issue-section">
+      <section v-if="section === 'issue'" class="section-card issue-section">
         <h2 class="section-title">领料申请</h2>
         <p v-if="!plan.can_issue" class="permission-note">{{ plan.issue_reason }}</p>
         <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_issue" @click="navigate('/issue')">申请领料</van-button>
         <button v-if="plan.can_view_issues" class="action-link record-link" @click="navigate('/issue-records')"><span>查看本产品领料记录</span><van-icon name="arrow" aria-hidden="true" /></button>
       </section>
-      <section v-if="plan.plan_category === 'ASSEMBLY'" class="section-card receipt-section">
+      <section v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY'" class="section-card receipt-section">
         <h2 class="section-title">成品入库</h2>
         <p class="permission-note">{{ plan.can_receive_finished ? '提交后由仓库确认入库。' : plan.finished_receipt_reason }}</p>
-        <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_finished" @click="router.push({ path: '/finished-receipt', query: { schedule_product_id: plan.schedule_product_id } })">成品入库</van-button>
+        <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_finished" @click="navigate('/finished-receipt')">成品入库</van-button>
       </section>
-      <section v-if="['METAL', 'SEWING'].includes(plan.plan_category)" class="section-card receipt-section">
+      <section v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" class="section-card receipt-section">
         <h2 class="section-title">半成品入库</h2>
         <p class="permission-note">{{ plan.can_receive_semi ? '提交后由仓库确认入库。' : plan.semi_receipt_reason }}</p>
-        <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_semi" @click="router.push({ path: '/semi-receipt', query: { schedule_product_id: plan.schedule_product_id, plan_category: plan.plan_category } })">半成品入库</van-button>
+        <van-button class="issue-button" type="primary" plain block :disabled="!plan.can_receive_semi" @click="navigate('/semi-receipt')">半成品入库</van-button>
       </section>
-      <section class="section-card report-section">
+      <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="permission-note">裁剪计划暂无手机入库入口</p>
+      <section v-if="section === 'report'" class="section-card report-section">
         <h2 class="section-title">选择报工工艺</h2>
         <p v-if="!plan.reporting_crafts.length" class="permission-note">{{ plan.report_reason || '暂无可查看的工艺' }}</p>
         <ul class="craft-list">

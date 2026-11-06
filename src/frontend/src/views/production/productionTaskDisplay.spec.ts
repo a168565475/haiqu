@@ -4,16 +4,20 @@ import { productLabels, productSpecifications, quantityWithUnits, localAmountTot
 const product = (overrides: Partial<ProductionTaskProduct>) => ({ product_id: null, product_name: '产品', quantity: 1, unit_id: 'piece', unit_name: '件', local_total_amount: '0.10', ...overrides }) as ProductionTaskProduct
 
 describe('生产任务显示口径', () => {
-  it('已接单且全部 BOM 已确认即可进入排产，采购进度不作门槛', () => {
-    const ready = { status: 'READY', bom_status: 'VERIFIED', purchase_status: 'ORDER_COMPLETED' } as const
+  it('已接单且至少一个产品最新 BOM 已确认即可进入排产，汇总状态和采购进度不作门槛', () => {
+    const ready = { status: 'READY', bom_status: 'VERIFIED', purchase_status: 'ORDER_COMPLETED', has_confirmed_bom_product: true } as const
     expect(isTaskReadyForScheduling(ready)).toBe(true)
     for (const bom_status of ['NOT_CREATED', 'PARTIAL', 'PENDING_CONFIRMATION', undefined] as const) {
-      expect(isTaskReadyForScheduling({ ...ready, bom_status })).toBe(false)
+      const task = { ...ready, bom_status }
+      expect(isTaskReadyForScheduling(task)).toBe(true)
     }
     for (const purchase_status of ['NOT_STARTED', 'REQUEST_FULLY_ALLOCATED', 'ORDER_DRAFT', 'ORDER_SUBMITTED', 'ORDER_PURCHASING', undefined] as const) {
-      expect(isTaskReadyForScheduling({ ...ready, purchase_status })).toBe(true)
+      const task = { ...ready, purchase_status }
+      expect(isTaskReadyForScheduling(task)).toBe(true)
     }
     expect(isTaskReadyForScheduling({ ...ready, status: 'IN_PRODUCTION' })).toBe(false)
+    expect(isTaskReadyForScheduling({ ...ready, has_confirmed_bom_product: false })).toBe(false)
+    expect(isTaskReadyForScheduling({ ...ready, has_confirmed_bom_product: undefined })).toBe(false)
     expect(isTaskReadyForScheduling(null)).toBe(false)
   })
   it('两个未建档产品分别显示，有货号才附带货号', () => {

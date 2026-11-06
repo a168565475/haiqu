@@ -712,6 +712,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     audit_timeline = serializers.SerializerMethodField()
     bom_status = serializers.SerializerMethodField()
     bom_status_display = serializers.SerializerMethodField()
+    has_confirmed_bom_product = serializers.SerializerMethodField()
     purchase_status = serializers.SerializerMethodField()
     purchase_status_display = serializers.SerializerMethodField()
 
@@ -733,7 +734,7 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             "start_waiver_reason", "start_waiver_by", "start_waiver_at", "actual_quantity",
             "actual_good_quantity", "excess_quantity", "run_batches", "current_boms",
             "pmc_confirmation", "audit_timeline",
-            "bom_status", "bom_status_display", "purchase_status", "purchase_status_display",
+            "bom_status", "bom_status_display", "has_confirmed_bom_product", "purchase_status", "purchase_status_display",
             "allowed_permissions", "allowed_update_fields",
         ]
 
@@ -917,7 +918,11 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
             seen_product_lines.add(bom.product_line_id)
             latest_boms.append(bom)
 
-        product_count = len(instance.products.all())
+        product_ids = {line.pk for line in instance.products.all()}
+        product_count = len(product_ids)
+        instance._serialized_has_confirmed_bom_product = any(
+            bom.product_line_id in product_ids and bom.status == "VERIFIED" for bom in latest_boms
+        )
         if not latest_boms:
             summary = ("NOT_CREATED", "未建立")
         elif len(latest_boms) < product_count:
@@ -978,6 +983,11 @@ class ProductionTaskReadSerializer(serializers.ModelSerializer):
     def get_bom_status_display(self, instance):
         return self._bom_status_summary(instance)[1]
 
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_confirmed_bom_product(self, instance):
+        self._bom_status_summary(instance)
+        return instance._serialized_has_confirmed_bom_product
+
     @extend_schema_field(serializers.CharField())
     def get_purchase_status(self, instance):
         return self._purchase_status_summary(instance)[0]
@@ -1027,7 +1037,7 @@ class ProductionTaskListSerializer(ProductionTaskReadSerializer):
         fields = [
             "id", "task_number", "source_sales_order_number", "delivery_date", "salesperson", "followers",
             "status", "status_display", "sales_order_id", "products", "bom_status", "bom_status_display", "purchase_status",
-            "purchase_status_display", "allowed_permissions",
+            "purchase_status_display", "has_confirmed_bom_product", "allowed_permissions",
         ]
 
 

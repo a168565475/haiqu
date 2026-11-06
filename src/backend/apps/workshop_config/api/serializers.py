@@ -1,9 +1,13 @@
+from functools import cached_property
+
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.organizations.models import Employee
 
 from ..constants import METAL_WORKSHOP_NAME
 from ..models import Craft, CraftType, Operation, PlanCategory, RecordStatus, Workshop
+from ..selectors import ROLE_WORKSHOP_NAMES, employee_role_workshop_name, employee_workshop_ids
 
 
 def _normalized_text(value, label):
@@ -48,13 +52,16 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
     is_supervisor = serializers.BooleanField(source="workshop_is_supervisor", required=False)
     status = serializers.ChoiceField(source="workshop_status", choices=["ACTIVE", "LEFT"], required=False)
     status_display = serializers.CharField(source="get_workshop_status_display", read_only=True)
+    can_edit = serializers.SerializerMethodField()
+    role_workshop = serializers.SerializerMethodField()
+    role_workshop_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
         fields = [
             "id", "workshop", "workshop_name", "position", "name", "is_supervisor", "status",
             "employee", "employee_code", "employee_name", "employee_status", "employee_archived", "department", "roles",
-            "status_display", "created_at", "updated_at",
+            "status_display", "can_edit", "role_workshop", "role_workshop_name", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "employee_code", "created_at", "updated_at"]
 
@@ -84,6 +91,26 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
                 names.append(name)
         return "、".join(names) or "未分配"
 
+    def get_can_edit(self, obj) -> bool:
+        ids = employee_workshop_ids(self.context.get("request"), "workshop_config.change_workshopemployee")
+        target_id = obj.workshop_id or self.get_role_workshop(obj)
+        return ids is None or (target_id is not None and str(target_id) in ids)
+
+    def get_role_workshop_name(self, obj) -> str | None:
+        return employee_role_workshop_name(obj)
+
+    @cached_property
+    def role_workshop_ids(self):
+        return dict(Workshop.objects.filter(name__in=ROLE_WORKSHOP_NAMES.values()).values_list("name", "pk"))
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_role_workshop(self, obj) -> str | None:
+        if obj.workshop_id is not None:
+            return None
+        name = employee_role_workshop_name(obj)
+        workshop_id = self.role_workshop_ids.get(name) if name else None
+        return str(workshop_id) if workshop_id else None
+
     def get_roles(self, obj):
         rows = getattr(obj, "_workshop_roles", None)
         if rows is None:
@@ -94,6 +121,22 @@ class WorkshopEmployeeSerializer(serializers.ModelSerializer):
             if name and name not in names:
                 names.append(name)
         return "、".join(names) or "未分配"
+
+
+class WorkshopEmployeeOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Workshop
+        fields = ["id", "name", "status"]
+        read_only_fields = fields
+
+
+class WorkshopEmployeeOptionsSerializer(serializers.Serializer):
+    workshops = WorkshopEmployeeOptionSerializer(many=True)
+    editable_workshops = WorkshopEmployeeOptionSerializer(many=True)
+
+
+class WorkshopEmployeeOptionsResponseSerializer(serializers.Serializer):
+    data = WorkshopEmployeeOptionsSerializer()
 
 
 class CraftSerializer(serializers.ModelSerializer):

@@ -53,6 +53,42 @@ beforeEach(() => {
 afterEach(async () => { wrapper?.unmount(); wrapper = undefined; try { await vi.runOnlyPendingTimersAsync() } finally { vi.useRealTimers(); vi.restoreAllMocks(); cleanup() } })
 
 describe('手机金工和车缝半成品入库', () => {
+  it.each(['METAL', 'SEWING'] as const)('%s来源404显示中文和返回入口，不显示无效提交栏', async category => {
+    mocks.route.query.plan_category = category
+    mocks.preview.mockRejectedValueOnce({ response: { status: 404, data: { error: { message: 'No ProductionScheduleProduct matches the given query.' } } } })
+    const view = await openPage()
+    expect(view.get('[role="alert"]').text()).toContain('未找到可访问的生产计划')
+    expect(view.text()).not.toContain('ProductionScheduleProduct')
+    expect(view.find('.semi-footer-note').exists()).toBe(false)
+    expect(view.findAll('button').some(item => ['重新加载', '提交入库申请'].includes(item.text()))).toBe(false)
+    await button(view, '返回生产入库')
+    expect(mocks.push).toHaveBeenLastCalledWith('/production-receipt')
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
+  it('预览404不清除待核对原单，保留原编号查询和离页保护', async () => {
+    const raw = JSON.stringify(pendingValue())
+    sessionStorage.setItem(storageKey(), raw)
+    mocks.preview.mockRejectedValueOnce({ response: { status: 404 } })
+    const view = await openPage()
+    expect(view.text()).toContain('原提交已保留')
+    expect(view.findAll('button').some(item => item.text() === '返回生产入库')).toBe(false)
+    expect(sessionStorage.getItem(storageKey())).toBe(raw)
+    expect(await mocks.guards.leave!({ path: '/production-receipt' })).toBe(false)
+    await button(view, '核对本次提交')
+    expect(mocks.find).toHaveBeenCalledExactlyOnceWith(JSON.parse(raw).payload.request_id)
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(view.text()).toContain('SEMI-TEST')
+  })
+  it('普通网络加载失败仍可重试，成功读取预览后恢复提交栏', async () => {
+    mocks.preview.mockRejectedValueOnce(new Error('网络暂时不可用'))
+    const view = await openPage()
+    expect(view.text()).toContain('网络暂时不可用')
+    expect(view.find('.semi-footer-note').exists()).toBe(false)
+    await button(view, '重新加载')
+    expect(view.find('[role="alert"]').exists()).toBe(false)
+    expect(view.find('.semi-footer-note').exists()).toBe(true)
+    expect(view.findAll('.semi-material')).toHaveLength(2)
+  })
   it.each(['METAL', 'SEWING'] as const)('%s按真实预览列出全部候选、单位和属性，产品折叠且唯一仓默认选中', async category => {
     mocks.route.query.plan_category = category; mocks.preview.mockResolvedValue(fixture(category))
     const view = await openPage()
@@ -89,6 +125,8 @@ describe('手机金工和车缝半成品入库', () => {
     expect(mocks.create).toHaveBeenCalledExactlyOnceWith({ request_id: '77777777-7777-4777-8777-777777777777', schedule_product_id: planId, plan_category: category, zone_id: zoneId, receipt_date: '2026-11-02', remark: '', lines: [{ bom_line_id: lineId, quantity: '10' }] }, '"semi-one"')
     expect(mocks.find).not.toHaveBeenCalled(); expect(view.text()).toContain('申请已提交，待仓库确认'); expect(view.text()).toContain('SEMI-TEST')
     expect(sessionStorage.getItem(storageKey(category))).toBeNull()
+    await button(view, '返回生产入库')
+    expect(mocks.push).toHaveBeenLastCalledWith('/production-receipt')
   })
   it('整段拒绝小数、正负号、科学记数和粘贴非法字符，整数仍校验超量/14位/全空', async () => {
     const view = await prepare(), input = view.get<HTMLInputElement>(`[data-line-id="${lineId}"] input`)

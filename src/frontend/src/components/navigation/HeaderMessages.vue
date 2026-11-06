@@ -63,7 +63,7 @@ function clearLinked() {
 }
 async function openLinkedNotification() {
   clearLinked()
-  const recipientId = route.path === '/' ? route.query.notification : undefined
+  const recipientId = ['/', '/workbench/production-overview', '/workbench/workshop'].includes(route.path) ? route.query.notification : undefined
   if (recipientId === undefined || !auth.user || auth.waitingForRole) return
   const request = new AbortController()
   linkedRequest = request

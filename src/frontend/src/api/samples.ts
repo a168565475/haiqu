@@ -10,6 +10,7 @@ import type {
   SampleListResult,
   SampleListItem,
   SampleOptions,
+  SampleFilterOptions,
   SampleFormContext,
   SampleFormOptions,
   SampleRequestFormInput,
@@ -211,6 +212,10 @@ export async function fetchSampleStats(query?: Partial<SampleListQuery>): Promis
 
 export async function fetchSampleOptions(): Promise<SampleOptions> {
   return unwrap(await apiClient.get<ApiDataResponse<SampleOptions>>('/api/v1/sample-requests/options/'))
+}
+
+export async function fetchSampleFilterOptions(): Promise<SampleFilterOptions> {
+  return unwrap(await apiClient.get<ApiDataResponse<SampleFilterOptions>>('/api/v1/sample-requests/options/', { params: { scope: 'filters' } }))
 }
 
 export async function fetchSampleFormOptions(): Promise<SampleFormOptions> {

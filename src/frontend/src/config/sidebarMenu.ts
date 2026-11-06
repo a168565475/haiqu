@@ -67,6 +67,8 @@ export const sidebarMenuItems: MenuItem[] = [
     defaultChildKey: 'purchase-orders',
     children: [
       { key: 'purchase-orders', label: '采购订单', to: { name: 'purchase-orders' }, anyPermissions: ['procurement.view_purchaseorder', 'procurement.view_supplier'] },
+      { key: 'purchase-tracking', label: '采购跟踪', to: { name: 'purchase-tracking' }, permission: 'procurement.view_purchaseorder' },
+      { key: 'purchase-alerts', label: '采购提醒', to: { name: 'purchase-alerts' }, permission: 'procurement.view_purchaseorder' },
       { key: 'purchase-return-records', label: '退货记录', to: { name: 'purchase-return-records' }, anyPermissions: ['access_control.confirm_purchasereturn', 'procurement.submit_purchaseorder', 'procurement.view_purchaseorder'] },
     ],
   },

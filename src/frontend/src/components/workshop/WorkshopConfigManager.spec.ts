@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import ElementPlus, { ElDropdown, ElFormItem, ElInput, ElSelect } from 'element-plus'
+import ElementPlus, { ElDropdown, ElFormItem, ElInput, ElOption, ElSelect } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Craft, Operation, WorkshopEmployee } from '@/types/workshopConfig'
@@ -11,6 +11,7 @@ const auth = vi.hoisted(() => ({ user: { is_superuser: false }, hasPermission: v
 vi.mock('@/api/workshopConfig', () => ({
   fetchWorkshopConfigList: api.list,
   fetchWorkshopConfigDetail: api.detail,
+  fetchWorkshopEmployeeOptions: api.options,
   createWorkshopConfig: api.create,
   updateWorkshopConfig: api.update,
   deleteWorkshopEmployee: api.remove,
@@ -26,7 +27,8 @@ const legacy: WorkshopEmployee = {
   id: 'assignment-1', workshop: 'workshop-1', workshop_name: '金工车间', position: '组长',
   name: '同名员工', employee: 'assignment-1', employee_code: 'E001', employee_name: '同名员工', employee_status: 'ACTIVE',
   employee_archived: false, department: '生产部', roles: '生产主管', is_supervisor: true, status: 'ACTIVE', status_display: '在职',
-  created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z',
+  created_at: '2026-10-21T00:00:00Z', updated_at: '2026-10-21T00:00:00Z', can_edit: true,
+  role_workshop: null, role_workshop_name: null,
 }
 const operation: Operation = {
   id: 'operation-1', operation_number: 'OP-LEGACY-001', product_name: '', craft: 'craft-1', craft_name: '管材加工',
@@ -43,7 +45,8 @@ const operationCraft: Craft = {
 const wrappers: VueWrapper[] = []
 
 async function render(record = legacy) {
-  api.list.mockImplementation((kind: string) => Promise.resolve({
+  api.list.mockImplementation((kind: string) => kind === 'workshops' && !auth.hasPermission('workshop_config.view_workshop')
+    ? Promise.reject({ response: { status: 403, data: { error: { message: '无权读取完整车间目录' } } } }) : Promise.resolve({
     data: kind === 'workshops' ? [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }] : [record],
     meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
   }))
@@ -79,6 +82,7 @@ beforeEach(() => {
   auth.hasPermission.mockReturnValue(true)
   api.create.mockResolvedValue({})
   api.update.mockResolvedValue({})
+  api.options.mockResolvedValue({ workshops: [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }], editable_workshops: [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }] })
   feedback.confirm.mockResolvedValue(undefined)
 })
 afterEach(() => wrappers.splice(0).forEach((wrapper) => wrapper.unmount()))
@@ -96,7 +100,6 @@ describe('车间直接配置行政生产员工', () => {
     await edit(wrapper)
     expect(field(wrapper, '员工').text()).toContain('同名员工')
     expect(field(wrapper, '员工').findComponent(ElSelect).exists()).toBe(false)
-    expect(api.options).not.toHaveBeenCalled()
     expect(api.create).not.toHaveBeenCalled()
   })
 
@@ -122,6 +125,21 @@ describe('车间直接配置行政生产员工', () => {
     await setSelect(wrapper, '车间', 'workshop-1')
     await button(wrapper, '保存').trigger('click'); await flushPromises()
     expect(feedback.warning).toHaveBeenCalledWith('请输入岗位。')
+  })
+
+  it('角色对应的未安排员工自动带入车间，车间只读且可保存岗位', async () => {
+    const wrapper = await render({
+      ...legacy, workshop: null, workshop_name: '未安排', position: '',
+      roles: '金工车间', role_workshop: 'workshop-1', role_workshop_name: '金工车间',
+    })
+    await edit(wrapper)
+    expect(field(wrapper, '车间').findComponent(ElSelect).exists()).toBe(false)
+    expect(field(wrapper, '车间').getComponent(ElInput).props('disabled')).toBe(true)
+    field(wrapper, '岗位').getComponent(ElInput).vm.$emit('update:modelValue', '金工')
+    await button(wrapper, '保存').trigger('click'); await flushPromises()
+    expect(api.update).toHaveBeenCalledWith('employees', legacy.id, {
+      workshop: 'workshop-1', position: '金工', is_supervisor: true, status: 'ACTIVE',
+    }, '"assignment-v1"')
   })
 
   it('清除安排使用版本控制，取消或失败不提示成功', async () => {
@@ -160,6 +178,35 @@ describe('车间直接配置行政生产员工', () => {
     const wrapper = await render()
     wrapper.getComponent(ElDropdown).vm.$emit('command', 'toggle'); await flushPromises()
     expect(api.update).toHaveBeenCalledExactlyOnceWith('employees', legacy.id, { status: 'LEFT' }, '"assignment-v1"')
+  })
+
+  it('主任只需员工权限即可加载选项，筛选和编辑使用各自车间范围', async () => {
+    auth.hasPermission.mockImplementation((permission: string) => ['workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee'].includes(permission))
+    api.options.mockResolvedValue({
+      workshops: [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }, { id: 'workshop-2', name: '车缝车间', status: 'ACTIVE' }],
+      editable_workshops: [{ id: 'workshop-1', name: '金工车间', status: 'ACTIVE' }],
+    })
+    const wrapper = await render()
+    expect(wrapper.text()).not.toContain('无权读取完整车间目录')
+    expect(api.list.mock.calls.some(([kind]) => kind === 'workshops')).toBe(false)
+    expect(api.options).toHaveBeenCalledOnce()
+    const filter = wrapper.findAllComponents(ElSelect).find(item => item.props('placeholder') === '全部车间')!
+    expect(filter.findAllComponents(ElOption).map(item => item.props('value'))).toEqual(['workshop-1', 'workshop-2'])
+    await edit(wrapper)
+    expect(field(wrapper, '车间').findAllComponents(ElOption).map(item => item.props('value'))).toEqual(['workshop-1'])
+  })
+
+  it('有修改权限但员工行不在修改范围时不显示操作，详情失权后不继续写入', async () => {
+    const readonly = await render({ ...legacy, can_edit: false })
+    expect(readonly.findComponent(ElDropdown).exists()).toBe(false)
+    const wrapper = await render()
+    api.detail.mockResolvedValue({ data: { ...legacy, can_edit: false }, etag: '"v2"' })
+    await edit(wrapper)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.getComponent(ElDropdown).vm.$emit('command', 'toggle'); await flushPromises()
+    wrapper.getComponent(ElDropdown).vm.$emit('command', 'delete'); await flushPromises()
+    expect(api.update).not.toHaveBeenCalled()
+    expect(api.remove).not.toHaveBeenCalled()
   })
 })
 

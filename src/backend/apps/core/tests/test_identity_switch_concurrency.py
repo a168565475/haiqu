@@ -11,11 +11,15 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
+from django.contrib.sessions.models import Session
 from django.db import close_old_connections, connection, connections
 from django.test import TransactionTestCase, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from apps.core import views as auth_views
 from apps.preferences.api.views import SavedViewViewSet
+from apps.samples.api.views import SampleRequestViewSet
 
 from .test_identity_switch_api import FLOW_SETTINGS, IdentitySwitchFixtures, copy_browser
 
@@ -46,7 +50,7 @@ class IdentitySwitchConcurrencyTests(IdentitySwitchFixtures, TransactionTestCase
                 self.worker_pids.append(pid)
 
             def observe(execute, sql, params, many, context):
-                if "pg_advisory_lock(" in sql.lower():
+                if "pg_advisory_lock(" in sql.lower() or "pg_advisory_lock_shared(" in sql.lower():
                     with self.observations_lock:
                         self.lock_calls.append((pid, sql, tuple(params or ())))
                     if lock_attempt is not None:
@@ -77,6 +81,318 @@ class IdentitySwitchConcurrencyTests(IdentitySwitchFixtures, TransactionTestCase
         for name in (settings.SESSION_COOKIE_NAME, self.return_cookie_name):
             if name in response.cookies:
                 browser.cookies[name] = response.cookies[name].value
+
+    def grant_samples(self, employee):
+        from django.contrib.auth.models import Permission
+        from apps.samples.models import SampleRequest
+
+        employee.user.user_permissions.add(Permission.objects.get(
+            content_type__app_label="samples", codename="view_samplerequest",
+        ))
+        return SampleRequest.objects.create(
+            owner_employee=employee, requested_by_employee=employee,
+            request_number=f"LOCK-{employee.employee_code}", requested_at=timezone.now(),
+        )
+
+    def test_sample_reads_overlap_under_shared_chain_lock(self):
+        sample = self.grant_samples(self.employee)
+        self.enter_flow()
+        version = self.version()
+        browsers = [copy_browser(self.client), copy_browser(self.client)]
+        paths = ["/api/v1/sample-requests/", "/api/v1/sample-requests/options/?scope=filters"]
+        both_entered = Event()
+        release = Event()
+        entered = []
+        original = SampleRequestViewSet.get_queryset
+
+        def paused(view):
+            with self.observations_lock:
+                entered.append((view.request.user.pk, view.actor_employee().pk))
+                if len(entered) == 2:
+                    both_entered.set()
+            if not release.wait(timeout=WAIT):
+                raise AssertionError("Concurrent sample readers did not both enter")
+            return original(view)
+
+        pool = ThreadPoolExecutor(max_workers=2)
+        try:
+            with patch.object(SampleRequestViewSet, "get_queryset", paused):
+                futures = [pool.submit(self.worker, lambda browser=browser, path=path: browser.get(
+                    path, HTTP_X_IDENTITY_VERSION=version)) for browser, path in zip(browsers, paths)]
+                self.assertTrue(both_entered.wait(timeout=WAIT), "Shared readers were serialized")
+                release.set()
+                responses = [future.result(timeout=FUTURE_WAIT) for future in futures]
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        self.assertEqual([response.status_code for response in responses], [200, 200])
+        self.assertEqual([row["id"] for row in responses[0].data["data"]], [str(sample.pk)])
+        self.assertEqual(entered, [(self.employee.user_id, self.employee.pk)] * 2)
+        self.assert_real_serialization()
+        self.assertTrue(all("pg_advisory_lock_shared(" in sql for _, sql, _ in self.lock_calls))
+        for response in responses:
+            self.assert_no_authentication_cookies(response)
+
+    def assert_sample_readers_block_transition(self, *, returning):
+        self.grant_samples(self.employee)
+        self.grant_samples(self.other_employee)
+        self.enter_flow()
+        version = self.version()
+        browsers = [copy_browser(self.client), copy_browser(self.client)]
+        writer = copy_browser(self.client)
+        paths = ["/api/v1/sample-requests/", "/api/v1/sample-requests/options/?scope=filters"]
+        both_entered = Event()
+        releases = [Event(), Event()]
+        writer_attempt = Event()
+        entered = []
+        original = SampleRequestViewSet.get_queryset
+
+        def paused(view):
+            index = 0 if view.action == "list" else 1
+            with self.observations_lock:
+                entered.append(index)
+                if len(entered) == 2:
+                    both_entered.set()
+            if not releases[index].wait(timeout=WAIT):
+                raise AssertionError("Timed out releasing shared sample read")
+            return original(view)
+
+        transition_path = "/api/auth/return-admin/" if returning else "/api/auth/switch/"
+        payload = {} if returning else {"employee_id": str(self.other_employee.pk)}
+        pool = ThreadPoolExecutor(max_workers=3)
+        try:
+            with patch.object(SampleRequestViewSet, "get_queryset", paused):
+                readers = [pool.submit(self.worker, lambda browser=browser, path=path: browser.get(
+                    path, HTTP_X_IDENTITY_VERSION=version)) for browser, path in zip(browsers, paths)]
+                self.assertTrue(both_entered.wait(timeout=WAIT))
+                transition = pool.submit(self.worker, lambda: self.post_json(
+                    transition_path, payload, version=version, client=writer), lock_attempt=writer_attempt)
+                self.assertTrue(writer_attempt.wait(timeout=WAIT))
+                self.assertFalse(transition.done())
+                releases[0].set()
+                first = readers[0].result(timeout=FUTURE_WAIT)
+                self.assertFalse(transition.done(), "Writer passed the remaining shared reader")
+                releases[1].set()
+                second = readers[1].result(timeout=FUTURE_WAIT)
+                changed = transition.result(timeout=FUTURE_WAIT)
+        finally:
+            for release in releases:
+                release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        expected_user = self.admin if returning else self.other_employee.user
+        new_version = self.assert_switch_state(changed, active=not returning, can_return=not returning, user=expected_user)
+        for response in (first, second):
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assert_no_authentication_cookies(response)
+            self.apply_all_response_cookies(response, writer)
+        self.assertEqual(self.version(writer), new_version)
+        self.assertEqual(writer.get("/api/auth/me/").data["user"]["id"], expected_user.pk)
+        self.assertEqual(browsers[0].get(paths[0], HTTP_X_IDENTITY_VERSION=version).status_code, 409)
+        self.assert_real_serialization()
+        self.assertEqual(sum("pg_advisory_lock_shared(" in sql for _, sql, _ in self.lock_calls), 2)
+        self.assertEqual(sum("pg_advisory_lock(" in sql for _, sql, _ in self.lock_calls), 1)
+
+    def test_switch_waits_for_all_sample_readers_and_late_responses_keep_new_identity(self):
+        self.assert_sample_readers_block_transition(returning=False)
+
+    def test_return_waits_for_all_sample_readers_and_late_responses_keep_new_identity(self):
+        self.assert_sample_readers_block_transition(returning=True)
+
+    def test_shared_sample_reads_keep_version_checks_and_fall_back_for_session_writes(self):
+        self.grant_samples(self.employee)
+        self.enter_flow()
+        version = self.version()
+        paths = ["/api/v1/sample-requests/", "/api/v1/sample-requests/options/?scope=filters"]
+        for path in paths:
+            for method in (self.client.get, self.client.head):
+                with self.subTest(path=path, method=method.__name__):
+                    with CaptureQueriesContext(connection) as queries:
+                        response = method(path, HTTP_X_IDENTITY_VERSION=version)
+                    self.assertEqual(response.status_code, 200, response.content)
+                    self.assertTrue(any("pg_advisory_lock_shared(" in query["sql"] for query in queries))
+                    self.assertTrue(any("pg_advisory_unlock_shared(" in query["sql"] for query in queries))
+                    self.assertEqual(method(path).status_code, 428)
+                    self.assertEqual(method(path, HTTP_X_IDENTITY_VERSION="stale").status_code, 409)
+        for setting in (
+            {"SESSION_SAVE_EVERY_REQUEST": True}, {"SECRET_KEY_FALLBACKS": ["old-test-secret"]},
+            {"CSRF_USE_SESSIONS": True}, {"SESSION_ENGINE": "django.contrib.sessions.backends.cached_db"},
+        ):
+            with self.subTest(setting=setting), self.settings(**setting):
+                browser = copy_browser(self.client)
+                with CaptureQueriesContext(connection) as queries:
+                    response = browser.get(paths[0], HTTP_X_IDENTITY_VERSION=version)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertTrue(any("pg_advisory_lock(" in query["sql"] for query in queries))
+                self.assertFalse(any("pg_advisory_lock_shared(" in query["sql"] for query in queries))
+        with CaptureQueriesContext(connection) as queries:
+            self.client.get("/api/auth/me/")
+        self.assertTrue(any("pg_advisory_lock(" in query["sql"] for query in queries))
+        self.assertFalse(any("pg_advisory_lock_shared(" in query["sql"] for query in queries))
+
+    def test_invalidated_parallel_sample_reader_cannot_resave_session_or_block_return(self):
+        from apps.organizations.models import Employee
+
+        sample = self.grant_samples(self.employee)
+        self.enter_flow()
+        version = self.version()
+        old_key = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        reader, invalid_reader, returning_browser = [copy_browser(self.client) for _ in range(3)]
+        in_read = Event()
+        release = Event()
+        return_attempt = Event()
+        old_key_saves = []
+        original_queryset = SampleRequestViewSet.get_queryset
+        original_save = SessionStore.save
+
+        def paused(view):
+            in_read.set()
+            if not release.wait(timeout=WAIT):
+                raise AssertionError("Timed out releasing valid sample reader")
+            return original_queryset(view)
+
+        def observed_save(store, *args, **kwargs):
+            if store.session_key == old_key:
+                old_key_saves.append(old_key)
+            return original_save(store, *args, **kwargs)
+
+        pool = ThreadPoolExecutor(max_workers=3)
+        try:
+            with patch.object(SampleRequestViewSet, "get_queryset", paused), patch.object(SessionStore, "save", observed_save):
+                reading = pool.submit(self.worker, lambda: reader.get(
+                    "/api/v1/sample-requests/", HTTP_X_IDENTITY_VERSION=version))
+                self.assertTrue(in_read.wait(timeout=WAIT))
+                Employee.objects.filter(pk=self.employee.pk).update(status="INACTIVE")
+                invalid = pool.submit(self.worker, lambda: invalid_reader.get(
+                    "/api/v1/sample-requests/", HTTP_X_IDENTITY_VERSION=version)).result(timeout=FUTURE_WAIT)
+                self.assertEqual(invalid.status_code, 401, invalid.content)
+                self.assert_no_authentication_cookies(invalid)
+                self.assertFalse(Session.objects.filter(session_key=old_key).exists())
+                returning = pool.submit(self.worker, lambda: self.post_json(
+                    "/api/auth/return-admin/", {}, version=version, client=returning_browser), lock_attempt=return_attempt)
+                self.assertTrue(return_attempt.wait(timeout=WAIT))
+                self.assertFalse(returning.done())
+                release.set()
+                old_response = reading.result(timeout=FUTURE_WAIT)
+                returned = returning.result(timeout=FUTURE_WAIT)
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        self.assertEqual(old_response.status_code, 200, old_response.content)
+        self.assertEqual([row["id"] for row in old_response.data["data"]], [str(sample.pk)])
+        self.assertEqual(old_key_saves, [])
+        self.assertFalse(Session.objects.filter(session_key=old_key).exists())
+        new_version = self.assert_switch_state(returned, active=False, can_return=False, user=self.admin)
+        self.assert_no_authentication_cookies(old_response)
+        self.apply_all_response_cookies(old_response, returning_browser)
+        self.assertEqual(self.version(returning_browser), new_version)
+        self.assertEqual(reader.get("/api/v1/sample-requests/", HTTP_X_IDENTITY_VERSION=version).status_code, 409)
+
+    def test_original_admin_flush_and_relogin_cannot_be_overwritten_by_late_reader(self):
+        from apps.organizations.models import Employee
+
+        admin_employee = Employee.objects.create(user=self.admin, employee_code="LOCK_ADMIN", display_name="锁测试管理员")
+        sample = self.grant_samples(admin_employee)
+        self.login()
+        old_key = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        reader, invalid_reader, relogin_browser = [copy_browser(self.client) for _ in range(3)]
+        in_read = Event()
+        release = Event()
+        old_key_saves = []
+        identities = []
+        original_queryset = SampleRequestViewSet.get_queryset
+        original_save = SessionStore.save
+
+        def paused(view):
+            identities.append(view.request.user.pk)
+            in_read.set()
+            if not release.wait(timeout=WAIT):
+                raise AssertionError("Timed out releasing original administrator read")
+            result = original_queryset(view)
+            identities.append(view.request.user.pk)
+            return result
+
+        def observed_save(store, *args, **kwargs):
+            if store.session_key == old_key:
+                old_key_saves.append(old_key)
+            return original_save(store, *args, **kwargs)
+
+        pool = ThreadPoolExecutor(max_workers=2)
+        try:
+            with patch.object(SampleRequestViewSet, "get_queryset", paused), patch.object(SessionStore, "save", observed_save):
+                reading = pool.submit(self.worker, lambda: reader.get("/api/v1/sample-requests/"))
+                self.assertTrue(in_read.wait(timeout=WAIT))
+                self.admin.set_password("ChangedIdentityLockPassword123!")
+                self.admin.save(update_fields=["password"])
+                invalid = pool.submit(self.worker, lambda: invalid_reader.get("/api/v1/sample-requests/")).result(timeout=FUTURE_WAIT)
+                self.assertEqual(invalid.status_code, 401, invalid.content)
+                self.assertFalse(Session.objects.filter(session_key=old_key).exists())
+                relogged = self.login(self.other_employee.user, client=relogin_browser)
+                self.assertEqual(relogged.data["user"]["id"], self.other_employee.user_id)
+                release.set()
+                old_response = reading.result(timeout=FUTURE_WAIT)
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        self.assertEqual(old_response.status_code, 200, old_response.content)
+        self.assertEqual([row["id"] for row in old_response.data["data"]], [str(sample.pk)])
+        self.assertEqual(identities, [self.admin.pk, self.admin.pk])
+        self.assertEqual(old_key_saves, [])
+        self.assertFalse(Session.objects.filter(session_key=old_key).exists())
+        self.assert_no_authentication_cookies(old_response)
+        self.apply_all_response_cookies(old_response, relogin_browser)
+        self.assertEqual(relogin_browser.get("/api/auth/me/").data["user"]["id"], self.other_employee.user_id)
+        self.assertEqual(reader.get("/api/v1/sample-requests/").status_code, 401)
+
+    def test_shared_sample_500_releases_lock_before_connection_closes(self):
+        from apps.core.identity_switch_services import lock_number
+
+        self.grant_samples(self.employee)
+        self.enter_flow()
+        version = self.version()
+        browser = copy_browser(self.client)
+        browser.raise_request_exception = False
+        returned = Event()
+        release = Event()
+        number = lock_number(self.root_key)
+
+        def fail_with_open_connection():
+            physical = connection.connection
+            response = browser.get("/api/v1/sample-requests/", HTTP_X_IDENTITY_VERSION=version)
+            self.assertEqual(response.status_code, 500, response.content)
+            self.assertIs(connection.connection, physical)
+            self.assertFalse(physical.closed)
+            returned.set()
+            if not release.wait(timeout=WAIT):
+                raise AssertionError("Timed out keeping failed shared reader connection open")
+            return response
+
+        def probe_exclusive_lock():
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", [number])
+                acquired = cursor.fetchone()[0]
+                try:
+                    self.assertTrue(acquired, "Failed sample reader leaked its shared lock")
+                finally:
+                    if acquired:
+                        cursor.execute("SELECT pg_advisory_unlock(%s)", [number])
+                        self.assertTrue(cursor.fetchone()[0])
+            return acquired
+
+        pool = ThreadPoolExecutor(max_workers=2)
+        try:
+            with patch.object(SampleRequestViewSet, "get_queryset", side_effect=RuntimeError("Intentional sample read failure")):
+                failed = pool.submit(self.worker, fail_with_open_connection)
+                self.assertTrue(returned.wait(timeout=WAIT))
+                self.assertTrue(pool.submit(self.worker, probe_exclusive_lock).result(timeout=FUTURE_WAIT))
+                self.assertFalse(failed.done())
+                release.set()
+                response = failed.result(timeout=FUTURE_WAIT)
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        self.assert_no_authentication_cookies(response)
+        self.assertTrue(any("pg_advisory_lock_shared(" in sql for _, sql, _ in self.lock_calls))
+        self.assertEqual(self.version(), version)
 
     def test_two_initial_switches_with_one_version_have_exactly_one_winner(self):
         self.login()

@@ -1,20 +1,28 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import ElementPlus, { ElDatePicker, ElSelect, ElPagination } from 'element-plus'
+import ElementPlus, { ElDatePicker, ElSelect, ElPagination, ElMessageBox } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import SampleListView from './SampleListView.vue'
 import { useAuthStore } from '@/stores/auth'
-import type { SampleListItem } from '@/types/sample'
+import type { SampleFilterOptions, SampleListItem, SampleListSummary } from '@/types/sample'
 
-const api = vi.hoisted(() => ({ rows: vi.fn(), options: vi.fn(), stats: vi.fn(), push: vi.fn(), query: {} as Record<string, string> }))
+const api = vi.hoisted(() => ({ rows: vi.fn(), options: vi.fn(), fullOptions: vi.fn(), stats: vi.fn(), detail: vi.fn(), remove: vi.fn(), push: vi.fn(), query: {} as Record<string, string> }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: api.query }), useRouter: () => ({ push: api.push }) }))
 vi.mock('@/api/samples', () => ({
-  fetchSamples: api.rows, fetchSampleOptions: api.options, fetchSampleStats: api.stats,
-  deleteSample: vi.fn(), fetchSample: vi.fn(),
+  fetchSamples: api.rows, fetchSampleFilterOptions: api.options, fetchSampleOptions: api.fullOptions, fetchSampleStats: api.stats,
+  deleteSample: api.remove, fetchSample: api.detail,
 }))
 
-const result = (name: string) => ({ data: [{ id: name, request_number: name, etag: '"version-1"', customer_name: '客户', products: [], status: 'PMC_REVIEW', status_display: 'PMC待审核', item_summary: { text: '桌子', count: 1 } }], meta: { total: 1 } })
+const result = (name: string) => {
+  const row: SampleListSummary = {
+    id: name, request_number: name, customer_name: '客户', products: [],
+    status: 'PMC_REVIEW', status_display: 'PMC待审核', item_summary: { text: '桌子', count: 1 },
+    sample_type_display: '售前样', owner: { id: 'owner', display_name: '业务甲' },
+    requested_at: '2026-11-05T08:00:00+08:00', requested_due_at: null, latest_shipment: null,
+  }
+  return { data: [row], meta: { total: 1 } }
+}
 const wrappers: ReturnType<typeof mount>[] = []
 function render(employeeId?: string, permissions: string[] = []) {
   const pinia = createPinia()
@@ -30,12 +38,56 @@ function render(employeeId?: string, permissions: string[] = []) {
 beforeEach(() => {
   vi.resetAllMocks()
   api.query = {}
-  api.options.mockResolvedValue({ statuses: [], sample_types: [], owners: [] })
+  api.options.mockResolvedValue({ statuses: [], sample_types: [], owner_filters: [] })
   api.stats.mockResolvedValue({ all: 1, pending_completion: 0, pending_payment: 0, pending_pmc: 1, pending_metalwork: 0, pending_cutting: 0, finished: 0 })
 })
-afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
+afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks() })
 
 describe('打样申请列表', () => {
+  it('最小摘要可展示，筛选选项仍在加载也不阻塞列表，更多筛选不额外请求', async () => {
+    let resolve!: (value: SampleFilterOptions) => void
+    api.options.mockReturnValueOnce(new Promise(done => { resolve = done }))
+    const data = result('SUMMARY')
+    data.data[0]!.products = [{ id: 'product', line_number: 1, category_name: '椅子', product_name: '折叠椅', specification: '大号；颜色：蓝色', total_sample_quantity: 2 }]
+    api.rows.mockResolvedValue(data)
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('.sample-table').text()).toContain('SUMMARY')
+    for (const text of ['折叠椅', '大号', '蓝色', '2 PCS', '业务甲']) expect(wrapper.text()).toContain(text)
+    expect(api.rows).toHaveBeenCalledTimes(1)
+    expect(api.options).toHaveBeenCalledTimes(1)
+    expect(api.fullOptions).not.toHaveBeenCalled()
+    const owner = wrapper.findAllComponents(ElSelect).find(item => item.classes().includes('owner-filter'))!
+    expect(owner.props()).toMatchObject({ loading: true, disabled: true })
+    await wrapper.find('.more-filters').trigger('click')
+    expect(api.options).toHaveBeenCalledTimes(1)
+    resolve({ statuses: [], sample_types: [], owner_filters: [{ id: 'owner', display_name: '业务甲' }] })
+    await flushPromises()
+    expect(owner.props()).toMatchObject({ loading: false, disabled: false })
+    owner.vm.$emit('update:modelValue', 'owner')
+    owner.vm.$emit('change', 'owner')
+    await flushPromises()
+    expect(api.rows).toHaveBeenLastCalledWith(expect.objectContaining({ owner_employee_id: 'owner' }))
+  })
+
+  it('筛选选项失败保留列表，单独重试成功后恢复筛选', async () => {
+    api.rows.mockResolvedValue(result('OPTIONS-FAILED'))
+    api.options.mockRejectedValueOnce(new AxiosError('offline'))
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('.sample-table').text()).toContain('OPTIONS-FAILED')
+    expect(wrapper.find('.filter-options-error').text()).toContain('样品筛选选项加载失败')
+    const filters = wrapper.findAllComponents(ElSelect).filter(item => item.classes().some(name => ['status-filter', 'type-filter', 'owner-filter'].includes(name)))
+    expect(filters).toHaveLength(3)
+    expect(filters.every(item => item.props('disabled'))).toBe(true)
+    await wrapper.get('.filter-options-error button').trigger('click')
+    await flushPromises()
+    expect(api.options).toHaveBeenCalledTimes(2)
+    expect(api.rows).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.filter-options-error').exists()).toBe(false)
+    expect(filters.every(item => !item.props('disabled'))).toBe(true)
+  })
+
   it('快速搜索时仅接纳最新响应，并保留服务端状态含义', async () => {
     let resolveFirst: (value: unknown) => void = () => {}
     api.rows.mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
@@ -62,6 +114,8 @@ describe('打样申请列表', () => {
     await flushPromises()
     expect(wrapper.find('[role="alert"]').text()).toContain('没有执行该样品操作的权限')
     expect(wrapper.find('.create-button').exists()).toBe(false)
+    expect(api.options).toHaveBeenCalledTimes(1)
+    expect(wrapper.findAllComponents(ElSelect).find(item => item.classes().includes('owner-filter'))!.props('disabled')).toBe(false)
     await wrapper.find('[role="alert"] button').trigger('click')
     await flushPromises()
     expect(api.rows).toHaveBeenCalledTimes(2)
@@ -184,6 +238,24 @@ describe('打样列表筛选和操作边界', () => {
     expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-detail', params: { sampleId: 'REAL' } })
     await wrapper.find('.create-button').trigger('click')
     expect(api.push).toHaveBeenLastCalledWith({ name: 'sample-new' })
+  })
+
+  it('摘要没有版本或完整详情时，删除仍先读取最新详情再携带版本', async () => {
+    api.rows.mockResolvedValue(result('SUMMARY-DELETE'))
+    api.detail.mockResolvedValue({ data: { request_number: '最新申请编号' }, etag: '"latest-version"' })
+    api.remove.mockResolvedValue({ deleted_count: 1 })
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+    const wrapper = render('employee', ['samples.delete_samplerequest'])
+    await flushPromises()
+    expect(api.detail).not.toHaveBeenCalled()
+    await wrapper.get('.row-actions button').trigger('click')
+    await vi.waitFor(() => expect(wrapper.findAllComponents({ name: 'ElDropdownItem' }).some(item => item.text() === '永久删除')).toBe(true))
+    wrapper.findAllComponents({ name: 'ElDropdownItem' }).find(item => item.text() === '永久删除')!.vm.$emit('click')
+    await flushPromises()
+    expect(api.detail).toHaveBeenCalledWith('SUMMARY-DELETE')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('最新申请编号'), '永久删除样品', expect.any(Object))
+    expect(api.remove).toHaveBeenCalledWith('SUMMARY-DELETE', '"latest-version"')
+    expect(api.rows).toHaveBeenCalledTimes(2)
   })
 })
 

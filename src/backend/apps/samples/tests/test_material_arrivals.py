@@ -43,7 +43,7 @@ class MaterialArrivalTests(APITestCase):
         self.sample = SampleRequest.objects.create(customer_account=self.customer, owner_employee=self.employee,
             request_number='ARRIVAL-TEST', status='PROCUREMENT_PENDING', application_payload_hash='new-application', requested_at=timezone.now())
         self.key = str(uuid.uuid4())
-        self.demand = {'key': self.key, 'name': '测试钢管', 'specification': 'Φ25×1.0', 'material': '测试钢管',
+        self.demand = {'key': self.key, 'name': '测试钢管', 'specification': 'Φ25×1.0', 'material': self.purchase_line.raw_material_snapshot,
                        'color': '黑色', 'category': 'hardware', 'quantity': '4', 'unitLabel': self.purchase_line.source_unit_text, 'unitId': '', 'notes': '',
                        'supplyQuantity': '0', 'shortageQuantity': '4'}
         record = SampleMaterialRequest.objects.create(sample_request=self.sample, draft={'lines': [self.demand], 'notes': ''},
@@ -121,6 +121,8 @@ class MaterialArrivalTests(APITestCase):
         sample = self.receive(first)
         self.assertEqual(sample.status, 'MATERIAL_ISSUE_PENDING')
         progress = material_progress(sample)
+        summary = material_progress(sample, summary_only=True)
+        self.assertEqual({key: summary[key] for key in ('label', 'status')}, {key: progress[key] for key in ('label', 'status')})
         self.assertEqual(sample_status_display(sample), '待发起领料')
         self.assertEqual(progress['label'], '部分入库')
         self.assertEqual(Decimal(progress['lines'][0]['remainingQuantity']), Decimal('2'))
@@ -131,6 +133,7 @@ class MaterialArrivalTests(APITestCase):
         sample = self.receive(second)
         self.assertEqual(sample.status, 'MATERIAL_ISSUE_PENDING')
         self.assertEqual(material_progress(sample)['label'], '材料齐备，待领料')
+        self.assertEqual(material_progress(sample, summary_only=True)['label'], '材料齐备，待领料')
         self.assertEqual(SampleMaterialArrival.objects.count(), 2)
         self.assertEqual(self.receive(second).status, 'MATERIAL_ISSUE_PENDING')
 

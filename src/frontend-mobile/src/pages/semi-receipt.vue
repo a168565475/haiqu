@@ -31,6 +31,7 @@ const preview = ref<SemiReceiptPreview | null>(null), pending = ref<PendingSemiR
 const quantities = ref<Record<string, string>>({}), receiptDate = ref(''), remark = ref(''), warehouseId = ref(''), zoneId = ref('')
 const loading = ref(false), saving = ref(false), storageBlocked = ref(false), needsRefresh = ref(false)
 const loadError = ref(''), actionError = ref('')
+const sourceUnavailable = ref(false)
 const showDate = ref(false), pickerDate = ref<string[]>([]), showWarehouse = ref(false), showZone = ref(false)
 const current = () => alive && auth.user?.id === owner.userId && auth.generation === owner.generation
 const blockers = computed(() => preview.value ? semiPageBlockers(preview.value) : [])
@@ -71,7 +72,7 @@ async function load() {
   if (!scope.value || !current() || storageBlocked.value || saving.value || !canView.value) return
   controller?.abort(); controller = new AbortController()
   const request = ++sequence, source = scope.value
-  loading.value = true; loadError.value = ''; preview.value = null
+  loading.value = true; loadError.value = ''; sourceUnavailable.value = false; preview.value = null
   try {
     const data = await fetchSemiReceiptPreview(source.schedule_product_id, source.plan_category, controller.signal)
     if (!current() || request !== sequence) return
@@ -85,14 +86,23 @@ async function load() {
     }
     if (!warehouseId.value && warehouses.value.length === 1) warehouseId.value = warehouses.value[0]!.id
   }
-  catch (error) { if (current() && request === sequence) loadError.value = errorMessage(error, '半成品入库信息加载失败，请重试。') }
+  catch (error) {
+    if (current() && request === sequence) {
+      sourceUnavailable.value = (error as { response?: { status?: number } })?.response?.status === 404
+      loadError.value = sourceUnavailable.value
+        ? pending.value
+          ? '当前生产计划不存在或暂不可访问。原提交已保留，请使用“核对本次提交”确认结果。'
+          : '未找到可访问的生产计划，请返回生产入库重新选择。'
+        : errorMessage(error, '半成品入库信息加载失败，请重试。')
+    }
+  }
   finally { if (current() && request === sequence) loading.value = false }
 }
 function initialize() {
   controller?.abort(); sequence++; store = null
   loading.value = false; saving.value = false; showDate.value = false; showWarehouse.value = false; showZone.value = false
   pending.value = null; pendingRaw = null; result.value = null; storageBlocked.value = false; needsRefresh.value = false
-  loadError.value = ''; actionError.value = ''; preview.value = null; quantities.value = {}; receiptDate.value = ''; remark.value = ''; warehouseId.value = ''; zoneId.value = ''
+  loadError.value = ''; actionError.value = ''; sourceUnavailable.value = false; preview.value = null; quantities.value = {}; receiptDate.value = ''; remark.value = ''; warehouseId.value = ''; zoneId.value = ''
   if (!scope.value) { loadError.value = '入库来源参数无效，请从金工或车缝计划重新进入半成品入库。'; return }
   store = createSemiReceiptPending(scope.value.schedule_product_id, scope.value.plan_category, owner, () => ({ userId: alive ? auth.user?.id ?? null : null, generation: auth.generation }))
   try {
@@ -203,16 +213,20 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
 </script>
 
 <template>
-  <WorkPage class="semi-work-page" title="半成品入库" :subtitle="preview?.production_order || (scope?.plan_category === 'METAL' ? '金工' : '车缝')">
+  <WorkPage class="semi-work-page" title="半成品入库" :subtitle="preview?.production_order || (scope?.plan_category === 'METAL' ? '金工' : '车缝')" section="receipt" back-to="/production-receipt">
     <div class="page-stack semi-page">
       <section v-if="result" class="section-card semi-success" role="status">
         <VanIcon name="passed" size="40" /><h2>{{ result.status === 'CONFIRMED' ? '仓库已确认入库' : '申请已提交，待仓库确认' }}</h2><strong>{{ result.receipt_number }}</strong>
         <p>{{ result.status === 'CONFIRMED' ? '原单已由仓库确认，请勿重复申请。' : '仓库在 ERP 确认后增加半成品库存。' }}</p>
-        <p v-if="actionError" class="semi-error">{{ actionError }}</p><VanButton block type="primary" @click="router.push('/')">返回生产列表</VanButton>
+        <p v-if="actionError" class="semi-error">{{ actionError }}</p><VanButton block type="primary" @click="router.push('/production-receipt')">返回生产入库</VanButton>
       </section>
       <template v-else>
         <div v-if="loading" class="semi-loading" role="status"><VanLoading>正在读取入库额度…</VanLoading></div>
-        <section v-if="loadError" class="error-panel" role="alert"><p>{{ loadError }}</p><VanButton v-if="scope && !storageBlocked && canView" block :disabled="saving || loading" @click="load">重新加载</VanButton></section>
+        <section v-if="loadError" class="error-panel" role="alert">
+          <p>{{ loadError }}</p>
+          <VanButton v-if="sourceUnavailable && !pending" block @click="router.push('/production-receipt')">返回生产入库</VanButton>
+          <VanButton v-else-if="scope && !storageBlocked && canView" block :disabled="saving || loading" @click="load">重新加载</VanButton>
+        </section>
         <section v-if="pending" class="section-card semi-pending" role="status"><strong>原提交待核对，填写内容已锁定</strong><p>{{ pending.payload.receipt_date }} · {{ pending.payload.lines.length }} 项入库明细</p><p>刷新或网络中断后继续使用原编号核对。<br />{{ pending.payload.request_id }}</p></section>
         <template v-if="preview">
           <details class="section-card semi-product">
@@ -253,7 +267,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
         <section v-if="actionError" class="error-panel" role="alert">{{ actionError }}</section>
       </template>
     </div>
-    <template v-if="!result" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项 · ${total} ${scope?.plan_category === 'METAL' ? '支' : '套'}` }} · 仓库确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
+    <template v-if="!result && (preview || pending)" #footer><p class="semi-footer-note">{{ pending ? '原编号核对结果，勿重复申请' : `本次 ${selectedLines.length} 项 · ${total} ${scope?.plan_category === 'METAL' ? '支' : '套'}` }} · 仓库确认后入库</p><VanButton block type="primary" :loading="saving" :disabled="!canSubmit" @click="submit">{{ pending ? '核对本次提交' : '提交入库申请' }}</VanButton></template>
     <VanPopup v-model:show="showDate" position="bottom" round teleport="body" class="semi-popup"><VanDatePicker v-model="pickerDate" title="收货日期" :columns-type="['year', 'month', 'day']" :min-date="minDate" :max-date="maxDate" :formatter="formatDate" @confirm="confirmDate" @cancel="showDate = false" /></VanPopup>
     <VanPopup v-model:show="showWarehouse" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>选择半成品仓</h2><div class="semi-options"><VanCell v-for="warehouse in warehouses" :key="warehouse.id" :title="warehouse.name" clickable :icon="warehouse.id === warehouseId ? 'success' : undefined" @click="selectWarehouse(warehouse.id)" /></div></VanPopup>
     <VanPopup v-model:show="showZone" position="bottom" round closeable teleport="body" class="semi-popup semi-picker"><h2>{{ warehouseName }} · 选择库区</h2><div class="semi-options"><VanCell v-for="zone in zones" :key="zone.id" :title="zone.name" clickable :icon="zone.id === zoneId ? 'success' : undefined" @click="selectZone(zone.id)" /><p v-if="!zones.length">当前仓库没有可用库区。</p></div></VanPopup>

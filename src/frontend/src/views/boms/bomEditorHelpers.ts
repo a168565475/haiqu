@@ -6,7 +6,7 @@ import type {
   BomSectionInput,
   BomSectionType,
 } from '@/types/bom'
-import { pipePlanForBomLine } from '@/utils/materialFlow'
+import { pipePlan, pipePlanForBomLine } from '@/utils/materialFlow'
 
 export interface FixedSectionDefinition {
   title: string
@@ -93,6 +93,10 @@ export function editableLine(line: BomLine): BomLineInput {
     coating_unit_area_sqm: line.coating_unit_area_sqm,
     purchase_unit_weight_kg: line.purchase_unit_weight_kg,
     tube_cut_piece_count: line.tube_cut_piece_count,
+    purchase_allowance_mode: line.purchase_allowance_mode || undefined,
+    purchase_allowance_rule: line.purchase_allowance_rule || undefined,
+    source_purchase_allowance_percent: line.source_purchase_allowance_percent ?? line.raw_values?.source_purchase_allowance_percent,
+    source_raw_bar_length_m: line.source_raw_bar_length_m ?? line.raw_values?.source_raw_bar_length_m,
     source_inventory_material_id: line.source_inventory_material_id || null,
     fabric_source_line_id: line.fabric_source_line_id || null,
     fabric_meters_per_set: line.fabric_meters_per_set || null,
@@ -150,12 +154,12 @@ export function editableSection(section: BomSection): BomSectionInput {
     id: section.id,
     section_type: section.section_type,
     title: section.title,
-    lines: lines.length || section.section_type !== 'PROFILE' ? lines : [blankLine('根')],
+    lines: lines.length || section.section_type !== 'PROFILE' ? lines : [{ ...blankLine('根'), purchase_allowance_mode: 'AUTO' }],
   }
 }
 
 export function defaultTubeSection(): BomSectionInput {
-  return { section_type: 'PROFILE', title: '管材类', lines: [blankLine('根')] }
+  return { section_type: 'PROFILE', title: '管材类', lines: [{ ...blankLine('根'), purchase_allowance_mode: 'AUTO' }] }
 }
 
 export function emptyFixedSection(definition: FixedSectionDefinition): BomSectionInput {
@@ -222,7 +226,7 @@ export function withFixedSections(sourceSections: BomSection[]) {
     if (!sectionByTitle.has(definition.title)) sectionByTitle.set(definition.title, emptyFixedSection(definition))
   }
   const tubeSection = sectionByTitle.get('管材类')
-  if (tubeSection && !tubeSection.lines.length) tubeSection.lines.push(blankLine('根'))
+  if (tubeSection && !tubeSection.lines.length) tubeSection.lines.push({ ...blankLine('根'), purchase_allowance_mode: 'AUTO' })
   const preserved = [...sectionByTitle.values()]
   return preserved.sort((left, right) => (
     (fixedOrder.get(left.title) ?? fixedSectionDefinitions.length)
@@ -257,6 +261,9 @@ export type TubeCalculationKey =
   | 'tube_cut_length_m'
   | 'suggested_purchase_meters'
   | 'branch_count'
+  | 'base_purchase_bar_count'
+  | 'purchase_allowance_bar_count'
+  | 'purchase_allowance_rule'
   | 'long_material_unit_weight_kg'
   | 'tube_unit_weight_kg'
   | 'long_material_total_weight_kg'
@@ -322,6 +329,9 @@ export function manualTubeMetricError(line: BomLineInput): string {
 export function tubeCalculations(line: BomLineInput, bom: BomDetail | null): Record<TubeCalculationKey, string> {
   const savedLine = line.id ? bom?.sections.flatMap(section => section.lines).find(saved => saved.id === line.id) : undefined
   const plan = pipePlanForBomLine(line, String(bom?.order_quantity || ''), savedLine)
+  const basePlan = pipePlan(line.length_value || '', line.unit_consumption || '', line.tube_cut_piece_count || '', String(bom?.order_quantity || ''))
+  const baseRoots = plan?.base_purchase_bar_count ?? basePlan?.branch_count
+  const allowanceRoots = plan?.purchase_allowance_bar_count ?? (plan && baseRoots ? String(BigInt(plan.branch_count) - BigInt(baseRoots)) : undefined)
   const metrics = line.tube_calculation_preview
   const unchanged = savedLine && ['tube_shape', 'tube_diameter', 'tube_thickness', 'length_value', 'tube_cut_piece_count'].every(
     key => String(line[key as keyof BomLineInput] ?? '') === String(savedLine[key as keyof typeof savedLine] ?? ''),
@@ -331,6 +341,9 @@ export function tubeCalculations(line: BomLineInput, bom: BomDetail | null): Rec
   return {
     total_consumption: plan?.total_consumption || '—', tube_cut_length_m: plan?.tube_cut_length_m || '—',
     branch_count: plan?.branch_count || '—', suggested_purchase_meters: plan?.suggested_purchase_meters || '—',
+    base_purchase_bar_count: plan && baseRoots ? baseRoots : '—',
+    purchase_allowance_bar_count: allowanceRoots ?? '—',
+    purchase_allowance_rule: plan?.purchase_allowance_rule || '',
     long_material_unit_weight_kg: longWeight || '—',
     tube_unit_weight_kg: unitWeight || '—',
     long_material_total_weight_kg: calculationText(plan && longWeight ? Number(plan.branch_count) * Number(longWeight) : null),

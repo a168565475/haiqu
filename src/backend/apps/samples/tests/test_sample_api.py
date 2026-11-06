@@ -22,7 +22,7 @@ from apps.customers.models import (
 )
 from apps.files.models import BusinessFile
 from apps.inquiries.models import Inquiry, InquiryItem, InquiryStatus
-from apps.organizations.models import Employee
+from apps.organizations.models import Employee, EmployeeOrganizationAssignment, OrganizationUnit
 from apps.quotations.models import (
     Quotation,
     QuotationLine,
@@ -45,6 +45,10 @@ class SampleApiTests(APITestCase):
             user=self.user,
             employee_code="SAMPLE_API_USER",
             display_name="样品接口测试员工",
+        )
+        department, _ = OrganizationUnit.objects.get_or_create(unit_code="DEPT_BUSINESS", defaults={"unit_name": "业务部"})
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.employee, organization_unit=department, effective_from=timezone.now(),
         )
         self.other_user = user_model.objects.create_user(username="sample_api_other")
         self.other_employee = Employee.objects.create(
@@ -1135,6 +1139,10 @@ class SampleApiTests(APITestCase):
         )
 
     def test_list_contract_options_summary_and_batch_actions(self):
+        EmployeeOrganizationAssignment.objects.create(
+            employee=self.other_employee, organization_unit=OrganizationUnit.objects.get(unit_code="DEPT_BUSINESS"),
+            effective_from=timezone.now(),
+        )
         created = self.create_sample(sample_type="TESTING")
         sample_id = created.data["data"]["id"]
         self.create_sample(sample_type="TESTING")
@@ -1143,10 +1151,11 @@ class SampleApiTests(APITestCase):
         self.assertEqual(listed.status_code, 200, listed.data)
         self.assertEqual(len(listed.data["data"]), 2)
         row = next(item for item in listed.data["data"] if item["id"] == sample_id)
-        self.assertEqual(row["sample_type"], "TESTING")
         self.assertEqual(row["sample_type_display"], "检测样")
         self.assertEqual(row["item_summary"]["count"], 1)
-        self.assertTrue(row["etag"])
+        detail = self.client.get(f"/api/v1/sample-requests/{sample_id}/")
+        self.assertEqual(detail.data["data"]["sample_type"], "TESTING")
+        self.assertTrue(detail.headers["ETag"])
 
         summary = self.client.get("/api/v1/sample-requests/summary/")
         options = self.client.get("/api/v1/sample-requests/options/")
@@ -1159,7 +1168,7 @@ class SampleApiTests(APITestCase):
             "/api/v1/sample-requests/bulk-transfer/",
             {
                 "sample_ids": [sample_id],
-                "etags": {sample_id: row["etag"]},
+                "etags": {sample_id: detail.headers["ETag"]},
                 "owner_employee_id": str(self.other_employee.pk),
                 "note": "测试批量转交",
             },
@@ -1259,7 +1268,7 @@ class SampleApiTests(APITestCase):
         forbidden = self.client.get("/api/v1/sample-requests/", {"q": "私有搜索产品"})
         self.assertEqual(forbidden.status_code, 403)
 
-    def test_list_returns_full_form_and_product_columns(self):
+    def test_list_summary_preserves_full_detail_form_and_product_columns(self):
         created = self.create_sample_form()
         sample_id = created.data["data"]["id"]
 
@@ -1268,6 +1277,14 @@ class SampleApiTests(APITestCase):
         self.assertEqual(listed.status_code, 200, listed.data)
         row = next(item for item in listed.data["data"] if item["id"] == sample_id)
         self.assertEqual(row["request_number"], "HTS-FORM-001")
+        self.assertEqual(row["sample_type_display"], "售前样")
+        self.assertEqual(len(row["products"]), 1)
+        self.assertEqual(row["products"][0]["total_sample_quantity"], 5)
+        self.assertNotIn("manual_request_number", row)
+        self.assertNotIn("task_sheet_file_name", row["products"][0])
+        detail = self.client.get(f"/api/v1/sample-requests/{sample_id}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        row = detail.data["data"]
         self.assertEqual(row["manual_request_number"], "FORM-001")
         self.assertEqual(row["shipping_method_display"], "邮寄")
         self.assertEqual(row["delivery_batch_display"], "一次交货")
@@ -1280,7 +1297,7 @@ class SampleApiTests(APITestCase):
         self.assertEqual(product["product_name"], "休闲椅样品")
         self.assertEqual(product["specification"], "常规规格")
         self.assertEqual(product["task_sheet_file_name"], "task.png")
-        self.assertEqual(product["total_sample_quantity"], 5)
+        self.assertEqual(sum(item["sample_quantity"] for item in product["details"]), 5)
         self.assertEqual(product["length_cm"], "80.00")
         self.assertIsNone(product["armrest_width_cm"])
         self.assertEqual(product["seat_width_cm"], "52.00")

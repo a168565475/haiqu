@@ -266,6 +266,7 @@ export interface ProductionTask {
   status_display: string
   bom_status?: ProductionTaskBomStatus
   bom_status_display?: string
+  has_confirmed_bom_product?: boolean
   purchase_status?: ProductionTaskPurchaseStatus
   purchase_status_display?: string
   status_reason?: string
@@ -344,7 +345,7 @@ export interface ProductionTaskListProduct extends Pick<ProductionTaskProduct,
 
 export interface ProductionTaskListItem extends Pick<ProductionTask,
   'id' | 'task_number' | 'source_sales_order_number' | 'delivery_date'
-  | 'status' | 'status_display' | 'bom_status' | 'bom_status_display'
+  | 'status' | 'status_display' | 'bom_status' | 'bom_status_display' | 'has_confirmed_bom_product'
   | 'purchase_status' | 'purchase_status_display' | 'allowed_permissions' | 'sales_order_id'> {
   salesperson: Pick<EmployeeOption, 'display_name'>
   followers: Array<Pick<EmployeeOption, 'display_name'>>

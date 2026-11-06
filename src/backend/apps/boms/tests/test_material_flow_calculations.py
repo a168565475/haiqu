@@ -34,7 +34,7 @@ class MaterialFlowCalculationTests(SimpleTestCase):
         self.assertEqual(pipe_plan_for_line(line)["allowance_pieces"], 4000)
 
     def test_unknown_calculation_versions_are_rejected(self):
-        for value in (None, True, "3", 3.0, 0, 4):
+        for value in (None, True, "3", 3.0, 0, 5):
             with self.subTest(version=value), self.assertRaises(MaterialFlowValueError):
                 self.plan(calculation_version=value)
 

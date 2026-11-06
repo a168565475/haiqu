@@ -174,7 +174,7 @@ describe('BOM 管材保存时自动关联原料', () => {
       await vm.applyLineDrawer()
       expect(vm.lineDrawerVisible).toBe(false)
       expect(section.lines[0]!.length_value).toBe('720')
-      expect(api.previewBomMaterialFlow).toHaveBeenCalledWith({ kind: 'PIPE', order_quantity: '1000', cutting_length_mm: '720', pieces_per_product: '2', pieces_per_bar: '8' })
+      expect(api.previewBomMaterialFlow).toHaveBeenCalledWith(expect.objectContaining({ kind: 'PIPE', order_quantity: '1000', cutting_length_mm: '720', pieces_per_product: '2', pieces_per_bar: '8', purchase_allowance_mode: 'AUTO' }))
       expect(api.fetchBomPipeMaterialMatches).not.toHaveBeenCalled()
     } finally { wrapper.unmount() }
   })

@@ -86,6 +86,7 @@ const sourceLoading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
 const sourceError = ref('')
+const preselectionError = ref('')
 const formPage = ref<HTMLElement | null>(null)
 const hoveredLineKey = ref('')
 let sourceRequestId = 0
@@ -168,6 +169,7 @@ function resetSource(): void {
   bulkSupplierId.value = null
   bulkDeliveryDate.value = ''
   sourceError.value = ''
+  preselectionError.value = ''
 }
 
 function applySource(result: PurchaseOrderSource): void {
@@ -398,6 +400,25 @@ function refreshBulkDeliveryDate(): void {
     : ''
 }
 
+function fillGridColumnDown(rowIndex: number, columnIndex: number): void {
+  if (!canWriteLines.value || sourceLoading.value || saving.value || rowIndex < 0 || rowIndex >= lines.value.length) return
+  if (columnIndex === 0) {
+    const value = lines.value[rowIndex]?.supplier_id
+    if (!value) return
+    for (let index = rowIndex + 1; index < lines.value.length; index += 1) {
+      lines.value[index]!.supplier_id = value
+    }
+    refreshBulkSupplier()
+  } else if (columnIndex === 1) {
+    const value = lines.value[rowIndex]?.delivery_date
+    if (!value) return
+    for (let index = rowIndex + 1; index < lines.value.length; index += 1) {
+      lines.value[index]!.delivery_date = value
+    }
+    refreshBulkDeliveryDate()
+  }
+}
+
 async function focusGridField(rowIndex: number, columnIndex: number): Promise<void> {
   if (rowIndex < 0 || rowIndex >= lines.value.length || columnIndex < 0 || columnIndex > 3) return
   await nextTick()
@@ -412,7 +433,7 @@ async function focusGridField(rowIndex: number, columnIndex: number): Promise<vo
 }
 
 function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnIndex: number): void {
-  if (event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.isComposing || event.keyCode === 229 || event.altKey || event.ctrlKey || event.metaKey) return
   const input = event.target instanceof HTMLInputElement ? event.target : null
   const pipeTrigger = event.target instanceof HTMLButtonElement && event.target.hasAttribute('data-pipe-quantity-trigger') ? event.target : null
   if ((!input && !pipeTrigger) || input?.disabled || pipeTrigger?.disabled) return
@@ -425,6 +446,12 @@ function handleGridNavigation(event: KeyboardEvent, rowIndex: number, columnInde
   let targetRow = rowIndex
   let targetColumn = columnIndex
   if (event.key === 'Enter') {
+    if (!event.shiftKey && (columnIndex === 0 || columnIndex === 1)) {
+      fillGridColumnDown(rowIndex, columnIndex)
+      // 末行也消费回车，避免重新展开选择框或触发表单默认动作。
+      event.preventDefault()
+      event.stopPropagation()
+    }
     targetRow += event.shiftKey ? -1 : 1
   } else if (event.key === 'ArrowDown') {
     targetRow += 1
@@ -722,11 +749,51 @@ async function restoreDetailSource(): Promise<void> {
   }
 }
 
+async function restoreTrackingSource(): Promise<void> {
+  const taskId = queryValue(route.query.production_task_id)
+  const bomId = queryValue(route.query.bom_id)
+  if (!taskId && !bomId) return
+  const requestId = ++sourceRequestId
+  selectedTaskId.value = ''
+  resetSource()
+  sourceTypeFilter.value = 'PRODUCTION'
+  if (!taskId || !bomId) {
+    preselectionError.value = '采购跟踪来源信息不完整，请重新选择生产订单和产品 BOM。'
+    return
+  }
+  const task = visibleSourceOptions.value.find(item => item.id === taskId && item.source_type === 'PRODUCTION')
+  if (!task) {
+    preselectionError.value = '关联生产订单不在当前可选范围，可能已变更状态或权限，请重新核对来源。'
+    return
+  }
+  selectedTaskId.value = task.id
+  sourceLoading.value = true
+  try {
+    const result = await fetchPurchaseOrderSource(task.id, bomId)
+    if (requestId !== sourceRequestId) return
+    // 指定产品失效时不得静默接受接口返回的其他默认 BOM。
+    if (result.production_task?.id !== task.id || result.selected_bom_id !== bomId
+      || !result.bom_options.some(item => item.bom_id === bomId)) {
+      resetSource()
+      preselectionError.value = '指定产品 BOM 已不在当前可选来源中，请核对后重新选择。'
+      return
+    }
+    applySource(result)
+  } catch (error) {
+    if (requestId === sourceRequestId) preselectionError.value = apiErrorMessage(error, '采购跟踪来源读取失败，请重试或重新选择。')
+  } finally {
+    if (requestId === sourceRequestId) sourceLoading.value = false
+  }
+}
+
 async function initializePage(): Promise<void> {
+  const requestId = sourceRequestId
+  const initialPath = route.fullPath
   await loadOptions()
-  if (!canAdd.value || loadError.value) return
+  if (!canAdd.value || loadError.value || requestId !== sourceRequestId || initialPath !== route.fullPath) return
   if (isBatchMode.value) await loadGroup()
   else if (isDetailStep.value) await restoreDetailSource()
+  else await restoreTrackingSource()
 }
 
 async function goToDetails(): Promise<void> {
@@ -867,7 +934,7 @@ onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown)
   void initializePage()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown))
+onBeforeUnmount(() => { sourceRequestId++; window.removeEventListener('keydown', handleWindowKeydown) })
 </script>
 
 <template>
@@ -896,6 +963,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', handleWindowKeydown)
 
       <ElAlert v-if="loadError" type="error" :title="loadError" :closable="false" show-icon>
         <ElButton link @click="initializePage">重新加载</ElButton>
+      </ElAlert>
+      <ElAlert v-if="!isDetailStep && preselectionError" type="warning" :title="preselectionError" :closable="false" show-icon data-testid="purchase-tracking-source-error">
+        <ElButton link :disabled="sourceLoading || optionsLoading" @click="initializePage">重新读取来源</ElButton>
       </ElAlert>
       <ElAlert v-if="isBatchMode && (batchConflict || sourceError)" type="warning" :title="batchConflict || sourceError" :closable="false" show-icon>
         <ElButton link :disabled="sourceLoading" @click="loadGroup(true)">重新读取总单版本（保留输入）</ElButton>

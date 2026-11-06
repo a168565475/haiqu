@@ -45,6 +45,10 @@ SAMPLE_EXECUTE = ('access_control.metalwork_sample', 'access_control.cutting_sam
                   'access_control.metalreport_sample', 'access_control.cuttingreport_sample')
 
 ROLE_POLICIES = {
+    'PURCHASE_TRACKING_RISK': {'PURCHASING': _rule(READ_PURCHASE), 'PMC': _rule(READ_PURCHASE),
+                             'MERCHANDISER': _rule(READ_PURCHASE, 'FOLLOWED')},
+    'PURCHASE_TRACKING_DIGEST': {'PURCHASING': _rule(READ_PURCHASE), 'PMC': _rule(READ_PURCHASE),
+                               'MERCHANDISER': _rule(READ_PURCHASE, 'FOLLOWED')},
     'PRODUCTION_TASK_CONFIRMED': {
         'TECHNICAL': _rule(READ_TASK), 'ADMINISTRATION': _rule(READ_TASK, exclude_actor=True),
         'FACTORY_MANAGER': _rule(READ_TASK, actor_role='ADMINISTRATION'),

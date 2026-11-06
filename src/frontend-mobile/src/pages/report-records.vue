@@ -70,15 +70,15 @@ function toggleRecord(id: string) {
 function newReport() {
   if (!scope.value) return
   void router.push(scope.value.craft_id
-    ? { path: '/report', query: { ...route.query } }
-    : { path: '/plan', query: { ...route.query, action: 'report' } })
+    ? { path: '/report', query: { ...route.query, section: 'report' } }
+    : { path: '/plan', query: { ...route.query, section: 'report', action: 'report' } })
 }
 watch(() => route.fullPath, () => { context.value = null; page.value = 1; void load() }, { immediate: true })
 onBeforeUnmount(() => { requestSequence++; controller?.abort() })
 </script>
 
 <template>
-  <WorkPage title="报工记录" :subtitle="workshop ? `${workshop.name} · ${craft?.name || (scope?.craft_id ? '指定工艺' : '本计划全部工艺')}` : '查看这项生产任务的报工'">
+  <WorkPage title="报工记录" :subtitle="workshop ? `${workshop.name} · ${craft?.name || (scope?.craft_id ? '指定工艺' : '本计划全部工艺')}` : '查看这项生产任务的报工'" section="report" back-to="/production-report?view=records">
     <div class="page-stack report-records">
       <section v-if="product" class="section-card records-context">
         <h2 class="section-title">{{ product.product_name }}</h2>
@@ -91,7 +91,7 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort() })
       <section v-else-if="loadError" class="error-panel" role="alert">
         <p>{{ loadError }}</p>
         <van-button v-if="scope" block @click="load(page)">重新加载</van-button>
-        <van-button v-else block @click="router.push('/')">返回任务列表</van-button>
+        <van-button v-else block @click="router.push('/production-report?view=records')">返回报工记录列表</van-button>
       </section>
       <van-empty v-else-if="!records.length" description="这项任务暂时没有报工记录" />
 

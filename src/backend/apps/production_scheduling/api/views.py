@@ -257,21 +257,19 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
             product_line_id=OuterRef("pk"),
             archived_at__isnull=True,
         ).order_by("-version_number", "-created_at", "-id").values("status")[:1]
-        unready_product_lines = ProductionTaskProduct.objects.filter(
+        ready_product_lines = ProductionTaskProduct.objects.filter(
             production_task_id=OuterRef("pk"),
         ).annotate(
             latest_bom_status=Subquery(latest_bom_status),
-        ).filter(Q(latest_bom_status__isnull=True) | ~Q(latest_bom_status=BomStatus.VERIFIED))
+        ).filter(latest_bom_status=BomStatus.VERIFIED)
         queryset = production_tasks_with_context(
             accessible_production_tasks(request).filter(status=ProductionTaskStatus.READY, archived_at__isnull=True)
         ).prefetch_related("products__sales_order_delivery_batch_line__sales_order_line__product_image").exclude(
             production_schedules__record_status=ScheduleStatus.ACTIVE
         ).annotate(
-            has_unready_product=Exists(unready_product_lines),
-            has_products=Exists(ProductionTaskProduct.objects.filter(production_task_id=OuterRef("pk"))),
+            has_ready_product=Exists(ready_product_lines),
         ).filter(
-            has_unready_product=False,
-            has_products=True,
+            has_ready_product=True,
         ).distinct().order_by("-created_at", "-id")
         keyword = request.query_params.get("search", "").strip()
         if len(keyword) > 200:
@@ -379,14 +377,14 @@ class ProductionScheduleViewSet(viewsets.GenericViewSet):
                 for item in getattr(task, "_active_purchase_requests_for_status", [])
             }
 
-        all_boms_verified = bool(products) and all(
+        has_verified_bom_product = any(
             latest_bom_by_product.get(line.pk) is not None
-            and latest_bom_by_product[line.pk].status == "VERIFIED"
+            and latest_bom_by_product[line.pk].status == BomStatus.VERIFIED
             for line in products
         )
         scheduling_blockers = []
-        if include_products and not all_boms_verified:
-            scheduling_blockers.append("生产任务单内所有产品的 BOM 必须已确认")
+        if include_products and not has_verified_bom_product:
+            scheduling_blockers.append("至少一个产品的 BOM 必须已确认")
         selectable = existing_schedule_id is None and (not include_products or not scheduling_blockers)
         unselectable_reason = ""
         if existing_schedule_id:

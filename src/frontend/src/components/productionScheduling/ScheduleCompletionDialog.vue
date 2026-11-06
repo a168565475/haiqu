@@ -19,6 +19,7 @@ const reason = ref('')
 const reasonError = ref('')
 const confirmRequested = ref(false)
 const busy = computed(() => props.submitting || confirmRequested.value)
+const hasUnscheduledProducts = computed(() => (props.preview?.unscheduled_product_count ?? 0) > 0)
 const showProcess = computed(() => busy.value || props.result || props.error || props.uncertain)
 const progressItems = [
   { key: 'MATERIAL', label: '材料入库' }, { key: 'METAL', label: '金工回货' },
@@ -52,7 +53,7 @@ function requestClose() { if (!busy.value) emit('update:modelValue', false) }
 function beforeClose(done: () => void) { if (!busy.value) done() }
 function updateVisible(value: boolean) { if (value || !busy.value) emit('update:modelValue', value) }
 function confirm() {
-  if (!props.preview || busy.value || props.result || props.uncertain) return
+  if (!props.preview || busy.value || props.result || props.uncertain || hasUnscheduledProducts.value) return
   const value = reason.value.trim()
   if (!value) { reasonError.value = '请填写完成说明。'; return }
   if (value.length > 500) { reasonError.value = '完成说明不能超过500字。'; return }
@@ -74,6 +75,7 @@ watch(() => [props.result, props.error, props.uncertain], () => {
   <AppWindowDialog :model-value="modelValue" title="完成订单" width="960px" :before-close="beforeClose" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :show-close="!busy" :minimizable="!busy" @update:model-value="updateVisible">
     <div class="schedule-completion" data-testid="schedule-completion-dialog">
       <template v-if="preview">
+        <ElAlert v-if="hasUnscheduledProducts" type="warning" :title="`还有 ${preview.unscheduled_product_count} 个产品未排产，请补齐排产后再完成整张生产任务。`" :closable="false" show-icon />
         <dl class="schedule-completion__identity">
           <div><dt>生产任务单</dt><dd><strong data-testid="completion-task-number">{{ preview.task.task_number || '—' }}</strong><span class="erp-list-tag" :class="`erp-list-tag--${statusTone(result ? result.production_sync.after_status : preview.task.status)}`" data-testid="completion-task-status">{{ result ? statusText(result.production_sync.after_status) : preview.task.status_display || '—' }}</span></dd></div>
           <div><dt>关联销售订单</dt><dd><strong>{{ preview.sales_order.order_number || '—' }}</strong><span class="erp-list-tag" :class="`erp-list-tag--${statusTone(result ? result.sales_sync.after_status : preview.sales_order.status)}`" data-testid="completion-sales-status">{{ result ? statusText(result.sales_sync.after_status) : preview.sales_order.status_display || '—' }}</span></dd><p v-if="preview.sales_order.reason" class="schedule-completion__note">{{ preview.sales_order.reason }}</p></div>
@@ -108,7 +110,7 @@ watch(() => [props.result, props.error, props.uncertain], () => {
         </ol>
       </section>
     </div>
-    <template #footer><ElButton :disabled="busy" data-testid="completion-close" @click="requestClose">{{ result || uncertain ? '关闭' : '取消' }}</ElButton><ElButton v-if="!result && !uncertain" type="primary" :loading="busy" :disabled="!preview || busy" data-testid="completion-submit" @click="confirm">{{ error ? '重试提交' : '确认完成' }}</ElButton></template>
+    <template #footer><ElButton :disabled="busy" data-testid="completion-close" @click="requestClose">{{ result || uncertain ? '关闭' : '取消' }}</ElButton><ElButton v-if="!result && !uncertain" type="primary" :loading="busy" :disabled="!preview || busy || hasUnscheduledProducts" data-testid="completion-submit" @click="confirm">{{ error ? '重试提交' : '确认完成' }}</ElButton></template>
   </AppWindowDialog>
 </template>
 

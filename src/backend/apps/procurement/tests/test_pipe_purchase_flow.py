@@ -226,6 +226,33 @@ class PipePurchaseOrderApiTests(APITestCase):
         self.assertEqual(Decimal(line['amount']), Decimal('2037.40'))
         self.assertEqual(self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json').status_code, 200)
 
+    def test_purchase_uses_base_plus_allowance_and_freezes_the_new_rule(self):
+        plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,
+                         order_quantity=1000, purchase_allowance_mode='AUTO')
+        self.line.suggested_bar_count = plan['suggested_bar_count']
+        self.line.suggested_purchase_meters = plan['suggested_purchase_meters']
+        self.line.raw_values.update({
+            'pipe_plan_version': 4,
+            **{key: plan[key] for key in ('purchase_allowance_mode', 'purchase_allowance_rule',
+                                          'base_purchase_bar_count', 'purchase_allowance_bar_count')},
+        })
+        self.line.save()
+        source = self.get_source(self.task)
+        self.assertEqual(source.status_code, 200, source.data)
+        self.assertEqual(source.data['data']['lines'][0]['suggested_bar_count'], 339)
+        created = self.create(actual_bar_count=339)
+        self.assertEqual(created.status_code, 201, created.data)
+        row = created.data['data']['lines'][0]
+        snapshot = row['calculation_snapshot']
+        self.assertEqual((snapshot['base_purchase_bar_count'], snapshot['purchase_allowance_bar_count'],
+                          row['suggested_bar_count']), (334, 5, 339))
+        self.assertEqual((snapshot['purchase_allowance_mode'], snapshot['purchase_allowance_rule']),
+                         ('AUTO', 'PLUS_5'))
+        self.assertEqual(Decimal(row['actual_purchase_quantity']), Decimal('1033.95'))
+        self.assertEqual(Decimal(row['amount']), Decimal('2067.90'))
+        confirmed = self.client.post(f"/api/v1/purchase-orders/{created.data['data']['id']}/confirm/", {}, format='json')
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
     def test_legacy_bom_and_purchase_source_keep_original_snapshot(self):
         self.line.raw_values.pop('pipe_plan_version')
         plan = pipe_plan(cutting_length_mm=500, pieces_per_product=2, pieces_per_bar=6,

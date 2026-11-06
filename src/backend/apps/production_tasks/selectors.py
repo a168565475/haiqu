@@ -8,6 +8,16 @@ from apps.files.models import USABLE_FILE_SCAN_STATUSES
 from .models import ProductionTask, ProductionTaskProduct, ProductionTaskStatus
 
 
+def unscheduled_task_products(task):
+    from apps.production_scheduling.models import ProductionScheduleProduct, ScheduleStatus
+
+    scheduled_ids = ProductionScheduleProduct.objects.filter(
+        schedule__production_task=task, schedule__record_status=ScheduleStatus.ACTIVE,
+        removed_at__isnull=True,
+    ).values("product_line_id")
+    return ProductionTaskProduct.objects.filter(production_task=task).exclude(pk__in=scheduled_ids)
+
+
 def production_task_source_image_ids(task, *, product_ids=None):
     products = ProductionTaskProduct.objects.filter(
         production_task=task,

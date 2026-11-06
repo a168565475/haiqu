@@ -296,6 +296,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         except ProductionTaskProduct.DoesNotExist as exc:
             raise NotFound("未找到可访问的生产任务产品。") from exc
 
+    @extend_schema(request=BomCreateInputSerializer, responses=BomDetailSerializer)
     def create(self, request):
         serializer = BomCreateInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -349,6 +350,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
                 uploaded_file=serializer.validated_data.get("workbook"),
                 source_bom=source_bom,
                 quantity_difference_reason=serializer.validated_data.get("quantity_difference_reason", ""),
+                defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False),
                 request=request,
             )
         return self._detail_response(
@@ -400,6 +402,7 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
             intent=serializer.validated_data["intent"],
             confirmation_token=serializer.validated_data.get("confirmation_token", ""),
             quantity_confirmation_reason=serializer.validated_data.get("quantity_confirmation_reason", ""),
+            defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False),
         )
         return self._detail_response(updated)
 
@@ -411,7 +414,8 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         serializer = BomUpdateInputSerializer(data=request.data, context={"bom": bom})
         serializer.is_valid(raise_exception=True)
         return Response({"data": material_save_preview(bom=bom, sections=serializer.validated_data["sections"],
-            request=request, intent=serializer.validated_data["intent"])})
+            request=request, intent=serializer.validated_data["intent"],
+            defer_import_material_matching=serializer.validated_data.get("defer_import_material_matching", False))})
 
     @extend_schema(request=None, responses=BomDetailSerializer)
     @action(detail=True, methods=["post"], url_path="sync-order-quantity")
@@ -579,7 +583,11 @@ class BomViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.Gene
         values = serializer.validated_data
         try:
             if values['kind'] == 'PIPE':
-                result = pipe_plan(**{key: values.get(key) for key in ('cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'order_quantity')})
+                result = pipe_plan(**{key: values.get(key) for key in (
+                    'cutting_length_mm', 'pieces_per_product', 'pieces_per_bar', 'order_quantity',
+                    'purchase_allowance_mode', 'purchase_allowance_rule',
+                    'source_purchase_allowance_percent', 'source_raw_bar_length_m',
+                )})
             else:
                 quantity = positive_integer(values['order_quantity'], 'order_quantity')
                 consumption = decimal_quantity(values.get('unit_consumption'), 'unit_consumption')

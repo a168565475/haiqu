@@ -275,7 +275,7 @@ onBeforeUnmount(() => { active = false; generation += 1; window.removeEventListe
 </script>
 
 <template>
-  <WorkPage class="issue-work-page" title="申请领料" :subtitle="taskNumber">
+  <WorkPage class="issue-work-page" title="申请领料" :subtitle="taskNumber" section="issue" back-to="/">
     <div class="page-stack issue-page">
       <div v-if="loading" class="section-card loading-panel"><VanLoading vertical>正在读取领料材料</VanLoading></div>
       <div v-else-if="loadError" class="error-panel" role="alert"><p>{{ loadError }}</p><VanButton block @click="initialize">重新加载</VanButton></div>

@@ -20,6 +20,8 @@ def enforcing(request, code):
 
 
 def scope_kind(code):
+    if code in {'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee'}:
+        return 'WORKSHOP'
     if code in {f'inventory.{action}_{kind}' for action in ('view', 'add', 'delete')
                 for kind in ('internalsemifinishedreceipt', 'finishedgoodsreceipt')}:
         return 'WORKSHOP'

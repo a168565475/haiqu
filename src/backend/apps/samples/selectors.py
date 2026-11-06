@@ -1,8 +1,8 @@
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 
 from apps.customers.selectors import accessible_customers
 
-from .models import SampleRequest, SampleShipment
+from .models import SampleItem, SampleMaterialArrival, SampleMaterialPurchaseSource, SampleProduct, SampleRequest, SampleShipment
 
 
 def _legacy_accessible_sample_requests(request, permission_codename):
@@ -48,9 +48,51 @@ def accessible_sample_requests(request, permission_codename):
     return SampleRequest.objects.filter(allowed).distinct()
 
 
-def sample_requests_with_context(queryset=None):
+def sample_requests_with_context(queryset=None, *, list_mode=False):
     if queryset is None:
         queryset = SampleRequest.objects.all()
+    if list_mode:
+        product_details = SampleItem.objects.select_related("product_color").only(
+            "id", "sample_product_id", "sample_request_id", "line_number", "product_color_id",
+            "color_card_snapshot", "color_code_snapshot", "color_name_snapshot", "sample_quantity",
+            "product_color__id", "product_color__color_card", "product_color__color_code", "product_color__color_name",
+        )
+        products = SampleProduct.objects.only(
+            "id", "sample_request_id", "line_number", "category_name_snapshot", "product_name", "specification",
+        ).prefetch_related(Prefetch("details", queryset=product_details))
+        purchase_sources = SampleMaterialPurchaseSource.objects.select_related(
+            "purchase_order_line__purchase_order",
+        ).only(
+            "id", "procurement_request_id", "purchase_order_line_id", "purchase_order_line__id",
+            "purchase_order_line__purchase_order_id", "purchase_order_line__purchase_order__id",
+            "purchase_order_line__purchase_order__archived_at",
+        )
+        return queryset.select_related(
+            "customer_account", "owner_employee", "material_request__procurement_request", "material_request__issue",
+        ).only(
+            "id", "request_number", "submitted_on", "customer_account_id", "owner_employee_id",
+            "requested_by_employee_id", "source_inquiry_id", "source_quotation_version_id",
+            "application_payload_hash", "archived_at", "status", "sample_type", "sample_due_date",
+            "requested_at", "requested_due_at", "customer_account__id", "customer_account__account_name",
+            "customer_account__archived_at", "owner_employee__id", "owner_employee__display_name",
+            "material_request__id", "material_request__sample_request_id", "material_request__no_materials",
+            "material_request__draft", "material_request__warehouse_draft", "material_request__submitted_at",
+            "material_request__reviewed_at", "material_request__procurement_request__id",
+            "material_request__procurement_request__material_request_id", "material_request__issue__id",
+            "material_request__issue__material_request_id", "material_request__issue__status",
+        ).prefetch_related(
+            Prefetch("items", queryset=SampleItem.objects.only(
+                "id", "sample_request_id", "line_number", "product_description_snapshot",
+            )),
+            Prefetch("products", queryset=products),
+            Prefetch("material_request__procurement_request__arrivals", queryset=SampleMaterialArrival.objects.only(
+                "id", "procurement_request_id", "line_key", "accepted_quantity",
+            )),
+            Prefetch("material_request__procurement_request__purchase_sources", queryset=purchase_sources),
+            Prefetch("shipments", queryset=SampleShipment.objects.only(
+                "id", "sample_request_id", "status", "shipped_at", "created_at",
+            )),
+        )
     return queryset.select_related(
         "customer_account",
         "transaction_entity",

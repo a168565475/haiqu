@@ -11,7 +11,7 @@ import ProductImage from '@/components/ProductImage.vue'
 import type { MobilePlan } from '@/types/mobilePlan'
 import { displayQuantity, progressLabel } from '@/utils/planDisplay'
 
-const props = defineProps<{ plans: MobilePlan[]; mode: 'list' | 'summary' }>()
+const props = defineProps<{ plans: MobilePlan[]; mode: 'list' | 'summary'; section: 'issue' | 'report' | 'receipt'; records?: boolean }>()
 const emit = defineEmits<{ open: [plan: MobilePlan]; issue: [plan: MobilePlan]; report: [plan: MobilePlan]; receiveFinished: [plan: MobilePlan]; receiveSemi: [plan: MobilePlan] }>()
 const expandedKey = ref('')
 
@@ -46,7 +46,7 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
             <span class="product-number">{{ plan.product.number || '未设置产品编号' }}</span>
           </span>
         </button>
-        <div class="list-progress">
+        <div v-if="section === 'report'" class="list-progress">
           <span>报工进度</span>
           <strong>{{ progressLabel(plan) }}</strong>
           <van-progress v-if="plan.progress?.percentage !== null && plan.progress?.percentage !== undefined" :percentage="Math.min(100, Math.max(0, plan.progress.percentage))" :show-pivot="false" stroke-width="6" />
@@ -62,16 +62,17 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
         <div><dt>计划数量</dt><dd>{{ displayQuantity(plan.product.quantity) }} <span>{{ plan.product.unit }}</span></dd></div>
         <div><dt>计划日期</dt><dd class="plan-date">{{ plan.plan_date || '未安排' }}</dd></div>
       </dl>
-      <div class="plan-actions" :class="{ 'has-receipt': ['METAL', 'SEWING', 'ASSEMBLY'].includes(plan.plan_category) }">
-        <van-button plain type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
-        <van-button type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button>
-        <van-button v-if="plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
-        <van-button v-if="['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
+      <div class="plan-actions">
+        <van-button v-if="section === 'issue'" type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
+        <van-button v-if="section === 'report' && !records" type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button><van-button v-if="records" type="primary" plain :disabled="!plan.can_view_reports" @click="emit('open', plan)">查看报工记录</van-button>
+        <van-button v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
+        <van-button v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
       </div>
-      <p v-if="!plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
-      <p v-if="!plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
-      <p v-if="plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
-      <p v-if="['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+      <p v-if="section === 'issue' && !plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
+      <p v-if="section === 'report' && !records && !plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
+      <p v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
+      <p v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+      <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="plan-unavailable">裁剪计划暂无手机入库入口</p>
     </article>
   </div>
 
@@ -86,7 +87,7 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
           <h2>{{ plan.product.name }}</h2>
           <dl><dt>计划数量</dt><dd>{{ displayQuantity(plan.product.quantity) }} <span>{{ plan.product.unit }}</span></dd></dl>
         </div>
-        <div class="summary-progress">
+        <div v-if="section === 'report'" class="summary-progress">
           <span>报工进度</span>
           <van-progress v-if="plan.progress?.percentage !== null && plan.progress?.percentage !== undefined" :percentage="Math.min(100, Math.max(0, plan.progress.percentage))" :show-pivot="false" stroke-width="6" />
           <strong>{{ progressLabel(plan) }}</strong>
@@ -98,7 +99,7 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
           <span class="product-copy">
             <span class="product-number">{{ plan.product.number || '未设置产品编号' }}</span>
             <span class="product-specification">{{ [plan.product.specification, plan.product.color].filter(Boolean).join(' · ') || '暂无规格' }}</span>
-            <span class="plan-detail-link">查看生产计划<van-icon name="arrow" aria-hidden="true" /></span>
+            <span class="plan-detail-link">{{ records ? '查看报工记录' : '查看生产计划' }}<van-icon name="arrow" aria-hidden="true" /></span>
           </span>
         </button>
         <dl class="plan-context">
@@ -106,16 +107,17 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
           <div><dt>计划类别</dt><dd>{{ plan.plan_category_label }}</dd></div>
         </dl>
         <dl class="summary-date"><dt>计划日期</dt><dd>{{ plan.plan_date || '未安排' }}</dd></dl>
-        <div class="plan-actions" :class="{ 'has-receipt': ['METAL', 'SEWING', 'ASSEMBLY'].includes(plan.plan_category) }">
-          <van-button plain type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
-          <van-button type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button>
-          <van-button v-if="plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
-          <van-button v-if="['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
+        <div class="plan-actions">
+          <van-button v-if="section === 'issue'" type="primary" :disabled="!plan.can_issue" @click="emit('issue', plan)">申请领料</van-button>
+          <van-button v-if="section === 'report' && !records" type="primary" :disabled="!plan.can_open_report" @click="emit('report', plan)">生产报工</van-button><van-button v-if="records" type="primary" plain :disabled="!plan.can_view_reports" @click="emit('open', plan)">查看报工记录</van-button>
+          <van-button v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY'" plain type="primary" :disabled="!plan.can_receive_finished" @click="emit('receiveFinished', plan)">成品入库</van-button>
+          <van-button v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category)" plain type="primary" :disabled="!plan.can_receive_semi" @click="emit('receiveSemi', plan)">半成品入库</van-button>
         </div>
-        <p v-if="!plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
-        <p v-if="!plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
-        <p v-if="plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
-        <p v-if="['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+        <p v-if="section === 'issue' && !plan.can_issue && plan.issue_reason" class="plan-unavailable">领料：{{ plan.issue_reason }}</p>
+        <p v-if="section === 'report' && !records && !plan.can_report && plan.report_reason" class="plan-unavailable">报工：{{ plan.report_reason }}</p>
+        <p v-if="section === 'receipt' && plan.plan_category === 'ASSEMBLY' && !plan.can_receive_finished && plan.finished_receipt_reason" class="plan-unavailable">入库：{{ plan.finished_receipt_reason }}</p>
+        <p v-if="section === 'receipt' && ['METAL', 'SEWING'].includes(plan.plan_category) && !plan.can_receive_semi && plan.semi_receipt_reason" class="plan-unavailable">入库：{{ plan.semi_receipt_reason }}</p>
+        <p v-if="section === 'receipt' && plan.plan_category === 'CUTTING'" class="plan-unavailable">裁剪计划暂无手机入库入口</p>
       </div>
     </van-collapse-item>
   </van-collapse>
@@ -149,10 +151,8 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
 .plan-numbers dd { font-size: 18px; font-weight: 600; line-height: 1.5; }
 .plan-numbers dd > span, .summary-product dd > span { font-size: 14px; font-weight: 400; }
 .plan-numbers .plan-date { font-size: 16px; line-height: 1.7; }
-.plan-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.plan-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .plan-actions .van-button { min-height: 48px; padding-inline: 8px; font-size: 16px; }
-.plan-actions.has-receipt { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.plan-actions.has-receipt .van-button { font-size: 15px; padding-inline: 4px; }
 .plan-unavailable { margin: 10px 0 0; color: var(--mobile-muted); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .plan-summary-item { margin-bottom: 12px; border: 1px solid transparent; border-radius: 12px; background: var(--mobile-surface); }
 .plan-summary-item:last-child { margin-bottom: 0; }
@@ -179,7 +179,6 @@ function handleSummaryKey(event: KeyboardEvent, key: string) {
 .summary-date { margin: 12px 0 16px; }
 .summary-date dd { font-size: 16px; font-weight: 500; }
 @media (max-width: 359px) {
-  .plan-actions.has-receipt .van-button { font-size: 14px; }
   .plan-list-row { padding-inline: 12px; }
   .list-product-header { gap: 8px; }
   .list-product { gap: 8px; }

@@ -88,15 +88,18 @@ describe('生产任务详情按需选项', () => {
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: { id: 'one', task_number: 'PROD-ONE', status: 'PENDING_VALIDATION', salesperson: { display_name: '业务员' }, products: [], followers: [], delivery_batches: [], current_boms: [], audit_timeline: [] }, etag: 'v1' } as never)
   })
   it.each([
-    ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false],
-    ['VERIFIED', 'ORDER_PURCHASING', true, true],
-    ['VERIFIED', 'NOT_STARTED', true, true],
-    ['VERIFIED', 'ORDER_COMPLETED', false, false],
-    ['VERIFIED', 'ORDER_COMPLETED', true, true],
-  ])('排产按钮遵守 BOM=%s、采购=%s 和权限=%s', async (bomStatus, purchaseStatus, allowed, visible) => {
+    ['PENDING_CONFIRMATION', 'ORDER_COMPLETED', true, false, false],
+    ['VERIFIED', 'ORDER_PURCHASING', true, true, true],
+    ['VERIFIED', 'NOT_STARTED', true, true, true],
+    ['VERIFIED', 'ORDER_COMPLETED', false, true, false],
+    ['VERIFIED', 'ORDER_COMPLETED', true, true, true],
+    ['PARTIAL', 'NOT_STARTED', true, true, true],
+    ['PARTIAL', 'ORDER_COMPLETED', true, false, false],
+    ['VERIFIED', 'ORDER_COMPLETED', true, false, false],
+  ])('排产按钮遵守 BOM=%s、采购=%s、权限=%s 和存在已确认产品=%s', async (bomStatus, purchaseStatus, allowed, hasConfirmedProduct, visible) => {
     permissionState.allowed = Boolean(allowed)
     vi.mocked(api.fetchProductionTask).mockResolvedValue({ data: {
-      id: 'one', task_number: 'HT26201', status: 'READY', bom_status: bomStatus, purchase_status: purchaseStatus,
+      id: 'one', task_number: 'HT26201', status: 'READY', bom_status: bomStatus, purchase_status: purchaseStatus, has_confirmed_bom_product: hasConfirmedProduct,
       salesperson: { display_name: '业务员' }, products: [], followers: [], current_boms: [], audit_timeline: [],
     }, etag: 'v1' } as never)
     const wrapper = shallowMount(ProductionTaskDetailView, { global: { plugins: [ElementPlus], stubs: { ElButton: false } } })

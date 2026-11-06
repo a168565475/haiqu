@@ -3,7 +3,7 @@ from copy import copy, deepcopy
 from decimal import Decimal
 from hashlib import sha256
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -22,7 +22,7 @@ from apps.reference_data.models import (AccessoryColor, AccessoryMaterial, Acces
     ProductColor, ProductionUnit)
 from .fabric_material_sync import fabric_parameter_values, synchronize_fabric_material, _specification
 from .duplicate_lines import validate_duplicate_material_lines
-from .models import BomLine, BomSection
+from .models import BomCreationMethod, BomLine, BomSection, BomStatus
 from .catalog_selection import apply_catalog_selection, uses_catalog
 from .pipe_material_sync import pipe_parameter_values, synchronize_pipe_material
 
@@ -99,6 +99,35 @@ def _active(source):
             and source.unit.status == "ACTIVE")
 
 
+def _active_import_material_source(line, planned_sources):
+    from apps.products.material_identity import resolve_bom_line_raw_material
+    material, _ = resolve_bom_line_raw_material(line)
+    if material is not None and _active(material):
+        return material
+    # 新规划的有效原料尚未入库，随后仍须通过建档确认凭据。
+    ids = {str(line.raw_values.get(field)) for field in SOURCE_FIELDS if line.raw_values.get(field)}
+    return next((item for item in planned_sources if str(item.pk) in ids and _active(item)), None)
+
+
+def _has_active_import_material_mapping(line, planned_sources):
+    if not line.material_catalog_id:
+        return _active_import_material_source(line, planned_sources) is not None
+    from apps.material_catalog.models import MaterialAllowedUnit, MaterialScope
+    snapshot = line.material_selection_snapshot or {}
+    if snapshot.get("scope") not in MaterialScope.values:
+        return False
+    try:
+        unit_id = UUID(str(snapshot.get("unit_id") or ""))
+    except ValueError:
+        return False
+    # 历史快照可继续显示，但已归档目录或停用单位不能解除导入待核状态。
+    allowed = MaterialAllowedUnit.objects.select_related("catalog", "unit").filter(
+        catalog_id=line.material_catalog_id, scope=snapshot["scope"], unit_id=unit_id,
+    ).first()
+    return bool(allowed and allowed.archived_at is None and allowed.catalog.archived_at is None
+                and allowed.unit.archived_at is None and allowed.unit.status == "ACTIVE")
+
+
 def _validate_source(source, label):
     try:
         source.full_clean()
@@ -150,10 +179,20 @@ def _auxiliary_source(line, sources, request):
                            current_id=raw.get("source_inventory_material_id"))
 
 
-def build_material_save_plan(*, bom, sections, request, for_update=False):
+def validate_deferred_import_matching(*, bom, intent, defer_import_material_matching):
+    if defer_import_material_matching and (
+        bom is None or bom.creation_method != BomCreationMethod.IMPORT
+        or bom.status != BomStatus.PENDING_CONFIRMATION or intent != "draft"
+    ):
+        raise ValidationError({"defer_import_material_matching": "只有待确认的 Excel 导入 BOM 草稿可以暂缓物料匹配。"})
+
+
+def build_material_save_plan(*, bom, sections, request, for_update=False, defer_import_material_matching=False):
     from .services import _editable_model_values, _merged_raw_values, _tube_specification
     from .material_flow_bom import apply_line_quantities, inherit_cutting_fabric_attributes, is_meter_fabric_section, is_pipe_cutting_line
     from .material_flow_calculations import CUTTING_QUANTITY_FIELDS
+
+    validate_deferred_import_matching(bom=bom, intent="draft", defer_import_material_matching=defer_import_material_matching)
 
     existing = {line.pk: line for line in BomLine.objects.filter(section__bom=bom).select_related("section")}
     source_ids, materials, names = set(), set(), set()
@@ -202,6 +241,11 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                     setattr(line, field, data[field])
             line.raw_values = _merged_raw_values(deepcopy(old.raw_values) if old else {}, data,
                                                 section.section_type, section.title, calculated)
+            # 新手工管材使用默认档；历史行和待核导入继续保存原计算口径。
+            if (old is None and section.section_type == "PROFILE" and not defer_import_material_matching
+                    and line.raw_values.get("source_purchase_allowance_percent") in (None, "")
+                    and not line.raw_values.get("purchase_allowance_mode")):
+                line.raw_values["purchase_allowance_mode"] = "AUTO"
             planned_lines[(section_index, line_number)] = line
             inputs[line.pk] = (data, old)
             if data.get("client_key"):
@@ -229,7 +273,10 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                 pending.color_id = (fabric.raw_values or {}).get("source_product_color_id") if fabric else None
                 pending.color_snapshot = line.raw_values["cutting_color"]
         source = None
-        if uses_catalog(data, old):
+        if defer_import_material_matching:
+            # 导入草稿先保留原表数据；未核对的材料不自动建档，也不套用几何重量公式。
+            line.raw_values["import_material_matching_deferred"] = True
+        elif uses_catalog(data, old):
             apply_catalog_selection(line, data, old=old, request=request, persist=for_update,
                                     versions=catalog_versions, allow_public_creation=False, require_tube_length=False,
                                     require_fabric_meter=True, inherit_fabric_source=True)
@@ -262,6 +309,14 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
                     line.raw_values["hardware_flow_unit"] = source.flow_unit or ""
                     if source.flow_unit.strip().upper() == "KG" and Decimal(data.get("unit_material_weight_kg") or "0") <= 0:
                         raise ValidationError({"sections": f"五金件第 {line_number} 行按公斤流转，须填写大于 0 的单个材料重量。"})
+        if not defer_import_material_matching and line.raw_values.get("import_material_matching_deferred"):
+            can_clear = _has_active_import_material_mapping(line, [*sources, *pipe_sources, *fabric_sources])
+            if section.title.strip() == "裁剪明细" and not is_pipe_cutting_line(line):
+                fabric = line.fabric_source_line
+                can_clear = bool(fabric and not fabric.raw_values.get("import_material_matching_deferred")
+                                 and _has_active_import_material_mapping(fabric, [*sources, *fabric_sources]))
+            if can_clear:
+                line.raw_values.pop("import_material_matching_deferred", None)
         from .tube_metrics import tube_metric_inputs
         restore_automatic_metrics = old is not None and (old.raw_values or {}).get("tube_metrics_manual") is True and data.get("manual_tube_metrics") is False
         recalculate_metrics = old is None or restore_automatic_metrics or data.get("recalculate_tube_metrics", False) or tube_metric_inputs(old) != tube_metric_inputs(line)
@@ -292,9 +347,11 @@ def build_material_save_plan(*, bom, sections, request, for_update=False):
             "attributes_digest": _digest(attributes)}
 
 
-def material_save_preview(*, bom, sections, request, intent):
+def material_save_preview(*, bom, sections, request, intent, defer_import_material_matching=False):
     require_save_permissions(request, intent)
-    plan = build_material_save_plan(bom=bom, sections=sections, request=request)
+    validate_deferred_import_matching(bom=bom, intent=intent, defer_import_material_matching=defer_import_material_matching)
+    plan = build_material_save_plan(bom=bom, sections=sections, request=request,
+                                   defer_import_material_matching=defer_import_material_matching)
     if intent == "verify":
         validate_duplicate_material_lines(plan["lines"].values())
     token = None

@@ -43,7 +43,7 @@ function displayProgress(): ScheduleProgressStatus {
     }])) as ScheduleProgressStatus['stage_progress'] }
 }
 function preview(): ScheduleCompletionPreview {
-  return { schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"',
+  return { schedule_id: 'schedule-1', schedule_number: 'PC-001', schedule_etag: '"schedule-v1"', unscheduled_product_count: 0,
     task: { id: 'task-1', task_number: 'HT-001', status: 'IN_PRODUCTION', status_display: '生产中', etag: '"task-v2"' },
     progress: progress(), products: [{ schedule_product_id: 'p1', product_name: '靠背凳', specification: '28x59', color: '酒红', material: 'PE', required_quantity: 200, received_quantity: 199, unit_name: '箱' }],
     sales_order: { id: null, order_number: null, status: null, status_display: null, etag: null, can_sync: false, reason: '当前账号无关联销售订单查看权限。' } }

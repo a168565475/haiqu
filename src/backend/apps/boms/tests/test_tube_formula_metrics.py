@@ -103,7 +103,7 @@ class TubeFormulaBomApiTests(TestCase):
         self.assertEqual(Decimal(line.raw_values["coating_unit_area_sqm"]), Decimal("0.0393"))
         self.assertEqual(line.raw_values["tube_unit_weight_kg"], line.raw_values["purchase_unit_weight_kg"])
         self.assertIn("tube_formula_snapshot", line.raw_values)
-        self.assertEqual((line.suggested_bar_count, line.raw_bar_length_m), (334, Decimal("3.05")))
+        self.assertEqual((line.suggested_bar_count, line.raw_bar_length_m), (339, Decimal("3.05")))
 
     def test_formula_edit_keeps_old_values_until_explicit_recalculation_or_geometry_edit(self):
         from apps.reference_data.models import TubeCalculationFormula
@@ -146,7 +146,7 @@ class TubeFormulaBomApiTests(TestCase):
         line = self.line()
         self.assertEqual(line.raw_values["tube_formula_snapshot"], before["tube_formula_snapshot"])
         self.assertEqual(Decimal(line.raw_values["purchase_unit_weight_kg"]), Decimal("0.2959"))
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1218.5100"))
 
     def test_new_incomplete_geometry_saves_empty_metrics_and_cannot_confirm(self):
         response = self.save_pipe(tube_diameter="")
@@ -202,7 +202,7 @@ class TubeFormulaBomApiTests(TestCase):
         line = BomLine.objects.get(section__bom=copied)
         self.assertEqual(line.raw_values["tube_formula_snapshot"], before["tube_formula_snapshot"])
         self.assertEqual(Decimal(line.raw_values["purchase_unit_weight_kg"]), Decimal("0.2959"))
-        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1204.0684"))
+        self.assertEqual(Decimal(line.raw_values["long_material_total_weight_kg"]), Decimal("1218.5100"))
         explicit = create_bom(product_line=self.product_line, creation_method="COPY", source_bom=copied,
                               actor_employee=self.employee)
         self.assertEqual(Decimal(BomLine.objects.get(section__bom=explicit).raw_values["purchase_unit_weight_kg"]), Decimal("99"))

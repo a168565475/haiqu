@@ -385,8 +385,9 @@ onBeforeUnmount(() => { disposed = true; requestId++; optionsRequestId++; comple
         <h1>{{ showingGroups ? '采购总单' : '采购订单' }}</h1>
         <span v-if="canView && !showingGroups" class="page-heading__count">共 {{ listReady ? total : '—' }} 条</span>
       </div>
-      <div v-if="canViewSuppliers && (!canView || showingGroups)" class="page-heading__actions">
-        <ElButton class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
+      <div v-if="(canView && showingGroups) || (canViewSuppliers && !canView)" class="page-heading__actions">
+        <ElButton v-if="canView && showingGroups" data-testid="purchase-tracking-entry" @click="router.push({ name: 'purchase-tracking' })">采购跟踪</ElButton>
+        <ElButton v-if="canViewSuppliers" class="supplier-button" data-testid="purchase-suppliers-entry" @click="openSuppliers">
           <BuildingOne theme="outline" size="18" :stroke-width="3" aria-hidden="true" />
           <span>供应商管理</span>
         </ElButton>

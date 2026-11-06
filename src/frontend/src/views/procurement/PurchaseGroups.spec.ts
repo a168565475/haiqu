@@ -82,6 +82,58 @@ const mountCompletionPage = async (group = completableGroup(), permitted = true)
   return wrapper.vm as any
 }
 
+describe('采购跟踪来源预选', () => {
+  const source = (bomId = 'bom-1') => ({ can_create: true, selected_bom_id: bomId, source_revision: 'source-1',
+    production_task: { id: 'task-1', products: [] }, bom_options: [{ bom_id: bomId, product_line_id: 'product-1' }],
+    lines: [{ bom_line_id: 'line-1', required_quantity: '10' }], preview_lines: [], blockers: [], requires_bom_selection: false,
+  })
+  function setupTrackingLink() {
+    state.route.name = 'purchase-order-create'
+    state.route.fullPath = '/purchase-orders/new?production_task_id=task-1&bom_id=bom-1'
+    state.route.query = { production_task_id: 'task-1', bom_id: 'bom-1' }
+    vi.mocked(ordersApi.fetchPurchaseOrderOptions).mockResolvedValue({ ...options(), production_tasks: [{ id: 'task-1', task_number: 'SC-1', can_create: true }] } as never)
+    vi.mocked(ordersApi.fetchPurchaseOrderSource).mockResolvedValue(source() as never)
+  }
+  it('预选真实任务及指定BOM，只读加载，仍通过原下一步建立总单', async () => {
+    setupTrackingLink()
+    const vm = await mountPage(PurchaseOrderFormView)
+    expect(ordersApi.fetchPurchaseOrderSource).toHaveBeenCalledWith('task-1', 'bom-1')
+    expect(vm.selectedTaskId).toBe('task-1')
+    expect(vm.selectedBomId).toBe('bom-1')
+    expect(groupsApi.createPurchaseGroup).not.toHaveBeenCalled()
+    await wrapper!.get('[data-testid="purchase-source-next"]').trigger('click'); await flushPromises()
+    expect(groupsApi.createPurchaseGroup).toHaveBeenCalledWith({ production_task_id: 'task-1', bom_id: 'bom-1', source_revision: 'source-1' })
+  })
+  it('任务不在可选范围时不请求或默认改选其他任务', async () => {
+    setupTrackingLink()
+    vi.mocked(ordersApi.fetchPurchaseOrderOptions).mockResolvedValue({ ...options(), production_tasks: [{ id: 'other', task_number: 'SC-2', can_create: true }] } as never)
+    const vm = await mountPage(PurchaseOrderFormView)
+    expect(ordersApi.fetchPurchaseOrderSource).not.toHaveBeenCalled()
+    expect(vm.selectedTaskId).toBe('')
+    expect(vm.preselectionError).toContain('当前可选范围')
+    expect(wrapper!.get('[data-testid="purchase-source-next"]').attributes('disabled')).toBe('true')
+  })
+  it('指定BOM不可用时不接受接口默认的另一产品', async () => {
+    setupTrackingLink()
+    vi.mocked(ordersApi.fetchPurchaseOrderSource).mockResolvedValue(source('other-bom') as never)
+    const vm = await mountPage(PurchaseOrderFormView)
+    expect(vm.selectedBomId).toBe('')
+    expect(vm.preselectionError).toContain('指定产品 BOM')
+    expect(groupsApi.createPurchaseGroup).not.toHaveBeenCalled()
+    expect(vm.canContinueToDetails).toBe(false)
+  })
+  it('来源读取失败可重试，成功后清除提示且不自动写入', async () => {
+    setupTrackingLink()
+    vi.mocked(ordersApi.fetchPurchaseOrderSource).mockRejectedValueOnce(new Error('offline'))
+    const vm = await mountPage(PurchaseOrderFormView)
+    expect(vm.preselectionError).toContain('读取失败')
+    await vm.initializePage()
+    expect(vm.selectedBomId).toBe('bom-1')
+    expect(vm.preselectionError).toBe('')
+    expect(groupsApi.createPurchaseGroup).not.toHaveBeenCalled()
+  })
+})
+
 describe('采购总单手动完成', () => {
   it.each(['no-permission', 'old-response'])('%s不提供完成入口或写入', async mode => {
     const group = mode === 'old-response' ? groupFixture() : completableGroup()
@@ -822,6 +874,22 @@ describe('总单与批次页面契约', () => {
     expect(wrapper!.find('.page-heading__actions [data-testid="purchase-suppliers-entry"]').exists()).toBe(true)
     const route = { name: 'purchase-orders', path: '/purchase-orders', fullPath: '/purchase-orders?view=groups', params: {}, query: { view: 'groups' }, meta: { layout: 'erp' } }
     expect(createPageTab(route)!.id).toBe(createPageTab({ ...route, fullPath: '/purchase-orders?view=orders', query: { view: 'orders' } })!.id)
+  })
+  it('仅采购查看权也能从总单进入跟踪，不依赖供应商查看权', async () => {
+    state.route.name = 'purchase-orders'
+    state.route.query = {}
+    state.permissions = ['procurement.view_purchaseorder']
+    await mountPage(PurchaseOrderListView)
+    await wrapper!.get('[data-testid="purchase-tracking-entry"]').trigger('click')
+    expect(state.push).toHaveBeenLastCalledWith({ name: 'purchase-tracking' })
+    expect(wrapper!.find('[data-testid="purchase-suppliers-entry"]').exists()).toBe(false)
+  })
+  it('没有采购查看权不显示跟踪入口', async () => {
+    state.route.name = 'purchase-orders'
+    state.permissions = ['procurement.view_supplier']
+    await mountPage(PurchaseOrderListView)
+    expect(wrapper!.find('[data-testid="purchase-tracking-entry"]').exists()).toBe(false)
+    expect(wrapper!.find('[data-testid="purchase-suppliers-entry"]').exists()).toBe(true)
   })
   it('删除已关联批次先读取子单ETag', async () => {
     vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)

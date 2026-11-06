@@ -69,6 +69,7 @@ const RawMaterialManagementView = () => import('@/views/products/RawMaterialMana
 const ProductManagementView = () => import('@/views/products/ProductManagementView.vue')
 const SupplierListView = () => import('@/views/procurement/SupplierListView.vue')
 const PurchaseOrderListView = () => import('@/views/procurement/PurchaseOrderListView.vue')
+const PurchaseTrackingView = () => import('@/views/procurement/PurchaseTrackingView.vue')
 const PurchaseOrderFormView = () => import('@/views/procurement/PurchaseOrderFormView.vue')
 const PurchaseOrderConfirmView = () => import('@/views/procurement/PurchaseOrderConfirmView.vue')
 const PurchaseOrderDetailView = () => import('@/views/procurement/PurchaseOrderDetailView.vue')
@@ -1582,6 +1583,28 @@ export const router = createRouter({
       },
     },
     {
+      path: '/purchase-tracking',
+      name: 'purchase-tracking',
+      component: PurchaseTrackingView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-tracking',
+        headerTitle: '采购管理 / 采购跟踪',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购总单', to: '/purchase-orders?view=groups' }, { label: '采购跟踪' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
+      path: '/purchase-alerts',
+      name: 'purchase-alerts',
+      component: PurchaseTrackingView,
+      meta: {
+        requiresAuth: true, layout: 'erp', activeMenu: 'purchase-alerts',
+        headerTitle: '采购管理 / 采购提醒',
+        breadcrumbs: [{ label: '采购管理' }, { label: '采购提醒' }],
+        pageWidth: 'fluid', flushPage: true,
+      },
+    },
+    {
       path: '/purchase-groups/:id',
       name: 'purchase-group-detail',
       component: PurchaseGroupDetailView,
@@ -1977,15 +2000,16 @@ router.beforeEach(async (to, from) => {
   }
 
   if (to.name === 'home') {
+    const notificationQuery = to.query.notification === undefined ? {} : { notification: to.query.notification }
     if (authStore.hasPermission('production_tasks.view_productiontask')) {
-      return { name: 'production-overview' }
+      return { name: 'production-overview', query: notificationQuery }
     }
     if (authStore.user?.is_superuser || authStore.hasAnyPermission([
       'production_scheduling.view_productionschedule',
       'workshop_reporting.view_workreport',
       'inventory.view_finishedgoodsreceipt',
     ])) {
-      return { name: 'workshop-workbench' }
+      return { name: 'workshop-workbench', query: notificationQuery }
     }
   }
 

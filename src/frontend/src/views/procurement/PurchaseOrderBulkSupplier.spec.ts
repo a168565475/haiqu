@@ -1,7 +1,8 @@
-import { flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount, type VueWrapper } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchPurchaseOrderOptions } from '@/api/purchaseOrders'
+import { createPurchaseOrder, fetchPurchaseOrderOptions, fetchPurchaseOrderSource } from '@/api/purchaseOrders'
+import { createPurchaseBatch, createPurchaseGroup } from '@/api/purchaseGroups'
 import type { PurchaseOrderInput, PurchaseOrderSource, PurchaseOrderSupplierOption } from '@/types/purchaseOrder'
 import type { SupplierCategory } from '@/types/supplier'
 import PurchaseOrderFormView from './PurchaseOrderFormView.vue'
@@ -9,17 +10,21 @@ import PurchaseOrderFormView from './PurchaseOrderFormView.vue'
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ name: 'purchase-order-create-details', query: {} }) }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { is_superuser: true }, hasPermission: () => true }) }))
 vi.mock('@/api/purchaseOrders', () => ({ fetchPurchaseOrderOptions: vi.fn(), fetchPurchaseOrderSource: vi.fn(), fetchSamplePurchaseOrderSource: vi.fn(), createPurchaseOrder: vi.fn() }))
+vi.mock('@/api/purchaseGroups', () => ({ createPurchaseBatch: vi.fn(), createPurchaseGroup: vi.fn(), fetchVersionedPurchaseGroup: vi.fn() }))
 
 type Page = {
-  lines: Array<{ category: string; supplier_id: string | null; suggested_supplier_category: SupplierCategory | null }>
+  lines: Array<{ category: string; supplier_id: string | null; delivery_date: string; suggested_supplier_category: SupplierCategory | null }>
   source: PurchaseOrderSource
   sourceLoading: boolean
+  saving: boolean
   supplierCategories: string[]
   bulkSupplierCategory: string | null
   bulkSupplierId: string | null
+  bulkDeliveryDate: string
   bulkSupplierOptions: PurchaseOrderSupplierOption[]
   applyBulkSupplier: (value: string | null) => void
   refreshBulkSupplier: () => void
+  handleGridNavigation: (event: KeyboardEvent, rowIndex: number, columnIndex: number) => void
   resetSource: () => void
   applySource: (source: PurchaseOrderSource) => void
   buildPayload: () => PurchaseOrderInput
@@ -53,7 +58,7 @@ beforeEach(async () => {
   page.applySource(source())
   await flushPromises()
 })
-afterEach(() => wrapper.unmount())
+afterEach(() => { wrapper.unmount(); vi.restoreAllMocks() })
 const categorySelect = () => wrapper.get('[data-testid="purchase-bulk-supplier-category"]').getComponent({ name: 'ElSelect' })
 async function chooseCategory(value: string | null) {
   categorySelect().vm.$emit('update:modelValue', value)
@@ -159,5 +164,147 @@ describe('采购按分类统一供应商', () => {
     expect(page.lines[2]!.supplier_id).toBe('supplier-a')
     page.applyBulkSupplier('supplier-b')
     expect(page.lines[2]!.supplier_id).toBe('supplier-b')
+  })
+
+})
+
+describe('采购行内回车下填', () => {
+  beforeEach(async () => {
+    wrapper.unmount()
+    wrapper = mount(PurchaseOrderFormView, { attachTo: document.body, global: {
+      plugins: [ElementPlus],
+      config: { warnHandler: (message, _instance, trace) => {
+        // 现有 CalendarIcon 函数触发的属性类型警告与回车行为无关，其他警告继续输出。
+        if (!message.startsWith('Invalid prop: type check failed for prop "prefixIcon".')) console.warn(message, trace)
+      } },
+    } })
+    await flushPromises()
+    page = wrapper.vm as unknown as Page
+    page.applySource(source())
+    await flushPromises()
+    wrapper.findAll('[data-grid-field]').forEach(field => {
+      Object.defineProperty(field.element, 'scrollIntoView', { configurable: true, value: vi.fn() })
+    })
+    page.lines[0]!.supplier_id = 'supplier-c'
+    page.lines[1]!.supplier_id = 'supplier-a'
+    page.lines[2]!.supplier_id = 'supplier-b'
+    page.lines[0]!.delivery_date = '2099-11-10'
+    page.lines[1]!.delivery_date = '2099-11-11'
+    page.lines[2]!.delivery_date = '2099-11-12'
+    await flushPromises()
+  })
+
+  const field = (row: number, column: number) => wrapper.get(`[data-grid-row="${row}"][data-grid-column="${column}"]`)
+  async function press(row: number, column: number, options: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...options })
+    field(row, column).get('input').element.dispatchEvent(event)
+    await flushPromises()
+    return event
+  }
+
+  it('普通回车跨分类覆盖当前行之后的供应商，并移到下一行同列', async () => {
+    await chooseCategory('__all__')
+    const event = await press(1, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-a'])
+    expect(page.bulkSupplierId).toBeNull()
+    expect(document.activeElement).toBe(field(2, 0).get('input').element)
+    expect(event.defaultPrevented).toBe(true)
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+    expect(fetchPurchaseOrderSource).not.toHaveBeenCalled()
+  })
+
+  it('交期回车覆盖全部后续日期并更新统一交期，不提交采购', async () => {
+    await press(0, 1)
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-10', '2099-11-10'])
+    expect(page.bulkDeliveryDate).toBe('2099-11-10')
+    expect(document.activeElement).toBe(field(1, 1).get('input').element)
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+  })
+
+  it.each([0, 1])('第 %i 列 Shift+Enter 只向上移动，不覆盖后续值', async column => {
+    await press(1, column, { shiftKey: true })
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+    expect(document.activeElement).toBe(field(0, column).get('input').element)
+  })
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])('输入法选字回车不覆盖、不跳到下一行：%j', async options => {
+    await press(0, 0, options)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(document.activeElement).not.toBe(field(1, 0).get('input').element)
+  })
+
+  it.each([0, 1])('第 %i 列弹层展开时回车交给选项/日期控件，不批量覆盖', async column => {
+    field(0, column).get('input').element.setAttribute('aria-expanded', 'true')
+    await press(0, column)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+  })
+
+  it.each(['preview', 'loading', 'saving'])('%s 状态禁止回车批量覆盖', async state => {
+    if (state === 'preview') page.source.can_create = false
+    if (state === 'loading') page.sourceLoading = true
+    if (state === 'saving') page.saving = true
+    await flushPromises()
+    await press(0, 0)
+    await press(0, 1)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+  })
+
+  it('末行回车不越界、不提交采购', async () => {
+    const event = await press(2, 0)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('空白当前供应商和日期不通过回车批量清空', async () => {
+    page.lines[0]!.supplier_id = null
+    page.lines[0]!.delivery_date = ''
+    await flushPromises()
+    await press(0, 0)
+    await press(0, 1)
+    expect(page.lines.map(row => row.supplier_id)).toEqual([null, 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['', '2099-11-11', '2099-11-12'])
+  })
+
+  it.each([2, 3])('第 %i 列回车仅导航，不复制供应商或日期', async column => {
+    await press(0, column)
+    expect(page.lines.map(row => row.supplier_id)).toEqual(['supplier-c', 'supplier-a', 'supplier-b'])
+    expect(page.lines.map(row => row.delivery_date)).toEqual(['2099-11-10', '2099-11-11', '2099-11-12'])
+    expect(document.activeElement).toBe(field(1, column).get('input').element)
+  })
+})
+
+describe('采购下填同步处理开销', () => {
+  it.each([100, 1000])('%i 行通过按键处理器正确覆盖，并记录不含页面渲染的耗时', async count => {
+    const template = source()
+    page.applySource({ ...template, lines: Array.from({ length: count }, (_, index) => ({
+      ...template.lines[0]!, bom_line_id: `line-${index}`, source_bom_line_id_snapshot: `line-${index}`,
+    })) })
+    const input = document.createElement('input')
+    input.addEventListener('keydown', event => page.handleGridNavigation(event, 0, 0))
+    const durations: number[] = []
+    for (let sample = 0; sample < 7; sample += 1) {
+      for (const line of page.lines) line.supplier_id = 'supplier-b'
+      page.lines[0]!.supplier_id = 'supplier-a'
+      const started = performance.now()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      durations.push(performance.now() - started)
+      expect(page.lines.every(line => line.supplier_id === 'supplier-a')).toBe(true)
+      await flushPromises()
+    }
+    durations.sort((left, right) => left - right)
+    console.info(`采购下填 ${count} 行，7次同步处理：中位 ${durations[3]!.toFixed(3)} ms，最大 ${durations[6]!.toFixed(3)} ms（不含页面渲染）`)
+    expect(createPurchaseOrder).not.toHaveBeenCalled()
+    expect(createPurchaseBatch).not.toHaveBeenCalled()
+    expect(createPurchaseGroup).not.toHaveBeenCalled()
   })
 })

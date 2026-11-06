@@ -159,6 +159,7 @@ export interface ScheduleCompletionPreview {
   schedule_id: string
   schedule_number: string
   schedule_etag: string
+  unscheduled_product_count: number
   task: { id: string; task_number: string; status: string; status_display: string; etag: string }
   progress: ScheduleProgressStatus['progress']
   products: Array<{

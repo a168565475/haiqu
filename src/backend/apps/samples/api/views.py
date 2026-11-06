@@ -112,6 +112,7 @@ from .serializers import (
     SampleRequestCreateSerializer,
     SampleRequestDetailSerializer,
     SampleRequestListSerializer,
+    SampleRequestListSummarySerializer,
     SampleRequestUpdateSerializer,
     SampleShipmentCreateSerializer,
     SampleShipmentProgressSerializer,
@@ -238,7 +239,7 @@ class SampleRequestViewSet(
         elif self.request.query_params.get("archived", "false").lower() != "all":
             archived = self.request.query_params.get("archived", "false").lower()
             queryset = queryset.filter(archived_at__isnull=archived != "true")
-        return sample_requests_with_context(queryset)
+        return sample_requests_with_context(queryset, list_mode=self.action == "list")
 
     def destroy(self, request, *args, **kwargs):
         sample_request = self.get_object()
@@ -247,7 +248,7 @@ class SampleRequestViewSet(
 
     def get_serializer_class(self):
         if self.action == "list":
-            return SampleRequestListSerializer
+            return SampleRequestListSummarySerializer
         if self.action == "create":
             return SampleRequestCreateSerializer
         if self.action == "partial_update":
@@ -550,8 +551,28 @@ class SampleRequestViewSet(
             }
         )
 
+    @extend_schema(parameters=[OpenApiParameter(
+        name="scope", type=OpenApiTypes.STR, enum=["full", "filters"],
+        description="full 返回完整操作选项；filters 仅返回列表类型、状态和业务员筛选。",
+    )])
     @action(detail=False, methods=["get"])
     def options(self, request):
+        scope = request.query_params.get("scope", "full")
+        if scope not in {"full", "filters"}:
+            raise ValidationError({"scope": "仅支持 full 或 filters。"})
+        if scope == "filters":
+            owners = employee_filter_choices(
+                active_department_employees("DEPT_BUSINESS"), self.get_queryset().values("owner_employee_id"),
+            )
+            return Response({"data": {
+                "sample_types": [{"value": value, "label": label} for value, label in SampleType.choices],
+                "statuses": [
+                    {"value": value, "label": '等待采购' if value == SampleRequestStatus.PROCUREMENT_PENDING else label}
+                    for value, label in SampleRequestStatus.choices
+                    if value not in {SampleRequestStatus.FEEDBACK_PENDING, SampleRequestStatus.COMPLETED}
+                ] + [{"value": PROCUREMENT_IN_PROGRESS, "label": "采购中"}],
+                "owner_filters": list(owners.values("id", "display_name")),
+            }})
         customers = accessible_customers(request, "add_samplerequest").filter(archived_at__isnull=True)
         return Response(
             {

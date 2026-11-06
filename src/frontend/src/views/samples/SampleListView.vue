@@ -6,12 +6,12 @@ import { AxiosError } from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 
-import { deleteSample, fetchSample, fetchSampleOptions, fetchSamples } from '@/api/samples'
+import { deleteSample, fetchSample, fetchSampleFilterOptions, fetchSamples } from '@/api/samples'
 import CrmPageHeader from '@/components/crm/CrmPageHeader.vue'
 import SampleStatusTag from '@/components/samples/SampleStatusTag.vue'
 import { sampleDateBounds, sampleProductsLabel, sampleProductFieldLabel, sampleQuantityLabel } from '@/utils/samplePresentation'
 import { useAuthStore } from '@/stores/auth'
-import type { SampleListItem, SampleListQuery, SampleOptions } from '@/types/sample'
+import type { SampleListSummary, SampleListQuery, SampleFilterOptions } from '@/types/sample'
 
 interface FilterForm {
   q: string
@@ -26,14 +26,16 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const optionLoading = ref(false)
+const optionError = ref('')
 const errorMessage = ref('')
-const rows = ref<SampleListItem[]>([])
+const rows = ref<SampleListSummary[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
-const options = ref<SampleOptions | null>(null)
+const options = ref<SampleFilterOptions | null>(null)
 const moreFiltersVisible = ref(false)
 let rowsRequest = 0
+let optionsRequest = 0
 const deletingId = ref<string | null>(null)
 const requestedDates = ref<[Date, Date] | null>(null)
 const mutationPending = computed(() => deletingId.value !== null)
@@ -88,13 +90,17 @@ async function loadRows() {
 }
 
 async function loadOptions() {
+  if (optionLoading.value) return
+  const request = ++optionsRequest
   optionLoading.value = true
+  optionError.value = ''
   try {
-    options.value = await fetchSampleOptions()
+    const result = await fetchSampleFilterOptions()
+    if (request === optionsRequest) options.value = result
   } catch (error) {
-    ElMessage.error(`样品选项加载失败：${getErrorMessage(error)}`)
+    if (request === optionsRequest) optionError.value = `样品筛选选项加载失败：${getErrorMessage(error)}`
   } finally {
-    optionLoading.value = false
+    if (request === optionsRequest) optionLoading.value = false
   }
 }
 
@@ -130,7 +136,7 @@ function openEdit(sampleId: string) {
   void router.push({ name: 'sample-edit', params: { sampleId } })
 }
 
-function canEditRow(row: SampleListItem) {
+function canEditRow(row: SampleListSummary) {
   if (!row.application_actions?.is_application) return false
   const canEditProducts = row.application_actions.can_edit_products
     && authStore.moduleCan('samples.complete_sample_requirements', undefined, row)
@@ -139,16 +145,16 @@ function canEditRow(row: SampleListItem) {
   return Boolean(canEditProducts || canEditMaterials)
 }
 
-function resubmitApplication(row: SampleListItem) {
+function resubmitApplication(row: SampleListSummary) {
   if (!row.application_actions?.can_resubmit || mutationPending.value) return
   void router.push({ path: '/samples/new', query: { editApplication: row.id } })
 }
 
-function rowClassName({ row }: { row: SampleListItem }) {
+function rowClassName({ row }: { row: SampleListSummary }) {
   return typeof route.query.focus === 'string' && route.query.focus === row.id ? 'is-focused-sample' : ''
 }
 
-async function deleteSampleRow(row: SampleListItem) {
+async function deleteSampleRow(row: SampleListSummary) {
   if (!canDelete.value || mutationPending.value || loading.value) return
   deletingId.value = row.id
   try {
@@ -175,7 +181,7 @@ onMounted(async () => {
   }
   await Promise.all([loadRows(), loadOptions()])
 })
-onBeforeUnmount(() => { rowsRequest++ })
+onBeforeUnmount(() => { rowsRequest++; optionsRequest++ })
 </script>
 
 <template>
@@ -196,9 +202,9 @@ onBeforeUnmount(() => { rowsRequest++ })
       >
         <template #suffix><button type="button" class="sample-search-button erp-list-search-button" aria-label="搜索打样申请列表" @click="searchSamples"><ElIcon><Search /></ElIcon></button></template>
       </ElInput>
-      <ElSelect v-model="filters.status" class="status-filter" aria-label="当前环节" clearable placeholder="当前环节：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
-      <ElSelect v-model="filters.sample_type" class="type-filter" aria-label="样品类型" clearable placeholder="样品类型：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in options?.sample_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
-      <ElSelect v-model="filters.owner_employee_id" class="owner-filter" aria-label="业务员" clearable filterable placeholder="业务员：全部" :loading="optionLoading" @change="searchSamples"><ElOption v-for="item in (options?.owner_filters || options?.owners)" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
+      <ElSelect v-model="filters.status" class="status-filter" aria-label="当前环节" clearable placeholder="当前环节：全部" :loading="optionLoading" :disabled="optionLoading || Boolean(optionError)" @change="searchSamples"><ElOption v-for="item in options?.statuses" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
+      <ElSelect v-model="filters.sample_type" class="type-filter" aria-label="样品类型" clearable placeholder="样品类型：全部" :loading="optionLoading" :disabled="optionLoading || Boolean(optionError)" @change="searchSamples"><ElOption v-for="item in options?.sample_types" :key="item.value" :label="item.label" :value="item.value" /></ElSelect>
+      <ElSelect v-model="filters.owner_employee_id" class="owner-filter" aria-label="业务员" clearable filterable placeholder="业务员：全部" :loading="optionLoading" :disabled="optionLoading || Boolean(optionError)" @change="searchSamples"><ElOption v-for="item in options?.owner_filters" :key="item.id" :label="item.display_name" :value="item.id" /></ElSelect>
       <ElPopover popper-class="erp-list-filter-popover" v-model:visible="moreFiltersVisible" trigger="click" placement="bottom-end" :width="340" :teleported="false">
         <template #reference><ElButton class="erp-button-motion more-filters">更多筛选</ElButton></template>
         <ElForm label-position="top" @submit.prevent="() => { searchSamples(); moreFiltersVisible = false }">
@@ -211,6 +217,7 @@ onBeforeUnmount(() => { rowsRequest++ })
 
     </div>
 
+    <ElAlert v-if="optionError" class="filter-options-error" type="error" :closable="false"><template #title>{{ optionError }} <ElButton link :disabled="optionLoading" @click="loadOptions">重试筛选选项</ElButton></template></ElAlert>
     </section>
 
     <div class="table-card erp-list-data">

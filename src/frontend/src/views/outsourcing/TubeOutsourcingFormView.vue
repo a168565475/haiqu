@@ -29,7 +29,7 @@ const materialName = cutting ? '辅料' : '五金'
 const quantityUnit = cutting ? '套' : '支'
 const craftId = ref('')
 const options = ref<TubeOptions | null>(null), context = ref<TubeSourceContext | null>(null)
-const taskId = ref(''), productId = ref(''), source = ref<TubeSourceKind>(cutting ? 'PUBLIC_CUTTING' : 'RAW_PIPE')
+const taskId = ref(''), productId = ref(''), source = ref<TubeSourceKind>(cutting ? 'PUBLIC_CUTTING' : 'METAL')
 const direct = computed(() => isDirectSource(source.value))
 const publicSemi = computed(() => source.value === 'PUBLIC_SEMI' || source.value === 'PUBLIC_CUTTING')
 const warehouseId = ref(''), zoneId = ref(''), rows = ref<Entry[]>([])
@@ -402,7 +402,7 @@ async function initialize() {
     options.value = result
     if (!pending.value && typeof route.query.source_kind === 'string' && options.value.source_kinds.some(item => item.value === route.query.source_kind)) source.value = route.query.source_kind as TubeSourceKind
     if (!pending.value && typeof route.query.zone_id === 'string') zoneId.value = route.query.zone_id
-    if (!pending.value && !options.value.source_kinds.some(item => item.value === source.value)) source.value = options.value.source_kinds[0]?.value || (cutting ? 'PUBLIC_CUTTING' : 'RAW_PIPE')
+    if (!pending.value && !options.value.source_kinds.some(item => item.value === source.value)) source.value = options.value.source_kinds[0]?.value || (cutting ? 'PUBLIC_CUTTING' : 'METAL')
     const scheduleId = pending.value?.schedule_product_id || (typeof route.query.schedule_product_id === 'string' ? route.query.schedule_product_id : '')
     for (const item of options.value.tasks) {
       const found = item.products.find(candidate => candidate.schedule_product_id === scheduleId)
@@ -510,7 +510,7 @@ onBeforeUnmount(() => { disposed = true; sourceRequest += 1 })
         <tr v-for="row in rows" :key="row.component_identity"><td v-for="column in columns" :key="column.key" :class="{ num: column.num }" :title="column.key === 'max_quantity' && row.blockers.length ? row.blockers.join('；') : undefined">
           <ElInput v-if="column.key === 'quantity'" v-model="row.quantity" :aria-label="`${row.part_name}外发${quantityUnit}数`" inputmode="numeric" :disabled="rowDisabled(row)" :placeholder="planMode || Number(row.max_quantity) ? '0' : '暂无可发'"><template v-if="Number(row.max_quantity)" #suffix>{{ quantityUnit }}</template></ElInput>
           <ElSelect v-else-if="column.key === 'factory'" v-model="row.factoryId" :aria-label="`${row.part_name}加工厂`" :disabled="rowDisabled(row)" filterable clearable placeholder="选择加工厂" no-data-text="该工艺暂无加工厂，请先添加加工厂并关联该工艺"><ElOption v-for="factory in factories" :key="factory.id" :label="factory.name" :value="factory.id" /></ElSelect>
-          <template v-else-if="column.key === 'unit_area_sqm'"><span>单支 {{ formatOutsourcingMoney(row.unit_area_sqm, '—') }}㎡</span><br /><small>合计 {{ formatOutsourcingMoney(outsourcingLineArea(row.quantity, row.unit_area_sqm), '—') }}㎡</small></template>
+          <template v-else-if="column.key === 'unit_area_sqm'">{{ formatOutsourcingMoney(outsourcingLineArea(row.quantity, row.unit_area_sqm), '—') }}㎡</template>
           <ElSelect v-else-if="column.key === 'price_unit'" v-model="row.priceUnit" :aria-label="`${row.part_name}计价方式`" :disabled="rowDisabled(row)"><ElOption label="按㎡" value="SQUARE_METER" /><ElOption label="按支" value="PIECE" /></ElSelect>
           <ElInput v-else-if="column.key === 'unit_price'" v-model="row.unitPrice" :aria-label="`${row.part_name}加工单价`" :disabled="rowDisabled(row)" inputmode="decimal" placeholder="填写单价"><template #suffix>元/{{ row.priceUnit === 'SQUARE_METER' ? '㎡' : quantityUnit }}</template></ElInput>
           <template v-else-if="column.key === 'planned_amount'">{{ row.quantity.trim() ? formatOutsourcingMoney(outsourcingLineAmount(row.quantity, row.unitPrice, row.priceUnit, row.unit_area_sqm)) : '—' }}</template>

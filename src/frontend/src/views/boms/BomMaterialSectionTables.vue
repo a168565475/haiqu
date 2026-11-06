@@ -12,6 +12,8 @@ type TubeCalculation = {
   total_consumption: string
   tube_cut_length_m: string
   branch_count: string
+  base_purchase_bar_count: string
+  purchase_allowance_bar_count: string
   suggested_purchase_meters: string
 }
 
@@ -158,7 +160,8 @@ const {
                <ElTableColumn label="总需求（支）" width="110"><template #default="scope"><b>{{ tubeCalculations(scope.row).total_consumption }}</b></template></ElTableColumn>
                <ElTableColumn prop="tube_cut_piece_count" label="切割支数" width="90" />
                <ElTableColumn label="原材料长度（m）" width="105"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).tube_cut_length_m) }}</template></ElTableColumn>
-               <ElTableColumn label="采购根数" width="90"><template #default="scope"><b>{{ tubeCalculations(scope.row).branch_count }}</b></template></ElTableColumn>
+               <ElTableColumn label="采购根数" width="90"><template #default="scope"><b>{{ tubeCalculations(scope.row).base_purchase_bar_count }}</b></template></ElTableColumn>
+               <ElTableColumn label="采购余量（根）" width="115"><template #default="scope">{{ tubeCalculations(scope.row).purchase_allowance_bar_count }}</template></ElTableColumn>
                <ElTableColumn label="建议采购米数" width="115"><template #default="scope">{{ compactDecimal(tubeCalculations(scope.row).suggested_purchase_meters) }}</template></ElTableColumn>
                <ElTableColumn prop="notes" label="备注" min-width="90"><template #default="scope"><ElTooltip :content="scope.row.notes || '—'" placement="top"><span class="profile-ellipsis-value">{{ scope.row.notes || '—' }}</span></ElTooltip></template></ElTableColumn>
              </ElTable>

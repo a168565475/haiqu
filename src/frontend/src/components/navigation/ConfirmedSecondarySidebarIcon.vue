@@ -196,8 +196,8 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28);fill:var(--icon-accent,#c84e28)"><circle cx="12" cy="19" r="2.5"/></g>
     </g>
 
-    <g v-else-if="name === 'purchase-orders'">
-      <title>采购订单</title>
+    <g v-else-if="name === 'purchase-orders' || name === 'purchase-tracking' || name === 'purchase-alerts'">
+      <title>{{ name === 'purchase-tracking' ? '采购跟踪' : name === 'purchase-alerts' ? '采购提醒' : '采购订单' }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M6 9h16l-2 8H7L5 6H2"/><path d="M11 9V2h8v7"/></g>
       <circle cx="8" cy="21" r="1.3"/><circle cx="18" cy="21" r="1.3"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M13.5 5h3m-3 2h2"/></g>

@@ -52,7 +52,7 @@ const fastReadLoadingRoute = computed(() => [
   'quotations', 'quotation-preview',
   'samples', 'sample-detail', 'sample-material-detail', 'sample-inventory', 'sample-outbound', 'sample-loans',
   'material-inventory', 'finished-goods-inventory', 'material-inbound-details',
-  'boms', 'purchase-orders', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
+  'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-order-confirm', 'purchase-inbounds', 'material-purchase-inbound', 'purchase-returns', 'purchase-return-records', 'material-quality-confirmation',
 ].includes(String(route.name || '')))
 const compactBusinessRoutes = [
   'customer-duplicates', 'contacts',
@@ -73,7 +73,7 @@ const viewportTableRoute = computed(() => (!glassDetailRoute.value || ['workshop
   'access-management', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks', 'samples', 'sample-inventory',
   'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'work-report-days',
   // 这些页面已提供内部滚动，由外壳分配高度，避免旧视口常量撑出额外滚动条。
-  'customers', 'purchase-orders', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
+  'customers', 'purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-inbounds', 'purchase-returns', 'purchase-return-records',
   'supplier-purchase-sheet-editor', 'sample-materials', 'sample-warehouse-review',
   'material-issue-detail',
   'suppliers', 'supplier-purchase-sheets', 'purchase-contract-templates', 'purchase-sheet-template-select',

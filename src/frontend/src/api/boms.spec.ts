@@ -23,6 +23,7 @@ import {
 } from '@/api/boms'
 import { apiClient } from '@/api/request'
 import { emptyProductEntry } from '@/utils/productEntryDraft'
+import { editableSection } from '@/views/boms/bomEditorHelpers'
 
 vi.mock('@/api/request', () => ({
   apiClient: {
@@ -44,6 +45,39 @@ describe('BOM API', () => {
     mockedPatch.mockReset()
     mockedPost.mockReset()
     mockedDelete.mockReset()
+  })
+
+  it('读取后转为编辑行，再预检和保存时保留原表余量与长料长度', async () => {
+    const fields = { source_purchase_allowance_percent: '1.0000', source_raw_bar_length_m: '5.72' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{
+      id: 'pipe-1', part_name: '衬管', length_value: '470', unit_consumption: '3', tube_cut_piece_count: '12', ...fields,
+      raw_values: { ...fields, import_material_matching_deferred: true },
+    }] }] }
+    mockedGet.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v1' } })
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const fetched = await fetchBomForEdit('bom-1')
+    const sections = fetched.data.sections.map(editableSection)
+    await previewBomMaterialSave('bom-1', sections, fetched.etag, { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, fetched.etag, { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ intent: 'draft', sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+      expect(call[2]).toEqual({ headers: { 'If-Match': 'v1' } })
+    }
+    expect(detail.sections[0]!.lines[0]!.raw_values.import_material_matching_deferred).toBe(true)
+  })
+
+  it('保存和预检保留手动采购余量选项，原表来源信息不丢失', async () => {
+    const fields = { purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5', source_purchase_allowance_percent: '1.0000' }
+    const detail = { id: 'bom-1', sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: [{ id: 'pipe-1', ...fields }] }] }
+    mockedPost.mockResolvedValueOnce({ data: { data: { confirmation_token: null, new_materials: [] } } })
+    mockedPatch.mockResolvedValueOnce({ data: { data: detail }, headers: { etag: 'v2' } })
+    const sections = detail.sections.map(section => editableSection(section as never))
+    await previewBomMaterialSave('bom-1', sections, 'v1', { intent: 'draft' })
+    await saveBomDraft('bom-1', sections, 'v1', { intent: 'draft' })
+    for (const call of [mockedPost.mock.calls[0]!, mockedPatch.mock.calls[0]!]) {
+      expect(call[1]).toMatchObject({ sections: [{ lines: [{ id: 'pipe-1', ...fields }] }] })
+    }
   })
 
   it('产品核对保留无目录关联的逐项草稿与版本头，不请求产品建档', async () => {

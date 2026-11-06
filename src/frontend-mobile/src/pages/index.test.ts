@@ -3,15 +3,17 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { Button, Empty, Icon, Search, Tab, Tabs } from 'vant'
 import type { MobilePlan } from '@/types/mobilePlan'
-import IndexPage from './index.vue'
+import { reactive } from 'vue'
+import IndexPage from '@/components/ProductionWorkspace.vue'
+const route = reactive<{ query: Record<string, string> }>({ query: {} })
 
-const mocks = vi.hoisted(() => ({ context: vi.fn(), fetch: vi.fn(), push: vi.fn(), replace: vi.fn() }))
+const mocks = vi.hoisted(() => ({ context: vi.fn(), fetch: vi.fn(), push: vi.fn(), replace: vi.fn(), permission: vi.fn() }))
 vi.mock('@/api/mobilePlans', () => ({ fetchMobileContext: mocks.context, fetchMobilePlans: mocks.fetch }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }))
-vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { display_name: '测试班组长' }, logout: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ user: { display_name: '测试班组长' }, logout: vi.fn(), hasPermission: mocks.permission }) }))
 vi.mock('@/components/WorkPage.vue', () => ({ default: { template: '<div><slot name="header-action" /><slot /></div>' } }))
 vi.mock('@/components/ProductionPlanList.vue', () => ({ default: {
-  name: 'ProductionPlanList', props: ['plans', 'mode'], emits: ['open', 'issue', 'report', 'receiveFinished', 'receiveSemi'],
+  name: 'ProductionPlanList', props: ['plans', 'mode', 'section', 'records'], emits: ['open', 'issue', 'report', 'receiveFinished', 'receiveSemi'],
   template: '<div data-testid="production-plans" :data-mode="mode">{{ plans.length }} 项</div>',
 } }))
 
@@ -38,10 +40,10 @@ const managementContext = () => ({ workshop_filter: { enabled: true, options: wo
 const workshopContext = () => ({ workshop_filter: { enabled: false, options: [], default_id: null } })
 const listStub = { name: 'VanList', props: ['loading', 'finished', 'error'], emits: ['load', 'update:loading'], template: '<div><slot /></div>' }
 let wrapper: VueWrapper | undefined
-async function openPage() {
-  wrapper = mount(IndexPage, { global: {
+async function openPage(section: 'issue' | 'report' | 'receipt' = 'issue') {
+  wrapper = mount(IndexPage, { props: { section }, global: {
     components: { VanButton: Button, VanEmpty: Empty, VanIcon: Icon, VanSearch: Search, VanTab: Tab, VanTabs: Tabs, VanList: listStub },
-    stubs: { VanPullRefresh: { template: '<div><slot /></div>' } },
+    stubs: { ProductionSectionTabs: true, VanPullRefresh: { template: '<div><slot /></div>' } },
   } })
   await flushPromises()
   return wrapper
@@ -65,6 +67,7 @@ async function switchCategory(view: VueWrapper, name: string) {
 }
 beforeEach(() => {
   vi.resetAllMocks()
+  route.query = {}
   mocks.context.mockResolvedValue(managementContext())
   mocks.fetch.mockImplementation(async ({ page }) => ({ data: [plan(String(page))], meta: { page, page_size: 12, total: 36, total_pages: 3 } }))
 })
@@ -72,7 +75,7 @@ afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('首页生产分类与生产计划视图切换', () => {
   it('半成品入库导航保留金工/车缝类别，拒绝其他类别与无权限入口', async () => {
-    const view = await openPage()
+    const view = await openPage('receipt')
     for (const category of ['METAL', 'SEWING']) {
       const item = { ...plan('semi'), plan_category: category, can_receive_semi: true }
       child(view).vm.$emit('receiveSemi', item)
@@ -85,7 +88,7 @@ describe('首页生产分类与生产计划视图切换', () => {
     expect(mocks.push).not.toHaveBeenCalled()
   })
   it('成品入库只路由至已授权装配计划，传真实排产产品 ID', async () => {
-    const view = await openPage()
+    const view = await openPage('receipt')
     const assembly = { ...plan('assembly'), plan_category: 'ASSEMBLY', can_receive_finished: true }
     child(view).vm.$emit('receiveFinished', assembly)
     await flushPromises()
@@ -94,6 +97,23 @@ describe('首页生产分类与生产计划视图切换', () => {
     child(view).vm.$emit('receiveFinished', { ...assembly, can_receive_finished: false })
     child(view).vm.$emit('receiveFinished', { ...assembly, plan_category: 'CUTTING' })
     await flushPromises()
+    expect(mocks.push).not.toHaveBeenCalled()
+  })
+  it('入库独立进入计划详情，报工模块不响应旧入库事件', async () => {
+    route.query = { view: 'records' }
+    const view = await openPage('receipt')
+    expect(child(view).props('section')).toBe('receipt')
+    expect(child(view).props('records')).toBe(false)
+    expect(view.find('production-section-tabs-stub').exists()).toBe(false)
+    const item = { ...plan('receipt'), can_receive_semi: true }
+    child(view).vm.$emit('open', item)
+    expect(mocks.push).toHaveBeenLastCalledWith({ path: '/plan', query: expect.objectContaining({ section: 'receipt', schedule_product_id: item.schedule_product_id }) })
+    await view.setProps({ section: 'report' })
+    route.query = {}
+    await flushPromises()
+    mocks.push.mockClear()
+    child(view).vm.$emit('receiveSemi', item)
+    child(view).vm.$emit('receiveFinished', { ...item, plan_category: 'ASSEMBLY', can_receive_finished: true })
     expect(mocks.push).not.toHaveBeenCalled()
   })
   it('管理账号使用 ERP 四个生产分类，默认金工，裁剪和车缝分别传稳定分类键', async () => {
@@ -227,15 +247,37 @@ describe('首页生产分类与生产计划视图切换', () => {
     for (const mode of ['list', 'summary']) {
       if (mode === 'summary') await switchMode(view, '切换为摘要式')
       const selected = mode === 'list' ? plan('metal') : { ...plan('sewing'), plan_category: 'SEWING', plan_category_label: '车缝', workshop: { id: 'workshop-sewing', name: '车缝车间' } }
-      const expectedQuery = { schedule_product_id: selected.schedule_product_id, production_task_id: selected.production_task_id, product_line_id: selected.product_line_id, plan_category: selected.plan_category, workshop_id: selected.workshop.id }
+      const expectedQuery = { schedule_product_id: selected.schedule_product_id, production_task_id: selected.production_task_id, product_line_id: selected.product_line_id, plan_category: selected.plan_category, workshop_id: selected.workshop.id, section: 'issue' }
       child(view).vm.$emit('open', selected)
       expect(mocks.push).toHaveBeenLastCalledWith({ path: '/plan', query: expectedQuery })
       child(view).vm.$emit('issue', selected)
       expect(mocks.push).toHaveBeenLastCalledWith({ path: '/issue', query: expectedQuery })
+      await view.setProps({ section: 'report' })
       child(view).vm.$emit('report', selected)
-      expect(mocks.push).toHaveBeenLastCalledWith({ path: '/report', query: { ...expectedQuery, craft_id: 'craft-one' } })
+      expect(mocks.push).toHaveBeenLastCalledWith({ path: '/report', query: { ...expectedQuery, section: 'report', craft_id: 'craft-one' } })
       child(view).vm.$emit('report', { ...selected, reporting_crafts: [...selected.reporting_crafts, { ...selected.reporting_crafts[0]!, id: 'craft-two' }] })
-      expect(mocks.push).toHaveBeenLastCalledWith({ path: '/plan', query: { ...expectedQuery, action: 'report' } })
+      expect(mocks.push).toHaveBeenLastCalledWith({ path: '/plan', query: { ...expectedQuery, section: 'report', action: 'report' } })
+      await view.setProps({ section: 'issue' })
     }
+  })
+  it('报工记录视图保留只读权限，点击计划携完整范围进入记录页', async () => {
+    route.query = { view: 'records' }
+    const view = await openPage('report')
+    expect(child(view).props('section')).toBe('report')
+    expect(child(view).props('records')).toBe(true)
+    const selected = { ...plan('history'), can_open_report: false, can_view_reports: true }
+    child(view).vm.$emit('open', selected)
+    expect(mocks.push).toHaveBeenLastCalledWith({ path: '/report-records', query: {
+      schedule_product_id: selected.schedule_product_id, production_task_id: selected.production_task_id,
+      product_line_id: selected.product_line_id, plan_category: selected.plan_category, workshop_id: selected.workshop.id, section: 'report',
+    } })
+    mocks.push.mockClear()
+    child(view).vm.$emit('open', { ...selected, can_view_reports: false })
+    expect(mocks.push).not.toHaveBeenCalled()
+    const requestCount = mocks.fetch.mock.calls.length
+    route.query = {}
+    await flushPromises()
+    expect(child(view).props('records')).toBe(false)
+    expect(mocks.fetch).toHaveBeenCalledTimes(requestCount)
   })
 })

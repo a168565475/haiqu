@@ -76,6 +76,7 @@ class ScheduleCompletionPreviewSerializer(serializers.Serializer):
     progress = serializers.DictField(child=serializers.DictField())
     products = ScheduleCompletionProductSerializer(many=True)
     sales_order = ScheduleCompletionSalesOrderSerializer()
+    unscheduled_product_count = serializers.IntegerField(min_value=0)
 
 
 class ScheduleCompletionPreviewResponseSerializer(serializers.Serializer):

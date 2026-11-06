@@ -37,6 +37,34 @@ describe('BOM 预览渲染', () => {
     expect(view.findAll('[data-field="total_consumption"]').map(cell => cell.text())).toEqual(['4000', '4000'])
   })
 
+  it('导入待确认预览保留原表采购余量和长料长度，未关联销售订单时不显示任务来源编号', async () => {
+    const sourceRows = [
+      ['730', '2', '8', '5.89'], ['910', '4', '6', '5.51'], ['680', '3', '9', '6.17'],
+      ['640', '3', '9', '5.81'], ['470', '3', '12', '5.72'], ['265', '6', '22', '5.93'],
+    ]
+    vi.mocked(fetchBom).mockResolvedValue({ ...record, status: 'PENDING_CONFIRMATION', order_quantity: '500', order_number: 'HT26130', source_sales_order_number: null,
+      sections: [{ id: 'pipes', title: '管材类', section_type: 'PROFILE', lines: sourceRows.map(([length, consumption, cuts, rawLength], index) => ({
+        id: `pipe-${index}`, part_name: '管材', length_value: length, unit_consumption: consumption, tube_cut_piece_count: cuts,
+        source_purchase_allowance_percent: '1', source_raw_bar_length_m: rawLength,
+        cutting_length_mm: Number(length), pieces_per_product: Number(consumption), pieces_per_bar: Number(cuts), raw_values: { pipe_plan_version: 3 }, images: [],
+      })) }],
+    } as never)
+    const view = await open()
+    expect(view.findAll('[data-field="branch_count"]').map(cell => cell.text())).toEqual(['127', '337', '169', '169', '127', '138'])
+    expect(view.findAll('[data-field="tube_cut_length_m"]').map(cell => cell.text())).toEqual(['5.89', '5.51', '6.17', '5.81', '5.72', '5.93'])
+    expect(view.findAll('[data-field="suggested_purchase_meters"]').map(cell => cell.text())).toEqual(['748.03', '1856.87', '1042.73', '981.89', '726.44', '818.34'])
+    expect(view.get('.preview-status-tag').text()).toBe('待确认')
+    expect(view.text()).toContain('销售订单未关联')
+    expect(view.text()).not.toContain('销售订单HT26130')
+  })
+
+  it('已确认 BOM 显示真实关联销售订单', async () => {
+    vi.mocked(fetchBom).mockResolvedValue({ ...record, status: 'VERIFIED', order_number: '任务来源编号', source_sales_order_number: 'SO-001' } as never)
+    const view = await open()
+    expect(view.get('.preview-status-tag').text()).toBe('已确认')
+    expect(view.text()).toContain('销售订单SO-001')
+  })
+
   it('每区按实际字段显示，序号从一开始，不输出原料编号或空数据假行', async () => {
     vi.mocked(fetchBom).mockResolvedValue(record as never)
     const view = await open()

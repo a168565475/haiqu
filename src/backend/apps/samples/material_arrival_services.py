@@ -10,14 +10,19 @@ from .services import SAMPLE_FIELDS, _write_sample_records
 from .procurement_status import has_purchase_order
 
 
-def material_progress(sample):
+def material_progress(sample, *, summary_only=False):
     record = getattr(sample, 'material_request', None)
     if not record:
         return {'label': '未填写', 'status': 'DRAFT', 'lines': []}
     if record.no_materials:
         return {'label': '无需用料', 'status': 'MATERIALS_READY', 'lines': []}
+    issue = getattr(record, 'issue', None)
+    if issue:
+        issue_label, issue_status = ('已领料', 'MATERIALS_ISSUED') if issue.status == SampleMaterialIssueStatus.ISSUED else ('待仓库确认领料', 'MATERIAL_ISSUE_REVIEW')
+        if summary_only:
+            return {'label': issue_label, 'status': issue_status, 'lines': []}
     procurement = getattr(record, 'procurement_request', None)
-    procurement_quantities = {str(row['key']): row['shortageQuantity'] for row in procurement.lines} if procurement else {}
+    procurement_quantities = {str(row['key']): row['shortageQuantity'] for row in procurement.lines} if procurement and not summary_only else {}
     arrivals = list(procurement.arrivals.all()) if procurement else []
     received = {}
     for arrival in arrivals:
@@ -29,10 +34,11 @@ def material_progress(sample):
         need = Decimal(row['quantity'] or '0')
         supplied = supply.get(row['key'], Decimal('0'))
         arrived = received.get(row['key'], Decimal('0'))
-        lines.append({**row, 'supplyQuantity': str(supplied), 'arrivedQuantity': str(arrived),
-                      'procurementQuantity': str(procurement_quantities.get(str(row['key']), '0')) if record.reviewed_at else None,
-                      'remainingQuantity': str(max(Decimal('0'), need - supplied - arrived))})
-    issue = getattr(record, 'issue', None)
+        line = {'arrivedQuantity': str(arrived), 'remainingQuantity': str(max(Decimal('0'), need - supplied - arrived))}
+        if not summary_only:
+            line = {**row, **line, 'supplyQuantity': str(supplied),
+                    'procurementQuantity': str(procurement_quantities.get(str(row['key']), '0')) if record.reviewed_at else None}
+        lines.append(line)
     if issue:
         issue_lines = {str(line.line_key): line for line in issue.lines.select_related('unit').all()}
         for line in lines:
@@ -41,9 +47,7 @@ def material_progress(sample):
                 line['availableQuantity'] = str(frozen.available_quantity)
                 line['issuedQuantity'] = None if frozen.issued_quantity is None else str(frozen.issued_quantity)
                 line['shortageQuantity'] = str(frozen.shortage_quantity)
-        if issue.status == SampleMaterialIssueStatus.ISSUED:
-            return {'label': '已领料', 'status': 'MATERIALS_ISSUED', 'lines': lines}
-        return {'label': '待仓库确认领料', 'status': 'MATERIAL_ISSUE_REVIEW', 'lines': lines}
+        return {'label': issue_label, 'status': issue_status, 'lines': lines}
     if not record.submitted_at:
         label, status = ('填写中' if lines else '未填写'), 'DRAFT'
     elif not record.reviewed_at:

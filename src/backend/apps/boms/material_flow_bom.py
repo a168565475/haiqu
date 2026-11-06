@@ -8,7 +8,8 @@ from rest_framework.exceptions import ValidationError
 from apps.products.material_identity import DIRECT_RAW_MATERIAL_SOURCE_KEYS, resolve_bom_line_raw_material, resolve_cutting_fabric_material
 from apps.reference_data.models import FabricMaterial
 from .material_flow_calculations import (
-    CUTTING_QUANTITY_FIELDS, MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, packaging_quantity, pipe_plan, positive_integer,
+    CUTTING_QUANTITY_FIELDS, PIPE_PURCHASE_ALLOWANCE_MODES, PIPE_PURCHASE_ALLOWANCE_RULES,
+    MaterialFlowValueError, cutting_quantity_plan, decimal_quantity, packaging_quantity, pipe_plan, positive_integer,
 )
 
 PIPE_FIELDS = ("cutting_length_mm", "pieces_per_product", "pieces_per_bar", "raw_bar_length_m",
@@ -73,6 +74,17 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                           recalculate_tube_metrics=False, expected_tube_formula_version=None):
     """旧展示字段只是新规则的投影；导入缺参留待补齐，不能猜每根切割支数。"""
     label = f"{line.section.title}第 {line.line_number} 行"
+    raw_values = line.raw_values or {}
+    mode, rule = raw_values.get("purchase_allowance_mode"), raw_values.get("purchase_allowance_rule")
+    if mode not in (None, "") or rule not in (None, ""):
+        if line.section.section_type != "PROFILE":
+            raise ValidationError({"sections": f"{label}采购余量只能填写在管材类。"})
+        if mode not in PIPE_PURCHASE_ALLOWANCE_MODES or (rule not in (None, "") and rule not in PIPE_PURCHASE_ALLOWANCE_RULES):
+            raise ValidationError({"sections": f"{label}采购余量模式或选项无效。"})
+        if mode == "MANUAL" and rule not in PIPE_PURCHASE_ALLOWANCE_RULES:
+            raise ValidationError({"sections": f"{label}手动采购余量必须选择有效选项。"})
+    if require_complete and (line.raw_values or {}).get("import_material_matching_deferred"):
+        raise ValidationError({"sections": f"{label}的导入物料尚未核对，请完成物料匹配后再确认 BOM。"})
     if require_complete and line.section.section_type == "PROFILE" and (line.raw_values or {}).get("pipe_source_sync_pending"):
         raise ValidationError({"sections": f"{label}请补齐材质、形状、截面、厚度及切割参数，保存后再确认 BOM。"})
     if require_complete and is_meter_fabric_section(line.section) and (line.raw_values or {}).get("fabric_source_sync_pending"):
@@ -112,25 +124,37 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
             else:
                 inputs_changed = any(positive_integer(value, field) != getattr(line, field)
                                      for field, value in inputs.items())
-                version = 3 if recalculate_pipe or inputs_changed else (line.raw_values or {}).get("pipe_plan_version", 2)
-                snapshot = pipe_plan(**inputs, order_quantity=order_quantity, calculation_version=version)
+                saved_version = (line.raw_values or {}).get("pipe_plan_version", 2)
+                version = 4 if mode or saved_version == 4 else (3 if recalculate_pipe or inputs_changed else saved_version)
+                snapshot = pipe_plan(**inputs, order_quantity=order_quantity, calculation_version=version,
+                    source_purchase_allowance_percent=(line.raw_values or {}).get("source_purchase_allowance_percent"),
+                    source_raw_bar_length_m=(line.raw_values or {}).get("source_raw_bar_length_m"),
+                    purchase_allowance_mode=mode, purchase_allowance_rule=rule)
             for field in PIPE_FIELDS:
                 setattr(line, field, snapshot[field] if snapshot else None)
             line.branch_count = str(snapshot["suggested_bar_count"]) if snapshot else ""
             line.original_material_length = snapshot["raw_bar_length_m"] if snapshot else ""
             line.total_purchase_quantity = snapshot["suggested_purchase_meters"] if snapshot else ""
             line.raw_values = {**(line.raw_values or {}), "tube_cut_length_m": line.original_material_length}
+            for field in ("base_purchase_bar_count", "purchase_allowance_bar_count"):
+                line.raw_values.pop(field, None)
             if snapshot:
-                if snapshot.get("calculation_version", 2) == 3:
-                    line.raw_values["pipe_plan_version"] = 3
+                if snapshot.get("calculation_version", 2) in (3, 4):
+                    line.raw_values["pipe_plan_version"] = snapshot["calculation_version"]
+                if snapshot.get("calculation_version") == 4:
+                    line.raw_values.update({field: snapshot[field] for field in (
+                        "base_purchase_bar_count", "purchase_allowance_bar_count",
+                        "purchase_allowance_mode", "purchase_allowance_rule",
+                    )})
                 line.length_value = str(snapshot["cutting_length_mm"])
                 line.unit_consumption = str(snapshot["pieces_per_product"])
                 line.total_consumption = str(snapshot["demand_pieces"])
                 line.raw_values["tube_cut_piece_count"] = str(snapshot["pieces_per_bar"])
             from .tube_metrics import apply_tube_metrics
-            apply_tube_metrics(line, recalculate=recalculate_tube_metrics, require_complete=require_complete,
-                               recalculate_total=previous_bar_count != line.suggested_bar_count,
-                               expected_formula_version=expected_tube_formula_version)
+            if not line.raw_values.get("import_material_matching_deferred") or line.raw_values.get("tube_metrics_manual") is True:
+                apply_tube_metrics(line, recalculate=recalculate_tube_metrics, require_complete=require_complete,
+                                   recalculate_total=previous_bar_count != line.suggested_bar_count,
+                                   expected_formula_version=expected_tube_formula_version)
             line.unit = "根"
         else:
             for field in PIPE_FIELDS:
@@ -164,7 +188,8 @@ def apply_line_quantities(line, order_quantity, *, require_complete=False, toler
                 else:
                     line.total_consumption = line.total_purchase_quantity = ""
     except MaterialFlowValueError as error:
-        if not tolerate_legacy:
+        if not tolerate_legacy or any((line.raw_values or {}).get(field) not in (None, "")
+                                     for field in ("source_purchase_allowance_percent", "source_raw_bar_length_m", "purchase_allowance_mode")):
             raise ValidationError({"sections": f"{label}：{error}"}) from error
         for field in PIPE_FIELDS:
             setattr(line, field, None)

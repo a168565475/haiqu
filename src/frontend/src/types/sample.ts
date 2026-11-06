@@ -38,6 +38,12 @@ export interface SampleOptions {
   fee_approvers: SampleOwnerOption[]
 }
 
+export interface SampleFilterOptions {
+  sample_types: SampleSelectOption[]
+  statuses: SampleSelectOption[]
+  owner_filters: Array<Pick<SampleOwnerOption, 'id' | 'display_name'>>
+}
+
 export interface SampleFormOptions {
   is_salesperson?: boolean
   current_maker: SampleOwnerOption
@@ -250,6 +256,22 @@ export interface SampleListProduct {
   seat_width_cm: string | null
   back_height_cm: string | null
   seat_height_cm: string | null
+}
+
+export interface SampleListSummary extends Pick<SampleListItem,
+  'id' | 'request_number' | 'customer_name' | 'status' | 'status_display'
+  | 'sample_type_display' | 'submitted_on' | 'requested_at' | 'requested_due_at'
+  | 'sample_due_date' | 'item_summary' | 'material_summary'
+> {
+  owner: Pick<CustomerEmployeeSummary, 'id' | 'display_name'> | null
+  products?: Array<Pick<SampleListProduct,
+    'id' | 'line_number' | 'category_name' | 'product_name' | 'specification' | 'color' | 'total_sample_quantity'
+  >>
+  application_actions?: Pick<NonNullable<SampleListItem['application_actions']>,
+    'is_application' | 'can_director_review' | 'can_resubmit' | 'can_edit_products' | 'can_edit_materials'
+  >
+  allowed_permissions?: string[]
+  latest_shipment: Pick<SampleShipmentSummary, 'status' | 'status_display'> | null
 }
 
 export interface SampleItemDetail {
@@ -568,7 +590,7 @@ export interface SampleDetailUpdateInput {
 }
 
 export interface SampleListResult {
-  data: SampleListItem[]
+  data: SampleListSummary[]
   meta: PageMeta
 }
 

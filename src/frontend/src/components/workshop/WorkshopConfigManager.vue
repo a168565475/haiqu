@@ -9,6 +9,7 @@ import {
   deleteWorkshopEmployee,
   fetchWorkshopConfigDetail,
   fetchWorkshopConfigList,
+  fetchWorkshopEmployeeOptions,
   updateWorkshopConfig,
 } from '@/api/workshopConfig'
 import { useAuthStore } from '@/stores/auth'
@@ -25,6 +26,7 @@ import type {
   WorkshopConfigRecord,
   WorkshopEmployee,
   WorkshopEmployeeStatus,
+  WorkshopOption,
 } from '@/types/workshopConfig'
 
 const props = defineProps<{
@@ -47,9 +49,12 @@ const can = (action: 'view' | 'add' | 'change') => (
 const canView = computed(() => can('view'))
 const canAdd = computed(() => props.kind !== 'employees' && can('add'))
 const canChange = computed(() => can('change'))
+const canChangeRow = (row: WorkshopConfigRecord) => canChange.value && (
+  props.kind !== 'employees' || (row as WorkshopEmployee).can_edit === true
+)
 
 const metadata = computed(() => ({
-  employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名、工号或岗位' },
+  employees: { title: '车间员工管理', createLabel: '新增员工', search: '搜索姓名、角色或岗位' },
   crafts: { title: '工艺信息管理', createLabel: '新增工艺', search: '搜索工艺或车间' },
   operations: { title: '工序信息管理', createLabel: '新增工序', search: '搜索品名、工艺或工序' },
 })[props.kind])
@@ -58,7 +63,8 @@ const rows = ref<WorkshopConfigRecord[]>([])
 const employeeRows = computed(() => rows.value as WorkshopEmployee[])
 const craftRows = computed(() => rows.value as Craft[])
 const operationRows = computed(() => rows.value as Operation[])
-const workshops = ref<Workshop[]>([])
+const workshops = ref<WorkshopOption[]>([])
+const editableEmployeeWorkshops = ref<WorkshopOption[]>([])
 const crafts = ref<Craft[]>([])
 const loading = ref(false)
 const loadError = ref('')
@@ -167,6 +173,12 @@ async function loadList(): Promise<void> {
 }
 
 async function loadDependencies(): Promise<void> {
+  if (props.kind === 'employees') {
+    const options = await fetchWorkshopEmployeeOptions()
+    workshops.value = options.workshops
+    editableEmployeeWorkshops.value = options.editable_workshops
+    return
+  }
   const tasks: Promise<unknown>[] = [
     fetchWorkshopConfigList<Workshop>('workshops', { page: 1, page_size: 100 }).then((result) => {
       workshops.value = result.data
@@ -232,9 +244,14 @@ function openCreate(): void {
 }
 
 async function openEdit(row: WorkshopConfigRecord): Promise<void> {
+  if (!canChangeRow(row)) return
   try {
     const detail = await fetchWorkshopConfigDetail(props.kind, row.id)
     const value = detail.data
+    if (!canChangeRow(value)) {
+      ElMessage.warning('该员工已不在可修改范围，请刷新列表。')
+      return
+    }
     resetForm()
     editorMode.value = 'edit'
     editingId.value = value.id
@@ -245,7 +262,7 @@ async function openEdit(row: WorkshopConfigRecord): Promise<void> {
       const employee = value as WorkshopEmployee
       editingEmployee.value = employee
       form.employee = employee.employee || ''
-      form.workshop = employee.workshop || ''
+      form.workshop = employee.workshop || employee.role_workshop || ''
       form.position = employee.position
       form.isSupervisor = employee.is_supervisor
     } else if (props.kind === 'crafts') {
@@ -268,6 +285,7 @@ async function openEdit(row: WorkshopConfigRecord): Promise<void> {
 function validateForm(): string {
   if (props.kind === 'employees') {
     if (!form.workshop) return '请选择车间。'
+    if (!editableEmployeeWorkshops.value.some(item => item.id === form.workshop && item.status === 'ACTIVE')) return '请选择有修改权限的启用车间。'
     if (!form.position.trim()) return '请输入岗位。'
   }
   if (props.kind === 'crafts') {
@@ -312,6 +330,7 @@ function buildPayload(): WorkshopConfigInput {
 }
 
 async function save(): Promise<void> {
+  if (props.kind === 'employees' && (!editingEmployee.value || !canChangeRow(editingEmployee.value))) return
   const message = validateForm()
   if (message) {
     ElMessage.warning(message)
@@ -334,6 +353,7 @@ async function save(): Promise<void> {
 }
 
 async function toggleStatus(row: WorkshopConfigRecord): Promise<void> {
+  if (!canChangeRow(row)) return
   const active = row.status === 'ACTIVE'
   const nextStatus = props.kind === 'employees'
     ? (active ? 'LEFT' : 'ACTIVE')
@@ -348,6 +368,10 @@ async function toggleStatus(row: WorkshopConfigRecord): Promise<void> {
   try {
     await ElMessageBox.confirm(note, `${actionLabel}确认`, { type: active ? 'warning' : 'info' })
     const detail = await fetchWorkshopConfigDetail(props.kind, row.id)
+    if (!canChangeRow(detail.data)) {
+      ElMessage.warning('该员工已不在可修改范围，请刷新列表。')
+      return
+    }
     await updateWorkshopConfig(props.kind, row.id, { status: nextStatus } as Partial<WorkshopConfigInput>, detail.etag)
     ElMessage.success(`${actionLabel}成功。`)
     await reloadAll()
@@ -358,6 +382,7 @@ async function toggleStatus(row: WorkshopConfigRecord): Promise<void> {
 }
 
 function handleRowAction(command: unknown, row: WorkshopConfigRecord): void {
+  if (!canChangeRow(row)) return
   const action = String(command)
   if (action === 'edit') void openEdit(row)
   if (action === 'toggle') void toggleStatus(row)
@@ -365,9 +390,13 @@ function handleRowAction(command: unknown, row: WorkshopConfigRecord): void {
 }
 
 async function removeEmployee(row: WorkshopEmployee): Promise<void> {
-  if (!canChange.value || saving.value) return
+  if (!canChangeRow(row) || saving.value) return
   try {
     const detail = await fetchWorkshopConfigDetail('employees', row.id)
+    if (!canChangeRow(detail.data)) {
+      ElMessage.warning('该员工已不在可修改范围，请刷新列表。')
+      return
+    }
     await ElMessageBox.confirm(`清除“${employeeLabel(row)}”的车间和岗位安排？`, '清除车间安排', { type: 'warning' })
     saving.value = true
     await deleteWorkshopEmployee(row.id, detail.etag)
@@ -456,10 +485,11 @@ onMounted(() => { void reloadAll() })
           <ElTableColumn label="姓名" min-width="160" show-overflow-tooltip><template #default="{ row }">{{ employeeLabel(row) }}</template></ElTableColumn>
           <ElTableColumn prop="department" label="部门" min-width="160" show-overflow-tooltip />
           <ElTableColumn prop="roles" label="角色" min-width="180" show-overflow-tooltip />
+          <ElTableColumn label="角色对应车间" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ row.role_workshop_name || '—' }}</template></ElTableColumn>
           <ElTableColumn label="是否为主管" width="130"><template #default="{ row }"><ElTag :type="row.is_supervisor ? 'success' : 'info'" effect="dark">{{ row.is_supervisor ? '是' : '否' }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="车间任职" width="110"><template #default="{ row }"><ElTag :type="!row.workshop ? 'info' : row.status === 'ACTIVE' ? 'success' : 'warning'" effect="dark">{{ !row.workshop ? '未安排' : row.status === 'ACTIVE' ? '任职中' : '已离岗' }}</ElTag></template></ElTableColumn>
           <ElTableColumn label="更新时间" min-width="180"><template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template></ElTableColumn>
-          <ElTableColumn v-if="canChange" label="操作" width="80" fixed="right"><template #default="{ row }"><ElDropdown trigger="click" @command="handleRowAction($event, row)"><ElButton text circle :icon="MoreFilled" aria-label="更多操作" class="row-action-trigger" /><template #dropdown><ElDropdownMenu><ElDropdownItem command="edit">编辑</ElDropdownItem><ElDropdownItem command="toggle" :disabled="!row.workshop">{{ row.status === 'ACTIVE' ? '结束车间任职' : '恢复车间任职' }}</ElDropdownItem><ElDropdownItem command="delete" divided :disabled="saving || !row.workshop">清除安排</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
+          <ElTableColumn v-if="canChange" label="操作" width="80" fixed="right"><template #default="{ row }"><ElDropdown v-if="canChangeRow(row)" trigger="click" @command="handleRowAction($event, row)"><ElButton text circle :icon="MoreFilled" aria-label="更多操作" class="row-action-trigger" /><template #dropdown><ElDropdownMenu><ElDropdownItem command="edit">编辑</ElDropdownItem><ElDropdownItem command="toggle" :disabled="!row.workshop">{{ row.status === 'ACTIVE' ? '结束车间任职' : '恢复车间任职' }}</ElDropdownItem><ElDropdownItem command="delete" divided :disabled="saving || !row.workshop">清除安排</ElDropdownItem></ElDropdownMenu></template></ElDropdown></template></ElTableColumn>
           <template #empty><ElEmpty description="暂无生产部员工" /></template>
         </ElTable>
 
@@ -496,7 +526,10 @@ onMounted(() => { void reloadAll() })
     <AppWindowDialog v-model="editorVisible" :title="`${editorMode === 'create' ? '新增' : '编辑'}${metadata.title.replace('管理', '')}`" :width="900" :height="editorHeight" destroy-on-close class="workshop-editor-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :before-close="beforeEditorClose">
       <ElForm label-position="top" class="editor-form">
         <template v-if="kind === 'employees'">
-          <ElFormItem label="车间" required><ElSelect v-model="form.workshop" filterable placeholder="请选择车间"><ElOption v-for="item in workshops" :key="item.id" :label="item.name" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect></ElFormItem>
+          <ElFormItem label="车间" required>
+            <ElInput v-if="editingEmployee?.role_workshop" :model-value="editingEmployee.role_workshop_name || '按角色对应车间'" disabled />
+            <ElSelect v-else v-model="form.workshop" filterable placeholder="请选择车间"><ElOption v-for="item in editableEmployeeWorkshops" :key="item.id" :label="item.name" :value="item.id" :disabled="item.status !== 'ACTIVE'" /></ElSelect>
+          </ElFormItem>
           <ElFormItem label="岗位" required><ElInput v-model="form.position" maxlength="100" placeholder="请输入岗位" /></ElFormItem>
           <ElFormItem label="员工"><span>{{ editingEmployee ? employeeLabel(editingEmployee) : '' }}</span></ElFormItem>
           <ElFormItem label="是否为主管" required><ElSelect v-model="form.isSupervisor"><ElOption label="是" :value="true" /><ElOption label="否" :value="false" /></ElSelect></ElFormItem>

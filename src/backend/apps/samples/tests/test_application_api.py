@@ -20,8 +20,8 @@ class SampleApplicationApiTests(APITestCase):
         from apps.organizations.models import EmployeeOrganizationAssignment, OrganizationUnit, EmployeeRoleAssignment, RoleProfile
         legacy_tests.SampleApiTests.setUp(self)
         department, _ = OrganizationUnit.objects.get_or_create(unit_code='DEPT_BUSINESS', defaults={'unit_name': '业务部'})
-        EmployeeOrganizationAssignment.objects.create(employee=self.employee, organization_unit=department,
-                                                       effective_from=timezone.now())
+        EmployeeOrganizationAssignment.objects.get_or_create(employee=self.employee, organization_unit=department,
+                                                               defaults={'effective_from': timezone.now()})
         group, _ = Group.objects.get_or_create(name='打样测试业务员')
         role, _ = RoleProfile.objects.get_or_create(role_code='SALESPERSON', defaults={'auth_group': group, 'display_name': '业务员'})
         EmployeeRoleAssignment.objects.create(employee=self.employee, role_profile=role, effective_from=timezone.now())

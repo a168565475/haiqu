@@ -260,7 +260,7 @@ async function submit() {
   finally { saving.value = false }
 }
 
-function openRecords() { void router.push({ path: '/report-records', query: { ...route.query } }) }
+function openRecords() { void router.push({ path: '/report-records', query: { ...route.query, section: 'report' } }) }
 
 async function allowLeave(to: RouteLocationNormalized) {
   // 身份失效必须允许退出本业务页，不能被未保存提示拦住登录跳转。
@@ -285,7 +285,7 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
 </script>
 
 <template>
-  <WorkPage class="report-work-page" title="生产报工" :subtitle="workshop && craft ? `${workshop.name} · ${craft.name}` : '班组长填写本次完成情况'">
+  <WorkPage class="report-work-page" title="生产报工" :subtitle="workshop && craft ? `${workshop.name} · ${craft.name}` : '班组长填写本次完成情况'" section="report" back-to="/production-report">
     <div class="page-stack report-page">
       <section v-if="completed" class="section-card report-success" role="status">
         <van-icon name="passed" size="40" />
@@ -296,7 +296,7 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
         <p class="muted">记录已生效，提交金额 {{ quantityText(completed.total_amount) }} 元。</p>
         <p v-if="employeeMemoryNotice" role="status">{{ employeeMemoryNotice }}</p>
         <van-button type="primary" block @click="openRecords">查看报工记录</van-button>
-        <van-button block plain @click="router.push('/')">返回生产列表</van-button>
+        <van-button block plain @click="router.push('/production-report')">返回生产报工</van-button>
       </section>
 
       <template v-else>
@@ -321,7 +321,7 @@ onBeforeUnmount(() => { requestSequence++; controller?.abort(); window.removeEve
         <section v-if="loadError" class="error-panel" role="alert">
           <p>{{ loadError }}</p>
           <van-button v-if="scope" block :disabled="locked || loading" @click="loadData(true)">重新加载</van-button>
-          <van-button v-else block @click="router.push('/')">返回任务列表</van-button>
+          <van-button v-else block @click="router.push('/production-report')">返回生产报工</van-button>
         </section>
 
         <section v-if="context && !loading" class="section-card report-date">

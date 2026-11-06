@@ -4,7 +4,7 @@ import { RouterLink } from 'vue-router'
 import { fetchSamples } from '@/api/samples'
 import { fetchWageSchemes } from '@/api/workshopReporting'
 import { useAuthStore } from '@/stores/auth'
-import type { SampleListItem } from '@/types/sample'
+import type { SampleListSummary } from '@/types/sample'
 import type { WageScheme } from '@/types/workshopReporting'
 
 const props = defineProps<{ view: 'overview' | 'detail' | 'mini'; refreshKey: string }>()
@@ -12,7 +12,7 @@ const auth = useAuthStore()
 type LoadState = 'loading' | 'ready' | 'forbidden' | 'error'
 const sampleState = ref<LoadState>('loading')
 const wageState = ref<LoadState>('loading')
-const samples = ref<SampleListItem[]>([])
+const samples = ref<SampleListSummary[]>([])
 const wages = ref<WageScheme[]>([])
 const sampleChecked = ref(0)
 const sampleHasMore = ref(false)

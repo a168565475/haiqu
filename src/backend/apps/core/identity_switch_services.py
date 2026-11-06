@@ -133,7 +133,7 @@ def lock_number(root):
 
 @contextmanager
 @sensitive_variables()
-def chain_lock(root):
+def chain_lock(root, *, shared=False):
     """Session-level lock preserves existing business transaction boundaries.
 
     Never proceed after a reconnect: a new physical connection does not own the
@@ -142,8 +142,10 @@ def chain_lock(root):
     connection.ensure_connection()
     physical = connection.connection
     number = lock_number(root)
+    lock_sql = "SELECT pg_advisory_lock_shared(%s)" if shared else "SELECT pg_advisory_lock(%s)"
+    unlock_sql = "SELECT pg_advisory_unlock_shared(%s)" if shared else "SELECT pg_advisory_unlock(%s)"
     with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_lock(%s)", [number])
+        cursor.execute(lock_sql, [number])
 
     @sensitive_variables()
     def same_connection(execute, sql, params, many, context):
@@ -164,7 +166,7 @@ def chain_lock(root):
         elif not physical.closed:
             try:
                 with connection.cursor() as cursor:
-                    cursor.execute("SELECT pg_advisory_unlock(%s)", [number])
+                    cursor.execute(unlock_sql, [number])
                     if not cursor.fetchone()[0]:
                         raise DatabaseError("Identity session lock was lost")
             except DatabaseError:

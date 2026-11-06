@@ -41,7 +41,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'sample-management': ['samples', 'sample-library'],
   'product-management': ['product-catalog', 'material-catalog'],
   'production-management': ['production-tasks', 'boms'],
-  'procurement-management': ['purchase-orders', 'purchase-return-records'],
+  'procurement-management': ['purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
   'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
@@ -49,7 +49,7 @@ const secondaryIconKeys: Record<string, string[]> = {
 }
 
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
-  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders',
+  'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
   'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
   'material-inventory', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-receipts', ...settingsEntries.map(([name]) => name),

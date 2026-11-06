@@ -89,7 +89,7 @@ function blankDraft(product: ScheduleTaskProduct): ProductDraft {
     sewing_return_date: '',
     finished_inbound_date: '',
     craft_ids: [],
-    selected: true,
+    selected: product.bom_status === 'VERIFIED',
     product,
   }
 }
@@ -113,7 +113,7 @@ async function loadDialog() {
     candidate.value = taskCandidate
     crafts.value = options.crafts
     drafts.push(...(taskCandidate.products || []).map(blankDraft))
-    activeProductId.value = drafts[0]?.product_line_id || ''
+    activeProductId.value = selectedDrafts.value[0]?.product_line_id || drafts[0]?.product_line_id || ''
     if (taskCandidate.existing_schedule_id) {
       errorMessage.value = '该生产任务单已经存在有效排产计划，请查看原计划。'
     }
@@ -144,11 +144,17 @@ function selectProduct(item: ProductDraft) {
 }
 
 function toggleProduct(item: ProductDraft, selected: boolean) {
+  if (item.product.bom_status !== 'VERIFIED') return
   item.selected = selected
   if (selected) activeProductId.value = item.product_line_id
   else if (activeProductId.value === item.product_line_id) {
     activeProductId.value = selectedDrafts.value[0]?.product_line_id || drafts[0]?.product_line_id || ''
   }
+}
+
+function productBlocker(product: ScheduleTaskProduct) {
+  if (product.bom_status === 'VERIFIED') return ''
+  return product.bom_status === 'NOT_CREATED' ? '未建立 BOM，暂不可排产' : '最新 BOM 未确认，暂不可排产'
 }
 
 function imageFallback(event: Event) {
@@ -202,6 +208,7 @@ function validate() {
   if (!schedulingReady.value) return schedulingBlockerText.value || 'BOM 已确认且满足排产条件后才能排产。'
   if (!selectedDrafts.value.length) return '请至少选择一个订单产品。'
   for (const item of selectedDrafts.value) {
+    if (item.product.bom_status !== 'VERIFIED') return `${item.product.product_name}：${productBlocker(item.product)}。`
     if (!Number.isInteger(item.planned_quantity) || item.planned_quantity < 1 || item.planned_quantity > item.product.quantity) {
       return `${item.product.product_name} 的排产数量必须是 1 到 ${item.product.quantity} 的整数。`
     }
@@ -275,7 +282,7 @@ function viewExistingSchedule() {
       </ElAlert>
 
       <section class="schedule-readiness" aria-label="排产前检查">
-        <header><strong>排产前检查</strong><span>BOM 已确认且满足任务、产品和工艺条件即可排产，采购进度仅供参考。</span></header>
+        <header><strong>排产前检查</strong><span>产品最新 BOM 已确认且满足任务、产品和工艺条件即可单独排产，采购进度仅供参考。</span></header>
         <div class="schedule-readiness__items">
           <div><span>PMC确认</span><ElTag class="readiness-tag is-success" effect="dark">已确认</ElTag></div>
           <div><span>BOM状态</span><ElTag class="readiness-tag" :class="verifiedBomCount === drafts.length && drafts.length ? 'is-success' : 'is-warning'" effect="dark">{{ bomSummary }}</ElTag></div>
@@ -295,7 +302,7 @@ function viewExistingSchedule() {
               :class="{ 'is-active': activeDraft?.product_line_id === item.product_line_id }"
               @click="selectProduct(item)"
             >
-              <ElCheckbox :model-value="item.selected" :aria-label="`选择${item.product.product_name}`" @click.stop @update:model-value="toggleProduct(item, Boolean($event))" />
+              <ElCheckbox :model-value="item.selected" :disabled="item.product.bom_status !== 'VERIFIED'" :aria-label="`选择${item.product.product_name}`" @click.stop @update:model-value="toggleProduct(item, Boolean($event))" />
               <ProtectedImage
                 :src="item.product.image_file_id ? scheduleProductImageUrl(candidate.id, item.product.image_file_id) : productImagePlaceholder"
                 :class="{ 'is-placeholder': !item.product.image_file_id }"
@@ -307,6 +314,7 @@ function viewExistingSchedule() {
                 <span :title="[item.product.item_number || item.product.product_code, item.product.color_name].filter(Boolean).join(' · ')">{{ [item.product.item_number || item.product.product_code, item.product.color_name].filter(Boolean).join(' · ') || '—' }}</span>
                 <small>订单数量</small>
                 <b>{{ quantity(item.product.quantity) }} {{ item.product.unit_name }}</b>
+                <small v-if="productBlocker(item.product)" :title="productBlocker(item.product)">{{ productBlocker(item.product) }}</small>
               </div>
               <div class="schedule-product-row__status">
                 <span>BOM</span>
@@ -327,24 +335,24 @@ function viewExistingSchedule() {
           </header>
 
           <section class="schedule-editor__section quantity-section">
-            <label><span>排产数量</span><div><ElInputNumber v-model="activeDraft.planned_quantity" :min="1" :max="activeDraft.product.quantity" :step="1" :precision="0" :controls="false" /><em>{{ activeDraft.product.unit_name }}</em></div></label>
+            <label><span>排产数量</span><div><ElInputNumber v-model="activeDraft.planned_quantity" :disabled="activeDraft.product.bom_status !== 'VERIFIED'" :min="1" :max="activeDraft.product.quantity" :step="1" :precision="0" :controls="false" /><em>{{ activeDraft.product.unit_name }}</em></div></label>
           </section>
 
           <section class="schedule-editor__section">
             <h3>计划关键时间</h3>
             <div class="schedule-date-grid">
-              <label><span>材料入库时间</span><ElDatePicker v-model="activeDraft.material_inbound_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
-              <label><span>金工回货时间</span><ElDatePicker v-model="activeDraft.metal_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
-              <label><span>车缝回货时间</span><ElDatePicker v-model="activeDraft.sewing_return_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
-              <label><span>成品入库时间</span><ElDatePicker v-model="activeDraft.finished_inbound_date" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
+              <label><span>材料入库时间</span><ElDatePicker v-model="activeDraft.material_inbound_date" :disabled="activeDraft.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
+              <label><span>金工回货时间</span><ElDatePicker v-model="activeDraft.metal_return_date" :disabled="activeDraft.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
+              <label><span>车缝回货时间</span><ElDatePicker v-model="activeDraft.sewing_return_date" :disabled="activeDraft.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
+              <label><span>成品入库时间</span><ElDatePicker v-model="activeDraft.finished_inbound_date" :disabled="activeDraft.product.bom_status !== 'VERIFIED'" value-format="YYYY-MM-DD" placeholder="选择日期" popper-class="schedule-date-popper" /></label>
             </div>
           </section>
 
           <section class="schedule-editor__section">
             <h3>工艺选择</h3>
             <div class="schedule-craft-grid">
-              <label><span>厂内工艺</span><div class="schedule-craft-field"><ElSelect :model-value="craftIdsByType(activeDraft, 'INTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂内工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(activeDraft, 'INTERNAL', value)"><ElOption v-for="craft in internalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><strong v-if="craftIdsByType(activeDraft, 'INTERNAL').length">{{ craftSummary(activeDraft, 'INTERNAL') }}</strong></div></label>
-              <label><span>厂外工艺</span><div class="schedule-craft-field"><ElSelect :model-value="craftIdsByType(activeDraft, 'EXTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂外工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(activeDraft, 'EXTERNAL', value)"><ElOption v-for="craft in externalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><strong v-if="craftIdsByType(activeDraft, 'EXTERNAL').length">{{ craftSummary(activeDraft, 'EXTERNAL') }}</strong></div></label>
+              <label><span>厂内工艺</span><div class="schedule-craft-field"><ElSelect :disabled="activeDraft.product.bom_status !== 'VERIFIED'" :model-value="craftIdsByType(activeDraft, 'INTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂内工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(activeDraft, 'INTERNAL', value)"><ElOption v-for="craft in internalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><strong v-if="craftIdsByType(activeDraft, 'INTERNAL').length">{{ craftSummary(activeDraft, 'INTERNAL') }}</strong></div></label>
+              <label><span>厂外工艺</span><div class="schedule-craft-field"><ElSelect :disabled="activeDraft.product.bom_status !== 'VERIFIED'" :model-value="craftIdsByType(activeDraft, 'EXTERNAL')" multiple collapse-tags :max-collapse-tags="0" placeholder="选择厂外工艺" popper-class="schedule-craft-popper" @update:model-value="(value: string[]) => updateCraftIds(activeDraft, 'EXTERNAL', value)"><ElOption v-for="craft in externalCrafts" :key="craft.id" :label="craft.name" :value="craft.id" /></ElSelect><strong v-if="craftIdsByType(activeDraft, 'EXTERNAL').length">{{ craftSummary(activeDraft, 'EXTERNAL') }}</strong></div></label>
             </div>
           </section>
           <p class="schedule-editor__tip">切换产品会保留已填写内容。</p>

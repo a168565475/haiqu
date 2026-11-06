@@ -25,7 +25,7 @@ function summary(overrides: Partial<ProductionTaskListItem> = {}): ProductionTas
     id: 'task-one', task_number: 'HT-SUMMARY', source_sales_order_number: null, sales_order_id: null,
     delivery_date: '2026-11-30', salesperson: { display_name: '业务甲' }, followers: [{ display_name: '跟单乙' }],
     status: 'READY', status_display: '已接单', bom_status: 'VERIFIED', bom_status_display: '已确认',
-    purchase_status: 'NOT_STARTED', purchase_status_display: '未发起',
+    purchase_status: 'NOT_STARTED', purchase_status_display: '未发起', has_confirmed_bom_product: true,
     allowed_permissions: ['access_control.cancel_productiontask', 'access_control.finish_productiontask'],
     products: [{
       id: 'product-one', customer_product_name: '列表产品甲', product_name: '原产品', item_number: 'ITEM-A',
@@ -105,7 +105,7 @@ describe('生产任务列表摘要契约', () => {
     expect(scheduleApi.fetchTaskCandidate).not.toHaveBeenCalled()
   })
 
-  it('摘要行打开真实排产弹窗后按任务 ID 独立取得排产产品', async () => {
+  it('部分 BOM 已确认的摘要行仍可打开排产弹窗，并按任务 ID 独立取得排产产品', async () => {
     const candidate: ScheduleTaskCandidate = {
       id: 'task-one', task_number: 'HT-SUMMARY', order_number: '', sales_order_number: null,
       customer_id: '', customer_name: '', order_date: '2026-11-03', delivery_date: '2026-11-30',
@@ -121,7 +121,7 @@ describe('生产任务列表摘要契约', () => {
     }
     vi.mocked(scheduleApi.fetchTaskCandidate).mockResolvedValue(candidate)
     vi.mocked(scheduleApi.fetchScheduleOptions).mockResolvedValue({ crafts: [], plan_categories: [], customers: [] })
-    await render()
+    await render(summary({ bom_status: 'PARTIAL', bom_status_display: '部分确认' }))
     await chooseAction('计划排产')
     expect(scheduleApi.fetchTaskCandidate).toHaveBeenCalledExactlyOnceWith('task-one')
     expect(scheduleApi.fetchScheduleOptions).toHaveBeenCalledTimes(1)

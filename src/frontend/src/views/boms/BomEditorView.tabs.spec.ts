@@ -39,6 +39,13 @@ beforeEach(() => {
 })
 
 describe('BOM 编辑页页签与核对集成', () => {
+  it.each([['PENDING_CONFIRMATION', '待确认'], ['VERIFIED', '已确认']])('状态 %s 显示为 %s', async (status, label) => {
+    vi.mocked(api.fetchBomForEdit).mockResolvedValue(versioned({ status }) as never)
+    const wrapper = open(); await flushPromises()
+    try {
+      expect(wrapper.get('.editor-status-tag').text()).toBe(label)
+    } finally { wrapper.unmount() }
+  })
   it('打印保留所有分区和当前未保存输入，不调用保存接口', async () => {
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
     const wrapper = open(); await flushPromises()

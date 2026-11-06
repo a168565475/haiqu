@@ -101,6 +101,9 @@ def delivery_statuses(recipient):
 
 
 def content_accessible(recipient, user, *, permission_snapshots=None):
+    if recipient.event.event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        from apps.procurement.tracking_notifications import tracking_recipient_payload
+        return tracking_recipient_payload(recipient, user, qualification_cache=permission_snapshots)['target_accessible']
     if recipient.event.status == "STALE":
         return False
     if recipient.scope == 'ROLE_POLICY':
@@ -124,6 +127,9 @@ def current_policy_recipient(recipient, user):
 
 
 def recipient_target(recipient, user):
+    if recipient.event.event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        from apps.procurement.tracking_notifications import tracking_recipient_payload
+        return tracking_recipient_payload(recipient, user)['target']
     if recipient.scope == 'ROLE_POLICY':
         current = current_policy_recipient(recipient, user)
         return current['target'] if current else None
@@ -135,6 +141,9 @@ def target_accessible(recipient, user):
 
 
 def recipient_payload(recipient, user, *, permission_snapshots=None):
+    if recipient.event.event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        from apps.procurement.tracking_notifications import tracking_recipient_payload
+        return tracking_recipient_payload(recipient, user, qualification_cache=permission_snapshots)
     accessible = content_accessible(recipient, user, permission_snapshots=permission_snapshots)
     event = get_event(recipient.event.event_code)
     if accessible:
@@ -176,7 +185,12 @@ def recipient_payload(recipient, user, *, permission_snapshots=None):
 
 
 def unread_count(employee_id):
-    return NotificationRecipient.objects.filter(employee_id=employee_id, read_at__isnull=True).count()
+    tracking_codes = {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}
+    unread = NotificationRecipient.objects.filter(employee_id=employee_id, read_at__isnull=True)
+    tracking = unread.filter(event__event_code__in=tracking_codes).select_related('event', 'employee__user')
+    qualification_cache = {}
+    return unread.exclude(event__event_code__in=tracking_codes).count() + sum(
+        content_accessible(recipient, recipient.employee.user, permission_snapshots=qualification_cache) for recipient in tracking)
 
 
 def delivery_queryset():

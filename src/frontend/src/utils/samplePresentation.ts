@@ -1,4 +1,4 @@
-import type { SampleListItem, SampleListQuery } from '@/types/sample'
+import type { SampleListSummary, SampleListQuery } from '@/types/sample'
 import type { SavedView } from '@/types/savedView'
 
 export const sampleSortOptions = [
@@ -18,7 +18,7 @@ export function sampleStatusTone(status: string): 'success' | 'warning' | 'dange
   return 'neutral'
 }
 
-export function sampleProductsLabel(row: SampleListItem): string {
+export function sampleProductsLabel(row: Pick<SampleListSummary, 'products' | 'item_summary'>): string {
   const products = row.products || []
   return products.map(product => product.product_name || '—').join('、') || row.item_summary?.text || '—'
 }
@@ -33,7 +33,7 @@ function splitLegacyColor(specification: string): { specification: string; color
   }
 }
 
-export function sampleProductFieldLabel(row: SampleListItem, field: 'specification' | 'category_name' | 'color'): string {
+export function sampleProductFieldLabel(row: Pick<SampleListSummary, 'products'>, field: 'specification' | 'category_name' | 'color'): string {
   const values = (row.products || []).map(product => {
     if (field === 'category_name') return product.category_name || '—'
     const parsed = splitLegacyColor(product.specification || '')
@@ -43,7 +43,7 @@ export function sampleProductFieldLabel(row: SampleListItem, field: 'specificati
   return values.join('；') || '—'
 }
 
-export function sampleQuantityLabel(row: SampleListItem): string {
+export function sampleQuantityLabel(row: Pick<SampleListSummary, 'products'>): string {
   const products = row.products || []
   if (!products.length || products.some(product => !Number.isFinite(product.total_sample_quantity))) return '—'
   return `${products.reduce((sum, product) => sum + product.total_sample_quantity, 0)} PCS`

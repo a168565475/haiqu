@@ -8,6 +8,7 @@ import type {
   BomHardwareMaterialGroup,
   BomHardwareMaterialQuery,
   BomLineImage,
+  BomLineInput,
   BomMaterialPickerQuery,
   BomMaterialSaveOptions,
   BomMaterialSavePreview,
@@ -358,7 +359,7 @@ export async function fetchBomFlowMaterials(kind: 'pipe' | 'fabric', q = ''): Pr
   return data
 }
 
-export async function previewBomMaterialFlow(input: { kind: 'PIPE' | 'FABRIC'; order_quantity: string; cutting_length_mm?: string; pieces_per_product?: string; pieces_per_bar?: string; unit_consumption?: string }) {
+export async function previewBomMaterialFlow(input: { kind: 'PIPE' | 'FABRIC'; order_quantity: string; cutting_length_mm?: string; pieces_per_product?: string; pieces_per_bar?: string; unit_consumption?: string } & Pick<BomLineInput, 'purchase_allowance_mode' | 'purchase_allowance_rule' | 'source_purchase_allowance_percent' | 'source_raw_bar_length_m'>) {
   const { data } = await apiClient.post<DataResponse<{ suggested_purchase_meters: string; raw_bar_length_m?: string; suggested_bar_count?: number }>>(`${basePath}material-flow-preview/`, input)
   return data.data
 }

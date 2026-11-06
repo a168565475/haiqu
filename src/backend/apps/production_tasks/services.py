@@ -1356,6 +1356,14 @@ def set_production_task_paused(*, task, paused, reason, actor_employee, request)
     return task
 
 
+def require_all_task_products_scheduled(task):
+    from .selectors import unscheduled_task_products
+
+    count = unscheduled_task_products(task).count()
+    if count:
+        raise Conflict(f"生产任务仍有 {count} 个产品未排产，请先补齐排产后再完成整单。")
+
+
 @transaction.atomic
 def close_production_task(*, task, target_status, reason, actor_employee, request):
     if target_status not in {ProductionTaskStatus.CANCELLED, ProductionTaskStatus.COMPLETED}:
@@ -1368,6 +1376,9 @@ def close_production_task(*, task, target_status, reason, actor_employee, reques
     task = ProductionTask.objects.select_for_update().get(pk=task.pk)
     if task.status in {ProductionTaskStatus.CANCELLED, ProductionTaskStatus.COMPLETED}:
         raise Conflict("订单已经结束或取消，不能重复操作。")
+
+    if target_status == ProductionTaskStatus.COMPLETED:
+        require_all_task_products_scheduled(task)
 
     before_data = _snapshot(task)
     task.status = target_status
@@ -1748,9 +1759,9 @@ def decide_production_order_by_pmc(*, task, validated_data, actor_employee, requ
         _validate_task_tax(includes_tax=task.includes_tax, tax_rate=task.tax_rate)
         if task.delivery_date < task.order_date:
             raise ValidationError({"delivery_date": "交期日期不能早于下单日期。"})
-        if not task.planned_start_date or not task.planned_end_date:
-            raise ValidationError({"planned_start_date": "PMC 确认前必须填写计划开始和计划完工日期。"})
-        if task.planned_end_date < task.planned_start_date:
+        if bool(task.planned_start_date) != bool(task.planned_end_date):
+            raise ValidationError({"planned_start_date": "计划开始和计划完工日期需同时填写或同时留空。"})
+        if task.planned_start_date and task.planned_end_date and task.planned_end_date < task.planned_start_date:
             raise ValidationError({"planned_end_date": "计划完工日期不能早于计划开始日期。"})
         task.status = ProductionTaskStatus.READY
         task.status_reason = ""
@@ -1848,6 +1859,7 @@ def complete_production_order(*, task, validated_data, actor_employee, request=N
     require_matching_etag(request, task)
     if task.status != ProductionTaskStatus.IN_PRODUCTION:
         raise Conflict("只有生产中的订单可以完结。")
+    require_all_task_products_scheduled(task)
     submitted_batches = validated_data.get("run_batches")
     if submitted_batches is not None:
         submitted_numbers = [item["batch_number"] for item in submitted_batches]

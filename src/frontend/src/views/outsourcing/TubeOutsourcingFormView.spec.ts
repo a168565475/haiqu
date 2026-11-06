@@ -67,11 +67,18 @@ afterEach(() => vi.restoreAllMocks())
 describe('管材建单与异常恢复', () => {
   beforeEach(() => {
     vi.resetAllMocks(); localStorage.clear(); resetIdentity()
-    routing.query = { schedule_product_id: 'schedule-product' }
+    routing.query = { schedule_product_id: 'schedule-product', source_kind: 'RAW_PIPE' }
     vi.mocked(api.fetchTubeOptions).mockResolvedValue(structuredClone(options))
     vi.mocked(api.fetchTubeSource).mockResolvedValue(structuredClone(context))
     vi.mocked(api.findTubeOrder).mockRejectedValue(httpError(404))
     vi.mocked(api.createTubeOrder).mockImplementation(async payload => result(payload))
+  })
+  it('普通新建默认未入库半成品，不请求仓库库存来源', async () => {
+    delete routing.query.source_kind
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...structuredClone(context), source_kind: 'METAL', zone_id: null })
+    const { wrapper } = await mountPage()
+    expect(api.fetchTubeSource).toHaveBeenLastCalledWith({ schedule_product_id: 'schedule-product', source_kind: 'METAL', is_plan: true })
+    wrapper.unmount()
   })
   it.each(['uid', 'generation', 'request', 'ready'] as const)('POST在%s边界后迟到成功不清记录、不导航、不提示', async boundary => {
     const { wrapper, vm } = await mountPage(); fill(vm)
@@ -403,8 +410,8 @@ describe('管材建单与异常恢复', () => {
     await flushPromises()
     expect(vm.rows[0]!.priceUnit).toBe('SQUARE_METER')
     expect(vm.totalArea).toBe('75.0000')
-    expect(wrapper.get('#tube-items').text()).toContain('单支 0.125㎡')
-    expect(wrapper.get('#tube-items').text()).toContain('合计 75㎡')
+    expect(wrapper.get('#tube-items').text()).not.toContain('单支')
+    expect(wrapper.get('#tube-items').text()).toContain('75㎡')
     for (const value of ['', '-1', '1e2', '0.151']) {
       vm.rows[0]!.unitPrice = value; vm.checkDispatch(); expect(vm.dialog).toBe('')
     }

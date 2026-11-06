@@ -174,7 +174,8 @@ function addCatalogLine() {
   const emptyIndex = activeSection.value.lines.findIndex(line => !line.id && !line.part_name && !line.material_catalog_id)
   if (emptyIndex >= 0) selectedLineIndex.value = emptyIndex
   else {
-    activeSection.value.lines.push(blankLine(activeSection.value.title === '面料类' ? '米' : ''))
+    activeSection.value.lines.push({ ...blankLine(activeSection.value.title === '面料类' ? '米' : ''),
+      ...(activeSection.value.section_type === 'PROFILE' ? { purchase_allowance_mode: 'AUTO' as const } : {}) })
     selectedLineIndex.value = activeSection.value.lines.length - 1
   }
   if (activeSection.value.title === '面料类' && !activeSection.value.lines[selectedLineIndex.value]!.unit) {
@@ -207,14 +208,16 @@ function syncCuttingSourceAttributes(line: BomLineInput) {
     ? item.id === line.fabric_source_line_id
     : Boolean(line.fabric_source_client_key && !item.id && item.client_key === line.fabric_source_client_key))
   const selected = source?.material_selection ?? source?.material_selection_snapshot
-  line.material = selected?.attributes.material || source?.material || ''
-  line.fabric_width = selected?.attributes.width || source?.fabric_width || ''
-  line.cutting_color = selected?.attributes.color || source?.fabric_color_name || source?.fabric_color_code || ''
+  // 旧面料的选料快照可能为 {}，没有属性时继续使用已保存的面料字段。
+  const sourceAttributes = selected?.attributes
+  line.material = sourceAttributes?.material || source?.material || ''
+  line.fabric_width = sourceAttributes?.width || source?.fabric_width || ''
+  line.cutting_color = sourceAttributes?.color || source?.fabric_color_name || source?.fabric_color_code || ''
   line.specification = source?.specification || ''
-  if (line.material_selection) {
-    const attrs = line.material_selection.attributes
+  const attrs = line.material_selection?.attributes
+  if (attrs) {
     for (const key of ['fabric_spec', 'size', 'model', 'process']) delete attrs[key]
-    const specification = selected?.attributes.fabric_spec || source?.specification
+    const specification = sourceAttributes?.fabric_spec || source?.specification
     if (specification) attrs.specification = specification
     else delete attrs.specification
     if (line.cutting_color) attrs.color = line.cutting_color
@@ -377,7 +380,7 @@ const canCreateHardwareRawMaterial = computed(() => (
 ))
 const canCreateRawMaterial = canCreateHardwareRawMaterial
 const activeSection = computed(() => sections.value[activeSectionIndex.value] || null)
-const editorStatusLabel = computed(() => bom.value?.status === 'VERIFIED' ? '已确认' : '草稿')
+const editorStatusLabel = computed(() => bom.value?.status === 'VERIFIED' ? '已确认' : '待确认')
 const sectionNavigationGroups = computed(() => {
   const definitions = [
     { label: '型材', titles: ['管材类'] },
@@ -1495,7 +1498,10 @@ function openLineDrawer(index: number) {
   editingCatalogMode.value = Boolean(!line.id || line.material_catalog_id)
   initialDrawerDraftImageIds.value = (line.draft_images || []).map((image) => image.id)
   preserveDrawerDraftImagesOnClose.value = false
-  if (activeSection.value.section_type === 'PROFILE') normalizeTubeCutPieceCount(editingLineDraft.value)
+  if (activeSection.value.section_type === 'PROFILE') {
+    normalizeTubeCutPieceCount(editingLineDraft.value)
+    if (!line.id && !line.purchase_allowance_mode && !line.source_purchase_allowance_percent) editingLineDraft.value.purchase_allowance_mode = 'AUTO'
+  }
   if (activeSection.value.title === '辅料类' || activeSection.value.title === '面料类') {
     if (!editingCatalogMode.value) void ensureEditorReferenceOptions()
   }
@@ -1550,7 +1556,7 @@ function resetLineDrawer() {
 
 function configuredLineError(section: BomSectionInput, line: BomLineInput, lineIndex: number) {
   if (line.material_catalog_id) {
-    if (line.material_selection && (!Object.keys(line.material_selection.attributes).length || !line.unit)) return '请选择具体属性和本次数量单位。'
+    if (line.material_selection && (!Object.keys(line.material_selection.attributes ?? {}).length || !line.unit)) return '请选择具体属性和本次数量单位。'
     return ''
   }
   const prefix = `“${section.title}”第 ${lineIndex + 1} 行`
@@ -1575,8 +1581,8 @@ function configuredLineError(section: BomSectionInput, line: BomLineInput, lineI
 
 function lineFieldError(section: BomSectionInput, line: BomLineInput, lineIndex: number) {
   const prefix = `“${section.title}”第 ${lineIndex + 1} 行`
-  if (section.section_type === 'PROFILE' && !pipePlan(line.length_value, line.unit_consumption, line.tube_cut_piece_count, String(bom.value?.order_quantity || ''))) {
-    return `${prefix}的切割长度、单耗和每根切割支数必须为正整数，且计算结果不能超出范围。`
+  if (section.section_type === 'PROFILE' && !pipePlan(line.length_value, line.unit_consumption, line.tube_cut_piece_count, String(bom.value?.order_quantity || ''), 3, line)) {
+    return `${prefix}的切割长度、单耗和每根切割支数必须为正整数；原表余量及长料长度须有效，且计算结果不能超出范围。`
   }
   if (section.section_type === 'PROFILE' && manualTubeMetricError(line)) return manualTubeMetricError(line)
   if (section.title === '裁剪明细') {
@@ -1662,7 +1668,9 @@ async function commitLineDrawer() {
     try {
       const line = editingLineDraft.value
       await previewBomMaterialFlow(targetSection.section_type === 'PROFILE'
-        ? { kind: 'PIPE', order_quantity: String(bom.value?.order_quantity || ''), cutting_length_mm: line.length_value, pieces_per_product: line.unit_consumption, pieces_per_bar: line.tube_cut_piece_count }
+        ? { kind: 'PIPE', order_quantity: String(bom.value?.order_quantity || ''), cutting_length_mm: line.length_value, pieces_per_product: line.unit_consumption, pieces_per_bar: line.tube_cut_piece_count,
+            purchase_allowance_mode: line.purchase_allowance_mode || undefined, purchase_allowance_rule: line.purchase_allowance_rule || undefined,
+            source_purchase_allowance_percent: line.source_purchase_allowance_percent || undefined, source_raw_bar_length_m: line.source_raw_bar_length_m || undefined }
         : { kind: 'FABRIC', order_quantity: String(bom.value?.order_quantity || ''), unit_consumption: line.unit_consumption })
       if (!lineDrawerVisible.value || line !== editingLineDraft.value || draftSnapshot !== JSON.stringify(editingLineDraft.value)) {
         ElMessage.warning('核算期间内容已变化，请重新应用修改。')
@@ -1716,6 +1724,7 @@ function followingLineDraft(section: BomSectionInput, current: BomLineInput): Bo
     }
     return {
       ...blankLine('根'),
+      purchase_allowance_mode: 'AUTO',
       material_selection: selected ? {
         catalog_version: selected.catalog_version, scope: 'BASE', processing_state: 'RAW', attributes, unit_name: '根',
         product_color_id: selected.product_color_id, color_card: selected.color_card, color_code: selected.color_code, color_name: selected.color_name,
@@ -1747,6 +1756,8 @@ function followingLineDraft(section: BomSectionInput, current: BomLineInput): Bo
     coating_unit_area_sqm: '',
     purchase_unit_weight_kg: '',
     tube_cut_piece_count: '',
+    source_purchase_allowance_percent: '',
+    source_raw_bar_length_m: '',
     powder_coating_color: '',
     powder_coating_unit_area_sqm: '',
     units_per_box: '',
@@ -1795,6 +1806,9 @@ async function saveAndEditNextLine() {
           draft_images: [...(nextLine.draft_images || [])],
         }
       : followingLineDraft(committed.section, draft)
+    if (committed.section.section_type === 'PROFILE' && !nextDraft.id && !nextDraft.purchase_allowance_mode && !nextDraft.source_purchase_allowance_percent) {
+      nextDraft.purchase_allowance_mode = 'AUTO'
+    }
     if (nextLine && inheritedValues && !nextDraft.material_catalog_id) {
       if (!nextDraft.tube_shape) nextDraft.tube_shape = inheritedValues.tube_shape
       if (!nextDraft.material) nextDraft.material = inheritedValues.material

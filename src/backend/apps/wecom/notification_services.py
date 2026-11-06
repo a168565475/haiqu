@@ -62,6 +62,9 @@ def _render(text, allowed, context, *, format_times=True):
 
 
 def _validate_rule(event, data):
+    if event['event_code'] in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        if VARIABLE.findall(data['title_template']) or 'reason_summary' not in VARIABLE.findall(data['body_template']):
+            raise ValidationError({'template': '采购跟踪标题使用固定文字，正文必须包含 {{reason_summary}} 完整风险摘要。'})
     validate_plain_text(data["name"])
     if len(data["name"]) > 100 or len(data["title_template"]) > 200 or len(data["body_template"]) > 8192:
         raise ValidationError({"template": "模板长度超出限制。"})
@@ -236,6 +239,8 @@ def _validated_context(event, context):
 @transaction.atomic
 def register_business_event(*, event_code, idempotency_key, object_type, object_id=None, object_version="", context=None, actor_employee=None):
     """业务成功事务内登记；只落库，不触发外部发送。调用方传入后端业务事实。"""
+    if event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        raise ValidationError('采购跟踪系统事件仅允许可信扫描器登记。')
     event = get_event(event_code)
     if not isinstance(idempotency_key, (str, UUID)) or not isinstance(object_type, str) or not isinstance(object_version, (str, int)):
         raise ValidationError("事件键、对象类型或版本格式无效。")
@@ -360,6 +365,10 @@ def _fail_delivery(delivery, code):
 
 
 def process_delivery(delivery, *, allow_uncertain=False, allow_failed=False, defer_unconfigured=False):
+    if delivery.recipient.event.event_code in {'PURCHASE_TRACKING_RISK', 'PURCHASE_TRACKING_DIGEST'}:
+        from apps.procurement.tracking_notifications import process_tracking_delivery
+        return process_tracking_delivery(delivery, allow_uncertain=allow_uncertain,
+            allow_failed=allow_failed, defer_unconfigured=defer_unconfigured)
     if connection.in_atomic_block:
         raise RuntimeError("外部通知只能在业务事务提交后执行。")
     allowed = {"PENDING"} | ({"UNCERTAIN"} if allow_uncertain else set()) | ({"FAILED"} if allow_failed else set())

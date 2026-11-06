@@ -302,6 +302,15 @@ EVENTS = {
 
 
 from .notification_plan_catalog import definitions as plan_definitions
+for tracking_code, tracking_title in (
+    ('PURCHASE_TRACKING_RISK', '采购跟踪即时提醒'),
+    ('PURCHASE_TRACKING_DIGEST', '采购跟踪每日汇总'),
+):
+    MULTILINE_DEFAULT_BODIES[tracking_code] = '{{reason_summary}}'
+    EVENTS[tracking_code] = _event(tracking_code, tracking_title, '{{reason_summary}}',
+        ['PURCHASING', 'PMC', 'MERCHANDISER'], ['ROLE_POLICY'],
+        'procurement.view_purchaseorder', 'purchase-tracking', enabled=False, variables=['reason_summary'])
+
 EVENTS.update(plan_definitions())
 MULTILINE_DEFAULT_BODIES.update({code: event['default_body'] for code, event in plan_definitions().items()})
 

@@ -4,6 +4,8 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, local
 
 CUTTING_USAGE_FIELDS = ("cutting_pieces_per_set", "fabric_meters_per_piece", "cutting_sets_per_product")
 CUTTING_QUANTITY_FIELDS = ("cutting_pieces_per_set", "cutting_sets_per_product")
+PIPE_PURCHASE_ALLOWANCE_RULES = ("NONE", "PLUS_5", "PLUS_8", "PERCENT_0_5", "PERCENT_1")
+PIPE_PURCHASE_ALLOWANCE_MODES = ("AUTO", "MANUAL")
 
 
 class MaterialFlowValueError(ValueError):
@@ -34,6 +36,36 @@ def decimal_quantity(value, field, *, places=4, max_digits=18, allow_zero=False)
 
 def positive_integer(value, field, *, allow_zero=False):
     return int(decimal_quantity(value, field, places=0, max_digits=14, allow_zero=allow_zero))
+
+
+def default_pipe_purchase_allowance_rule(base_bar_count):
+    """按基础采购根数返回默认余量选项；边界归入前一档。"""
+    roots = positive_integer(base_bar_count, "base_purchase_bar_count")
+    if roots <= 500:
+        return "PLUS_5"
+    if roots <= 1000:
+        return "PLUS_8"
+    return "PERCENT_1"
+
+
+def pipe_purchase_allowance_roots(base_bar_count, rule):
+    roots = positive_integer(base_bar_count, "base_purchase_bar_count")
+    if rule not in PIPE_PURCHASE_ALLOWANCE_RULES:
+        raise MaterialFlowValueError("purchase_allowance_rule", "采购余量选项无效。")
+    if rule == "NONE":
+        return 0
+    if rule == "PLUS_5":
+        return 5
+    if rule == "PLUS_8":
+        return 8
+    percent = Decimal("0.5") if rule == "PERCENT_0_5" else Decimal("1")
+    with localcontext() as context:
+        context.prec = 64
+        return positive_integer(
+            (Decimal(roots) * percent / Decimal("100")).to_integral_value(rounding=ROUND_CEILING),
+            "purchase_allowance_bar_count",
+            allow_zero=True,
+        )
 
 
 def packaging_quantity(*, units_per_box, order_quantity):
@@ -94,9 +126,24 @@ def cutting_usage_plan(*, cutting_pieces_per_set=None, fabric_meters_per_piece=N
     }
 
 
-def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_quantity, calculation_version=3):
-    if type(calculation_version) is not int or calculation_version not in (2, 3):
+def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_quantity, calculation_version=3,
+              source_purchase_allowance_percent=None, source_raw_bar_length_m=None,
+              purchase_allowance_rule=None, purchase_allowance_mode=None):
+    if type(calculation_version) is not int or calculation_version not in (2, 3, 4):
         raise MaterialFlowValueError("pipe_plan_version", "管材计算版本无效。")
+    uses_allowance = calculation_version == 4 or purchase_allowance_mode not in (None, "")
+    allowance_values = {}
+    if uses_allowance:
+        purchase_allowance_mode = purchase_allowance_mode or "AUTO"
+        if purchase_allowance_mode not in PIPE_PURCHASE_ALLOWANCE_MODES:
+            raise MaterialFlowValueError("purchase_allowance_mode", "采购余量模式无效。")
+        if purchase_allowance_rule not in (None, "") and purchase_allowance_rule not in PIPE_PURCHASE_ALLOWANCE_RULES:
+            raise MaterialFlowValueError("purchase_allowance_rule", "采购余量选项无效。")
+        if purchase_allowance_mode == "MANUAL" and purchase_allowance_rule not in PIPE_PURCHASE_ALLOWANCE_RULES:
+            raise MaterialFlowValueError("purchase_allowance_rule", "手动采购余量必须选择有效选项。")
+        calculation_version = 4
+    elif purchase_allowance_rule not in (None, ""):
+        raise MaterialFlowValueError("purchase_allowance_mode", "选择采购余量时必须同时指定模式。")
     length = positive_integer(cutting_length_mm, "cutting_length_mm")
     consumption = positive_integer(pieces_per_product, "pieces_per_product")
     cuts = positive_integer(pieces_per_bar, "pieces_per_bar")
@@ -105,22 +152,52 @@ def pipe_plan(*, cutting_length_mm, pieces_per_product, pieces_per_bar, order_qu
         context.prec = 64
         meters = ((Decimal(length) * cuts + 50) / 1000).quantize(Decimal("0.01"), rounding=ROUND_CEILING)
         meters = decimal_quantity(meters, "raw_bar_length_m", places=2)
+        source_values = {}
+        if source_raw_bar_length_m not in (None, ""):
+            meters = decimal_quantity(source_raw_bar_length_m, "source_raw_bar_length_m", places=2)
+            if meters * 1000 < length * cuts:
+                raise MaterialFlowValueError("source_raw_bar_length_m", "原表长料长度不足以切出当前每根支数，请核对切割长度和长料长度。")
+            source_values["source_raw_bar_length_m"] = format(meters, ".2f")
         demand = positive_integer(order * consumption, "demand_pieces")
-        # 整数分数向上取整，避免 1/3 等无限小数的中间舍入。
-        # 旧版本保留已确认的 1% 采购余量；新版本只按净需求向上取整根数。
-        factor = 101 if calculation_version == 2 else 100
-        bars = positive_integer((demand * factor + cuts * 100 - 1) // (cuts * 100), "suggested_bar_count")
+        base_bars = positive_integer(
+            (Decimal(demand) / cuts).to_integral_value(rounding=ROUND_CEILING),
+            "base_purchase_bar_count",
+        )
+        factor = 100
+        if source_purchase_allowance_percent not in (None, ""):
+            percent = decimal_quantity(source_purchase_allowance_percent, "source_purchase_allowance_percent", allow_zero=True)
+            if percent > 100:
+                raise MaterialFlowValueError("source_purchase_allowance_percent", "原表采购余量百分比不能超过 100。")
+            factor = Decimal("100") + percent
+            source_values["source_purchase_allowance_percent"] = format(percent, "f")
+        elif calculation_version == 2:
+            factor = 101
+        if uses_allowance:
+            allowance_rule = (default_pipe_purchase_allowance_rule(base_bars)
+                              if purchase_allowance_mode == "AUTO" else purchase_allowance_rule)
+            allowance_bars = pipe_purchase_allowance_roots(base_bars, allowance_rule)
+            bars = positive_integer(base_bars + allowance_bars, "suggested_bar_count")
+            allowance_values = {
+                "base_purchase_bar_count": base_bars,
+                "purchase_allowance_rule": allowance_rule,
+                "purchase_allowance_mode": purchase_allowance_mode,
+                "purchase_allowance_bar_count": allowance_bars,
+            }
+        else:
+            bars = positive_integer((Decimal(demand) * factor / (cuts * 100)).to_integral_value(rounding=ROUND_CEILING), "suggested_bar_count")
         allowance = positive_integer(bars * cuts, "allowance_pieces")
         total = decimal_quantity(bars * meters, "suggested_purchase_meters", places=2, max_digits=22)
     # 数量规则单独标记；结构版本不变，旧快照不新增键以保留来源版本摘要。
     return {
         "schema_version": 2,
-        **({"calculation_version": 3} if calculation_version == 3 else {}),
+        **({"calculation_version": calculation_version} if calculation_version in (3, 4) else {}),
+        **source_values,
         "cutting_length_mm": length,
         "pieces_per_product": consumption,
         "pieces_per_bar": cuts,
         "order_quantity": order,
         "demand_pieces": demand,
+        **allowance_values,
         "raw_bar_length_m": format(meters, ".2f"),
         "suggested_bar_count": bars,
         "suggested_purchase_meters": format(total, ".2f"),
@@ -136,6 +213,10 @@ def pipe_plan_for_line(line, *, order_quantity=None):
         pieces_per_bar=line.pieces_per_bar,
         order_quantity=line.section.bom.order_quantity if order_quantity is None else order_quantity,
         calculation_version=(line.raw_values or {}).get("pipe_plan_version", 2),
+        source_purchase_allowance_percent=(line.raw_values or {}).get("source_purchase_allowance_percent"),
+        source_raw_bar_length_m=(line.raw_values or {}).get("source_raw_bar_length_m"),
+        purchase_allowance_rule=(line.raw_values or {}).get("purchase_allowance_rule"),
+        purchase_allowance_mode=(line.raw_values or {}).get("purchase_allowance_mode"),
     )
 
 

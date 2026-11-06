@@ -99,6 +99,35 @@ class ProductionTaskSchedulingProgressApiTests(APITestCase):
         self.purchase_order.save(update_fields=["archived_at", "updated_at"])
         self.assert_progress("VERIFIED", "NOT_STARTED")
 
+    def test_confirmed_bom_product_flag_uses_latest_active_version(self):
+        second = ProductionTaskProduct.objects.get(pk=self.line.pk)
+        second.pk = None
+        second.line_number = 2
+        second.save()
+
+        def assert_flag(expected):
+            for url in ("/api/v1/production-tasks/", f"/api/v1/production-tasks/{self.task.pk}/"):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200, response.data)
+                data = response.data["data"]
+                row = next(item for item in data if item["id"] == str(self.task.pk)) if isinstance(data, list) else data
+                self.assertEqual(row.get("has_confirmed_bom_product"), expected)
+                self.assertEqual(row["bom_status"], "PARTIAL")
+
+        assert_flag(True)
+        latest = Bom.objects.get(pk=self.bom.pk)
+        latest.pk = None
+        latest.bom_number = "BOM-PARTIAL-SCHEDULE-V2"
+        latest.version_number = 2
+        latest.status = BomStatus.PENDING_CONFIRMATION
+        latest.confirmed_at = None
+        latest.confirmed_by_employee = None
+        latest.save()
+        assert_flag(False)
+        latest.archived_at = timezone.now()
+        latest.save(update_fields=["archived_at", "updated_at"])
+        assert_flag(True)
+
     def test_progress_details_require_task_read_permission(self):
         self.user.user_permissions.clear()
         for url in ("/api/v1/production-tasks/", f"/api/v1/production-tasks/{self.task.pk}/"):

@@ -26,6 +26,7 @@ from apps.production_tasks.api.serializers import ProductionTaskProductInputSeri
 from ..maintenance import CONFIGURED_FIELD_LABELS
 from ..fabric_material_sync import FABRIC_REFERENCE_FIELDS
 from ..material_flow_bom import validate_cutting_specification
+from ..material_flow_calculations import PIPE_PURCHASE_ALLOWANCE_MODES, PIPE_PURCHASE_ALLOWANCE_RULES
 from ..models import Bom, BomCreationMethod, BomLine, BomSection, BomSectionType
 from ..selectors import pipe_dimension_numbers
 from .image_serializers import BomLineImageSerializer
@@ -53,6 +54,12 @@ class BomLineSerializer(serializers.ModelSerializer):
     purchase_unit_weight_kg = serializers.SerializerMethodField()
     manual_tube_metrics = serializers.SerializerMethodField()
     tube_cut_piece_count = serializers.SerializerMethodField()
+    source_purchase_allowance_percent = serializers.SerializerMethodField()
+    purchase_allowance_mode = serializers.SerializerMethodField()
+    purchase_allowance_rule = serializers.SerializerMethodField()
+    base_purchase_bar_count = serializers.SerializerMethodField()
+    purchase_allowance_bar_count = serializers.SerializerMethodField()
+    source_raw_bar_length_m = serializers.SerializerMethodField()
     tube_cut_length_m = serializers.SerializerMethodField()
     long_material_unit_weight_kg = serializers.SerializerMethodField()
     tube_unit_weight_kg = serializers.SerializerMethodField()
@@ -186,6 +193,24 @@ class BomLineSerializer(serializers.ModelSerializer):
         if obj.section.section_type != BomSectionType.PROFILE:
             return ""
         return self._raw_value(obj, "tube_cut_length_m")
+
+    def get_source_purchase_allowance_percent(self, obj) -> str:
+        return self._raw_value(obj, "source_purchase_allowance_percent") if obj.section.section_type == BomSectionType.PROFILE else ""
+
+    def get_purchase_allowance_mode(self, obj) -> str:
+        return self._raw_value(obj, "purchase_allowance_mode") if obj.section.section_type == BomSectionType.PROFILE else ""
+
+    def get_purchase_allowance_rule(self, obj) -> str:
+        return self._raw_value(obj, "purchase_allowance_rule") if obj.section.section_type == BomSectionType.PROFILE else ""
+
+    def get_base_purchase_bar_count(self, obj) -> int | None:
+        return (obj.raw_values or {}).get("base_purchase_bar_count") if obj.section.section_type == BomSectionType.PROFILE else None
+
+    def get_purchase_allowance_bar_count(self, obj) -> int | None:
+        return (obj.raw_values or {}).get("purchase_allowance_bar_count") if obj.section.section_type == BomSectionType.PROFILE else None
+
+    def get_source_raw_bar_length_m(self, obj) -> str:
+        return self._raw_value(obj, "source_raw_bar_length_m") if obj.section.section_type == BomSectionType.PROFILE else ""
 
     def get_long_material_unit_weight_kg(self, obj):
         if obj.section.section_type != BomSectionType.PROFILE:
@@ -419,6 +444,12 @@ class BomLineSerializer(serializers.ModelSerializer):
             "purchase_unit_weight_kg",
             "manual_tube_metrics",
             "tube_cut_piece_count",
+            "source_purchase_allowance_percent",
+            "purchase_allowance_mode",
+            "purchase_allowance_rule",
+            "base_purchase_bar_count",
+            "purchase_allowance_bar_count",
+            "source_raw_bar_length_m",
             "tube_cut_length_m",
             "long_material_unit_weight_kg",
             "tube_unit_weight_kg",
@@ -926,6 +957,7 @@ class BomCreateInputSerializer(serializers.Serializer):
     creation_method = serializers.ChoiceField(choices=BomCreationMethod.choices)
     source_bom_id = serializers.UUIDField(required=False, allow_null=True)
     workbook = serializers.FileField(required=False)
+    defer_import_material_matching = serializers.BooleanField(required=False, default=False)
     production_task_product_update = ProductionTaskProductUpdateField(required=False)
     quantity_difference_reason = serializers.CharField(
         required=False,
@@ -936,6 +968,8 @@ class BomCreateInputSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         method = attrs["creation_method"]
+        if attrs.get("defer_import_material_matching") and method != BomCreationMethod.IMPORT:
+            raise serializers.ValidationError({"defer_import_material_matching": "只有 Excel 导入 BOM 可以暂缓物料匹配。"})
         if method == BomCreationMethod.IMPORT and not attrs.get("workbook"):
             raise serializers.ValidationError({"workbook": "请选择 BOM Excel 文件。"})
         if method == BomCreationMethod.COPY and not attrs.get("source_bom_id"):
@@ -1033,6 +1067,12 @@ class BomLineWriteSerializer(serializers.Serializer):
     fabric_meters_per_piece = serializers.DecimalField(read_only=True, allow_null=True, max_digits=18, decimal_places=4)
     cutting_sets_per_product = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=99999999999999)
     tube_cut_piece_count = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
+    source_purchase_allowance_percent = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
+    purchase_allowance_mode = serializers.ChoiceField(choices=PIPE_PURCHASE_ALLOWANCE_MODES, required=False, allow_blank=True)
+    purchase_allowance_rule = serializers.ChoiceField(choices=PIPE_PURCHASE_ALLOWANCE_RULES, required=False, allow_blank=True)
+    base_purchase_bar_count = serializers.IntegerField(read_only=True, allow_null=True)
+    purchase_allowance_bar_count = serializers.IntegerField(read_only=True, allow_null=True)
+    source_raw_bar_length_m = serializers.CharField(required=False, allow_blank=True, max_length=100, trim_whitespace=True)
     source_inventory_material_id = serializers.UUIDField(required=False, allow_null=True)
     pending_raw_material = PendingRawMaterialSerializer(required=False, write_only=True)
     source_raw_material_id = serializers.UUIDField(required=False, allow_null=True)
@@ -1076,6 +1116,10 @@ class BomLineWriteSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        if attrs.get("purchase_allowance_mode") == "MANUAL" and not attrs.get("purchase_allowance_rule"):
+            raise serializers.ValidationError({"purchase_allowance_rule": "手动采购余量必须选择有效选项。"})
+        if attrs.get("purchase_allowance_rule") and not attrs.get("purchase_allowance_mode"):
+            raise serializers.ValidationError({"purchase_allowance_mode": "选择采购余量时必须同时指定模式。"})
         if attrs.get("pending_raw_material") and any(attrs.get(field) for field in (
             "source_inventory_material_id", "source_raw_material_id", "source_cutting_material_id",
             "source_packaging_material_id",
@@ -1099,6 +1143,27 @@ class BomLineWriteSerializer(serializers.Serializer):
 
     def validate_unit_material_weight_kg(self, value):
         return self._nonnegative_decimal(value, "单个材料重量")
+
+    def validate_source_purchase_allowance_percent(self, value):
+        if value == "":
+            return value
+        from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity
+        try:
+            number = decimal_quantity(value, "source_purchase_allowance_percent", allow_zero=True)
+        except MaterialFlowValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+        if number > 100:
+            raise serializers.ValidationError("原表采购余量百分比不能超过 100。")
+        return format(number, "f")
+
+    def validate_source_raw_bar_length_m(self, value):
+        if value == "":
+            return value
+        from ..material_flow_calculations import MaterialFlowValueError, decimal_quantity
+        try:
+            return format(decimal_quantity(value, "source_raw_bar_length_m", places=2), ".2f")
+        except MaterialFlowValueError as error:
+            raise serializers.ValidationError(str(error)) from error
 
     def validate_powder_coating_unit_area_sqm(self, value):
         return self._nonnegative_decimal(value, "喷塑单个面积")
@@ -1151,6 +1216,17 @@ class BomMaterialFlowPreviewInputSerializer(serializers.Serializer):
     pieces_per_product = serializers.CharField(max_length=30, required=False)
     pieces_per_bar = serializers.CharField(max_length=30, required=False)
     unit_consumption = serializers.CharField(max_length=30, required=False)
+    purchase_allowance_mode = serializers.ChoiceField(choices=PIPE_PURCHASE_ALLOWANCE_MODES, required=False, allow_blank=True)
+    purchase_allowance_rule = serializers.ChoiceField(choices=PIPE_PURCHASE_ALLOWANCE_RULES, required=False, allow_blank=True)
+    source_purchase_allowance_percent = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    source_raw_bar_length_m = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if attrs["kind"] != "PIPE" and any(attrs.get(field) for field in (
+            "purchase_allowance_mode", "purchase_allowance_rule", "source_purchase_allowance_percent", "source_raw_bar_length_m",
+        )):
+            raise serializers.ValidationError("采购余量和原表管材参数只能用于管材。")
+        return attrs
 
 
 class BomMaterialFlowPreviewResponseSerializer(serializers.Serializer):
@@ -1162,6 +1238,18 @@ class BomUpdateInputSerializer(serializers.Serializer):
     intent = serializers.ChoiceField(choices=("draft", "verify"), default="draft")
     confirmation_token = serializers.CharField(required=False, allow_blank=True, max_length=100000)
     quantity_confirmation_reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    defer_import_material_matching = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        from ..material_save_plan import validate_deferred_import_matching
+        deferred = attrs.get("defer_import_material_matching", False)
+        validate_deferred_import_matching(bom=self.context.get("bom"), intent=attrs["intent"],
+                                         defer_import_material_matching=deferred)
+        if deferred and any(line.get("pending_raw_material") or line.get("_pending_raw_source")
+                            or line.get("material_selection") or line.get("material_catalog_id")
+                            for section in attrs["sections"] for line in section["lines"]):
+            raise serializers.ValidationError({"defer_import_material_matching": "暂缓匹配时不能同时申请新增原料或重新选择材料目录。"})
+        return attrs
 
     @staticmethod
     def _fixed_title_for_existing_section(section, used_titles):
@@ -1549,6 +1637,14 @@ class BomUpdateInputSerializer(serializers.Serializer):
         used_draft_image_ids = set()
         for section in sections:
             for line_number, line in enumerate(section["lines"], start=1):
+                if section["section_type"] != BomSectionType.PROFILE and any(
+                    line.get(field) for field in ("source_purchase_allowance_percent", "source_raw_bar_length_m")
+                ):
+                    raise serializers.ValidationError("原表管材采购参数只能填写在管材类。")
+                if section["section_type"] != BomSectionType.PROFILE and any(
+                    line.get(field) for field in ("purchase_allowance_mode", "purchase_allowance_rule")
+                ):
+                    raise serializers.ValidationError("采购余量只能填写在管材类。")
                 draft_image_ids = line.get("draft_image_ids", [])
                 if len(draft_image_ids) != len(set(draft_image_ids)):
                     raise serializers.ValidationError(

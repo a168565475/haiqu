@@ -91,6 +91,8 @@ describe('手机装配成品入库', () => {
     expect(view.text()).toContain('申请已提交，待仓库确认')
     expect(view.text()).toContain('FG-TEST')
     expect(sessionStorage.getItem(storageKey())).toBeNull()
+    await button(view, '返回生产入库')
+    expect(mocks.push).toHaveBeenLastCalledWith('/production-receipt')
   })
   it('整段拒绝非法数量，正整数仍受剩余额度和包装箱位约束', async () => {
     const view = await prepare()

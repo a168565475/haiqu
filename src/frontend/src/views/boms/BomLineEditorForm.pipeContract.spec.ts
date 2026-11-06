@@ -11,6 +11,54 @@ vi.mock('@/api/boms', () => ({ fetchBomCatalogSelectionOptions: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ hasPermission: () => true }) }))
 
 describe('BOM管材沿原根米支输入流程', () => {
+  it('采购余量回显自动档，任何数量均能手动换档，数量变化不覆盖手动选择', async () => {
+    const line = reactive({ ...blankLine('根'), purchase_allowance_mode: 'AUTO' as 'AUTO' | 'MANUAL', purchase_allowance_rule: '' as '' | 'PERCENT_0_5' })
+    const calculations = { base_purchase_bar_count: '500', purchase_allowance_bar_count: '5', branch_count: '505', purchase_allowance_rule: 'PLUS_5' }
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: calculations,
+    } as never, global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const allowanceField = wrapper.findAll('.drawer-field').find(field => field.find('span').text() === '采购余量')!
+    const selector = allowanceField.findComponent({ name: 'ElSelect' })
+    expect(selector.props('modelValue')).toBe('AUTO')
+    expect(allowanceField.findAllComponents({ name: 'ElOption' }).map((option: { props: () => Record<string, unknown> }) => option.props().value)).toEqual(['AUTO', 'NONE', 'PLUS_5', 'PLUS_8', 'PERCENT_0_5', 'PERCENT_1'])
+    expect(allowanceField.findComponent({ name: 'ElOption' }).props('label')).toBe('自动（+5 根）')
+    expect(wrapper.text()).toContain('采购根数500')
+    expect(wrapper.text()).toContain('采购余量（根）5')
+    expect(wrapper.text()).toContain('建议采购根数505')
+    selector.vm.$emit('change', 'PLUS_5')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PLUS_5' })
+    selector.vm.$emit('change', 'PERCENT_0_5')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'PERCENT_0_5' })
+    await wrapper.setProps({ editingLineCalculations: { ...calculations, purchase_allowance_rule: 'PERCENT_1', base_purchase_bar_count: '5001' } })
+    expect(selector.props('modelValue')).toBe('PERCENT_0_5')
+    selector.vm.$emit('change', 'AUTO')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'AUTO', purchase_allowance_rule: '' })
+    expect(selector.props('modelValue')).toBe('AUTO')
+    expect(allowanceField.findComponent({ name: 'ElOption' }).props('label')).toBe('自动（+1%）')
+    wrapper.unmount()
+  })
+
+  it('历史行打开时保持原规则，用户选项后才切换新模式', async () => {
+    const line = reactive(blankLine('根'))
+    const wrapper = shallowMount(BomLineEditorForm, { props: {
+      displayLineImages: () => [], formatHardwareColor: String,
+      catalogMode: true, editingSection: { title: '管材类', section_type: 'PROFILE', lines: [] },
+      editingLineDraft: line, editingLineCalculations: null,
+    } as never, global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const selector = wrapper.find('[aria-label="采购余量"]')
+    expect(selector.attributes('placeholder')).toBe('沿用已保存规则')
+    expect(line.purchase_allowance_mode).toBeUndefined()
+    wrapper.findAll('.drawer-field').find(field => field.find('span').text() === '采购余量')!.findComponent({ name: 'ElSelect' }).vm.$emit('change', 'NONE')
+    await wrapper.vm.$nextTick()
+    expect(line).toMatchObject({ purchase_allowance_mode: 'MANUAL', purchase_allowance_rule: 'NONE' })
+    wrapper.unmount()
+  })
+
   it('包材行编辑按当前订单与用量显示需求，缺少用量提示待填写', async () => {
     const line = { ...blankLine('个'), units_per_box: '10', unit_consumption: '999', packaging_material_number: 'PK-001', raw_material: 'PK-OLD' }
     const wrapper = shallowMount(BomLineEditorForm, { props: {

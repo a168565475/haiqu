@@ -35,6 +35,8 @@ const pagePermissions: Record<string, string[]> = {
   'purchase-order-create': ['procurement.add_purchaseorder'],
   'purchase-order-create-details': ['procurement.add_purchaseorder'],
   'purchase-order-detail': ['procurement.view_purchaseorder'],
+  'purchase-tracking': ['procurement.view_purchaseorder'],
+  'purchase-alerts': ['procurement.view_purchaseorder'],
   'purchase-inbound-detail': ['inventory.receive_material', 'inventory.quality_confirm_material'],
   'material-purchase-inbound': ['inventory.receive_material'],
   'material-quality-confirmation': ['inventory.quality_confirm_material'],

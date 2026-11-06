@@ -5,6 +5,7 @@ import {
   fetchWorkshopConfigDetail,
   fetchWorkshopConfigList,
   fetchWorkshopConfigSummary,
+  fetchWorkshopEmployeeOptions,
   updateWorkshopConfig,
 } from '@/api/workshopConfig'
 import { apiClient } from '@/api/request'
@@ -29,7 +30,9 @@ describe('生产车间配置 API', () => {
     for (const kind of ['workshops', 'employees', 'crafts', 'operations'] as const) {
       await fetchWorkshopConfigList(kind, { page: 1, page_size: 20, q: '测试' })
       expect(mockedGet).toHaveBeenLastCalledWith(`/api/v1/workshop-config/${kind}/`, {
-        params: { page: 1, page_size: 20, q: '测试' },
+        params: kind === 'employees'
+          ? { position_state: 'ROLE_ALL', page: 1, page_size: 20, q: '测试' }
+          : { page: 1, page_size: 20, q: '测试' },
       })
     }
   })
@@ -59,5 +62,12 @@ describe('生产车间配置 API', () => {
     mockedGet.mockResolvedValueOnce({ data: { data: { total: 81, active: 74, left: 7 } } })
     await expect(fetchWorkshopConfigSummary('employees')).resolves.toEqual({ total: 81, active: 74, left: 7 })
     expect(mockedGet).toHaveBeenCalledWith('/api/v1/workshop-config/employees/summary/')
+  })
+
+  it('员工车间选项使用员工自身权限并保留独立查看和修改范围', async () => {
+    const options = { workshops: [{ id: 'metal', name: '金工车间', status: 'ACTIVE' }], editable_workshops: [] }
+    mockedGet.mockResolvedValueOnce({ data: { data: options } })
+    await expect(fetchWorkshopEmployeeOptions()).resolves.toEqual(options)
+    expect(mockedGet).toHaveBeenCalledExactlyOnceWith('/api/v1/workshop-config/employees/options/')
   })
 })

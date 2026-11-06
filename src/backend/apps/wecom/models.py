@@ -254,6 +254,7 @@ class NotificationDelivery(TimeStampedModel):
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     user_id_snapshot = models.CharField(max_length=64, blank=True)
+    tracking_part_results = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "wecom_notification_delivery"

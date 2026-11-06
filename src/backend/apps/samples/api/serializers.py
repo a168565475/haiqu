@@ -30,6 +30,7 @@ from ..models import (
     SampleFileLink,
     SampleParameterImage,
     SampleItem,
+    SampleProduct,
     SampleRequest,
     SampleRequestStatus,
     SampleShipment,
@@ -844,6 +845,53 @@ class SampleRequestListSerializer(ModuleAccessSerializerMixin, serializers.Model
             "archived_at",
             "created_at",
             "updated_at",
+        ]
+
+
+class SampleRequestListSummaryProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category_name_snapshot")
+    color = serializers.SerializerMethodField()
+    total_sample_quantity = serializers.SerializerMethodField()
+    get_color = SampleRequestListProductSerializer.get_color
+    get_total_sample_quantity = SampleRequestListProductSerializer.get_total_sample_quantity
+
+    class Meta:
+        model = SampleProduct
+        fields = ["id", "line_number", "category_name", "product_name", "specification", "color", "total_sample_quantity"]
+
+
+class SampleRequestListOwnerSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    display_name = serializers.CharField()
+
+
+class SampleRequestListSummarySerializer(SampleRequestListSerializer):
+    """列表保留展示和操作摘要；详情继续沿用完整字段契约。"""
+    owner = SampleRequestListOwnerSerializer(source="owner_employee", read_only=True)
+    products = SampleRequestListSummaryProductSerializer(many=True, read_only=True)
+
+    def get_material_summary(self, instance) -> dict | None:
+        if not instance.application_payload_hash:
+            return None
+        from ..material_arrival_services import material_progress
+        progress = material_progress(instance, summary_only=True)
+        return {key: progress[key] for key in ["label", "status"]}
+
+    def get_application_actions(self, instance) -> dict:
+        actions = application_actions(instance, self.context.get("request"))
+        return {key: actions[key] for key in (
+            "is_application", "can_resubmit", "can_edit_products", "can_edit_materials", "can_director_review",
+        )}
+
+    def get_latest_shipment(self, instance):
+        shipment = max(instance.shipments.all(), key=lambda item: (item.shipped_at or item.created_at, item.pk), default=None)
+        return {"status": shipment.status, "status_display": shipment.get_status_display()} if shipment else None
+
+    class Meta(SampleRequestListSerializer.Meta):
+        fields = [
+            "id", "request_number", "submitted_on", "customer_name", "owner", "status", "status_display",
+            "sample_type_display", "sample_due_date", "requested_at", "requested_due_at", "products",
+            "item_summary", "application_actions", "material_summary", "allowed_permissions", "latest_shipment",
         ]
 
 

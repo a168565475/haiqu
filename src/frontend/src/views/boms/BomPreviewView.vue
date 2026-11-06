@@ -28,7 +28,7 @@ const sections = computed(() => [...(bom.value?.sections || [])].sort((left, rig
   return rank(left.title) - rank(right.title)
 }))
 const totalLines = computed(() => sections.value.reduce((sum, section) => sum + section.lines.length, 0))
-const previewStatusLabel = computed(() => bom.value?.status === 'VERIFIED' ? '已确认' : '草稿')
+const previewStatusLabel = computed(() => bom.value?.status === 'VERIFIED' ? '已确认' : '待确认')
 const quantityChanged = computed(() => Number(bom.value?.order_quantity) !== Number(bom.value?.current_order_quantity))
 
 function number(value: string | number | null | undefined) {
@@ -129,7 +129,7 @@ onMounted(loadPage)
               <div><span>BOM编号</span><b>{{ bom.bom_number }}</b></div>
               <div><span>版本 / 状态</span><b>V{{ bom.version_number }} · {{ previewStatusLabel }}</b></div>
               <div><span>生产任务单</span><b>{{ bom.production_task_number || '—' }}</b></div>
-              <div><span>销售订单</span><b>{{ bom.order_number || '—' }}</b></div>
+              <div><span>销售订单</span><b>{{ bom.source_sales_order_number || '未关联' }}</b></div>
               <div><span>客户</span><b>{{ bom.customer_name || '—' }}</b></div>
               <div><span>产品编码</span><b>{{ bom.product_code_snapshot || bom.product_number_snapshot || '—' }}</b></div>
               <div><span>产品名称</span><b>{{ bom.product_name_snapshot || '—' }}</b></div>

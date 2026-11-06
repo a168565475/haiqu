@@ -131,5 +131,10 @@ def templates(workshops, coating_craft_ids=()):
         'procurement.view_supplierpurchasesheet', 'finance.view_financeaccount', 'finance.view_accountingsubject',
         'finance.view_receivablestatement', 'finance.view_receipt'))
     result['FACTORY_MANAGER'] = module_rows(*sorted(factory_codes))
+    # 车间员工配置仅补给三主任，不纳入上面的厂长动作并集。
+    for role, workshop in DIRECTORS.items():
+        result[role] += scoped_rows((
+            'workshop_config.view_workshopemployee', 'workshop_config.change_workshopemployee',
+        ), 'WORKSHOP', [workshops[workshop]])
     return {role: sorted({(row['permission'], row['scope']): row for row in rows}.values(),
                          key=lambda row: (row['permission'], row['scope'])) for role, rows in result.items()}

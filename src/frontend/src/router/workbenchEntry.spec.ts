@@ -7,6 +7,22 @@ let navigationSequence = 0
 
 describe('首页和旧工作台链接的权限分流', () => {
   it.each([
+    ['production_tasks.view_productiontask', 'production-overview'],
+    ['workshop_reporting.view_workreport', 'workshop-workbench'],
+  ])('消息卡片按 %s 分流时保留收件编号，不透传其他参数', async (permission, target) => {
+    setActivePinia(createPinia())
+    const auth = useAuthStore()
+    auth.applyAuthResponse({ authenticated: true, user: {
+      id: 1, username: 'entry-test', display_name: '入口测试', is_superuser: false,
+      employee: { id: 'employee-1', employee_code: 'E001', display_name: '入口测试', status: 'ACTIVE' },
+      permissions: [permission!], data_scope: 'SELF',
+    } })
+    const recipient = '12345678-1234-1234-1234-123456789abc'
+    await router.push(`/?notification=${recipient}&unexpected=ignored`)
+    expect(router.currentRoute.value.name).toBe(target)
+    expect(router.currentRoute.value.query).toEqual({ notification: recipient })
+  })
+  it.each([
     ['/', ['production_tasks.view_productiontask'], 'production-overview'],
     ['/workbench/manager', ['production_tasks.view_productiontask'], 'production-overview'],
     ['/workbench/sales', ['production_tasks.view_productiontask'], 'production-overview'],

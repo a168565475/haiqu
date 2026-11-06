@@ -28,7 +28,7 @@ from .duplicate_lines import validate_duplicate_material_lines
 from .image_files import delete_business_file_if_unreferenced
 from .maintenance import match_maintenance_configuration
 from .material_save_plan import (build_material_save_plan, lock_material_references,
-                                persist_material_plan, require_save_permissions)
+                                persist_material_plan, require_save_permissions, validate_deferred_import_matching)
 from .models import (
     Bom,
     BomCreationMethod,
@@ -82,6 +82,10 @@ TUBE_DETAIL_FIELDS = [
     "coating_unit_area_sqm",
     "purchase_unit_weight_kg",
     "tube_cut_piece_count",
+    "source_purchase_allowance_percent",
+    "purchase_allowance_mode",
+    "purchase_allowance_rule",
+    "source_raw_bar_length_m",
 ]
 
 TUBE_CALCULATED_FIELDS = [
@@ -219,7 +223,11 @@ def _tube_calculations(line_data, product_quantity, *, calculation_version=3):
         plan = pipe_plan(cutting_length_mm=line_data.get("length_value"),
                          pieces_per_product=line_data.get("unit_consumption"),
                           pieces_per_bar=line_data.get("tube_cut_piece_count"), order_quantity=product_quantity,
-                          calculation_version=calculation_version)
+                          calculation_version=calculation_version,
+                          source_purchase_allowance_percent=line_data.get("source_purchase_allowance_percent"),
+                          source_raw_bar_length_m=line_data.get("source_raw_bar_length_m"),
+                          purchase_allowance_mode=line_data.get("purchase_allowance_mode"),
+                          purchase_allowance_rule=line_data.get("purchase_allowance_rule"))
         total_consumption = Decimal(plan["demand_pieces"])
         cut_length = Decimal(plan["raw_bar_length_m"])
         branch_count = Decimal(plan["suggested_bar_count"])
@@ -266,6 +274,8 @@ def _merged_raw_values(existing_values, line_data, section_type, section_title, 
         values["source_inventory_material_id"] = str(source_id) if source_id else ""
     if section_type == "PROFILE":
         from .tube_metrics import supports_tube_metrics
+        if values.get("purchase_allowance_mode") and line_data.get("purchase_allowance_mode") == "":
+            raise ValidationError({"sections": "已启用的采购余量不能清空模式；无需余量请选择不加余量。"})
         if "manual_tube_metrics" in line_data:
             values["tube_metrics_manual"] = line_data["manual_tube_metrics"]
         tube_shape = line_data.get("tube_shape", values.get("tube_shape", values.get("E", "")))
@@ -451,7 +461,7 @@ def _bom_number():
     return next_business_number("BOM")
 
 
-def _create_sections(bom, plan):
+def _create_sections(bom, plan, *, defer_import_material_matching=False):
     for section_index, section_data in enumerate(plan["sections"], start=1):
         section = BomSection.objects.create(
             bom=bom,
@@ -471,6 +481,8 @@ def _create_sections(bom, plan):
         )
 
     for line in BomLine.objects.filter(section__bom=bom).select_related("section"):
+        if defer_import_material_matching:
+            line.raw_values = {**line.raw_values, "import_material_matching_deferred": True}
         if is_meter_fabric_section(line.section) and not line.unit_consumption:
             line.unit_consumption = line.purchase_consumption
         apply_line_quantities(line, bom.order_quantity, tolerate_legacy=True, recalculate_pipe=True,
@@ -539,7 +551,10 @@ def create_bom(
     request=None,
     link_source=False,
     preserve_tube_formula=False,
+    defer_import_material_matching=False,
 ):
+    if defer_import_material_matching and creation_method != BomCreationMethod.IMPORT:
+        raise ValidationError({"defer_import_material_matching": "只有 Excel 导入 BOM 可以暂缓物料匹配。"})
     prepared = None
     persisted_path = None
     plan = None
@@ -642,7 +657,7 @@ def create_bom(
             )
             _reuse_confirmed_product_review(bom, actor_employee=actor_employee, request=request)
             if plan:
-                _create_sections(bom, plan)
+                _create_sections(bom, plan, defer_import_material_matching=defer_import_material_matching)
             elif source_bom:
                 _copy_sections(bom, source_bom, preserve_tube_formula=preserve_tube_formula)
             else:
@@ -1078,7 +1093,11 @@ def _sync_profile_lines_to_order_quantity(bom, *, previous_order_quantity=None):
                               recalculate_pipe=previous_order_quantity is not None and Decimal(previous_order_quantity) != Decimal(bom.order_quantity))
         if line.section.section_type == "PROFILE":
             _, raw = _tube_calculations({"length_value": line.length_value, "unit_consumption": line.unit_consumption,
-                                         "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", "")}, bom.order_quantity,
+                                         "tube_cut_piece_count": (line.raw_values or {}).get("tube_cut_piece_count", ""),
+                                         "source_purchase_allowance_percent": (line.raw_values or {}).get("source_purchase_allowance_percent"),
+                                         "purchase_allowance_mode": (line.raw_values or {}).get("purchase_allowance_mode"),
+                                         "purchase_allowance_rule": (line.raw_values or {}).get("purchase_allowance_rule"),
+                                         "source_raw_bar_length_m": (line.raw_values or {}).get("source_raw_bar_length_m")}, bom.order_quantity,
                                         calculation_version=(line.raw_values or {}).get("pipe_plan_version", 2))
             line.raw_values = {**line.raw_values, **raw}
         line.save()
@@ -1219,11 +1238,12 @@ def _edit_snapshot(bom):
 
 @transaction.atomic
 def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", confirmation_token="",
-                     quantity_confirmation_reason=""):
+                     quantity_confirmation_reason="", defer_import_material_matching=False):
     ProductionTask.objects.select_for_update().get(pk=bom.production_task_id)
     locked = Bom.objects.select_for_update().get(pk=bom.pk)
     require_matching_etag(request, locked)
     require_save_permissions(request, intent)
+    validate_deferred_import_matching(bom=locked, intent=intent, defer_import_material_matching=defer_import_material_matching)
     lock_material_references(sections, bom=locked)
     # 字典/版本在等待锁期间可能改变；事务内重新验证，预检凭据会对比实际建档内容。
     from .api.serializers import BomUpdateInputSerializer
@@ -1334,7 +1354,8 @@ def update_bom_lines(*, bom, sections, actor_employee, request, intent="draft", 
                 raise ValidationError({"sections": "每条用料明细最多保留 20 张图片。"})
             drafts_for_payload_line[id(line_data)] = ordered_drafts
 
-    material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True)
+    material_plan = build_material_save_plan(bom=locked, sections=sections, request=request, for_update=True,
+                                            defer_import_material_matching=defer_import_material_matching)
     if intent == "verify":
         validate_duplicate_material_lines(material_plan["lines"].values())
     persist_material_plan(plan=material_plan, bom=locked, request=request, actor_employee=actor_employee,

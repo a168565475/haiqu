@@ -57,7 +57,7 @@ export function bomPreviewCell(line: BomPreviewLine, key: string, section: BomPr
   if (section.section_type === 'PROFILE') {
     if (['total_consumption', 'tube_cut_length_m', 'branch_count', 'suggested_purchase_meters'].includes(key)) {
       const plan = pipePlanForBomLine(line, orderQuantity, savedLine || line)
-      return plan ? plan[key as keyof typeof plan] : '—'
+      return plan ? plan[key as 'total_consumption' | 'tube_cut_length_m' | 'branch_count' | 'suggested_purchase_meters'] : '—'
     }
     if (key === 'specification') return line.specification || `${line.tube_diameter || '—'} × ${line.tube_thickness || '—'}`
   }

@@ -6,7 +6,8 @@ import type { MaterialCatalog, PublicMaterialOptions } from '@/types/materialCat
 import PinyinFilterSelect from '@/components/production/PinyinFilterSelect.vue'
 import { compactDecimal } from '@/utils/compactDecimal'
 import { packagingQuantity } from '@/utils/bomPackagingQuantity'
-import type { BomDetail, BomLineInput, BomSectionInput } from '@/types/bom'
+import { defaultPurchaseAllowanceRule, purchaseAllowanceOptions } from '@/utils/materialFlow'
+import type { BomDetail, BomLineInput, BomSectionInput, PurchaseAllowanceRule } from '@/types/bom'
 
 type AnyRecord = Record<string, any>
 type AnyFunction = (...args: any[]) => any
@@ -72,6 +73,19 @@ const emit = defineEmits<{
 }>()
 const currentCatalog = ref<MaterialCatalog>()
 const currentPublicSpray = ref<PublicMaterialOptions>()
+const selectedPurchaseAllowance = computed(() => props.editingLineDraft?.purchase_allowance_mode === 'MANUAL'
+  ? props.editingLineDraft.purchase_allowance_rule : props.editingLineDraft?.purchase_allowance_mode === 'AUTO' ? 'AUTO' : '')
+const automaticPurchaseAllowanceLabel = computed(() => {
+  const baseCount = String(props.editingLineCalculations?.base_purchase_bar_count || '')
+  if (!/^\d+$/.test(baseCount)) return '自动（按采购根数选择）'
+  const rule = defaultPurchaseAllowanceRule(BigInt(baseCount))
+  return `自动（${purchaseAllowanceOptions.find(option => option.value === rule)?.label}）`
+})
+function selectPurchaseAllowance(value: PurchaseAllowanceRule | 'AUTO') {
+  if (!props.editingLineDraft) return
+  props.editingLineDraft.purchase_allowance_mode = value === 'AUTO' ? 'AUTO' : 'MANUAL'
+  props.editingLineDraft.purchase_allowance_rule = value === 'AUTO' ? '' : value
+}
 const coatingOptions = computed(() => props.catalogMode ? (currentPublicSpray.value?.values || []).filter(value => value.field_key === 'color').map(value => ({ id: value.id, color_name: value.value })) : props.tubeCoatingColors)
 const catalogCoatingEnabled = computed(() => !!currentCatalog.value?.spray_enabled && !!currentPublicSpray.value && currentCatalog.value.id === props.editingLineDraft?.material_catalog_id)
 const coatingPlaceholder = computed(() => {
@@ -171,6 +185,13 @@ const {
                 <ElOption v-for="item in coatingOptions" :key="item.id" :label="item.color_name" :value="item.color_name" />
               </ElSelect>
             </label>
+            <label class="drawer-field">
+              <span>采购余量</span>
+              <ElSelect :model-value="selectedPurchaseAllowance" :placeholder="editingLineDraft.purchase_allowance_mode ? '填写切割参数后自动选择' : '沿用已保存规则'" aria-label="采购余量" @change="selectPurchaseAllowance">
+                <ElOption value="AUTO" :label="automaticPurchaseAllowanceLabel" />
+                <ElOption v-for="option in purchaseAllowanceOptions" :key="option.value" :value="option.value" :label="option.label" />
+              </ElSelect>
+            </label>
             <div class="pipe-quantity-row">
               <label class="drawer-field"><span>切割长度（mm）</span><ElInput v-model="editingLineDraft.length_value" inputmode="numeric" placeholder="正整数毫米" aria-label="切割长度（mm）" /></label>
               <label class="drawer-field"><span>切割支数</span><ElInput v-model="editingLineDraft.tube_cut_piece_count" inputmode="decimal" placeholder="填写" aria-label="切割支数" @blur="normalizeTubeCutPieceCount(editingLineDraft)" /></label>
@@ -196,7 +217,9 @@ const {
               <div class="drawer-calculation-grid">
                 <label><span>总耗</span><strong>{{ editingLineCalculations.total_consumption }}</strong></label>
                 <label><span>原材料长度（m）</span><strong>{{ compactDecimal(editingLineCalculations.tube_cut_length_m) }}</strong></label>
-                <label><span>采购根数</span><strong>{{ editingLineCalculations.branch_count }}</strong></label>
+                <label><span>采购根数</span><strong>{{ editingLineCalculations.base_purchase_bar_count }}</strong></label>
+                <label><span>采购余量（根）</span><strong>{{ editingLineCalculations.purchase_allowance_bar_count }}</strong></label>
+                <label><span>建议采购根数</span><strong>{{ editingLineCalculations.branch_count }}</strong></label>
                 <label><span>建议采购米数</span><strong>{{ compactDecimal(editingLineCalculations.suggested_purchase_meters) }}</strong></label>
                 <label><span>长料单重（kg）</span><strong>{{ editingLineCalculations.long_material_unit_weight_kg }}</strong></label>
                 <label><span>单支重量（kg）</span><strong>{{ editingLineCalculations.tube_unit_weight_kg }}</strong></label>

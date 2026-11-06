@@ -11,9 +11,15 @@ import type {
   WorkshopConfigQuery,
   WorkshopConfigRecord,
   WorkshopConfigSummary,
+  WorkshopEmployeeOptions,
 } from '@/types/workshopConfig'
 
 const basePath = '/api/v1/workshop-config/'
+
+export async function fetchWorkshopEmployeeOptions(): Promise<WorkshopEmployeeOptions> {
+  const { data } = await apiClient.get<DataResponse<WorkshopEmployeeOptions>>(`${basePath}employees/options/`)
+  return data.data
+}
 
 export async function deleteWorkshopEmployee(id: string, etag: string): Promise<void> {
   await apiClient.delete(`${basePath}employees/${encodeURIComponent(id)}/`, { headers: { 'If-Match': etag } })
@@ -21,6 +27,14 @@ export async function deleteWorkshopEmployee(id: string, etag: string): Promise<
 
 function resourcePath(kind: ResourceKind): string {
   return `${basePath}${kind}/`
+}
+
+export function buildWorkshopConfigQuery(
+  kind: ResourceKind,
+  query: WorkshopConfigQuery,
+): WorkshopConfigQuery {
+  if (kind !== 'employees') return query
+  return { position_state: 'ROLE_ALL', ...query }
 }
 
 function versioned<T extends WorkshopConfigRecord>(
@@ -36,7 +50,7 @@ export async function fetchWorkshopConfigList<T extends WorkshopConfigRecord>(
   kind: ResourceKind,
   query: WorkshopConfigQuery,
 ): Promise<PaginatedWorkshopConfig<T>> {
-  const { data } = await apiClient.get<PaginatedWorkshopConfig<T>>(resourcePath(kind), { params: query })
+  const { data } = await apiClient.get<PaginatedWorkshopConfig<T>>(resourcePath(kind), { params: buildWorkshopConfigQuery(kind, query) })
   return data
 }
 

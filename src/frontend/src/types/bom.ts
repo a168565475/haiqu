@@ -6,6 +6,8 @@ import type { RawMaterialInput } from './rawMaterial'
 export type BomStatus = 'PENDING_CONFIRMATION' | 'VERIFIED'
 export type BomCreationMethod = 'IMPORT' | 'COPY' | 'BLANK'
 export type BomSectionType = 'PROFILE' | 'ACCESSORY' | 'FABRIC'
+export type PurchaseAllowanceRule = 'NONE' | 'PLUS_5' | 'PLUS_8' | 'PERCENT_0_5' | 'PERCENT_1'
+export type PurchaseAllowanceMode = 'AUTO' | 'MANUAL'
 
 export interface BomLineImage {
   id: string
@@ -50,6 +52,10 @@ export interface BomLine {
   raw_bar_length_m?: string | null
   suggested_bar_count?: number | null
   suggested_purchase_meters?: string | null
+  base_purchase_bar_count?: number | null
+  purchase_allowance_bar_count?: number | null
+  purchase_allowance_rule?: PurchaseAllowanceRule | ''
+  purchase_allowance_mode?: PurchaseAllowanceMode | ''
   fabric_source_line_id?: string | null
   fabric_meters_per_set?: string | null
   id: string
@@ -83,6 +89,8 @@ export interface BomLine {
   coating_unit_area_sqm: string
   purchase_unit_weight_kg: string
   tube_cut_piece_count: string
+  source_purchase_allowance_percent?: string
+  source_raw_bar_length_m?: string
   tube_cut_length_m: string
   long_material_unit_weight_kg: string
   tube_unit_weight_kg: string
@@ -232,6 +240,8 @@ export interface TubeCalculationPreview {
 }
 
 export interface BomLineInput {
+  purchase_allowance_rule?: PurchaseAllowanceRule | ''
+  purchase_allowance_mode?: PurchaseAllowanceMode | ''
   material_quantity?: string | null
   material_catalog_id?: string | null
   material_selection_snapshot?: MaterialSelectionSnapshot
@@ -277,6 +287,8 @@ export interface BomLineInput {
   coating_unit_area_sqm: string
   purchase_unit_weight_kg: string
   tube_cut_piece_count: string
+  source_purchase_allowance_percent?: string
+  source_raw_bar_length_m?: string
   source_inventory_material_id: string | null
   source_raw_material_id: string | null
   hardware_material_number: string

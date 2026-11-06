@@ -956,3 +956,6 @@ class SupplierPurchaseSheetSealImage(TimeStampedModel):
 
     def __str__(self):
         return f"{self.sheet} - 甲方盖章"
+
+
+from .tracking_models import PurchaseTrackingContent, PurchaseTrackingDigest, PurchaseTrackingIssue, PurchaseTrackingNotice, PurchaseTrackingPolicy  # noqa: E402,F401

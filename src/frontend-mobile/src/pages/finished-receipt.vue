@@ -178,7 +178,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
 </script>
 
 <template>
-  <WorkPage class="receipt-work-page" title="成品入库" :subtitle="preview?.task_number || '装配'">
+  <WorkPage class="receipt-work-page" title="成品入库" :subtitle="preview?.task_number || '装配'" section="receipt" back-to="/production-receipt">
     <div class="page-stack receipt-page">
       <section v-if="result" class="section-card receipt-success" role="status">
         <VanIcon name="passed" size="40" />
@@ -186,7 +186,7 @@ onBeforeUnmount(() => { alive = false; sequence++; controller?.abort(); window.r
         <strong>{{ result.receipt_number }}</strong>
         <p>{{ result.status === 'CONFIRMED' ? '原单已由仓库确认，请勿重复申请。' : '仓库在 ERP 确认后增加成品库存。' }}</p>
         <p v-if="actionError" class="receipt-error">{{ actionError }}</p>
-        <VanButton block type="primary" @click="router.push('/')">返回生产列表</VanButton>
+        <VanButton block type="primary" @click="router.push('/production-receipt')">返回生产入库</VanButton>
       </section>
       <template v-else>
         <div v-if="loading" class="receipt-loading" role="status"><VanLoading>正在读取入库额度…</VanLoading></div>

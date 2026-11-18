@@ -47,11 +47,13 @@ it('手工入库只取材料仓和库区，未填写时不能提交', async () =
   expect((wrapper.vm as unknown as { ready: boolean }).ready).toBe(false)
   expect(api.createManualMaterialReceipt).not.toHaveBeenCalled(); wrapper.unmount()
 })
-it('材料库存右上角不再显示材料入库，仅保留收发记录入口', async () => {
-  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus], stubs: { ElButton: { template: '<button><slot /></button>' } } } }); await flushPromises()
+it('材料库存把配置放在重置旁边，移除刷新和收发记录入口', async () => {
+  const wrapper = shallowMount(MaterialInventoryView, { global: { plugins: [ElementPlus], stubs: { ElButton: { template: '<button><slot /></button>' }, ElDropdown: { template: '<div><slot /></div>' } } } }); await flushPromises()
   expect(wrapper.findAll('button').some(button => button.text() === '材料入库')).toBe(false)
   expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
-  expect(wrapper.findAll('button').some(button => button.text() === '收发记录')).toBe(true)
+  expect(wrapper.findAll('button').map(button => button.text())).not.toContain('收发记录')
+  expect(wrapper.findAll('button').map(button => button.text())).not.toContain('刷新')
+  expect(wrapper.get('.erp-list-filter-actions').findAll('button').map(button => button.text())).toEqual(['配置', '重置', '应用筛选'])
   wrapper.unmount()
 })
 it('材料库存旧响应和卸载后的响应失效', async () => {
@@ -88,7 +90,7 @@ it('半成品库存入口从路由读取库存性质并传递加工状态筛选'
   expect(source).toContain('placeholder="加工状态：全部"')
   expect(source).toContain('label="加工状态"')
   expect(wrapper.findAll('button').some(button => button.text() === '喷塑入库')).toBe(false)
-  expect(wrapper.findAll('button').some(button => button.text() === '入库记录')).toBe(true)
+  expect(wrapper.findAll('button').some(button => button.text() === '入库记录')).toBe(false)
   expect(wrapper.findComponent(ManualMaterialInboundDialog).exists()).toBe(false)
   expect(source).toContain('processing_status_label')
   wrapper.unmount()

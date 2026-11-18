@@ -192,7 +192,7 @@ export const router = createRouter({
     {
       path: '/inventory/semi-finished/receipts', name: 'semi-receipt-records',
       component: () => import('@/views/inventory/SemiReceiptRecordsView.vue'),
-      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'material-inventory', headerTitle: '仓库管理 / 半成品入库记录', breadcrumbs: [{label:'仓库管理'},{label:'材料库存',to:'/inventory/materials'},{label:'半成品入库记录'}], pageWidth: 'fluid', flushPage: true },
+      meta: { requiresAuth: true, layout: 'erp', activeMenu: 'semi-receipt-records', headerTitle: '仓库管理 / 车间入库', breadcrumbs: [{label:'仓库管理'},{label:'车间入库'}], pageWidth: 'fluid', flushPage: true },
     },
     {
       path: '/inventory/semi-finished/tube-return', name: 'inventory-tube-return',
@@ -1183,7 +1183,7 @@ export const router = createRouter({
       component: MaterialIssueListView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料' }],
+        headerTitle: '仓库管理 / 车间领料', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1193,7 +1193,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 新增', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '新增' }],
+        headerTitle: '仓库管理 / 车间领料 / 新增', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '新增' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1203,7 +1203,7 @@ export const router = createRouter({
       component: MaterialIssueFormView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 修改', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '修改' }],
+        headerTitle: '仓库管理 / 车间领料 / 修改', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '修改' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },
@@ -1213,7 +1213,7 @@ export const router = createRouter({
       component: MaterialIssueDetailView,
       meta: {
         requiresAuth: true, layout: 'erp', activeMenu: 'material-issues',
-        headerTitle: '仓库管理 / 生产领料 / 领料单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '生产领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
+        headerTitle: '仓库管理 / 车间领料 / 领料单详情', breadcrumbs: [{ label: '仓库管理' }, { label: '车间领料', to: '/workshop/material-issues' }, { label: '领料单详情' }],
         pageWidth: 'fluid', flushPage: true,
       },
     },

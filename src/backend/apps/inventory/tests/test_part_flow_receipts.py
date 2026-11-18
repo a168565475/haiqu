@@ -94,6 +94,53 @@ class PartFlowReceiptTests(D1Fixture, APITestCase):
         self.assertIsNone(line.input_requirement_id)
         self.assertEqual(line.unit_id, self.cut_unit.pk)
 
+    def test_receipt_list_groups_both_statuses_and_detail_keeps_each_cut_piece(self):
+        parts = self.parts[:2]
+        preview = self.preview('CUTTING')
+        submitted = self.client.post(self.url, {
+            'request_id': str(uuid.uuid4()), 'schedule_product_id': str(self.schedule_product.pk),
+            'plan_category': 'CUTTING', 'zone_id': str(self.semi_zone.pk), 'receipt_date': str(timezone.localdate()),
+            'lines': [{'bom_line_id': str(part.pk), 'quantity': str(quantity)} for part, quantity in zip(parts, (10, 20))],
+        }, format='json', HTTP_IF_MATCH=preview['etag'])
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        receipt_id = submitted.data['data']['receipt_id']
+        for status in ('PENDING', '已入库'):
+            listed = self.client.get(self.url, {'search': parts[1].part_name, 'page_size': 1})
+            self.assertEqual(listed.status_code, 200, listed.data)
+            self.assertEqual(listed.data['data']['total'], 1)
+            row, = listed.data['data']['items']
+            self.assertEqual((row['id'], row['status'], row['unit']), (receipt_id, status, '片'))
+            self.assertEqual(float(row['quantity']), 30)
+            detail = self.client.get(f'{self.url}{receipt_id}/')
+            self.assertEqual(detail.status_code, 200, detail.data)
+            self.assertEqual({line['bom_line_id']: float(line['quantity']) for line in detail.data['data']['lines']},
+                {str(parts[0].pk): 10, str(parts[1].pk): 20})
+            if status == 'PENDING':
+                confirmed = self.confirm(submitted)
+                self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(PublicStockMovement.objects.filter(source_id=receipt_id).count(), 2)
+
+    def test_confirmed_external_list_counts_documents_and_sums_by_unit(self):
+        receipt_id = uuid.uuid4()
+        for document, line, stage, unit, amount in (
+            (receipt_id, self.parts[0], 'CUTTING', self.cut_unit, 20),
+            (receipt_id, self.part, 'SEWING', self.part_unit, 10),
+            (uuid.uuid4(), self.parts[1], 'CUTTING', self.cut_unit, 5),
+        ):
+            identity = build_semi_finished_identity(bom_line=line, completed_craft=component_stock_craft(stage), unit=unit)
+            credit_public_stock(identity=identity, zone=self.semi_zone, quantity=amount,
+                actor_employee=self.employee, source_type='TUBE_OUTSOURCING_RETURN',
+                source_id=document, source_line_id=uuid.uuid4(), production_task=self.task,
+                product_line=self.product_line, bom_line=line, snapshot={'receipt_number': '测试入库单号'})
+        listed = self.client.get(self.url, {'source': 'EXTERNAL', 'search': '测试入库单号'})
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(listed.data['data']['total'], 2)
+        row = next(item for item in listed.data['data']['items'] if len(item['quantity_totals']) == 2)
+        self.assertEqual({item['unit']: float(item['quantity']) for item in row['quantity_totals']}, {'片': 20, '个': 10})
+        detail = self.client.get(f"{self.url}{row['id']}/")
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual({item['unit']: float(item['quantity']) for item in detail.data['data']['lines']}, {'片': 20, '个': 10})
+
     def test_stale_preview_rejected_and_parent_composition_is_frozen(self):
         etag = self.preview('SEWING')['etag']
         first, _ = self.submit('SEWING', self.part, 10, etag)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Calendar, CopyDocument, Delete, Plus, Refresh } from '@element-plus/icons-vue'
+import { Calendar, CopyDocument, Delete, Plus } from '@element-plus/icons-vue'
 import { isCancel } from 'axios'
 import type { MaterialAttributeValue, MaterialCatalog, MaterialCatalogSummary, MaterialColorSelection, MaterialFieldDefinition, PublicMaterialOptions } from '@/types/materialCatalog'
 import type { MaterialReceivingOptions, MaterialTransferDirection, MaterialTransferPayload } from '@/types/inventory'
@@ -109,7 +109,7 @@ function templateFields(row: TransferRow) {
 }
 const tableFields = computed(() => {
   const fields = new Map<string, MaterialFieldDefinition>()
-  rows.value.forEach(row => templateFields(row).forEach(field => fields.set(field.key, field)))
+  rows.value.forEach(row => rowFields(row).forEach(field => fields.set(field.key, field)))
   return [...fields.values()].sort((a, b) => {
     const ai = FIELD_ORDER.indexOf(a.key)
     const bi = FIELD_ORDER.indexOf(b.key)
@@ -198,7 +198,7 @@ function rowError(row: TransferRow) {
   if (row.selectionError) return row.selectionError
   if (!row.catalogId || !row.catalog) return '请选择品名'
   if (row.catalog.id !== row.catalogId || row.catalog.category_key !== catalogKey(row)) return '品名与当前分区不一致，请重选'
-  if (!row.publicOptions) return '品名属性未加载，请刷新选项'
+  if (!row.publicOptions) return '品名属性未加载，请重新选择品名'
   const fixed: Record<string, string[]> = {
     TUBE: ['material', 'shape', 'section_size', 'thickness'],
     FABRIC: ['material', 'fabric_spec', 'width', 'color'],
@@ -223,7 +223,7 @@ function rowError(row: TransferRow) {
   const unit = unitsFor(row).find(item => item.id === row.unitId)
   if (!unit) return '请选择有效单位'
   if (row.catalog.base_warehouse_id && !options.value.warehouses.some(item => item.id === row.catalog!.base_warehouse_id)) return '品名默认仓库不可用，请核实配置后刷新'
-  if (row.catalog.base_warehouse_id && row.warehouseId !== row.catalog.base_warehouse_id) return '品名默认仓库已变化，请刷新选项'
+  if (row.catalog.base_warehouse_id && row.warehouseId !== row.catalog.base_warehouse_id) return '品名默认仓库已变化，请刷新页面后重试'
   if (!options.value.warehouses.some(item => item.id === row.warehouseId)) return '请选择有效仓库'
   if (!row.warehouseId || !row.zoneId || !zonesFor(row).some(zone => zone.id === row.zoneId)) return '请选择仓库和库区'
   if (row.category === 'tube') {
@@ -470,6 +470,7 @@ onBeforeUnmount(() => { sourceVersion += 1 })
         <h1>材料收发</h1>
         <p>采购之外的盘点、调整和其他材料收发。</p>
       </div>
+      <slot name="actions" />
     </header>
     <form class="erp-list-filters" aria-label="材料收发筛选" @submit.prevent>
         <div class="filter-field filter-date" aria-label="收发日期">
@@ -564,15 +565,9 @@ onBeforeUnmount(() => { sourceVersion += 1 })
       </ElTable>
       </div>
       </div>
-      <div class="table-footer">
-        <span v-if="firstError" class="line-error">{{ firstError }}</span>
-        <span v-else class="line-tip">出库数量不能超过所选仓库 / 库区的可用库存。</span>
-      </div>
     </section>
 
     <footer class="transfer-footer">
-      <ElButton :icon="Refresh" :disabled="draftDisabled" @click="loadPageOptions()">刷新选项</ElButton>
-      <span v-if="!ready && !blocked" class="save-hint">{{ validationHint || '请检查表格内的必填项。' }}</span>
       <ElButton type="primary" :loading="submitting" :disabled="!canSubmit" @click="submit">保存{{ direction === 'IN' ? '入库' : '出库' }}</ElButton>
     </footer>
   </section>
@@ -580,10 +575,10 @@ onBeforeUnmount(() => { sourceVersion += 1 })
 
 <style scoped lang="scss">
 .material-transfer-form { height: 100%; min-height: 0; color: var(--erp-color-text-primary); }
-.transfer-header, .transfer-footer, .table-footer { display: flex; align-items: center; justify-content: space-between; }
+.transfer-header { display: flex; align-items: center; justify-content: space-between; }
 .transfer-header { margin-bottom: 0; }
 .transfer-header p { margin: 5px 0 0; color: var(--erp-color-text-secondary); font-size: 13px; }
-.row-count, .filter-count, .line-tip { color: var(--erp-color-text-secondary); font-size: 12px; }
+.row-count, .filter-count { color: var(--erp-color-text-secondary); font-size: 12px; }
 .table-toolbar { justify-content: space-between; }
 .material-transfer-form .erp-list-filters { align-items: center; }
 .filter-field { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; }
@@ -602,10 +597,7 @@ onBeforeUnmount(() => { sourceVersion += 1 })
 .material-transfer-table :deep(.el-input__wrapper), .material-transfer-table :deep(.el-select__wrapper) { min-height: 32px; padding: 1px 9px; box-shadow: 0 0 0 1px var(--erp-input-border, var(--erp-color-border)) inset; }
 .material-transfer-table :deep(.el-button.is-text) { padding: 4px; }
 .row-actions { display: inline-flex; align-items: center; gap: 2px; }
-.table-footer { min-height: 40px; padding: 0 4px; }
-.line-error { color: var(--erp-color-danger, #d03050); font-size: 12px; }
-.transfer-footer { padding-top: 12px; gap: 10px; justify-content: flex-end; }
-.save-hint { margin-right: auto; color: var(--erp-color-danger, #d03050); font-size: 12px; }
+.transfer-footer { display: flex; align-items: center; justify-content: flex-end; padding-top: 12px; }
 @media (max-width: 1280px) { .filter-remark { width: 200px; } }
 @media (max-width: 980px) { .filter-field { flex-basis: calc(33.333% - 8px); } .filter-remark { width: auto; } }
 </style>

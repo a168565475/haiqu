@@ -57,7 +57,7 @@ beforeEach(() => {
   for (const [category, template, keys] of templates) {
     let group = definitions.categories.find(item => item.key === category)
     if (!group) { group = { key: category, label: category, templates: [] }; definitions.categories.push(group) }
-    const fields: MaterialFieldDefinition[] = keys.split(',').map(key => ({ key, label: key, kind: 'text' }))
+    const fields: MaterialFieldDefinition[] = keys.split(',').map(key => ({ key, label: key === 'length' ? '长度' : key, kind: 'text' }))
     group.templates.push({ key: template, label: template, supports_spray: false, fields })
     details[template] = { id: template, name: template, category_key: category, template_key: template, updated_at: 'v1', spray_enabled: false, values: [], units: [], base_warehouse_id: 'w1', semi_warehouse_id: null }
     publicData[template] = {
@@ -167,6 +167,9 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
   it('删除BOM长度列，管材单根长度直接输入米数并提交到库存', async () => {
     const { vm, wrapper } = await render()
     const row = await choose(vm, 'TUBE')
+    const headers = wrapper.findAll('th').map(header => header.text())
+    expect(headers).not.toContain('长度')
+    expect(headers).toContain('单根长度（米）')
     expect(wrapper.find('input[aria-label="第 1 行长度（毫米）"]').exists()).toBe(false)
     const lengthInput = wrapper.find('input[aria-label="第 1 行单根长度（米）"]')
     expect(lengthInput.exists()).toBe(true)
@@ -292,12 +295,12 @@ describe('材料收发表格契约（真实组件、模拟请求边界）', () =
     vm.sectionChanged('fabric'); expect(vm.rows).toHaveLength(1); expect(vm.rows[0]).toMatchObject({ category: 'fabric', catalogId: '', quantity: '' })
   })
 
-  it('未填写完整时保存按钮仍可点击，并显示缺少的具体内容', async () => {
+  it('未填写完整时点击保存才提示缺少的具体内容', async () => {
     const { wrapper, vm } = await render()
     const saveButton = wrapper.findAllComponents(ElButton).find(button => button.text().includes('保存入库'))!
     expect(vm.ready).toBe(false)
     expect(saveButton.props('disabled')).toBe(false)
-    expect(wrapper.text()).toContain('请填写备注。')
+    expect(wrapper.text()).not.toContain('请填写备注。')
     await saveButton.trigger('click')
     expect(ElMessage.warning).toHaveBeenCalledWith('请填写备注。')
   })

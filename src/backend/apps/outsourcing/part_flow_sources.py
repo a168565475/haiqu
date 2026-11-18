@@ -25,6 +25,36 @@ def uses_part_flow(product_id, source_kind):
             section__bom__archived_at__isnull=True, component_kind='SEWN_PART').exists())
 
 
+def _part_stock_by_zone(schedule_product, rows):
+    if not rows:
+        return
+    issue = MaterialIssue(production_task_id=schedule_product.schedule.production_task_id,
+        product_line_id=schedule_product.product_line_id, stock_mode='PUBLIC_V2')
+    lines = [MaterialIssueLine(id=row['bom_line_id'], issue=issue, line_type='SEMI',
+        unit_id=row['input_identity']['unit_id'], requested_quantity=1,
+        conversion_snapshot={'kind': 'PUBLIC_SEMI', 'public_identity': row['input_identity']}) for row in rows]
+    quantities = public_issue_quantity_context(issue, lines=lines)
+    for row, line in zip(rows, lines):
+        pool = _pool(line)
+        pool_free = quantities['stock'][pool] - quantities['pending_stock'][pool]
+        by_zone = {}
+        for balance in quantities['balances'][pool]:
+            reserved = quantities['tube_reserved_by_zone'].get((pool, str(balance.zone_id)), Decimal(0))
+            available = max(min(balance.quantity - reserved, pool_free), Decimal(0))
+            by_zone[balance.zone_id] = (balance.quantity, available)
+        yield row, by_zone
+
+
+def add_cut_piece_stock_zones(schedule_product, plan, inputs):
+    targets = {piece['component_identity']: quantity * piece['pieces_per_part']
+        for quantity, snapshot in plan.lines.values_list('quantity', 'snapshot') for piece in snapshot.get('pieces', [])}
+    short_rows = [row for row in inputs if not row['blockers']
+        and Decimal(row['max_quantity']) < targets.get(row['component_identity'], 0)]
+    for row, by_zone in _part_stock_by_zone(schedule_product, short_rows):
+        row['stock_zones'] = [{'zone_id': str(zone_id), 'available_quantity': str(available)}
+            for zone_id, (_, available) in by_zone.items() if available > 0]
+
+
 def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=False):
     sewing = craft.outsourcing_code == 'SEWING'
     if (sewing and source_kind not in {'CUTTING', 'PUBLIC_PIECE'}) or (
@@ -78,9 +108,7 @@ def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
             row['blockers'].append(str(getattr(error, 'detail', error)))
     candidates = inputs if sewing else rows
     by_id = {str(row.pk): row for row in parents}
-    issue = MaterialIssue(production_task_id=schedule_product.schedule.production_task_id,
-        product_line_id=schedule_product.product_line_id, stock_mode='PUBLIC_V2')
-    stock_lines = []
+    stock_rows = []
     for row in candidates:
         line = row.pop('_line', None) or by_id[row['bom_line_id']]
         if row['blockers']:
@@ -88,20 +116,11 @@ def part_source_context(*, schedule_product, source_kind, zone, craft, for_plan=
         if source_kind in {'CUTTING', 'SEWING'}:
             row['max_quantity'] = str(first_output_available(schedule_product.product_line_id, line, bom.order_quantity))
         elif row['input_identity']:
-            stock_lines.append(MaterialIssueLine(id=line.pk, issue=issue, line_type='SEMI',
-                unit_id=row['input_identity']['unit_id'], requested_quantity=1,
-                conversion_snapshot={'kind': 'PUBLIC_SEMI', 'public_identity': row['input_identity']}))
-    if stock_lines:
-        quantities = public_issue_quantity_context(issue, lines=stock_lines)
-        by_line = {str(line.pk): line for line in stock_lines}
-        for row in candidates:
-            if row['bom_line_id'] not in by_line:
-                continue
-            pool = _pool(by_line[row['bom_line_id']])
-            amount = sum((value.quantity for value in quantities['balances'][pool] if value.zone_id == zone.pk), Decimal(0))
-            reserved = quantities['tube_reserved_by_zone'].get((pool, str(zone.pk)), Decimal(0))
-            row['stock_quantity'] = str(amount)
-            row['max_quantity'] = str(max(min(amount-reserved, quantities['stock'][pool]-quantities['pending_stock'][pool]), Decimal(0)))
+            stock_rows.append(row)
+    for row, by_zone in _part_stock_by_zone(schedule_product, stock_rows):
+        amount, available = by_zone.get(zone.pk, (Decimal(0), Decimal(0)))
+        row['stock_quantity'] = str(amount)
+        row['max_quantity'] = str(available)
     if for_plan:
         for row in rows:
             row['max_quantity'] = row['order_required'] if not row['blockers'] else '0'

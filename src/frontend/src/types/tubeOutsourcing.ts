@@ -263,6 +263,7 @@ export interface TubePlanReceiptRecord {
   lines: Array<ProcessingMaterialPair & { order_line_id: string; component_identity: string; received_quantity: string; zone_id: string; zone_name: string; unit?: string; part_name?: string; specification?: string; unit_price?: string | null; received_amount?: string | null }>
 }
 export interface TubePieceSource extends Partial<TubeSourceRow> {
+  stock_zones?: Array<{ zone_id: string; available_quantity: string }>
   component_identity: string; bom_line_id: string; parent_component_identity: string; parent_name: string
   part_name: string; specification: string; unit: string; pieces_per_part: number
   order_required: string; max_quantity: string; stock_quantity: string | null; blockers: string[]

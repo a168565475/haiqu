@@ -256,11 +256,15 @@ async function openAction(action: PurchaseTrackingAction): Promise<void> {
 function showAction(row: PurchaseTrackingRow): boolean { return actionsFor(row).length > 0 }
 function showActionBlocked(row: PurchaseTrackingRow): boolean { return !showAction(row) && Boolean(row.action_blocked_reason) }
 function rowClassName({ row }: { row: PurchaseTrackingRow }): string { return row.row_key === rowKey.value ? 'is-located' : '' }
+function productionOrderGroupKey(row: PurchaseTrackingArrival | PurchaseTrackingCoverage): string {
+  return JSON.stringify([row.production_task_id, row.product_line_id || row.row_key, row.product_name,
+    'bom_created_at' in row ? row.bom_created_at : null])
+}
 function arrivalGroupKey(row: PurchaseTrackingArrival): string { return `${row.purchase_order_no}\u0000${row.supplier_name}` }
 function arrivalSpanMethod({ row, column, rowIndex }: { row: PurchaseTrackingArrival; column: { property?: string }; rowIndex: number }): [number, number] | undefined {
-  if (!['task_number', 'purchase_order_no', 'supplier_name'].includes(column.property || '')) return undefined
+  if (!['task_number', 'supplier_name'].includes(column.property || '')) return undefined
   const rows = arrivals.value
-  const groupKey = column.property === 'task_number' ? (item: PurchaseTrackingArrival) => item.production_task_id : arrivalGroupKey
+  const groupKey = column.property === 'task_number' ? productionOrderGroupKey : arrivalGroupKey
   const key = groupKey(row)
   if (rowIndex > 0 && groupKey(rows[rowIndex - 1]!) === key) return [0, 0]
   let span = 1
@@ -271,9 +275,10 @@ function arrivalSpanMethod({ row, column, rowIndex }: { row: PurchaseTrackingArr
 function coverageSpanMethod({ row, column, rowIndex }: { row: PurchaseTrackingCoverage; column: { property?: string }; rowIndex: number }): [number, number] | undefined {
   if (column.property !== 'task_number') return undefined
   const rows = coverage.value
-  if (rowIndex > 0 && rows[rowIndex - 1]!.production_task_id === row.production_task_id) return [0, 0]
+  const key = productionOrderGroupKey(row)
+  if (rowIndex > 0 && productionOrderGroupKey(rows[rowIndex - 1]!) === key) return [0, 0]
   let span = 1
-  while (rowIndex + span < rows.length && rows[rowIndex + span]!.production_task_id === row.production_task_id) span += 1
+  while (rowIndex + span < rows.length && productionOrderGroupKey(rows[rowIndex + span]!) === key) span += 1
   return [span, 1]
 }
 
@@ -334,9 +339,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
         </div>
         <div ref="panel" class="erp-list-table-frame" :aria-busy="loading" @scroll.capture="hideMaterialAttributes">
           <ElTable v-if="mode === 'arrival'" v-loading="loading" :data="arrivals" row-key="row_key" :row-class-name="rowClassName" :span-method="arrivalSpanMethod" class="tracking-table arrival-table" height="100%" @cell-mouse-enter="showMaterialAttributes" @cell-mouse-leave="hideMaterialAttributes" @mouseleave="hideMaterialAttributes">
-            <ElTableColumn prop="task_number" label="生产订单号" width="132" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell tracking-strong">{{ row.task_number }}</span></template></ElTableColumn>
-            <ElTableColumn label="产品" width="150" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell">{{ row.product_name || '产品待核对' }}</span></template></ElTableColumn>
-            <ElTableColumn prop="purchase_order_no" label="订单号" width="154" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell tracking-strong">{{ row.purchase_order_no }}</span></template></ElTableColumn>
+            <ElTableColumn prop="task_number" label="生产订单号" width="190"><template #default="{ row }"><div class="tracking-order-info" data-testid="arrival-order-info"><span class="tracking-cell tracking-strong" :title="row.task_number">{{ row.task_number }}</span><span class="tracking-cell" :title="row.product_name || '产品待核对'">{{ row.product_name || '产品待核对' }}</span></div></template></ElTableColumn>
             <ElTableColumn prop="supplier_name" label="供应商" width="150" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell">{{ row.supplier_name || '供应商待核对' }}</span></template></ElTableColumn>
             <ElTableColumn label="采购批次" width="108" align="center"><template #default="{ row }"><span class="tracking-cell">{{ row.batch_number === null ? '待核对' : `第${row.batch_number}批` }}</span></template></ElTableColumn>
             <ElTableColumn label="材料" min-width="150"><template #default="{ row }"><span class="tracking-cell" tabindex="0" data-testid="arrival-material-name" :aria-label="`查看材料属性：${row.material_name || '材料待核对'}`" @focus="focusMaterialAttributes(row, $event)" @blur="hideMaterialAttributes" @keydown.esc="hideMaterialAttributes">{{ row.material_name || '材料待核对' }}</span></template></ElTableColumn>
@@ -354,9 +357,7 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
           </ElTable>
 
           <ElTable v-else v-loading="loading" :data="coverage" row-key="row_key" :row-class-name="rowClassName" :span-method="coverageSpanMethod" class="tracking-table coverage-table" height="100%" @cell-mouse-enter="showMaterialAttributes" @cell-mouse-leave="hideMaterialAttributes" @mouseleave="hideMaterialAttributes">
-            <ElTableColumn prop="task_number" label="生产订单号" width="120" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell tracking-strong">{{ row.task_number }}</span></template></ElTableColumn>
-            <ElTableColumn label="产品" width="110" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell">{{ row.product_name || '产品待核对' }}</span></template></ElTableColumn>
-            <ElTableColumn label="BOM创建时间" width="156" show-overflow-tooltip><template #default="{ row }"><span class="tracking-cell" :title="bomTimingText(row)">{{ formatTime(row.bom_created_at) }}</span></template></ElTableColumn>
+            <ElTableColumn prop="task_number" label="生产订单号" width="190"><template #default="{ row }"><div class="tracking-order-info" data-testid="coverage-order-info"><span class="tracking-cell tracking-strong" :title="row.task_number">{{ row.task_number }}</span><span class="tracking-cell" :title="row.product_name || '产品待核对'">{{ row.product_name || '产品待核对' }}</span><span class="tracking-cell tracking-order-time" :title="bomTimingText(row)">BOM创建：{{ formatTime(row.bom_created_at) }}</span></div></template></ElTableColumn>
             <ElTableColumn label="订单交期" width="112" show-overflow-tooltip><template #default="{ row }"><span v-if="row.order_delivery_date" class="tracking-cell">{{ row.order_delivery_date }}</span><ElTag v-else type="warning" effect="dark" disable-transitions class="tracking-risk-tag" title="订单交期未填写，需核对补充" data-testid="coverage-order-date-missing">缺交期</ElTag></template></ElTableColumn>
             <ElTableColumn label="品名" min-width="150"><template #default="{ row }"><span class="tracking-cell" tabindex="0" data-testid="coverage-material-name" :aria-label="`查看材料属性：${row.material_name || '材料待核对'}`" @focus="focusMaterialAttributes(row, $event)" @blur="hideMaterialAttributes" @keydown.esc="hideMaterialAttributes">{{ row.material_name || '材料待核对' }}</span></template></ElTableColumn>
             <ElTableColumn label="规格" width="110"><template #default="{ row }"><span class="tracking-cell" tabindex="0" data-testid="coverage-specification" :aria-label="`查看材料属性：${row.material_name || '材料待核对'}`" @focus="focusMaterialAttributes(row, $event)" @blur="hideMaterialAttributes" @keydown.esc="hideMaterialAttributes">{{ row.specification || '—' }}</span></template></ElTableColumn>
@@ -401,6 +402,8 @@ onBeforeUnmount(() => { disposed = true; requestVersion++; requestController?.ab
 .material-attribute-tooltip span { color: var(--erp-color-text-secondary); min-width: 42px; }
 .tracking-cell { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tracking-strong { font-weight: 600; }
+.tracking-order-info { display: flex; flex-direction: column; min-width: 0; line-height: 20px; }
+.tracking-order-time { color: var(--erp-color-text-secondary); font-size: 12px; }
 .tracking-number { font-variant-numeric: tabular-nums; }
 .risk-danger { color: var(--erp-color-danger); font-weight: 500; }
 .tracking-risk-tag { max-width: 100%; vertical-align: middle; font-weight: 600; }

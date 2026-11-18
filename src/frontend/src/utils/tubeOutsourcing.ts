@@ -1,4 +1,5 @@
 import type { TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { TubeReceiptPreview } from '@/types/tubeReceipts'
 import type { ProcessingMaterialPair } from '@/types/processingMaterial'
 
 export function tubeMaterialColumn(row: ProcessingMaterialPair & { thickness?: string; spray_color?: string }, key: 'shape' | 'thickness' | 'spray_color'): string {
@@ -17,6 +18,11 @@ export const tubeSourceLabels: Record<TubeSourceKind, string> = {
 }
 export const isCuttingSource = (source: string | undefined) => ['PUBLIC_CUTTING', 'SEWING', 'CUTTING', 'PUBLIC_PIECE', 'PUBLIC_PART'].includes(source || '')
 export const isDirectSource = (source: string | undefined) => ['METAL', 'SEWING', 'CUTTING'].includes(source || '')
+
+export function defaultOutsourcingReceiptWarehouse(source: TubeSourceKind, warehouses: TubeReceiptPreview['warehouses']) {
+  const warehouseName = isCuttingSource(source) ? '成品布面仓' : '管材喷塑仓'
+  return warehouses.find(warehouse => warehouse.name === warehouseName)?.id
+}
 
 export function wholeTubeQuantity(value: string): number | null {
   const text = value.trim()

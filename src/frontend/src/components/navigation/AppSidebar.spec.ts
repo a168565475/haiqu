@@ -43,7 +43,7 @@ const secondaryIconKeys: Record<string, string[]> = {
   'production-management': ['production-tasks', 'boms'],
   'procurement-management': ['purchase-orders', 'purchase-tracking', 'purchase-alerts', 'purchase-return-records'],
   'workshop-management': ['workshop-scheduling', 'workshop-internal-plan', 'workshop-outsourcing', 'wage-schemes', 'work-report-days', 'workshop-configuration'],
-  'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'warehouse-outsourcing'],
+  'warehouse-management': ['finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing'],
   'employee-management': ['employee-list', 'attendance'],
   boards: boardEntries.map(([name]) => name),
 }
@@ -51,7 +51,7 @@ const secondaryIconKeys: Record<string, string[]> = {
 const routeNames = ['home', 'manager-workbench', 'sales-workbench', 'production-workbench', 'production-overview', 'workshop-workbench', 'customers', 'complaints', 'inquiries', 'quotations', 'sales-orders', 'tasks',
   'samples', 'sample-inventory', 'products', 'raw-materials', 'material-catalog', 'product-catalog', 'production-tasks', 'boms', 'purchase-orders', 'purchase-tracking', 'purchase-alerts',
   'purchase-inbounds', 'purchase-returns', 'purchase-return-records', 'workshop-configuration', 'workshop-scheduling', 'workshop-metalworking-plan',
-  'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
+  'workshop-outsourcing', 'warehouse-outsourcing', 'material-issues', 'semi-receipt-records', 'wage-schemes', 'work-report-days', 'finished-goods-inventory',
   'material-inventory', 'material-transfers', 'material-inbound-records', 'material-inbound-details', 'employee-list', 'wecom-attendance', 'finance-accounts', 'finance-subjects', 'finance-statements', 'finance-purchase-payables', 'finance-receipts', ...settingsEntries.map(([name]) => name),
   ...boardEntries.map(([name]) => name)]
 let wrapper: VueWrapper
@@ -200,7 +200,7 @@ describe('全局悬停侧栏', () => {
     await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().find(`[data-menu-key="${missingKey}"]`).exists()).toBe(false)
     expect(panel().findAll('a, button, [tabindex]').map(item => item.attributes('data-menu-key'))).toEqual([
-      'finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'warehouse-outsourcing',
+      'finished-goods-inventory', 'material-inventory', 'material-transfers', 'purchase-inbounds', 'purchase-returns', 'material-issues', 'semi-receipt-records', 'warehouse-outsourcing',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
     const plate = panel().get('[data-sidebar-hover-plate]')
@@ -463,13 +463,16 @@ describe('全局悬停侧栏', () => {
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('workshop-scheduling')
   })
 
-  it('仓库集中显示库存、材料收发、采购入库、退货明细和生产领料', async () => {
-    await setup()
+  it('仓库菜单中车间领料的下一项可直接打开车间入库记录', async () => {
+    const { router } = await setup()
     await group('warehouse').trigger('keydown', { key: 'ArrowRight' })
     expect(panel().findAll('.app-sidebar__flyout-label').map(item => item.text())).toEqual([
-      '成品库存', '材料库存', '材料收发', '采购入库', '退货明细', '生产领料', '委外管理',
+      '成品库存', '材料库存', '材料收发', '采购入库', '退货明细', '车间领料', '车间入库', '委外管理',
     ])
     expect(document.activeElement?.getAttribute('data-menu-key')).toBe('finished-goods-inventory')
+    await panel().get('[data-menu-key="semi-receipt-records"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('semi-receipt-records')
   })
 
   it('只有材料收发记录查看权限时不能进入材料收发编辑页', async () => {

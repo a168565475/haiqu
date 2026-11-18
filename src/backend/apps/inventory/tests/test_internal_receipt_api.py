@@ -210,15 +210,24 @@ class InternalReceiptApiTests(PublicStockFixture, TestCase):
         self.assertEqual(PublicStockMovement.objects.filter(source_type='INTERNAL_SEMI_RECEIPT').count(), 1)
 
     def test_records_and_lazy_internal_source_details(self):
-        confirmed = self.confirm_receipt(self.receive())
+        submitted = self.receive()
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        pending = self.client.get(self.url).data['data']['items'][0]
+        self.assertEqual(pending['source_display'], self.workshop.name)
+        self.assertEqual(pending['status'], 'PENDING')
+        self.assertEqual(pending['submitted_by'], self.employee.display_name)
+        confirmed = self.confirm_receipt(submitted)
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code,200,response.data)
         row = response.data['data']['items'][0]
-        self.assertEqual(row['source_display'],'厂内入库')
+        self.assertEqual(row['source_display'], self.workshop.name)
+        self.assertEqual(row['submitted_by'], self.employee.display_name)
+        self.assertEqual(row['actor'], self.reviewer_employee.display_name)
         self.assertNotIn('source_detail',row)
         detail = self.client.get(self.url+row['id']+'/')
         self.assertEqual(detail.status_code,200,detail.data)
+        self.assertEqual(detail.data['data']['source_display'], self.workshop.name)
         self.assertEqual(Decimal(detail.data['data']['source_detail']['received_after']),100)
 
     def test_rejects_cutting_and_missing_permission(self):

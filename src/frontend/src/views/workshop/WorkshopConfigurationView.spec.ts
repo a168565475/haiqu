@@ -46,4 +46,16 @@ describe('生产车间配置入口', () => {
     })
     expect(wrapper.text()).not.toContain('导入 Excel')
   })
+
+  it.each([
+    ['operations', '80vw'],
+    ['crafts', undefined],
+    ['employees', undefined],
+  ])('仅工序管理入口传入新增弹窗宽度（%s）', (panel, width) => {
+    routerState.route.query = { panel }
+    const wrapper = shallowMount(WorkshopConfigurationView, {
+      global: { renderStubDefaultSlot: true, stubs: { ElAlert: true, ElTag: true } },
+    })
+    expect(wrapper.getComponent({ name: 'WorkshopConfigManager' }).props('createDialogWidth')).toBe(width)
+  })
 })

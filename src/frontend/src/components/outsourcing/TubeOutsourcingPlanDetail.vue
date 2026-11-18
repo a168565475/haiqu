@@ -11,9 +11,9 @@ import ProcessingMaterialDetails from '@/components/inventory/ProcessingMaterial
 import ComponentSourceMaterials from './ComponentSourceMaterials.vue'
 import { correctTubePlanRecord, dispatchTubePlan, fetchTubeOrder, fetchTubeSource, findTubePlanRecordCorrection, receiveTubePlan, updateTubePlanQuantity } from '@/api/tubeOutsourcing'
 import { fetchTubeReceiptPreview } from '@/api/tubeReceipts'
-import type { TubeDetailLine, TubeOrderDetail, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
+import type { TubeDetailLine, TubeOrderDetail, TubePieceSource, TubePlanPendingAction, TubePlanRecordCorrectionDraft, TubeSourceContext, TubeSourceKind, TubeSourceRow } from '@/types/tubeOutsourcing'
 import type { TubeReceiptPreview } from '@/types/tubeReceipts'
-import { isCuttingSource, isDirectSource, tubeMaterialColumn, tubeQuantityError, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
+import { defaultOutsourcingReceiptWarehouse, isCuttingSource, isDirectSource, tubeMaterialColumn, tubeQuantityError, wholeTubeQuantity } from '@/utils/tubeOutsourcing'
 import { formatOutsourcingMoney, outsourcingLineAmount, outsourcingPriceError } from '@/utils/outsourcingPrices'
 import { createClientUuid } from '@/utils/clientUuid'
 import { componentSourceColumns, materialSpecificationValue, plannedMaterialSpecification } from '@/utils/componentSourceColumns'
@@ -261,6 +261,11 @@ async function changeSource() {
   zone.value = direct.value ? '' : sourceZones.value[0]?.id || ''
   await loadSource()
 }
+function changeReceiptWarehouse(id: string) {
+  warehouseId.value = id
+  const defaultZone = receiptZones.value.length === 1 ? receiptZones.value[0]!.id : ''
+  entries.value.forEach(row => { row.zone = defaultZone })
+}
 async function open(kind: 'DISPATCH' | 'RECEIPT') {
   if (kind === 'DISPATCH' ? !canDispatch.value : !canReceive.value) return
   mode.value = kind; message.value = ''; date.value = today(); remark.value = ''; receiptPreview.value = null
@@ -282,7 +287,7 @@ async function open(kind: 'DISPATCH' | 'RECEIPT') {
       receiptPreview.value = preview
       if (preview.order.etag !== props.order.etag) emit('updated', preview.order)
       if (!isCurrent()) return
-      warehouseId.value = preview.warehouses[0]?.id || ''
+      changeReceiptWarehouse(defaultOutsourcingReceiptWarehouse(preview.order.source_kind, preview.warehouses) ?? preview.warehouses[0]?.id ?? '')
       if (!preview.can_receive) message.value = preview.blockers.join('；') || '当前不能办理入库。'
     } catch (cause) { if (isCancel(cause)) return; if (isCurrent() && !disposed && sequence === requestSequence) message.value = errorText(cause, '入库选项读取失败。') }
     finally { if (isCurrent() && !disposed && sequence === requestSequence) loading.value = false }
@@ -465,6 +470,24 @@ async function postPending() {
     }
   } finally { if (isCurrent()) saving.value = false }
 }
+function partQuantityError(basis: TubePieceSource | TubeSourceRow, name: string, requested: string) {
+  if (basis.blockers.length) return basis.blockers.join('；')
+  if (Number(requested) <= Number(basis.max_quantity)) return ''
+  if (source.value !== 'CUTTING' || !('parent_component_identity' in basis)) return `${name}：来源可用数量不足。`
+
+  const remaining = dispatchRemaining(basis.component_identity)
+  if (Number(requested) > remaining) {
+    return `${name}：本单已发 ${number(sent(basis.component_identity))} ${basis.unit}，剩余可发 ${number(remaining)} ${basis.unit}。`
+  }
+  const reason = `${name}：车间可直发 ${number(basis.max_quantity)} ${basis.unit}。`
+  const stock = basis.stock_zones?.find(item => Number(item.available_quantity) >= Number(requested))
+  const stockZone = stock && sourceZones.value.find(item => item.id === stock.zone_id)
+  if (stockZone) {
+    return `${reason}请在本单改选「裁片库存」，来源库区选「${stockZone.warehouse_name} / ${stockZone.name}」（可发 ${number(stock.available_quantity)} ${basis.unit}）。`
+  }
+  return `${reason}本次填写 ${number(requested)} ${basis.unit}，请核对数量。`
+}
+
 async function submit() {
   if (!storageAvailable()) return
   if (locked.value || !mode.value || (mode.value === 'DISPATCH' ? !canDispatch.value : !canReceive.value)) return
@@ -480,7 +503,7 @@ async function submit() {
       const basis = (inputMode.value ? context.value.inputs : context.value.rows)?.find(item => item.component_identity === row.component)
       if (!basis) { message.value = `${row.name}：当前来源没有该部件。`; return }
       const issue = partFlow.value
-        ? (basis.blockers.length ? basis.blockers.join('；') : Number(row.quantity) > Number(basis.max_quantity) ? `${row.name}：来源可用数量不足。` : '')
+        ? partQuantityError(basis, row.name, row.quantity)
         : tubeQuantityError(row.quantity, basis as TubeSourceRow, source.value === 'RAW_PIPE', unit.value)
       if (issue) { message.value = issue; return }
       if (Number(row.quantity) > dispatchRemaining(row.id)) { message.value = `${row.name}：本次最多可发 ${number(dispatchRemaining(row.id))} ${entryUnit(row.id)}，累计外发不能超过总单填写数量。`; return }
@@ -624,7 +647,7 @@ onBeforeUnmount(() => { disposed = true; requestSequence += 1 })
       <div class="plan-fields">
         <label class="form-field"><span>{{ mode === 'DISPATCH' ? '实际发出日期' : '入库日期' }}</span><ElDatePicker v-model="date" type="date" value-format="YYYY-MM-DD" :disabled="locked" :aria-label="mode === 'DISPATCH' ? '实际发出日期' : '入库日期'" /></label>
         <template v-if="mode === 'DISPATCH'"><label class="form-field"><span>实际材料来源</span><ElSelect v-model="source" :disabled="locked" aria-label="实际材料来源" @change="changeSource"><ElOption v-for="item in options?.source_kinds || []" :key="item.value" :value="item.value" :label="item.label" /></ElSelect></label><label v-if="!direct" class="form-field"><span>实际来源库区</span><ElSelect v-model="zone" :disabled="locked" aria-label="实际来源库区" @change="loadSource"><ElOption v-for="item in sourceZones" :key="item.id" :value="item.id" :label="`${item.warehouse_name} / ${item.name}`" /></ElSelect></label></template>
-        <label v-else class="form-field"><span>入库仓库</span><ElSelect v-model="warehouseId" :disabled="locked" aria-label="入库仓库" @change="entries.forEach(row => row.zone = '')"><ElOption v-for="item in receiptPreview?.warehouses || []" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
+        <label v-else class="form-field"><span>入库仓库</span><ElSelect :model-value="warehouseId" :disabled="locked" aria-label="入库仓库" @update:model-value="changeReceiptWarehouse"><ElOption v-for="item in receiptPreview?.warehouses || []" :key="item.id" :value="item.id" :label="item.name" /></ElSelect></label>
       </div>
       <div v-if="partFlow" v-loading="loading" class="tube-detail-table-wrap"><table class="tube-detail-table plan-entry-table plan-entry-table--parts">
         <thead><tr><th>{{ inputMode ? '部位 / 裁片' : '部位' }}</th><th>规格</th><th v-for="column in componentSourceColumns" :key="column.key" :style="{ width: `${column.width}px` }">{{ column.label }}</th><th>单位</th><th v-if="mode === 'DISPATCH'">可外发多少</th><th v-if="mode === 'DISPATCH'">已外发</th><th v-else>累计入库</th><th>本次数量</th><th>加工厂</th><th v-if="mode === 'RECEIPT'">入库库区</th></tr></thead>

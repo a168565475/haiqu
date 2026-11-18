@@ -88,6 +88,19 @@ it('旧车间表单上下文不能确认入库或重放旧请求', async () => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()); vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('D3整单喷塑回货', () => {
+  it.each([
+    ['PUBLIC_PIECE', '成品布面仓'],
+    ['PUBLIC_SEMI', '管材喷塑仓'],
+  ] as const)('旧外发单入库按 %s 默认选中 %s', async (sourceKind, warehouseName) => {
+    const preview = structuredClone(base)
+    preview.order.source_kind = sourceKind
+    preview.warehouses[1]!.name = warehouseName
+    vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValueOnce(preview)
+
+    const { vm } = await mountPage({ orderId: order.id, embedded: true })
+    expect(vm.warehouse).toBe('warehouse-2')
+    expect(vm.rows[0]!.zone).toBe('zone-2')
+  })
   it.each(['uid', 'generation', 'request', 'ready'] as const)('确认在%s边界后迟到成功不清记录、不提示', async boundary => {
     const { vm } = await mountPage(); receive(vm)
     let resolve!: (value: TubeReceipt) => void
@@ -248,10 +261,15 @@ describe('D3整单喷塑回货', () => {
     vm.rows[0]!.zone = 'zone-1'; vm.rows[0]!.reason = '  实收18，另2未回  '; vm.remark = '  存A区  '; await vm.finishReceipt()
     expect(vi.mocked(api.confirmTubeReceipt).mock.calls[0]![1]).toEqual(expect.objectContaining({ remark: '存A区', lines: [{ order_line_id: 'line-1', received_quantity: '18', shortage_reason: '实收18，另2未回', zone_id: 'zone-1' }] }))
   })
-  it('换仓须确认，仅清库区，数量原因备注保留', async () => {
-    const { vm } = await mountPage(); receive(vm, '18'); vm.remark = '备注保留'; vm.requestWarehouseChange('warehouse-2')
+  it('换到多库区仓库须确认和手选库区，数量原因备注保留', async () => {
+    const preview = structuredClone(base)
+    preview.zones.push({ id: 'zone-3', warehouse_id: 'warehouse-2', warehouse: '半成品暂存仓', name: 'C区' })
+    vi.mocked(api.fetchTubeReceiptPreview).mockResolvedValueOnce(preview)
+    const { wrapper, vm } = await mountPage(); receive(vm, '18'); vm.remark = '备注保留'; vm.requestWarehouseChange('warehouse-2')
     expect(vm.dialog).toBe('warehouse'); expect(vm.warehouse).toBe('warehouse-1'); vm.confirmWarehouseChange()
     expect(vm.warehouse).toBe('warehouse-2'); expect(vm.rows[0]).toEqual(expect.objectContaining({ received: '18', reason: '实物少回', zone: '' })); expect(vm.remark).toBe('备注保留')
+    await wrapper.get('input[aria-label="前腿管实收支数"]').setValue('17')
+    expect(vm.rows[0]!.zone).toBe('')
     await vm.finishReceipt(); expect(api.confirmTubeReceipt).not.toHaveBeenCalled(); vm.rows[0]!.zone = 'zone-2'; await vm.finishReceipt(); expect(api.confirmTubeReceipt).toHaveBeenCalledTimes(1)
   })
   it.each([400, 403, 404, 409, 412, 428])('明确拒绝%s刷新依据并保留本次输入，不伪造成功', async status => {

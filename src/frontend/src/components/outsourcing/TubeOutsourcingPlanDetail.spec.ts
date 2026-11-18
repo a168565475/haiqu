@@ -64,6 +64,7 @@ function typedColumnOrder(): TubeOrderDetail {
   return value
 }
 interface ViewModel {
+  warehouseId: string
   entries: Array<{ quantity: string; zone: string; factory: string }>
   materialEntries: Array<{ id: string; quantity: string; zone: string; factory: string }>
   mode: string; pending: TubePlanPendingAction | null; message: string; canReceive: boolean
@@ -250,6 +251,25 @@ describe('委外总单分次收发', () => {
     expect(api.dispatchTubePlan).not.toHaveBeenCalled()
     expect(api.receiveTubePlan).not.toHaveBeenCalled()
   })
+  it.each([
+    { stock: '200', sent: '0', message: '床面 / 面片：车间可直发 0 片。请在本单改选「裁片库存」，来源库区选「布面仓 / 四楼」（可发 200 片）。' },
+    { stock: '119', sent: '0', message: '床面 / 面片：车间可直发 0 片。本次填写 120 片，请核对数量。' },
+    { stock: '200', sent: '200', message: '床面 / 面片：本单已发 200 片，剩余可发 0 片。' },
+  ])('直发不足时按该裁片可用库存 $stock 和本单已发量 $sent 提示', async ({ stock, sent, message }) => {
+    const value = typedColumnOrder()
+    value.inputs![0]!.dispatched_quantity = sent
+    value.plan_options!.source_kinds.push({ value: 'PUBLIC_PIECE', label: '裁片库存' })
+    value.plan_options!.zones.push({ id: 'fabric-zone', warehouse_id: 'fabric', warehouse_name: '布面仓', name: '四楼', warehouse_type: 'SEMI_FINISHED' })
+    vi.mocked(api.fetchTubeSource).mockResolvedValue({ ...sourceContext, source_kind: 'CUTTING', inputs: [{
+      ...value.inputs![0]!, order_required: '200', max_quantity: '0', stock_quantity: null, blockers: [],
+      stock_zones: [{ zone_id: 'zone-1', available_quantity: '1' }, { zone_id: 'fabric-zone', available_quantity: stock }],
+    }] })
+    const { vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'dispatch' })
+    vm.entries[0]!.quantity = '120'
+    await vm.submit()
+    expect(vm.message).toBe(message)
+    expect(api.dispatchTubePlan).not.toHaveBeenCalled()
+  })
   it('混合单位裁片分组汇总并按行发出，部位回货保持单位和历史费用暂缓', async () => {
     const value = structuredClone(order)
     Object.assign(value, { part_flow: true, sewing_inputs: true, fees_deferred: true, source_kind: 'CUTTING', zone_id: null, planned_amount: null })
@@ -329,6 +349,34 @@ describe('委外总单分次收发', () => {
     vm.entries[0]!.quantity = '1500'; await vm.submit()
     expect(api.dispatchTubePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({ lines: [{ component_identity: 'part-1', quantity: '1500', factory_id: 'factory-1' }] }), 'v1')
     expect(wrapper.emitted('closed')).toHaveLength(1)
+  })
+  it.each([
+    ['CUTTING', '成品布面仓'],
+    ['METAL', '管材喷塑仓'],
+  ] as const)('列表外发入库按 %s 默认选中 %s', async (sourceKind, warehouseName) => {
+    const value = { ...structuredClone(order), source_kind: sourceKind }
+    vi.mocked(receipts.fetchTubeReceiptPreview).mockResolvedValueOnce({
+      order: value, etag: value.etag, can_receive: true, blockers: [], actor_name: '经办人', today: '2026-10-29',
+      warehouses: [{ id: 'other-warehouse', name: '半成品暂存仓' }, { id: 'default-warehouse', name: warehouseName }],
+      zones: [
+        { id: 'zone-1', warehouse_id: 'default-warehouse', warehouse: warehouseName, name: 'A区' },
+        { id: 'zone-2', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'B区' },
+        { id: 'zone-3', warehouse_id: 'other-warehouse', warehouse: '半成品暂存仓', name: 'C区' },
+      ], receipt: null,
+    })
+    const { wrapper, vm } = await mountPage(value, true, { actionOnly: true, entryAction: 'return' })
+    expect(vm.warehouseId).toBe('default-warehouse')
+    expect(vm.entries[0]!.zone).toBe('zone-1')
+
+    const warehouseSelect = wrapper.getComponent({ name: 'ElSelect' })
+    warehouseSelect.vm.$emit('update:modelValue', 'other-warehouse')
+    await flushPromises()
+    expect(vm.warehouseId).toBe('other-warehouse')
+    expect(vm.entries[0]!.zone).toBe('')
+
+    warehouseSelect.vm.$emit('update:modelValue', 'default-warehouse')
+    await flushPromises()
+    expect(vm.entries[0]!.zone).toBe('zone-1')
   })
   it('列表外发入库保留实收记录、材料属性和只读计划厂家，不显示可入上限', async () => {
     const { wrapper, vm } = await mountPage(structuredClone(order), true, { actionOnly: true, entryAction: 'return' })

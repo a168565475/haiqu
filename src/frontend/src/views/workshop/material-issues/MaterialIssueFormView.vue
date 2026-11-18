@@ -315,7 +315,7 @@ onMounted(initialize)
       <div class="material-issue-scroll">
         <header class="form-titlebar">
           <div class="form-title-copy">
-            <h1>{{ editing ? '修改生产领料单' : '新增生产领料单' }}</h1>
+            <h1>{{ editing ? '修改车间领料单' : '新增车间领料单' }}</h1>
             <span v-if="planContextActive" class="plan-label">{{ planCategoryLabels[planCategory] }}</span>
           </div>
         </header>

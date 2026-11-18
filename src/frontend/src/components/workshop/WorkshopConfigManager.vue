@@ -31,6 +31,7 @@ import type {
 
 const props = defineProps<{
   kind: EditableResourceKind
+  createDialogWidth?: number | string
   initialWorkshop?: string
   initialCraftType?: CraftType
   initialCraft?: string
@@ -107,6 +108,7 @@ const selectedFormCraft = computed(() => crafts.value.find((item) => item.id ===
 const isMetalCraft = (craft: Craft | null | undefined) => (
   craft?.workshop_name === '金工车间'
 )
+const editorWidth = computed(() => editorMode.value === 'create' ? props.createDialogWidth ?? 900 : 900)
 const editorHeight = computed(() => ({ employees: 360, crafts: 670, operations: 700 })[props.kind])
 
 function apiErrorMessage(error: unknown, fallback: string): string {
@@ -523,7 +525,7 @@ onMounted(() => { void reloadAll() })
       </div>
     </template>
 
-    <AppWindowDialog v-model="editorVisible" :title="`${editorMode === 'create' ? '新增' : '编辑'}${metadata.title.replace('管理', '')}`" :width="900" :height="editorHeight" destroy-on-close class="workshop-editor-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :before-close="beforeEditorClose">
+    <AppWindowDialog v-model="editorVisible" :title="`${editorMode === 'create' ? '新增' : '编辑'}${metadata.title.replace('管理', '')}`" :width="editorWidth" :height="editorHeight" destroy-on-close class="workshop-editor-dialog" :close-on-click-modal="!saving" :close-on-press-escape="!saving" :before-close="beforeEditorClose">
       <ElForm label-position="top" class="editor-form">
         <template v-if="kind === 'employees'">
           <ElFormItem label="车间" required>

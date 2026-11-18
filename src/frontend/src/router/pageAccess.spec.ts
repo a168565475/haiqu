@@ -16,6 +16,19 @@ function followedReader(permissions: string[]): PageAccessReader {
 }
 
 describe('岗位菜单与独立页面权限', () => {
+  it('车间入库使用半成品入库查看权，跟单角色保留关联记录入口', () => {
+    const key = 'semi-receipt-records'
+    const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === key)!
+    const permission = 'inventory.view_internalsemifinishedreceipt'
+    for (const [auth, showMenu, openRecords] of [
+      [reader(['inventory.view_materialinbound']), false, false],
+      [reader([permission]), true, true],
+      [followedReader([permission]), false, true],
+    ] as const) {
+      expect(canOpenMenu(item, auth)).toBe(showMenu)
+      expect(canOpenPage(key, auth)).toBe(openRecords)
+    }
+  })
   it('材料收发使用收货权限，收发记录查看权限独立保留', () => {
     const item = sidebarMenuItems.flatMap(group => group.children ?? [group]).find(item => item.key === 'material-transfers')!
     expect(item?.label).toBe('材料收发')

@@ -75,12 +75,12 @@ describe('采购入库使用当前应用的路由', () => {
     } finally { wrapper.unmount() }
   })
 
-  it('采购入库、退货明细和生产领料保留旧路径并使用仓库上下文', async () => {
+  it('采购入库、退货明细和车间领料保留旧路径并使用仓库上下文', async () => {
     const { router: actualRouter } = await vi.importActual<typeof import('@/router')>('@/router')
     const expected = [
       ['purchase-inbounds', '/purchase-inbound', '采购入库'],
       ['purchase-returns', '/purchase-returns', '退货明细'],
-      ['material-issues', '/workshop/material-issues', '生产领料'],
+      ['material-issues', '/workshop/material-issues', '车间领料'],
     ] as const
     for (const [name, path, label] of expected) {
       const route = actualRouter.getRoutes().find(item => item.name === name)

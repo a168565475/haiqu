@@ -41,12 +41,15 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 
 describe('采购跟踪与采购提醒独立列表', () => {
-  it('到货跟踪按采购页面骨架渲染，所有信息单列且不展开', async () => {
+  it('到货跟踪将产品收拢到生产订单号下，其他信息独立列且不展开', async () => {
     await open()
     expect(wrapper!.get('h1').text()).toBe('采购跟踪')
     expect(wrapper!.find('[data-tab]').exists()).toBe(false)
-    const headers = wrapper!.get('thead').text()
-    for (const label of ['生产订单号', '产品', '订单号', '供应商', '材料', '规格', '采购数量', '实际收货', '合格数量', '待检数量', '未到数量', '采购交期', '交期状态']) expect(headers).toContain(label)
+    const headers = wrapper!.findAll('thead th').map(header => header.text())
+    for (const label of ['生产订单号', '供应商', '材料', '规格', '采购数量', '实际收货', '合格数量', '待检数量', '未到数量', '采购交期', '交期状态']) expect(headers).toContain(label)
+    expect(headers).not.toContain('产品')
+    expect(headers).not.toContain('订单号')
+    expect(wrapper!.get('[data-testid="arrival-order-info"]').findAll('.tracking-cell').map(cell => cell.text())).toEqual(['SC-1', '测试产品'])
     expect(wrapper!.get('tbody').text()).toContain('360 米')
     expect(wrapper!.get('tbody').text()).toContain('280 米')
     expect(wrapper!.get('tbody').text()).toContain('80 米')
@@ -55,7 +58,7 @@ describe('采购跟踪与采购提醒独立列表', () => {
     expect(wrapper!.find('details, tbody [aria-expanded], .el-drawer').exists()).toBe(false)
   })
 
-  it('跟踪生产订单号加粗并跨采购单连续合并，保留订单和供应商合并', async () => {
+  it('跟踪同生产订单同产品跨采购单连续合并，供应商仍按采购单分组合并', async () => {
     vi.mocked(api.fetchPurchaseTrackingArrivals).mockResolvedValue(page([
       arrival(),
       arrival({ row_key: 'arrival:line-2', purchase_order_line_id: 'line-2' }),
@@ -68,14 +71,29 @@ describe('采购跟踪与采购提醒独立列表', () => {
     const firstCells = rows[0]!.findAll('td')
     expect(firstCells[0]!.get('.tracking-strong').text()).toBe('SC-1')
     expect(firstCells[0]!.attributes('rowspan')).toBe('3')
-    expect(firstCells[2]!.attributes('rowspan')).toBe('2')
-    expect(firstCells[3]!.attributes('rowspan')).toBe('2')
+    expect(firstCells[1]!.attributes('rowspan')).toBe('2')
     expect(rows[1]!.text()).not.toContain('SC-1')
     expect(rows[2]!.text()).not.toContain('SC-1')
-    expect(rows[2]!.text()).toContain('CG-2')
+    expect(rows[2]!.text()).toContain('供应商二')
+    expect(wrapper!.get('tbody').text()).not.toContain('CG-2')
     expect(rows[3]!.findAll('td')[0]!.attributes('rowspan')).toBe('1')
     expect(rows[4]!.findAll('td')[0]!.attributes('rowspan')).toBe('1')
-    expect(rows[4]!.findAll('td')[0]!.text()).toBe('SC-1')
+    expect(rows[4]!.findAll('td')[0]!.get('.tracking-strong').text()).toBe('SC-1')
+  })
+
+  it.each([
+    { label: '不同产品ID', first: {}, second: { product_line_id: 'product-2' } },
+    { label: '产品名称不同', first: {}, second: { product_name: '另一产品' } },
+    { label: '缺少产品ID', first: { product_line_id: null }, second: { product_line_id: null } },
+  ] satisfies { label: string; first: Partial<PurchaseTrackingArrival>; second: Partial<PurchaseTrackingArrival> }[])('跟踪同订单$label时保留各行产品归属', async item => {
+    vi.mocked(api.fetchPurchaseTrackingArrivals).mockResolvedValue(page([
+      arrival(item.first), arrival({ row_key: 'arrival:line-2', ...item.second }),
+    ]))
+    await open()
+    const cells = wrapper!.findAll('.el-table__body tbody tr').map(row => row.findAll('td')[0]!)
+    expect(cells.map(cell => cell.attributes('rowspan'))).toEqual(['1', '1'])
+    expect(cells.map(cell => cell.get('.tracking-strong').text())).toEqual(['SC-1', 'SC-1'])
+    expect(cells[1]!.get('[data-testid="arrival-order-info"]').text()).toContain(item.second.product_name || '测试产品')
   })
 
   it('规格悬停展示采购冻结属性，正文保持单行规格', async () => {
@@ -276,23 +294,43 @@ describe('采购跟踪与采购提醒独立列表', () => {
     expect(wrapper!.findComponent(PurchaseTrackingPolicyDialog).props('modelValue')).toBe(false)
   })
 
-  it('采购提醒按任务合并单元格，不跨任务或跨分页合并', async () => {
+  it('采购提醒按同任务同产品同BOM时间合并当前页相邻行', async () => {
     vi.mocked(api.fetchPurchaseTrackingCoverage).mockResolvedValue(page([
       coverage(),
-      coverage({ row_key: 'coverage:product-2:line-2', product_line_id: 'product-2' }),
+      coverage({ row_key: 'coverage:product-1:line-2' }),
       coverage({ row_key: 'coverage:other:line-3', production_task_id: 'task-2', task_number: 'SC-2' }),
-    ], 21))
+    ], 23, 2))
     await open('/purchase-alerts?page=2')
     const rows = wrapper!.findAll('.el-table__body tbody tr')
     expect(wrapper!.get('thead').text()).toContain('生产订单号')
     expect(rows[0]!.findAll('td')[0]!.get('.tracking-strong').text()).toBe('SC-1')
     expect(rows[0]!.findAll('td')[0]!.attributes('rowspan')).toBe('2')
     expect(rows[1]!.text()).not.toContain('SC-1')
-    expect(rows[2]!.findAll('td')[0]!.text()).toBe('SC-2')
+    expect(rows[2]!.findAll('td')[0]!.get('.tracking-strong').text()).toBe('SC-2')
     expect(rows[2]!.findAll('td')[0]!.attributes('rowspan')).toBe('1')
   })
 
-  it('品名悬停复用采购属性，BOM创建时间和订单交期独立展示', async () => {
+  it.each([
+    { label: '不同产品ID', first: {}, second: { product_line_id: 'product-2' } },
+    { label: '产品名称不同', first: {}, second: { product_name: '另一产品' } },
+    { label: 'BOM创建时间不同', first: { bom_created_at: '2026-11-01T09:20:30+08:00' }, second: { bom_created_at: '2026-11-02T10:30:40+08:00' } },
+    { label: '缺少产品ID', first: { product_line_id: null }, second: { product_line_id: null } },
+  ] satisfies { label: string; first: Partial<PurchaseTrackingCoverage>; second: Partial<PurchaseTrackingCoverage> }[])('采购提醒同订单$label时不隐藏产品或BOM信息', async item => {
+    vi.mocked(api.fetchPurchaseTrackingCoverage).mockResolvedValue(page([
+      coverage(item.first), coverage({ row_key: 'coverage:product-1:line-2', ...item.second }),
+    ]))
+    await open('/purchase-alerts')
+    const cells = wrapper!.findAll('.el-table__body tbody tr').map(row => row.findAll('td')[0]!)
+    expect(cells.map(cell => cell.attributes('rowspan'))).toEqual(['1', '1'])
+    expect(cells.map(cell => cell.get('.tracking-strong').text())).toEqual(['SC-1', 'SC-1'])
+    expect(cells[1]!.get('[data-testid="coverage-order-info"]').text()).toContain(item.second.product_name || '测试产品')
+    if (item.second.bom_created_at) {
+      expect(cells[0]!.text()).toContain('2026-11-01 09:20')
+      expect(cells[1]!.text()).toContain('2026-11-02 10:30')
+    }
+  })
+
+  it('品名悬停复用采购属性，BOM创建时间收拢首列且订单交期独立展示', async () => {
     vi.mocked(api.fetchPurchaseTrackingCoverage).mockResolvedValue(page([coverage({
       bom_created_at: '2026-11-01T09:20:30+08:00', order_delivery_date: '2026-12-15',
       material_attributes_snapshot: { fields: [{ key: 'thickness', label: '厚度', value: '1.5 mm' }, { key: 'material', label: '材质', value: 'Q235' }] },
@@ -301,10 +339,12 @@ describe('采购跟踪与采购提醒独立列表', () => {
     const headers = wrapper!.get('thead').text()
     expect(headers).toContain('品名')
     expect(headers).not.toContain('BOM材料')
-    expect(headers).toContain('BOM创建时间')
+    expect(headers).not.toContain('产品')
+    expect(headers).not.toContain('BOM创建时间')
     expect(headers).toContain('订单交期')
     expect(wrapper!.get('tbody').text()).toContain('2026-11-01')
     expect(wrapper!.get('tbody').text()).toContain('2026-12-15')
+    expect(wrapper!.get('[data-testid="coverage-order-info"]').findAll('.tracking-cell').map(cell => cell.text())).toEqual(['SC-1', '测试产品', 'BOM创建：2026-11-01 09:20'])
     const tooltip = wrapper!.findAllComponents(ElTooltip).find(item => item.props('virtualTriggering'))!
     expect(tooltip.exists()).toBe(true)
     await wrapper!.findAll('tbody td').find(cell => cell.find('[data-testid="coverage-material-name"]').exists())!.trigger('mouseenter')
@@ -389,13 +429,15 @@ describe('采购跟踪与采购提醒独立列表', () => {
     expect(wrapper!.get('h1').text()).toBe('采购提醒')
   })
 
-  it('交期页按订单号、供应商和交期保持独立列', async () => {
+  it('交期页隐藏采购订单号，供应商和交期保持独立列', async () => {
     await open()
     const row = wrapper!.get('tbody tr')
     const cells = row.findAll('td').map(cell => cell.text())
-    expect(cells[2]).toBe('CG-1')
-    expect(cells[3]).toBe('测试供应商')
-    expect(cells[13]).toBe('2026-11-03')
+    const headers = wrapper!.findAll('thead th').map(header => header.text())
+    expect(headers).not.toContain('订单号')
+    expect(row.text()).not.toContain('CG-1')
+    expect(cells[headers.indexOf('供应商')]).toBe('测试供应商')
+    expect(cells[headers.indexOf('采购交期')]).toBe('2026-11-03')
   })
 
   it('筛选和分页都提交到接口，不在页面内假筛选', async () => {

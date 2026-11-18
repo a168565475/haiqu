@@ -242,10 +242,20 @@ describe('工序配置自动编号与快捷筛选', () => {
     })
   })
 
+  it('只在新增时使用入口传入的弹窗宽度', async () => {
+    const wrapper = await renderOperations({ createDialogWidth: '80vw' })
+    await edit(wrapper)
+    expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('900')
+    await button(wrapper, '取消').trigger('click')
+    await button(wrapper, '新增工序').trigger('click')
+    expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('80vw')
+  })
+
   it('按当前车间、厂内类型和工艺初始化筛选，并在保存后发出 saved 事件', async () => {
     const wrapper = await renderOperations({ initialWorkshop: 'workshop-1', initialCraftType: 'INTERNAL', initialCraft: 'craft-1' })
     expect(api.list.mock.calls.some(([kind, query]) => kind === 'operations' && query.workshop === 'workshop-1' && query.craft_type === 'INTERNAL' && query.craft === 'craft-1')).toBe(true)
     await button(wrapper, '新增工序').trigger('click')
+    expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('900')
     await setSelect(wrapper, '工艺', 'craft-1')
     field(wrapper, '工序名称').getComponent(ElInput).vm.$emit('update:modelValue', '新增冲孔')
     await button(wrapper, '保存').trigger('click'); await flushPromises()

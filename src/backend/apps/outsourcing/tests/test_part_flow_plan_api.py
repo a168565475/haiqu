@@ -9,7 +9,7 @@ from rest_framework.test import APITestCase
 
 from apps.access_control.tests.test_resource_scopes import ScopedActorMixin
 from apps.boms.models import BomLine, BomSection
-from apps.inventory.models import PublicStockMovement
+from apps.inventory.models import PublicStockMovement, WarehouseZone
 from apps.inventory.part_flow_quantities import first_output_available
 from apps.inventory.part_flow_receipts import component_stock_craft
 from apps.inventory.public_stock_identity import build_semi_finished_identity
@@ -133,10 +133,30 @@ class PartFlowPlanApiTests(ScopedActorMixin, D1Fixture, APITestCase):
         order = self.create_part_plan()
         order, _ = self.dispatch_part(order, 20)
         self.assertEqual(order['dispatch_records'][0]['lines'][0]['quantity'], '20')
+        self.assertTrue(all('stock_zones' not in row for row in self.part_context(order=order)['inputs']))
         response = self.client.get(BASE + 'source-context/', {
             'schedule_product_id': str(self.schedule_product.pk), 'source_kind': 'PUBLIC_PIECE',
             'craft_id': str(self.external_sewing.pk), 'zone_id': str(self.semi_zone.pk), 'is_plan': 'true'})
         self.assertEqual(response.status_code, 403, response.data)
+
+    def test_direct_shortage_shows_current_stock_zones_without_changing_dispatch_revision(self):
+        order, _ = self.dispatch_part(self.create_part_plan(), 20)
+        before = self.part_context(order=order)
+        piece = self.parts[0]
+        identity = build_semi_finished_identity(bom_line=piece, completed_craft=component_stock_craft('CUTTING'), unit=self.piece_unit)
+        other_zone = WarehouseZone.objects.create(warehouse=self.semi_zone.warehouse, zone_name='备用裁片区')
+        for zone, quantity in [(self.semi_zone, 30), (other_zone, 5)]:
+            credit_public_stock(identity=identity, zone=zone, quantity=quantity,
+                source_type='TEST_PART_OPENING', source_id=uuid.uuid4(), source_line_id=uuid.uuid4(), actor_employee=self.employee)
+        context = self.part_context(order=order)
+        self.assertEqual(context['source_revision'], before['source_revision'])
+        row = next(row for row in context['inputs'] if row['bom_line_id'] == str(piece.pk))
+        self.assertEqual({stock['zone_id']: Decimal(stock['available_quantity']) for stock in row['stock_zones']},
+            {str(self.semi_zone.pk): 30, str(other_zone.pk): 5})
+        stock_row = next(row for row in self.part_context('PUBLIC_PIECE', order=order)['inputs']
+            if row['bom_line_id'] == str(piece.pk))
+        self.assertEqual(Decimal(stock_row['max_quantity']), 30)
+        self.assertTrue(all('stock_zones' not in row for row in context['inputs'] if row['bom_line_id'] != str(piece.pk)))
 
     def test_partial_direct_pieces_and_cotton_return_only_parts_without_receipt_cap(self):
         context = self.part_context()

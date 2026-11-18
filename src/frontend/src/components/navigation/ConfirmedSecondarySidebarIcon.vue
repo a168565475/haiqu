@@ -1,5 +1,12 @@
 <script setup lang="ts">
 defineProps<{ name: string }>()
+
+const inboundIconTitles: Record<string, string> = {
+  'purchase-inbounds': '采购入库',
+  'material-inbound-details': '一般入库',
+  'material-transfers': '材料收发',
+  'semi-receipt-records': '车间入库',
+}
 </script>
 
 <template>
@@ -203,8 +210,8 @@ defineProps<{ name: string }>()
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M13.5 5h3m-3 2h2"/></g>
     </g>
 
-    <g v-else-if="name === 'purchase-inbounds' || name === 'material-inbound-details' || name === 'material-transfers'">
-      <title>{{ name === 'material-inbound-details' ? '一般入库' : name === 'material-transfers' ? '材料收发' : '采购入库' }}</title>
+    <g v-else-if="inboundIconTitles[name]">
+      <title>{{ inboundIconTitles[name] }}</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M3 11v10h18V11l-4-4h-2M3 11l4-4h2"/></g>
       <path d="M3 14h6m6 0h6"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M12 2v13m-3-3 3 3 3-3"/></g>
@@ -240,7 +247,7 @@ defineProps<{ name: string }>()
     </g>
 
     <g v-else-if="name === 'material-issues'">
-      <title>生产领料</title>
+      <title>车间领料</title>
       <g style="fill:var(--icon-muted,#e7e9e4)"><path d="M3 13V3h4v10m2 0V5h4v8M2 13h12v8H2Z"/></g>
       <path d="M5 16v2m4-2v2"/>
       <g class="accent part" style="stroke:var(--icon-accent,#c84e28)"><path d="M16 16h6m-3-3 3 3-3 3"/></g>

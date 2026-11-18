@@ -17,6 +17,7 @@ const wrappers: ReturnType<typeof mount>[] = []
 async function render() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/inventory/material-transfers', name: 'material-transfers', component: MaterialInboundDetailView },
+    { path: '/inventory/material-transfer-records', name: 'material-inbound-records', component: { template: '<div />' } },
   ] })
   await router.push({ name: 'material-transfers' })
   const wrapper = mount(MaterialInboundDetailView, { global: { plugins: [router, ElementPlus] } })
@@ -33,6 +34,16 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('材料收发页面', () => {
+  it('有查看权限时通过页头按钮打开收发记录', async () => {
+    identity.permissions.push('inventory.view_material_receipt')
+    const { wrapper, router } = await render()
+    const records = wrapper.get('header.transfer-header button')
+    expect(records.text()).toBe('收发记录')
+    await records.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('material-inbound-records')
+  })
+
   it('直接展示筛选区和无弹窗的入库/出库共用表格', async () => {
     const { wrapper } = await render()
     expect(wrapper.get('h1').text()).toBe('材料收发')
@@ -44,6 +55,9 @@ describe('材料收发页面', () => {
     expect(wrapper.findAll('th').map(item => item.text())).toContain('入库数量')
     expect(wrapper.findAll('th').map(item => item.text())).toContain('品名')
     expect(wrapper.find('[aria-label="操作人"]').exists()).toBe(true)
+    expect(wrapper.find('header.transfer-header button').exists()).toBe(false)
+    expect(wrapper.find('.table-footer').exists()).toBe(false)
+    expect(wrapper.get('footer.transfer-footer').findAll('button').map(button => button.text())).toEqual(['保存入库'])
   })
 
   it('可以添加行和复制行', async () => {

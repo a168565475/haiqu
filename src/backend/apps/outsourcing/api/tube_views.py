@@ -123,6 +123,11 @@ class TubeOutsourcingOrderViewSet(viewsets.GenericViewSet):
             from ..plan_services import plan_source_context
             context = plan_source_context(schedule_product=product, source_kind=data['source_kind'],
                 zone=zone, craft=craft, for_plan=bool(data.get('is_plan')))
+            if data.get('plan_id') and data['source_kind'] == 'CUTTING' and context.get('sewing_inputs'):
+                from ..part_flow_sources import add_cut_piece_stock_zones
+                from ..source_access import allowed_source_kinds
+                if 'PUBLIC_PIECE' in allowed_source_kinds(request, permission):
+                    add_cut_piece_stock_zones(product, plan, context['inputs'])
         elif data['source_kind'] in CUTTING_SOURCES:
             from ..cutting_sources import cutting_source_context
             context = cutting_source_context(schedule_product=product, source_kind=data['source_kind'], zone=zone, craft=craft)

@@ -6,7 +6,8 @@ import * as api from '@/api/internalReceipts'
 import type { SemiReceiptRecord } from '@/types/internalReceipt'
 import SemiReceiptRecordsView from './SemiReceiptRecordsView.vue'
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ name: 'semi-receipt-records', query: {} }), useRouter: () => ({ push: vi.fn() }) }))
+const route = vi.hoisted(() => ({ name: 'semi-receipt-records', query: {} }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: vi.fn() }) }))
 const confirm = vi.hoisted(() => vi.fn())
 const permissions = vi.hoisted(() => new Set<string>())
 vi.mock('@/api/internalReceipts', () => ({ fetchSemiReceiptRecords: vi.fn(), fetchSemiReceiptRecord: vi.fn(), confirmInternalReceiptRecord: confirm, deleteInternalReceiptRecord: vi.fn() }))
@@ -24,11 +25,73 @@ const record: SemiReceiptRecord = {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  route.name = 'semi-receipt-records'
   permissions.clear(); permissions.add('inventory.confirm_internalsemifinishedreceipt')
   vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
   vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [record], total: 1 })
 })
 afterEach(() => vi.restoreAllMocks())
+
+function mountRecords() {
+  return shallowMount(SemiReceiptRecordsView, {
+    global: {
+      plugins: [ElementPlus],
+      renderStubDefaultSlot: true,
+      stubs: {
+        ElDropdown: { template: '<div><slot/><slot name="dropdown"/></div>' },
+        AppWindowDialog: { props: ['modelValue'], template: '<section v-if="modelValue" role="dialog"><slot/><slot name="footer"/></section>' },
+      },
+    },
+  })
+}
+
+it('车间入库显示原提交人，隐藏标注的列、头部附加项和底栏', async () => {
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [{ ...record, submitted_by: '车间提交人' }, { ...record, id: 'legacy' }], total: 2 })
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    const headers = wrapper.findAll('thead th').map(cell => cell.text())
+    expect(headers).toContain('提交人')
+    expect(headers).not.toContain('部位')
+    expect(headers).not.toContain('厚度')
+    const submitterIndex = headers.indexOf('提交人')
+    expect(wrapper.findAll('tbody tr').map(row => row.findAll('td')[submitterIndex]?.text())).toEqual(['车间提交人', '—'])
+    expect(wrapper.get('header').text()).toBe('车间入库')
+    expect(wrapper.find('footer').exists()).toBe(false)
+    expect(wrapper.find('.receipt-page-controls').exists()).toBe(false)
+    expect(wrapper.get('tbody .scroll-actions-cell').text()).toContain('更多')
+  } finally { wrapper.unmount() }
+})
+
+it('车间入库超过一页时可从筛选区翻到第二页', async () => {
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [record], total: 21 })
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    const pagination = wrapper.getComponent({ name: 'ElPagination' })
+    expect(wrapper.get('.erp-list-filter').find('.receipt-page-controls').exists()).toBe(true)
+    pagination.vm.$emit('update:current-page', 2)
+    pagination.vm.$emit('current-change', 2)
+    await flushPromises()
+    expect(api.fetchSemiReceiptRecords).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, page_size: 20 }))
+    expect(wrapper.find('footer').exists()).toBe(false)
+  } finally { wrapper.unmount() }
+})
+
+it('半成品出库沿用原列表与独立查看入口', async () => {
+  route.name = 'semi-outbound-records'
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(record)
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('半成品出库记录')
+    expect(wrapper.findAll('thead th').map(cell => cell.text())).toEqual(expect.arrayContaining(['部位', '厚度']))
+    expect(wrapper.get('tbody .receipt-link').text()).toBe('查看')
+    expect(wrapper.find('footer').exists()).toBe(true)
+    await wrapper.get('tbody .receipt-link').trigger('click')
+    expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('1180')
+  } finally { wrapper.unmount() }
+})
 
 it('待确认多部位单按单位汇总，并逐行展示各部位而非只展示首行', async () => {
   const pending: SemiReceiptRecord = { ...record, status: 'PENDING', quantity: '', unit: '',
@@ -38,11 +101,11 @@ it('待确认多部位单按单位汇总，并逐行展示各部位而非只展�
     ] }
   vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
   vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(pending)
-  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  const wrapper = mountRecords()
   try {
     await flushPromises()
     expect(wrapper.text()).toContain('2 个、3 件')
-    await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    await wrapper.get('[data-testid="view-semi-receipt"]').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('床面'); expect(wrapper.text()).toContain('外袋')
     expect(wrapper.text()).not.toContain('部位入库进度')
   } finally { wrapper.unmount() }
@@ -51,9 +114,9 @@ it('待确认多部位单按单位汇总，并逐行展示各部位而非只展�
 it('委外总单入库按本次实收展示支或套，不推算批次少回', async () => {
   const detail: SemiReceiptRecord = { ...record, source: 'EXTERNAL', source_detail: { source_type: 'TUBE_OUTSOURCING_RETURN', is_plan: true, source_number: 'WF-总单', receipt_number: 'RK-批次', received_quantity: '200', output_unit: '套' } }
   vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
-  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  const wrapper = mountRecords()
   try {
-    await flushPromises(); await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    await flushPromises(); await wrapper.get('[data-testid="view-semi-receipt"]').trigger('click'); await flushPromises()
     expect(wrapper.text()).toContain('委外总单入库')
     expect(wrapper.text()).toContain('WF-总单')
     expect(wrapper.text()).toContain('本次实收200 套')
@@ -68,9 +131,9 @@ it.each(['SEWING', 'PUBLIC_CUTTING'])('非总单裁片回货 %s 沿保存单位�
     dispatched_quantity: '120', received_quantity: '100', shortage_quantity: '20', output_unit: sourceKind === 'SEWING' ? '套' : undefined,
   } }
   vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
-  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+  const wrapper = mountRecords()
   try {
-    await flushPromises(); await wrapper.get('.receipt-link').trigger('click'); await flushPromises()
+    await flushPromises(); await wrapper.get('[data-testid="view-semi-receipt"]').trigger('click'); await flushPromises()
     const summary = wrapper.get('.receipt-detail-progress').text()
     expect(summary).toContain('实发数量120 套')
     expect(summary).toContain('实收数量100 套')
@@ -79,41 +142,69 @@ it.each(['SEWING', 'PUBLIC_CUTTING'])('非总单裁片回货 %s 沿保存单位�
   } finally { wrapper.unmount() }
 })
 
-describe('半成品入库记录原料投入展示', () => {
-  it.each([
-    [null, '不核算'],
-    ['12.5', '12.5 米'],
-    ['0', '0 米'],
-    [undefined, '—'],
-  ])('原料投入为 %s 时显示 %s，不把缺失核算伪装成零', async (inputQuantity, expected) => {
-    const detail = structuredClone(record)
-    if (inputQuantity === undefined) delete detail.source_detail!.input_quantity
-    else detail.source_detail!.input_quantity = inputQuantity
-    vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
-    try {
-      await flushPromises()
-      await wrapper.get('.receipt-link').trigger('click')
-      await flushPromises()
-      const input = wrapper.findAll('.receipt-detail-progress label').find(label => label.text().startsWith('本次对应原料投入'))!
-      expect(input.find('strong').text()).toBe(expected)
-      expect(input.text()).not.toContain('NaN')
-      expect(api.fetchSemiReceiptRecord).toHaveBeenCalledWith('record-1', 'IN')
-    } finally { wrapper.unmount() }
-  })
-})
-
-it('待入库记录显示确认操作并调用仓库确认接口', async () => {
-  const pending = { ...record, status: 'PENDING', stock_movement_id: null }
-  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 } as never)
-  confirm.mockResolvedValue({ receipt_id: pending.id, receipt_number: pending.receipt_number, status: 'CONFIRMED', replayed: false, record_ids: ['movement-1'] })
-  const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+it('已入库详情按单据的实际属性分列，数量取每条明细', async () => {
+  const detail: SemiReceiptRecord = { ...record, lines: [
+    { id: 'metal', unit: '支', quantity: '40000', stage: '金工完成',
+      attributes: { part_name: '上下管', category: '管材类', material: '铁', color: '', unit_name: '支',
+        tube_shape: '圆管', tube_diameter: '17', tube_thickness: '1.5', cutting_length_mm: 530 },
+      progress: { required: '50000', received_before: '3000', received_after: '43000', input_quantity: '40000', input_unit: '支' } },
+    { id: 'cut', unit: '片', quantity: '20000', stage: '裁剪完成',
+      attributes: { ...record.attributes, part_name: '左扶手裁片', specification: '52*52*92', component_attributes: { specification: '60*60*107' } } },
+  ] }
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(detail)
+  const wrapper = mountRecords()
   try {
     await flushPromises()
+    await wrapper.get('[data-testid="view-semi-receipt"]').trigger('click')
+    await flushPromises()
+    const dialog = wrapper.get('[role="dialog"]')
+    const headers = dialog.findAll('th').map(cell => cell.text())
+    const lines = dialog.findAll('tbody tr').map(row => row.findAll('td').map(cell => cell.text()))
+    expect(headers).toEqual(expect.arrayContaining(['截面形状', '截面尺寸', '厚度', '下料长度', '部位规格', '数量', '单位']))
+    expect(lines[0]?.[headers.indexOf('截面尺寸')]).toBe('17')
+    expect(lines[0]?.[headers.indexOf('下料长度')]).toBe('530 mm')
+    expect(lines[0]?.[headers.indexOf('数量')]).toBe('40,000')
+    expect(lines[1]?.[headers.indexOf('下料长度')]).toBe('—')
+    expect(lines[1]?.[headers.indexOf('部位规格')]).toBe('60*60*107')
+    expect(headers).not.toContain('硬度')
+    expect(dialog.text()).not.toContain('部位入库进度')
+    expect(dialog.text()).not.toContain('本次对应原料投入')
+  } finally { wrapper.unmount() }
+})
+
+it.each(['confirm-semi-receipt', 'view-semi-receipt'])('待入库入口 %s 先读详情，再以详情版本确认', async entry => {
+  const pending = { ...record, status: 'PENDING', stock_movement_id: null, etag: '"list-version"' }
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 } as never)
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue({ ...pending, etag: '"detail-version"' })
+  confirm.mockResolvedValue({ receipt_id: pending.id, receipt_number: pending.receipt_number, status: 'CONFIRMED', replayed: false, record_ids: ['movement-1'] })
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('车间入库')
     expect(wrapper.text()).toContain('待入库')
+    await wrapper.get(`[data-testid="${entry}"]`).trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').attributes('width')).toBe('80vw')
+    expect(api.fetchSemiReceiptRecord).toHaveBeenCalledWith(pending.id, 'IN')
+    expect(confirm).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="confirm-receipt-in-detail"]').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(pending.id, '"detail-version"')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+  } finally { wrapper.unmount() }
+})
+
+it('从待入库列表打开已被别人确认的单据时，不再显示确认按钮', async () => {
+  vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [{ ...record, status: 'PENDING' }], total: 1 })
+  vi.mocked(api.fetchSemiReceiptRecord).mockResolvedValue(record)
+  const wrapper = mountRecords()
+  try {
+    await flushPromises()
     await wrapper.get('[data-testid="confirm-semi-receipt"]').trigger('click')
     await flushPromises()
-    expect(confirm).toHaveBeenCalledWith(pending.id, undefined)
+    expect(wrapper.get('[role="dialog"]').text()).toContain('已入库')
+    expect(wrapper.find('[data-testid="confirm-receipt-in-detail"]').exists()).toBe(false)
+    expect(confirm).not.toHaveBeenCalled()
   } finally { wrapper.unmount() }
 })
 
@@ -122,7 +213,7 @@ describe('半成品待入库删除', () => {
   it('普通仓管只有查看与删除权限也可读取记录并操作删除，不依赖计划或新增权限', async () => {
     permissions.clear(); permissions.add('inventory.view_internalsemifinishedreceipt'); permissions.add('inventory.delete_internalsemifinishedreceipt')
     vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const wrapper = mountRecords()
     try {
       await flushPromises()
       expect(api.fetchSemiReceiptRecords).toHaveBeenCalledOnce()
@@ -132,7 +223,7 @@ describe('半成品待入库删除', () => {
   })
   it('由后台授权控制删除入口，已入库即使带删除标记也不显示', async () => {
     vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending, { ...pending, id: 'forbidden', can_delete: false }, { ...record, can_delete: true }], total: 3 })
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const wrapper = mountRecords()
     try {
       await flushPromises()
       expect(wrapper.findAll('[data-testid="delete-semi-receipt"]')).toHaveLength(1)
@@ -141,7 +232,7 @@ describe('半成品待入库删除', () => {
   it('确认后删除整张待入库单，携带版本并刷新列表', async () => {
     vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValueOnce({ items: [pending], total: 1 }).mockResolvedValue({ items: [], total: 0 })
     vi.mocked(api.deleteInternalReceiptRecord).mockResolvedValue()
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const wrapper = mountRecords()
     try {
       await flushPromises()
       await wrapper.get('[data-testid="delete-semi-receipt"]').trigger('click')
@@ -155,7 +246,7 @@ describe('半成品待入库删除', () => {
   it('取消删除不发请求、不刷新记录', async () => {
     vi.mocked(api.fetchSemiReceiptRecords).mockResolvedValue({ items: [pending], total: 1 })
     vi.mocked(ElMessageBox.confirm).mockRejectedValue('cancel')
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const wrapper = mountRecords()
     try {
       await flushPromises()
       await wrapper.get('[data-testid="delete-semi-receipt"]').trigger('click'); await flushPromises()
@@ -168,7 +259,7 @@ describe('半成品待入库删除', () => {
     const failure = new AxiosError('conflict')
     failure.response = { status, data: { error: { message: '该记录已变化，请重新核对。' } } } as never
     vi.mocked(api.deleteInternalReceiptRecord).mockRejectedValue(failure)
-    const wrapper = shallowMount(SemiReceiptRecordsView, { global: { plugins: [ElementPlus], renderStubDefaultSlot: true } })
+    const wrapper = mountRecords()
     try {
       await flushPromises()
       await wrapper.get('[data-testid="delete-semi-receipt"]').trigger('click'); await flushPromises()
